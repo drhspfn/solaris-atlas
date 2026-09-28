@@ -1,0 +1,28 @@
+services:
+  api:
+    command: ["uvicorn", "wuwa_story.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ../../packages/server/src:/app/packages/server/src
+      - ../../packages/server/migrations:/app/packages/server/migrations
+
+  web:
+    build:
+      context: ../..
+      dockerfile: packages/web/Dockerfile
+      target: dev
+    environment:
+      VITE_API_PROXY_TARGET: http://api:8000
+    volumes:
+      - ../../packages/web/src:/app/packages/web/src
+      - ../../packages/web/public:/app/packages/web/public
+      - ../../packages/web/index.html:/app/packages/web/index.html
+      - ../../packages/web/vite.config.ts:/app/packages/web/vite.config.ts
+
+  caddy:
+    volumes:
+      - ../dev/Caddyfile:/etc/caddy/Caddyfile:ro
+
+  worker:
+    volumes:
+      - ../../packages/worker/src:/app/packages/worker/src
+      - ../../packages/server/src:/app/packages/server/src

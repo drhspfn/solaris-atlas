@@ -26,12 +26,12 @@
 
 ## Verification
 
-- `uv run alembic upgrade head` — passed. Local project database is at revision `0004_auth`; all six auth tables are present.
-- `WUWA_TEST_DATABASE_URL=... uv run pytest` — **27 passed**. The DB-backed HTTP test covers registration, case-insensitive duplicate email, user-only role assignment, HttpOnly opaque session cookie, DB token digest, `/auth/me`, logout, CSRF rejection, login, and indistinguishable wrong/unknown email errors. Google OIDC signature and claims validation is exercised using an in-process HTTP mock; no Google request is made.
-- `uv run ruff check .` — passed.
-- `uv run mypy src/wuwa_story/auth src/wuwa_story/api/app.py src/wuwa_story/config/settings.py` — passed (13 source files).
-- `uv run mypy src` — still reports **65 errors in 8 existing non-auth modules** (`storage/s3.py`, `ingestion/raw.py`, `api/routes/story.py`, `search/indexer.py`, `ingestion/canonical_import.py`, `api/routes/nodes.py`, `ingestion/compiler_importer.py`, and `workers/cli.py`). No auth module is among those errors.
-- `cd apps/web && npm run build` — passed (TypeScript check and Vite production build).
+- `cd packages/server && uv run alembic upgrade head` — passed. Local project database is at revision `0004_auth`; all six auth tables are present.
+- `cd packages/server && WUWA_TEST_DATABASE_URL=... uv run pytest` — **27 passed**. The DB-backed HTTP test covers registration, case-insensitive duplicate email, user-only role assignment, HttpOnly opaque session cookie, DB token digest, `/auth/me`, logout, CSRF rejection, login, and indistinguishable wrong/unknown email errors. Google OIDC signature and claims validation is exercised using an in-process HTTP mock; no Google request is made.
+- `cd packages/server && uv run ruff check .` — passed.
+- `cd packages/server && cd packages/server && uv run mypy src/wuwa_story/auth src/wuwa_story/api/app.py src/wuwa_story/config/settings.py` — passed (13 source files).
+- `cd packages/server && uv run mypy src` — still reports **65 errors in 8 existing non-auth modules** (`storage/s3.py`, `ingestion/raw.py`, `api/routes/story/*`, `search/indexer.py`, `ingestion/canonical_import.py`, `api/routes/nodes.py`, `ingestion/compiler_importer.py`, and the worker CLI. These were the pre-refactor paths and results.). No auth module is among those errors.
+- `cd packages/web && npm run build` — passed (TypeScript check and Vite production build).
 - The test client emits one Starlette deprecation warning about using HTTPX; tests pass.
 
 ## Google Cloud setup
@@ -40,4 +40,4 @@ See [google-oauth.md](google-oauth.md). Remaining setup is to create the Google 
 
 ## Known limits
 
-Rate limiting is left at the reverse-proxy boundary for now; the auth routes remain independently addressable for a later limiter. Full Google browser redirect/callback was not exercised against Google, because credentials are intentionally absent; cryptographic ID-token validation and the normal account flows are covered locally. Full-repository mypy is not clean due to the listed existing modules. Email verification, password recovery, 2FA, password changes, account deletion, and admin UI remain out of scope. No Google credentials are present in this repository.
+Rate limiting is left at the reverse-proxy boundary for now; the auth routes remain independently addressable for a later limiter. Full Google browser redirect/callback was not exercised against Google, because credentials are intentionally absent; cryptographic ID-token validation and the normal account flows are covered locally. The report records the pre-refactor mypy run; rerun it against the new package paths before using it as a current baseline. Email verification, password recovery, 2FA, password changes, account deletion, and admin UI remain out of scope. No Google credentials are present in this repository.

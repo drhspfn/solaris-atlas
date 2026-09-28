@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 .venv/
 __pycache__/
 *.py[cod]
@@ -9,16 +11,14 @@ __pycache__/
 htmlcov/
 *.egg-info/
 .DS_Store
-
-# Local credentials and machine-specific settings
-.env.*
-!.env.example
 .vscode/
-apps/web/node_modules/
-apps/web/dist/
-apps/web/.vite/
+
+# Package-local environments and frontend artifacts
+packages/*/.venv/
+packages/*/node_modules/
+packages/*/dist/
+packages/*/.vite/
 
 # Runtime artifacts
 *.log
-.DS_Store
 var/upstream-sync/

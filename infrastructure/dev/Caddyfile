@@ -1,0 +1,16 @@
+:80 {
+  @api path /api /api/*
+  handle @api {
+    uri strip_prefix /api
+    reverse_proxy api:8000
+  }
+
+  @apiDocs path /docs* /redoc* /openapi.json /oauth2-redirect*
+  handle @apiDocs {
+    reverse_proxy api:8000
+  }
+
+  handle {
+    reverse_proxy web:5173
+  }
+}

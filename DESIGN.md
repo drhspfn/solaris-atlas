@@ -64,18 +64,18 @@ Solaris Atlas should feel like an editorial field atlas assembled from quiet res
 ### Product context and register
 
 - **Audience and primary job:** Wuthering Waves players exploring characters, story transcripts, locations, items and source-backed links.
-- **Target market(s) and evidence:** Global audience; the UI exposes English, Russian and Chinese locale choices in `src/components/layout/LocaleSwitcher.tsx`.
+- **Target market(s) and evidence:** Global audience; the UI exposes English, Russian and Chinese locale choices in `packages/web/src/components/layout/LocaleSwitcher.tsx`.
 - **Locale(s) and language policy:** UI copy is currently English; localized game text follows the selected archive locale.
 - **Usage scene:** Desktop-first browsing with responsive mobile access; users move between searchable catalogs, entity profiles and quest transcripts.
 - **Register:** Hybrid. The home page carries the editorial brand; catalogs and detail pages prioritize readable evidence and navigation.
 - **Memorable signature:** Thin mint and cyan resonance paths connecting story entities.
 - **Restraint:** Most surfaces stay near-monochrome. Semantic colors identify entity type in small marks only.
 - **Anti-references:** Neon cyberpunk, terminal green, generic SaaS panels and glass effects.
-- **Token ownership/runtime mapping:** This document mirrors the canonical runtime tokens in `src/styles/index.css`. `:root` defines the named palette and legacy aliases; shared page components consume those variables and the design override layer. No separate generated theme exists.
+- **Token ownership/runtime mapping:** This document mirrors the canonical runtime tokens in `packages/web/src/styles/index.css`. `:root` defines the named palette and legacy aliases; shared page components consume those variables and the design override layer. No separate generated theme exists.
 
 ## Colors
 
-Use the exact Solaris Atlas palette defined in `:root` of `src/styles/index.css`. Root and page backgrounds are `--bg-root` and `--bg-page`; cards use `--surface-1`, hover uses `--surface-2`, and active panels use `--surface-3`. Mint marks primary actions and selected story elements; cyan marks graph paths and location states. Warm gold is reserved for story/lore emphasis. Semantic entity hues stay on small icons, dots and borders rather than large fills.
+Use the exact Solaris Atlas palette defined in `:root` of `packages/web/src/styles/index.css`. Root and page backgrounds are `--bg-root` and `--bg-page`; cards use `--surface-1`, hover uses `--surface-2`, and active panels use `--surface-3`. Mint marks primary actions and selected story elements; cyan marks graph paths and location states. Warm gold is reserved for story/lore emphasis. Semantic entity hues stay on small icons, dots and borders rather than large fills.
 
 ## Typography
 
@@ -95,7 +95,7 @@ Use 6px graph nodes, 8px chips, 10px buttons, 12px inputs/cards and 14px feature
 
 ## Components
 
-The existing CSS in `src/styles/index.css` is the runtime owner. Global semantic variables map the palette and radii to existing components; the appended Solaris layer refines existing selectors instead of introducing a parallel component system. Search, navigation and entity cards retain their established React owners.
+The existing CSS in `packages/web/src/styles/index.css` is the runtime owner. Global semantic variables map the palette and radii to existing components; the appended Solaris layer refines existing selectors instead of introducing a parallel component system. Search, navigation and entity cards retain their established React owners.
 
 ## Do's and Don'ts
 

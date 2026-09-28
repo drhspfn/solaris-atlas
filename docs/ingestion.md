@@ -13,9 +13,10 @@ Raw source rows remain release-scoped and are tied to SHA-256-verified source fi
 Import a compiled snapshot into the configured PostgreSQL database with:
 
 ```bash
-docker compose run --rm --build --no-deps \
+docker compose -f infrastructure/local/compose.yml --env-file infrastructure/local/.env \
+  run --rm --build --no-deps \
   -v /absolute/path/to/dist/3.6.0:/dataset:ro \
-  api wuwa-story-import /dataset --batch-size 500
+  worker wuwa-story-import /dataset --batch-size 500
 ```
 
 ## Import a chronological version series
@@ -36,13 +37,9 @@ requested range and fails before connecting to PostgreSQL if any are missing. Mu
 snapshots in a minor version are all imported in ascending order.
 
 ```bash
-docker compose run --rm --build --no-deps \
-  -v /absolute/path/to/dist:/datasets:ro \
-  api wuwa-story-worker import-series /datasets --from-version 3.0 --to-version 3.6 --dry-run
+cd packages/worker && uv run wuwa-story-import-series /datasets --from-version 3.0 --to-version 3.6 --dry-run
 
-docker compose run --rm --build --no-deps \
-  -v /absolute/path/to/dist:/datasets:ro \
-  api wuwa-story-worker import-series /datasets --from-version 3.0 --to-version 3.6
+cd packages/worker && uv run wuwa-story-import-series /datasets --from-version 3.0 --to-version 3.6
 ```
 
 `wuwa-story-import-series /datasets --from-version 3.0 --to-version 3.6` is the equivalent
@@ -59,16 +56,16 @@ local narrative compiler, imports that compiled snapshot, then records the branc
 The checkpoint advances only after a successful compile and DB import, so a failed run retries that
 commit next time. With no `--to-version`, newly appearing later release branches are discovered too.
 
-From the project directory:
+From the worker package directory (`cd packages/worker`):
 
 ```bash
-uv run wuwa-story-worker sync-github \
-  --compiler-root ../wuwa-story-investigation \
+uv run wuwa-story-sync-github \
+  --compiler-root ../../../wuwa-story-investigation \
   --workspace ./var/upstream-sync \
   --from-version 3.0 --to-version 3.6 --dry-run
 
-uv run wuwa-story-worker sync-github \
-  --compiler-root ../wuwa-story-investigation \
+uv run wuwa-story-sync-github \
+  --compiler-root ../../../wuwa-story-investigation \
   --workspace ./var/upstream-sync \
   --from-version 3.0 --to-version 3.6
 ```
@@ -76,8 +73,8 @@ uv run wuwa-story-worker sync-github \
 For ongoing polling, omit `--to-version` and pass `--watch`; it checks every 30 minutes by default:
 
 ```bash
-uv run wuwa-story-worker sync-github \
-  --compiler-root ../wuwa-story-investigation \
+uv run wuwa-story-sync-github \
+  --compiler-root ../../../wuwa-story-investigation \
   --workspace ./var/upstream-sync \
   --from-version 3.0 --watch --interval-seconds 1800
 ```
@@ -92,7 +89,7 @@ The importer registers the release, then loads raw evidence, localization, canon
 If a previous importer version populated generic graph nodes but left typed action/dialogue projections incomplete, rebuild those two projections from the same snapshot with:
 
 ```bash
-.venv/bin/python scripts/refresh_action_dialogue_projection.py \
+cd packages/server && uv run python scripts/refresh_action_dialogue_projection.py \
   /absolute/path/to/dist/3.6.0 --batch-size 500
 ```
 
@@ -101,7 +98,7 @@ This targeted repair only replaces `core.quest_action` and `core.dialogue_line` 
 For a compiled snapshot that adds only exact-resource speaker/character crosswalks, apply those graph edges and typed links without replaying the multi-million-row localization import:
 
 ```bash
-.venv/bin/python scripts/import_exact_crosswalks.py \
+cd packages/server && uv run python scripts/import_exact_crosswalks.py \
   /absolute/path/to/dist/3.6.0
 ```
 
@@ -113,11 +110,11 @@ fresh full import builds all lexical search documents automatically; run the
 indexer manually only to repair or refresh an existing release:
 
 ```bash
-.venv/bin/python scripts/refresh_searchable_entities.py \
+cd packages/server && uv run python scripts/refresh_searchable_entities.py \
   /absolute/path/to/dist/3.6.0
-.venv/bin/python scripts/import_entity_reference_edges.py \
+cd packages/server && uv run python scripts/import_entity_reference_edges.py \
   /absolute/path/to/dist/3.6.0
-.venv/bin/python scripts/build_lexical_index.py 3.6.0
+cd packages/server && uv run python scripts/build_lexical_index.py 3.6.0
 ```
 
 The focused import applies to an existing release whose canonical node

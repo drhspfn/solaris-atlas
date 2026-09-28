@@ -1,0 +1,40 @@
+[project]
+name = "wuwa-story-worker"
+version = "0.1.0"
+description = "Snapshot ingestion worker for WuWa Story"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "wuwa-story-server",
+]
+
+[project.scripts]
+wuwa-story-worker = "wuwa_story_worker.cli:main"
+wuwa-story-import = "wuwa_story_worker.cli:import_main"
+wuwa-story-import-series = "wuwa_story_worker.cli:import_series_main"
+wuwa-story-sync-github = "wuwa_story_worker.cli:sync_github_main"
+
+[tool.uv.sources]
+wuwa-story-server = { path = "../server" }
+
+[build-system]
+requires = ["hatchling>=1.26,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wuwa_story_worker"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+ignore = ["B008", "E501"]
+
+[dependency-groups]
+dev = ["mypy>=1.13,<2", "pytest>=8.3,<9", "pytest-asyncio>=0.24,<1", "ruff>=0.8,<1"]

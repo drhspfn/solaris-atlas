@@ -1,63 +1,31 @@
-# Architecture
+# Package and service boundaries
 
-The service is split into API, persistence, ingestion, graph operations, search primitives, and storage adapters. PostgreSQL is the source of truth for metadata and canonical records. Large immutable objects use an interchangeable local or S3-compatible storage backend; a game-source path is provenance and is never treated as an object-store key.
+The repository is a small monorepo with three independently buildable applications:
 
-```mermaid
-flowchart LR
-  Compiler[Deterministic narrative compiler output] --> Importer[Python importer]
-  Importer --> Raw[(raw schema)]
-  Importer --> I18n[(i18n schema)]
-  Importer --> Graph[(graph schema)]
-  Importer --> Core[(core and story schemas)]
-  API[FastAPI] --> Repositories[Repositories and services]
-  Repositories --> PG[(PostgreSQL 17 + pgvector)]
-  Repositories --> ObjectService[Storage service]
-  ObjectService --> Local[Local filesystem]
-  ObjectService --> S3[S3-compatible object store / MinIO]
-```
+- `packages/server` owns the FastAPI application, account workflows, PostgreSQL mappings, migrations, localization, graph/search services, and the shared deterministic import library.
+- `packages/worker` owns background commands and snapshot polling. It has its own `pyproject.toml`, lockfile, virtual environment, source package, and image. It installs `wuwa-story-server` from the sibling package for database and import functionality.
+- `packages/web` owns the React/Vite client, npm lockfile, frontend environment, and its development and production image targets.
 
-```mermaid
-flowchart TB
-  subgraph ops[ops]
-    Release[game_release]
-    Run[import_run / processing_run]
-    Processor[processor / ai_model]
-  end
-  subgraph sources[raw and i18n]
-    SourceFile[source_file]
-    SourceRecord[source_record]
-    LKey[localization_key]
-    LValue[localization_value]
-  end
-  subgraph canonical[graph and core]
-    Node[graph.node]
-    Revision[node_revision]
-    Edge[graph.edge]
-    Evidence[edge_evidence]
-    Entity[quest / dialogue / speaker / character / item / location ...]
-  end
-  Release --> SourceFile --> SourceRecord
-  Release --> Node
-  Node --> Revision
-  Node --> Edge
-  Edge --> Evidence
-  Node --> Entity
-  SourceRecord -. source identity .-> Evidence
-  LKey --> LValue
-  Entity -. references .-> LKey
-  Release --> Run --> Processor
-```
+`infrastructure/local` contains the persistent Compose stack and Caddy routing. `infrastructure/dev` overlays live reload and source mounts on that stack. Both use the Compose project name `wuwa-story`, retaining its existing `postgres_data`, `minio_data`, and `wuwa_sync_data` named volumes.
 
-```mermaid
-flowchart LR
-  Raw[Immutable source row] -->|explicitly normalized| Node[Canonical node and revision]
-  Node -->|source-backed edge| Edge[Directed graph edge]
-  Edge --> Evidence[Field path + source record + basis]
-  Node --> I18n[Localization key identity]
-  I18n --> Value[Locale value and resolution state]
-  Node -. later, out of scope .-> Claims[Semantic claims/events]
-```
+## Server module boundaries
 
-The schema is divided into `ops`, `storage`, `raw`, `i18n`, `graph`, `core`, `ontology`, `story`, `content`, and `search`. `graph.edge.basis` distinguishes explicit references, exact joins, authored ordering, source-array adjacency, runtime conditions, and later semantic/manual relations. No authored order is asserted as actual player traversal.
+Within `packages/server/src/wuwa_story`:
 
-Semantic claims and event extraction are represented as persistence contracts only; the importer does not populate them. Embedding tables are model-versioned and no vector index is required until an embedding model is selected.
+- `api` contains FastAPI composition, transport dependencies, and route modules. Story browse routes are grouped into catalog, profiles, and transcripts with shared source-backed payload builders.
+- `auth` contains account policy, validation, OAuth, session services, and HTTP routes.
+- `db/models` is the single SQLAlchemy mapping registry, including `db/models/auth.py`; `db/repositories` contains reusable persistence queries.
+- `ingestion` handles canonical/raw snapshot processing, release registration, and GitHub snapshot operations that are shared by the command worker.
+- `graph`, `search`, and `storage` own their focused services and adapters.
+
+There is no separate generic `libs/` or empty `domain/` layer: the current project has no independent, persistence-free domain model that would justify a package boundary there. Introduce one when a real use case needs logic shared across transport or storage implementations.
+
+## Environment and build commands
+
+Each package has an ignored `.env` copied from its committed `.env.example`. Local orchestration settings live under `infrastructure/local`. `./scripts/dev-up.sh` creates missing files and applies database migrations.
+
+- Server: `cd packages/server && uv sync`; build with `uv build` or `docker compose ... build api`.
+- Worker: `cd packages/worker && uv sync`; build with `uv build` or `docker compose ... build worker`.
+- Web: `cd packages/web && npm ci && npm run build`; Docker builds its `runtime` target by default and its `dev` target in the dev override.
+
+Caddy serves the frontend on port 5173, forwards `/api/*` to FastAPI, and also routes Swagger UI paths so `/api/docs` works. FastAPI remains directly available on port 8000 for development and API inspection.

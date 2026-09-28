@@ -16,4 +16,4 @@ Date: 2026-09-27. This is a targeted check of the imported 1.0.0 snapshot, not a
 
 The screenshot comparison is against later-game (3.x) progression requirements, while the inspected snapshot is 1.0.0. The 1.0 snapshot cannot be expected to contain items introduced later. For 1.0 data, the item definitions and at least the sampled ascension links are present. This spot-check does not establish complete coverage of all progression, acquisition, map-spawn, quest, or character-dialogue tables.
 
-New imports now build search documents automatically after canonical entities and localization have been imported. Existing imported snapshots can be repaired with `scripts/build_lexical_index.py <game-version>`.
+New imports now build search documents automatically after canonical entities and localization have been imported. Existing imported snapshots can be repaired with `cd packages/server && uv run python scripts/build_lexical_index.py <game-version>`.
