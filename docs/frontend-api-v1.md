@@ -10,6 +10,8 @@ GET /categories
 
 `browse_categories` is the UI facet list: `character`, `item`, `location`, `quest`, `speaker`, and `dialogue`. `categories` retains the raw graph node-type inventory. The UI should use `browse_categories`; `location` maps to raw node types `area` and `location`.
 
+The frontend catalog pages use `GET /catalog?category=character&locale=en&limit=24&offset=0` for alphabetized browse pages without a search term. Supported categories are character, item, location, quest, and speaker.
+
 ## Search catalog
 
 ```http

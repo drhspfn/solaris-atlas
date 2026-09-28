@@ -7,9 +7,13 @@ dependencies = [
   "alembic>=1.14,<2",
   "asyncpg>=0.30,<1",
   "boto3>=1.35,<2",
+  "email-validator>=2,<3",
   "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
   "ijson>=3.3,<4",
+  "joserfc>=1.4,<2",
   "pgvector>=0.3,<1",
+  "pwdlib[argon2]>=0.2,<1",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.6,<3",
   "sqlalchemy[asyncio]>=2.0.36,<3",
@@ -22,6 +26,9 @@ dev = ["httpx>=0.28,<1", "mypy>=1.13,<2", "pytest>=8.3,<9", "pytest-asyncio>=0.2
 [project.scripts]
 wuwa-story-worker = "wuwa_story.workers.cli:main"
 wuwa-story-import = "wuwa_story.workers.cli:import_main"
+wuwa-story-import-series = "wuwa_story.workers.cli:import_series_main"
+wuwa-story-sync-github = "wuwa_story.workers.cli:sync_github_main"
+wuwa-story-admin = "wuwa_story.auth.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.26,<2"]

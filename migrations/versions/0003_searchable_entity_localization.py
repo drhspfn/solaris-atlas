@@ -10,51 +10,36 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "character",
-        sa.Column("nickname_key_id", sa.BigInteger(), nullable=True),
-        schema="core",
-    )
-    op.create_foreign_key(
-        "fk_character_nickname_key_id_localization_key",
-        "character",
-        "localization_key",
-        ["nickname_key_id"],
-        ["id"],
-        source_schema="core",
-        referent_schema="i18n",
-        ondelete="SET NULL",
-    )
-    op.add_column(
-        "item",
-        sa.Column("description_key_id", sa.BigInteger(), nullable=True),
-        schema="core",
-    )
-    op.create_foreign_key(
-        "fk_item_description_key_id_localization_key",
-        "item",
-        "localization_key",
-        ["description_key_id"],
-        ["id"],
-        source_schema="core",
-        referent_schema="i18n",
-        ondelete="SET NULL",
-    )
-    op.add_column(
-        "location",
-        sa.Column("name_key_id", sa.BigInteger(), nullable=True),
-        schema="core",
-    )
-    op.create_foreign_key(
-        "fk_location_name_key_id_localization_key",
-        "location",
-        "localization_key",
-        ["name_key_id"],
-        ["id"],
-        source_schema="core",
-        referent_schema="i18n",
-        ondelete="SET NULL",
-    )
+    # Revision 0001 creates the current SQLAlchemy metadata, which may already
+    # include these later-added columns and foreign keys on a fresh install.
+    inspector = sa.inspect(op.get_bind())
+    for table, column, constraint in (
+        ("character", "nickname_key_id", "fk_character_nickname_key_id_localization_key"),
+        ("item", "description_key_id", "fk_item_description_key_id_localization_key"),
+        ("location", "name_key_id", "fk_location_name_key_id_localization_key"),
+    ):
+        columns = {entry["name"] for entry in inspector.get_columns(table, schema="core")}
+        if column not in columns:
+            op.add_column(table, sa.Column(column, sa.BigInteger(), nullable=True), schema="core")
+        foreign_keys = inspector.get_foreign_keys(table, schema="core")
+        has_reference = any(
+            entry.get("constrained_columns") == [column]
+            and entry.get("referred_schema") == "i18n"
+            and entry.get("referred_table") == "localization_key"
+            and entry.get("referred_columns") == ["id"]
+            for entry in foreign_keys
+        )
+        if not has_reference:
+            op.create_foreign_key(
+                constraint,
+                table,
+                "localization_key",
+                [column],
+                ["id"],
+                source_schema="core",
+                referent_schema="i18n",
+                ondelete="SET NULL",
+            )
     op.execute(
         """
         INSERT INTO ontology.relation_type (id, key, label, category, directional, metadata)

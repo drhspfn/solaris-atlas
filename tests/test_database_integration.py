@@ -35,6 +35,7 @@ async def test_migrated_database_has_required_schemas_and_extensions() -> None:
             "story",
             "content",
             "search",
+            "auth",
         } <= schemas
         assert {"vector", "pg_trgm", "pgcrypto"} <= extensions
     finally:

@@ -497,6 +497,9 @@ async def _insert_typed_entities(
                             "metadata": {
                                 "game_character_id": record.get("game_id"),
                                 "name_key": _nested_key(record, "name"),
+                                "role_type": raw.get("RoleType"),
+                                "is_trial": raw.get("IsTrial"),
+                                "is_show": raw.get("IsShow"),
                             },
                         }
                     ],

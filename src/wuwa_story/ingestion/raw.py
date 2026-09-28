@@ -1,5 +1,7 @@
+import base64
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Iterator
 from decimal import Decimal
@@ -13,6 +15,45 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
+
+logger = logging.getLogger(__name__)
+
+
+class _EscapeControlCharacters:
+    """Escape literal JSON control bytes inside strings without buffering whole tables."""
+
+    def __init__(self, stream: Any, normalizations: set[str]) -> None:
+        self.stream = stream
+        self.normalizations = normalizations
+        self.in_string = False
+        self.escaped = False
+
+    def read(self, size: int = -1) -> bytes:
+        data = self.stream.read(size)
+        if not data:
+            return data
+        result = bytearray()
+        for byte in data:
+            if self.in_string:
+                if self.escaped:
+                    self.escaped = False
+                    result.append(byte)
+                elif byte == 0x5C:
+                    self.escaped = True
+                    result.append(byte)
+                elif byte == 0x22:
+                    self.in_string = False
+                    result.append(byte)
+                elif byte < 0x20:
+                    result.extend(f"\\u{byte:04x}".encode("ascii"))
+                    self.normalizations.add("literal_control_characters_escaped")
+                else:
+                    result.append(byte)
+            else:
+                if byte == 0x22:
+                    self.in_string = True
+                result.append(byte)
+        return bytes(result)
 
 
 def canonical_record_hash(record: Any) -> bytes:
@@ -33,9 +74,7 @@ def _json_safe(value: Any) -> Any:
         ord(char) == 0 or 0xD800 <= ord(char) <= 0xDFFF for char in value
     ):
         return "".join(
-            f"\\u{ord(char):04x}"
-            if ord(char) == 0 or 0xD800 <= ord(char) <= 0xDFFF
-            else char
+            f"\\u{ord(char):04x}" if ord(char) == 0 or 0xD800 <= ord(char) <= 0xDFFF else char
             for char in value
         )
     if isinstance(value, list):
@@ -69,30 +108,70 @@ def verify_indexed_file(path: Path, entry: dict[str, Any]) -> bool:
 
 
 def _iter_records(
-    path: Path, shape: str, *, preserve_surrogates: bool = False
+    path: Path,
+    shape: str,
+    *,
+    preserve_surrogates: bool = False,
+    normalizations: set[str] | None = None,
 ) -> Iterator[tuple[int, str | None, Any]]:
+    normalized = normalizations if normalizations is not None else set()
     with path.open("rb") as stream:
         header = stream.read(64)
     if header.startswith(b"version https://git-lfs.github.com/spec/v1"):
         # Some upstream checkouts contain Git LFS pointer files instead of payloads.
         # Preserve the exact pointer as an explicit source record rather than dropping it.
-        yield 0, None, {
-            "_source_representation": "git_lfs_pointer",
-            "raw_pointer": path.read_text(encoding="utf-8"),
-        }
+        yield (
+            0,
+            None,
+            {
+                "_source_representation": "git_lfs_pointer",
+                "raw_pointer": path.read_text(encoding="utf-8"),
+            },
+        )
         return
     with path.open("rb") as stream:
+        parsed_stream = _EscapeControlCharacters(stream, normalized)
         if shape == "array":
             parser = ijson_python.items if preserve_surrogates else ijson.items
-            for index, record in enumerate(parser(stream, "item")):
-                yield index, None, _json_safe(record)
+            index = 0
+            try:
+                for index, record in enumerate(parser(parsed_stream, "item")):
+                    yield index, None, _json_safe(record)
+                return
+            except Exception as exc:
+                yield from _preserve_unparsed_file(path, index + 1, exc, normalized)
         elif shape == "object":
             parser = ijson_python.kvitems if preserve_surrogates else ijson.kvitems
-            for index, (key, record) in enumerate(parser(stream, "")):
-                yield index, key, _json_safe(record)
+            index = 0
+            try:
+                for index, (key, record) in enumerate(parser(parsed_stream, "")):
+                    yield index, key, _json_safe(record)
+                return
+            except Exception as exc:
+                yield from _preserve_unparsed_file(path, index + 1, exc, normalized)
         else:
-            value = json.loads(path.read_text(encoding="utf-8"))
-            yield 0, None, value
+            try:
+                value = json.loads(parsed_stream.read().decode("utf-8"), strict=False)
+                yield 0, None, value
+            except Exception as exc:
+                yield from _preserve_unparsed_file(path, 0, exc, normalized)
+
+
+def _preserve_unparsed_file(
+    path: Path, row_index: int, error: Exception, normalizations: set[str]
+) -> Iterator[tuple[int, str | None, Any]]:
+    """Retain malformed upstream JSON bytes as an explicit raw evidence record."""
+    logger.error("Could not parse %s; preserving the complete raw file: %s", path, error)
+    normalizations.add("malformed_json_preserved_as_raw_payload")
+    yield (
+        row_index,
+        None,
+        {
+            "_source_representation": "malformed_json_file",
+            "parser_error": f"{type(error).__name__}: {error}",
+            "raw_bytes_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+        },
+    )
 
 
 async def import_raw_snapshot(
@@ -162,15 +241,24 @@ async def import_raw_snapshot(
         source_file_id = file_record.id
         expected_count = table.get("record_count")
         stored_count = existing_counts.get(source_file_id, 0)
-        if isinstance(expected_count, int) and stored_count >= expected_count:
+        ingestion_state = file_record.metadata_json.get("ingestion_state")
+        if ingestion_state == "raw_fallback" or (
+            ingestion_state == "parsed"
+            and isinstance(expected_count, int)
+            and stored_count >= expected_count
+        ):
             # The immutable source hash and stored count prove this file was fully
             # ingested already; don't reread or stream millions of duplicate rows.
             seen += expected_count
             continue
         preserve_surrogates = verify_indexed_file(path, entry)
+        normalizations: set[str] = set()
         batch: list[dict[str, Any]] = []
         for row_index, source_key, record in _iter_records(
-            path, schema_shape, preserve_surrogates=preserve_surrogates
+            path,
+            schema_shape,
+            preserve_surrogates=preserve_surrogates,
+            normalizations=normalizations,
         ):
             seen += 1
             batch.append(
@@ -196,7 +284,9 @@ async def import_raw_snapshot(
                     )
                 )
                 created += max(getattr(result, "rowcount", 0) or 0, 0)
-                existing_counts[source_file_id] = existing_counts.get(source_file_id, 0) + len(batch)
+                existing_counts[source_file_id] = existing_counts.get(source_file_id, 0) + len(
+                    batch
+                )
                 await session.commit()
                 batch.clear()
         if batch:
@@ -213,5 +303,17 @@ async def import_raw_snapshot(
             )
             created += max(getattr(result, "rowcount", 0) or 0, 0)
             existing_counts[source_file_id] = existing_counts.get(source_file_id, 0) + len(batch)
+        if normalizations:
+            file_record.metadata_json = {
+                **file_record.metadata_json,
+                "ingestion_normalizations": sorted(normalizations),
+                "ingestion_state": (
+                    "raw_fallback"
+                    if "malformed_json_preserved_as_raw_payload" in normalizations
+                    else "parsed"
+                ),
+            }
+        else:
+            file_record.metadata_json = {**file_record.metadata_json, "ingestion_state": "parsed"}
         await session.commit()
     return seen, created

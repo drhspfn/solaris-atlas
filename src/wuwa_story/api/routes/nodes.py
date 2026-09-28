@@ -6,6 +6,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.api.source_labels import source_family_label
+from wuwa_story.db.models.core import DialogueLine, Quest, QuestAction, QuestNode, QuestState
 from wuwa_story.db.models.graph import Edge, Node, NodeRevision, NodeType
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.ontology import RelationType
@@ -240,6 +241,136 @@ async def node_source_record(
             "raw_record": record.data,
         },
         "resolution": "linked_by_source_record_id",
+    }
+
+
+@router.get("/{canonical_key:path}/narrative-context")
+async def node_narrative_context(
+    canonical_key: str,
+    locale: str = "en",
+    game_version: str | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Resolve authored context for a dialogue node using its canonical source joins."""
+    node = await get_node(session, canonical_key)
+    if node is None:
+        raise HTTPException(status_code=404, detail="node not found")
+    node_type = await session.get(NodeType, node.type_id)
+    if node_type is None or node_type.key not in {"talk_item", "dialogue_line", "narration", "player_choice"}:
+        return {"canonical_key": canonical_key, "available": False, "reason": "node is not a dialogue-like entry"}
+
+    line = await session.get(DialogueLine, node.id)
+    if line is None or line.action_node_id is None:
+        return {"canonical_key": canonical_key, "available": False, "reason": "no normalized DialogueLine is linked to this node"}
+
+    from wuwa_story.api.routes.story import _dialogue_payload, _quest_info, _release_id
+
+    release_id = await _release_id(session, game_version)
+    line_query = (
+        select(DialogueLine, QuestAction, QuestState, Node, SourceRecord, SourceFile)
+        .join(Node, Node.id == DialogueLine.node_id)
+        .join(QuestAction, QuestAction.node_id == DialogueLine.action_node_id)
+        .join(QuestState, QuestState.node_id == QuestAction.quest_state_node_id)
+        .outerjoin(SourceRecord, SourceRecord.id == DialogueLine.source_record_id)
+        .outerjoin(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+    )
+    target_row = (await session.execute(line_query.where(DialogueLine.node_id == node.id))).first()
+    if target_row is None:
+        return {"canonical_key": canonical_key, "available": False, "reason": "dialogue source row is incomplete"}
+    target_payload = await _dialogue_payload(
+        session, target_row, locale_code=locale, release_id=release_id
+    )
+    def compact_dialogue(payload: dict[str, Any]) -> dict[str, Any]:
+        """Keep display/provenance fields without repeating an entire ShowTalk blob."""
+        action = payload.get("action")
+        if action:
+            action.pop("params", None)
+        provenance = payload.get("provenance")
+        if provenance:
+            provenance.pop("raw_record", None)
+        for choice in payload.get("player_choices", []):
+            choice_provenance = choice.get("provenance")
+            if choice_provenance:
+                choice_provenance.pop("raw_record", None)
+        return payload
+
+    target_payload = compact_dialogue(target_payload)
+    target_action = target_row[1]
+    target_state = target_row[2]
+
+    context_rows = list(
+        (
+            await session.execute(
+                line_query.where(
+                    DialogueLine.action_node_id == target_action.node_id,
+                    DialogueLine.source_index.between(
+                        max(0, (line.source_index or 0) - 3),
+                        (line.source_index or 0) + 3,
+                    ),
+                ).order_by(DialogueLine.source_index, DialogueLine.node_id)
+            )
+        ).all()
+    )
+    context = [
+        compact_dialogue(
+            await _dialogue_payload(session, row, locale_code=locale, release_id=release_id)
+        )
+        for row in context_rows
+    ]
+
+    state_owners = (
+        select(Edge.from_node_id)
+        .join(RelationType, RelationType.id == Edge.relation_type_id)
+        .where(
+            Edge.to_node_id == target_state.node_id,
+            RelationType.key == "references_flow_state",
+            Edge.layer == "source",
+        )
+    )
+    quest_rows = await session.scalars(
+        select(Quest)
+        .where(
+            Quest.game_quest_id.in_(
+                select(QuestNode.game_quest_id).where(
+                    QuestNode.node_id.in_(state_owners), QuestNode.game_quest_id.is_not(None)
+                )
+            )
+        )
+        .order_by(Quest.game_quest_id)
+        .limit(20)
+    )
+    quests = [await _quest_info(session, quest, locale, game_version) for quest in quest_rows]
+
+    source_rows = await session.execute(
+        select(SourceRecord, SourceFile)
+        .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+        .where(SourceRecord.id == target_state.source_record_id)
+    )
+    state_source = source_rows.first()
+    owner_keys = list(
+        await session.scalars(select(Node.canonical_key).where(Node.id.in_(state_owners)))
+    )
+    return {
+        "canonical_key": canonical_key,
+        "available": True,
+        "dialogue": target_payload,
+        "context": context,
+        "flow_state": {
+            "state_key": target_state.state_key,
+            "canonical_key": f"flow_state:{target_state.state_key}",
+            "source": {
+                "file": state_source[1].logical_source_path if state_source else None,
+                "row": state_source[0].row_index if state_source else None,
+                "record_id": target_state.source_record_id,
+            },
+        },
+        "quests": quests,
+        "quest_resolution": {
+            "basis": "explicit references_flow_state edge from QuestNodeData node to this flow state, then QuestNode.game_quest_id",
+            "quest_node_refs": owner_keys,
+            "unresolved": not bool(quests),
+        },
+        "ordering": "source_index within one authored ShowTalk action; this context window is not runtime branch traversal",
     }
 
 

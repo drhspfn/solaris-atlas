@@ -102,11 +102,7 @@ async def lexical_search(
     statement = statement.order_by(
         sort(SearchDocument.title) if sort_by == "name" else sort(score), Node.id
     ).limit(min(max((limit + offset) * 20, 200), 4000))
-    rows = _unique_entities(
-        [dict(row._mapping) for row in await session.execute(statement)], limit, offset
-    )
-    if rows:
-        return rows
+    trigram_rows = [dict(row._mapping) for row in await session.execute(statement)]
     fts = (
         select(
             Node.id,
@@ -130,6 +126,24 @@ async def lexical_search(
     fts = fts.order_by(
         sort(SearchDocument.title) if sort_by == "name" else sort(rank), Node.id
     ).limit(min(max((limit + offset) * 20, 200), 4000))
-    return _unique_entities(
-        [dict(row._mapping) for row in await session.execute(fts)], limit, offset
-    )
+    full_text_rows = [dict(row._mapping) for row in await session.execute(fts)]
+    # Trigram matching catches typos and partial names; FTS catches whole-word
+    # matches that score poorly against a longer title (e.g. "core" in
+    # "LF Whisperin Core"). Merge both result sets before de-duplicating entities.
+    combined: dict[int, dict[str, Any]] = {}
+    for row in [*trigram_rows, *full_text_rows]:
+        current = combined.get(row["id"])
+        if current is None or row["score"] > current["score"]:
+            combined[row["id"]] = row
+    rows = list(combined.values())
+    if sort_by == "name":
+        rows.sort(
+            key=lambda row: (str(row["alias"]).casefold(), row["id"]),
+            reverse=sort_order == "desc",
+        )
+    else:
+        rows.sort(
+            key=lambda row: (float(row["score"]), str(row["alias"]).casefold(), row["id"]),
+            reverse=sort_order == "desc",
+        )
+    return rows[offset : offset + limit]

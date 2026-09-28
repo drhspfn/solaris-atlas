@@ -51,7 +51,7 @@ async def import_localization_batch(
     source_refs: dict[str, set[int]] = {}
     for row in batch:
         for value in row.get("values_by_locale", {}).values():
-            for source in value.get("sources", []):
+            for source in value.get("sources") or []:
                 if isinstance(source.get("file"), str) and isinstance(source.get("position"), int):
                     source_refs.setdefault(source["file"], set()).add(source["position"])
     source_record_ids: dict[tuple[str, int], int] = {}
@@ -101,7 +101,7 @@ async def import_localization_batch(
             if resolution == "resolved_empty" and content != "":
                 raise ValueError("resolved_empty localization value must contain an empty string")
             source_record_id = None
-            for source in value.get("sources", []):
+            for source in value.get("sources") or []:
                 source_record_id = source_record_ids.get(
                     (source.get("file"), source.get("position"))
                 )

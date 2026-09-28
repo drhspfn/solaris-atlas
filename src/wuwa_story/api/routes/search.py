@@ -134,7 +134,13 @@ async def search(
         sort_order=sort_order,
         offset=offset,
     )
+    # A result may have matched an item's description instead of its display
+    # name. Keep the matched alias for traceability, but always give catalog
+    # cards a canonical localized title.
+    from wuwa_story.api.routes.story import _node_label
+
     for result in results:
+        result["title"] = (await _node_label(session, result["id"], locale))["label"]
         result["category"] = (
             "location"
             if result["node_type"] in {"area", "location"}

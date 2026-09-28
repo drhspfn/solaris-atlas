@@ -14,7 +14,11 @@ htmlcov/
 .env.*
 !.env.example
 .vscode/
+apps/web/node_modules/
+apps/web/dist/
+apps/web/.vite/
 
 # Runtime artifacts
 *.log
 .DS_Store
+var/upstream-sync/

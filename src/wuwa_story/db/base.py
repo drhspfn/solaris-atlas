@@ -16,6 +16,7 @@ SCHEMAS = (
     "story",
     "content",
     "search",
+    "auth",
 )
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_name)s",

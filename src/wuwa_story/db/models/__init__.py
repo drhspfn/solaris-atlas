@@ -1,5 +1,13 @@
 # This module re-exports mapped classes to populate metadata for Alembic and callers.
 # ruff: noqa: F401
+from wuwa_story.auth.models import (
+    AuthSession,
+    Identity,
+    OAuthState,
+    PendingLink,
+    PendingRegistration,
+    User,
+)
 from wuwa_story.db.models.content import Document, DocumentHead, DocumentReference
 from wuwa_story.db.models.core import (
     NPC,
@@ -75,6 +83,12 @@ from wuwa_story.db.models.story import (
 )
 
 __all__ = [
+    "AuthSession",
+    "Identity",
+    "OAuthState",
+    "PendingLink",
+    "PendingRegistration",
+    "User",
     "Document",
     "DocumentHead",
     "DocumentReference",

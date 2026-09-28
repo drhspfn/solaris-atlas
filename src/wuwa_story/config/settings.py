@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +19,52 @@ class Settings(BaseSettings):
     s3_use_ssl: bool = False
     local_storage_root: str = "./var/objects"
     log_level: str = "INFO"
+    auth_session_ttl_days: int = 30
+    auth_pending_registration_ttl_minutes: int = 15
+    auth_pending_link_ttl_minutes: int = 10
+    auth_cookie_name: str = "solaris_session"
+    auth_cookie_secure: bool | None = None
+    auth_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    auth_cookie_domain: str | None = None
+    auth_csrf_cookie_name: str = "solaris_csrf"
+    auth_csrf_secret: SecretStr = Field(default=SecretStr("development-only-change-me"))
+    cors_allowed_origins: str = "http://localhost:3000,http://localhost:5173"
+    frontend_url: str = "http://localhost:3000"
+    google_client_id: str = ""
+    google_client_secret: SecretStr = Field(default=SecretStr(""))
+    google_redirect_uri: str = "http://localhost:8000/auth/google/callback"
+
+    @field_validator("auth_cookie_domain", mode="before")
+    @classmethod
+    def blank_cookie_domain_is_host_only(cls, value: object) -> object:
+        return None if value == "" else value
+
+    @model_validator(mode="after")
+    def validate_auth_settings(self) -> "Settings":
+        if self.auth_session_ttl_days < 1:
+            raise ValueError("AUTH_SESSION_TTL_DAYS must be positive")
+        if self.auth_pending_registration_ttl_minutes < 1 or self.auth_pending_link_ttl_minutes < 1:
+            raise ValueError("Pending authentication lifetimes must be positive")
+        if self.app_env == "production":
+            if self.auth_csrf_secret.get_secret_value() == "development-only-change-me":
+                raise ValueError("AUTH_CSRF_SECRET must be configured in production")
+            if not self.auth_cookie_is_secure:
+                raise ValueError("AUTH_COOKIE_SECURE must be true in production")
+        return self
+
+    @property
+    def auth_cookie_is_secure(self) -> bool:
+        if self.auth_cookie_secure is not None:
+            return self.auth_cookie_secure
+        return self.app_env == "production"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [
+            origin.strip().rstrip("/")
+            for origin in self.cors_allowed_origins.split(",")
+            if origin.strip()
+        ]
 
 
 @lru_cache

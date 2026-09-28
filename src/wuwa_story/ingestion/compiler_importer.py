@@ -13,6 +13,7 @@ from wuwa_story.ingestion.importer import Importer
 from wuwa_story.ingestion.localization import import_localization_batch
 from wuwa_story.ingestion.raw import import_raw_snapshot
 from wuwa_story.ingestion.releases import register_release, start_import_run
+from wuwa_story.search.indexer import build_lexical_index
 
 
 class CompiledDatasetImporter(Importer):
@@ -70,6 +71,9 @@ class CompiledDatasetImporter(Importer):
                 batch_size,
             )
             edge_count = await import_canonical_edges(adapter, session, release.id, batch_size)
+            # Search documents are a deterministic projection of imported localized text.
+            # Build them as part of snapshot import so freshly imported releases are searchable.
+            await build_lexical_index(session, release.game_version, batch_size)
             seen += entity_count + edge_count
             created += entity_count + edge_count
             run = await session.get(ImportRun, run_id)
