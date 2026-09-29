@@ -1,0 +1,7 @@
+# Localization coverage (Game 3.6.0)
+
+The compiler keys text by raw namespace/key identity and tracks four outcomes: `resolved_nonempty`, `resolved_empty`, `missing_key`, and `broken_redirect`. Empty strings are present data and do not count as successful translated content. `localization/coverage.json` is generated from the union of identities across locales; a locale missing an identity receives an explicit `missing_key` row in the aggregate.
+
+The 3.6 snapshot contains 324,306 union identities across 13 locales. English has 267,899 non-empty and 56,407 empty values; German 269,336 / 54,970; Spanish 269,593 / 54,713; French 267,116 / 57,190; Japanese 267,811 / 56,495; Korean 266,855 / 57,451; Portuguese 266,938 / 57,368; Thai 266,609 / 57,697; Simplified Chinese 284,709 / 39,597; Traditional Chinese 267,172 / 57,134. Indonesian contains only 13 non-empty values and 324,293 empty values. Russian and Vietnamese have 0 non-empty and 324,306 empty values each, so key presence must not be interpreted as a translated Russian/Vietnamese corpus. The previous build showed zero broken redirects and zero locale-key absences; the final rebuilt metrics are in `dist/3.6.0/localization/coverage.json`.
+
+Tests cover present/nonempty, present/empty, missing, valid redirect, missing redirect and union-based missing locale rows. Referenced-but-missing keys remain diagnostics; there is no text fallback or fabricated content.

@@ -3,10 +3,10 @@
 The repository is a small monorepo with three independently buildable applications:
 
 - `packages/server` owns the FastAPI application, account workflows, PostgreSQL mappings, migrations, localization, graph/search services, and the shared deterministic import library.
-- `packages/worker` owns background commands and snapshot polling. It has its own `pyproject.toml`, lockfile, virtual environment, source package, and image. It installs `wuwa-story-server` from the sibling package for database and import functionality.
+- `packages/worker` owns the RabbitMQ consumer/scheduler and bundled deterministic snapshot compiler. It has its own `pyproject.toml`, lockfile, virtual environment, source package, and image. It installs `wuwa-story-server` from the sibling package for database and import functionality.
 - `packages/web` owns the React/Vite client, npm lockfile, frontend environment, and its development and production image targets.
 
-`infrastructure/local` contains the persistent Compose stack and Caddy routing. `infrastructure/dev` overlays live reload and source mounts on that stack. Both use the Compose project name `wuwa-story`, retaining its existing `postgres_data`, `minio_data`, and `wuwa_sync_data` named volumes.
+`infrastructure/local` contains the persistent Compose stack and Caddy routing. `infrastructure/dev` overlays live reload and source mounts on that stack. Both use the Compose project name `wuwa-story`, retaining PostgreSQL, MinIO, RabbitMQ, and worker data volumes.
 
 ## Server module boundaries
 

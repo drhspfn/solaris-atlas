@@ -8,7 +8,7 @@ Source-traceable Wuthering Waves story archive and browsing API.
 packages/
   server/       FastAPI application, persistence models, migrations and server environment
   web/          React + Vite client and frontend environment
-  worker/       Snapshot importer, GitHub watcher and worker environment
+  worker/       RabbitMQ snapshot compiler/importer, game data compiler and worker environment
 infrastructure/
   local/        Persistent local Compose stack and Caddy routes
   dev/          Live reload overrides for the local stack
@@ -42,13 +42,14 @@ Both Compose files use the `wuwa-story` project name and the existing named Post
 cd packages/server && uv sync && uv run uvicorn wuwa_story.api.app:app --reload
 cd packages/server && uv run alembic upgrade head
 cd packages/server && uv run wuwa-story-admin promote user@example.com
-cd packages/worker && uv sync && uv run wuwa-story-import /path/to/compiled-dataset
-cd packages/worker && uv run wuwa-story-import-series /path/to/snapshots --from-version 1.0 --to-version 3.6
-cd packages/worker && uv run wuwa-story-sync-github --compiler-root /path/to/wuwa-story-investigation --workspace var/upstream-sync --from-version 1.0
+cd packages/worker && uv sync && uv run wuwa-story-worker enqueue-snapshot --version 1.0
+cd packages/worker && uv run wuwa-story-worker watch-upstream --from-version 1.0 --once
 cd packages/web && npm ci && npm run dev
 ```
 
 The web client includes searchable character, item, location and quest catalogs, entity profiles, source-linked connections and quest transcripts. API requests use `/api`; Caddy routes them to FastAPI, while the dev Vite server uses its service-level proxy target. Start the GitHub snapshot watcher when needed with `docker compose -f infrastructure/local/compose.yml --env-file infrastructure/local/.env --profile worker up --build -d worker`.
+
+Start the RabbitMQ consumer and GitHub branch scheduler with `docker compose -f infrastructure/local/compose.yml --env-file infrastructure/local/.env --profile worker up --build -d worker snapshot-scheduler`. The worker builds each pinned upstream commit and imports it to PostgreSQL. Queue settings and manual replay of failed messages are documented in [packages/worker/README.md](packages/worker/README.md).
 
 Browser authentication uses server-side opaque sessions in HttpOnly cookies, Argon2id password hashes and CSRF protection. Google login and account linking use the server-side OpenID Connect flow described in [docs/google-oauth.md](docs/google-oauth.md). Configure package-local values in `packages/server/.env` before enabling Google OAuth.
 

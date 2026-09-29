@@ -1,0 +1,7 @@
+# Walking, ambient and battle dialogue investigation
+
+The direct, fully supported dialogue path remains `FlowState.Actions[].Params.TalkItems[]` (`ShowTalk`), with exact `TidTalk` to PlotAudio and TextMap identity joins. A whole-BinData search found no `WavesLine` field/table in this snapshot and no FlowState action containing that name.
+
+Additional candidate sources were inspected: `entity_audio/characteraudioconfig` (18 rows) contains character audio event paths and combat-state metadata, but no dialogue text, flow/state pointer or caption; `audio_interjection/interjection.json` (360 rows) contains AkEvent/timbre metadata without speaker/text/flow; `npc_actions` (6 rows) stores opaque BinData with NpcId but no extractable line identity; `custom_sequence` is empty. InteractData and BubbleData are interaction/runtime references and now emit exact references to existing FlowStates where a full triple exists. PhantomBattle dialogue records likewise point to ordinary flow states.
+
+These tables do not currently prove a deterministic walking/ambient/battle transcript outside the ordinary FlowState/TalkItem pathway. Battle configuration proves some flow references, not that every audio event is a spoken line or that it played in a specific traversal. Physical voice files and runtime event execution are unavailable in the datamined config snapshot. Thus no separate `ambient_dialogue` or `npc_bark` entities are fabricated. The retained raw evidence and unresolved source records remain available for later schema work.

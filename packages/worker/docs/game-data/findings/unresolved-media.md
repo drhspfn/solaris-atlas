@@ -1,0 +1,5 @@
+# Unresolved media references
+
+The deterministic video metadata chain is `PlayMovie.Params.VideoName` → exact `cgVedio.CgName` → video variants (`CgFile`) → captions (`CaptionText`, timing fields) and videosound records. `videoqte` also joins by exact CgName. Physical movie/audio bytes and package membership are not extracted here. QuestRefVideo contains QuestId/PakName/OnlineBranch/GirlOrBoy but no direct CgName; package metadata does not identify a particular cutscene.
+
+A raw action value `" M0341A"` is now normalized only when stripping whitespace yields exactly one existing CgName. The source raw value is retained; resolution records `unique_whitespace_normalization`. No fuzzy matching is used. Remaining PlayMovie values are `M0320`, `M0323`, `WJZY`, `C3zhuashanghen`, `C3shanghenBOSS`, `ShangHenBaoPo1`, plus one empty value. Sequence asset paths containing M0320/M0323 are not a direct reference to `cgVedio.CgName` and are not joined. No exact media-table mapping for the other names was found.

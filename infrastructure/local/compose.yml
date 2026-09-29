@@ -43,6 +43,22 @@ services:
     command:
       - 'until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 1; done; mc mb --ignore-existing "local/$${S3_BUCKET}"'
 
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: wuwa
+      RABBITMQ_DEFAULT_PASS: wuwa
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   api:
     build:
       context: ../..
@@ -88,30 +104,47 @@ services:
     env_file:
       - ../../packages/worker/.env
     profiles: ["worker"]
+    command: ["wuwa-story-worker", "run"]
+    volumes:
+      - wuwa_worker_data:/var/lib/wuwa-worker
+    environment:
+      DATABASE_URL: postgresql+asyncpg://wuwa:wuwa@postgres:5432/wuwa_story
+      RABBITMQ_URL: amqp://wuwa:wuwa@rabbitmq:5672/
+      WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  snapshot-scheduler:
+    build:
+      context: ../..
+      dockerfile: packages/worker/Dockerfile
+    env_file:
+      - ../../packages/worker/.env
+    profiles: ["worker"]
     command:
       - wuwa-story-worker
-      - sync-github
-      - --compiler-root
-      - /opt/wuwa-compiler
-      - --workspace
-      - /var/lib/wuwa-sync
+      - watch-upstream
       - --from-version
-      - "3.0"
-      - --watch
+      - "1.0"
+      - --workspace
+      - /var/lib/wuwa-worker
       - --interval-seconds
       - "1800"
     volumes:
-      - ${WUWA_COMPILER_HOST_DIR:-../../../wuwa-story-investigation}:/opt/wuwa-compiler:ro
-      - wuwa_sync_data:/var/lib/wuwa-sync
+      - wuwa_worker_data:/var/lib/wuwa-worker
     environment:
-      DATABASE_URL: postgresql+asyncpg://wuwa:wuwa@postgres:5432/wuwa_story
+      RABBITMQ_URL: amqp://wuwa:wuwa@rabbitmq:5672/
     depends_on:
-      postgres:
+      rabbitmq:
         condition: service_healthy
 
 volumes:
   postgres_data:
   minio_data:
-  wuwa_sync_data:
+  rabbitmq_data:
+  wuwa_worker_data:
   caddy_data:
   caddy_config:

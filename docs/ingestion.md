@@ -8,81 +8,30 @@ Dataset root must include a versioned `manifest.json`, `coverage.json`, `raw-evi
 
 Raw source rows remain release-scoped and are tied to SHA-256-verified source files. Decimal tokens are normalized to JSON numeric values for JSONB. Unpaired UTF-16 surrogate escapes and NUL escapes, which PostgreSQL JSONB rejects, are stored as reversible literal `\\uXXXX` sequences; the exact original bytes remain available in the indexed source file. Localization `resolved_empty` values are retained; absent keys remain absent rather than receiving synthetic text. Graph edge evidence points to the original source file/record and raw field path. Source identity and version are carried into canonical records.
 
-## Entrypoint
+## Automated worker pipeline
 
-Import a compiled snapshot into the configured PostgreSQL database with:
+The worker package contains the deterministic compiler, so no investigation checkout or bind mount is required. The scheduler discovers numeric release branches from `1.0`, publishes each unseen branch head to durable RabbitMQ, and checkpoints the commit only after the broker confirms publication. Each message carries both the version branch and immutable full commit SHA. The consumer checks out that commit, compiles and verifies the manifest, imports the dataset through `CompiledDatasetImporter`, and removes the temporary per-job build after success. The shared shallow Git object cache remains in the worker volume.
+
+Start the consumer and scheduler:
 
 ```bash
 docker compose -f infrastructure/local/compose.yml --env-file infrastructure/local/.env \
-  run --rm --build --no-deps \
-  -v /absolute/path/to/dist/3.6.0:/dataset:ro \
-  worker wuwa-story-import /dataset --batch-size 500
+  --profile worker up --build -d rabbitmq worker snapshot-scheduler
 ```
 
-## Import a chronological version series
-
-Place each separately compiled snapshot in a child directory of one root, for example:
-
-```text
-/datasets/wuwa/
-  3.0.0/manifest.json
-  3.1.0/manifest.json
-  ...
-  3.6.0/manifest.json
-```
-
-The series importer reads each manifest, sorts snapshots by the full game version, and imports
-them one at a time. It requires at least one snapshot for every major/minor version in the
-requested range and fails before connecting to PostgreSQL if any are missing. Multiple hotfix
-snapshots in a minor version are all imported in ascending order.
+Queue one version manually or scan once:
 
 ```bash
-cd packages/worker && uv run wuwa-story-import-series /datasets --from-version 3.0 --to-version 3.6 --dry-run
+docker compose -f infrastructure/local/compose.yml --env-file infrastructure/local/.env \
+  --profile worker run --rm worker wuwa-story-worker enqueue-snapshot --version 1.0
 
-cd packages/worker && uv run wuwa-story-import-series /datasets --from-version 3.0 --to-version 3.6
+docker compose -f infrastructure/local/compose.yml --env-file infrastructure/local/.env \
+  --profile worker run --rm snapshot-scheduler wuwa-story-worker watch-upstream --from-version 1.0 --once
 ```
 
-`wuwa-story-import-series /datasets --from-version 3.0 --to-version 3.6` is the equivalent
-installed CLI command. This importer consumes version-specific snapshots; it does not synthesize
-older versions from a newer archive. To obtain the snapshots from upstream and compile them, use
-the GitHub sync command below.
+The scheduler polls every 30 minutes by default and watches new commits on known branches as well as newly appearing version branches. It records the latest published commit per branch in the persistent worker volume. This captures the retained branch heads; it does not reconstruct historical hotfix commits overwritten upstream. Consumers acknowledge successful imports; failures go to the durable `wuwa.snapshot-build.v1.failed` queue and can be requeued with `wuwa-story-worker replay-failed`. See [the worker guide](../packages/worker/README.md) for concurrency and operations.
 
-## Fetch, compile, and import directly from GitHub
-
-Arikatsu's public `WutheringWaves_Data` repository keeps version branches (`3.0` through `3.6`)
-with the source datamine for each release line. `sync-github` discovers those refs using Git,
-fetches each branch head as a shallow pinned commit into a persistent cache, compiles it with the
-local narrative compiler, imports that compiled snapshot, then records the branch/commit checkpoint.
-The checkpoint advances only after a successful compile and DB import, so a failed run retries that
-commit next time. With no `--to-version`, newly appearing later release branches are discovered too.
-
-From the worker package directory (`cd packages/worker`):
-
-```bash
-uv run wuwa-story-sync-github \
-  --compiler-root ../../../wuwa-story-investigation \
-  --workspace ./var/upstream-sync \
-  --from-version 3.0 --to-version 3.6 --dry-run
-
-uv run wuwa-story-sync-github \
-  --compiler-root ../../../wuwa-story-investigation \
-  --workspace ./var/upstream-sync \
-  --from-version 3.0 --to-version 3.6
-```
-
-For ongoing polling, omit `--to-version` and pass `--watch`; it checks every 30 minutes by default:
-
-```bash
-uv run wuwa-story-sync-github \
-  --compiler-root ../../../wuwa-story-investigation \
-  --workspace ./var/upstream-sync \
-  --from-version 3.0 --watch --interval-seconds 1800
-```
-
-The upstream branch inventory was confirmed on GitHub on 2026-09-27. A one-time historical sync
-can therefore create separate 3.0–3.6 release snapshots from the pinned branch heads. This records
-the latest retained datamine commit for each release line; it does not reconstruct every hotfix
-commit that was overwritten on a branch.
+The previous local compiled-series entrypoint remains available via `wuwa-story-worker import-series /datasets --from-version 1.0 --to-version 3.6`, for importing snapshots compiled outside this automatic pipeline.
 
 The importer registers the release, then loads raw evidence, localization, canonical entities, typed records, global edges, and edge evidence. Completed raw files are skipped on resume when their stored SHA-256 and row count match the indexed snapshot. JSONB-incompatible NUL and unpaired surrogate escapes are stored as reversible literal escapes, and Git LFS pointer files are retained as explicit raw records. If an upstream JSON file is structurally malformed, already readable rows are imported and the complete original byte stream is retained as an explicit `malformed_json_file` raw record with its parser error and source hash; this is visible in source-file ingestion metadata and is not treated as a clean parse.
 

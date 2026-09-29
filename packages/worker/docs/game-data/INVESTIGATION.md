@@ -1,0 +1,46 @@
+# Raw schema investigation — Arikatsu 3.6, with Dimbreath 3.1 comparison
+
+## Scope and evidence
+
+The full Arikatsu 3.6 `BinData/` and `Textmaps/` checkout was inspected: 2,022 BinData JSON tables across 492 families and 699 localization JSON files across 13 locales. `wuwa-narrative scan` records each checked-out file's shape, row count, sampled field paths, all observed BinData field names, key candidates, narrative classification and parser status in `coverage.json`. Sampled field paths illustrate nested shape; all-record field-name scanning catches rare keys. Raw payloads are retained on normalized entities, and every inventoried JSON table is copied byte-for-byte to `raw-evidence/`.
+
+The primary version is the Arikatsu README's Game 3.6.0 / Resource 3.6.6 snapshot, commit `353f2eaed119bc9f680eab92807d20ac75a79b40`. Dimbreath commit `e9234ffe094b2d944d16b222d31102e8ab32d954` is a 3.1.19 overlap. Dimbreath commonly encodes `Data` as JSON text where Arikatsu provides parsed objects; the quest pass accepts either shape.
+
+## Quest structure and reachability
+
+`BinData/QuestData/questdata.json` has 1,846 rows `{QuestId, Data}`. `BinData/QuestNodeData/questnodedata.json` has 24,909 rows `{Key: '<QuestId>_<NodeId>', Data:{Type,Id,ParentNodeId,...}}`, exactly matching all 1,846 QuestData groups. Every nonzero `ParentNodeId` resolves within its quest; row order and sibling node IDs are not runtime order.
+
+Observed quest node types are ChildQuest (12,641), Sequence (5,377), ParallelSelect (1,944), QuestSucceed (1,855), AlwaysFalse (975), QuestFailed (770), Action (730), ConditionSelector (453), Condition (101), Repeater (61), AlwaysTrue (2). `ConditionSelector.Data.Slots[i].Condition` and `.Node` embed branch structure; embedded descendants generally match flat quest-node records, but 22 embedded records have extra `Child` fields. The compiler preserves both raw forms. `QuestData.Data.ProvideType.Conditions[].{Type:'PreQuest',PreQuest}` is an explicit quest prerequisite. `QuestData.Reference` tokens such as `f_...` are retained without speculative links.
+
+Flow triples occur in quest-node Condition and action structures and in PlotHandBook. Exact resolution is `flow.Id = FlowListName + '_' + FlowId` and `flowState.StateKey = flow.Id + '_' + StateId`. The 7,829 nested triples found in QuestNodeData all resolved to both tables in this snapshot. PlotHandBook has additional missing references: 17 missing FlowStates and 3 missing flows in the measured run. `PlotHandBook.Data[]` preserves authored presentation order; it is not proof of actual player traversal. Quest `119000000` has 90 quest nodes, 48 embedded flow triples and 42 distinct referenced states. Quest `168800009` has 176 nodes, 59 triples and 52 distinct states.
+
+## Dialogue and independent flow entry points
+
+`flowState.Actions` is JSON-encoded. All 20,198 states must be parsed, including states with no known quest owner. `ShowTalk.Params.TalkItems` includes Talk, Option, SystemOption, CenterText, AvgTalk, AvgNarration, AvgCenterText, PhoneMessage, QTE, NoTextItem, and type-less rows. In this snapshot there are 102,653 Talk rows, 2,307 type-less rows, 917 Option, 905 CenterText, 416 PhoneMessage, 122 AvgNarration, 99 AvgTalk, 79 NoTextItem, 51 QTE, 34 SystemOption and 8 AvgCenterText. Options occur inline on 11,068 Talk rows and 404 type-less rows, so a parser must inspect Options independently of Type and TidTalk. `TalkSequence`, `SequenceTransitions.NextSequenceIndex/OptionTextKey`, and nested `JumpTalk.Params.TalkId` are authored navigation evidence. Duplicate local TalkItem IDs require position-based canonical IDs and ambiguous target diagnostics.
+
+`BinData/PhoneMsg/shortmessage.json` has 270 records. All 270 `FlowParam=[prefix,suffix,state]` values resolve through `flow.Id=prefix+'_'+suffix` and `flowState.StateKey=flow.Id+'_'+state`. Only 16 contain nonzero QuestId, so phone narrative cannot be restricted to quest-owned states. `WhichChat` points exactly to `PhoneMsg/chatpartner.Id`, whose Name is a MultiText key. `RandomPlot/plotreference.json` has 22 `Plot` triples; splitting from the right yields 22/22 exact flow-state matches. `RandomPlot.randomplot.ClientPlotReferenceList` points to those references, providing a separate random/battle speech entry point. A literal WavesLine source was not found in the current checkout; complete walking/battle/NPC speech coverage is unproven.
+
+Additional story-bearing tables include `subtitle_text/subtitletext.json` (1,262 rows, numeric CharacterName/Subtitles1-5/Option1-5 IDs), `QuestReview/questreviewnode.json` (25 review nodes with localized text and SuccessorNodeId), `QuestMultiLine/questtimepointconfig.json` (19 rows with QuestId and UnlockCondition), `FragmentMemory/photomemorycollect.json` (94 rows with text and quest/item references), `MusicSubTitle/musicsubtitle.json` (186 timing rows), and `PlotGuest/plotguest.json` (24 records with explicit SpeakerID arrays). The compiler normalizes these where field identity is established and copies still-unsupported candidate tables as raw evidence. `custom_sequence/customsequence.json` is empty in 3.6.
+
+## Localization
+
+Arikatsu has `de,en,es,fr,id,ja,ko,pt,ru,th,vi,zh-Hans,zh-Hant`. A primary MultiText file has 313,758 rows per sampled locale. For 2,257 English primary rows, `RedirectDbIndex=1` and `Content` is masked; matching IDs in `multi_text_1sthalf/MultiText.json` contain the actual text. The second-half table overlaps 800 primary keys and should not blindly override primary text. The localization export preserves key, content, raw content, redirect metadata and exact source positions, then groups all locales by exact key in `all-locales.jsonl`. Numeric subtitle IDs resolve in each locale's `subtitle_text/SubtitleText.json`, separate from string MultiText keys. Canonical identity uses raw keys/IDs, never an English string.
+
+## Speakers, roles, NPCs and locations
+
+`ShowTalk.TalkItems[].WhoId` matches `BinData/speaker/speaker.json[].Id`; that table has 6,624 rows. `Speaker_<Id>_Name` in MultiText resolves display text. Denia uses WhoId 200144, Nivora 150058. `PlotGuest.SpeakerID[]` is another explicit speaker reference. `speaker` has no RoleId/NpcId. Equal numeric speaker/role IDs are not identity: RoleInfo 1402 names Yangyang while Speaker 1402 names Gardener A. Role, speaker and NPC-head IDs remain separate namespaces. `item/iteminfo.json` has 2,232 records with localized names/descriptions; `area/area.json` has 459 records with AreaId, Title and Father. Exact `ItemId`/`AreaId` fields can link when their targets exist. `QuestData.RegionId` is not treated as AreaId without evidence.
+
+## Cutscenes, voice and audio
+
+There are 153 FlowState `PlayMovie` actions. `Params.VideoName` matches `cgVedio/videodata.CgName` for 145 instances; eight are unresolved in that table. `videodata` has 330 rows / 173 distinct CgNames, often with GirlOrBoy and BelongBranch variants. Same `CgName` relates videosound (166 rows) and videocaption (1,278 rows). `VideoSound.CaptionId` is not a caption-table foreign key: C0026 uses 137 in sound versus 1393+ in caption. The join is CgName. `CgFile`, `EventPath`, caption localization key and locale timing are retained. `QuestRefVideo` supplies quest/package/branch references, without a direct CgName field.
+
+`TalkItem.TidTalk` exactly matches `plot_audio/plotaudio.Id` for 40,701 voiced TalkItems; all matched rows had `PlayVoice:true` in the measured data. PlotAudio's FileName is a voice resource identifier, not a verified physical package path. There are 717 TalkAkEvent values in TalkItems, 1,295 PostAkEvent actions, 110 SetAudioState actions and 400 PlaySequenceData actions. UE/Wwise paths are preserved as asset references. Physical media bytes require a separate optional extraction path; FModelCLI, Ludiglot and SunsetMkt describe that workflow, which was not run on this Mac.
+
+## Version and source limits
+
+The 3.1 Dimbreath and 3.6 Arikatsu overlap retained sampled quest/state/action/text/speaker IDs for QuestIds 139000039 and 915700000, as documented in `findings/version-stability.md`. The Denia quest is later content absent in 3.1. Identifier stability beyond measured records is not assumed. The compiler reports schema drift and unknown narrative candidates; raw evidence remains available even when a normalizer is incomplete.
+
+
+## Parser refinement pass
+
+The follow-up pass added strict coverage, per-locale empty/missing localization states, field-strength table tiers, exact ancillary reference extraction and AppleDouble-safe filesystem traversal. The 3.6 snapshot build was run with `--strict --strict-coverage`; see [COVERAGE_REPORT.md](COVERAGE_REPORT.md) and [findings/PARSER_REFINEMENT_REPORT.md](findings/PARSER_REFINEMENT_REPORT.md). Raw-schema audits for Tier 1 candidates, dialogue outside FlowState, unused PlotAudio, speaker identity and unresolved media are documented under `findings/`. No semantic inference was added.

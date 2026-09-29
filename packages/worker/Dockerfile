@@ -10,7 +10,7 @@ COPY packages/server/src /app/packages/server/src
 COPY packages/worker/pyproject.toml packages/worker/uv.lock ./
 COPY packages/worker/src ./src
 RUN uv sync --frozen --no-dev
-RUN mkdir -p /var/lib/wuwa-sync && useradd --create-home --uid 10001 appuser \
-    && chown -R appuser:appuser /app /var/lib/wuwa-sync
+RUN mkdir -p /var/lib/wuwa-worker && useradd --create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app /var/lib/wuwa-worker
 USER appuser
 CMD ["wuwa-story-worker", "run"]

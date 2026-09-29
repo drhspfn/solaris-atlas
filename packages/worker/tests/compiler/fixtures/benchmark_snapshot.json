@@ -1,0 +1,14 @@
+{
+  "source_commit": "353f2eaed119bc9f680eab92807d20ac75a79b40",
+  "flow_states": 20198,
+  "raw_talk_items": 107591,
+  "quest_graphs": {
+    "119000000": {"scenes": 38, "quest_nodes": 90, "choices": 73, "cutscenes": 0},
+    "168800009": {"scenes": 132, "quest_nodes": 176, "choices": 103, "cutscenes": 2},
+    "139000039": {"scenes": 172, "quest_nodes": 65, "choices": 186, "cutscenes": 0},
+    "915700000": {"scenes": 6, "quest_nodes": 73, "choices": 14, "cutscenes": 2},
+    "880000034": {"scenes": 7, "quest_nodes": 38, "choices": 15, "cutscenes": 0},
+    "880000036": {"scenes": 11, "quest_nodes": 125, "choices": 26, "cutscenes": 0},
+    "880000038": {"scenes": 22, "quest_nodes": 143, "choices": 21, "cutscenes": 1}
+  }
+}

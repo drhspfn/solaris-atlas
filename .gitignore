@@ -18,6 +18,7 @@ packages/*/.venv/
 packages/*/node_modules/
 packages/*/dist/
 packages/*/.vite/
+packages/worker/var/
 
 # Runtime artifacts
 *.log

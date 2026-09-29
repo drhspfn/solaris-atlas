@@ -75,9 +75,10 @@ def prepare_checkout(repo_url: str, cache: Path) -> None:
 
 
 def fetch_snapshot(cache: Path, snapshot: RemoteSnapshot) -> None:
-    refspec = f"+refs/heads/{snapshot.branch}:refs/remotes/origin/{snapshot.branch}"
-    _git("-C", str(cache), "fetch", "--depth=1", "origin", refspec)
-    fetched = _git("-C", str(cache), "rev-parse", f"refs/remotes/origin/{snapshot.branch}")
+    # Jobs are pinned when enqueued. Fetch the advertised commit itself so a branch
+    # advancing before the consumer runs cannot silently change the requested snapshot.
+    _git("-C", str(cache), "fetch", "--depth=1", "origin", snapshot.commit)
+    fetched = _git("-C", str(cache), "rev-parse", "FETCH_HEAD")
     if fetched != snapshot.commit:
         raise RuntimeError(
             f"Upstream branch {snapshot.branch} moved during fetch: "
