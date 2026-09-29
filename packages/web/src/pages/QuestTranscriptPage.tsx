@@ -5,10 +5,13 @@ import { api } from "../api/client";
 import { entityPath } from "../data/entities";
 import { useLocale } from "../hooks/useLocale";
 import { ErrorPanel, EmptyInline, PageLoader } from "../components/ui/Feedback";
+import { PlayerText } from "../components/dialogue/PlayerText";
+import { usePlayerDisplay } from "../hooks/usePlayerDisplay";
 
 export function QuestPage() {
   const { key = "" } = useParams();
   const locale = useLocale();
+  const playerDisplay = usePlayerDisplay();
   const [profile, setProfile] = useState<any>(null);
   const [transcript, setTranscript] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -167,7 +170,9 @@ export function QuestPage() {
                     )}
                   </div>
                   <p>
-                    {line.text?.content || line.text?.inline_text || (
+                    {line.text?.content || line.text?.inline_text ? (
+                      <PlayerText display={playerDisplay} value={line.text} fallback={line.text?.inline_text || ""} />
+                    ) : (
                       <i className="missing">Text unavailable in this locale</i>
                     )}
                   </p>
@@ -181,7 +186,7 @@ export function QuestPage() {
                         <div className="choice-option" key={j}>
                           <span className="choice-diamond">◇</span>
                           <span>
-                            {choice.text?.content || "Choice text unavailable"}
+                            <PlayerText display={playerDisplay} value={choice.text} fallback="Choice text unavailable" />
                           </span>
                         </div>
                       ))}

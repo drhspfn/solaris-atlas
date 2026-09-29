@@ -8,10 +8,13 @@ import { useLocale } from "../hooks/useLocale";
 import { PanelTitle } from "../components/ui/PanelTitle";
 import { ErrorPanel, EmptyInline, PageLoader } from "../components/ui/Feedback";
 import { InlineDialogueSearch } from "../components/search/InlineDialogueSearch";
+import { PlayerText } from "../components/dialogue/PlayerText";
+import { usePlayerDisplay } from "../hooks/usePlayerDisplay";
 
 export function Profile({ kind }: { kind: "character" | "item" | "location" }) {
   const { key = "" } = useParams();
   const locale = useLocale();
+  const playerDisplay = usePlayerDisplay();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -331,7 +334,7 @@ export function Profile({ kind }: { kind: "character" | "item" | "location" }) {
                               {(scene.dialogue || []).map((line: any, lineIndex: number) => (
                                 <div className="shared-transcript-line" key={`${line.id || lineIndex}`}>
                                   <strong>{line.speaker?.label || line.speaker?.canonical_key || "Unknown speaker"}</strong>
-                                  <p>{localizedText(line.text, line.text?.inline_text || "Text unavailable in this locale")}</p>
+                                  <p><PlayerText display={playerDisplay} value={line.text} fallback={line.text?.inline_text || "Text unavailable in this locale"} /></p>
                                 </div>
                               ))}
                               {scene.dialogue_truncated && <small>Transcript shortened; open the quest for the complete authored sequence.</small>}
@@ -584,7 +587,7 @@ export function Profile({ kind }: { kind: "character" | "item" | "location" }) {
       {kind === "character" && (
         <section className="content-panel full-panel">
           <PanelTitle number="03" title="Dialogue search" />
-          <InlineDialogueSearch character={key} quests={quests} />
+          <InlineDialogueSearch character={key} quests={quests} playerDisplay={playerDisplay} />
         </section>
       )}
     </div>

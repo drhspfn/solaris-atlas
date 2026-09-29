@@ -5,6 +5,44 @@
 @media(max-width:640px){.generic-node-hero{gap:13px}.generic-node-icon{width:57px;height:57px;flex:none}.generic-node-hero h1{font-size:23px;overflow-wrap:anywhere}.generic-node-hero>a{font-size:0}.generic-node-hero>a svg{width:16px;height:16px}}
 .scene-item{border-radius:var(--radius-sm)}
 
+.narrative-player-name{color:var(--accent-mint);font-weight:600}
+.settings-page{padding-bottom:64px}
+.settings-heading{padding:10px 0 27px}
+.settings-heading h1{margin:13px 0 8px}
+.settings-heading p{margin:0;color:var(--text-secondary);font-size:13px}
+.settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.settings-panel{min-width:0;padding:20px}
+.settings-panel .panel-title{display:flex;align-items:center;gap:10px;padding-bottom:13px;border-bottom:1px solid var(--border-subtle)}
+.settings-panel .panel-title>span{color:var(--accent-mint);display:grid;place-items:center}
+.settings-panel .panel-title h2{font:500 16px 'Manrope',sans-serif;color:var(--text-primary);margin:0}
+.settings-help{font-size:10px;line-height:1.6;color:var(--text-secondary);margin:13px 0}
+.settings-help code{color:var(--accent-warm);font-size:9px}
+.settings-options{display:grid;gap:7px}
+.settings-option{display:flex;align-items:center;gap:11px;min-height:59px;padding:10px 12px;border:1px solid var(--border-default);background:var(--surface-1);cursor:pointer;transition:border-color .16s,background .16s}
+.settings-option:hover,.settings-option.selected{border-color:var(--accent-muted);background:var(--surface-2)}
+.settings-option input[type=radio]{accent-color:var(--accent-mint);width:15px;height:15px;flex:none;margin:0}
+.settings-option-main{display:flex;align-items:center;gap:11px;flex:1;min-width:0;cursor:pointer}
+.settings-option>span{display:grid;gap:4px;min-width:0}
+.settings-option strong{font:500 11px 'Manrope',sans-serif;color:var(--text-primary)}
+.settings-option small{font-size:9px;line-height:1.4;color:var(--text-muted)}
+.settings-color-swatch,.settings-color-input{margin-left:auto;width:30px;height:30px;flex:none;border:1px solid var(--border-strong);border-radius:50%;background:var(--accent-mint)}
+.settings-color-input{padding:2px;cursor:pointer;background:var(--surface-1)}
+.settings-color-input::-webkit-color-swatch-wrapper{padding:0}
+.settings-color-input::-webkit-color-swatch{border:0;border-radius:50%}
+.settings-preview{margin-top:15px;padding:13px 14px;border-left:2px solid var(--accent-mint);background:var(--surface-2)}
+.settings-preview>small{display:flex;align-items:center;gap:6px;color:var(--text-muted);font:600 8px 'Manrope',sans-serif;letter-spacing:.12em}
+.settings-preview p{font:400 13px/1.65 'Manrope',sans-serif;color:var(--text-primary);margin:8px 0}
+.settings-preview>span{font-size:9px;color:var(--text-muted)}
+.settings-preview>span b{color:var(--text-secondary);font-weight:500}
+.rover-title-list{margin-top:13px;border-top:1px solid var(--border-subtle);padding-top:10px}
+.rover-title-list summary{display:flex;justify-content:space-between;cursor:pointer;color:var(--text-secondary);font-size:9px;list-style:none}
+.rover-title-list summary::-webkit-details-marker{display:none}
+.rover-title-list summary span{color:var(--text-muted)}
+.rover-title-list>div{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
+.rover-title-list>div span{border:1px solid var(--border-default);padding:5px 7px;color:var(--text-secondary);font-size:8px}
+.settings-storage-note{margin:14px 0 0;color:var(--text-muted);font-size:9px;line-height:1.5}
+@media(max-width:760px){.settings-grid{grid-template-columns:1fr}.settings-panel{padding:15px}}
+
 /* Solaris Atlas visual refinement. Runtime token owner: this stylesheet. */
 :root{
   --bg-root:#090E0F;

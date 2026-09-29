@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, NavLink, Route, Routes } from "react-router-dom";
-import { ExternalLink, Menu, Sparkles, X } from "lucide-react";
+import { ExternalLink, Menu, Settings, Sparkles, X } from "lucide-react";
 import { categories } from "../data/entities";
 import { LocaleSwitcher } from "../components/layout/LocaleSwitcher";
 import { Footer } from "../components/layout/Footer";
@@ -12,6 +12,7 @@ import { SearchPage } from "../pages/SearchPage";
 import { NotFound } from "../pages/NotFoundPage";
 import { NodeExplorerPage } from "../pages/NodeExplorerPage";
 import { AccountPage, GoogleCompletePage, GoogleExistingLinkPage, GoogleSuccessPage, LoginPage, RegisterPage } from "../pages/AuthPages";
+import { SettingsPage } from "../pages/SettingsPage";
 import { useAuth } from "../auth/AuthProvider";
 
 const apiDocsUrl = import.meta.env.VITE_API_DOCS_URL ?? "http://localhost:8000/docs";
@@ -43,6 +44,13 @@ export function App() {
               {c.key === "quest" ? "Story" : c.label}
             </NavLink>
           ))}
+          <NavLink
+            onClick={() => setMobileOpen(false)}
+            to="/settings"
+            className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}
+          >
+            <Settings size={13} /> Settings
+          </NavLink>
           <a
             className="nav-link nav-about"
             href={apiDocsUrl}
@@ -83,6 +91,7 @@ export function App() {
           <Route path="/auth/google/link-existing" element={<GoogleExistingLinkPage />} />
           <Route path="/auth/google/success" element={<GoogleSuccessPage />} />
           <Route path="/account" element={<AccountPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

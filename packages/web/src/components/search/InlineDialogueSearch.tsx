@@ -3,13 +3,16 @@ import { Link } from "react-router-dom";
 import { Search } from "lucide-react";
 import { api } from "../../api/client";
 import { useLocale } from "../../hooks/useLocale";
+import { PlayerText, type PlayerDisplay } from "../dialogue/PlayerText";
 
 export function InlineDialogueSearch({
   character,
   quests = [],
+  playerDisplay,
 }: {
   character: string;
   quests?: any[];
+  playerDisplay: PlayerDisplay;
 }) {
   const locale = useLocale();
   const [q, setQ] = useState("");
@@ -68,7 +71,7 @@ export function InlineDialogueSearch({
       {results.map((r, i) => (
         <div className="quote-result" key={i}>
           <p>
-            “{r.text?.content || r.text?.inline_text || "Text unavailable"}”
+            “<PlayerText display={playerDisplay} value={r.text} fallback={r.text?.inline_text || "Text unavailable"} />”
           </p>
           <small>
             {r.flow_state || "Dialogue"} · {r.action?.name || "Talk"} ·{" "}
