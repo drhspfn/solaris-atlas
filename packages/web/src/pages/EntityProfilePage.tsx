@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowRight, ChevronRight, BookOpen, Sparkles } from "lucide-react";
-import { api } from "../api/client";
+import { api, apiUrl } from "../api/client";
 import { categoryTitle, entityPath, type Entity } from "../data/entities";
 import { localizedText } from "../data/localized";
 import { useLocale } from "../hooks/useLocale";
@@ -10,6 +10,7 @@ import { ErrorPanel, EmptyInline, PageLoader } from "../components/ui/Feedback";
 import { InlineDialogueSearch } from "../components/search/InlineDialogueSearch";
 import { PlayerText } from "../components/dialogue/PlayerText";
 import { usePlayerDisplay } from "../hooks/usePlayerDisplay";
+import { CharacterArchive, type CharacterArchiveData } from "../components/characters/CharacterArchive";
 
 export function Profile({ kind }: { kind: "character" | "item" | "location" }) {
   const { key = "" } = useParams();
@@ -19,6 +20,8 @@ export function Profile({ kind }: { kind: "character" | "item" | "location" }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showAllRelated, setShowAllRelated] = useState(false);
+  const [archive, setArchive] = useState<CharacterArchiveData | null>(null);
+  const [archiveError, setArchiveError] = useState("");
   useEffect(() => {
     setLoading(true);
     setError("");
@@ -28,6 +31,16 @@ export function Profile({ kind }: { kind: "character" | "item" | "location" }) {
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
+  }, [kind, key, locale]);
+  useEffect(() => {
+    setArchive(null);
+    setArchiveError("");
+    if (kind !== "character") return;
+    const controller = new AbortController();
+    api<CharacterArchiveData>(`/characters/${encodeURIComponent(key)}/archive?locale=${encodeURIComponent(locale)}`)
+      .then((result) => { if (!controller.signal.aborted) setArchive(result); })
+      .catch((cause: Error) => { if (!controller.signal.aborted) setArchiveError(cause.message); });
+    return () => controller.abort();
   }, [kind, key, locale]);
   if (loading) return <PageLoader />;
   if (error)
@@ -92,13 +105,7 @@ export function Profile({ kind }: { kind: "character" | "item" | "location" }) {
   const quests = data?.quests_with_dialogue || data?.quest_references || [];
   const itemQuestUses = kind === "item" ? data?.quest_uses || [] : [];
   const characterMaterials = kind === "character" ? data?.progression_materials || [] : [];
-  const materialsByItem = new Map<string, { item: any; uses: any[] }>();
-  for (const use of characterMaterials) {
-    const key = use.item?.canonical_key || `unresolved:${use.item_id}`;
-    const group = materialsByItem.get(key) || { item: use.item, uses: [] };
-    group.uses.push(use);
-    materialsByItem.set(key, group);
-  }
+  const portraitUrl = archive?.artwork.find((art) => art.kind === "RoleHeadIconLarge")?.url;
   const progressionGroupsByCharacter = new Map<string, { character: any; uses: any[] }>();
   for (const use of data?.progression_uses || []) {
     const characterKey = use.character?.canonical_key;
@@ -127,10 +134,11 @@ export function Profile({ kind }: { kind: "character" | "item" | "location" }) {
       </div>
       <div className="profile-hero">
         <div className={`profile-portrait art-${kind}`}>
+          {portraitUrl && <img className="character-portrait-image" src={apiUrl(portraitUrl.replace(/^\/api/, ""))} alt={`${name} portrait`} />}
           <div className="portrait-rings" />
-          <span>
+          {!portraitUrl && <span>
             {kind === "character" ? "✳" : kind === "item" ? "✧" : "⌖"}
-          </span>
+          </span>}
           <small>{kind.toUpperCase()}</small>
         </div>
         <div className="profile-main">
@@ -142,7 +150,7 @@ export function Profile({ kind }: { kind: "character" | "item" | "location" }) {
             <span className="heading-period">.</span>
           </h1>
           <p>
-            {description ||
+            {description || (kind === "character" ? archive?.biography?.replace(/<[^>]*>/g, "").slice(0, 260) : null) ||
               (kind === "character"
                 ? "A character recorded in the Solaris Atlas story archive."
                 : "Explore source-backed details and story links for this entry.")}
@@ -161,6 +169,11 @@ export function Profile({ kind }: { kind: "character" | "item" | "location" }) {
           <small>{data?.source?.source_file || "Source metadata linked"}</small>
         </div>
       </div>
+      {kind === "character" && (
+        archive ? <CharacterArchive archive={archive} materials={characterMaterials} locale={locale} characterKey={key} />
+          : archiveError ? <div className="character-archive-error">Character details unavailable: {archiveError}</div>
+            : <div className="character-archive-loading">Loading character details…</div>
+      )}
       <div className="profile-columns">
         <section className="content-panel">
           <PanelTitle
@@ -372,49 +385,6 @@ export function Profile({ kind }: { kind: "character" | "item" | "location" }) {
                 </div>
               ))}
             </details>
-          )}
-          {kind === "character" && characterMaterials.length > 0 && (
-            <div className="subsection character-materials">
-              <h3>Progression materials</h3>
-              <div className="list-stack">
-                {Array.from(materialsByItem.entries()).map(([key, group]) => (
-                  <div className="connection-row character-material-row" key={key}>
-                    <span className="connection-index">✧</span>
-                    <div>
-                      {group.item?.canonical_key ? (
-                        <Link to={entityPath({
-                          id: group.item.id,
-                          canonical_key: group.item.canonical_key,
-                          node_type: "item",
-                        })}>
-                          <strong>{group.item.label}</strong>
-                        </Link>
-                      ) : (
-                        <strong>Unresolved item · {group.uses[0].item_id}</strong>
-                      )}
-                      <div className="character-material-uses">
-                        {group.uses.map((use: any, index: number) => (
-                          <span key={`${use.kind}-${use.level_cap}-${use.group_id}-${index}`}>
-                            {use.kind === "character_ascension"
-                              ? `Lv. ${use.level_cap ?? "—"}`
-                              : use.kind.replaceAll("_", " ")}
-                            {use.required_count != null ? ` · ${use.required_count}×` : ""}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <details className="progression-evidence">
-                      <summary>Source</summary>
-                      {group.uses.map((use: any, index: number) => (
-                        <small key={`${use.source?.file}-${use.source?.row}-${index}`}>
-                          {use.source?.file} · row {use.source?.row} · {use.source?.raw_path}
-                        </small>
-                      ))}
-                    </details>
-                  </div>
-                ))}
-              </div>
-            </div>
           )}
           {kind === "character" && related.length > 18 && (
             <button

@@ -19,6 +19,8 @@ SUPPORTED = {
     "cgVedio/videodata.json", "cgVedio/videosound.json", "cgVedio/videocaption.json",
     "plot_audio/plotaudio.json", "audio/audio.json", "item/iteminfo.json",
     "area/area.json", "role/roleinfo.json", "subtitle_text/subtitletext.json",
+    "questtype/questtype.json", "quest_chapter/questchapter.json",
+    "QuestTree/questtreenode.json", "QuestTree/questtreechapter.json",
 }
 PARTIAL = {
     "QuestRefVideo/questrefvideoconfig.json", "QuestReview/questreviewnode.json",

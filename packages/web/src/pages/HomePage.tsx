@@ -108,8 +108,8 @@ export function Home() {
             Step into a story to read every scene and line, with choices
             preserved in context.
           </p>
-          <Link className="text-link" to="/catalog/quest">
-            Explore the story <ArrowRight size={16} />
+          <Link className="text-link" to="/story-map">
+            Follow the story map <ArrowRight size={16} />
           </Link>
         </div>
         <div className="path-visual">

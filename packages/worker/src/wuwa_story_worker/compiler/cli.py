@@ -8,8 +8,8 @@ import os
 import re
 import shutil
 import sys
-from collections import Counter, defaultdict, deque
-from datetime import datetime, timezone
+from collections import defaultdict, deque
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -184,17 +184,23 @@ def build(data_root: Path, dist_root: Path, requested_version: str | None, stric
             "source": {"file": f"Textmaps/{row['locale']}"}, "raw": row["counts"]}),
         diagnostic=writer.diagnostic)
     localization_key_count = aggregate_locales(out / "localization")
-    localize = lambda key: {"key": key, "en": english[key]["content"],
-                            "source": english[key]["source"],
-                            "resolution": english[key].get("resolution", "resolved_nonempty")} if key in english else {
-                                "key": key, "en": None, "source": None, "resolution": "missing_key"}
+    def localize(key: str) -> dict[str, Any]:
+        if key in english:
+            return {"key": key, "en": english[key]["content"],
+                    "source": english[key]["source"],
+                    "resolution": english[key].get("resolution", "resolved_nonempty")}
+        return {"key": key, "en": None, "source": None, "resolution": "missing_key"}
     print("Compiling quests, entities, media and all FlowStates...", flush=True)
     paths = {name: data_root / path for name, path in {
         "quest_data": "BinData/QuestData/questdata.json",
         "quest_nodes": "BinData/QuestNodeData/questnodedata.json",
         "plot_handbook": "BinData/PlotHandBook/plothandbookconfig.json",
+        "quest_types": "BinData/questtype/questtype.json",
+        "quest_chapters": "BinData/quest_chapter/questchapter.json",
+        "quest_tree_nodes": "BinData/QuestTree/questtreenode.json",
+        "quest_tree_chapters": "BinData/QuestTree/questtreechapter.json",
         "flow": "BinData/flow/flow.json", "flow_state": "BinData/flowState/flowstate.json"}.items()}
-    compile_quests(paths, writer.emit, writer.edge, writer.diagnostic, localize)
+    quest_counts = compile_quests(paths, writer.emit, writer.edge, writer.diagnostic, localize)
     compile_entities(data_root, writer, english)
     compile_media(data_root, writer.emit, writer.edge, writer.diagnostic, localize)
     flow_counts = compile_flow(data_root, writer, english, set(baseline.get("action_names", [])))
@@ -252,6 +258,20 @@ def build(data_root: Path, dist_root: Path, requested_version: str | None, stric
                                            flow_counts.get("referenced_voice_ids", 0))},
         "cutscenes": {"resolved": flow_counts.get("resolved_cutscenes", 0),
                       "unresolved": flow_counts.get("unresolved_cutscenes", 0)},
+        "quest_progression": {
+            "quests": quest_counts.get("quest", 0),
+            "quest_type_links": quest_counts.get("quest_type_links", 0),
+            "quest_chapter_links": quest_counts.get("quest_chapter_links", 0),
+            "quest_tree_nodes": quest_counts.get("quest_tree_node", 0),
+            "tree_quest_links": quest_counts.get("quest_tree_quest_links", 0),
+            "tree_predecessor_links": quest_counts.get("quest_tree_predecessor_links", 0),
+            "tree_next_links": quest_counts.get("quest_tree_next_links", 0),
+            "tree_main_node_links": quest_counts.get("quest_tree_main_node_links", 0),
+            "tree_included_node_links": quest_counts.get("quest_tree_includes_node_links", 0),
+            "unresolved_tree_references": sum(
+                item["code"].startswith("unresolved_quest_tree") for item in writer.diagnostics
+            ),
+        },
         "additional_sources": reference_counts,
         "strict_coverage": {"failures": int(coverage_failures),
                             **coverage_findings},
@@ -263,7 +283,7 @@ def build(data_root: Path, dist_root: Path, requested_version: str | None, stric
     (out / "coverage-summary.json").write_text(
         json.dumps(coverage_summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     epoch = os.environ.get("SOURCE_DATE_EPOCH")
-    timestamp = datetime.fromtimestamp(int(epoch), timezone.utc) if epoch else datetime.now(timezone.utc)
+    timestamp = datetime.fromtimestamp(int(epoch), UTC) if epoch else datetime.now(UTC)
     manifest = {"schema_version": "1", "game_version": game_version,
                 "resource_version": resource_version, "source_repository": "Arikatsu/WutheringWaves_Data",
                 "source_commit": source_commit,

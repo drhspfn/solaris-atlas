@@ -96,6 +96,54 @@ class QuestCompilerTests(unittest.TestCase):
         self.assertFalse(any(e[2] == "references_flow_state" for e in edges))
         self.assertEqual(counts["unresolved_flow_state"], 1)
 
+    def test_quest_tree_and_classification_preserve_distinct_ordering_sources(self):
+        self.rows["quest_data"][0]["Data"].update({"Type": 1, "ChapterId": 7})
+        self.rows["quest_data"][1]["Data"].update({"Type": 1, "ChapterId": 7})
+        self.paths.update({key: self.paths["quest_data"].parent / f"{key}.json" for key in (
+            "quest_types", "quest_chapters", "quest_tree_nodes", "quest_tree_chapters")})
+        self.rows.update({
+            "quest_types": [{"Id": 1, "MainId": 1, "QuestTypeName": "QuestType_1"}],
+            "quest_chapters": [{"Id": 7, "ChapterName": "QuestChapter_7"}],
+            "quest_tree_chapters": [{"Id": 2, "Name": "QuestTree_2"}],
+            "quest_tree_nodes": [
+                {"Id": 10, "ChapterId": 2, "QuestArray": [99], "PreNode": [],
+                 "NextNode": 11, "IncludeNodes": [11], "QuestType": 1},
+                {"Id": 11, "ChapterId": 2, "QuestArray": [100], "PreNode": [10],
+                 "NextNode": 0, "MainQuestNode": 10, "QuestType": 1},
+            ],
+        })
+        records, edges, diagnostics, counts = self.compile()
+        self.assertFalse(diagnostics)
+        edge_keys = {(a, b, kind, basis) for a, b, kind, basis, *_ in edges}
+        self.assertIn(("quest:100", "quest_type:1", "has_quest_type", "exact_quest_type_id"), edge_keys)
+        self.assertIn(("quest:100", "quest_chapter:7", "in_quest_chapter", "exact_chapter_id"), edge_keys)
+        self.assertIn(("quest_tree_node:11", "quest:100", "quest_tree_contains_quest",
+                       "explicit_quest_array"), edge_keys)
+        self.assertIn(("quest_tree_node:10", "quest_tree_node:11", "quest_tree_next",
+                       "explicit_next_node"), edge_keys)
+        self.assertIn(("quest_tree_node:11", "quest_tree_node:10", "quest_tree_predecessor",
+                       "explicit_pre_node"), edge_keys)
+        self.assertIn(("quest_tree_node:11", "quest_tree_node:10", "quest_tree_main_node",
+                       "explicit_main_quest_node"), edge_keys)
+        self.assertIn(("quest_tree_node:10", "quest_tree_node:11", "quest_tree_includes_node",
+                       "explicit_include_nodes"), edge_keys)
+        self.assertEqual(counts["quest_tree_node"], 2)
+        self.assertEqual(next(r for kind, r in records if kind == "quest_tree_node"
+                              and r["game_id"] == 11)["raw"]["PreNode"], [10])
+        self.assertFalse(any(a == "quest:99" and b == "quest:100" for a, b, *_ in edges))
+
+    def test_unresolved_tree_references_reported_without_invented_edges(self):
+        self.paths["quest_tree_nodes"] = self.paths["quest_data"].parent / "quest_tree_nodes.json"
+        self.rows["quest_tree_nodes"] = [
+            {"Id": 10, "ChapterId": 9, "QuestArray": [999], "PreNode": [77], "NextNode": 88}
+        ]
+        records, edges, diagnostics, _ = self.compile()
+        self.assertTrue(any(kind == "quest_tree_node" for kind, _ in records))
+        self.assertEqual({code for code, *_ in diagnostics if code.startswith("unresolved_quest_tree")},
+                         {"unresolved_quest_tree_chapter", "unresolved_quest_tree_quest",
+                          "unresolved_quest_tree_predecessor", "unresolved_quest_tree_next"})
+        self.assertFalse(any(e[0] == "quest_tree_node:10" for e in edges))
+
 
 if __name__ == "__main__":
     unittest.main()

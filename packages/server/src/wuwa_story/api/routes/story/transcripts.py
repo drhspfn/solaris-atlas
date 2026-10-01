@@ -12,6 +12,7 @@ from wuwa_story.api.routes.story.shared import (
     _quest_state_ids,
     _release_id,
 )
+from wuwa_story.api.routes.story.media import dialogue_media
 from wuwa_story.db.models.core import (
     DialogueLine,
     Quest,
@@ -88,6 +89,7 @@ async def search_dialogue(
         .limit(limit)
     )
     rows = list((await session.execute(statement)).all())
+    media_by_line = await dialogue_media(session, [row[0].node_id for row in rows], release_id)
     return {
         "query": q,
         "locale": locale,
@@ -96,7 +98,8 @@ async def search_dialogue(
         "offset": offset,
         "limit": limit,
         "results": [
-            await _dialogue_payload(session, row, locale_code=locale, release_id=release_id)
+            {**await _dialogue_payload(session, row, locale_code=locale, release_id=release_id),
+             "media": media_by_line.get(row[0].node_id, {"voice_references": [], "audio_event_paths": []})}
             for row in rows
         ],
     }
@@ -177,6 +180,7 @@ async def quest_transcript(
         .where(Scene.node_id.in_(scene_ids))
         .order_by(Scene.authored_order, Scene.node_id)
     )
+    media_by_line = await dialogue_media(session, [row[0].node_id for row in rows], release_id)
     return {
         "quest": await _quest_info(session, quest, locale, game_version),
         "ordering_semantics": "Authored state/action/talk ordering; branches and runtime conditions are not flattened into a guaranteed playthrough.",
@@ -194,7 +198,8 @@ async def quest_transcript(
         "limit": limit,
         "lines_returned": len(rows),
         "lines": [
-            await _dialogue_payload(session, row, locale_code=locale, release_id=release_id)
+            {**await _dialogue_payload(session, row, locale_code=locale, release_id=release_id),
+             "media": media_by_line.get(row[0].node_id, {"voice_references": [], "audio_event_paths": []})}
             for row in rows
         ],
     }

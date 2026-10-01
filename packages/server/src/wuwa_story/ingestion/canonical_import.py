@@ -835,6 +835,7 @@ async def import_canonical_edges(
             evidences.append(
                 {
                     "edge_id": edge_ids[key],
+                    "release_id": release_id,
                     "source_record_id": source_ids.get(source_ref) if source_ref else None,
                     "source_file_path": record["source"],
                     "source_raw_path": record["raw_path"],
@@ -848,6 +849,7 @@ async def import_canonical_edges(
                 .on_conflict_do_nothing(
                     index_elements=[
                         EdgeEvidence.edge_id,
+                        EdgeEvidence.release_id,
                         EdgeEvidence.source_file_path,
                         EdgeEvidence.source_raw_path,
                     ]

@@ -23,3 +23,4 @@ packages/worker/var/
 # Runtime artifacts
 *.log
 var/upstream-sync/
+premium-audit.json

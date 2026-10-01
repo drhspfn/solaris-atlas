@@ -18,6 +18,7 @@ router = APIRouter(tags=["story browsing"])
 @router.get("/catalog")
 async def browse_catalog(
     category: str = Query(pattern="^(character|item|location|quest|speaker)$"),
+    quest_type_id: int | None = Query(None, ge=0),
     locale: str = "en",
     limit: int = Query(24, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -27,6 +28,8 @@ async def browse_catalog(
     locale_row = await session.scalar(select(Locale).where(Locale.code == locale))
     if locale_row is None:
         raise HTTPException(status_code=400, detail=f"unknown locale: {locale}")
+    if quest_type_id is not None and category != "quest":
+        raise HTTPException(status_code=400, detail="quest_type_id requires category=quest")
     release_id = await _release_id(session, None)
     node_types = {"location": ["area", "location"], "quest": ["quest"]}.get(category, [category])
     name_key_id = func.coalesce(
@@ -94,6 +97,8 @@ async def browse_catalog(
         # RoleInfo.RoleType=2 rows are alternate/battle role configs, not the
         # primary Resonator roster. Keep unknown future values visible.
         statement = statement.where(or_(role_type == 1, role_type.is_(None)))
+    if quest_type_id is not None:
+        statement = statement.where(Quest.quest_type == str(quest_type_id))
     total = (
         await session.scalar(
             select(func.count(Node.id))
@@ -115,6 +120,15 @@ async def browse_catalog(
                     Node.status == "active",
                     or_(role_type == 1, role_type.is_(None)),
                 )
+            )
+            or 0
+        )
+    elif quest_type_id is not None:
+        total = (
+            await session.scalar(
+                select(func.count(Node.id))
+                .join(Quest, Quest.node_id == Node.id)
+                .where(Node.status == "active", Quest.quest_type == str(quest_type_id))
             )
             or 0
         )
@@ -165,6 +179,7 @@ async def browse_catalog(
         )
     return {
         "category": category,
+        "quest_type_id": quest_type_id,
         "locale": locale,
         "total": total,
         "limit": limit,

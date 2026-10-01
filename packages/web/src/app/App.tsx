@@ -8,6 +8,7 @@ import { Home } from "../pages/HomePage";
 import { Catalog } from "../pages/CatalogPage";
 import { Profile } from "../pages/EntityProfilePage";
 import { QuestPage } from "../pages/QuestTranscriptPage";
+import { StoryMapPage } from "../pages/StoryMapPage";
 import { SearchPage } from "../pages/SearchPage";
 import { NotFound } from "../pages/NotFoundPage";
 import { NodeExplorerPage } from "../pages/NodeExplorerPage";
@@ -32,6 +33,7 @@ export function App() {
           </span>
         </Link>
         <nav className={mobileOpen ? "nav open" : "nav"}>
+          <NavLink onClick={() => setMobileOpen(false)} to="/story-map" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>Story map</NavLink>
           {categories.map((c) => (
             <NavLink
               key={c.key}
@@ -76,6 +78,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/catalog/:category" element={<Catalog />} />
+          <Route path="/story-map" element={<StoryMapPage />} />
           <Route
             path="/characters/:key"
             element={<Profile kind="character" />}

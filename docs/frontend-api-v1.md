@@ -21,7 +21,7 @@ GET /search?q=pecok&category=item&locale=en&sort_by=relevance&sort_order=desc&li
 - Repeat `category` to search across multiple categories: `category=character&category=location`.
 - `location` searches raw node types `area` and `location`.
 - `scope=dialogue` searches localized dialogue text through the same `/search` endpoint; optionally pass `character=character%3A1211` or `quest_id=119000000`. Dialogue results use authored order. `category=dialogue` is a shorthand for this scope.
-- `locale`: locale code such as `en` or `ru`.
+- `locale`: source locale code such as `en`, `ja`, `zh-Hans` (Simplified Chinese), or `zh-Hant` (Traditional Chinese). The 1.0 snapshot also has substantial `ko`, `de`, `es`, and `fr` text. Seeded locale codes alone do not guarantee translated content; `ru` is nearly empty in this snapshot.
 - `sort_by`: `relevance` or `name`; `sort_order`: `asc` or `desc`.
 - `limit` is 1–100; `offset` is zero-based.
 - Each result has `canonical_key`, raw `node_type`, UI `category`, matched alias, and lexical score. `snapshot_version` identifies the imported search index. `semantic_available` remains false.

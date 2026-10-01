@@ -49,8 +49,22 @@ cd packages/web && npm ci && npm run dev
 
 The web client includes searchable character, item, location and quest catalogs, entity profiles, source-linked connections and quest transcripts. API requests use `/api`; Caddy routes them to FastAPI, while the dev Vite server uses its service-level proxy target. Start the GitHub snapshot watcher when needed with `docker compose -f infrastructure/local/compose.yml --env-file infrastructure/local/.env --profile worker up --build -d worker`.
 
+The [story map](http://localhost:5173/story-map) groups early snapshots by QuestData chapters and acts, and uses QuestTree when that table exists in an imported snapshot. QuestData prerequisites are shown as requirements, not assumed playthrough order. Version choices include only imported snapshots.
+
 Start the RabbitMQ consumer and GitHub branch scheduler with `docker compose -f infrastructure/local/compose.yml --env-file infrastructure/local/.env --profile worker up --build -d worker snapshot-scheduler`. The worker builds each pinned upstream commit and imports it to PostgreSQL. Queue settings and manual replay of failed messages are documented in [packages/worker/README.md](packages/worker/README.md).
 
 Browser authentication uses server-side opaque sessions in HttpOnly cookies, Argon2id password hashes and CSRF protection. Google login and account linking use the server-side OpenID Connect flow described in [docs/google-oauth.md](docs/google-oauth.md). Configure package-local values in `packages/server/.env` before enabling Google OAuth.
 
 See [docs/architecture.md](docs/architecture.md) for package ownership and [docs/ingestion.md](docs/ingestion.md) for snapshot ingestion and [docs/AUTH_IMPLEMENTATION_REPORT.md](docs/AUTH_IMPLEMENTATION_REPORT.md) for authentication routes and behavior.
+
+## Source-backed quest progression
+
+The compiler now joins QuestData to the game's quest type/chapter tables and QuestTree nodes. These links distinguish quest classification, explicit prerequisites, and authored quest-tree progression. After compiling and importing a snapshot with the current worker, browse them through:
+
+```bash
+curl 'http://localhost:8000/quests/119000000/continuity?locale=en&game_version=3.6.0'
+curl 'http://localhost:8000/graph/path?from=quest%3A119000000&to=quest%3A125000129&mode=quest_sequence&game_version=3.6.0'
+curl 'http://localhost:8000/catalog?category=quest&quest_type_id=1&locale=en'
+```
+
+The path response retains each edge's original direction and source record. `mode=narrative` also permits quest nodes, scenes, flow states, actions and dialogue relations. Searches are bounded; `truncated:true` means the search limit was reached. `first_observed_game_version` is the earliest imported snapshot containing the quest, not a claim about its actual release date. Schema evidence and remaining chronology limits are in [INVESTIGATION.md](packages/worker/docs/game-data/INVESTIGATION.md).

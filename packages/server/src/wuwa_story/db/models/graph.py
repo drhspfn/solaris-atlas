@@ -124,6 +124,7 @@ class EdgeEvidence(Base):
     __table_args__ = (
         UniqueConstraint(
             "edge_id",
+            "release_id",
             "source_file_path",
             "source_raw_path",
             postgresql_nulls_not_distinct=True,
@@ -134,6 +135,9 @@ class EdgeEvidence(Base):
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     edge_id: Mapped[int] = mapped_column(
         ForeignKey("graph.edge.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    release_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ops.game_release.id", ondelete="RESTRICT"), index=True
     )
     evidence_node_id: Mapped[int | None] = mapped_column(
         ForeignKey("graph.node.id", ondelete="SET NULL")

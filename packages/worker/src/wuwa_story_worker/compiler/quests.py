@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Callable, Mapping
-
+from typing import Any
 
 Emit = Callable[[str, dict[str, Any]], None]
 Edge = Callable[[str, str, str, str, dict[str, Any], str, dict[str, Any] | None], None]
@@ -101,12 +101,26 @@ def compile_quests(
         diagnostic_callback("missing_optional_source_table", "warning", str(plot_path), "$",
                             {"table": "PlotHandBook", "reason": "not present in this source snapshot"})
         plot_rows = []
+    optional_tables = {}
+    for table in ("quest_types", "quest_chapters", "quest_tree_nodes", "quest_tree_chapters"):
+        path = paths.get(table)
+        if path is None or not Path(path).is_file():
+            if path is not None:
+                diagnostic_callback("missing_optional_source_table", "warning", str(path), "$",
+                                    {"table": table, "reason": "not present in this source snapshot"})
+            optional_tables[table] = []
+        else:
+            optional_tables[table] = _rows(path)
     flow_rows = _rows(paths["flow"])
     state_rows = _rows(paths["flow_state"])
     flow_ids = {row.get("Id") for row in flow_rows if isinstance(row, dict)}
     state_by_key = {row.get("StateKey"): (index, row) for index, row in enumerate(state_rows) if isinstance(row, dict)}
     quest_ids = {row.get("QuestId") for row in quest_rows if isinstance(row, dict)}
     node_ids = {row.get("Key") for row in node_rows if isinstance(row, dict)}
+    quest_type_ids = {row.get("Id") for row in optional_tables["quest_types"] if isinstance(row, dict)}
+    chapter_ids = {row.get("Id") for row in optional_tables["quest_chapters"] if isinstance(row, dict)}
+    tree_node_ids = {row.get("Id") for row in optional_tables["quest_tree_nodes"] if isinstance(row, dict)}
+    tree_chapter_ids = {row.get("Id") for row in optional_tables["quest_tree_chapters"] if isinstance(row, dict)}
     emitted_states: set[str] = set()
 
     def link_flow(owner: str, flow: dict[str, Any], source: dict[str, Any], raw_path: str, basis: str) -> None:
@@ -152,6 +166,31 @@ def compile_quests(
                     found.append(item)
         return found
 
+    for table, kind, prefix, text_fields in (
+        ("quest_types", "quest_type", "quest_type", ("QuestTypeName",)),
+        ("quest_chapters", "quest_chapter", "quest_chapter",
+         ("ChapterNum", "SectionNum", "ActName", "ChapterName")),
+        ("quest_tree_chapters", "quest_tree_chapter", "quest_tree_chapter",
+         ("Name", "RegionName", "TitleText")),
+    ):
+        for index, row in enumerate(optional_tables[table]):
+            source = _source(paths[table], index)
+            identifier = row.get("Id") if isinstance(row, dict) else None
+            if not isinstance(identifier, int):
+                diagnostic("unsupported_quest_classification_row", "error", source, "$", row)
+                continue
+            text_keys = []
+            for field in text_fields:
+                value = row.get(field)
+                if isinstance(value, str) and value:
+                    entry = {"key": value, "raw_path": field}
+                    if localize:
+                        entry["localized"] = localize(value)
+                    text_keys.append(entry)
+            emit(kind, {"id": f"{prefix}:{identifier}", "game_id": identifier,
+                        "source": source, "raw": row, "text_keys": text_keys})
+            counts[kind] += 1
+
     for index, row in enumerate(quest_rows):
         source = _source(paths["quest_data"], index)
         quest_id = row.get("QuestId")
@@ -163,6 +202,22 @@ def compile_quests(
         emit("quest", {"id": owner, "quest_id": quest_id, "source": source,
                        "raw": row, "data": data, "text_keys": explicit_text_keys(data)})
         counts["quest"] += 1
+        quest_type = data.get("Type")
+        if isinstance(quest_type, int) and quest_type in quest_type_ids:
+            edge(owner, f"quest_type:{quest_type}", "has_quest_type", "exact_quest_type_id",
+                 source, "Data.Type", None)
+            counts["quest_type_links"] += 1
+        elif quest_type_ids:
+            diagnostic("unresolved_quest_type", "warning", source, "Data.Type", quest_type)
+        chapter_id = data.get("ChapterId")
+        if isinstance(chapter_id, int) and chapter_id != 0:
+            if chapter_id in chapter_ids:
+                edge(owner, f"quest_chapter:{chapter_id}", "in_quest_chapter",
+                     "exact_chapter_id", source, "Data.ChapterId", None)
+                counts["quest_chapter_links"] += 1
+            elif chapter_ids:
+                diagnostic("unresolved_quest_chapter", "warning", source,
+                           "Data.ChapterId", chapter_id)
         link_nested_flows(owner, data, source)
         for raw_path, value in _visit(data.get("ProvideType", {}), "Data.ProvideType"):
             if isinstance(value, dict) and value.get("Type") == "PreQuest":
@@ -262,6 +317,90 @@ def compile_quests(
                     else:
                         diagnostic("unresolved_condition_slot_node", "warning", source,
                                    f"{raw_path}.Slots[{slot_index}].Node.Id", target_id)
+
+    for index, row in enumerate(optional_tables["quest_tree_nodes"]):
+        source = _source(paths["quest_tree_nodes"], index)
+        identifier = row.get("Id") if isinstance(row, dict) else None
+        quest_array = row.get("QuestArray") if isinstance(row, dict) else None
+        predecessors = row.get("PreNode") if isinstance(row, dict) else None
+        if not isinstance(identifier, int) or not isinstance(quest_array, list) or not isinstance(predecessors, list):
+            diagnostic("unsupported_quest_tree_node", "error", source, "$", row)
+            continue
+        owner = f"quest_tree_node:{identifier}"
+        text_keys = []
+        for field in ("Name", "QuestChapterName", "ChapterName", "Summary", "AccessDesc"):
+            value = row.get(field)
+            if isinstance(value, str) and value:
+                item = {"key": value, "raw_path": field}
+                if localize:
+                    item["localized"] = localize(value)
+                text_keys.append(item)
+        emit("quest_tree_node", {"id": owner, "game_id": identifier,
+                                 "chapter_id": row.get("ChapterId"), "quest_type": row.get("QuestType"),
+                                 "node_type": row.get("NodeType"), "source": source,
+                                 "raw": row, "text_keys": text_keys})
+        counts["quest_tree_node"] += 1
+        chapter_id = row.get("ChapterId")
+        if chapter_id in tree_chapter_ids:
+            edge(owner, f"quest_tree_chapter:{chapter_id}", "in_quest_tree_chapter",
+                 "exact_tree_chapter_id", source, "ChapterId", None)
+        else:
+            diagnostic("unresolved_quest_tree_chapter", "warning", source, "ChapterId", chapter_id)
+        tree_type = row.get("QuestType")
+        if tree_type in quest_type_ids:
+            edge(owner, f"quest_type:{tree_type}", "has_quest_type",
+                 "exact_quest_type_id", source, "QuestType", None)
+        elif quest_type_ids:
+            diagnostic("unresolved_quest_tree_type", "warning", source, "QuestType", tree_type)
+        main_node = row.get("MainQuestNode")
+        if isinstance(main_node, int) and main_node:
+            if main_node in tree_node_ids:
+                edge(owner, f"quest_tree_node:{main_node}", "quest_tree_main_node",
+                     "explicit_main_quest_node", source, "MainQuestNode", None)
+                counts["quest_tree_main_node_links"] += 1
+            else:
+                diagnostic("unresolved_quest_tree_main_node", "warning", source,
+                           "MainQuestNode", main_node)
+        included = row.get("IncludeNodes", [])
+        if isinstance(included, list):
+            for position, included_node in enumerate(included):
+                if included_node in tree_node_ids:
+                    edge(owner, f"quest_tree_node:{included_node}", "quest_tree_includes_node",
+                         "explicit_include_nodes", source, f"IncludeNodes[{position}]", None)
+                    counts["quest_tree_includes_node_links"] += 1
+                else:
+                    diagnostic("unresolved_quest_tree_included_node", "warning", source,
+                               f"IncludeNodes[{position}]", included_node)
+        else:
+            diagnostic("unsupported_quest_tree_include_nodes", "warning", source,
+                       "IncludeNodes", included)
+        for position, quest_id in enumerate(quest_array):
+            if quest_id in quest_ids:
+                edge(owner, f"quest:{quest_id}", "quest_tree_contains_quest",
+                     "explicit_quest_array", source, f"QuestArray[{position}]",
+                     {"array_index": position, "ordering_scope": "quest_tree_membership_only"})
+                counts["quest_tree_quest_links"] += 1
+            else:
+                diagnostic("unresolved_quest_tree_quest", "warning", source,
+                           f"QuestArray[{position}]", quest_id)
+        for position, previous in enumerate(predecessors):
+            if previous in tree_node_ids:
+                edge(owner, f"quest_tree_node:{previous}", "quest_tree_predecessor",
+                     "explicit_pre_node", source, f"PreNode[{position}]",
+                     {"ordering_scope": "authored_quest_tree", "runtime_traversal": False})
+                counts["quest_tree_predecessor_links"] += 1
+            else:
+                diagnostic("unresolved_quest_tree_predecessor", "warning", source,
+                           f"PreNode[{position}]", previous)
+        next_node = row.get("NextNode")
+        if isinstance(next_node, int) and next_node != 0:
+            if next_node in tree_node_ids:
+                edge(owner, f"quest_tree_node:{next_node}", "quest_tree_next",
+                     "explicit_next_node", source, "NextNode",
+                     {"ordering_scope": "authored_quest_tree", "runtime_traversal": False})
+                counts["quest_tree_next_links"] += 1
+            else:
+                diagnostic("unresolved_quest_tree_next", "warning", source, "NextNode", next_node)
 
     for index, row in enumerate(plot_rows):
         source = _source(paths["plot_handbook"], index)

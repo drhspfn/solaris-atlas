@@ -1,37 +1,68 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { BookOpen, ChevronRight, Compass, Users } from "lucide-react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { ArrowUp, BookOpen, ChevronRight, Users } from "lucide-react";
 import { api } from "../api/client";
 import { entityPath } from "../data/entities";
 import { useLocale } from "../hooks/useLocale";
 import { ErrorPanel, EmptyInline, PageLoader } from "../components/ui/Feedback";
 import { PlayerText } from "../components/dialogue/PlayerText";
 import { usePlayerDisplay } from "../hooks/usePlayerDisplay";
+import { QuestContinuity } from "../components/story/QuestContinuity";
+import { DialogueAudioReference, QuestMediaReferences, type QuestMediaManifest } from "../components/story/QuestMediaReferences";
+import type { QuestContinuity as QuestContinuityData } from "../data/story";
 
 export function QuestPage() {
   const { key = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  const gameVersion = searchParams.get("game_version") || "";
   const locale = useLocale();
   const playerDisplay = usePlayerDisplay();
   const [profile, setProfile] = useState<any>(null);
   const [transcript, setTranscript] = useState<any>(null);
+  const [continuity, setContinuity] = useState<QuestContinuityData | null>(null);
+  const [media, setMedia] = useState<QuestMediaManifest | null>(null);
+  const [continuityError, setContinuityError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [onlyChoices, setOnlyChoices] = useState(false);
   const [onlyLines, setOnlyLines] = useState(false);
+  const [showBackToTop, setShowBackToTop] = useState(false);
   useEffect(() => {
+    const updateVisibility = () => setShowBackToTop(window.scrollY > window.innerHeight);
+    updateVisibility();
+    window.addEventListener("scroll", updateVisibility, { passive: true });
+    return () => window.removeEventListener("scroll", updateVisibility);
+  }, []);
+  useEffect(() => {
+    let active = true;
     setLoading(true);
     setError("");
+    setContinuity(null);
+    setMedia(null);
+    setContinuityError("");
+    const selection = new URLSearchParams({ locale });
+    if (gameVersion) selection.set("game_version", gameVersion);
     Promise.all([
-      api<any>(`/quests/${key}/profile?locale=${locale}`),
-      api<any>(`/quests/${key}/transcript?locale=${locale}&limit=2000`),
+      api<any>(`/quests/${key}/profile?${selection}`),
+      api<any>(`/quests/${key}/transcript?${selection}&limit=2000`),
+      api<QuestContinuityData>(`/quests/${key}/continuity?${selection}`)
+        .then((result) => ({ result, failure: "" }))
+        .catch((reason: Error) => ({ result: null, failure: reason.message })),
+      api<QuestMediaManifest>(`/quests/${key}/media?${selection}`)
+        .catch(() => null),
     ])
-      .then(([p, t]) => {
+      .then(([p, t, c, m]) => {
+        if (!active) return;
         setProfile(p);
         setTranscript(t);
+        setContinuity(c.result);
+        setContinuityError(c.failure);
+        setMedia(m);
       })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [key, locale]);
+      .catch((e) => { if (active) setError(e.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [key, locale, gameVersion]);
   if (loading) return <PageLoader />;
   if (error)
     return (
@@ -54,12 +85,22 @@ export function QuestPage() {
   const shown = lines
     .filter((line: any) => !onlyChoices || line.player_choices?.length)
     .filter((line: any) => !onlyLines || line.speaker);
+  const stateCounts = new Map<string, number>();
+  for (const line of shown) {
+    const state = line.flow_state || "Unassigned";
+    stateCounts.set(state, (stateCounts.get(state) || 0) + 1);
+  }
+  const stateIndex = Array.from(stateCounts, ([key, count], index) => ({
+    key, count, anchor: `flow-state-${index}`,
+  }));
+  const stateAnchors = new Map(stateIndex.map((state) => [state.key, state.anchor]));
+  const firstLineInState = new Set<string>();
   return (
     <div className="page-container quest-container">
       <div className="breadcrumbs">
         <Link to="/">Archive</Link>
         <ChevronRight size={13} />
-        <Link to="/catalog/quest">Quests</Link>
+        <Link to="/story-map">Story map</Link>
         <ChevronRight size={13} />
         <span>{quest.name?.content || `Quest ${key}`}</span>
       </div>
@@ -81,7 +122,7 @@ export function QuestPage() {
               QUEST ID <b>{quest.game_quest_id}</b>
             </span>
             <span>
-              SCENES <b>{scenes.length}</b>
+              FLOW STATES <b>{stateIndex.length}</b>
             </span>
             <span>
               LINES <b>{lines.length}</b>
@@ -89,6 +130,8 @@ export function QuestPage() {
           </div>
         </div>
       </section>
+      {continuity && <QuestContinuity continuity={continuity} title={quest.name?.content || `Quest ${key}`} />}
+      {continuityError && <div className="quest-continuity-warning" role="status">Story path unavailable: {continuityError}</div>}
       <div className="transcript-toolbar">
         <div>
           <span className="eyebrow left">AUTHORED TRANSCRIPT</span>
@@ -123,33 +166,37 @@ export function QuestPage() {
         <aside className="scene-nav">
           <h3>
             IN THIS QUEST{" "}
-            <span>{scenes.length.toString().padStart(2, "0")}</span>
+            <span>{stateIndex.length.toString().padStart(2, "0")}</span>
           </h3>
-          {scenes.length ? (
-            scenes.map((scene: any, i: number) => (
-                <div className="scene-item" key={i}>
-                  <span>{String(i + 1).padStart(2, "0")}</span>
-                  {scene.title || `Scene ${i + 1}`}
-                </div>
-            ))
+          {stateIndex.length ? (
+            <>
+              <p className="flow-nav-note">Authored flow states. Branches may change the path you see in game.</p>
+              <nav className="flow-state-list" aria-label="Quest flow states">
+                {stateIndex.map((state, i) => (
+                  <a href={`#${state.anchor}`} className="flow-state-link" key={state.key} title={state.key}>
+                    <span>{String(i + 1).padStart(2, "0")}</span>
+                    <span>Flow state {i + 1}<small>{state.key}</small></span>
+                    <b>{state.count}</b>
+                  </a>
+                ))}
+              </nav>
+            </>
           ) : (
-            <p>Scenes are not separately titled in this data.</p>
+            <p>No transcript lines in this view.</p>
           )}
-          <div className="tree-note">
-            <Compass size={15} />
-            <span>
-              Flow states: {profile.flow_states?.length || 0}
-              <br />
-              Tree links: {profile.tree_edges?.length || 0}
-            </span>
-          </div>
+          {scenes.length > 0 && <p className="flow-nav-note">{scenes.length} source scene records are also linked to this quest.</p>}
+          <QuestMediaReferences manifest={media} stateAnchors={stateAnchors} />
         </aside>
         <div className="transcript">
           {shown.length ? (
-            shown.map((line: any, i: number) => (
+            shown.map((line: any, i: number) => {
+              const state = line.flow_state || "Unassigned";
+              const isFirst = !firstLineInState.has(state);
+              firstLineInState.add(state);
+              return (
               <article
                 className="transcript-line"
-                id={i === 0 ? "scene-0" : undefined}
+                id={isFirst ? stateAnchors.get(state) : undefined}
                 key={line.id || i}
               >
                 <div className="line-rail">
@@ -176,6 +223,7 @@ export function QuestPage() {
                       <i className="missing">Text unavailable in this locale</i>
                     )}
                   </p>
+                  <DialogueAudioReference media={line.media} />
                   {line.player_choices?.length > 0 && (
                     <div className="choice-block">
                       <div className="choice-heading">
@@ -210,7 +258,7 @@ export function QuestPage() {
                   </div>
                 </div>
               </article>
-            ))
+            );})
           ) : (
             <EmptyInline text="No dialogue lines matched this view." />
           )}
@@ -283,6 +331,19 @@ export function QuestPage() {
             </details>
           )}
         </section>
+      )}
+      {showBackToTop && (
+        <button
+          className="quest-back-to-top"
+          type="button"
+          onClick={() => {
+            const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+            window.scrollTo({ top: 0, behavior: reducedMotion ? "auto" : "smooth" });
+          }}
+        >
+          <ArrowUp size={16} aria-hidden="true" />
+          <span>Back to top</span>
+        </button>
       )}
     </div>
   );

@@ -104,7 +104,7 @@ async def build_and_import_snapshot(payload: dict[str, Any]) -> None:
         command = [
             sys.executable,
             "-m",
-            "wuwa_story_worker.compiler.cli",
+            "wuwa_story_worker.compiler",
             "--data",
             str(source),
             "--dist",
