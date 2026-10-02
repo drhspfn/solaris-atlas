@@ -21,7 +21,8 @@ from wuwa_story.storage.service import FileRegistrationService
 
 from wuwa_story_worker.asset_export import _sha256, export_assets
 from wuwa_story_worker.client_assets import save_json, workspace_lock
-from wuwa_story_worker.map_sources import WORLD_TILE_SIZE, read_markers, read_tiles
+from wuwa_story_worker.map_catalog import read_catalog
+from wuwa_story_worker.map_sources import WORLD_TILE_SIZE, read_tiles
 
 logger = logging.getLogger(__name__)
 
@@ -112,16 +113,19 @@ async def build_maps(root: Path, fmodel: Path, converter: Path, publish: bool = 
                          "preview": preview.name, "preview_sha256": _sha256(preview), "tiles": [
                              {**tile, "png": tile["png"].relative_to(output).as_posix()}
                              for tile in group]})
-        markers = await asyncio.to_thread(read_markers, config, {key[0] for key in groups})
+        markers, details, diagnostics = await asyncio.to_thread(read_catalog, config, {key[0] for key in groups})
+        for data in maps:
+            data["catalog"] = details.get(data["game_map_id"], {})
         sources = {}
-        for name in ("db_map.db", "db_mapfog.db", "db_ui_resource.db", "db_level_entity.db"):
+        for name in ("db_map.db", "db_mapfog.db", "db_ui_resource.db", "db_level_entity.db",
+                     "db_area.db", "db_item.db", "db_enrichment.db", "db_map_mark.db", "db_monster_Info.db"):
             sources[name] = {"path": str((config / name).resolve()), "sha256": _sha256(config / name)}
         receipt = output / "manifest.json"
         save_json(receipt, {"schema_version": 1, "asset_job_id": plan["id"],
                             "game_version": plan["version"], "keys_commit": plan["keys_commit"],
                             "converter_sha256": _sha256(converter), "raw_root": str(raw.resolve()),
                             "coordinate_system": "Unreal world units; raster X=world X, raster Y=world Y; tile rows descend",
-                            "sources": sources, "maps": maps, "markers": markers})
+                            "sources": sources, "maps": maps, "markers": markers, "diagnostics": diagnostics})
         logger.info("maps.built layers=%s tiles=%s markers=%s", len(maps), len(tiles), len(markers))
         if publish:
             await publish_maps(receipt)
@@ -155,7 +159,8 @@ async def publish_maps(receipt: Path) -> None:
                 values.update(asset_job_id=bundle["asset_job_id"], game_version=bundle["game_version"],
                               preview_file_id=preview.id, metadata_json={"source_file_ids": source_ids,
                               "preview_width": data["preview_width"], "preview_height": data["preview_height"],
-                              "keys_commit": bundle["keys_commit"], "converter_sha256": bundle["converter_sha256"]})
+                              "keys_commit": bundle["keys_commit"], "converter_sha256": bundle["converter_sha256"],
+                              "catalog": data.get("catalog", {})})
                 stmt = insert(TileMap).values(**values)
                 map_id = await session.scalar(stmt.on_conflict_do_update(
                     index_elements=[TileMap.asset_job_id, TileMap.game_map_id, TileMap.layer_key],
