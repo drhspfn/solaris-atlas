@@ -5,6 +5,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { PlayerText } from '../components/dialogue/PlayerText';
 import { QuestContinuity } from '../components/story/QuestContinuity';
+import { QuestCutscenes } from '../components/story/QuestCutscenes';
 import {
   DialogueAudioReference,
   type QuestMediaManifest,
@@ -341,6 +342,7 @@ export function QuestPage() {
               <QuestMediaReferences manifest={media} stateAnchors={stateAnchors} />
             </aside>
             <div className="transcript">
+              <QuestCutscenes manifest={media} stateAnchors={stateAnchors} />
               {shown.length ? (
                 shown.map((line: any, i: number) => {
                   const branch = branchByLine.get(line.id);
