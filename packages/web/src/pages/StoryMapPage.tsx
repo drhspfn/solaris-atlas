@@ -1,5 +1,5 @@
-import { ArrowRight, BookOpen, ChevronRight, GitBranch, Search } from 'lucide-react';
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { ArrowRight, BookOpen, ChevronRight, GitBranch, Search, X } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 import { api } from '../api/client';
@@ -70,6 +70,7 @@ function StoryStep({ node, version }: { node: StoryTreeNode; version: string }) 
 }
 
 export function StoryMapPage() {
+  const searchInput = useRef<HTMLInputElement>(null);
   const locale = useLocale();
   const [params, setParams] = useSearchParams();
   const version = params.get('game_version') || '';
@@ -219,17 +220,32 @@ export function StoryMapPage() {
             ))}
           </select>
         </label>
-        <label className="story-map-search">
-          Find a quest in this path
+        <div className="story-map-search">
+          <label htmlFor="story-path-search">Find a quest in this path</label>
           <span>
             <Search size={16} aria-hidden="true" />
             <input
+              id="story-path-search"
+              ref={searchInput}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Quest or chapter name"
             />
+            {query && (
+              <button
+                type="button"
+                className="search-clear"
+                aria-label="Clear quest search"
+                onClick={() => {
+                  setQuery('');
+                  searchInput.current?.focus();
+                }}
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            )}
           </span>
-        </label>
+        </div>
       </div>
       {loading ? (
         <PageLoader />

@@ -1,5 +1,5 @@
-import { Search } from 'lucide-react';
-import React, { useState } from 'react';
+import { Search, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { api } from '../../api/client';
@@ -17,6 +17,9 @@ export function InlineDialogueSearch({
   playerDisplay: PlayerDisplay;
 }) {
   const locale = useLocale();
+  const input = useRef<HTMLInputElement>(null);
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => () => request.current?.abort(), []);
   const [q, setQ] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
@@ -24,6 +27,9 @@ export function InlineDialogueSearch({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!q.trim()) return;
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
     setBusy(true);
     try {
       const params = new URLSearchParams({
@@ -34,12 +40,12 @@ export function InlineDialogueSearch({
         limit: String(APP_SETTINGS.limits.inlineDialogueSearch),
       });
       if (questId) params.set('quest_id', questId);
-      const data = await api<any>(`/search?${params}`);
-      setResults(data.results);
+      const data = await api<any>(`/search?${params}`, { signal: controller.signal });
+      if (!controller.signal.aborted) setResults(data.results);
     } catch {
-      setResults([]);
+      if (!controller.signal.aborted) setResults([]);
     } finally {
-      setBusy(false);
+      if (!controller.signal.aborted) setBusy(false);
     }
   }
   return (
@@ -47,10 +53,28 @@ export function InlineDialogueSearch({
       <form className="dialogue-search" onSubmit={submit}>
         <Search size={16} />
         <input
+          ref={input}
+          aria-label="Search character dialogue"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search within this character’s lines"
         />
+        {q && (
+          <button
+            type="button"
+            className="search-clear"
+            aria-label="Clear dialogue search"
+            onClick={() => {
+              request.current?.abort();
+              setBusy(false);
+              setQ('');
+              setResults([]);
+              input.current?.focus();
+            }}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        )}
         {quests.length > 0 && (
           <select
             value={questId}

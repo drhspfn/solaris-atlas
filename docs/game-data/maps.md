@@ -36,7 +36,7 @@ Most selected textures are 1024×1024. Two JH floor textures are 1028×1024; the
 
 - A shared world map can contain geographically separated regions; their source coordinates are preserved. No arbitrary regional offsets are introduced.
 - Floors are independent map layers. Original gravity IDs are retained; entities are not assigned to gravity/floor variants without evidence.
-- Chest and collectible categories currently use blueprint names. This is a placement inventory, not a confirmed completion checklist. Conditional, dormant, hidden and template placements can appear. Component overrides are retained for later classification.
+- Chest and collectible categories use blueprint names, with Unclaimed Rafter Kite placements additionally identified by BaseInfoComponent.MapIcon = 15 from templates and entity overrides. Their names, descriptions and icons come from the type-only mapmark record; positions and hidden flags come from each level entity. This is a placement inventory, not a confirmed completion checklist. Conditional, dormant, hidden and template placements can appear. Component overrides are retained for later classification.
 - Marker endpoints return the game map's placements and explicitly report unresolved floor assignment. They support world bounds, category, hidden flag and cursor pagination.
 - Source game map IDs are not conflated with existing story `core.location` identities.
 - Database rollback removes only the new spatial tables. Uploaded content is retained; automatic garbage collection is not included.

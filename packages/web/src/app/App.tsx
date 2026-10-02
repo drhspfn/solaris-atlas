@@ -46,7 +46,11 @@ export function App() {
             SOLARIS<span className="brand-light"> ATLAS</span>
           </span>
         </Link>
-        <nav className={mobileOpen ? 'nav open' : 'nav'}>
+        <nav
+          id="primary-navigation"
+          aria-label="Main navigation"
+          className={mobileOpen ? 'nav open' : 'nav'}
+        >
           <NavLink
             onClick={() => setMobileOpen(false)}
             to="/map"
@@ -101,6 +105,8 @@ export function App() {
             className="mobile-menu"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label="Toggle menu"
+            aria-expanded={mobileOpen}
+            aria-controls="primary-navigation"
           >
             {mobileOpen ? <X /> : <Menu />}
           </button>
