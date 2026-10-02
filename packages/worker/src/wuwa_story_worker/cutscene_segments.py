@@ -3,6 +3,7 @@
 import array
 import hashlib
 import json
+import logging
 import re
 import subprocess
 import time
@@ -13,6 +14,8 @@ from pathlib import Path
 from PIL import Image, ImageChops
 
 from wuwa_story_worker.client_assets import save_json, workspace_lock
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -221,9 +224,11 @@ def export_segments(
         report_path = root / "analysis.json"
         if report_path.exists():
             report = json.loads(report_path.read_text(encoding="utf-8"))
+            logger.info("cutscene.comparison_cached id=%s", key)
         else:
             report = {**identity, "id": key, **analyze(paths, ffmpeg, root, settings)}
             save_json(report_path, report)
+            logger.info("cutscene.comparison_complete id=%s frames=%s window=%s", key, report["frames"], report["difference_window"])
         fps, count = report["fps"], report["frames"]
         window = report["difference_window"]
         specs = []
@@ -297,6 +302,7 @@ def export_segments(
                 if not counts or int(counts[-1]) != last - first:
                     raise ValueError("Exported segment frame count differs from its source range")
                 temporary.replace(target)
+                logger.info("cutscene.segment_exported id=%s role=%s frames=%s bytes=%s", key, role, last - first, target.stat().st_size)
             segments.append(
                 {
                     "id": f"segment-{key[:16]}-{role}",
