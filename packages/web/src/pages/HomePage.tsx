@@ -1,21 +1,18 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { ArrowRight, BookOpen, MapPin, Users } from "lucide-react";
-import { api } from "../api/client";
-import { categories } from "../data/entities";
-import { SearchBox } from "../components/search/SearchBox";
-import { useLocale } from "../hooks/useLocale";
+import { ArrowRight, BookOpen, MapPin, Users } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+
+import { api } from '../api/client';
+import { SearchBox } from '../components/search/SearchBox';
+import { categories } from '../data/entities';
+import { useLocale } from '../hooks/useLocale';
 
 export function Home() {
   const locale = useLocale();
   const [counts, setCounts] = useState<Record<string, number>>({});
   useEffect(() => {
-    api<{ browse_categories: { key: string; count: number }[] }>("/categories")
-      .then((d) =>
-        setCounts(
-          Object.fromEntries(d.browse_categories.map((c) => [c.key, c.count])),
-        ),
-      )
+    api<{ browse_categories: { key: string; count: number }[] }>('/categories')
+      .then((d) => setCounts(Object.fromEntries(d.browse_categories.map((c) => [c.key, c.count]))))
       .catch(() => {});
   }, []);
   return (
@@ -28,18 +25,14 @@ export function Home() {
         </div>
         <div className="hero-copy">
           <div className="eyebrow">
-            <span className="eyebrow-line" /> THE STORY ATLAS{" "}
-            <span className="eyebrow-line" />
+            <span className="eyebrow-line" /> THE STORY ATLAS <span className="eyebrow-line" />
           </div>
           <h1>
             Every story leaves
             <br />
             <em>a resonance.</em>
           </h1>
-          <p>
-            Explore the people, places and story connections woven across
-            Solaris-3.
-          </p>
+          <p>Explore the people, places and story connections woven across Solaris-3.</p>
           <SearchBox />
           <div className="hero-foot">
             <span>
@@ -58,17 +51,11 @@ export function Home() {
             <span className="eyebrow left">EXPLORE THE ARCHIVE</span>
             <h2>Where will you begin?</h2>
           </div>
-          <span className="section-note">
-            A world told through its people and places
-          </span>
+          <span className="section-note">A world told through its people and places</span>
         </div>
         <div className="category-grid">
           {categories.map((c, i) => (
-            <Link
-              to={`/catalog/${c.key}`}
-              className={`category-card card-${c.key}`}
-              key={c.key}
-            >
+            <Link to={`/catalog/${c.key}`} className={`category-card card-${c.key}`} key={c.key}>
               <div className="card-top">
                 <span className="category-icon">
                   <c.icon size={19} />
@@ -78,7 +65,7 @@ export function Home() {
                 </span>
               </div>
               <div>
-                <h3>{c.key === "quest" ? "Story" : c.label}</h3>
+                <h3>{c.key === 'quest' ? 'Story' : c.label}</h3>
                 <p>{c.description}</p>
               </div>
               <div className="card-bottom">
@@ -104,9 +91,8 @@ export function Home() {
             leads to another.
           </h2>
           <p>
-            Open a character to see their story appearances and connections.
-            Step into a story to read every scene and line, with choices
-            preserved in context.
+            Open a character to see their story appearances and connections. Step into a story to
+            read every scene and line, with choices preserved in context.
           </p>
           <Link className="text-link" to="/story-map">
             Follow the story map <ArrowRight size={16} />
@@ -119,20 +105,24 @@ export function Home() {
             <span>Character</span>
           </div>
           <div className="path-link">
-            <span /><small>appears in</small>
+            <span />
+            <small>appears in</small>
           </div>
           <div className="path-node">
             <BookOpen size={16} />
             <span>Story scene</span>
           </div>
           <div className="path-link">
-            <span /><small>takes place at</small>
+            <span />
+            <small>takes place at</small>
           </div>
           <div className="path-node">
             <MapPin size={16} />
             <span>Location</span>
           </div>
-          <span className="path-footnote">Illustrative path · links follow game source records</span>
+          <span className="path-footnote">
+            Illustrative path · links follow game source records
+          </span>
         </div>
       </section>
     </>

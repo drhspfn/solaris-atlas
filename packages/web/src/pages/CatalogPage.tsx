@@ -1,30 +1,31 @@
-import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { ChevronRight, Search, X } from "lucide-react";
-import { api } from "../api/client";
-import { categoryTitle, categories, type Entity } from "../data/entities";
-import { useLocale } from "../hooks/useLocale";
-import { EntityCard } from "../components/cards/EntityCard";
-import { ErrorPanel, EmptyState } from "../components/ui/Feedback";
+import { ChevronRight, Search, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+
+import { api } from '../api/client';
+import { EntityCard } from '../components/cards/EntityCard';
+import { EmptyState, ErrorPanel } from '../components/ui/Feedback';
+import { categories, categoryTitle, type Entity } from '../data/entities';
+import { useLocale } from '../hooks/useLocale';
 
 export function Catalog() {
-  const { category = "character" } = useParams();
+  const { category = 'character' } = useParams();
   const locale = useLocale();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState('');
   const [items, setItems] = useState<Entity[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
   const [offset, setOffset] = useState(0);
   const [searchResults, setSearchResults] = useState<Entity[] | null>(null);
   useEffect(() => {
-    setQuery("");
+    setQuery('');
     setOffset(0);
     setSearchResults(null);
   }, [category]);
   useEffect(() => {
     setLoading(true);
-    setError("");
+    setError('');
     api<{ results: Entity[]; total: number }>(
       `/catalog?category=${category}&locale=${locale}&limit=24&offset=${offset}`,
     )
@@ -42,7 +43,7 @@ export function Catalog() {
       return;
     }
     setLoading(true);
-    setError("");
+    setError('');
     try {
       const d = await api<{ results: Entity[] }>(
         `/search?q=${encodeURIComponent(query)}&category=${category}&locale=${locale}&limit=50`,
@@ -55,7 +56,7 @@ export function Catalog() {
     }
   };
   const list = searchResults ?? items;
-  const title = categoryTitle[category] ?? "Archive";
+  const title = categoryTitle[category] ?? 'Archive';
   return (
     <div className="page-container">
       <div className="breadcrumbs">
@@ -73,10 +74,8 @@ export function Catalog() {
           <p>Browse source-linked entries from the current game archive.</p>
         </div>
         <div className="total-chip">
-          <span>
-            {(searchResults ? searchResults.length : total).toLocaleString()}
-          </span>
-          <small>{searchResults ? "matches" : "entries"}</small>
+          <span>{(searchResults ? searchResults.length : total).toLocaleString()}</span>
+          <small>{searchResults ? 'matches' : 'entries'}</small>
         </div>
       </div>
       <div className="catalog-tools">
@@ -91,7 +90,7 @@ export function Catalog() {
             <button
               type="button"
               onClick={() => {
-                setQuery("");
+                setQuery('');
                 setSearchResults(null);
               }}
             >
@@ -103,9 +102,7 @@ export function Catalog() {
         <div className="filter-pills">
           {categories.map((c) => (
             <Link
-              className={
-                category === c.key ? "filter-pill selected" : "filter-pill"
-              }
+              className={category === c.key ? 'filter-pill selected' : 'filter-pill'}
               to={`/catalog/${c.key}`}
               key={c.key}
             >
@@ -131,20 +128,13 @@ export function Catalog() {
           </div>
           {!searchResults && total > 24 && (
             <div className="pagination">
-              <button
-                disabled={!offset}
-                onClick={() => setOffset(Math.max(0, offset - 24))}
-              >
+              <button disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 24))}>
                 Previous
               </button>
               <span>
-                {offset + 1}–{Math.min(offset + list.length, total)} of{" "}
-                {total.toLocaleString()}
+                {offset + 1}–{Math.min(offset + list.length, total)} of {total.toLocaleString()}
               </span>
-              <button
-                disabled={offset + 24 >= total}
-                onClick={() => setOffset(offset + 24)}
-              >
+              <button disabled={offset + 24 >= total} onClick={() => setOffset(offset + 24)}>
                 Next
               </button>
             </div>

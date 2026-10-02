@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { readMapPreferences, type MapPreferences } from '../state/mapPreferences';
+
+import { type MapPreferences, readMapPreferences } from '../state/mapPreferences';
 
 export function useMapPreferences(legacy: URLSearchParams, hiddenCategories: string) {
   const [preferences, setPreferences] = useState<MapPreferences>(() => {

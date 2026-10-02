@@ -13,7 +13,7 @@ export type StoryTreeNode = {
   chapter_label: string | null;
   quest_type_id: number;
   node_type_id: number | null;
-  source_kind: "quest_tree" | "quest_prerequisite";
+  source_kind: 'quest_tree' | 'quest_prerequisite';
   previous_node_ids: number[];
   next_node_id: number | null;
   quests: StoryQuest[];
@@ -51,13 +51,17 @@ export type QuestContinuity = {
     name: LocalizedText;
     tree_chapter_name: LocalizedText;
     neighbors: {
-      relation: "quest_tree_predecessor" | "quest_tree_next";
+      relation: 'quest_tree_predecessor' | 'quest_tree_next';
       canonical_key: string;
       quest_ids: number[];
       name: LocalizedText;
       source: { file: string; raw_path: string };
     }[];
   }[];
-  prerequisites: { quest: string; name: LocalizedText; source: { file: string; raw_path: string } }[];
+  prerequisites: {
+    quest: string;
+    name: LocalizedText;
+    source: { file: string; raw_path: string };
+  }[];
   required_by: { quest: string; name: LocalizedText; source: { file: string; raw_path: string } }[];
 };

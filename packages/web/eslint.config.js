@@ -29,7 +29,9 @@ export default tseslint.config(
     },
 
     rules: {
-      ...reactHooks.configs.recommended.rules,
+      // React
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
 
       'react-refresh/only-export-components': [
         'warn',
@@ -55,7 +57,6 @@ export default tseslint.config(
         },
       ],
 
-      // TypeScript
       '@typescript-eslint/no-explicit-any': 'warn',
     },
   },
