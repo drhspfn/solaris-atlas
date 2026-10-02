@@ -68,6 +68,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://wuwa:wuwa@postgres:5432/wuwa_story
       S3_ENDPOINT_URL: http://minio:9000
+      S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:9000}
       FRONTEND_URL: http://localhost:5173
       CORS_ALLOWED_ORIGINS: http://localhost:5173
       GOOGLE_REDIRECT_URI: http://localhost:8000/auth/google/callback
@@ -114,6 +115,26 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  asset-worker:
+    build:
+      context: ../..
+      dockerfile: packages/worker/Dockerfile
+    env_file:
+      - ../../packages/worker/.env
+    profiles: ["assets"]
+    command: ["wuwa-story-worker", "run", "--queue", "asset_download"]
+    volumes:
+      - ${WUWA_ASSET_HOST_PATH:-../../packages/worker/var/client-assets}:/var/lib/wuwa-assets
+    environment:
+      RABBITMQ_URL: amqp://wuwa:wuwa@rabbitmq:5672/
+      WUWA_ASSET_WORKSPACE: /var/lib/wuwa-assets
+      WUWA_ASSET_DOWNLOAD_CONCURRENCY: "4"
+      WUWA_ASSET_EXPORT_FILTERS: ${WUWA_ASSET_EXPORT_FILTERS:-ConfigDB}
+      WUWA_ASSET_BUILD_MAPS: ${WUWA_ASSET_BUILD_MAPS:-0}
+    depends_on:
       rabbitmq:
         condition: service_healthy
 

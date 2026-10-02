@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     app_name: str = "WuWa Story Platform"
     database_url: str = "postgresql+asyncpg://wuwa:wuwa@localhost:5432/wuwa_story"
     s3_endpoint_url: str = "http://localhost:9000"
+    s3_public_endpoint_url: str | None = None
     s3_access_key_id: str = "minio"
     s3_secret_access_key: SecretStr = Field(default=SecretStr("minioadmin"))
     s3_bucket: str = "wuwa"

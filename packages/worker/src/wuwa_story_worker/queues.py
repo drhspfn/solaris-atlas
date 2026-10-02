@@ -14,6 +14,16 @@ class QueueSpec:
 
 
 QUEUES = {
+    "asset_extract": QueueSpec(
+        key="asset_extract",
+        name="wuwa.asset-extract.v1",
+        default_concurrency=1,
+    ),
+    "asset_download": QueueSpec(
+        key="asset_download",
+        name="wuwa.asset-download.v1",
+        default_concurrency=1,
+    ),
     "snapshot_build": QueueSpec(
         key="snapshot_build",
         name="wuwa.snapshot-build.v1",

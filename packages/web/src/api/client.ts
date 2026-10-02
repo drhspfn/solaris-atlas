@@ -8,7 +8,7 @@ export class ApiError extends Error {
 
 export async function api<T>(
   path: string,
-  options: { method?: string; body?: unknown; csrf?: boolean } = {},
+  options: { method?: string; body?: unknown; csrf?: boolean; signal?: AbortSignal } = {},
 ): Promise<T> {
   const method = options.method ?? "GET";
   const headers = new Headers({ Accept: "application/json" });
@@ -22,6 +22,7 @@ export async function api<T>(
   }
   const response = await fetch(`${apiBase}${path}`, {
     method,
+    signal: options.signal,
     headers,
     credentials: "include",
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
