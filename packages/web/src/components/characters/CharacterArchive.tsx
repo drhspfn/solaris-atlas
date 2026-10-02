@@ -213,7 +213,19 @@ export function CharacterArchive({
                   <div key={art.kind}>
                     <strong>{art.kind.replaceAll(/([a-z])([A-Z])/g, '$1 $2')}</strong>
                     <code title={art.engine_path}>{art.engine_path}</code>
-                    <small>{art.url ? 'Ready' : 'Awaiting export'}</small>
+                    <small>
+                      {art.url ? (
+                        <a
+                          href={apiUrl(art.url.replace(/^\/api/, ''))}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          View image
+                        </a>
+                      ) : (
+                        'Awaiting export'
+                      )}
+                    </small>
                   </div>
                 ))}
               </div>

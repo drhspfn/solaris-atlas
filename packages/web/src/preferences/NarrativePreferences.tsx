@@ -9,12 +9,14 @@ export type PlayerNameColorMode = 'accent' | 'custom';
 type VoiceLanguage = 'en' | 'ja' | 'ko' | 'zh';
 
 type Preferences = {
+  preferredRover: 'ask' | 'male' | 'female';
   voiceLanguage: VoiceLanguage;
   nameMode: PlayerNameMode;
   colorMode: PlayerNameColorMode;
   customColor: string;
 };
 type PreferenceContextValue = Preferences & {
+  setPreferredRover: (value: Preferences['preferredRover']) => void;
   setVoiceLanguage: (value: VoiceLanguage) => void;
   setNameMode: (value: PlayerNameMode) => void;
   setColorMode: (value: PlayerNameColorMode) => void;
@@ -30,6 +32,10 @@ function loadPreferences(): Preferences {
     if (!saved) return defaults;
     const value = JSON.parse(saved) as Partial<Preferences>;
     return {
+      preferredRover:
+        value.preferredRover === 'male' || value.preferredRover === 'female'
+          ? value.preferredRover
+          : defaults.preferredRover,
       voiceLanguage:
         value.voiceLanguage === 'ja' || value.voiceLanguage === 'ko' || value.voiceLanguage === 'zh'
           ? value.voiceLanguage
@@ -60,6 +66,7 @@ export function NarrativePreferencesProvider({ children }: { children: ReactNode
   const value = useMemo<PreferenceContextValue>(
     () => ({
       ...preferences,
+      setPreferredRover: (preferredRover) => update({ preferredRover }),
       setVoiceLanguage: (voiceLanguage) => update({ voiceLanguage }),
       setNameMode: (nameMode) => update({ nameMode }),
       setColorMode: (colorMode) => update({ colorMode }),

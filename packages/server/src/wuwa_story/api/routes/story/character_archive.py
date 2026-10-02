@@ -152,10 +152,9 @@ async def character_archive(
         .join(FileLocation, FileLocation.file_id == FileObject.id)
         .where(
             FileReference.owner_node_id == node.id,
-            FileReference.release_id == release_id,
             FileLocation.available.is_(True),
             FileLocation.is_primary.is_(True),
-        )
+        ).order_by(FileReference.id)
     )
     files: dict[tuple[str, str | None], tuple[int, str | None]] = {}
     for reference, file, _location in file_rows:

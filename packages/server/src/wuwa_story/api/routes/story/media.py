@@ -16,6 +16,7 @@ from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileReference
 from wuwa_story.db.session import get_session
+from wuwa_story.ingestion.cutscenes import Clip, PlaybackFlow
 from wuwa_story.storage.s3 import S3Storage
 
 router = APIRouter(tags=["story browsing"])
@@ -104,13 +105,84 @@ async def dialogue_media(
     return result
 
 
+async def cutscene_videos(session: AsyncSession, asset_ids: list[int], asset_version: str | None = None) -> dict[int, dict]:
+    """Published playable files for exact authored asset identities, across text snapshots."""
+    if not asset_ids:
+        return {}
+    settings = get_settings()
+    storage = S3Storage(settings)
+    rows = await session.execute(
+        select(FileReference, FileLocation.object_key)
+        .join(FileLocation, FileLocation.file_id == FileReference.file_id)
+        .where(FileReference.owner_node_id.in_(asset_ids),
+               FileReference.reference_type == "cutscene_video",
+               FileLocation.backend == "s3", FileLocation.bucket == settings.s3_bucket,
+               FileLocation.available.is_(True), FileLocation.is_primary.is_(True))
+        .where(FileReference.metadata_json["asset_version"].astext == asset_version if asset_version else True)
+        .order_by(FileReference.id.desc())
+    )
+    videos = {}
+    for reference, object_key in rows:
+        videos.setdefault(reference.owner_node_id, {
+            "url": storage.public_url(object_key),
+            "asset_version": reference.metadata_json.get("asset_version"),
+            "has_audio": reference.metadata_json.get("has_audio", False),
+            "soundtrack": reference.metadata_json.get("soundtrack"),
+            "subtitles_included": reference.metadata_json.get("subtitles_included", False),
+        })
+    return videos
+
+
+async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict[int, dict]:
+    if not cutscene_ids:
+        return {}
+    rows = await session.scalars(select(FileReference).where(
+        FileReference.owner_node_id.in_(cutscene_ids), FileReference.reference_type == "cutscene_flow")
+        .order_by(FileReference.id.desc()))
+    selected = {}
+    for reference in rows:
+        selected.setdefault(reference.owner_node_id, reference)
+    result = {}
+    for owner_id, reference in selected.items():
+        flow = PlaybackFlow.model_validate(reference.metadata_json["flow"])
+        keys = {node.asset for node in flow.nodes if isinstance(node, Clip)}
+        nodes = list(await session.scalars(select(Node).where(Node.canonical_key.in_(keys))))
+        videos = await cutscene_videos(session, [node.id for node in nodes], reference.metadata_json["asset_version"])
+        media = {node.canonical_key: videos[node.id] for node in nodes if node.id in videos}
+        segment_nodes = [node for node in flow.nodes if isinstance(node, Clip) and node.segment]
+        if segment_nodes:
+            settings = get_settings()
+            storage = S3Storage(settings)
+            segment_rows = await session.execute(select(FileReference, FileLocation.object_key)
+                .join(FileLocation, FileLocation.file_id == FileReference.file_id)
+                .where(FileReference.owner_node_id.in_([node.id for node in nodes]),
+                    FileReference.reference_type == "cutscene_segment",
+                    FileReference.metadata_json["asset_version"].astext == reference.metadata_json["asset_version"],
+                    FileReference.metadata_json["segment_id"].astext.in_([node.segment for node in segment_nodes]),
+                    FileLocation.backend == "s3", FileLocation.bucket == settings.s3_bucket,
+                    FileLocation.available.is_(True), FileLocation.is_primary.is_(True))
+                .order_by(FileReference.id.desc()))
+            for segment_reference, object_key in segment_rows:
+                key = segment_reference.metadata_json["segment_id"]
+                media.setdefault(key, {"url": storage.public_url(object_key),
+                    "asset_version": segment_reference.metadata_json["asset_version"],
+                    "has_audio": segment_reference.metadata_json.get("has_audio", False),
+                    "soundtrack": segment_reference.metadata_json.get("soundtrack"), "subtitles_included": False})
+        required = {node.segment or node.asset for node in flow.nodes if isinstance(node, Clip)}
+        # Publish the whole path or none of it; a broken branch is not a playable flow.
+        if required.issubset(media):
+            result[owner_id] = {**flow.model_dump(), "media": {key: media[key] for key in required},
+                                "asset_version": reference.metadata_json["asset_version"]}
+    return result
+
+
 @router.get("/quests/{game_quest_id}/media")
 async def quest_media(
     game_quest_id: int,
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    """Manifest for later FModel extraction; these are references, not playable files."""
+    """Authored media references with published playable files when available."""
     quest = await session.scalar(select(Quest).where(Quest.game_quest_id == game_quest_id))
     if quest is None:
         raise HTTPException(status_code=404, detail="quest not found")
@@ -131,9 +203,11 @@ async def quest_media(
     )
     cutscene_ids = [link["node_id"] for entries in action_links.values() for link in entries
                     if link["relation"] == "plays_cutscene"]
+    flows = await cutscene_flows(session, cutscene_ids)
     variants = await _links(session, cutscene_ids, ("has_variant", "uses_audio_event", "uses_audio_event_normalized", "uses_caption"), release_id)
     child_ids = [link["node_id"] for entries in variants.values() for link in entries]
     assets = await _links(session, child_ids, ("references_asset",), release_id)
+    playable = await cutscene_videos(session, [asset["node_id"] for entries in assets.values() for asset in entries])
     resource_rows = await session.execute(
         select(NodeRevision.node_id, SourceRecord.data)
         .join(SourceRecord, SourceRecord.id == NodeRevision.source_record_id)
@@ -155,6 +229,7 @@ async def quest_media(
                 if link["canonical_key"].startswith("asset:ue:") else "cg_name",
             }
             if link["relation"] == "plays_cutscene":
+                entry["playback"] = flows.get(link["node_id"])
                 entry["resources"] = [
                     {"kind": child["relation"], "reference": child["canonical_key"],
                      "basis": child["basis"], "source": child["source"],
@@ -174,7 +249,7 @@ async def quest_media(
                           "engine_path": asset["canonical_key"].removeprefix("asset:ue:")
                           if asset["canonical_key"].startswith("asset:ue:") else None,
                           "reference_kind": "unreal_asset_path", "basis": asset["basis"],
-                          "source": asset["source"]}
+                          "source": asset["source"], "video": playable.get(asset["node_id"])}
                          for asset in assets.get(child["node_id"], [])
                      ]}
                     for child in variants.get(link["node_id"], [])
@@ -190,7 +265,7 @@ async def quest_media(
     return {
         "quest": f"quest:{game_quest_id}",
         "game_version": (await session.get(GameRelease, release_id)).game_version,
-        "availability": "references_only",
+        "availability": "partial" if playable else "references_only",
         "events": events,
         "video_packages": [
             {"reference": link["canonical_key"], "basis": link["basis"],

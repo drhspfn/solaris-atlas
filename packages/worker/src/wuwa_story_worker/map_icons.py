@@ -1,6 +1,7 @@
 """Decode item textures and LGUI atlas sprites used by world-map markers."""
 
 import asyncio
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -19,14 +20,32 @@ def sprite_box(info: dict, width: int, height: int) -> tuple[int, int, int, int]
     return x[0], y[0], x[1], y[1]
 
 
-async def build_icons(root: Path, fmodel: Path, converter: Path, markers: list[dict]) -> dict:
+async def build_icons(
+    root: Path, fmodel: Path, converter: Path, markers: list[dict], *, entity_media: bool = False
+) -> dict:
     sources = {m["metadata_json"].get("icon_source") for m in markers} - {None, ""}
+    cache = None
+    if entity_media:
+        identity = json.dumps(
+            [sorted(sources), _sha256(converter), _sha256(fmodel)], sort_keys=True
+        )
+        cache = (
+            root / "entity-image-cache" / (hashlib.sha256(identity.encode()).hexdigest() + ".json")
+        )
+        if cache.is_file():
+            saved = json.loads(cache.read_text(encoding="utf-8"))
+            if all(
+                Path(path).is_file() and _sha256(Path(path)) == digest
+                for path, digest in saved["files"].items()
+            ):
+                return saved["icons"]
     folders = set()
     for source in sources:
         if source.startswith("/Game/Aki/UI/UIResources/"):
             folder = source.removeprefix("/Game/Aki/UI/UIResources/").rsplit("/", 1)[0] + "/"
             if (
-                folder.startswith("Common/Image/")
+                entity_media
+                or folder.startswith("Common/Image/")
                 or folder.startswith("Common/Atlas/WorldMapIcon")
                 or folder == "UiWorldMap/Atlas/MoraleMapIcon/"
             ):
@@ -48,7 +67,19 @@ async def build_icons(root: Path, fmodel: Path, converter: Path, markers: list[d
         for path in paths:
             key = "/Game/" + path.relative_to(raw / "Client/Content").with_suffix("").as_posix()
             raw_files[key] = path
-        decoded = Path(tempfile.mkdtemp(prefix=receipt.parent.name + "-", dir=output))
+        decoded = (
+            (output / ("entity-" + receipt.parent.name + "-" + _sha256(converter)[:16]))
+            if entity_media
+            else Path(tempfile.mkdtemp(prefix=receipt.parent.name + "-", dir=output))
+        )
+        decoded.mkdir(exist_ok=True)
+        complete = decoded / "decode-receipt.json"
+        cached = False
+        if entity_media and complete.exists():
+            cached = all(
+                (decoded / path).is_file() and _sha256(decoded / path) == digest
+                for path, digest in json.loads(complete.read_text(encoding="utf-8")).items()
+            )
         packages = decoded / "packages.txt"
         textures = [p for p in paths if not p.name.startswith(("SP_", "TPI_"))]
         packages.write_text(
@@ -100,7 +131,15 @@ async def build_icons(root: Path, fmodel: Path, converter: Path, markers: list[d
                         check=True,
                     )
 
-        await asyncio.to_thread(convert)
+        if not cached:
+            await asyncio.to_thread(convert)
+            if entity_media:
+                hashes = {
+                    p.relative_to(decoded).as_posix(): _sha256(p)
+                    for p in decoded.rglob("*")
+                    if p.is_file() and p.suffix in (".png", ".json") and p != complete
+                }
+                complete.write_text(json.dumps(hashes), encoding="utf-8")
         for path in decoded.rglob("*.png"):
             relative = path.relative_to(decoded / raw.name / "Client/Content")
             pngs["/Game/" + relative.with_suffix("").as_posix()] = path
@@ -160,4 +199,13 @@ async def build_icons(root: Path, fmodel: Path, converter: Path, markers: list[d
                         if p and p.is_file()
                     ],
                 }
+    if cache:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        files = {str(Path(icon["path"])): icon["sha256"] for icon in result.values()}
+        files.update(
+            {path: _sha256(Path(path)) for icon in result.values() for path in icon["raw_paths"]}
+        )
+        temporary = cache.with_suffix(".partial.json")
+        temporary.write_text(json.dumps({"icons": result, "files": files}), encoding="utf-8")
+        temporary.replace(cache)
     return result

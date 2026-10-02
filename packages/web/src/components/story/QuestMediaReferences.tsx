@@ -12,10 +12,43 @@ export interface MediaAssetReference {
   reference: string;
   engine_path: string | null;
   source: MediaSource;
+  video?: {
+    url: string;
+    asset_version: string;
+    has_audio: boolean;
+    soundtrack: string;
+    subtitles_included: boolean;
+  } | null;
+}
+
+export type CutsceneNode =
+  | {
+      id: string;
+      kind: 'clip';
+      asset: string;
+      segment?: string | null;
+      start: number;
+      end: number | null;
+      next: string | null;
+    }
+  | {
+      id: string;
+      kind: 'choice';
+      prompt: string;
+      options: Array<{ label: string; next: string; rover?: 'male' | 'female' | null }>;
+    };
+export interface CutsceneFlow {
+  version: 1;
+  entry: string;
+  nodes: CutsceneNode[];
+  evidence: string;
+  asset_version: string;
+  media: Record<string, NonNullable<MediaAssetReference['video']>>;
 }
 
 export interface QuestMediaEvent {
   kind: 'cutscene' | 'sequence' | 'audio_event';
+  playback?: CutsceneFlow | null;
   action: string;
   flow_state: string;
   reference: string;
@@ -41,7 +74,7 @@ export interface QuestMediaEvent {
 }
 
 export interface QuestMediaManifest {
-  availability: 'references_only';
+  availability: 'references_only' | 'partial';
   events: QuestMediaEvent[];
   video_packages: Array<{ reference: string; packages: Array<{ reference: string }> }>;
 }
@@ -70,7 +103,11 @@ export function QuestMediaReferences({
       <h4>
         Media references <span>{manifest.events.length}</span>
       </h4>
-      <p>Game resource paths are recorded. Files have not been exported yet.</p>
+      <p>
+        {manifest.availability === 'partial'
+          ? 'Available cutscenes can be watched beside the transcript. Other entries are source references.'
+          : 'Game resource paths are recorded. Files have not been exported yet.'}
+      </p>
       {visualEvents.map((event, index) => (
         <details className="quest-media-event" key={`${event.action}-${event.reference}-${index}`}>
           <summary>
@@ -205,7 +242,7 @@ export function DialogueAudioReference({
                   audio.pause();
                   return;
                 }
-                document.querySelectorAll('audio').forEach((other) => {
+                document.querySelectorAll<HTMLMediaElement>('audio, video').forEach((other) => {
                   if (other !== audio) other.pause();
                 });
                 void audio.play().catch(() => setFailedUrl(track.url));

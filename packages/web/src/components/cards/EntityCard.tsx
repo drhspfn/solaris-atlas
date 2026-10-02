@@ -1,6 +1,7 @@
 import { ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
+import { apiUrl } from '../../api/client';
 import { APP_SETTINGS } from '../../config/settings';
 import { display, type Entity, entityPath } from '../../data/entities';
 
@@ -14,10 +15,19 @@ export function EntityCard({ item, index = 0 }: { item: Entity; index?: number }
         animationDelay: `${Math.min(index, APP_SETTINGS.presentation.cardStaggerMaxIndex) * APP_SETTINGS.presentation.cardStaggerMs}ms`,
       }}
     >
-      <div className={`entity-art art-${type}`}>
-        <span className="art-glyph">
-          {type === 'character' ? '✳' : type === 'quest' ? '◈' : type === 'item' ? '✧' : '⌖'}
-        </span>
+      <div className={`entity-art art-${type}${item.image_url ? ' has-image' : ''}`}>
+        {item.image_url ? (
+          <img
+            className="entity-card-image"
+            src={apiUrl(item.image_url.replace(/^\/api/, ''))}
+            alt=""
+            loading="lazy"
+          />
+        ) : (
+          <span className="art-glyph">
+            {type === 'character' ? '✳' : type === 'quest' ? '◈' : type === 'item' ? '✧' : '⌖'}
+          </span>
+        )}
         <span className="art-type">{type}</span>
         <span className="art-id">{item.canonical_key}</span>
       </div>

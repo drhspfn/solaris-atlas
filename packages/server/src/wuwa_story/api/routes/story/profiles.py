@@ -40,6 +40,7 @@ from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.search import EntityAlias, SearchDocument
 from wuwa_story.db.models.story import Scene
 from wuwa_story.db.session import get_session
+from wuwa_story.storage.entity_media import entity_image_urls
 
 router = APIRouter(tags=["story browsing"])
 
@@ -588,6 +589,7 @@ async def item_profile(
                 },
             }
         )
+    image_url = (await entity_image_urls(session, [node.id])).get(node.id)
     return {
         "item": {
             "canonical_key": node.canonical_key,
@@ -598,11 +600,12 @@ async def item_profile(
             "status": node.status,
         },
         "media": {
-            "status": "asset_not_extracted",
+            "status": "ready" if image_url else "asset_not_extracted",
+            "image_url": image_url,
             "icon_asset_path": raw.get("Icon"),
             "small_icon_asset_path": raw.get("IconSmall"),
             "medium_icon_asset_path": raw.get("IconMiddle"),
-            "note": "These are upstream Unreal asset identifiers; image bytes or browser URLs are not currently served.",
+            "note": "Artwork comes from published client assets; the recording version is separate from the story snapshot.",
         },
         "gameplay_metadata": {
             "item_type": raw.get("ItemType"),

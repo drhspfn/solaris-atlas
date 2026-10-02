@@ -1,0 +1,71 @@
+{
+  "cutscene": "cutscene:C3jinzhoutexie",
+  "asset_version": "3.7.0",
+  "compare_variants": true,
+  "videos": [
+    {
+      "asset": "asset:ue:/Game/Aki/Sequence/LevelB_Seq/Main/Section1/M01012/M01012_Nanzhu.M01012_Nanzhu",
+      "soundtrack": [
+        {
+          "bank": "Client/Content/Aki/WwiseAudio_Generated/Event/play_sfx_lvb_jinzhoutexie.bnk",
+          "start_seconds": 0.0,
+          "end_seconds": null,
+          "gain_db": 0
+        }
+      ]
+    },
+    {
+      "asset": "asset:ue:/Game/Aki/Sequence/LevelB_Seq/Main/Section1/M01012/M01012_Nvzhu.M01012_Nvzhu",
+      "soundtrack": [
+        {
+          "bank": "Client/Content/Aki/WwiseAudio_Generated/Event/play_sfx_lvb_jinzhoutexie.bnk",
+          "start_seconds": 0.0,
+          "end_seconds": null,
+          "gain_db": 0
+        }
+      ]
+    }
+  ],
+  "flow": {
+    "version": 1,
+    "entry": "variants",
+    "nodes": [
+      {
+        "id": "variants",
+        "kind": "choice",
+        "prompt": "Choose a variant",
+        "options": [
+          {
+            "label": "Male Rover",
+            "next": "cg-103",
+            "rover": "male"
+          },
+          {
+            "label": "Female Rover",
+            "next": "cg-104",
+            "rover": "female"
+          }
+        ]
+      },
+      {
+        "id": "cg-103",
+        "kind": "clip",
+        "asset": "asset:ue:/Game/Aki/Sequence/LevelB_Seq/Main/Section1/M01012/M01012_Nanzhu.M01012_Nanzhu",
+        "segment": null,
+        "start": 0,
+        "end": null,
+        "next": null
+      },
+      {
+        "id": "cg-104",
+        "kind": "clip",
+        "asset": "asset:ue:/Game/Aki/Sequence/LevelB_Seq/Main/Section1/M01012/M01012_Nvzhu.M01012_Nvzhu",
+        "segment": null,
+        "start": 0,
+        "end": null,
+        "next": null
+      }
+    ],
+    "evidence": "db_cgVedio.db: VideoData CG C3jinzhoutexie, gender-specific/shared VideoSound with source seconds. Shared prefixes and narrative choices are not inferred."
+  }
+}

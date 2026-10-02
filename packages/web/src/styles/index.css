@@ -723,6 +723,17 @@ button {
   border: 1px solid #819a7950;
   border-radius: 50%;
 }
+.entity-card-image {
+  width: 112px;
+  height: 112px;
+  object-fit: contain;
+  position: relative;
+  z-index: 1;
+}
+.entity-art.has-image:before,
+.entity-art.has-image:after {
+  display: none;
+}
 .art-quest {
   background:
     radial-gradient(circle at 50% 50%, #75613c40, transparent 43%),
@@ -5557,4 +5568,128 @@ button.search-clear:focus-visible {
 .dialogue-play.unavailable:hover {
   background: transparent;
   border-color: transparent;
+}
+
+/* Playable cutscenes share the transcript column and its quiet source disclosures. */
+.quest-cutscene {
+  padding: 20px;
+  border-bottom: 1px solid var(--border-default);
+}
+.quest-cutscene header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.quest-cutscene h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 16px;
+}
+.quest-cutscene video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--bg-root);
+  border-radius: 6px;
+}
+.quest-cutscene footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  align-items: baseline;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.quest-cutscene footer details {
+  width: 100%;
+}
+.quest-cutscene footer summary {
+  cursor: pointer;
+}
+.quest-cutscene footer code,
+.quest-cutscene footer small {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 8px;
+}
+
+.cutscene-stage {
+  position: relative;
+}
+.cutscene-choice {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: safe center;
+  gap: 12px;
+  padding: 20px;
+  background: rgb(9 14 15 / 85%);
+  overflow-y: auto;
+}
+.cutscene-choice h4 {
+  margin: 0 0 8px;
+  font-size: clamp(16px, 3vw, 24px);
+  color: var(--text-primary);
+}
+.cutscene-choice button {
+  width: min(100%, 320px);
+  padding: 12px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--mint);
+  background: var(--surface-1);
+}
+.cutscene-choice button:hover {
+  background: var(--surface-3);
+  border-color: var(--mint);
+}
+.cutscene-restart {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: var(--surface-1);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  color: var(--text-secondary);
+}
+
+.cutscene-actions {
+  display: flex;
+  gap: 6px;
+}
+.cutscene-stage:fullscreen {
+  display: grid;
+  place-items: center;
+  background: var(--bg-root);
+}
+.cutscene-stage:fullscreen video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 0;
+}
+.cutscene-choice button {
+  flex-shrink: 0;
+  min-height: 44px;
+}
+
+.cutscene-exit-fullscreen {
+  display: none;
+}
+.cutscene-stage:fullscreen .cutscene-exit-fullscreen {
+  display: grid;
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
 }

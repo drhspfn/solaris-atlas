@@ -10,6 +10,7 @@ export type Entity = {
   title?: string;
   slug?: string;
   score?: number;
+  image_url?: string | null;
 };
 export const categories = [
   {

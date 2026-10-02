@@ -9,6 +9,7 @@ from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.repositories.search import lexical_search
 from wuwa_story.db.session import get_session
+from wuwa_story.storage.entity_media import entity_image_urls
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -139,7 +140,9 @@ async def search(
     # cards a canonical localized title.
     from wuwa_story.api.routes.story import _node_label
 
+    images = await entity_image_urls(session, [result["id"] for result in results])
     for result in results:
+        result["image_url"] = images.get(result["id"])
         result["title"] = (await _node_label(session, result["id"], locale))["label"]
         result["category"] = (
             "location"

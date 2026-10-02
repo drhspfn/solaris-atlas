@@ -2,6 +2,16 @@
 
 ## Dialogue voice playback
 
+Available quest cutscenes appear in the transcript column with native video
+controls. Playback follows a validated clip/choice graph: pauses for keyboard
+accessible options inside the video, replaces sources at branch transitions,
+and supports shared continuations. Restart returns to the entry. Original video
+files retain their identity; analyzed variants use exported fragments with matching
+audio, and the shared suffix is one join in the playback graph. Starting a cutscene pauses other
+media. Subtitles and soundtrack coverage are stated below the video; asset
+versions and technical paths stay behind a source disclosure. A failed video
+offers an explicit page-refresh retry instruction. No autoplay is requested.
+
 Quest dialogue uses one compact play/pause button beside the first text line. Text retains the same horizontal position when audio is unavailable; a muted unavailable-audio icon fills the control slot with an accessible tooltip. Starting a voice pauses other audio on the page. Changing voice language replaces the active audio source; unavailable languages do not fall back silently. English is the default, independent of text locale, and the existing narrative preferences provider persists the choice.
 
 The voice language selector deliberately uses the existing native select pattern: the operating system owns its popup and keyboard interaction. Source details are behind a small information icon at the right edge, with a native hover tooltip and a click/keyboard disclosure. Audio asset versions are recorded separately from transcript snapshot versions; a matching filename does not confirm that a current recording is identical to a historical release.
@@ -46,6 +56,21 @@ The region rail keeps a fixed width on hover and focus. Full names are available
 Map controls share one top offset. Return to map restores the selected location bounds, or the current region when no location is selected, without changing filters, region, floor or selected object. Zooming out stops one level beyond the region overview. View recovery is transient and is not written to the shared URL.
 
 Frontend behavior defaults (map zoom, tile coordinate contract, paging limits, storage keys and narrative preferences) are owned by `packages/web/src/config/settings.ts`. CSS owns visual layout tokens; server settings remain in the existing server configuration.
+
+Settings offers a preferred Rover for cutscenes: ask each time (default), male,
+or female. The existing narrative preferences provider saves it locally, with
+an in-memory fallback. Only an explicitly tagged, complete male/female variant
+pair skips its prompt. Text labels never establish variant identity. A shared
+intro still plays first, followed automatically by the preferred branch and
+shared continuation. Narrative and untagged choices remain interactive; page
+load never starts playback automatically.
+
+Catalog cards and entity portraits use published client images when available.
+Image geometry stays fixed while loading; missing artwork keeps the established
+placeholder. Character artwork disclosures link to available full images, and
+skill icons use their exact source assets. Character voice playback resolves
+only the selected language. Imported asset versions remain independent of the
+story snapshot; a matching source path does not establish historical byte identity.
 
 The map return action is an icon button below the zoom controls with a persistent accessible name and title. Marker details have a left-aligned category and title, a copy-link icon, and a square close button in a fixed header; only the detail body scrolls. Duplicate category/title text is omitted. Shared marker links focus at zoom 2 or closer. Copy success is announced briefly, and clipboard errors remain actionable.
 

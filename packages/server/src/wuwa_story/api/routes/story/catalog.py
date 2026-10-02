@@ -12,6 +12,7 @@ from wuwa_story.db.models.graph import Node, NodeType
 from wuwa_story.db.models.i18n import Locale, LocalizationValue
 from wuwa_story.db.models.search import SearchDocument
 from wuwa_story.db.session import get_session
+from wuwa_story.storage.entity_media import entity_image_urls
 
 router = APIRouter(tags=["story browsing"])
 
@@ -133,6 +134,7 @@ async def browse_catalog(
             or 0
         )
     rows = (await session.execute(statement.offset(offset).limit(limit))).all()
+    images = await entity_image_urls(session, [row[0].id for row in rows])
     results = []
     fallback_labels = {
         "character": "Unnamed character",
@@ -175,6 +177,7 @@ async def browse_catalog(
                 "title": title,
                 "aliases": aliases or [],
                 "slug": node.slug,
+                "image_url": images.get(node.id),
             }
         )
     return {

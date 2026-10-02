@@ -118,7 +118,8 @@ export function Profile({ kind }: { kind: 'character' | 'item' | 'location' }) {
   const quests = data?.quests_with_dialogue || data?.quest_references || [];
   const itemQuestUses = kind === 'item' ? data?.quest_uses || [] : [];
   const characterMaterials = kind === 'character' ? data?.progression_materials || [] : [];
-  const portraitUrl = archive?.artwork.find((art) => art.kind === 'RoleHeadIconLarge')?.url;
+  const portraitUrl =
+    archive?.artwork.find((art) => art.kind === 'RoleHeadIconLarge')?.url || data?.media?.image_url;
   const progressionGroupsByCharacter = new Map<string, { character: any; uses: any[] }>();
   for (const use of data?.progression_uses || []) {
     const characterKey = use.character?.canonical_key;

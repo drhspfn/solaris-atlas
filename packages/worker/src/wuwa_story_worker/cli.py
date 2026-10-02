@@ -23,6 +23,7 @@ from wuwa_story_worker.asset_jobs import (
 )
 from wuwa_story_worker.broker import consume_jobs, replay_failed_jobs
 from wuwa_story_worker.client_assets import discover_plan, download_plan, save_json
+from wuwa_story_worker.entity_media import process_entity_media
 from wuwa_story_worker.map_assets import build_maps
 from wuwa_story_worker.queues import QUEUES, queue_concurrency
 from wuwa_story_worker.scheduler import (
@@ -152,7 +153,7 @@ async def _import_datasets(datasets: list[tuple[str, Path]], batch_size: int) ->
 
 async def _run(queues: list[str] | None = None) -> None:
     handlers = {"snapshot_build": build_and_import_snapshot, "asset_download": download_client_assets,
-                "asset_extract": extract_client_assets}
+                "asset_extract": extract_client_assets, "entity_media": process_entity_media}
     # Existing workers keep their snapshot-only role unless explicitly configured.
     await consume_jobs({key: handlers[key] for key in (queues or ["snapshot_build"])})
 
