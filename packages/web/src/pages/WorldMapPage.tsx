@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
-import { api } from "../api/client";
-import { useLocale } from "../hooks/useLocale";
-import {useMapPreferences} from "../hooks/useMapPreferences";
-import {compactMapLink, type MapPreferences} from "../state/mapPreferences";
-import "../styles/world-map.css";
-import { ObjectIcon, iconNode } from "../components/MapIcons";
+import 'leaflet/dist/leaflet.css';
+import '../styles/world-map.css';
+
+import L from 'leaflet';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+
+import { api } from '../api/client';
+import { iconNode, ObjectIcon } from '../components/MapIcons';
+import { APP_SETTINGS } from '../config/settings';
+import { useLocale } from '../hooks/useLocale';
+import { useMapPreferences } from '../hooks/useMapPreferences';
+import { compactMapLink, type MapPreferences } from '../state/mapPreferences';
 type Names = Record<string, string>;
 type Place = {
   id: number;
@@ -56,62 +59,62 @@ type Marker = {
   };
 };
 const categories: Record<string, [string, string]> = {
-  hologram: ["Tactical holograms", "#f18b7e"],
-  combat_activity: ["Dream patrols", "#e3c176"],
-  teleport: ["Resonance beacons", "#82cbcd"],
-  tacet_field: ["Tacet fields", "#b9a3ee"],
-  chest: ["Chests", "#e3c176"],
-  resource: ["Plants & materials", "#9bd9c0"],
-  collectible: ["Collectibles", "#edabcf"],
-  boss: ["Bosses", "#f18b7e"],
-  monster: ["Enemies", "#c29b8b"],
-  shop: ["Shops & services", "#c6dbec"],
-  activity: ["Activities", "#d3b5ef"],
-  treasure_spot: ["Treasure areas", "#dac78f"],
-  exploration: ["Other map marks", "#b5c4c2"],
+  hologram: ['Tactical holograms', '#f18b7e'],
+  combat_activity: ['Dream patrols', '#e3c176'],
+  teleport: ['Resonance beacons', '#82cbcd'],
+  tacet_field: ['Tacet fields', '#b9a3ee'],
+  chest: ['Chests', '#e3c176'],
+  resource: ['Plants & materials', '#9bd9c0'],
+  collectible: ['Collectibles', '#edabcf'],
+  boss: ['Bosses', '#f18b7e'],
+  monster: ['Enemies', '#c29b8b'],
+  shop: ['Shops & services', '#c6dbec'],
+  activity: ['Activities', '#d3b5ef'],
+  treasure_spot: ['Treasure areas', '#dac78f'],
+  exploration: ['Other map marks', '#b5c4c2'],
 };
 const menuGroups = [
   {
-    key: "featured",
-    title: "Featured",
-    categories: ["teleport", "chest", "collectible"],
+    key: 'featured',
+    title: 'Featured',
+    categories: ['teleport', 'chest', 'collectible'],
   },
   {
-    key: "battle",
-    title: "Battle",
-    categories: [
-      "boss",
-      "tacet_field",
-      "monster",
-      "hologram",
-      "combat_activity",
-    ],
+    key: 'battle',
+    title: 'Battle',
+    categories: ['boss', 'tacet_field', 'monster', 'hologram', 'combat_activity'],
   },
   {
-    key: "activities",
-    title: "Activities & exploration",
-    categories: ["activity", "exploration", "treasure_spot"],
+    key: 'activities',
+    title: 'Activities & exploration',
+    categories: ['activity', 'exploration', 'treasure_spot'],
   },
   {
-    key: "unidentified",
-    title: "Unidentified collectibles",
-    categories: ["collectible"],
+    key: 'unidentified',
+    title: 'Unidentified collectibles',
+    categories: ['collectible'],
   },
-  { key: "services", title: "Shops & services", categories: ["shop"] },
-  { key: "ascension", title: "Ascension materials", categories: ["resource"] },
-  { key: "ore", title: "Ore", categories: ["resource"] },
-  { key: "gathering", title: "Other resources", categories: ["resource"] },
+  { key: 'services', title: 'Shops & services', categories: ['shop'] },
+  { key: 'ascension', title: 'Ascension materials', categories: ['resource'] },
+  { key: 'ore', title: 'Ore', categories: ['resource'] },
+  { key: 'gathering', title: 'Other resources', categories: ['resource'] },
 ];
 const markerType = (m: Marker) =>
-  `${m.category}:${m.metadata.item_id ? `item:${m.metadata.item_id}` : m.category === "combat_activity" ? "dream-patrol" : m.metadata.names?.en || m.metadata.icon_source || m.metadata.type_key || m.blueprint_type}`;
-const MAP_MAX_ZOOM = 3;
+  `${m.category}:${m.metadata.item_id ? `item:${m.metadata.item_id}` : m.category === 'combat_activity' ? 'dream-patrol' : m.metadata.names?.en || m.metadata.icon_source || m.metadata.type_key || m.blueprint_type}`;
+const mapSettings = APP_SETTINGS.map;
 
 const position = (world: number[]) =>
-  L.latLng((-world[1] / 85000) * 256, (world[0] / 85000) * 256);
+  L.latLng(
+    (-world[1] / mapSettings.worldUnitsPerTile) * mapSettings.tilePixels,
+    (world[0] / mapSettings.worldUnitsPerTile) * mapSettings.tilePixels,
+  );
 const bounds = (a: Atlas) =>
   L.latLngBounds(
-    [(a.grid_bounds[1] - 1) * 256, (a.grid_bounds[0] - 1) * 256],
-    [a.grid_bounds[3] * 256, a.grid_bounds[2] * 256],
+    [
+      (a.grid_bounds[1] - 1) * mapSettings.tilePixels,
+      (a.grid_bounds[0] - 1) * mapSettings.tilePixels,
+    ],
+    [a.grid_bounds[3] * mapSettings.tilePixels, a.grid_bounds[2] * mapSettings.tilePixels],
   );
 function MapCanvas({
   base,
@@ -122,6 +125,8 @@ function MapCanvas({
   selected,
   onSelect,
   focus,
+  resetView,
+  resetLocation,
   onVisible,
   onCluster,
 }: {
@@ -133,39 +138,49 @@ function MapCanvas({
   selected: Marker | null;
   onSelect: (m: Marker) => void;
   focus: Place | Marker | null;
+  resetView: number;
+  resetLocation: Place | undefined;
   onVisible: (ids: Set<number>) => void;
   onCluster: (markers: Marker[]) => void;
 }) {
   const element = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const objects = useRef<L.LayerGroup | null>(null);
-  const [zoom, setZoom] = useState(-2);
+  const [zoom, setZoom] = useState<number>(mapSettings.initialZoom);
   const [view, setView] = useState(0);
   const [tileError, setTileError] = useState(false);
+  const lastResetView = useRef(0);
   useEffect(() => {
     const instance = L.map(element.current!, {
       crs: L.CRS.Simple,
-      minZoom: -6,
-      maxZoom: MAP_MAX_ZOOM,
+      minZoom: mapSettings.minZoom,
+      maxZoom: mapSettings.maxZoom,
       preferCanvas: true,
       attributionControl: false,
     });
     map.current = instance;
-    for (const [pane, z] of [
-      ["surface-preview", 200],
-      ["surface-detail", 220],
-      ["floor-preview", 240],
-      ["floor-detail", 260],
-    ] as const)
-      instance.createPane(pane).style.zIndex = String(z);
+    for (const [pane, z] of mapSettings.panes) instance.createPane(pane).style.zIndex = String(z);
     objects.current = L.layerGroup().addTo(instance);
-    instance.fitBounds(bounds(base), { padding: [25, 25] });
+    const updateMinZoom = () =>
+      instance.setMinZoom(
+        Math.max(
+          mapSettings.minZoom,
+          instance.getBoundsZoom(bounds(base)) - mapSettings.overviewZoomOutLevels,
+        ),
+      );
+    updateMinZoom();
+    instance.fitBounds(bounds(base), {
+      padding: [mapSettings.initialFitPadding, mapSettings.initialFitPadding],
+    });
     const update = () => {
       setZoom(instance.getZoom());
       setView((v) => v + 1);
     };
-    instance.on("moveend zoomend", update);
-    const resize = new ResizeObserver(() => instance.invalidateSize());
+    instance.on('moveend zoomend', update);
+    const resize = new ResizeObserver(() => {
+      instance.invalidateSize();
+      updateMinZoom();
+    });
     resize.observe(element.current!);
     return () => {
       resize.disconnect();
@@ -181,22 +196,20 @@ function MapCanvas({
       const alpha = atlas.id === base.id && active ? opacity / 100 : 1;
       if (atlas.preview) {
         const preview = L.imageOverlay(atlas.preview.url, bounds(atlas), {
-          pane: atlas.id === base.id ? "surface-preview" : "floor-preview",
+          pane: atlas.id === base.id ? 'surface-preview' : 'floor-preview',
           opacity: alpha,
           interactive: false,
         }).addTo(instance);
-        preview.on("error", () => setTileError(true));
+        preview.on('error', () => setTileError(true));
         layers.push(preview);
       }
-      if (zoom >= -1 && atlas.tiles) {
-        const lookup = new Map(
-          atlas.tiles.map((t) => [`${t.x},${t.y}`, t.image?.url]),
-        );
+      if (zoom >= mapSettings.detailMinZoom && atlas.tiles) {
+        const lookup = new Map(atlas.tiles.map((t) => [`${t.x},${t.y}`, t.image?.url]));
         const Grid = L.GridLayer.extend({
           createTile(coords: L.Coords, done: L.DoneCallback) {
-            const image = document.createElement("img");
+            const image = document.createElement('img');
             const url = lookup.get(`${coords.x + 1},${-coords.y}`);
-            image.alt = "";
+            image.alt = '';
             if (url) {
               image.onload = () => done(undefined, image);
               image.onerror = () => {
@@ -210,12 +223,12 @@ function MapCanvas({
         });
         layers.push(
           new (Grid as typeof L.GridLayer)({
-            tileSize: 256,
-            pane: atlas.id === base.id ? "surface-detail" : "floor-detail",
-            minNativeZoom: 0,
-            maxNativeZoom: 0,
-            minZoom: -1,
-            maxZoom: MAP_MAX_ZOOM,
+            tileSize: mapSettings.tilePixels,
+            pane: atlas.id === base.id ? 'surface-detail' : 'floor-detail',
+            minNativeZoom: mapSettings.tileNativeZoom,
+            maxNativeZoom: mapSettings.tileNativeZoom,
+            minZoom: mapSettings.detailMinZoom,
+            maxZoom: mapSettings.maxZoom,
             opacity: alpha,
             bounds: bounds(atlas),
           }).addTo(instance),
@@ -230,14 +243,15 @@ function MapCanvas({
     const instance = map.current!;
     const group = objects.current!;
     group.clearLayers();
-    const visible = markers.filter((m) =>
-      instance.getBounds().contains(position(m.world)),
-    );
+    const visible = markers.filter((m) => instance.getBounds().contains(position(m.world)));
     onVisible(new Set(visible.map((m) => m.id)));
     const cells = new Map<string, Marker[]>();
     for (const marker of visible) {
       const point = instance.latLngToContainerPoint(position(marker.world));
-      const size = zoom < 2 ? 42 : 20;
+      const size =
+        zoom < mapSettings.clusterSplitZoom
+          ? mapSettings.clusterCellPixels
+          : mapSettings.closeClusterCellPixels;
       const key =
         selected?.id === marker.id
           ? `m${marker.id}`
@@ -254,75 +268,67 @@ function MapCanvas({
           cell.reduce((sum, m) => sum + position(m.world).lng, 0) / cell.length,
         );
         const label = iconNode(marker, base.icons);
-        const count = document.createElement("b");
-        count.className = "atlas-cluster-count";
+        const count = document.createElement('b');
+        count.className = 'atlas-cluster-count';
         count.textContent = String(cell.length);
         label.append(count);
         L.marker(center, {
           icon: L.divIcon({
-            className: "atlas-point atlas-cluster",
+            className: 'atlas-point atlas-cluster',
             html: label,
-            iconSize: [32, 32],
+            iconSize: [mapSettings.clusterSize, mapSettings.clusterSize],
           }),
           title: `${cell.length} objects. Zoom in to explore.`,
         })
           .addTo(group)
-          .on("click", () => {
-            if (zoom >= MAP_MAX_ZOOM) onCluster(cell);
+          .on('click', () => {
+            if (zoom >= mapSettings.maxZoom) onCluster(cell);
             else
-              instance.setView(center, Math.min(MAP_MAX_ZOOM, zoom + 1), {
-                animate: false,
-              });
+              instance.setView(
+                center,
+                Math.min(mapSettings.maxZoom, zoom + mapSettings.clusterZoomStep),
+                {
+                  animate: false,
+                },
+              );
           });
         continue;
       }
       const isSelected = selected?.id === marker.id;
       const dot = L.marker(position(marker.world), {
         icon: L.divIcon({
-          className: isSelected ? "atlas-point selected" : "atlas-point",
+          className: isSelected ? 'atlas-point selected' : 'atlas-point',
           html: iconNode(marker, base.icons),
-          iconSize: [30, 30],
-          iconAnchor: [15, 15],
+          iconSize: [mapSettings.markerSize, mapSettings.markerSize],
+          iconAnchor: [mapSettings.markerSize / 2, mapSettings.markerSize / 2],
         }),
-        title:
-          marker.metadata.names?.en ??
-          categories[marker.category]?.[0] ??
-          "Map object",
+        title: marker.metadata.names?.en ?? categories[marker.category]?.[0] ?? 'Map object',
       }).addTo(group);
-      const tooltip = document.createElement("span");
+      const tooltip = document.createElement('span');
       tooltip.textContent =
         cell.length > 1
           ? `${cell.length} objects — zoom in`
-          : (marker.metadata.names?.en ??
-            categories[marker.category]?.[0] ??
-            "Map object");
+          : (marker.metadata.names?.en ?? categories[marker.category]?.[0] ?? 'Map object');
       dot.bindTooltip(tooltip);
-      dot.on("click", () => {
+      dot.on('click', () => {
         if (cell.length > 1)
           instance.setView(
             position(marker.world),
-            Math.min(MAP_MAX_ZOOM, instance.getZoom() + 2),
+            Math.min(mapSettings.maxZoom, instance.getZoom() + mapSettings.markerZoomStep),
           );
         else onSelect(marker);
       });
     }
-  }, [
-    markers,
-    selected,
-    zoom,
-    view,
-    onSelect,
-    onVisible,
-    onCluster,
-    base.icons,
-  ]);
+  }, [markers, selected, zoom, view, onSelect, onVisible, onCluster, base.icons]);
   useEffect(() => {
     if (!focus || !map.current) return;
-    if ("world" in focus)
+    if ('world' in focus)
       map.current.setView(
         position(focus.world),
-        Math.max(0, map.current.getZoom()),
-        { animate: false },
+        Math.max(mapSettings.markerFocusMinZoom, map.current.getZoom()),
+        {
+          animate: false,
+        },
       );
     else
       map.current.fitBounds(
@@ -330,93 +336,106 @@ function MapCanvas({
           position([focus.bounds[0], focus.bounds[1]]),
           position([focus.bounds[2], focus.bounds[3]]),
         ),
-        { padding: [35, 35], maxZoom: 1, animate: false },
+        {
+          padding: [mapSettings.locationFitPadding, mapSettings.locationFitPadding],
+          maxZoom: mapSettings.locationMaxZoom,
+          animate: false,
+        },
       );
   }, [focus]);
+  useEffect(() => {
+    if (resetView === lastResetView.current || !map.current) return;
+    lastResetView.current = resetView;
+    const target = resetLocation
+      ? L.latLngBounds(
+          position([resetLocation.bounds[0], resetLocation.bounds[1]]),
+          position([resetLocation.bounds[2], resetLocation.bounds[3]]),
+        )
+      : bounds(base);
+    const padding = resetLocation ? mapSettings.locationFitPadding : mapSettings.initialFitPadding;
+    map.current.fitBounds(target, {
+      padding: [padding, padding],
+      maxZoom: mapSettings.locationMaxZoom,
+      animate: false,
+    });
+  }, [resetView, resetLocation, base]);
   return (
-    <div
-      className="atlas-canvas"
-      ref={element}
-      aria-label="Interactive world map"
-    >
-      {" "}
+    <div className="atlas-canvas" ref={element} aria-label="Interactive world map">
+      {' '}
       {tileError && (
         <div className="atlas-warning" role="status">
-          {" "}
-          Some map images could not load. Reload to retry.{" "}
+          {' '}
+          Some map images could not load. Reload to retry.{' '}
         </div>
-      )}{" "}
+      )}{' '}
     </div>
   );
 }
 export function WorldMapPage() {
   const locale = useLocale();
   const [params, setParams] = useSearchParams();
-  const [filters, setFilters] = useMapPreferences(params, Object.keys(categories).join(","));
-  const [shareStatus, setShareStatus] = useState("");
-  const openedMarker = useRef("");
+  const [filters, setFilters] = useMapPreferences(params, Object.keys(categories).join(','));
+  const [shareStatus, setShareStatus] = useState('');
+  const openedMarker = useRef('');
   useEffect(() => {
     const compact = compactMapLink(params);
-    if (compact.toString() !== params.toString()) setParams(compact, {replace: true});
+    if (compact.toString() !== params.toString()) setParams(compact, { replace: true });
   }, [params, setParams]);
   const [maps, setMaps] = useState<Atlas[]>([]);
   const [base, setBase] = useState<Atlas | null>(null);
   const [floors, setFloors] = useState<Atlas[]>([]);
   const [markers, setMarkers] = useState<Marker[]>([]);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
-  const search = filters.q ?? "";
+  const search = filters.q ?? '';
   const [selected, setSelected] = useState<Marker | null>(null);
   const [cluster, setCluster] = useState<Marker[]>([]);
   const [focus, setFocus] = useState<Place | Marker | null>(null);
+  const [resetView, setResetView] = useState(0);
   const [visible, setVisible] = useState<Set<number>>(new Set());
-  const [listLimit, setListLimit] = useState(60);
+  const [listLimit, setListLimit] = useState<number>(mapSettings.listPageSize);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
-    () =>
-      new Set(
-        menuGroups
-          .filter((group) => group.key !== "featured")
-          .map((group) => group.key),
-      ),
+    () => new Set(menuGroups.filter((group) => group.key !== 'featured').map((group) => group.key)),
   );
   const toggleGroup = (key: string) =>
     setCollapsedGroups((current) => {
       const next = new Set(current);
-      next.has(key) ? next.delete(key) : next.add(key);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
-  const name = (names?: Names, fallback = "") =>
+  const name = (names?: Names, fallback = '') =>
     names?.[locale] || names?.en || Object.values(names ?? {})[0] || fallback;
   const change = (key: keyof MapPreferences, value: string) => {
-    setFilters(current => {
-      const next = {...current};
-      value || key === "hide" ? next[key] = value : delete next[key];
+    setFilters((current) => {
+      const next = { ...current };
+      if (value || key === 'hide') next[key] = value;
+      else delete next[key];
       return next;
     });
   };
   const chooseMap = (id: string) => {
-    setFilters(current => ({map: id, hide: current.hide ?? Object.keys(categories).join(",")}));
-    setParams({}, {replace: true});
+    setFilters((current) => ({ map: id, hide: current.hide ?? Object.keys(categories).join(',') }));
+    setParams({}, { replace: true });
     setFocus(null);
     setSelected(null);
     setCluster([]);
   };
-  const mapId = params.get("map") ?? filters.map;
-  const active = filters.floor ?? "";
+  const mapId = params.get('map') ?? filters.map;
+  const active = filters.floor ?? '';
   const area = Number(filters.area ?? 0);
-  const disabled = (filters.hide ?? "").split(",");
-  const opacityValue = Number(filters.opacity ?? 30);
-  const opacity = Number.isFinite(opacityValue) ? Math.min(100, Math.max(0, opacityValue)) : 30;
-  const unknown = filters.unknown !== "0";
-  const includeHidden = filters.hidden === "1";
+  const disabled = (filters.hide ?? '').split(',');
+  const opacityValue = Number(filters.opacity ?? mapSettings.surfaceOpacityPercent);
+  const opacity = Number.isFinite(opacityValue)
+    ? Math.min(100, Math.max(0, opacityValue))
+    : mapSettings.surfaceOpacityPercent;
+  const unknown = filters.unknown !== '0';
+  const includeHidden = filters.hidden === '1';
   useEffect(() => {
     const previous = document.title;
-    document.title = "Interactive map — Solaris Atlas";
-    const timer = window.setInterval(
-      () => setRetry((n) => n + 1),
-      45 * 60 * 1000,
-    );
+    document.title = 'Interactive map — Solaris Atlas';
+    const timer = window.setInterval(() => setRetry((n) => n + 1), mapSettings.signedUrlRefreshMs);
     return () => {
       document.title = previous;
       window.clearInterval(timer);
@@ -424,7 +443,7 @@ export function WorldMapPage() {
   }, []);
   useEffect(() => {
     let cancelled = false;
-    api<Atlas[]>("/maps")
+    api<Atlas[]>('/maps')
       .then((data) => {
         if (!cancelled) {
           setMaps(data);
@@ -444,7 +463,7 @@ export function WorldMapPage() {
   const roots = useMemo(
     () =>
       maps
-        .filter((m) => !m.layer.startsWith("floor:"))
+        .filter((m) => !m.layer.startsWith('floor:'))
         .sort(
           (a, b) =>
             b.game_version.localeCompare(a.game_version, undefined, {
@@ -455,14 +474,14 @@ export function WorldMapPage() {
   );
   const chosen =
     roots.find((m) => String(m.id) === mapId) ??
-    roots.find((m) => m.game_map_id === 8) ??
+    roots.find((m) => m.game_map_id === mapSettings.defaultGameMapId) ??
     roots[0];
   useEffect(() => {
     if (!chosen) return;
     let cancelled = false;
     const controller = new AbortController();
     setLoading(true);
-    setError("");
+    setError('');
     setSelected(null);
     setMarkers([]);
     setBase(null);
@@ -476,11 +495,10 @@ export function WorldMapPage() {
       const result: Marker[] = [];
       let after: number | null = 0;
       while (after !== null) {
-        const page: { items: Marker[]; next_after_id: number | null } =
-          await api(
-            `/maps/${chosen.id}/markers?compact=true&include_hidden=true&limit=5000&after_id=${after}`,
-            { signal: controller.signal },
-          );
+        const page: { items: Marker[]; next_after_id: number | null } = await api(
+          `/maps/${chosen.id}/markers?compact=true&include_hidden=true&limit=${mapSettings.markerPageSize}&after_id=${after}`,
+          { signal: controller.signal },
+        );
         if (cancelled) return;
         result.push(...page.items);
         after = page.next_after_id;
@@ -522,10 +540,10 @@ export function WorldMapPage() {
               id: m.id,
               names: {},
               bounds: [
-                (m.grid_bounds[0] - 1) * 85000,
-                -m.grid_bounds[3] * 85000,
-                m.grid_bounds[2] * 85000,
-                -(m.grid_bounds[1] - 1) * 85000,
+                (m.grid_bounds[0] - 1) * mapSettings.worldUnitsPerTile,
+                -m.grid_bounds[3] * mapSettings.worldUnitsPerTile,
+                m.grid_bounds[2] * mapSettings.worldUnitsPerTile,
+                -(m.grid_bounds[1] - 1) * mapSettings.worldUnitsPerTile,
               ],
             });
           }
@@ -537,32 +555,40 @@ export function WorldMapPage() {
       cancelled = true;
     };
   }, [active, chosen?.id, maps, retry]);
-  const markerId = params.get("marker");
+  const markerId = params.get('marker');
   useEffect(() => {
     if (loading || !base || !markerId) return;
     const key = `${base.id}:${markerId}`;
     if (openedMarker.current === key) return;
     openedMarker.current = key;
-    const marker = markers.find(item => String(item.id) === markerId);
+    const marker = markers.find((item) => String(item.id) === markerId);
     if (!marker) {
-      setShareStatus("This marker is no longer available on this map.");
+      setShareStatus('This marker is no longer available on this map.');
       return;
     }
-    setFilters(current => ({...current, map: String(base.id), area: "", q: "", floor: "", hidden: marker.metadata.hidden ? "1" : current.hidden ?? ""}));
+    setFilters((current) => ({
+      ...current,
+      map: String(base.id),
+      area: '',
+      q: '',
+      floor: '',
+      hidden: marker.metadata.hidden ? '1' : (current.hidden ?? ''),
+    }));
     setSelected(marker);
     setCluster([]);
     setFocus(marker);
-    setShareStatus("");
+    setShareStatus('');
   }, [markers, loading, base?.id, markerId]);
-  const markerLink = selected && chosen
-    ? `${window.location.origin}/map?map=${chosen.id}&marker=${selected.id}`
-    : "";
+  const markerLink =
+    selected && chosen
+      ? `${window.location.origin}/map?map=${chosen.id}&marker=${selected.id}`
+      : '';
   const copyMarkerLink = async () => {
     try {
       await navigator.clipboard.writeText(markerLink);
-      setShareStatus("Link copied.");
+      setShareStatus('Link copied.');
     } catch {
-      setShareStatus("Copy the link below to share this marker.");
+      setShareStatus('Copy the link below to share this marker.');
     }
   };
   const locations = base?.metadata.catalog?.locations ?? [];
@@ -575,10 +601,10 @@ export function WorldMapPage() {
         id: base.id,
         names: {},
         bounds: [
-          (base.grid_bounds[0] - 1) * 85000,
-          -base.grid_bounds[3] * 85000,
-          base.grid_bounds[2] * 85000,
-          -(base.grid_bounds[1] - 1) * 85000,
+          (base.grid_bounds[0] - 1) * mapSettings.worldUnitsPerTile,
+          -base.grid_bounds[3] * mapSettings.worldUnitsPerTile,
+          base.grid_bounds[2] * mapSettings.worldUnitsPerTile,
+          -(base.grid_bounds[1] - 1) * mapSettings.worldUnitsPerTile,
         ],
       });
   }, [area, base?.id]);
@@ -589,7 +615,7 @@ export function WorldMapPage() {
           (includeHidden || !m.metadata.hidden) &&
           (!area || m.metadata.area_ids?.includes(area)) &&
           (!active ||
-            m.metadata.floor === Number(active.split(":")[1]) ||
+            m.metadata.floor === Number(active.split(':')[1]) ||
             (unknown && !m.metadata.floor)),
       ),
     [markers, area, active, unknown, includeHidden],
@@ -604,8 +630,8 @@ export function WorldMapPage() {
     }
     return [...groups.entries()].sort(
       (a, b) =>
-        ["teleport", "chest", "collectible"].indexOf(a[1].marker.category) -
-          ["teleport", "chest", "collectible"].indexOf(b[1].marker.category) ||
+        ['teleport', 'chest', 'collectible'].indexOf(a[1].marker.category) -
+          ['teleport', 'chest', 'collectible'].indexOf(b[1].marker.category) ||
         a[1].marker.category.localeCompare(b[1].marker.category) ||
         b[1].count - a[1].count,
     );
@@ -617,36 +643,34 @@ export function WorldMapPage() {
           ((String(m.id) === markerId && selected?.id === m.id) ||
             (!disabled.includes(m.category) && !disabled.includes(markerType(m)))) &&
           (!search ||
-            `${name(m.metadata.names)} ${m.metadata.names?.en ?? ""} ${categories[m.category]?.[0]} ${m.blueprint_type}`
+            `${name(m.metadata.names)} ${m.metadata.names?.en ?? ''} ${categories[m.category]?.[0]} ${m.blueprint_type}`
               .toLowerCase()
               .includes(search.toLowerCase())),
       ),
     [scoped, filters.hide, search, locale, markerId, selected?.id],
   );
-  const [lastType, setLastType] = useState("");
+  const [lastType, setLastType] = useState('');
   const toggleType = (type: string, marker: Marker) => {
     setLastType(name(marker.metadata.names, marker.blueprint_type));
     if (disabled.includes(marker.category)) {
-      const siblings = markers
-        .filter((m) => m.category === marker.category)
-        .map(markerType);
+      const siblings = markers.filter((m) => m.category === marker.category).map(markerType);
       change(
-        "hide",
+        'hide',
         [
           ...new Set([
             ...disabled.filter((k) => k && k !== marker.category && k !== type),
             ...siblings.filter((k) => k !== type),
           ]),
-        ].join(","),
+        ].join(','),
       );
     } else toggle(type);
   };
   const toggle = (key: string) =>
     change(
-      "hide",
+      'hide',
       disabled.includes(key)
-        ? disabled.filter((k) => k && k !== key).join(",")
-        : [...disabled.filter(Boolean), key].join(","),
+        ? disabled.filter((k) => k && k !== key).join(',')
+        : [...disabled.filter(Boolean), key].join(','),
     );
   const floorOptions = maps.filter(
     (m) =>
@@ -654,130 +678,113 @@ export function WorldMapPage() {
       m.asset_job_id === chosen.asset_job_id &&
       m.game_map_id === chosen.game_map_id &&
       m.game_version === chosen.game_version &&
-      m.layer.startsWith("floor:"),
+      m.layer.startsWith('floor:'),
   );
   const objectName = (m: Marker) =>
     name(
       m.metadata.names,
-      m.blueprint_type === "MapMark"
-        ? "Unnamed map mark"
-        : m.category === "collectible"
-          ? "Unidentified collectible"
-          : `${categories[m.category]?.[0] ?? "Object"} · ${m.blueprint_type}`,
+      m.blueprint_type === 'MapMark'
+        ? 'Unnamed map mark'
+        : m.category === 'collectible'
+          ? 'Unidentified collectible'
+          : `${categories[m.category]?.[0] ?? 'Object'} · ${m.blueprint_type}`,
     );
   return (
     <section className="world-map-page">
-      {" "}
+      {' '}
       <aside className="atlas-sidebar">
-        {" "}
+        {' '}
         <div className="atlas-heading">
-          {" "}
-          <span className="eyebrow">SOLARIS / FIELD ATLAS</span>{" "}
-          <h1>Interactive map</h1>{" "}
-          <p>Find a place. Explore what’s there.</p>{" "}
-        </div>{" "}
+          {' '}
+          <span className="eyebrow">SOLARIS / FIELD ATLAS</span> <h1>Interactive map</h1>{' '}
+          <p>Find a place. Explore what’s there.</p>{' '}
+        </div>{' '}
         <label>
-          {" "}
-          World & version{" "}
+          {' '}
+          World & version{' '}
           <select
-            value={chosen?.id ?? ""}
+            value={chosen?.id ?? ''}
             onChange={(e) => {
               chooseMap(e.target.value);
             }}
           >
-            {" "}
+            {' '}
             {roots.map((m) => (
               <option key={m.id} value={m.id}>
-                {" "}
-                {name(m.metadata.catalog?.names, `Map ${m.game_map_id}`)} ·{" "}
-                {m.game_version}{" "}
-                {m.layer === "gravity:2" ? " · Inverted" : ""}{" "}
+                {' '}
+                {name(m.metadata.catalog?.names, `Map ${m.game_map_id}`)} · {m.game_version}{' '}
+                {m.layer === 'gravity:2' ? ' · Inverted' : ''}{' '}
               </option>
-            ))}{" "}
-          </select>{" "}
-        </label>{" "}
+            ))}{' '}
+          </select>{' '}
+        </label>{' '}
         <div className="atlas-menu-toolbar">
-          {" "}
+          {' '}
           <label>
-            {" "}
-            Location{" "}
+            {' '}
+            Location{' '}
             <select
               value={area}
-              onChange={(e) =>
-                change("area", e.target.value === "0" ? "" : e.target.value)
-              }
+              onChange={(e) => change('area', e.target.value === '0' ? '' : e.target.value)}
             >
-              {" "}
-              <option value="0">All locations</option>{" "}
-              {[
-                ...new Set(
-                  locations.map((l) => name(l.group_names, "Other locations")),
+              {' '}
+              <option value="0">All locations</option>{' '}
+              {[...new Set(locations.map((l) => name(l.group_names, 'Other locations')))].map(
+                (group) => (
+                  <optgroup key={group} label={group}>
+                    {' '}
+                    {locations
+                      .filter((l) => name(l.group_names, 'Other locations') === group)
+                      .map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {' '}
+                          {name(l.names, `Location ${l.id}`)}{' '}
+                        </option>
+                      ))}{' '}
+                  </optgroup>
                 ),
-              ].map((group) => (
-                <optgroup key={group} label={group}>
-                  {" "}
-                  {locations
-                    .filter(
-                      (l) => name(l.group_names, "Other locations") === group,
-                    )
-                    .map((l) => (
-                      <option key={l.id} value={l.id}>
-                        {" "}
-                        {name(l.names, `Location ${l.id}`)}{" "}
-                      </option>
-                    ))}{" "}
-                </optgroup>
-              ))}{" "}
-            </select>{" "}
-          </label>{" "}
+              )}{' '}
+            </select>{' '}
+          </label>{' '}
           <label>
-            {" "}
-            Find an object{" "}
+            {' '}
+            Find an object{' '}
             <input
               type="search"
               placeholder="Plant, chest, beacon…"
               value={search}
               onChange={(e) => {
-                change("q", e.target.value);
-                setListLimit(60);
+                change('q', e.target.value);
+                setListLimit(mapSettings.listPageSize);
               }}
-            />{" "}
-          </label>{" "}
-        </div>{" "}
+            />{' '}
+          </label>{' '}
+        </div>{' '}
         <details className="atlas-levels" open={Boolean(active)}>
-          {" "}
-          <summary>Layers & display</summary>{" "}
+          {' '}
+          <summary>Layers & display</summary>{' '}
           <label className="atlas-check">
-            {" "}
+            {' '}
             <input
               type="checkbox"
               checked={includeHidden}
-              onChange={(e) => change("hidden", e.target.checked ? "1" : "")}
-            />{" "}
-            Include hidden game placements{" "}
-          </label>{" "}
+              onChange={(e) => change('hidden', e.target.checked ? '1' : '')}
+            />{' '}
+            Include hidden game placements{' '}
+          </label>{' '}
           <label>
-            {" "}
-            Visible floor{" "}
-            <div
-              className="atlas-floor-buttons"
-              role="group"
-              aria-label="Map floors"
-            >
-              {" "}
-              <button
-                aria-pressed={!active}
-                onClick={() => change("floor", "")}
-              >
-                {" "}
-                Surface{" "}
-              </button>{" "}
+            {' '}
+            Visible floor{' '}
+            <div className="atlas-floor-buttons" role="group" aria-label="Map floors">
+              {' '}
+              <button aria-pressed={!active} onClick={() => change('floor', '')}>
+                {' '}
+                Surface{' '}
+              </button>{' '}
               {[
                 ...new Set(
                   floorOptions.map(
-                    (m) =>
-                      base?.metadata.catalog?.floors?.[m.layer.split(":")[1]]
-                        ?.group_id,
+                    (m) => base?.metadata.catalog?.floors?.[m.layer.split(':')[1]]?.group_id,
                   ),
                 ),
               ].map((group) => (
@@ -787,145 +794,132 @@ export function WorldMapPage() {
                   open={floorOptions.some(
                     (m) =>
                       m.layer === active &&
-                      base?.metadata.catalog?.floors?.[m.layer.split(":")[1]]
-                        ?.group_id === group,
+                      base?.metadata.catalog?.floors?.[m.layer.split(':')[1]]?.group_id === group,
                   )}
                 >
-                  {" "}
+                  {' '}
                   <summary>
-                    {" "}
+                    {' '}
                     {name(
                       base?.metadata.catalog?.floors?.[
                         floorOptions
                           .find(
                             (m) =>
-                              base?.metadata.catalog?.floors?.[
-                                m.layer.split(":")[1]
-                              ]?.group_id === group,
+                              base?.metadata.catalog?.floors?.[m.layer.split(':')[1]]?.group_id ===
+                              group,
                           )
-                          ?.layer.split(":")[1] ?? ""
+                          ?.layer.split(':')[1] ?? ''
                       ]?.group_names,
                       `Area ${group}`,
-                    )}{" "}
-                  </summary>{" "}
+                    )}{' '}
+                  </summary>{' '}
                   {floorOptions
                     .filter(
                       (m) =>
-                        base?.metadata.catalog?.floors?.[m.layer.split(":")[1]]
-                          ?.group_id === group,
+                        base?.metadata.catalog?.floors?.[m.layer.split(':')[1]]?.group_id === group,
                     )
                     .map((m) => (
                       <button
                         key={m.id}
                         aria-pressed={active === m.layer}
-                        onClick={() => change("floor", m.layer)}
-                      >{`Floor ${base?.metadata.catalog?.floors?.[m.layer.split(":")[1]]?.floor ?? m.layer.split(":")[1]}`}</button>
-                    ))}{" "}
+                        onClick={() => change('floor', m.layer)}
+                      >{`Floor ${base?.metadata.catalog?.floors?.[m.layer.split(':')[1]]?.floor ?? m.layer.split(':')[1]}`}</button>
+                    ))}{' '}
                 </details>
-              ))}{" "}
-            </div>{" "}
-          </label>{" "}
+              ))}{' '}
+            </div>{' '}
+          </label>{' '}
           {active && (
             <>
-              {" "}
+              {' '}
               <label>
-                {" "}
-                Surface opacity <output>{opacity}%</output>{" "}
+                {' '}
+                Surface opacity <output>{opacity}%</output>{' '}
                 <input
                   type="range"
                   min="0"
                   max="100"
                   value={opacity}
-                  onChange={(e) => change("opacity", e.target.value)}
-                />{" "}
-              </label>{" "}
+                  onChange={(e) => change('opacity', e.target.value)}
+                />{' '}
+              </label>{' '}
               <label className="atlas-check">
-                {" "}
+                {' '}
                 <input
                   type="checkbox"
                   checked={unknown}
-                  onChange={(e) =>
-                    change("unknown", e.target.checked ? "" : "0")
-                  }
-                />{" "}
-                Include objects with unknown floor{" "}
-              </label>{" "}
+                  onChange={(e) => change('unknown', e.target.checked ? '' : '0')}
+                />{' '}
+                Include objects with unknown floor{' '}
+              </label>{' '}
             </>
-          )}{" "}
-          <small>
-            {" "}
-            Floor placement is shown only where the game records it.{" "}
-          </small>{" "}
-        </details>{" "}
+          )}{' '}
+          <small> Floor placement is shown only where the game records it. </small>{' '}
+        </details>{' '}
         {search && (
           <div className="atlas-search-result">
-            {" "}
+            {' '}
             <span>
-              {" "}
+              {' '}
               {
                 types.filter(([, item]) =>
-                  `${objectName(item.marker)} ${item.marker.metadata.names?.en ?? ""} ${categories[item.marker.category]?.[0]} ${item.marker.blueprint_type}`
+                  `${objectName(item.marker)} ${item.marker.metadata.names?.en ?? ''} ${categories[item.marker.category]?.[0]} ${item.marker.blueprint_type}`
                     .toLowerCase()
                     .includes(search.toLowerCase()),
                 ).length
-              }{" "}
-              matching types{" "}
-            </span>{" "}
-            <button onClick={() => change("q", "")}>Clear search</button>{" "}
+              }{' '}
+              matching types{' '}
+            </span>{' '}
+            <button onClick={() => change('q', '')}>Clear search</button>{' '}
           </div>
-        )}{" "}
+        )}{' '}
         <div className="atlas-global-controls" aria-label="All map markers">
-          {" "}
-          <span>Map markers</span>{" "}
+          {' '}
+          <span>Map markers</span>{' '}
           <div>
-            {" "}
-            <button disabled={loading} onClick={() => change("hide", "")}>
-              {" "}
-              Show all{" "}
-            </button>{" "}
+            {' '}
+            <button disabled={loading} onClick={() => change('hide', '')}>
+              {' '}
+              Show all{' '}
+            </button>{' '}
             <button
               disabled={loading}
               onClick={() => {
                 change(
-                  "hide",
+                  'hide',
                   [
                     ...new Set([
                       ...Object.keys(categories),
                       ...markers.map((marker) => marker.category),
                     ]),
-                  ].join(","),
+                  ].join(','),
                 );
                 setSelected(null);
                 setCluster([]);
               }}
             >
-              {" "}
-              Hide all{" "}
-            </button>{" "}
-          </div>{" "}
-          <button
-            onClick={() =>
-              setCollapsedGroups(new Set(menuGroups.map((group) => group.key)))
-            }
-          >
-            {" "}
-            Collapse groups{" "}
-          </button>{" "}
-        </div>{" "}
+              {' '}
+              Hide all{' '}
+            </button>{' '}
+          </div>{' '}
+          <button onClick={() => setCollapsedGroups(new Set(menuGroups.map((group) => group.key)))}>
+            {' '}
+            Collapse groups{' '}
+          </button>{' '}
+        </div>{' '}
         {menuGroups.map((group) => {
           const entries = types.filter(
             ([, item]) =>
               group.categories.includes(item.marker.category) &&
-              (group.key === "unidentified"
+              (group.key === 'unidentified'
                 ? !item.marker.metadata.names?.en
-                : group.key !== "featured" ||
-                  item.marker.category !== "collectible" ||
+                : group.key !== 'featured' ||
+                  item.marker.category !== 'collectible' ||
                   Boolean(item.marker.metadata.names?.en)) &&
-              (item.marker.category !== "resource" ||
-                (item.marker.metadata.resource_group ?? "gathering") ===
-                  group.key) &&
+              (item.marker.category !== 'resource' ||
+                (item.marker.metadata.resource_group ?? 'gathering') === group.key) &&
               (!search ||
-                `${objectName(item.marker)} ${item.marker.metadata.names?.en ?? ""} ${categories[item.marker.category]?.[0]} ${item.marker.blueprint_type}`
+                `${objectName(item.marker)} ${item.marker.metadata.names?.en ?? ''} ${categories[item.marker.category]?.[0]} ${item.marker.blueprint_type}`
                   .toLowerCase()
                   .includes(search.toLowerCase())),
           );
@@ -941,154 +935,133 @@ export function WorldMapPage() {
                   .forEach((m) => excluded.add(markerType(m)));
               }
             keys.forEach((key) => excluded.delete(key));
-            change("hide", [...excluded].join(","));
+            change('hide', [...excluded].join(','));
           };
           return (
             <section className="atlas-menu-group" key={group.key}>
-              {" "}
-              <header onClick={event => {
-                if (!(event.target as Element).closest("button")) toggleGroup(group.key);
-              }}>
-                {" "}
+              {' '}
+              <header
+                onClick={(event) => {
+                  if (!(event.target as Element).closest('button')) toggleGroup(group.key);
+                }}
+              >
+                {' '}
                 <h2>
-                  {" "}
+                  {' '}
                   <button
                     className="atlas-group-toggle"
                     aria-expanded={!collapsedGroups.has(group.key)}
                     aria-controls={`atlas-group-${group.key}`}
                     onClick={() => toggleGroup(group.key)}
                   >
-                    {" "}
+                    {' '}
                     <span aria-hidden="true">
-                      {" "}
-                      {collapsedGroups.has(group.key) ? "+" : "−"}{" "}
-                    </span>{" "}
-                    {group.title}{" "}
-                  </button>{" "}
-                </h2>{" "}
+                      {' '}
+                      {collapsedGroups.has(group.key) ? '+' : '−'}{' '}
+                    </span>{' '}
+                    {group.title}{' '}
+                  </button>{' '}
+                </h2>{' '}
                 <div>
-                  {" "}
-                  <button
-                    onClick={selectAll}
-                    aria-label={`Select all ${group.title}`}
-                  >
-                    {" "}
-                    Select all{" "}
-                  </button>{" "}
+                  {' '}
+                  <button onClick={selectAll} aria-label={`Select all ${group.title}`}>
+                    {' '}
+                    Select all{' '}
+                  </button>{' '}
                   <button
                     onClick={() =>
-                      change(
-                        "hide",
-                        [
-                          ...new Set([...disabled.filter(Boolean), ...keys]),
-                        ].join(","),
-                      )
+                      change('hide', [...new Set([...disabled.filter(Boolean), ...keys])].join(','))
                     }
                     aria-label={`Clear ${group.title}`}
                   >
-                    {" "}
-                    Clear{" "}
-                  </button>{" "}
-                </div>{" "}
-              </header>{" "}
+                    {' '}
+                    Clear{' '}
+                  </button>{' '}
+                </div>{' '}
+              </header>{' '}
               <div
                 id={`atlas-group-${group.key}`}
                 hidden={collapsedGroups.has(group.key)}
                 className={
-                  group.key === "gathering"
-                    ? "atlas-type-grid compact"
-                    : "atlas-type-grid"
+                  group.key === 'gathering' ? 'atlas-type-grid compact' : 'atlas-type-grid'
                 }
               >
-                {" "}
+                {' '}
                 {entries.map(([type, item]) => {
                   const enabled =
-                    !disabled.includes(item.marker.category) &&
-                    !disabled.includes(type);
+                    !disabled.includes(item.marker.category) && !disabled.includes(type);
                   const title =
-                    item.marker.category === "combat_activity"
-                      ? "Dream Patrol"
+                    item.marker.category === 'combat_activity'
+                      ? 'Dream Patrol'
                       : objectName(item.marker);
                   return (
                     <button
                       key={type}
-                      className={
-                        enabled ? "atlas-type-tile enabled" : "atlas-type-tile"
-                      }
+                      className={enabled ? 'atlas-type-tile enabled' : 'atlas-type-tile'}
                       aria-pressed={enabled}
                       aria-label={`${title}, ${item.count} locations`}
                       title={`${title} · ${item.count} locations`}
                       onClick={() => toggleType(type, item.marker)}
                       onFocus={() => setLastType(title)}
                     >
-                      {" "}
-                      <ObjectIcon
-                        marker={item.marker}
-                        icons={base?.icons}
-                      />{" "}
-                      <span className="atlas-tile-name">{title}</span>{" "}
-                      <span className="atlas-tile-count">
-                        {" "}
-                        {item.count.toLocaleString()}{" "}
-                      </span>{" "}
+                      {' '}
+                      <ObjectIcon marker={item.marker} icons={base?.icons} />{' '}
+                      <span className="atlas-tile-name">{title}</span>{' '}
+                      <span className="atlas-tile-count"> {item.count.toLocaleString()} </span>{' '}
                     </button>
                   );
-                })}{" "}
-              </div>{" "}
+                })}{' '}
+              </div>{' '}
             </section>
           );
-        })}{" "}
+        })}{' '}
         {lastType && (
           <p className="atlas-last-type" role="status">
-            {" "}
-            {lastType}{" "}
+            {' '}
+            {lastType}{' '}
           </p>
-        )}{" "}
+        )}{' '}
         <details className="atlas-object-list">
-          {" "}
+          {' '}
           <summary>
-            {" "}
-            In this view ·{" "}
-            {filtered
-              .filter((m) => visible.has(m.id))
-              .length.toLocaleString()}{" "}
-          </summary>{" "}
+            {' '}
+            In this view · {filtered.filter((m) => visible.has(m.id)).length.toLocaleString()}{' '}
+          </summary>{' '}
           {filtered
             .filter((m) => visible.has(m.id))
             .slice(0, listLimit)
             .map((m) => (
               <button
                 key={m.id}
-                className={selected?.id === m.id ? "selected" : ""}
+                className={selected?.id === m.id ? 'selected' : ''}
                 onClick={() => {
                   setSelected(m);
                   setFocus(m);
                 }}
               >
-                {" "}
-                <ObjectIcon marker={m} icons={base?.icons} />{" "}
-                {objectName(m)}{" "}
+                {' '}
+                <ObjectIcon marker={m} icons={base?.icons} /> {objectName(m)}{' '}
               </button>
-            ))}{" "}
+            ))}{' '}
           {filtered.filter((m) => visible.has(m.id)).length > listLimit && (
-            <button onClick={() => setListLimit((n) => n + 60)}>
-              {" "}
-              Show more objects{" "}
+            <button onClick={() => setListLimit((n) => n + mapSettings.listPageSize)}>
+              {' '}
+              Show more objects{' '}
             </button>
-          )}{" "}
+          )}{' '}
           {!loading && !filtered.length && (
             <p>No objects match. Clear the search or show all categories.</p>
-          )}{" "}
-        </details>{" "}
-      </aside>{" "}
+          )}{' '}
+        </details>{' '}
+      </aside>{' '}
       <div className="atlas-map-area">
-        {" "}
+        {' '}
         <nav className="atlas-region-rail" aria-label="Switch map region">
-          {" "}
+          {' '}
           {roots.map((m) => {
             const title =
               name(m.metadata.catalog?.names, `Map ${m.game_map_id}`) +
-              (m.layer === "gravity:2" ? " · Inverted" : "");
+              (m.layer === 'gravity:2' ? ' · Inverted' : '');
             return (
               <button
                 key={m.id}
@@ -1099,26 +1072,26 @@ export function WorldMapPage() {
                   chooseMap(String(m.id));
                 }}
               >
-                {" "}
+                {' '}
                 <span>
-                  {" "}
+                  {' '}
                   {title
                     .split(/\s+/)
                     .map((word) => word[0])
-                    .join("")
-                    .slice(0, 3)}{" "}
-                </span>{" "}
-                <span className="atlas-region-name">{title}</span>{" "}
+                    .join('')
+                    .slice(0, mapSettings.regionLabelCharacters)}{' '}
+                </span>{' '}
+                <span className="atlas-region-name">{title}</span>{' '}
               </button>
             );
-          })}{" "}
-        </nav>{" "}
+          })}{' '}
+        </nav>{' '}
         {!loading && !maps.length && !error && (
           <div className="atlas-error" role="status">
-            {" "}
-            No maps have been imported yet.{" "}
+            {' '}
+            No maps have been imported yet.{' '}
           </div>
-        )}{" "}
+        )}{' '}
         {base && (
           <MapCanvas
             base={base}
@@ -1129,37 +1102,51 @@ export function WorldMapPage() {
             selected={selected}
             onSelect={setSelected}
             focus={focus}
+            resetView={resetView}
+            resetLocation={locations.find((location) => location.id === area)}
             onVisible={setVisible}
             onCluster={setCluster}
           />
-        )}{" "}
-        <div className="atlas-map-status" role="status">
-          {" "}
-          {loading
-            ? "Loading map objects…"
-            : `${filtered.length.toLocaleString()} ${filtered.length === 1 ? "object" : "objects"} · ${chosen?.game_version ?? ""}`}{" "}
-          <span>Scroll to zoom · drag to explore</span>{" "}
-        </div>{" "}
-        {shareStatus && <p className="atlas-share-status" role="status">{shareStatus}</p>}
+        )}{' '}
+        <div className="atlas-map-status">
+          <div role="status">
+            {' '}
+            {loading
+              ? 'Loading map objects…'
+              : `${filtered.length.toLocaleString()} ${filtered.length === 1 ? 'object' : 'objects'} · ${chosen?.game_version ?? ''}`}{' '}
+            <span>Scroll to zoom · drag to explore</span>
+          </div>
+          <button
+            className="atlas-reset-view"
+            disabled={!base || loading}
+            onClick={() => setResetView((value) => value + 1)}
+          >
+            Return to map
+          </button>
+        </div>{' '}
+        {shareStatus && (
+          <p className="atlas-share-status" role="status">
+            {shareStatus}
+          </p>
+        )}
         {error && (
           <div className="atlas-error" role="alert">
-            {" "}
-            <p>{error}</p>{" "}
-            <button onClick={() => setRetry((n) => n + 1)}>Retry</button>{" "}
+            {' '}
+            <p>{error}</p> <button onClick={() => setRetry((n) => n + 1)}>Retry</button>{' '}
           </div>
-        )}{" "}
+        )}{' '}
         {cluster.length > 0 && (
           <article className="atlas-detail atlas-cluster-detail">
-            {" "}
+            {' '}
             <button
               className="atlas-close"
               aria-label="Close nearby objects"
               onClick={() => setCluster([])}
             >
-              {" "}
-              ×{" "}
-            </button>{" "}
-            <h2>{cluster.length} objects here</h2>{" "}
+              {' '}
+              ×{' '}
+            </button>{' '}
+            <h2>{cluster.length} objects here</h2>{' '}
             {cluster.map((m) => (
               <button
                 key={m.id}
@@ -1169,67 +1156,65 @@ export function WorldMapPage() {
                   setFocus(m);
                 }}
               >
-                {" "}
-                <ObjectIcon marker={m} icons={base?.icons} />{" "}
-                {objectName(m)}{" "}
+                {' '}
+                <ObjectIcon marker={m} icons={base?.icons} /> {objectName(m)}{' '}
               </button>
-            ))}{" "}
+            ))}{' '}
           </article>
-        )}{" "}
+        )}{' '}
         {selected && cluster.length === 0 && (
           <article className="atlas-detail">
-            {" "}
+            {' '}
             <button
               className="atlas-close"
               aria-label="Close object details"
               onClick={() => setSelected(null)}
             >
-              {" "}
-              ×{" "}
-            </button>{" "}
+              {' '}
+              ×{' '}
+            </button>{' '}
             <span className="eyebrow">
-              {" "}
-              {categories[selected.category]?.[0] ?? "Map object"}{" "}
-            </span>{" "}
-            <h2>{objectName(selected)}</h2>{" "}
+              {' '}
+              {categories[selected.category]?.[0] ?? 'Map object'}{' '}
+            </span>{' '}
+            <h2>{objectName(selected)}</h2>{' '}
             <div className="atlas-share-marker">
               <a href={markerLink}>Open this marker</a>
               <button onClick={copyMarkerLink}>Copy link</button>
-              <input aria-label="Marker link" value={markerLink} readOnly onFocus={event => event.currentTarget.select()} />
+              <input
+                aria-label="Marker link"
+                value={markerLink}
+                readOnly
+                onFocus={(event) => event.currentTarget.select()}
+              />
             </div>
-            {name(selected.metadata.description) && (
-              <p>{name(selected.metadata.description)}</p>
-            )}{" "}
+            {name(selected.metadata.description) && <p>{name(selected.metadata.description)}</p>}{' '}
             <p>
-              {" "}
+              {' '}
               {selected.metadata.floor
                 ? `Recorded floor: ${selected.metadata.floor}`
-                : "Floor not recorded"}{" "}
-            </p>{" "}
+                : 'Floor not recorded'}{' '}
+            </p>{' '}
             {Boolean(selected.metadata.condition_id) && (
               <p>This mark appears under an in-game condition.</p>
-            )}{" "}
-            <small>
-              {" "}
-              Game placements may depend on progress or respawn state.{" "}
-            </small>{" "}
+            )}{' '}
+            <small> Game placements may depend on progress or respawn state. </small>{' '}
             <details>
-              {" "}
-              <summary>Position & source</summary>{" "}
+              {' '}
+              <summary>Position & source</summary>{' '}
               <p>
-                {" "}
-                X {selected.world[0].toFixed(0)} · Y{" "}
-                {selected.world[1].toFixed(0)} · Z{" "}
-                {selected.world[2].toFixed(0)}{" "}
-              </p>{" "}
+                {' '}
+                X {selected.world[0].toFixed(0)} · Y {selected.world[1].toFixed(0)} · Z{' '}
+                {selected.world[2].toFixed(0)}{' '}
+              </p>{' '}
               <p>
-                {" "}
-                {selected.blueprint_type} · {selected.entity_id}{" "}
-              </p>{" "}
-            </details>{" "}
+                {' '}
+                {selected.blueprint_type} · {selected.entity_id}{' '}
+              </p>{' '}
+            </details>{' '}
           </article>
-        )}{" "}
-      </div>{" "}
+        )}{' '}
+      </div>{' '}
     </section>
   );
 }

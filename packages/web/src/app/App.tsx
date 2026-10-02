@@ -1,25 +1,36 @@
-import { lazy, Suspense, useState } from "react";
-import { Link, NavLink, Route, Routes } from "react-router-dom";
-import { ExternalLink, Menu, Settings, Sparkles, X } from "lucide-react";
-import { categories } from "../data/entities";
-import { LocaleSwitcher } from "../components/layout/LocaleSwitcher";
-import { Footer } from "../components/layout/Footer";
-import { Home } from "../pages/HomePage";
-import { Catalog } from "../pages/CatalogPage";
-import { Profile } from "../pages/EntityProfilePage";
-import { QuestPage } from "../pages/QuestTranscriptPage";
-import { PageLoader } from "../components/ui/Feedback";
-import { StoryMapPage } from "../pages/StoryMapPage";
-import { SearchPage } from "../pages/SearchPage";
-import { NotFound } from "../pages/NotFoundPage";
-import { NodeExplorerPage } from "../pages/NodeExplorerPage";
-import { AccountPage, GoogleCompletePage, GoogleExistingLinkPage, GoogleSuccessPage, LoginPage, RegisterPage } from "../pages/AuthPages";
-import { SettingsPage } from "../pages/SettingsPage";
-import { useAuth } from "../auth/AuthProvider";
+import { ExternalLink, Menu, Settings, Sparkles, X } from 'lucide-react';
+import { lazy, Suspense, useState } from 'react';
+import { Link, NavLink, Route, Routes } from 'react-router-dom';
 
-const WorldMapPage = lazy(() => import("../pages/WorldMapPage").then(module => ({ default: module.WorldMapPage })));
+import { useAuth } from '../auth/AuthProvider';
+import { Footer } from '../components/layout/Footer';
+import { LocaleSwitcher } from '../components/layout/LocaleSwitcher';
+import { PageLoader } from '../components/ui/Feedback';
+import { APP_SETTINGS } from '../config/settings';
+import { categories } from '../data/entities';
+import {
+  AccountPage,
+  GoogleCompletePage,
+  GoogleExistingLinkPage,
+  GoogleSuccessPage,
+  LoginPage,
+  RegisterPage,
+} from '../pages/AuthPages';
+import { Catalog } from '../pages/CatalogPage';
+import { Profile } from '../pages/EntityProfilePage';
+import { Home } from '../pages/HomePage';
+import { NodeExplorerPage } from '../pages/NodeExplorerPage';
+import { NotFound } from '../pages/NotFoundPage';
+import { QuestPage } from '../pages/QuestTranscriptPage';
+import { SearchPage } from '../pages/SearchPage';
+import { SettingsPage } from '../pages/SettingsPage';
+import { StoryMapPage } from '../pages/StoryMapPage';
 
-const apiDocsUrl = import.meta.env.VITE_API_DOCS_URL ?? "http://localhost:8000/docs";
+const WorldMapPage = lazy(() =>
+  import('../pages/WorldMapPage').then((module) => ({ default: module.WorldMapPage })),
+);
+
+const apiDocsUrl = import.meta.env.VITE_API_DOCS_URL ?? APP_SETTINGS.api.defaultDocsUrl;
 
 export function App() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -35,39 +46,56 @@ export function App() {
             SOLARIS<span className="brand-light"> ATLAS</span>
           </span>
         </Link>
-        <nav className={mobileOpen ? "nav open" : "nav"}>
-          <NavLink onClick={() => setMobileOpen(false)} to="/map" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>Interactive map</NavLink>
-          <NavLink onClick={() => setMobileOpen(false)} to="/story-map" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>Story map</NavLink>
+        <nav className={mobileOpen ? 'nav open' : 'nav'}>
+          <NavLink
+            onClick={() => setMobileOpen(false)}
+            to="/map"
+            className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+          >
+            Interactive map
+          </NavLink>
+          <NavLink
+            onClick={() => setMobileOpen(false)}
+            to="/story-map"
+            className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+          >
+            Story map
+          </NavLink>
           {categories.map((c) => (
             <NavLink
               key={c.key}
               onClick={() => setMobileOpen(false)}
               to={`/catalog/${c.key}`}
-              className={({ isActive }) =>
-                isActive ? "nav-link active" : "nav-link"
-              }
+              className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
             >
-              {c.key === "quest" ? "Story" : c.label}
+              {c.key === 'quest' ? 'Story' : c.label}
             </NavLink>
           ))}
           <NavLink
             onClick={() => setMobileOpen(false)}
             to="/settings"
-            className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}
+            className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
           >
             <Settings size={13} /> Settings
           </NavLink>
-          <a
-            className="nav-link nav-about"
-            href={apiDocsUrl}
-            target="_blank"
-            rel="noreferrer"
-          >
+          <a className="nav-link nav-about" href={apiDocsUrl} target="_blank" rel="noreferrer">
             API <ExternalLink size={12} />
           </a>
         </nav>
         <div className="top-actions">
-          {user ? <details className="auth-menu"><summary>{user.nickname}</summary><div className="auth-menu-popover"><Link to="/account">Account</Link><button onClick={() => void logout()}>Sign out</button></div></details> : <Link className="nav-link auth-nav" to="/login">Sign in</Link>}
+          {user ? (
+            <details className="auth-menu">
+              <summary>{user.nickname}</summary>
+              <div className="auth-menu-popover">
+                <Link to="/account">Account</Link>
+                <button onClick={() => void logout()}>Sign out</button>
+              </div>
+            </details>
+          ) : (
+            <Link className="nav-link auth-nav" to="/login">
+              Sign in
+            </Link>
+          )}
           <LocaleSwitcher />
           <button
             className="mobile-menu"
@@ -82,12 +110,16 @@ export function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/catalog/:category" element={<Catalog />} />
-          <Route path="/map" element={<Suspense fallback={<PageLoader />}><WorldMapPage /></Suspense>} />
-          <Route path="/story-map" element={<StoryMapPage />} />
           <Route
-            path="/characters/:key"
-            element={<Profile kind="character" />}
+            path="/map"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <WorldMapPage />
+              </Suspense>
+            }
           />
+          <Route path="/story-map" element={<StoryMapPage />} />
+          <Route path="/characters/:key" element={<Profile kind="character" />} />
           <Route path="/items/:key" element={<Profile kind="item" />} />
           <Route path="/locations/:key" element={<Profile kind="location" />} />
           <Route path="/quests/:key" element={<QuestPage />} />

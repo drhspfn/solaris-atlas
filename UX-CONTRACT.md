@@ -36,3 +36,7 @@ Map filter groups are Featured, Battle, Activities & exploration, Shops & servic
 The marker toolbar can show or hide all types across every group, regardless of search and location. Show all clears type exclusions; Hide all excludes every marker category and closes object details. Group disclosure buttons preserve filter selections. Featured starts open; other groups start collapsed. Disclosure state is transient and independent of local filters.
 
 The region rail keeps a fixed width on hover and focus. Full names are available through native title tooltips and accessible button labels; disclosure never changes the panel geometry.
+
+Map controls share one top offset. Return to map restores the selected location bounds, or the current region when no location is selected, without changing filters, region, floor or selected object. Zooming out stops one level beyond the region overview. View recovery is transient and is not written to the shared URL.
+
+Frontend behavior defaults (map zoom, tile coordinate contract, paging limits, storage keys and narrative preferences) are owned by `packages/web/src/config/settings.ts`. CSS owns visual layout tokens; server settings remain in the existing server configuration.

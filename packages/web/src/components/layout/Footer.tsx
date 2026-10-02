@@ -1,5 +1,5 @@
-import { Link } from "react-router-dom";
-import { Sparkles } from "lucide-react";
+import { Sparkles } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 export function Footer() {
   return (
@@ -16,7 +16,9 @@ export function Footer() {
         <span>A connected story archive for Solaris-3.</span>
         <span>Unofficial Wuthering Waves companion archive.</span>
       </div>
-      <a className="footer-domain" href="https://solarisatlas.fun">solarisatlas.fun</a>
+      <a className="footer-domain" href="https://solarisatlas.fun">
+        solarisatlas.fun
+      </a>
     </footer>
   );
 }

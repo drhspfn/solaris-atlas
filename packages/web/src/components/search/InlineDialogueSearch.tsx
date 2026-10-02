@@ -1,9 +1,11 @@
-import React, { useState } from "react";
-import { Link } from "react-router-dom";
-import { Search } from "lucide-react";
-import { api } from "../../api/client";
-import { useLocale } from "../../hooks/useLocale";
-import { PlayerText, type PlayerDisplay } from "../dialogue/PlayerText";
+import { Search } from 'lucide-react';
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+
+import { api } from '../../api/client';
+import { APP_SETTINGS } from '../../config/settings';
+import { useLocale } from '../../hooks/useLocale';
+import { type PlayerDisplay, PlayerText } from '../dialogue/PlayerText';
 
 export function InlineDialogueSearch({
   character,
@@ -15,10 +17,10 @@ export function InlineDialogueSearch({
   playerDisplay: PlayerDisplay;
 }) {
   const locale = useLocale();
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
-  const [questId, setQuestId] = useState("");
+  const [questId, setQuestId] = useState('');
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!q.trim()) return;
@@ -26,12 +28,12 @@ export function InlineDialogueSearch({
     try {
       const params = new URLSearchParams({
         q,
-        scope: "dialogue",
+        scope: 'dialogue',
         character,
         locale,
-        limit: "8",
+        limit: String(APP_SETTINGS.limits.inlineDialogueSearch),
       });
-      if (questId) params.set("quest_id", questId);
+      if (questId) params.set('quest_id', questId);
       const data = await api<any>(`/search?${params}`);
       setResults(data.results);
     } catch {
@@ -66,15 +68,21 @@ export function InlineDialogueSearch({
             })}
           </select>
         )}
-        <button>{busy ? "Searching" : "Find lines"}</button>
+        <button>{busy ? 'Searching' : 'Find lines'}</button>
       </form>
       {results.map((r, i) => (
         <div className="quote-result" key={i}>
           <p>
-            “<PlayerText display={playerDisplay} value={r.text} fallback={r.text?.inline_text || "Text unavailable"} />”
+            “
+            <PlayerText
+              display={playerDisplay}
+              value={r.text}
+              fallback={r.text?.inline_text || 'Text unavailable'}
+            />
+            ”
           </p>
           <small>
-            {r.flow_state || "Dialogue"} · {r.action?.name || "Talk"} ·{" "}
+            {r.flow_state || 'Dialogue'} · {r.action?.name || 'Talk'} ·{' '}
             {questId ? (
               <Link to={`/quests/${questId}`}>Open quest transcript</Link>
             ) : (

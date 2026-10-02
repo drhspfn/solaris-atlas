@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { readMapPreferences, type MapPreferences } from '../state/mapPreferences';
+
+import { APP_SETTINGS } from '../config/settings';
+import { type MapPreferences, readMapPreferences } from '../state/mapPreferences';
 
 export function useMapPreferences(legacy: URLSearchParams, hiddenCategories: string) {
   const [preferences, setPreferences] = useState<MapPreferences>(() => {
     let saved: string | null = null;
     try {
-      saved = localStorage.getItem('atlas-map-filters');
+      saved = localStorage.getItem(APP_SETTINGS.storage.mapFilters);
     } catch {
       /* Storage may be unavailable. */
     }
@@ -13,7 +15,7 @@ export function useMapPreferences(legacy: URLSearchParams, hiddenCategories: str
   });
   useEffect(() => {
     try {
-      localStorage.setItem('atlas-map-filters', JSON.stringify(preferences));
+      localStorage.setItem(APP_SETTINGS.storage.mapFilters, JSON.stringify(preferences));
     } catch {
       /* Keep in-memory preferences. */
     }

@@ -1,14 +1,8 @@
-import React, { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowRight, Search } from "lucide-react";
+import { ArrowRight, Search } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
-export function SearchBox({
-  initial = "",
-  category,
-}: {
-  initial?: string;
-  category?: string;
-}) {
+export function SearchBox({ initial = '', category }: { initial?: string; category?: string }) {
   const [value, setValue] = useState(initial);
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -16,10 +10,10 @@ export function SearchBox({
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     const next = new URLSearchParams();
-    if (value.trim()) next.set("q", value.trim());
-    if (category && category !== "all") next.set("category", category);
-    for (const c of params.getAll("category"))
-      if (!next.has("category")) next.append("category", c);
+    if (value.trim()) next.set('q', value.trim());
+    if (category && category !== 'all') next.set('category', category);
+    for (const c of params.getAll('category'))
+      if (!next.has('category')) next.append('category', c);
     navigate(`/search?${next}`);
   };
   return (

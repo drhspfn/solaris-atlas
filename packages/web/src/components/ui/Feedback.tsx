@@ -1,5 +1,3 @@
-
-
 export function PageLoader() {
   return (
     <div className="page-container">
@@ -29,11 +27,11 @@ export function EmptyState({ query }: { query: string }) {
   return (
     <div className="empty-state">
       <div>⌕</div>
-      <h3>{query ? "No matching entries" : "Nothing here yet"}</h3>
+      <h3>{query ? 'No matching entries' : 'Nothing here yet'}</h3>
       <p>
         {query
-          ? "Try another name or switch the category filter."
-          : "This collection has no entries in the active snapshot."}
+          ? 'Try another name or switch the category filter.'
+          : 'This collection has no entries in the active snapshot.'}
       </p>
     </div>
   );
