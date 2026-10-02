@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Link, NavLink, Route, Routes } from "react-router-dom";
 import { ExternalLink, Menu, Settings, Sparkles, X } from "lucide-react";
 import { categories } from "../data/entities";
@@ -8,6 +8,7 @@ import { Home } from "../pages/HomePage";
 import { Catalog } from "../pages/CatalogPage";
 import { Profile } from "../pages/EntityProfilePage";
 import { QuestPage } from "../pages/QuestTranscriptPage";
+import { PageLoader } from "../components/ui/Feedback";
 import { StoryMapPage } from "../pages/StoryMapPage";
 import { SearchPage } from "../pages/SearchPage";
 import { NotFound } from "../pages/NotFoundPage";
@@ -15,6 +16,8 @@ import { NodeExplorerPage } from "../pages/NodeExplorerPage";
 import { AccountPage, GoogleCompletePage, GoogleExistingLinkPage, GoogleSuccessPage, LoginPage, RegisterPage } from "../pages/AuthPages";
 import { SettingsPage } from "../pages/SettingsPage";
 import { useAuth } from "../auth/AuthProvider";
+
+const WorldMapPage = lazy(() => import("../pages/WorldMapPage").then(module => ({ default: module.WorldMapPage })));
 
 const apiDocsUrl = import.meta.env.VITE_API_DOCS_URL ?? "http://localhost:8000/docs";
 
@@ -33,6 +36,7 @@ export function App() {
           </span>
         </Link>
         <nav className={mobileOpen ? "nav open" : "nav"}>
+          <NavLink onClick={() => setMobileOpen(false)} to="/map" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>Interactive map</NavLink>
           <NavLink onClick={() => setMobileOpen(false)} to="/story-map" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>Story map</NavLink>
           {categories.map((c) => (
             <NavLink
@@ -78,6 +82,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/catalog/:category" element={<Catalog />} />
+          <Route path="/map" element={<Suspense fallback={<PageLoader />}><WorldMapPage /></Suspense>} />
           <Route path="/story-map" element={<StoryMapPage />} />
           <Route
             path="/characters/:key"
