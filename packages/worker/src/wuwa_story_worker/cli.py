@@ -22,6 +22,7 @@ from wuwa_story_worker.asset_jobs import (
 )
 from wuwa_story_worker.broker import consume_jobs, replay_failed_jobs
 from wuwa_story_worker.client_assets import discover_plan, download_plan, save_json
+from wuwa_story_worker.map_assets import build_maps
 from wuwa_story_worker.queues import QUEUES, queue_concurrency
 from wuwa_story_worker.scheduler import (
     DEFAULT_REPOSITORY,
@@ -51,6 +52,11 @@ def _parser() -> argparse.ArgumentParser:
     asset_export.add_argument("--fmodel", type=Path, required=True)
     asset_export.add_argument("--filter", required=True)
     asset_export.add_argument("--upload", action="store_true", help="Publish raw exported files and manifest to S3")
+    maps = commands.add_parser("extract-maps", help="Decode map tiles, assemble previews and extract positioned objects")
+    maps.add_argument("root", type=Path)
+    maps.add_argument("--fmodel", type=Path, required=True)
+    maps.add_argument("--converter", type=Path, required=True, help="CUE4Parse.CLI executable")
+    maps.add_argument("--publish", action="store_true", help="Register maps and content addressed files in PostgreSQL and S3")
     importer = commands.add_parser("import-compiler", help="Import a compiled output directory")
     importer.add_argument("dataset", type=Path)
     importer.add_argument("--batch-size", type=int, default=1000)
@@ -164,6 +170,8 @@ def main() -> None:
         print(root)
     elif args.command == "extract-assets":
         print(asyncio.run(export_assets(args.root.resolve(), args.fmodel, args.filter, args.upload)))
+    elif args.command == "extract-maps":
+        print(asyncio.run(build_maps(args.root.resolve(), args.fmodel, args.converter, args.publish)))
     elif args.command == "enqueue-snapshot":
         asyncio.run(_enqueue(args))
     elif args.command == "watch-upstream":

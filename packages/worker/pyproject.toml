@@ -5,6 +5,8 @@ description = "Snapshot ingestion worker for WuWa Story"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "aio-pika>=9.5,<10",
+  "flatbuffers>=25,<26",
+  "pillow>=11,<13",
   "wuwa-story-server",
 ]
 
