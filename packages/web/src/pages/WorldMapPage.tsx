@@ -4,6 +4,8 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { api } from "../api/client";
 import { useLocale } from "../hooks/useLocale";
+import {useMapPreferences} from "../hooks/useMapPreferences";
+import {compactMapLink, type MapPreferences} from "../state/mapPreferences";
 import "../styles/world-map.css";
 import { ObjectIcon, iconNode } from "../components/MapIcons";
 type Names = Record<string, string>;
@@ -348,6 +350,13 @@ function MapCanvas({
 export function WorldMapPage() {
   const locale = useLocale();
   const [params, setParams] = useSearchParams();
+  const [filters, setFilters] = useMapPreferences(params, Object.keys(categories).join(","));
+  const [shareStatus, setShareStatus] = useState("");
+  const openedMarker = useRef("");
+  useEffect(() => {
+    const compact = compactMapLink(params);
+    if (compact.toString() !== params.toString()) setParams(compact, {replace: true});
+  }, [params, setParams]);
   const [maps, setMaps] = useState<Atlas[]>([]);
   const [base, setBase] = useState<Atlas | null>(null);
   const [floors, setFloors] = useState<Atlas[]>([]);
@@ -355,7 +364,7 @@ export function WorldMapPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
-  const search = params.get("q") ?? "";
+  const search = filters.q ?? "";
   const [selected, setSelected] = useState<Marker | null>(null);
   const [cluster, setCluster] = useState<Marker[]>([]);
   const [focus, setFocus] = useState<Place | Marker | null>(null);
@@ -377,21 +386,28 @@ export function WorldMapPage() {
     });
   const name = (names?: Names, fallback = "") =>
     names?.[locale] || names?.en || Object.values(names ?? {})[0] || fallback;
-  const change = (key: string, value: string) => {
-    const next = new URLSearchParams(params);
-    value ? next.set(key, value) : next.delete(key);
-    setParams(next, { replace: key === "q" || key === "opacity" });
+  const change = (key: keyof MapPreferences, value: string) => {
+    setFilters(current => {
+      const next = {...current};
+      value || key === "hide" ? next[key] = value : delete next[key];
+      return next;
+    });
   };
-  const mapId = params.get("map");
-  const active = params.get("floor") ?? "";
-  const area = Number(params.get("area") ?? 0);
-  const disabled = (params.get("hide") ?? "").split(",");
-  const opacity = Math.min(
-    100,
-    Math.max(0, Number(params.get("opacity") ?? 30)),
-  );
-  const unknown = params.get("unknown") !== "0";
-  const includeHidden = params.get("hidden") === "1";
+  const chooseMap = (id: string) => {
+    setFilters(current => ({map: id, hide: current.hide ?? Object.keys(categories).join(",")}));
+    setParams({}, {replace: true});
+    setFocus(null);
+    setSelected(null);
+    setCluster([]);
+  };
+  const mapId = params.get("map") ?? filters.map;
+  const active = filters.floor ?? "";
+  const area = Number(filters.area ?? 0);
+  const disabled = (filters.hide ?? "").split(",");
+  const opacityValue = Number(filters.opacity ?? 30);
+  const opacity = Number.isFinite(opacityValue) ? Math.min(100, Math.max(0, opacityValue)) : 30;
+  const unknown = filters.unknown !== "0";
+  const includeHidden = filters.hidden === "1";
   useEffect(() => {
     const previous = document.title;
     document.title = "Interactive map — Solaris Atlas";
@@ -519,10 +535,39 @@ export function WorldMapPage() {
       cancelled = true;
     };
   }, [active, chosen?.id, maps, retry]);
+  const markerId = params.get("marker");
+  useEffect(() => {
+    if (loading || !base || !markerId) return;
+    const key = `${base.id}:${markerId}`;
+    if (openedMarker.current === key) return;
+    openedMarker.current = key;
+    const marker = markers.find(item => String(item.id) === markerId);
+    if (!marker) {
+      setShareStatus("This marker is no longer available on this map.");
+      return;
+    }
+    setFilters(current => ({...current, map: String(base.id), area: "", q: "", floor: "", hidden: marker.metadata.hidden ? "1" : current.hidden ?? ""}));
+    setSelected(marker);
+    setCluster([]);
+    setFocus(marker);
+    setShareStatus("");
+  }, [markers, loading, base?.id, markerId]);
+  const markerLink = selected && chosen
+    ? `${window.location.origin}/map?map=${chosen.id}&marker=${selected.id}`
+    : "";
+  const copyMarkerLink = async () => {
+    try {
+      await navigator.clipboard.writeText(markerLink);
+      setShareStatus("Link copied.");
+    } catch {
+      setShareStatus("Copy the link below to share this marker.");
+    }
+  };
   const locations = base?.metadata.catalog?.locations ?? [];
   useEffect(() => {
     const location = locations.find((l) => l.id === area);
     if (location) setFocus(location);
+    else if (markerId && selected && String(selected.id) === markerId) setFocus(selected);
     else if (base)
       setFocus({
         id: base.id,
@@ -567,14 +612,14 @@ export function WorldMapPage() {
     () =>
       scoped.filter(
         (m) =>
-          !disabled.includes(m.category) &&
-          !disabled.includes(markerType(m)) &&
+          ((String(m.id) === markerId && selected?.id === m.id) ||
+            (!disabled.includes(m.category) && !disabled.includes(markerType(m)))) &&
           (!search ||
             `${name(m.metadata.names)} ${m.metadata.names?.en ?? ""} ${categories[m.category]?.[0]} ${m.blueprint_type}`
               .toLowerCase()
               .includes(search.toLowerCase())),
       ),
-    [scoped, params, search, locale],
+    [scoped, filters.hide, search, locale, markerId, selected?.id],
   );
   const [lastType, setLastType] = useState("");
   const toggleType = (type: string, marker: Marker) => {
@@ -635,10 +680,7 @@ export function WorldMapPage() {
           <select
             value={chosen?.id ?? ""}
             onChange={(e) => {
-              const next = new URLSearchParams();
-              next.set("map", e.target.value);
-              setParams(next);
-              setFocus(null);
+              chooseMap(e.target.value);
             }}
           >
             {" "}
@@ -902,7 +944,9 @@ export function WorldMapPage() {
           return (
             <section className="atlas-menu-group" key={group.key}>
               {" "}
-              <header>
+              <header onClick={event => {
+                if (!(event.target as Element).closest("button")) toggleGroup(group.key);
+              }}>
                 {" "}
                 <h2>
                   {" "}
@@ -1050,10 +1094,7 @@ export function WorldMapPage() {
                 title={title}
                 aria-pressed={chosen?.id === m.id}
                 onClick={() => {
-                  setParams({ map: String(m.id) });
-                  setFocus(null);
-                  setSelected(null);
-                  setCluster([]);
+                  chooseMap(String(m.id));
                 }}
               >
                 {" "}
@@ -1094,9 +1135,10 @@ export function WorldMapPage() {
           {" "}
           {loading
             ? "Loading map objects…"
-            : `${filtered.length.toLocaleString()} objects · ${chosen?.game_version ?? ""}`}{" "}
+            : `${filtered.length.toLocaleString()} ${filtered.length === 1 ? "object" : "objects"} · ${chosen?.game_version ?? ""}`}{" "}
           <span>Scroll to zoom · drag to explore</span>{" "}
         </div>{" "}
+        {shareStatus && <p className="atlas-share-status" role="status">{shareStatus}</p>}
         {error && (
           <div className="atlas-error" role="alert">
             {" "}
@@ -1148,6 +1190,11 @@ export function WorldMapPage() {
               {categories[selected.category]?.[0] ?? "Map object"}{" "}
             </span>{" "}
             <h2>{objectName(selected)}</h2>{" "}
+            <div className="atlas-share-marker">
+              <a href={markerLink}>Open this marker</a>
+              <button onClick={copyMarkerLink}>Copy link</button>
+              <input aria-label="Marker link" value={markerLink} readOnly onFocus={event => event.currentTarget.select()} />
+            </div>
             {name(selected.metadata.description) && (
               <p>{name(selected.metadata.description)}</p>
             )}{" "}

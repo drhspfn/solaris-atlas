@@ -177,9 +177,9 @@
 .atlas-detail {
   position: absolute;
   z-index: 500;
-  right: 20px;
+  right: 76px;
   bottom: 20px;
-  width: min(350px, calc(100% - 40px));
+  width: min(350px, calc(100% - 90px));
   padding: 24px;
   border: 1px solid var(--border-default);
   border-radius: 8px;
@@ -663,16 +663,6 @@
 .atlas-region-name {
   display: none;
 }
-.atlas-region-rail button:hover .atlas-region-name,
-.atlas-region-rail button:focus-visible .atlas-region-name {
-  display: block;
-}
-.atlas-region-rail button:hover,
-.atlas-region-rail button:focus-visible {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 .atlas-floor-group {
   width: 100%;
   border: 1px solid var(--border-default);
@@ -721,3 +711,9 @@
 .atlas-type-grid[hidden] {
   display: none;
 }
+
+.atlas-share-marker{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0}.atlas-share-marker a{font-size:12px;color:var(--accent-mint)}.atlas-share-marker input{width:100%;min-width:0;padding:7px;font-size:11px}.atlas-share-marker button{font-size:12px;padding:7px}.atlas-share-status{position:absolute;bottom:12px;left:12px;z-index:900;max-width:calc(100% - 24px);padding:10px;background:var(--surface-1);border:1px solid var(--border-default);border-radius:6px;font-size:12px}
+
+.atlas-region-rail{width:52px;box-sizing:border-box}.atlas-region-rail button{width:38px;flex-shrink:0}.atlas-region-rail .atlas-region-name{display:none}
+
+.atlas-menu-group > header{cursor:pointer}.atlas-menu-group > header > h2{flex:1;min-width:0}.atlas-menu-group header .atlas-group-toggle{width:100%}
