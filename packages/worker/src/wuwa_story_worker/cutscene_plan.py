@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import math
 import re
 import sqlite3
 import struct
@@ -24,6 +25,8 @@ def sound_timing(blob: bytes) -> tuple[float, float | None]:
     start_offset, end_offset = table.Offset(12), table.Offset(14)
     start = struct.unpack_from("<f", blob, table.Pos + start_offset)[0] if start_offset else 0
     end = struct.unpack_from("<f", blob, table.Pos + end_offset)[0] if end_offset else -1
+    if not math.isfinite(start) or not math.isfinite(end):
+        raise ValueError("Non-finite source soundtrack timing")
     return max(0, start), None if end < 0 else end
 
 

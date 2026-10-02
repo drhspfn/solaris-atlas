@@ -2,7 +2,7 @@ import struct
 
 import pytest
 
-from wuwa_story_worker.cutscene_import import bank_media_id, movie_path
+from wuwa_story_worker.cutscene_import import bank_media_id, movie_path, video_duration
 
 
 def bank(object_type, obj):
@@ -40,3 +40,16 @@ def test_sound_and_music_source_layouts():
 def test_malformed_banks_fail_closed(data):
     with pytest.raises(ValueError):
         bank_media_id(data)
+
+
+def test_multiple_embedded_languages_are_not_silently_dropped(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "wuwa_story_worker.cutscene_import.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            stderr=b"Duration: 00:01:00.00 Video: h264 Audio: aac Audio: aac"
+        ),
+    )
+    with pytest.raises(ValueError, match="Multiple embedded audio"):
+        video_duration(tmp_path / "ffmpeg", tmp_path / "movie.mp4")

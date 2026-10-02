@@ -96,6 +96,8 @@ def video_duration(ffmpeg: Path, movie: Path) -> tuple[float, bool]:
     match = re.search(r"Duration: (\d+):(\d+):(\d+\.\d+)", info)
     if not match or "Video: h264" not in info:
         raise ValueError("Expected a finite browser-compatible H.264 movie")
+    if info.count("Audio:") > 1:
+        raise ValueError("Multiple embedded audio tracks need explicit language mapping")
     hours, minutes, seconds = map(float, match.groups())
     return hours * 3600 + minutes * 60 + seconds, "Audio:" in info
 
