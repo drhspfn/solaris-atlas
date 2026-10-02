@@ -723,6 +723,17 @@ button {
   border: 1px solid #819a7950;
   border-radius: 50%;
 }
+.entity-card-image {
+  width: 112px;
+  height: 112px;
+  object-fit: contain;
+  position: relative;
+  z-index: 1;
+}
+.entity-art.has-image:before,
+.entity-art.has-image:after {
+  display: none;
+}
 .art-quest {
   background:
     radial-gradient(circle at 50% 50%, #75613c40, transparent 43%),
