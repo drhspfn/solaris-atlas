@@ -8,12 +8,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.api.routes.story.shared import _quest_state_ids, _release_id
+from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.core import Quest, QuestAction, QuestState, VoiceReference
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceRecord
+from wuwa_story.db.models.storage import FileLocation, FileReference
 from wuwa_story.db.session import get_session
+from wuwa_story.storage.s3 import S3Storage
 
 router = APIRouter(tags=["story browsing"])
 
@@ -57,6 +60,27 @@ async def dialogue_media(
     voices = {voice.node_id: voice for voice in await session.scalars(
         select(VoiceReference).where(VoiceReference.node_id.in_(voice_ids))
     )} if voice_ids else {}
+    tracks: dict[int, dict[str, dict]] = defaultdict(dict)
+    if voice_ids:
+        settings = get_settings()
+        storage = S3Storage(settings)
+        rows = await session.execute(
+            select(FileReference, FileLocation.object_key)
+            .join(FileLocation, FileLocation.file_id == FileReference.file_id)
+            .where(FileReference.owner_node_id.in_(voice_ids),
+                   FileReference.reference_type == "voice_audio",
+                   FileLocation.backend == "s3", FileLocation.bucket == settings.s3_bucket,
+                   FileLocation.available.is_(True), FileLocation.is_primary.is_(True))
+            .order_by(FileReference.id.desc())
+        )
+        for reference, object_key in rows:
+            language = reference.metadata_json.get("language")
+            if language in ("en", "ja", "ko", "zh"):
+                tracks[reference.owner_node_id].setdefault(language, {
+                    "language": language, "url": storage.public_url(object_key),
+                    "asset_version": reference.metadata_json.get("asset_version"),
+                    "duration_seconds": reference.metadata_json.get("duration_seconds"),
+                })
     result = {}
     for line_id, entries in links.items():
         result[line_id] = {
@@ -64,7 +88,8 @@ async def dialogue_media(
                 {"canonical_key": link["canonical_key"], "plot_audio_id": voice.plot_audio_id,
                  "file_name": voice.file_name, "reference_kind": "plot_audio_filename",
                  "engine_path": None, "media_asset_linked": voice.media_asset_node_id is not None,
-                 "basis": link["basis"], "source": link["source"]}
+                 "basis": link["basis"], "source": link["source"],
+                 "tracks": list(tracks.get(voice.node_id, {}).values())}
                 for link in entries if link["relation"] == "has_voice_reference"
                 if (voice := voices.get(link["node_id"])) is not None
             ],
