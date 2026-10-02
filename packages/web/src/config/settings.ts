@@ -7,7 +7,12 @@ export const APP_SETTINGS = {
     narrative: 'solaris-atlas:narrative-preferences:v1',
     guestPlayerTitle: 'solaris-atlas:guest-player-title:v1',
   },
-  narrative: { nameMode: 'nickname', colorMode: 'accent', customColor: '#9BD9C0' },
+  narrative: {
+    nameMode: 'nickname',
+    colorMode: 'accent',
+    customColor: '#9BD9C0',
+    voiceLanguage: 'en',
+  },
   limits: {
     catalogPage: 24,
     catalogSearch: 50,
