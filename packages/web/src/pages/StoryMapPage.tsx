@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ArrowRight, BookOpen, ChevronRight, GitBranch, Search } from "lucide-react";
 import { api } from "../api/client";
@@ -84,20 +84,20 @@ export function StoryMapPage() {
   const chapters = useMemo(() => map?.chapters.map((chapter) => ({
     ...chapter,
     nodes: chapter.nodes.filter((node) =>
-      !query.trim() || [chapter.title, chapter.act_title, node.title, node.chapter_label, ...node.quests.map((quest) => quest.title)]
+      !query.trim() || [chapter.title, chapter.act_title, chapter.snapshot_game_version, node.title, node.chapter_label, ...node.quests.map((quest) => quest.title)]
         .some((value) => value?.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())),
     ),
   })).filter((chapter) => chapter.nodes.length) ?? [], [map, query]);
   const total = map?.chapters.reduce((sum, chapter) => sum + chapter.nodes.length, 0) ?? 0;
   const visible = chapters.reduce((sum, chapter) => sum + chapter.nodes.length, 0);
   const groupedChapters = useMemo(() => {
-    const groups: { title: string; subtitle: string | null; acts: typeof chapters }[] = [];
+    const groups: { title: string; subtitle: string | null; unchaptered: boolean; version: string; treeAvailable: boolean; acts: typeof chapters }[] = [];
     for (const chapter of chapters) {
       const title = chapter.title || `Chapter ${chapter.id}`;
       const subtitle = chapter.act_title === title ? null : chapter.chapter_number || null;
       const last = groups.at(-1);
-      if (last && last.title === title && last.subtitle === subtitle) last.acts.push(chapter);
-      else groups.push({ title, subtitle, acts: [chapter] });
+      if (last && !chapter.tree_available && last.title === title && last.subtitle === subtitle && last.unchaptered === (chapter.id === 0) && last.version === chapter.snapshot_game_version) last.acts.push(chapter);
+      else groups.push({ title, subtitle, unchaptered: chapter.id === 0, version: chapter.snapshot_game_version, treeAvailable: chapter.tree_available, acts: [chapter] });
     }
     return groups;
   }, [chapters]);
@@ -131,8 +131,9 @@ export function StoryMapPage() {
           </select>
         </label>
         <label>
-          Imported snapshot
-          <select value={version || map?.selected_game_version || ""} onChange={(event) => updateParam("game_version", event.target.value)}>
+          Version
+          <select value={version} onChange={(event) => updateParam("game_version", event.target.value)}>
+            <option value="">All patches</option>
             {(map?.imported_game_versions || []).map((item) => <option key={item} value={item}>{item}</option>)}
           </select>
         </label>
@@ -144,44 +145,35 @@ export function StoryMapPage() {
       {loading ? <PageLoader /> : error ? <ErrorPanel message={error} /> : map && (
         <>
           <div className="story-map-context">
-            <span>{visible} of {total} {map.tree_available ? "path nodes" : "source quests"} · snapshot {map.selected_game_version}</span>
-            <p>{map.tree_available ? "Connections follow QuestTree predecessor and next references. Branches and runtime conditions may change the route a player sees." : "This snapshot has no QuestTree. Chapters come from QuestData; any links shown are prerequisites, not an authored next quest."} “Seen from” is the earliest imported snapshot, not a confirmed release date.</p>
+            <span>{visible} of {total} source entries · {version ? `first seen in ${version}` : "all imported patches"}</span>
+            <p>Quests are grouped by their earliest imported snapshot, not a confirmed release date. Chapters and links follow the available game data; prerequisite links do not prove an immediate next quest.</p>
           </div>
           {!map.chapters.length ? (
             <div className="story-map-empty">
-              <h2>No source-backed path in this snapshot</h2>
-              <p>No QuestTree or chapter records matched this story path. The quest transcript archive is still available.</p>
+              <h2>{version ? `No quests first seen in ${version}` : "No source-backed story path"}</h2>
+              <p>No quest records matched this story path. The quest transcript archive is still available.</p>
               <Link className="text-link" to="/catalog/quest">Browse quests <ArrowRight size={15} /></Link>
             </div>
-          ) : chapters.length && !map.tree_available ? groupedChapters.map((group, index) => (
-            <section key={`${group.title}:${group.subtitle}`} className="story-chapter" aria-labelledby={`story-chapter-group-${index}`}>
-              <div className="story-chapter-heading">
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <div>
-                  <small>{group.subtitle || "QUEST CHAPTER"}</small>
-                  <h2 id={`story-chapter-group-${index}`}>{group.title}</h2>
+          ) : chapters.length ? groupedChapters.map((group, index) => (
+            <Fragment key={`${group.version}:${group.title}:${index}`}>
+              {!version && (index === 0 || groupedChapters[index - 1].version !== group.version) && <div className="story-patch-marker">First seen in snapshot {group.version}</div>}
+              <section className="story-chapter" aria-labelledby={`story-chapter-group-${index}`}>
+                <div className="story-chapter-heading">
+                  <span>{String(index + 1).padStart(2, "0")}</span>
+                  <div>
+                    <small>{group.treeAvailable ? `QUEST TREE CHAPTER ${group.acts[0].id}` : group.unchaptered ? "QUESTS WITHOUT A CHAPTER" : group.subtitle || "QUEST CHAPTER"}</small>
+                    <h2 id={`story-chapter-group-${index}`}>{group.title}</h2>
+                  </div>
+                  <b>{group.acts.reduce((sum, act) => sum + act.nodes.length, 0)} {group.treeAvailable ? "paths" : "source quests"}</b>
                 </div>
-                <b>{group.acts.reduce((sum, act) => sum + act.nodes.length, 0)} source quests</b>
-              </div>
-              {group.acts.map((act) => (
-                <div key={act.id} className="story-act">
-                  {act.act_title !== group.title && <h3>{[act.act_number, act.act_title].filter(Boolean).join(" · ") || `Act ${act.id}`}</h3>}
-                  <ol className="story-steps">{act.nodes.map((node) => <StoryStep key={node.id} node={node} version={map.selected_game_version} />)}</ol>
-                </div>
-              ))}
-            </section>
-          )) : chapters.length ? chapters.map((chapter, index) => (
-            <section key={chapter.id} className="story-chapter" aria-labelledby={`story-chapter-${chapter.id}`}>
-              <div className="story-chapter-heading">
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <div>
-                  <small>QUEST TREE CHAPTER {chapter.id}</small>
-                  <h2 id={`story-chapter-${chapter.id}`}>{chapter.title || `Chapter ${chapter.id}`}</h2>
-                </div>
-                <b>{chapter.nodes.length} paths</b>
-              </div>
-              <ol className="story-steps">{chapter.nodes.map((node) => <StoryStep key={node.id} node={node} version={map.selected_game_version} />)}</ol>
-            </section>
+                {group.acts.map((act) => (
+                  <div key={act.id} className="story-act">
+                    {!group.treeAvailable && !group.unchaptered && act.act_title !== group.title && <h3>{[act.act_number, act.act_title].filter(Boolean).join(" · ") || `Act ${act.id}`}</h3>}
+                    <ol className="story-steps">{act.nodes.map((node) => <StoryStep key={node.id} node={node} version={group.version} />)}</ol>
+                  </div>
+                ))}
+              </section>
+            </Fragment>
           )) : <div className="story-map-empty"><h2>No matching quests</h2><p>Try another name or story path.</p></div>}
         </>
       )}

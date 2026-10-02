@@ -11,6 +11,14 @@ import { QuestContinuity } from "../components/story/QuestContinuity";
 import { DialogueAudioReference, QuestMediaReferences, type QuestMediaManifest } from "../components/story/QuestMediaReferences";
 import type { QuestContinuity as QuestContinuityData } from "../data/story";
 
+type ChoiceBranch = {
+  choice: any;
+  sourceLineId: string;
+  optionIndex: number;
+  lineIds: string[];
+  continuationLineId: string | null;
+};
+
 export function QuestPage() {
   const { key = "" } = useParams();
   const [searchParams] = useSearchParams();
@@ -26,7 +34,27 @@ export function QuestPage() {
   const [error, setError] = useState("");
   const [onlyChoices, setOnlyChoices] = useState(false);
   const [onlyLines, setOnlyLines] = useState(false);
+  const [activeChoiceId, setActiveChoiceId] = useState<string | null>(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
+  useEffect(() => {
+    if (!activeChoiceId) return;
+    let enteredBranch = false;
+    const updateHighlight = () => {
+      const activeLines = document.querySelectorAll(".branch-line-active");
+      const inView = Array.from(activeLines).some((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.bottom > 0 && rect.top < window.innerHeight;
+      });
+      if (inView) enteredBranch = true;
+      else if (enteredBranch) setActiveChoiceId(null);
+    };
+    window.addEventListener("scroll", updateHighlight, { passive: true });
+    const frame = requestAnimationFrame(updateHighlight);
+    return () => {
+      window.removeEventListener("scroll", updateHighlight);
+      cancelAnimationFrame(frame);
+    };
+  }, [activeChoiceId]);
   useEffect(() => {
     const updateVisibility = () => setShowBackToTop(window.scrollY > window.innerHeight);
     updateVisibility();
@@ -73,6 +101,11 @@ export function QuestPage() {
   const quest = profile.quest;
   const lines = transcript.lines || [];
   const scenes = transcript.scenes || profile.scenes || [];
+  const storyGalleryRecord =
+    profile.source?.raw_record?.Data?.Key?.includes("剧情图鉴专用") === true;
+  const hasMediaReferences = Boolean(
+    media?.events.length || media?.video_packages.length,
+  );
   const explicitLinks = profile.explicit_links || [];
   const questConnections = explicitLinks.filter(
     (link: any) =>
@@ -82,8 +115,62 @@ export function QuestPage() {
   const sourceGraphLinks = explicitLinks.filter(
     (link: any) => !questConnections.includes(link),
   );
+  const availableLineIds = new Set<string>(lines.map((line: any) => line.id));
+  const branches: ChoiceBranch[] = lines.flatMap((line: any) =>
+    (line.player_choices || []).flatMap((choice: any, optionIndex: number) => {
+      const lineIds = choice.branch?.line_ids;
+      return Array.isArray(lineIds) &&
+        lineIds.length > 0 &&
+        lineIds.every((id: string) => availableLineIds.has(id))
+        ? [
+            {
+              choice,
+              sourceLineId: line.id,
+              optionIndex,
+              lineIds,
+              continuationLineId: choice.branch.continuation_line_id,
+            },
+          ]
+        : [];
+    }),
+  );
+  const branchesByChoice = new Map(
+    branches.map((branch) => [branch.choice.id, branch]),
+  );
+  const branchOwners = new Map<string, ChoiceBranch[]>();
+  for (const branch of branches) {
+    for (const lineId of branch.lineIds) {
+      branchOwners.set(lineId, [...(branchOwners.get(lineId) || []), branch]);
+    }
+  }
+  const branchByLine = new Map<string, ChoiceBranch>();
+  for (const branch of branches) {
+    if (branch.lineIds.every((id) => branchOwners.get(id)?.length === 1)) {
+      for (const lineId of branch.lineIds) branchByLine.set(lineId, branch);
+    }
+  }
+  const joins = new Map<string, number>();
+  for (const branch of branches) {
+    if (
+      branch.continuationLineId &&
+      branch.continuationLineId !== branch.sourceLineId
+    ) {
+      joins.set(
+        branch.continuationLineId,
+        (joins.get(branch.continuationLineId) || 0) + 1,
+      );
+    }
+  }
+  const choiceTargetIds = new Set<string>(
+    lines.flatMap((line: any) =>
+      (line.player_choices || []).map((choice: any) => choice.target_line_id).filter(Boolean),
+    ),
+  );
+  for (const branch of branches) {
+    for (const lineId of branch.lineIds) choiceTargetIds.add(lineId);
+  }
   const shown = lines
-    .filter((line: any) => !onlyChoices || line.player_choices?.length)
+    .filter((line: any) => !onlyChoices || line.player_choices?.length || choiceTargetIds.has(line.id))
     .filter((line: any) => !onlyLines || line.speaker);
   const stateCounts = new Map<string, number>();
   for (const line of shown) {
@@ -94,7 +181,13 @@ export function QuestPage() {
     key, count, anchor: `flow-state-${index}`,
   }));
   const stateAnchors = new Map(stateIndex.map((state) => [state.key, state.anchor]));
+  const lineAnchors = new Map<string, string>();
   const firstLineInState = new Set<string>();
+  shown.forEach((line: any, index: number) => {
+    const state = line.flow_state || "Unassigned";
+    lineAnchors.set(line.id, firstLineInState.has(state) ? `line-${index}` : stateAnchors.get(state)!);
+    firstLineInState.add(state);
+  });
   return (
     <div className="page-container quest-container">
       <div className="breadcrumbs">
@@ -127,18 +220,49 @@ export function QuestPage() {
             <span>
               LINES <b>{lines.length}</b>
             </span>
+            {scenes.length > 0 && <span>SCENES <b>{scenes.length}</b></span>}
           </div>
         </div>
       </section>
       {continuity && <QuestContinuity continuity={continuity} title={quest.name?.content || `Quest ${key}`} />}
       {continuityError && <div className="quest-continuity-warning" role="status">Story path unavailable: {continuityError}</div>}
+      {lines.length === 0 ? (
+        <section
+          className="quest-no-transcript"
+          aria-labelledby="quest-no-transcript-title"
+        >
+          <span className="eyebrow left">
+            SOURCE RECORD · NO DIALOGUE TRANSCRIPT
+          </span>
+          <h2 id="quest-no-transcript-title">
+            {storyGalleryRecord
+              ? "Story gallery record"
+              : "No dialogue recorded for this quest"}
+          </h2>
+          <p>
+            {storyGalleryRecord
+              ? `The game data marks this as a story gallery record. This import has ${scenes.length} scene records, but no dialogue lines or playable video for it.`
+              : scenes.length > 0
+                ? `This import has ${scenes.length} scene records for this quest, but no dialogue lines. The source does not confirm what players see at this point.`
+                : "The game data lists this quest, but this import has no dialogue or scene records for it."}
+          </p>
+          <p>
+            Its place in the story and source links are still shown on this
+            page.
+          </p>
+          {hasMediaReferences && (
+            <QuestMediaReferences manifest={media} stateAnchors={new Map()} />
+          )}
+        </section>
+      ) : (
+        <>
       <div className="transcript-toolbar">
         <div>
           <span className="eyebrow left">AUTHORED TRANSCRIPT</span>
           <h2>Story, as recorded.</h2>
           <p>
-            Dialogue appears in authored order. Runtime branches are preserved
-            where present; this is not a single guaranteed playthrough.
+            Choices with a recorded path show their own lines. Select an answer
+            to highlight its branch; this is not a single guaranteed playthrough.
           </p>
         </div>
         <div className="transcript-filters">
@@ -190,13 +314,12 @@ export function QuestPage() {
         <div className="transcript">
           {shown.length ? (
             shown.map((line: any, i: number) => {
-              const state = line.flow_state || "Unassigned";
-              const isFirst = !firstLineInState.has(state);
-              firstLineInState.add(state);
+              const branch = branchByLine.get(line.id);
+              const active = branch?.choice.id === activeChoiceId;
               return (
               <article
-                className="transcript-line"
-                id={isFirst ? stateAnchors.get(state) : undefined}
+                className={`transcript-line${branch ? " branch-line" : ""}${active ? " branch-line-active" : ""}`}
+                id={lineAnchors.get(line.id)}
                 key={line.id || i}
               >
                 <div className="line-rail">
@@ -204,6 +327,14 @@ export function QuestPage() {
                   <i />
                 </div>
                 <div className="line-body">
+                  {(joins.get(line.id) || 0) > 1 && <div className="branch-join">Branches meet here</div>}
+                  {branch && branch.lineIds[0] === line.id && (
+                    <div className="branch-marker">
+                      <span>CHOICE {String(branch.optionIndex + 1).padStart(2, "0")} · {branch.lineIds.length} {branch.lineIds.length === 1 ? "LINE" : "LINES"}</span>
+                      <strong><PlayerText display={playerDisplay} value={branch.choice.text} fallback="Choice text unavailable" /></strong>
+                      {active && <button type="button" onClick={() => setActiveChoiceId(null)}>Clear highlight</button>}
+                    </div>
+                  )}
                   <div className="speaker-row">
                     <span className="speaker-dot" />
                     <strong>
@@ -232,10 +363,22 @@ export function QuestPage() {
                       </div>
                       {line.player_choices.map((choice: any, j: number) => (
                         <div className="choice-option" key={j}>
-                          <span className="choice-diamond">◇</span>
-                          <span>
-                            <PlayerText display={playerDisplay} value={choice.text} fallback="Choice text unavailable" />
-                          </span>
+                          <span className="choice-diamond">{String(j + 1).padStart(2, "0")}</span>
+                          {lineAnchors.has(choice.target_line_id) ? (
+                            <button type="button" className="choice-branch-button" aria-pressed={activeChoiceId === choice.id}
+                              onClick={() => {
+                                const next = activeChoiceId === choice.id || !branchesByChoice.has(choice.id) ? null : choice.id;
+                                setActiveChoiceId(next);
+                                if (activeChoiceId !== choice.id) requestAnimationFrame(() => document.getElementById(lineAnchors.get(choice.target_line_id)!)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+                              }}>
+                              <span><PlayerText display={playerDisplay} value={choice.text} fallback="Choice text unavailable" /></span>
+                              <small>{branchesByChoice.has(choice.id)
+                                ? `${branchesByChoice.get(choice.id)!.lineIds.length} ${branchesByChoice.get(choice.id)!.lineIds.length === 1 ? "line" : "lines"}${branchesByChoice.get(choice.id)!.continuationLineId === line.id ? " · returns here" : ""}`
+                                : "View reply"}</small>
+                            </button>
+                          ) : (
+                            <span><PlayerText display={playerDisplay} value={choice.text} fallback="Choice text unavailable" /></span>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -256,6 +399,12 @@ export function QuestPage() {
                       </span>
                     )}
                   </div>
+                  {branch && branch.lineIds.at(-1) === line.id && branch.continuationLineId && lineAnchors.has(branch.continuationLineId) && (
+                    <div className="branch-end">
+                      <span>{branch.continuationLineId === branch.sourceLineId ? "Returns to the choice" : "Continues after this branch"}</span>
+                      <a href={`#${lineAnchors.get(branch.continuationLineId)}`}>Go there ↑</a>
+                    </div>
+                  )}
                 </div>
               </article>
             );})
@@ -264,10 +413,12 @@ export function QuestPage() {
           )}
         </div>
       </div>
+        </>
+      )}
       {(questConnections.length > 0 || sourceGraphLinks.length > 0) && (
         <section className="content-panel quest-links-panel">
           <div className="panel-title">
-            <span>02</span>
+            <span>{lines.length === 0 ? "01" : "02"}</span>
             <h2>Quest connections</h2>
             <small>{questConnections.length}</small>
           </div>
