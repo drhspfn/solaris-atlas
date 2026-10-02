@@ -28,6 +28,7 @@ class Clip(StrictModel):
 class Option(StrictModel):
     label: str = Field(min_length=1)
     next: str = Field(min_length=1)
+    rover: Literal["male", "female"] | None = None
 
 
 class Choice(StrictModel):

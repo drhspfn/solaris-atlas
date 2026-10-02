@@ -43,6 +43,10 @@ def test_other_cutscene_single_and_gender_specific_timed_sound(tmp_path):
     assert single["videos"][0]["soundtrack"] == []
     branch = plan_cutscene(db_path, tmp_path, "Branch", "3.7.0")
     assert branch["flow"]["nodes"][0]["kind"] == "choice"
+    assert [option["rover"] for option in branch["flow"]["nodes"][0]["options"]] == [
+        "female",
+        "male",
+    ]
     assert branch["videos"][0]["soundtrack"][0]["start_seconds"] == 2.5
     assert branch["videos"][0]["soundtrack"][0]["end_seconds"] == 10
     assert branch["videos"][1]["soundtrack"] == []

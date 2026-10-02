@@ -72,6 +72,7 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str) 
                 if gender == 0
                 else f"CG {cg_id}",
                 "next": f"cg-{cg_id}",
+                "rover": "male" if gender == 1 else "female" if gender == 0 else None,
             }
         )
     nodes = (

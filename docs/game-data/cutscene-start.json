@@ -49,11 +49,13 @@
         "options": [
           {
             "label": "Male Rover",
-            "next": "cg-101"
+            "next": "cg-101",
+            "rover": "male"
           },
           {
             "label": "Female Rover",
-            "next": "cg-102"
+            "next": "cg-102",
+            "rover": "female"
           }
         ]
       },

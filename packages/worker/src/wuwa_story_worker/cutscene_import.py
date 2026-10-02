@@ -224,6 +224,22 @@ async def import_cutscene_recipe(
                                 if index < len(labels)
                                 else f"Variant {index + 1}",
                                 "next": segment["id"],
+                                "rover": next(
+                                    (
+                                        option.rover
+                                        for option in source_choices.options
+                                        if any(
+                                            node.id == option.next
+                                            and node.kind == "clip"
+                                            and node.asset
+                                            == spec.videos[segment["source_index"]].asset
+                                            for node in spec.flow.nodes
+                                        )
+                                    ),
+                                    None,
+                                )
+                                if source_choices
+                                else None,
                             }
                             for index, segment in enumerate(branches)
                         ],

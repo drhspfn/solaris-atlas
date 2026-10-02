@@ -1,9 +1,16 @@
 import pytest
 from pydantic import ValidationError
 
-from wuwa_story.ingestion.cutscenes import CutsceneRecipe, PlaybackFlow
+from wuwa_story.ingestion.cutscenes import CutsceneRecipe, Option, PlaybackFlow
 
 ASSET = "asset:ue:/Game/Movies/Test.Test"
+
+
+def test_rover_identity_is_optional_and_validated():
+    assert Option(label="Answer", next="clip").rover is None
+    assert Option(label="A", next="clip", rover="female").rover == "female"
+    with pytest.raises(ValidationError):
+        Option(label="A", next="clip", rover="unknown")
 
 
 def clip(key, next=None):
