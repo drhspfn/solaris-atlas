@@ -62,6 +62,8 @@
 .story-map-context{display:flex;align-items:flex-start;justify-content:space-between;gap:22px;padding:15px 0 23px;border-bottom:1px solid var(--border-subtle)}
 .story-map-context>span{flex:none;font:600 11px 'Manrope',sans-serif;color:var(--accent-mint)}
 .story-map-context p{max-width:660px;margin:0;color:var(--text-muted);font-size:11px;line-height:1.6}
+.story-patch-marker{margin:36px 0 0;padding:10px 14px;border-left:2px solid var(--accent-warm);background:var(--surface-1);color:var(--accent-warm);font:600 11px 'Manrope',sans-serif;letter-spacing:.04em}
+.story-patch-marker+.story-chapter{padding-top:24px}
 .story-chapter{padding:42px 0 22px;border-bottom:1px solid var(--border-subtle)}
 .story-chapter-heading{display:flex;align-items:center;gap:24px;padding-bottom:24px}
 .story-chapter-heading>span{display:grid;place-items:center;flex:none;width:62px;height:62px;border:1px solid var(--border-strong);border-radius:50%;font:400 19px 'Manrope',sans-serif;color:var(--accent-mint)}
@@ -110,6 +112,10 @@
 .quest-continuity-current>span{display:block;margin-top:9px;color:var(--text-muted);font-size:9px;overflow-wrap:anywhere}
 .quest-continuity-note{margin:15px 0 0;color:var(--text-muted);font-size:10px;line-height:1.5}
 .quest-continuity-warning{margin-top:20px;padding:12px 15px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);color:var(--accent-warm);font-size:11px}
+.quest-no-transcript{margin:clamp(24px,3vw,40px) 0;padding:26px 30px;border:1px solid var(--border-default);border-left:2px solid var(--accent-warm);border-radius:var(--radius-lg);background:var(--surface-1)}
+.quest-no-transcript h2{margin:12px 0;font:500 22px/1.35 'Manrope',sans-serif;color:var(--text-primary)}
+.quest-no-transcript p{max-width:720px;margin:9px 0;color:var(--text-secondary);font-size:12px;line-height:1.7}
+.quest-no-transcript .quest-media-panel{margin-top:20px}
 @media(max-width:760px){
   .story-map-hero{padding-bottom:25px}.story-map-seal{display:none}
   .story-map-tools{grid-template-columns:1fr 1fr}.story-map-search{grid-column:1/-1}
@@ -451,6 +457,26 @@ input,select{border-radius:var(--radius-sm)}
 @media(max-width:640px){.scene-nav>h3:after{content:'Flow index'}.flow-state-list{max-height:190px}.quest-media-panel{margin-top:12px}}
 
 .quest-links-panel{margin-top:clamp(24px,3vw,40px)}
+.app-shell{overflow:clip}
+@media(min-width:641px){.scene-nav{max-height:calc(100dvh - 30px);overflow-y:auto}}
+.choice-option .choice-diamond{flex:none;min-width:20px;font:600 9px 'Manrope',sans-serif;color:var(--accent-warm)}
+.choice-branch-button{display:flex;align-items:center;justify-content:space-between;gap:16px;flex:1;min-width:0;padding:1px 0;border:0;background:transparent;color:inherit;text-align:left}
+.choice-branch-button:hover,.choice-branch-button:focus-visible,.choice-branch-button[aria-pressed="true"]{color:var(--accent-mint)}
+.choice-branch-button:focus-visible{outline:2px solid var(--accent-mint);outline-offset:3px}
+.choice-branch-button small{flex:none;color:var(--accent-warm);font-size:9px;white-space:nowrap}
+.choice-branch-button[aria-pressed="true"] small{color:var(--accent-mint)}
+.transcript-line.branch-line{border-left:2px solid var(--accent-warm);background:rgba(213,198,162,.035)}
+.transcript-line.branch-line-active{border-left-color:var(--accent-mint);background:rgba(155,217,192,.09)}
+.branch-marker{display:flex;align-items:center;flex-wrap:wrap;gap:7px 14px;margin:-3px 0 17px;padding-bottom:12px;border-bottom:1px solid var(--border-default)}
+.branch-marker>span{color:var(--accent-warm);font:700 9px 'Manrope',sans-serif;letter-spacing:.1em}
+.branch-marker strong{flex:1;min-width:180px;color:var(--text-primary);font-size:11px;font-weight:600}
+.branch-marker button,.branch-end a{border:0;background:transparent;color:var(--accent-mint);font-size:10px;cursor:pointer}
+.branch-marker button:hover,.branch-end a:hover{text-decoration:underline}
+.branch-marker button:focus-visible,.branch-end a:focus-visible{outline:2px solid var(--accent-mint);outline-offset:3px}
+.branch-join{margin:-3px 0 14px;color:var(--accent-cyan);font:700 9px 'Manrope',sans-serif;letter-spacing:.08em;text-transform:uppercase}
+.branch-end{display:flex;justify-content:space-between;gap:12px;margin-top:15px;padding-top:10px;border-top:1px solid var(--border-default);color:var(--text-muted);font-size:10px}
+@media(max-width:640px){.choice-branch-button{align-items:flex-start;flex-direction:column;gap:4px}.branch-marker strong{min-width:100%}}
+.transcript-line:target{border-color:var(--accent-mint);background:var(--surface-2)}
 .quest-back-to-top{position:fixed;right:clamp(18px,4vw,56px);bottom:calc(20px + env(safe-area-inset-bottom));z-index:8;display:flex;align-items:center;gap:9px;min-height:44px;padding:0 16px;border:1px solid var(--border-strong);border-radius:var(--radius-md);background:var(--surface-2);color:var(--accent-mint);box-shadow:0 10px 30px #0008;font-size:11px;font-weight:600;transition:background .2s,border-color .2s,transform .2s}
 .quest-back-to-top:hover{background:var(--surface-3);border-color:var(--accent-mint);transform:translateY(-2px)}
 .quest-back-to-top:focus-visible{outline:2px solid var(--accent-mint);outline-offset:3px}

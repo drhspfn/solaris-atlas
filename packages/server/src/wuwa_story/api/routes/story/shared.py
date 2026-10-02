@@ -379,6 +379,55 @@ def _provenance(
         "raw_record": record.data,
     }
 
+def _choice_branch(
+    params: dict[str, Any], state_key: str, action_index: int, target_line_id: str | None
+) -> dict[str, Any] | None:
+    """Read one source-authored talk sequence without inferring runtime paths."""
+    prefix = f"talk_item:{state_key}:{action_index}:"
+    if not target_line_id or not target_line_id.startswith(prefix):
+        return None
+    items = params.get("TalkItems")
+    sequences = params.get("TalkSequence")
+    if not isinstance(items, list) or not isinstance(sequences, list):
+        return None
+    try:
+        target_item = items[int(target_line_id.removeprefix(prefix))]
+        target_talk_id = target_item["Id"]
+    except (ValueError, IndexError, TypeError, KeyError):
+        return None
+    matches = [
+        (index, sequence.index(target_talk_id))
+        for index, sequence in enumerate(sequences)
+        if isinstance(sequence, list) and target_talk_id in sequence
+    ]
+    if len(matches) != 1:
+        return None
+    sequence_index, start = matches[0]
+    local_ids: dict[Any, list[str]] = {}
+    for index, item in enumerate(items):
+        if isinstance(item, dict) and item.get("Id") is not None:
+            local_ids.setdefault(item["Id"], []).append(f"{prefix}{index}")
+
+    def unique_line_id(talk_id: Any) -> str | None:
+        candidates = local_ids.get(talk_id, [])
+        return candidates[0] if len(candidates) == 1 else None
+
+    line_ids = [unique_line_id(talk_id) for talk_id in sequences[sequence_index][start:]]
+    if not line_ids or any(line_id is None for line_id in line_ids):
+        return None
+    continuation_line_id = None
+    transitions = params.get("SequenceTransitions") or {}
+    if isinstance(transitions, dict):
+        outgoing = transitions.get(str(sequence_index), [])
+        if isinstance(outgoing, list) and len(outgoing) == 1 and isinstance(outgoing[0], dict):
+            transition = outgoing[0]
+            next_index = transition.get("NextSequenceIndex")
+            if not transition.get("OptionTextKey") and isinstance(next_index, int) and 0 <= next_index < len(sequences):
+                next_sequence = sequences[next_index]
+                if isinstance(next_sequence, list) and next_sequence:
+                    continuation_line_id = unique_line_id(next_sequence[0])
+    return {"line_ids": line_ids, "continuation_line_id": continuation_line_id}
+
 async def _dialogue_payload(
     session: AsyncSession,
     row: tuple[Any, ...],
@@ -404,6 +453,45 @@ async def _dialogue_payload(
     choices = await session.scalars(
         select(PlayerChoice).where(PlayerChoice.node_id.in_(choice_targets))
     )
+    choices = sorted(
+        choices,
+        key=lambda choice: (
+            (choice.metadata_json or {}).get("choice_index")
+            if (choice.metadata_json or {}).get("choice_index") is not None
+            else 999,
+            choice.node_id,
+        ),
+    )
+    choice_ids = [choice.node_id for choice in choices]
+    target_keys: dict[int, set[str]] = {choice_id: set() for choice_id in choice_ids}
+    if choice_ids:
+        direct_targets = await session.execute(
+            select(Edge.from_node_id, Node.canonical_key)
+            .join(RelationType, RelationType.id == Edge.relation_type_id)
+            .join(Node, Node.id == Edge.to_node_id)
+            .where(Edge.from_node_id.in_(choice_ids), RelationType.key == "choice_branch")
+        )
+        for choice_id, target_key in direct_targets:
+            target_keys[choice_id].add(target_key)
+        unresolved = [choice_id for choice_id in choice_ids if not target_keys[choice_id]]
+        if unresolved:
+            nested_actions = await session.execute(
+                select(Edge.from_node_id, Edge.to_node_id)
+                .join(RelationType, RelationType.id == Edge.relation_type_id)
+                .where(Edge.from_node_id.in_(unresolved), RelationType.key == "contains_nested_action")
+            )
+            nested_owners: dict[int, int] = {
+                nested_id: choice_id for choice_id, nested_id in nested_actions
+            }
+            if nested_owners:
+                jumps = await session.execute(
+                    select(Edge.from_node_id, Node.canonical_key)
+                    .join(RelationType, RelationType.id == Edge.relation_type_id)
+                    .join(Node, Node.id == Edge.to_node_id)
+                    .where(Edge.from_node_id.in_(nested_owners), RelationType.key == "jumps_to_talk")
+                )
+                for nested_id, target_key in jumps:
+                    target_keys[nested_owners[nested_id]].add(target_key)
     choice_payloads = []
     for choice in choices:
         choice_node = await session.get(Node, choice.node_id)
@@ -423,6 +511,12 @@ async def _dialogue_payload(
                 "text": await _localized(
                     session, choice.localization_key_id, locale_code, release_id
                 ),
+                "target_line_id": next(iter(target_keys[choice.node_id]))
+                if len(target_keys[choice.node_id]) == 1 else None,
+                "branch": _choice_branch(
+                    action.params, state.state_key, action.action_index,
+                    next(iter(target_keys[choice.node_id])),
+                ) if action and state and len(target_keys[choice.node_id]) == 1 else None,
                 "provenance": _provenance(choice_source, choice_file),
             }
         )

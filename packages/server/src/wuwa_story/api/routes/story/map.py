@@ -7,11 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from wuwa_story.api.routes.story.shared import _display_label, _release_id, _version_key
+from wuwa_story.api.routes.story.shared import _display_label, _version_key
 from wuwa_story.db.models.core import Quest
 from wuwa_story.db.models.graph import NodeRevision
 from wuwa_story.db.models.i18n import Locale, LocalizationKey, LocalizationValue
-from wuwa_story.db.models.ops import GameRelease
+from wuwa_story.db.models.ops import GameRelease, ImportRun
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.session import get_session
 
@@ -100,7 +100,9 @@ async def _first_observed(
         select(Quest.game_quest_id, GameRelease.game_version, GameRelease.sequence)
         .join(NodeRevision, NodeRevision.node_id == Quest.node_id)
         .join(GameRelease, GameRelease.id == NodeRevision.release_id)
-        .where(Quest.game_quest_id.in_(quest_ids))
+        .where(Quest.game_quest_id.in_(quest_ids), GameRelease.id.in_(
+            select(ImportRun.release_id).where(ImportRun.status == "succeeded")
+        ))
     )).all()
     first_seen: dict[int, str] = {}
     for quest_id, version, _sequence in sorted(
@@ -120,11 +122,9 @@ async def _prerequisite_map(
     session: AsyncSession, release: GameRelease, locale: str,
     quest_type_id: int, versions: list[str], quest_records: list[SourceRecord],
 ) -> dict[str, Any]:
-    """For early patches without QuestTree, show only explicit chapter/prerequisite data."""
+    """For early patches without QuestTree, show QuestData and its explicit links."""
     selected = [record for record in quest_records
                 if isinstance(record.data.get("QuestId"), int)
-                and isinstance(_quest_data(record).get("ChapterId"), int)
-                and _quest_data(record)["ChapterId"] > 0
                 and (quest_type_id == 0 or _quest_data(record).get("Type") == quest_type_id)]
     chapter_records = await _records(session, release.id, QUEST_CHAPTER_PATH)
     chapter_by_id = {record.data.get("Id"): record for record in chapter_records}
@@ -139,9 +139,10 @@ async def _prerequisite_map(
     titles = await _localized_titles(session, release, locale, keys)
     grouped: dict[int, list[SourceRecord]] = defaultdict(list)
     for record in selected:
-        grouped[_quest_data(record)["ChapterId"]].append(record)
+        chapter_id = _quest_data(record).get("ChapterId")
+        grouped[chapter_id if isinstance(chapter_id, int) and chapter_id > 0 else 0].append(record)
     chapters = []
-    for chapter_id in sorted(grouped):
+    for chapter_id in sorted(grouped, key=lambda value: (value == 0, value)):
         chapter = chapter_by_id.get(chapter_id)
         authored = []
         records_by_id = {record.data["QuestId"]: record for record in grouped[chapter_id]}
@@ -172,7 +173,9 @@ async def _prerequisite_map(
             })
         chapters.append({
             "id": chapter_id,
-            "title": titles.get(chapter.data.get("ChapterName")) if chapter else None,
+            "title": titles.get(chapter.data.get("ChapterName")) if chapter else (
+                "Quests without a chapter" if chapter_id == 0 else None
+            ),
             "chapter_number": titles.get(chapter.data.get("ChapterNum")) if chapter else None,
             "act_title": titles.get(chapter.data.get("ActName")) if chapter else None,
             "act_number": titles.get(chapter.data.get("SectionNum")) if chapter else None,
@@ -184,29 +187,17 @@ async def _prerequisite_map(
         "quest_type_id": quest_type_id,
         "tree_available": False,
         "chapters": chapters,
-        "ordering_basis": "QuestData.Data.ChapterId groups quests in source ID order; ProvideType.Conditions.PreQuest is a prerequisite, not an immediate next event",
+        "ordering_basis": "QuestData.Data.ChapterId groups quests when present; unchaptered quests are grouped separately. ProvideType.Conditions.PreQuest is a prerequisite, not an immediate next event",
         "version_basis": "Earliest imported snapshot containing each quest, not a proven debut patch",
     }
 
 
-@router.get("/story-map")
-async def story_map(
-    locale: str = "en",
-    game_version: str | None = None,
-    quest_type_id: int = Query(1, ge=0),
-    session: AsyncSession = Depends(get_session),
+async def _snapshot_map(
+    session: AsyncSession, release: GameRelease, locale: str,
+    quest_type_id: int, versions: list[str],
 ) -> dict[str, Any]:
-    """Expose authored QuestTree order; version labels mean observed imports only."""
-    if await session.scalar(select(Locale.id).where(Locale.code == locale)) is None:
-        raise HTTPException(status_code=400, detail=f"unknown locale: {locale}")
-    release_id = await _release_id(session, game_version)
-    if release_id is None:
-        raise HTTPException(status_code=404, detail="game version not imported")
-    release = await session.get(GameRelease, release_id)
-    assert release is not None
-    versions = sorted(
-        set(await session.scalars(select(GameRelease.game_version))), key=_version_key
-    )
+    """Build one source-backed snapshot without applying a patch filter."""
+    release_id = release.id
     tree_records = await _records(session, release_id, TREE_NODE_PATH)
     chapter_records = await _records(session, release_id, TREE_CHAPTER_PATH)
     quest_records = await _records(session, release_id, QUEST_PATH)
@@ -278,5 +269,67 @@ async def story_map(
         "tree_available": True,
         "chapters": chapters,
         "ordering_basis": "QuestTree.PreNode and QuestTree.NextNode; authored navigation, not a guaranteed playthrough",
+        "version_basis": "Earliest imported snapshot containing each quest, not a proven debut patch",
+    }
+
+
+def _first_seen_chapters(snapshot: dict[str, Any], version: str) -> list[dict[str, Any]]:
+    """Keep only quests first observed in this imported snapshot."""
+    chapters = []
+    for chapter in snapshot["chapters"]:
+        nodes = []
+        for node in chapter["nodes"]:
+            quests = [quest for quest in node["quests"]
+                      if quest["first_observed_game_version"] == version]
+            if quests:
+                nodes.append({**node, "quests": quests})
+        if nodes:
+            chapters.append({**chapter, "nodes": nodes,
+                             "snapshot_game_version": version,
+                             "tree_available": snapshot["tree_available"]})
+    return chapters
+
+
+@router.get("/story-map")
+async def story_map(
+    locale: str = "en",
+    game_version: str | None = None,
+    quest_type_id: int = Query(1, ge=0),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Browse all imported patches, or quests first seen in one selected patch."""
+    if await session.scalar(select(Locale.id).where(Locale.code == locale)) is None:
+        raise HTTPException(status_code=400, detail=f"unknown locale: {locale}")
+    releases = list(await session.scalars(
+        select(GameRelease)
+        .where(GameRelease.id.in_(
+            select(ImportRun.release_id).where(ImportRun.status == "succeeded")
+        ))
+    ))
+    latest_by_version = {release.game_version: release
+                         for release in sorted(releases, key=lambda item: item.sequence)}
+    ordered = sorted(latest_by_version.values(),
+                     key=lambda item: (_version_key(item.game_version), item.sequence))
+    versions = [release.game_version for release in ordered]
+    if not ordered:
+        raise HTTPException(status_code=404, detail="no imported game versions")
+    if game_version:
+        release = latest_by_version.get(game_version)
+        if release is None:
+            raise HTTPException(status_code=404, detail="game version not imported")
+        snapshot = await _snapshot_map(session, release, locale, quest_type_id, versions)
+        return {**snapshot, "chapters": _first_seen_chapters(snapshot, game_version)}
+
+    chapters = []
+    for release in ordered:
+        snapshot = await _snapshot_map(session, release, locale, quest_type_id, versions)
+        chapters.extend(_first_seen_chapters(snapshot, release.game_version))
+    return {
+        "selected_game_version": None,
+        "imported_game_versions": versions,
+        "quest_type_id": quest_type_id,
+        "tree_available": all(chapter["tree_available"] for chapter in chapters),
+        "chapters": chapters,
+        "ordering_basis": "Imported snapshots in version order; each quest appears in its earliest observed snapshot. Within each snapshot, source chapters and explicit prerequisites determine grouping.",
         "version_basis": "Earliest imported snapshot containing each quest, not a proven debut patch",
     }

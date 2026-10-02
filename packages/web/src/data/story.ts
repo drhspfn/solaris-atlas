@@ -21,7 +21,7 @@ export type StoryTreeNode = {
 };
 
 export type StoryMap = {
-  selected_game_version: string;
+  selected_game_version: string | null;
   imported_game_versions: string[];
   quest_type_id: number;
   tree_available: boolean;
@@ -31,6 +31,8 @@ export type StoryMap = {
     chapter_number?: string | null;
     act_title?: string | null;
     act_number?: string | null;
+    snapshot_game_version: string;
+    tree_available: boolean;
     nodes: StoryTreeNode[];
   }[];
   ordering_basis: string;
