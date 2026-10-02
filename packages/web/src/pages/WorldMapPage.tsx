@@ -104,6 +104,8 @@ const menuGroups = [
 ];
 const markerType = (m: Marker) =>
   `${m.category}:${m.metadata.item_id ? `item:${m.metadata.item_id}` : m.category === "combat_activity" ? "dream-patrol" : m.metadata.names?.en || m.metadata.icon_source || m.metadata.type_key || m.blueprint_type}`;
+const MAP_MAX_ZOOM = 3;
+
 const position = (world: number[]) =>
   L.latLng((-world[1] / 85000) * 256, (world[0] / 85000) * 256);
 const bounds = (a: Atlas) =>
@@ -144,7 +146,7 @@ function MapCanvas({
     const instance = L.map(element.current!, {
       crs: L.CRS.Simple,
       minZoom: -6,
-      maxZoom: 2,
+      maxZoom: MAP_MAX_ZOOM,
       preferCanvas: true,
       attributionControl: false,
     });
@@ -213,7 +215,7 @@ function MapCanvas({
             minNativeZoom: 0,
             maxNativeZoom: 0,
             minZoom: -1,
-            maxZoom: 2,
+            maxZoom: MAP_MAX_ZOOM,
             opacity: alpha,
             bounds: bounds(atlas),
           }).addTo(instance),
@@ -266,9 +268,9 @@ function MapCanvas({
         })
           .addTo(group)
           .on("click", () => {
-            if (zoom >= 2) onCluster(cell);
+            if (zoom >= MAP_MAX_ZOOM) onCluster(cell);
             else
-              instance.setView(center, Math.min(2, zoom + 1), {
+              instance.setView(center, Math.min(MAP_MAX_ZOOM, zoom + 1), {
                 animate: false,
               });
           });
@@ -299,7 +301,7 @@ function MapCanvas({
         if (cell.length > 1)
           instance.setView(
             position(marker.world),
-            Math.min(2, instance.getZoom() + 2),
+            Math.min(MAP_MAX_ZOOM, instance.getZoom() + 2),
           );
         else onSelect(marker);
       });
