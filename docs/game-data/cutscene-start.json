@@ -1,0 +1,74 @@
+{
+  "cutscene": "cutscene:Start",
+  "asset_version": "3.7.0",
+  "videos": [
+    {
+      "asset": "asset:ue:/Game/Aki/Sequence/LevelA_Seq/Main/01/M0206/M0206_Mp4.M0206_Mp4",
+      "soundtrack": [
+        {
+          "bank": "Client/Content/Aki/WwiseAudio_Generated/Event/play_sequence_music_m0206.bnk",
+          "start_seconds": 0
+        },
+        {
+          "bank": "Client/Content/Aki/WwiseAudio_Generated/Event/play_sfx_lva_m0206.bnk",
+          "start_seconds": 0
+        }
+      ]
+    },
+    {
+      "asset": "asset:ue:/Game/Aki/Sequence/LevelA_Seq/Main/01/M0206/M0206_nvzhu_Mp4.M0206_nvzhu_Mp4",
+      "soundtrack": [
+        {
+          "bank": "Client/Content/Aki/WwiseAudio_Generated/Event/play_sequence_music_m0206.bnk",
+          "start_seconds": 0
+        },
+        {
+          "bank": "Client/Content/Aki/WwiseAudio_Generated/Event/play_sfx_lva_m0206.bnk",
+          "start_seconds": 0
+        }
+      ]
+    }
+  ],
+  "flow": {
+    "version": 1,
+    "entry": "intro",
+    "evidence": "Viewer Rover-variant choice; current videodata CG101 GirlOrBoy1 and CG102 GirlOrBoy0. Visually shared establishing shots through 24s, separate encoded originals retained. videosound shared events start at 0s, EndMoment -1. No authored narrative choice claimed.",
+    "nodes": [
+      {
+        "id": "intro",
+        "kind": "clip",
+        "asset": "asset:ue:/Game/Aki/Sequence/LevelA_Seq/Main/01/M0206/M0206_Mp4.M0206_Mp4",
+        "start": 0,
+        "end": 24,
+        "next": "rover"
+      },
+      {
+        "id": "rover",
+        "kind": "choice",
+        "prompt": "Choose your Rover",
+        "options": [
+          {
+            "label": "Male Rover",
+            "next": "male"
+          },
+          {
+            "label": "Female Rover",
+            "next": "female"
+          }
+        ]
+      },
+      {
+        "id": "male",
+        "kind": "clip",
+        "asset": "asset:ue:/Game/Aki/Sequence/LevelA_Seq/Main/01/M0206/M0206_Mp4.M0206_Mp4",
+        "start": 24
+      },
+      {
+        "id": "female",
+        "kind": "clip",
+        "asset": "asset:ue:/Game/Aki/Sequence/LevelA_Seq/Main/01/M0206/M0206_nvzhu_Mp4.M0206_nvzhu_Mp4",
+        "start": 24
+      }
+    ]
+  }
+}

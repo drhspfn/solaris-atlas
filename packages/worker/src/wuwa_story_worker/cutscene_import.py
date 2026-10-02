@@ -1,17 +1,21 @@
-"""Bounded 3.7 cutscene import from exported assets and source soundtrack banks."""
+"""Publish exported cutscene assets and a validated playback graph."""
 
 import asyncio
+import json
 import re
 import struct
 import subprocess
+import tempfile
 from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy import text as sql_text
 from wuwa_story.config.settings import get_settings
-from wuwa_story.db.models.graph import Node
+from wuwa_story.db.models.graph import Edge, Node
+from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.storage import FileReference
 from wuwa_story.db.session import SessionFactory
+from wuwa_story.ingestion.cutscenes import Clip, CutsceneRecipe
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
@@ -69,160 +73,242 @@ def bank_media_id(data: bytes) -> int:
     return sources[0]
 
 
-async def import_cutscene_sample(
-    assets: Path,
-    movies: Path,
-    audio: Path,
-    output: Path,
-    decoder: Path,
-    ffmpeg: Path,
-    asset_version: str,
+def confined(root: Path, relative: str) -> Path:
+    path = (root / relative).resolve()
+    if not path.is_relative_to(root.resolve()):
+        raise ValueError("Export path escapes its root")
+    return path
+
+
+async def run_tool(args: list[str], timeout: int = 300):
+    return await asyncio.to_thread(
+        subprocess.run, args, capture_output=True, timeout=timeout, check=True
+    )
+
+
+def video_duration(ffmpeg: Path, movie: Path) -> tuple[float, bool]:
+    probe = subprocess.run(
+        [str(ffmpeg.resolve()), "-hide_banner", "-i", str(movie.resolve())],
+        capture_output=True,
+        timeout=30,
+    )
+    info = probe.stderr.decode("utf-8", errors="replace")
+    match = re.search(r"Duration: (\d+):(\d+):(\d+\.\d+)", info)
+    if not match or "Video: h264" not in info:
+        raise ValueError("Expected a finite browser-compatible H.264 movie")
+    hours, minutes, seconds = map(float, match.groups())
+    return hours * 3600 + minutes * 60 + seconds, "Audio:" in info
+
+
+async def import_cutscene_recipe(
+    recipe: Path, assets: Path, movies: Path, audio: Path, output: Path, decoder: Path, ffmpeg: Path
 ) -> dict:
-    if asset_version != "3.7.0":
-        raise ValueError("Cutscene sample bank layout is verified for 3.7.0 only")
-    # Explicit scope: Start's two source variants and two shared events, not arbitrary banks.
-    stems = ("M0206_Mp4", "M0206_nvzhu_Mp4")
-    events = ("play_sequence_music_m0206", "play_sfx_lva_m0206")
+    spec = CutsceneRecipe.model_validate_json(recipe.read_text(encoding="utf-8"))
+    # Separate working directories keep simultaneous publishers from overwriting each other.
     output.mkdir(parents=True, exist_ok=True)
-    decoded = []
-    for event in events:
-        matches = list(assets.rglob(event + ".bnk"))
-        if len(matches) != 1:
-            raise ValueError(f"Expected exactly one exported bank: {event}")
-        media_id = bank_media_id(matches[0].read_bytes())
-        inputs = list(audio.rglob(f"{media_id}.wem"))
-        if len(inputs) != 1:
-            raise ValueError(f"Expected exact soundtrack WEM: {media_id}")
-        wav = output / f"{media_id}.wav"
-        await asyncio.to_thread(
-            subprocess.run,
-            [str(decoder.resolve()), "-i", "-o", str(wav.resolve()), str(inputs[0].resolve())],
-            check=True,
-            capture_output=True,
-            timeout=120,
-        )
-        decoded.append((matches[0], inputs[0], wav))
-    prepared = []
-    for stem in stems:
-        matches = list(assets.rglob(stem + ".uexp"))
-        if len(matches) != 1:
-            raise ValueError(f"Expected exactly one exported media asset: {stem}")
-        authored_path = movie_path(matches[0].read_bytes())
-        movie = movies / authored_path
-        if not movie.is_file():
-            raise FileNotFoundError(authored_path)
-        relative = matches[0].relative_to(assets).as_posix()
-        if not relative.startswith("Client/Content/"):
-            raise ValueError("Asset export must retain its game content path")
-        engine = (
-            "/Game/" + relative.removeprefix("Client/Content/").removesuffix(".uexp") + "." + stem
-        )
-        playable = output / (stem + ".mp4")
-        temporary = output / (stem + ".partial.mp4")
-        await asyncio.to_thread(
-            subprocess.run,
-            [
-                str(ffmpeg.resolve()),
-                "-y",
-                "-i",
-                str(movie.resolve()),
-                "-i",
-                str(decoded[0][2].resolve()),
-                "-i",
-                str(decoded[1][2].resolve()),
-                "-filter_complex",
-                "[1:a][2:a]amix=inputs=2:normalize=0,alimiter=level=false,apad=pad_dur=2[a]",
-                "-map",
-                "0:v:0",
-                "-map",
-                "[a]",
-                "-c:v",
-                "copy",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "192k",
-                "-shortest",
-                "-movflags",
-                "+faststart",
-                str(temporary.resolve()),
-            ],
-            check=True,
-            capture_output=True,
-            timeout=300,
-        )
-        temporary.replace(playable)
-        prepared.append((engine, movie, playable))
-    storage = S3Storage(get_settings())
-    await storage.ensure_bucket()
-    service = FileRegistrationService(storage)
-    async with SessionFactory() as session:
-        for engine, movie, playable in prepared:
-            node = await session.scalar(
-                select(Node).where(Node.canonical_key == "asset:ue:" + engine)
+    with tempfile.TemporaryDirectory(dir=output) as temporary:
+        work = Path(temporary)
+        prepared, decoded = [], {}
+        for index, video in enumerate(spec.videos):
+            engine = video.asset.removeprefix("asset:ue:")
+            package, object_name = engine.rsplit(".", 1)
+            if package.rsplit("/", 1)[-1] != object_name:
+                raise ValueError("Expected an exact Unreal media asset identity")
+            exported = confined(
+                assets, "Client/Content/" + package.removeprefix("/Game/") + ".uexp"
             )
-            if node is None:
-                raise ValueError(f"No exact imported media asset node: {engine}")
-            await session.execute(sql_text("SELECT pg_advisory_xact_lock(:id)"), {"id": node.id})
-            original = await service.register_file(
-                session, movie, "video_game", mime_type="video/mp4"
-            )
-            result = await service.register_file(
-                session, playable, "video_mp4", mime_type="video/mp4"
-            )
-            await service.register_variant(
-                session, original.id, result.id, "cutscene_soundtrack_mix"
-            )
-            source_files = []
-            for bank, wem, wav in decoded:
-                for path, kind, mime in (
-                    (bank, "unknown", "application/octet-stream"),
-                    (wem, "audio_wem", "audio/x-wem"),
-                    (wav, "audio_wav", "audio/wav"),
-                ):
-                    source = await service.register_file(session, path, kind, mime_type=mime)
-                    source_files.append(source.id)
-            reference = await session.scalar(
-                select(FileReference).where(
-                    FileReference.owner_node_id == node.id,
-                    FileReference.reference_type == "cutscene_video",
-                    FileReference.metadata_json["asset_version"].astext == asset_version,
+            movie = confined(movies, movie_path(exported.read_bytes()))
+            duration, embedded_audio = await asyncio.to_thread(video_duration, ffmpeg, movie)
+            for node in spec.flow.nodes:
+                if isinstance(node, Clip) and node.asset == video.asset:
+                    if (
+                        node.start >= duration
+                        or node.end is not None
+                        and node.end > duration + 0.05
+                    ):
+                        raise ValueError("Playback range exceeds its source video")
+            command = [str(ffmpeg.resolve()), "-y", "-i", str(movie)]
+            filters, streams, source_paths = [], [], []
+            if embedded_audio:
+                streams.append("[0:a:0]")
+            for track_index, track in enumerate(video.soundtrack, 1):
+                bank = confined(assets, track.bank)
+                if bank not in decoded:
+                    media_id = bank_media_id(bank.read_bytes())
+                    matches = list(audio.rglob(f"{media_id}.wem"))
+                    if len(matches) != 1:
+                        raise ValueError(f"Expected exactly one soundtrack WEM: {media_id}")
+                    wav = work / f"{media_id}.wav"
+                    await run_tool(
+                        [str(decoder.resolve()), "-i", "-o", str(wav), str(matches[0].resolve())],
+                        120,
+                    )
+                    decoded[bank] = (bank, matches[0], wav)
+                bank_file, wem, wav = decoded[bank]
+                source_paths.append((bank_file, wem, wav))
+                command.extend(["-i", str(wav)])
+                length = (track.end_seconds or duration) - track.start_seconds
+                if length <= 0 or track.start_seconds >= duration:
+                    raise ValueError("Soundtrack timing exceeds video duration")
+                filters.append(
+                    f"[{track_index}:a]atrim=duration={length},asetpts=PTS-STARTPTS,volume={track.gain_db}dB,adelay={round(track.start_seconds * 1000)}:all=1[t{track_index}]"
                 )
-            )
-            if reference is None:
-                reference = await service.register_reference(
-                    session,
-                    owner_node_id=node.id,
-                    file_id=result.id,
-                    reference_type="cutscene_video",
-                    source_name=movie.name,
-                    source_path=engine,
+                streams.append(f"[t{track_index}]")
+            playable = work / f"{index}.mp4"
+            has_audio = bool(streams)
+            if streams:
+                filters.append(
+                    "".join(streams)
+                    + f"amix=inputs={len(streams)}:normalize=0,alimiter=level=false,apad=whole_dur={duration}[a]"
                 )
-            reference.file_id = result.id
-            reference.metadata_json = {
-                "asset_version": asset_version,
-                "has_audio": True,
-                "soundtrack": "music_and_effects",
-                "source_file_ids": source_files,
-                "audio_start_seconds": [0, 0],
-                "scope": "Start",
-                "subtitles_included": False,
+                command.extend(
+                    [
+                        "-filter_complex",
+                        ";".join(filters),
+                        "-map",
+                        "0:v:0",
+                        "-map",
+                        "[a]",
+                        "-c:a",
+                        "aac",
+                        "-b:a",
+                        "192k",
+                    ]
+                )
+            else:
+                command.extend(["-map", "0:v:0"])
+            command.extend(
+                ["-c:v", "copy", "-t", str(duration), "-movflags", "+faststart", str(playable)]
+            )
+            await run_tool(command)
+            prepared.append((video, movie, playable, source_paths, duration, has_audio))
+        storage = S3Storage(get_settings())
+        await storage.ensure_bucket()
+        service = FileRegistrationService(storage)
+        async with SessionFactory() as session:
+            keys = sorted([spec.cutscene] + [video.asset for video in spec.videos])
+            nodes = {
+                node.canonical_key: node
+                for node in await session.scalars(select(Node).where(Node.canonical_key.in_(keys)))
             }
-        await session.commit()
+            if set(nodes) != set(keys):
+                raise ValueError("Recipe references missing imported game nodes")
+            variant_ids = list(
+                await session.scalars(
+                    select(Edge.to_node_id)
+                    .join(RelationType, RelationType.id == Edge.relation_type_id)
+                    .where(
+                        Edge.from_node_id == nodes[spec.cutscene].id,
+                        RelationType.key == "has_variant",
+                        Edge.layer == "source",
+                    )
+                )
+            )
+            linked_assets = set(
+                await session.scalars(
+                    select(Edge.to_node_id)
+                    .join(RelationType, RelationType.id == Edge.relation_type_id)
+                    .where(
+                        Edge.from_node_id.in_(variant_ids),
+                        RelationType.key == "references_asset",
+                        Edge.layer == "source",
+                    )
+                )
+            )
+            if not {nodes[video.asset].id for video in spec.videos}.issubset(linked_assets):
+                raise ValueError("Recipe videos are not authored variants of this cutscene")
+            # Deterministic lock order prevents deadlock when recipes share video assets.
+            for node_id in sorted(node.id for node in nodes.values()):
+                await session.execute(
+                    sql_text("SELECT pg_advisory_xact_lock(:id)"), {"id": node_id}
+                )
+            for video, movie, playable, source_paths, duration, has_audio in prepared:
+                original = await service.register_file(
+                    session, movie, "video_game", mime_type="video/mp4"
+                )
+                result = await service.register_file(
+                    session, playable, "video_mp4", mime_type="video/mp4"
+                )
+                await service.register_variant(
+                    session, original.id, result.id, "cutscene_soundtrack_mix"
+                )
+                source_files = []
+                for bank, wem, wav in source_paths:
+                    for path, kind, mime in (
+                        (bank, "unknown", "application/octet-stream"),
+                        (wem, "audio_wem", "audio/x-wem"),
+                        (wav, "audio_wav", "audio/wav"),
+                    ):
+                        source = await service.register_file(session, path, kind, mime_type=mime)
+                        source_files.append(source.id)
+                reference = await publication_reference(
+                    session,
+                    service,
+                    nodes[video.asset].id,
+                    result.id,
+                    "cutscene_video",
+                    spec.asset_version,
+                )
+                reference.source_path = video.asset.removeprefix("asset:ue:")
+                reference.source_name = movie.name
+                reference.metadata_json = {
+                    "asset_version": spec.asset_version,
+                    "has_audio": has_audio,
+                    "soundtrack": "music_and_effects"
+                    if video.soundtrack
+                    else "embedded"
+                    if has_audio
+                    else "none",
+                    "source_file_ids": source_files,
+                    "soundtrack_recipe": [track.model_dump() for track in video.soundtrack],
+                    "duration_seconds": duration,
+                    "subtitles_included": False,
+                }
+            flow_file = work / "recipe.json"
+            flow_file.write_text(spec.model_dump_json(indent=2), encoding="utf-8")
+            registered = await service.register_file(
+                session, flow_file, "raw_json", mime_type="application/json"
+            )
+            reference = await publication_reference(
+                session,
+                service,
+                nodes[spec.cutscene].id,
+                registered.id,
+                "cutscene_flow",
+                spec.asset_version,
+            )
+            reference.metadata_json = {
+                "asset_version": spec.asset_version,
+                "flow": spec.flow.model_dump(),
+            }
+            await session.commit()
     return {
-        "videos": len(prepared),
-        "soundtrack": "music_and_effects",
-        "asset_version": asset_version,
+        "videos": len(spec.videos),
+        "cutscene": spec.cutscene,
+        "asset_version": spec.asset_version,
     }
+
+
+async def publication_reference(session, service, owner_id, file_id, kind, version):
+    reference = await session.scalar(
+        select(FileReference).where(
+            FileReference.owner_node_id == owner_id,
+            FileReference.reference_type == kind,
+            FileReference.metadata_json["asset_version"].astext == version,
+        )
+    )
+    if reference is None:
+        reference = await service.register_reference(
+            session, owner_node_id=owner_id, file_id=file_id, reference_type=kind
+        )
+    reference.file_id = file_id
+    return reference
 
 
 if __name__ == "__main__":
     import argparse
-    import json
 
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("assets", "movies", "audio", "output", "decoder", "ffmpeg"):
+    for name in ("recipe", "assets", "movies", "audio", "output", "decoder", "ffmpeg"):
         parser.add_argument("--" + name, required=True, type=Path)
-    parser.add_argument("--asset-version", required=True)
-    args = parser.parse_args()
-    print(json.dumps(asyncio.run(import_cutscene_sample(**vars(args)))))
+    print(json.dumps(asyncio.run(import_cutscene_recipe(**vars(parser.parse_args())))))
