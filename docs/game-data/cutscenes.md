@@ -29,6 +29,24 @@ This is a viewer Rover-variant choice, not an authored narrative choice.
 `cutscene-start.json` is generated from the game configuration and enables
 automatic comparison, without a manually chosen scene boundary.
 
+## Second verified import
+
+`cutscene-jinzhou.json` is another unmodified configuration-generated plan:
+`C3jinzhoutexie`, CG 103/104, in quest 139000026 (1.0.0 story snapshot).
+The 3.7.0 HD packages were checked against the official manifest SHA-1,
+and both movies were resolved through their exported media asset paths.
+Automatic comparison of the 1368 frames at 30 fps produced an intro of
+1254 frames (41.8 seconds), two branches of 93 frames (3.1 seconds), and
+a shared tail of 21 frames (0.7 seconds). These fragments and the playback
+graph were published through the same importer as `Start`.
+
+The confirmed `play_sfx_lvb_jinzhoutexie` soundtrack resolves to WEM
+806886777 and is included. The preceding flow-state event
+`play_sequence_music_m01012` contains Wwise actions rather than a direct
+Sound/MusicTrack source. That separate music event is **not reconstructed**
+by this import. VideoSound alone therefore does not guarantee the complete
+in-game soundtrack; resolving contextual Wwise actions remains required.
+
 ## Automatic comparison and segmentation
 
 Multi-variant plans enable `compare_variants`. Import prepares complete video

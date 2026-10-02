@@ -262,12 +262,8 @@ function FlowPlayer({
       {failed && <p role="alert">Video could not load. Refresh the page to retry.</p>}
       <footer>
         <span>
-          {source.soundtrack === 'music_and_effects'
-            ? 'Music and sound effects'
-            : source.has_audio
-              ? 'Sound included'
-              : 'No audio track'}{' '}
-          · {source.subtitles_included ? 'Subtitles included' : 'Subtitles not available yet'}
+          {source.has_audio ? 'Sound included' : 'No audio track'} ·{' '}
+          {source.subtitles_included ? 'Subtitles included' : 'Subtitles not available yet'}
         </span>
         {anchor && <a href={`#${anchor}`}>Continue to dialogue ↗</a>}
         <details>
