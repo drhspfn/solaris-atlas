@@ -13,6 +13,7 @@ class Clip(StrictModel):
     id: str = Field(min_length=1)
     kind: Literal["clip"] = "clip"
     asset: str = Field(pattern=r"^asset:ue:/Game/")
+    segment: str | None = Field(default=None, pattern=r"^segment-[a-z0-9-]+$")
     start: float = Field(default=0, ge=0)
     end: float | None = Field(default=None, gt=0)
     next: str | None = None
@@ -97,6 +98,7 @@ class VideoInput(StrictModel):
 class CutsceneRecipe(StrictModel):
     cutscene: str = Field(pattern=r"^cutscene:.+")
     asset_version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
+    compare_variants: bool = False
     videos: list[VideoInput] = Field(min_length=1, max_length=100)
     flow: PlaybackFlow
 

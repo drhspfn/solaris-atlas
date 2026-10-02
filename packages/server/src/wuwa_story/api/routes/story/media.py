@@ -149,9 +149,29 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
         nodes = list(await session.scalars(select(Node).where(Node.canonical_key.in_(keys))))
         videos = await cutscene_videos(session, [node.id for node in nodes], reference.metadata_json["asset_version"])
         media = {node.canonical_key: videos[node.id] for node in nodes if node.id in videos}
+        segment_nodes = [node for node in flow.nodes if isinstance(node, Clip) and node.segment]
+        if segment_nodes:
+            settings = get_settings()
+            storage = S3Storage(settings)
+            segment_rows = await session.execute(select(FileReference, FileLocation.object_key)
+                .join(FileLocation, FileLocation.file_id == FileReference.file_id)
+                .where(FileReference.owner_node_id.in_([node.id for node in nodes]),
+                    FileReference.reference_type == "cutscene_segment",
+                    FileReference.metadata_json["asset_version"].astext == reference.metadata_json["asset_version"],
+                    FileReference.metadata_json["segment_id"].astext.in_([node.segment for node in segment_nodes]),
+                    FileLocation.backend == "s3", FileLocation.bucket == settings.s3_bucket,
+                    FileLocation.available.is_(True), FileLocation.is_primary.is_(True))
+                .order_by(FileReference.id.desc()))
+            for segment_reference, object_key in segment_rows:
+                key = segment_reference.metadata_json["segment_id"]
+                media.setdefault(key, {"url": storage.public_url(object_key),
+                    "asset_version": segment_reference.metadata_json["asset_version"],
+                    "has_audio": segment_reference.metadata_json.get("has_audio", False),
+                    "soundtrack": segment_reference.metadata_json.get("soundtrack"), "subtitles_included": False})
+        required = {node.segment or node.asset for node in flow.nodes if isinstance(node, Clip)}
         # Publish the whole path or none of it; a broken branch is not a playable flow.
-        if set(media) == keys:
-            result[owner_id] = {**flow.model_dump(), "media": media,
+        if required.issubset(media):
+            result[owner_id] = {**flow.model_dump(), "media": {key: media[key] for key in required},
                                 "asset_version": reference.metadata_json["asset_version"]}
     return result
 
