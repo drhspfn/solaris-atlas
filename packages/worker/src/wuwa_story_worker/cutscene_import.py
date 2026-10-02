@@ -15,9 +15,11 @@ from wuwa_story.db.models.graph import Edge, Node
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.storage import FileReference
 from wuwa_story.db.session import SessionFactory
-from wuwa_story.ingestion.cutscenes import Clip, CutsceneRecipe
+from wuwa_story.ingestion.cutscenes import Clip, CutsceneRecipe, PlaybackFlow
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
+
+from wuwa_story_worker.cutscene_segments import export_segments
 
 
 def movie_path(data: bytes) -> str:
@@ -103,7 +105,14 @@ def video_duration(ffmpeg: Path, movie: Path) -> tuple[float, bool]:
 
 
 async def import_cutscene_recipe(
-    recipe: Path, assets: Path, movies: Path, audio: Path, output: Path, decoder: Path, ffmpeg: Path
+    recipe: Path,
+    assets: Path,
+    movies: Path,
+    audio: Path,
+    output: Path,
+    decoder: Path,
+    ffmpeg: Path,
+    analyze_variants: bool = False,
 ) -> dict:
     spec = CutsceneRecipe.model_validate_json(recipe.read_text(encoding="utf-8"))
     # Separate working directories keep simultaneous publishers from overwriting each other.
@@ -184,23 +193,83 @@ async def import_cutscene_recipe(
             )
             await run_tool(command)
             prepared.append((video, movie, playable, source_paths, duration, has_audio))
+        analysis, segments = None, []
+        if (analyze_variants or spec.compare_variants) and len(prepared) > 1:
+            analysis, segments = await asyncio.to_thread(
+                export_segments,
+                [item[2] for item in prepared],
+                ffmpeg.resolve(),
+                output / "segments",
+            )
+            nodes = []
+            shared = next((segment for segment in segments if segment["role"] == "shared"), None)
+            intro = next((segment for segment in segments if segment["role"] == "intro"), None)
+            outro = next((segment for segment in segments if segment["role"] == "outro"), None)
+            branches = [segment for segment in segments if segment["role"].startswith("branch-")]
+            source_choices = next((node for node in spec.flow.nodes if node.kind == "choice"), None)
+            labels = (
+                [option.label for option in source_choices.options]
+                if source_choices
+                else [f"Variant {index + 1}" for index in range(len(prepared))]
+            )
+            if branches:
+                nodes.append(
+                    {
+                        "id": "choice",
+                        "kind": "choice",
+                        "prompt": source_choices.prompt if source_choices else "Choose a variant",
+                        "options": [
+                            {
+                                "label": labels[index]
+                                if index < len(labels)
+                                else f"Variant {index + 1}",
+                                "next": segment["id"],
+                            }
+                            for index, segment in enumerate(branches)
+                        ],
+                    }
+                )
+            for segment in segments:
+                nodes.append(
+                    {
+                        "id": segment["id"],
+                        "kind": "clip",
+                        "asset": spec.videos[segment["source_index"]].asset,
+                        "segment": segment["id"],
+                        "start": 0,
+                        "end": (segment["end_frame"] - segment["start_frame"]) / analysis["fps"],
+                        "next": "choice"
+                        if segment is intro
+                        else outro["id"]
+                        if segment in branches and outro
+                        else None,
+                    }
+                )
+            flow = PlaybackFlow.model_validate(
+                {
+                    "entry": (shared or intro or {"id": "choice"})["id"],
+                    "nodes": nodes,
+                    "evidence": f"Automatic frame and PCM comparison {analysis['id']}; source CG variants, not inferred narrative choices.",
+                }
+            )
+            spec = spec.model_copy(update={"flow": flow})
         storage = S3Storage(get_settings())
         await storage.ensure_bucket()
         service = FileRegistrationService(storage)
         async with SessionFactory() as session:
             keys = sorted([spec.cutscene] + [video.asset for video in spec.videos])
-            nodes = {
+            nodes_by_key = {
                 node.canonical_key: node
                 for node in await session.scalars(select(Node).where(Node.canonical_key.in_(keys)))
             }
-            if set(nodes) != set(keys):
+            if set(nodes_by_key) != set(keys):
                 raise ValueError("Recipe references missing imported game nodes")
             variant_ids = list(
                 await session.scalars(
                     select(Edge.to_node_id)
                     .join(RelationType, RelationType.id == Edge.relation_type_id)
                     .where(
-                        Edge.from_node_id == nodes[spec.cutscene].id,
+                        Edge.from_node_id == nodes_by_key[spec.cutscene].id,
                         RelationType.key == "has_variant",
                         Edge.layer == "source",
                     )
@@ -217,13 +286,14 @@ async def import_cutscene_recipe(
                     )
                 )
             )
-            if not {nodes[video.asset].id for video in spec.videos}.issubset(linked_assets):
+            if not {nodes_by_key[video.asset].id for video in spec.videos}.issubset(linked_assets):
                 raise ValueError("Recipe videos are not authored variants of this cutscene")
             # Deterministic lock order prevents deadlock when recipes share video assets.
-            for node_id in sorted(node.id for node in nodes.values()):
+            for node_id in sorted(node.id for node in nodes_by_key.values()):
                 await session.execute(
                     sql_text("SELECT pg_advisory_xact_lock(:id)"), {"id": node_id}
                 )
+            playable_files = []
             for video, movie, playable, source_paths, duration, has_audio in prepared:
                 original = await service.register_file(
                     session, movie, "video_game", mime_type="video/mp4"
@@ -231,6 +301,7 @@ async def import_cutscene_recipe(
                 result = await service.register_file(
                     session, playable, "video_mp4", mime_type="video/mp4"
                 )
+                playable_files.append(result)
                 await service.register_variant(
                     session, original.id, result.id, "cutscene_soundtrack_mix"
                 )
@@ -246,7 +317,7 @@ async def import_cutscene_recipe(
                 reference = await publication_reference(
                     session,
                     service,
-                    nodes[video.asset].id,
+                    nodes_by_key[video.asset].id,
                     result.id,
                     "cutscene_video",
                     spec.asset_version,
@@ -266,6 +337,43 @@ async def import_cutscene_recipe(
                     "duration_seconds": duration,
                     "subtitles_included": False,
                 }
+            if analysis:
+                analysis_file = output / "segments" / analysis["id"] / "analysis.json"
+                report_file = await service.register_file(
+                    session, analysis_file, "raw_json", mime_type="application/json"
+                )
+                for segment in segments:
+                    index = segment["source_index"]
+                    file = await service.register_file(
+                        session, segment["path"], "video_mp4", mime_type="video/mp4"
+                    )
+                    await service.register_variant(
+                        session, playable_files[index].id, file.id, "cutscene_segment"
+                    )
+                    reference = await publication_reference(
+                        session,
+                        service,
+                        nodes_by_key[spec.videos[index].asset].id,
+                        file.id,
+                        "cutscene_segment",
+                        spec.asset_version,
+                        segment["id"],
+                    )
+                    reference.metadata_json = {
+                        "asset_version": spec.asset_version,
+                        "segment_id": segment["id"],
+                        "analysis_file_id": report_file.id,
+                        "has_audio": prepared[index][5],
+                        "soundtrack": "music_and_effects"
+                        if spec.videos[index].soundtrack
+                        else "embedded"
+                        if prepared[index][5]
+                        else "none",
+                        "start_frame": segment["start_frame"],
+                        "end_frame": segment["end_frame"],
+                        "fps": analysis["fps"],
+                        "subtitles_included": False,
+                    }
             flow_file = work / "recipe.json"
             flow_file.write_text(spec.model_dump_json(indent=2), encoding="utf-8")
             registered = await service.register_file(
@@ -274,7 +382,7 @@ async def import_cutscene_recipe(
             reference = await publication_reference(
                 session,
                 service,
-                nodes[spec.cutscene].id,
+                nodes_by_key[spec.cutscene].id,
                 registered.id,
                 "cutscene_flow",
                 spec.asset_version,
@@ -291,12 +399,13 @@ async def import_cutscene_recipe(
     }
 
 
-async def publication_reference(session, service, owner_id, file_id, kind, version):
+async def publication_reference(session, service, owner_id, file_id, kind, version, segment=None):
     reference = await session.scalar(
         select(FileReference).where(
             FileReference.owner_node_id == owner_id,
             FileReference.reference_type == kind,
             FileReference.metadata_json["asset_version"].astext == version,
+            FileReference.metadata_json["segment_id"].astext == segment if segment else True,
         )
     )
     if reference is None:
@@ -313,4 +422,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("recipe", "assets", "movies", "audio", "output", "decoder", "ffmpeg"):
         parser.add_argument("--" + name, required=True, type=Path)
+    parser.add_argument("--analyze-variants", action="store_true")
     print(json.dumps(asyncio.run(import_cutscene_recipe(**vars(parser.parse_args())))))

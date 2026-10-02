@@ -87,6 +87,7 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str) 
             "cutscene": "cutscene:" + name,
             "asset_version": asset_version,
             "videos": inputs,
+            "compare_variants": len(inputs) > 1,
             "flow": {
                 "entry": nodes[0]["id"],
                 "nodes": nodes,
