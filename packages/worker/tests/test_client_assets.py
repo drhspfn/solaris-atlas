@@ -205,6 +205,25 @@ async def test_download_handoff_is_pinned_and_repeatable(tmp_path, monkeypatch):
     assert [item[1]["filter"] for item in published[:2]] == ["ConfigDB", "Audio"]
 
 
+@pytest.mark.asyncio
+async def test_map_handoff_uses_download_identity(tmp_path, monkeypatch):
+    plan = _plan()
+    monkeypatch.setenv("WUWA_ASSET_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("WUWA_ASSET_EXPORT_FILTERS", "ConfigDB")
+    monkeypatch.setenv("WUWA_ASSET_BUILD_MAPS", "1")
+    monkeypatch.setattr(asset_jobs, "download_plan", lambda *args: tmp_path)
+    published = []
+    async def publish(queue, payload, message_id):
+        published.append((queue, payload, message_id))
+    monkeypatch.setattr(asset_jobs, "publish_job", publish)
+    await asset_jobs.download_client_assets(plan)
+    assert len(published) == 2
+    assert published[1][0] == "asset_extract"
+    assert published[1][1]["job_type"] == "assets.maps"
+    assert published[1][1]["download_id"] == plan["id"]
+    assert published[1][2] == plan["id"] + "-maps-v1"
+
+
 def test_download_preflight_rejects_low_disk_space(tmp_path, monkeypatch):
     monkeypatch.setattr(client_assets.shutil, "disk_usage", lambda *a: SimpleNamespace(free=1))
     monkeypatch.setattr(client_assets, "urlopen", lambda *a, **k: pytest.fail("must not download"))

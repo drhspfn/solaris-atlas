@@ -85,4 +85,29 @@ uv run --project packages/worker wuwa-story-worker extract-assets <job-directory
 
 Exports retain `fmodel.log`, a file inventory with SHA-256 hashes, and a publication receipt. Exit zero alone is not success: explicit failures, empty output, missing PAK mounts, or mismatching file counts reject publication. Verified files go to version/tier/job/filter-specific S3 keys with content hashes, then the manifest is uploaded last as the completion marker. Retry reuses a completed local export and republishes the same immutable keys. Failed extraction messages use the same dead-letter/replay workflow with `--queue asset_extract`.
 
-This stage publishes raw archive contents. Audio conversion (Wwise bank extraction/decoding), cutscene conversion, linking bytes to database media references, map coordinates, and application playback are subsequent stages. Successfully opening one archive does not establish that every 3.7 archive is supported; the complete job must pass mount and export checks.
+This command publishes raw archive contents. Audio conversion (Wwise bank extraction/decoding), cutscene conversion, linking bytes to dialogue media references, and application playback are subsequent stages. Successfully opening one archive does not establish that every 3.7 archive is supported; the complete job must pass mount and export checks.
+
+### Map extraction and database publication
+
+Map extraction additionally uses [CUE4Parse.CLI cli-0.2.0](https://github.com/joric/CUE4Parse.CLI/releases/tag/cli-0.2.0), Windows x64. Place the release in `var/tools/cue-cli`. Verified `cue4parse.exe` SHA-256: `967680f00a123e6355c7cb22545a56f2804f0330ce4569aa1ad027779cfbc729`. The receipt records the actual converter hash; map readers currently accept only client `3.7.0`.
+
+```powershell
+uv run --project packages/worker wuwa-story-worker extract-maps <job-directory> --fmodel <FModelCLI.exe> --converter <cue4parse.exe> --publish
+```
+
+This validates raw exports, resolves tile resources from ConfigDB, decodes each requested texture, assembles bounded overview PNGs, and extracts chest/collectible placements. Full resolution tiles remain separate, so interactive clients do not need one enormous stitched image. Floor layers and gravity variants remain separate. Missing tiles are transparent rather than filled with invented terrain.
+
+Apply migration `0006_tile_maps` before publication. Files go through `FileRegistrationService`: content SHA-256, canonical `objects/...` key, `file_object`, `file_location`, and `file_variant` links to original Unreal files. `core.tile_map`, `core.map_tile`, and `core.map_marker` preserve client-build identity and placement. Publication uses one database transaction and a per-build advisory lock; retries reuse file/map identities. A failed transaction can leave unreferenced content addressed objects in S3, but cannot expose a partial map in the API. No existing story data is deleted.
+
+To use the durable extraction queue, add the converter path to the Windows worker environment and restart that worker:
+
+```powershell
+$env:WUWA_TEXTURE_CONVERTER_PATH = 'E:\Projects\solaris-atlas\packages\worker\var\tools\cue-cli\cue4parse.exe'
+uv run --project packages/worker wuwa-story-worker enqueue-maps <plan.json>
+```
+
+Set `WUWA_ASSET_BUILD_MAPS=1` on the downloader to enqueue map extraction automatically after a verified download. The same Windows `asset_extract` consumer handles raw exports and map jobs. Failures go to its existing failed queue.
+
+API: `GET /maps?game_version=3.7.0`, `GET /maps/{id}`, `GET /maps/{id}/markers`. Local reverse-proxy URLs start with `/api/maps`. Tile manifests include `file_id`, SHA-256 and signed MinIO URLs valid for one hour. Set `S3_PUBLIC_ENDPOINT_URL` to the browser-reachable MinIO/CDN origin; Docker's internal `minio:9000` is not a browser address.
+
+World coordinates and original tile indices are retained. Marker categories initially come from blueprint names and do not prove that a placement is active in a particular playthrough. Hidden/sleep flags, component overrides and Z height are preserved. Floor assignment is unresolved where there is no reliable source link; marker responses explicitly report this. See [map source notes](../../docs/game-data/maps.md) for transforms and limitations.

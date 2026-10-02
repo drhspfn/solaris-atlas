@@ -14,6 +14,7 @@ from typing import Any
 from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.broker import publish_job
 from wuwa_story_worker.client_assets import download_plan, validate_plan
+from wuwa_story_worker.map_assets import build_maps
 
 logger = logging.getLogger(__name__)
 _download_lock = asyncio.Lock()
@@ -23,6 +24,13 @@ async def enqueue_assets(plan: dict[str, Any]) -> None:
     validate_plan(plan)
     await publish_job("asset_download", plan, plan["id"])
     logger.info("Queued asset job %s (%s %s)", plan["id"], plan["version"], plan["tier"])
+
+
+async def enqueue_maps(plan: dict[str, Any]) -> None:
+    validate_plan(plan)
+    await publish_job("asset_extract", {"schema_version": 1, "job_type": "assets.maps",
+                      "download_id": plan["id"], "version": plan["version"], "tier": plan["tier"]},
+                      plan["id"] + "-maps-v1")
 
 
 async def download_client_assets(plan: dict[str, Any]) -> None:
@@ -39,13 +47,17 @@ async def download_client_assets(plan: dict[str, Any]) -> None:
         await publish_job("asset_extract", {"schema_version": 1, "job_type": "assets.extract",
                           "download_id": plan["id"], "version": plan["version"], "tier": plan["tier"],
                           "filter": asset_filter}, plan["id"] + "-" + tag)
+    if os.getenv("WUWA_ASSET_BUILD_MAPS", "0") == "1":
+        await enqueue_maps(plan)
 
 
 async def extract_client_assets(payload: dict[str, Any]) -> None:
-    if payload.get("schema_version") != 1 or payload.get("job_type") != "assets.extract":
+    if payload.get("schema_version") != 1 or payload.get("job_type") not in ("assets.extract", "assets.maps"):
         raise ValueError("Unsupported extraction job")
-    for key, pattern in {"download_id": r"[0-9a-f]{64}", "version": r"\d+\.\d+\.\d+",
-                         "tier": r"sd|hd|uhd", "filter": r"[a-zA-Z0-9_./-]+"}.items():
+    patterns = {"download_id": r"[0-9a-f]{64}", "version": r"\d+\.\d+\.\d+", "tier": r"sd|hd|uhd"}
+    if payload["job_type"] == "assets.extract":
+        patterns["filter"] = r"[a-zA-Z0-9_./-]+"
+    for key, pattern in patterns.items():
         if not isinstance(payload.get(key), str) or not re.fullmatch(pattern, payload[key]):
             raise ValueError(f"Invalid extraction {key}")
     workspace = Path(os.environ["WUWA_ASSET_WORKSPACE"]).resolve()
@@ -53,5 +65,10 @@ async def extract_client_assets(payload: dict[str, Any]) -> None:
     plan = json.loads((root / "plan.json").read_text(encoding="utf-8"))
     if plan["id"] != payload["download_id"]:
         raise ValueError("Extraction job does not match downloaded plan")
+    if payload["job_type"] == "assets.maps":
+        receipt = await build_maps(root, Path(os.environ["WUWA_FMODEL_PATH"]),
+                                   Path(os.environ["WUWA_TEXTURE_CONVERTER_PATH"]), publish=True)
+        logger.info("Built and published map assets: %s", receipt)
+        return
     receipt = await export_assets(root, Path(os.environ["WUWA_FMODEL_PATH"]), payload["filter"], upload=True)
     logger.info("Exported and published %s: %s", payload["filter"], receipt)
