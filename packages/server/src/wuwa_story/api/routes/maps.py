@@ -49,18 +49,21 @@ async def map_manifest(map_id: int, session: AsyncSession = Depends(get_session)
     row = await get_map(session, map_id)
     tiles = list(await session.scalars(select(MapTile).where(MapTile.map_id == row.id).order_by(MapTile.y, MapTile.x)))
     ids = {tile.file_id for tile in tiles}
+    ids.update(row.metadata_json.get("icon_file_ids", {}).values())
     if row.preview_file_id is not None:
         ids.add(row.preview_file_id)
     settings = get_settings()
     files = (await session.execute(select(FileObject, FileLocation).join(
         FileLocation, FileLocation.file_id == FileObject.id).where(
         FileObject.id.in_(ids), FileLocation.backend == "s3",
-        FileLocation.bucket == settings.s3_bucket, FileLocation.available.is_(True),
+        FileLocation.bucket == settings.s3_bucket, FileLocation.available.is_(
+            True),
         FileLocation.is_primary.is_(True)))).all()
     storage = S3Storage(settings)
     locations = {file.id: {"file_id": file.id, "sha256": file.sha256.hex() if file.sha256 else None,
                            "url": storage.public_url(location.object_key)} for file, location in files}
     return {**describe_map(row), "url_expires_in": 3600,
+            "icons": {source: locations[file_id] for source, file_id in row.metadata_json.get("icon_file_ids", {}).items() if file_id in locations},
             "preview": locations.get(row.preview_file_id) if row.preview_file_id is not None else None,
             "tiles": [{"x": tile.x, "y": tile.y,
                        "pixel_x": (tile.x - row.min_x) * row.tile_size,
@@ -71,6 +74,7 @@ async def map_manifest(map_id: int, session: AsyncSession = Depends(get_session)
 
 @router.get("/{map_id}/markers")
 async def map_markers(map_id: int, category: str | None = None,
+                      compact: bool = False,
                       min_x: float | None = Query(None, allow_inf_nan=False),
                       min_y: float | None = Query(None, allow_inf_nan=False),
                       max_x: float | None = Query(None, allow_inf_nan=False),
@@ -88,7 +92,8 @@ async def map_markers(map_id: int, category: str | None = None,
     if category is not None:
         query = query.where(MapMarker.category == category)
     if not include_hidden:
-        query = query.where(func.coalesce(MapMarker.metadata_json["hidden"].as_boolean(), False).is_(False))
+        query = query.where(func.coalesce(
+            MapMarker.metadata_json["hidden"].as_boolean(), False).is_(False))
     for column, minimum, maximum in ((MapMarker.world_x, min_x, max_x), (MapMarker.world_y, min_y, max_y)):
         if minimum is not None:
             query = query.where(column >= minimum)
@@ -106,5 +111,7 @@ async def map_markers(map_id: int, category: str | None = None,
          "world": [marker.world_x, marker.world_y, marker.world_z],
          "pixel": [(marker.world_x - (row.min_x - 1) * row.world_tile_size) * scale,
                    (marker.world_y + row.max_y * row.world_tile_size) * scale],
-         "metadata": marker.metadata_json} for marker in markers],
+         "metadata": ({key: value for key, value in marker.metadata_json.items()
+                       if key in ("names", "description", "type_key", "area_ids", "floor", "hidden", "condition_id", "item_id", "icon_source", "resource_group")}
+                      if compact else marker.metadata_json)} for marker in markers],
         "next_after_id": markers[-1].id if more else None}

@@ -34,7 +34,8 @@ async def test_map_api_coordinates_bounds_and_pagination():
                 session.add(MapMarker(asset_job_id=job_id, game_map_id=8, entity_id=entity_id,
                                       category="chest", blueprint_type="Treasure001",
                                       world_x=-127500, world_y=212500, world_z=100,
-                                      metadata_json={"hidden": hidden}))
+                                      metadata_json={"hidden": hidden, "names": {"en": "Basic Supply Chest"},
+                                                     "icon_source": "/Game/Icon.Icon", "components": {"internal": True}}))
             await session.flush()
             map_id = row.id
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
@@ -50,6 +51,11 @@ async def test_map_api_coordinates_bounds_and_pagination():
             assert result.json()["next_after_id"] is None
             result = await client.get(f"/maps/{map_id}/markers", params={"include_hidden": True})
             assert len(result.json()["items"]) == 3
+            result = await client.get(f"/maps/{map_id}/markers", params={"compact": True})
+            meta = result.json()["items"][0]["metadata"]
+            assert meta["names"]["en"] == "Basic Supply Chest"
+            assert meta["icon_source"] == "/Game/Icon.Icon"
+            assert "components" not in meta
             result = await client.get(f"/maps/{map_id}/markers", params={"min_x": 0})
             assert result.json()["items"] == []
             result = await client.get(f"/maps/{map_id}/markers", params={"min_x": 1, "max_x": -1})
