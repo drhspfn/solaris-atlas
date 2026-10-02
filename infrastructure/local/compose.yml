@@ -117,6 +117,25 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  asset-worker:
+    build:
+      context: ../..
+      dockerfile: packages/worker/Dockerfile
+    env_file:
+      - ../../packages/worker/.env
+    profiles: ["assets"]
+    command: ["wuwa-story-worker", "run", "--queue", "asset_download"]
+    volumes:
+      - ${WUWA_ASSET_HOST_PATH:-../../packages/worker/var/client-assets}:/var/lib/wuwa-assets
+    environment:
+      RABBITMQ_URL: amqp://wuwa:wuwa@rabbitmq:5672/
+      WUWA_ASSET_WORKSPACE: /var/lib/wuwa-assets
+      WUWA_ASSET_DOWNLOAD_CONCURRENCY: "4"
+      WUWA_ASSET_EXPORT_FILTERS: ${WUWA_ASSET_EXPORT_FILTERS:-ConfigDB}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
   snapshot-scheduler:
     build:
       context: ../..
