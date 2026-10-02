@@ -1364,7 +1364,8 @@ button {
   color: #c1aa75;
   border-color: #514a37;
 }
-.line-body > p {
+.line-body > p,
+.dialogue-spoken-text > p {
   font:
     400 12px/1.8 'Manrope',
     sans-serif;
@@ -1931,7 +1932,8 @@ button {
   .action-tag {
     font-size: 7px;
   }
-  .line-body > p {
+  .line-body > p,
+  .dialogue-spoken-text > p {
     font-size: 11px;
   }
   .line-foot {
@@ -5443,4 +5445,116 @@ button.search-clear:focus-visible {
   .nav-link.active:after {
     display: none;
   }
+}
+
+.dialogue-voice {
+  position: relative;
+  padding-right: 30px;
+  margin-top: 12px;
+}
+.dialogue-voice audio {
+  display: none;
+}
+.dialogue-spoken-text {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 10px;
+}
+.dialogue-spoken-text > p {
+  grid-column: 2;
+  min-width: 0;
+  margin: 0 0 8px;
+  line-height: 24px;
+}
+.dialogue-play {
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  color: var(--cyan);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.dialogue-play:hover {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+.dialogue-play:focus-visible {
+  outline: 2px solid var(--mint);
+  outline-offset: 2px;
+}
+.dialogue-voice > small {
+  display: block;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.voice-language {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.voice-language select {
+  width: auto;
+  padding: 8px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.dialogue-source-info {
+  position: absolute;
+  top: 0;
+  right: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.dialogue-source-info > summary {
+  width: 24px;
+  height: 24px;
+  justify-content: center;
+  color: var(--text-muted);
+  border-radius: 6px;
+}
+.dialogue-source-info > summary:hover,
+.dialogue-source-info[open] > summary {
+  color: var(--cyan);
+  background: var(--surface-2);
+}
+.dialogue-source-info > summary:focus-visible {
+  outline: 2px solid var(--mint);
+  outline-offset: 2px;
+}
+.dialogue-source-info > .dialogue-source-popover {
+  position: absolute;
+  top: 28px;
+  right: 0;
+  width: min(300px, 65vw);
+  padding: 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  z-index: 2;
+  overflow-wrap: anywhere;
+}
+.dialogue-source-popover > div + div {
+  margin-top: 12px;
+}
+
+.dialogue-play.unavailable {
+  color: var(--text-muted);
+  opacity: 0.65;
+  cursor: default;
+}
+.dialogue-play.unavailable:hover {
+  background: transparent;
+  border-color: transparent;
 }

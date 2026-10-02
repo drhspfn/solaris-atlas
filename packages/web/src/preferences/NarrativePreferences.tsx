@@ -6,12 +6,16 @@ const STORAGE_KEY = APP_SETTINGS.storage.narrative;
 export type PlayerNameMode = 'nickname' | 'rover_title';
 export type PlayerNameColorMode = 'accent' | 'custom';
 
+type VoiceLanguage = 'en' | 'ja' | 'ko' | 'zh';
+
 type Preferences = {
+  voiceLanguage: VoiceLanguage;
   nameMode: PlayerNameMode;
   colorMode: PlayerNameColorMode;
   customColor: string;
 };
 type PreferenceContextValue = Preferences & {
+  setVoiceLanguage: (value: VoiceLanguage) => void;
   setNameMode: (value: PlayerNameMode) => void;
   setColorMode: (value: PlayerNameColorMode) => void;
   setCustomColor: (value: string) => void;
@@ -26,6 +30,10 @@ function loadPreferences(): Preferences {
     if (!saved) return defaults;
     const value = JSON.parse(saved) as Partial<Preferences>;
     return {
+      voiceLanguage:
+        value.voiceLanguage === 'ja' || value.voiceLanguage === 'ko' || value.voiceLanguage === 'zh'
+          ? value.voiceLanguage
+          : 'en',
       nameMode: value.nameMode === 'rover_title' ? 'rover_title' : 'nickname',
       colorMode: value.colorMode === 'custom' ? 'custom' : 'accent',
       customColor: /^#[\da-f]{6}$/i.test(value.customColor || '')
@@ -52,6 +60,7 @@ export function NarrativePreferencesProvider({ children }: { children: ReactNode
   const value = useMemo<PreferenceContextValue>(
     () => ({
       ...preferences,
+      setVoiceLanguage: (voiceLanguage) => update({ voiceLanguage }),
       setNameMode: (nameMode) => update({ nameMode }),
       setColorMode: (colorMode) => update({ colorMode }),
       setCustomColor: (customColor) => update({ customColor }),

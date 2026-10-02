@@ -1,4 +1,7 @@
-import { Film, Volume2 } from 'lucide-react';
+import { Film, Info, Pause, Play, Volume2, VolumeX } from 'lucide-react';
+import { type ReactNode, useRef, useState } from 'react';
+
+import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
 
 export interface MediaSource {
   file: string | null;
@@ -147,9 +150,12 @@ export function QuestMediaReferences({
 
 export function DialogueAudioReference({
   media,
+  children,
 }: {
+  children?: ReactNode;
   media?: {
     voice_references?: Array<{
+      tracks?: Array<{ language: string; url: string; asset_version: string }>;
       file_name: string | null;
       plot_audio_id: string | null;
       source: MediaSource;
@@ -157,28 +163,125 @@ export function DialogueAudioReference({
     audio_event_paths?: Array<{ engine_path: string; source: MediaSource }>;
   };
 }) {
+  const { voiceLanguage } = useNarrativePreferences();
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playingUrl, setPlayingUrl] = useState<string | null>(null);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const voices = media?.voice_references || [];
   const events = media?.audio_event_paths || [];
-  if (!voices.length && !events.length) return null;
+  if (!voices.length && !events.length)
+    return (
+      <div className="dialogue-voice">
+        <div className="dialogue-spoken-text">
+          <span
+            className="dialogue-play unavailable"
+            role="img"
+            aria-label="Audio not available yet"
+            title="Audio not available yet"
+            tabIndex={0}
+          >
+            <VolumeX size={16} />
+          </span>
+          {children}
+        </div>
+      </div>
+    );
+  const tracks = voices.flatMap((voice) => voice.tracks || []);
+  const track = tracks.find((entry) => entry.language === voiceLanguage);
   return (
-    <details className="dialogue-audio-ref">
-      <summary>
-        <Volume2 size={13} /> Voice source · awaiting file export
-      </summary>
-      {voices.map((voice, index) => (
-        <div key={`${voice.plot_audio_id}-${index}`}>
-          <code>{voice.file_name || voice.plot_audio_id}</code>
-          <small>PlotAudio filename · no confirmed Unreal asset path</small>
-          <SourcePath source={voice.source} />
+    <div className="dialogue-voice">
+      <div className="dialogue-spoken-text">
+        {track && (
+          <>
+            <button
+              type="button"
+              className="dialogue-play"
+              aria-label={playingUrl === track.url ? 'Pause voice' : 'Play voice'}
+              title={playingUrl === track.url ? 'Pause voice' : 'Play voice'}
+              onClick={() => {
+                const audio = audioRef.current;
+                if (!audio) return;
+                if (!audio.paused) {
+                  audio.pause();
+                  return;
+                }
+                document.querySelectorAll('audio').forEach((other) => {
+                  if (other !== audio) other.pause();
+                });
+                void audio.play().catch(() => setFailedUrl(track.url));
+              }}
+            >
+              {playingUrl === track.url ? <Pause size={16} /> : <Play size={16} />}
+            </button>
+            <audio
+              ref={audioRef}
+              key={track.url}
+              preload="none"
+              src={track.url}
+              onPlaying={() => {
+                setPlayingUrl(track.url);
+                setFailedUrl(null);
+              }}
+              onPause={() => setPlayingUrl(null)}
+              onEnded={() => setPlayingUrl(null)}
+              onError={() => {
+                setPlayingUrl(null);
+                setFailedUrl(track.url);
+              }}
+            />
+          </>
+        )}
+        {!track && (
+          <span
+            className="dialogue-play unavailable"
+            role="img"
+            aria-label="Audio not available yet"
+            title={
+              tracks.length
+                ? 'This voice language is not available yet.'
+                : 'Audio not available yet.'
+            }
+            tabIndex={0}
+          >
+            <VolumeX size={16} />
+          </span>
+        )}
+        {children}
+      </div>
+      {failedUrl === track?.url && (
+        <small role="alert">Audio could not load. Try playing again or refresh the page.</small>
+      )}
+      <details className="dialogue-audio-ref dialogue-source-info">
+        <summary
+          aria-label="Audio source details"
+          title={voices
+            .map((voice) =>
+              [voice.file_name || voice.plot_audio_id, voice.source.file, voice.source.raw_path]
+                .filter(Boolean)
+                .join('\n'),
+            )
+            .concat(events.map((event) => event.engine_path))
+            .join('\n\n')}
+        >
+          <Info size={14} />
+        </summary>
+        <div className="dialogue-source-popover">
+          {voices.map((voice, index) => (
+            <div key={`${voice.plot_audio_id}-${index}`}>
+              <code>{voice.file_name || voice.plot_audio_id}</code>
+              <small>PlotAudio filename · no confirmed Unreal asset path</small>
+              <SourcePath source={voice.source} />
+            </div>
+          ))}
+          {events.map((event, index) => (
+            <div key={`${event.engine_path}-${index}`}>
+              <code>{event.engine_path}</code>
+              <small>Unreal audio event path</small>
+              <SourcePath source={event.source} />
+            </div>
+          ))}
         </div>
-      ))}
-      {events.map((event, index) => (
-        <div key={`${event.engine_path}-${index}`}>
-          <code>{event.engine_path}</code>
-          <small>Unreal audio event path</small>
-          <SourcePath source={event.source} />
-        </div>
-      ))}
-    </details>
+      </details>
+    </div>
   );
 }

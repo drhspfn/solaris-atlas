@@ -16,6 +16,7 @@ import { entityPath } from '../data/entities';
 import type { QuestContinuity as QuestContinuityData } from '../data/story';
 import { useLocale } from '../hooks/useLocale';
 import { usePlayerDisplay } from '../hooks/usePlayerDisplay';
+import { useNarrativePreferences } from '../preferences/NarrativePreferences';
 
 type ChoiceBranch = {
   choice: any;
@@ -31,6 +32,7 @@ export function QuestPage() {
   const gameVersion = searchParams.get('game_version') || '';
   const locale = useLocale();
   const playerDisplay = usePlayerDisplay();
+  const { voiceLanguage, setVoiceLanguage } = useNarrativePreferences();
   const [profile, setProfile] = useState<any>(null);
   const [transcript, setTranscript] = useState<any>(null);
   const [continuity, setContinuity] = useState<QuestContinuityData | null>(null);
@@ -267,6 +269,19 @@ export function QuestPage() {
               </p>
             </div>
             <div className="transcript-filters">
+              <label className="voice-language">
+                Voice
+                <select
+                  aria-label="Voice language"
+                  value={voiceLanguage}
+                  onChange={(event) => setVoiceLanguage(event.target.value as typeof voiceLanguage)}
+                >
+                  <option value="en">English</option>
+                  <option value="ja">Japanese</option>
+                  <option value="ko">Korean</option>
+                  <option value="zh">Chinese</option>
+                </select>
+              </label>
               <button
                 onClick={() => {
                   setOnlyLines(!onlyLines);
@@ -373,18 +388,19 @@ export function QuestPage() {
                             <span className="action-tag">{line.action.name}</span>
                           )}
                         </div>
-                        <p>
-                          {line.text?.content || line.text?.inline_text ? (
-                            <PlayerText
-                              display={playerDisplay}
-                              value={line.text}
-                              fallback={line.text?.inline_text || ''}
-                            />
-                          ) : (
-                            <i className="missing">Text unavailable in this locale</i>
-                          )}
-                        </p>
-                        <DialogueAudioReference media={line.media} />
+                        <DialogueAudioReference media={line.media}>
+                          <p>
+                            {line.text?.content || line.text?.inline_text ? (
+                              <PlayerText
+                                display={playerDisplay}
+                                value={line.text}
+                                fallback={line.text?.inline_text || ''}
+                              />
+                            ) : (
+                              <i className="missing">Text unavailable in this locale</i>
+                            )}
+                          </p>
+                        </DialogueAudioReference>
                         {line.player_choices?.length > 0 && (
                           <div className="choice-block">
                             <div className="choice-heading">

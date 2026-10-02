@@ -1,5 +1,11 @@
 # Interactive map UX contract
 
+## Dialogue voice playback
+
+Quest dialogue uses one compact play/pause button beside the first text line. Text retains the same horizontal position when audio is unavailable; a muted unavailable-audio icon fills the control slot with an accessible tooltip. Starting a voice pauses other audio on the page. Changing voice language replaces the active audio source; unavailable languages do not fall back silently. English is the default, independent of text locale, and the existing narrative preferences provider persists the choice.
+
+The voice language selector deliberately uses the existing native select pattern: the operating system owns its popup and keyboard interaction. Source details are behind a small information icon at the right edge, with a native hover tooltip and a click/keyboard disclosure. Audio asset versions are recorded separately from transcript snapshot versions; a matching filename does not confirm that a current recording is identical to a historical release.
+
 ## Scope and evidence
 
 Read-only game atlas at `/map`, using published map manifests, positioned entities and authored game marks. The API and `docs/game-data/maps.md` own coordinate and source semantics. Existing DESIGN.md owns visual tokens. No real-world location data, purchases or irreversible actions.
