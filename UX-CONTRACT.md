@@ -57,6 +57,14 @@ Map controls share one top offset. Return to map restores the selected location 
 
 Frontend behavior defaults (map zoom, tile coordinate contract, paging limits, storage keys and narrative preferences) are owned by `packages/web/src/config/settings.ts`. CSS owns visual layout tokens; server settings remain in the existing server configuration.
 
+Settings offers a preferred Rover for cutscenes: ask each time (default), male,
+or female. The existing narrative preferences provider saves it locally, with
+an in-memory fallback. Only an explicitly tagged, complete male/female variant
+pair skips its prompt. Text labels never establish variant identity. A shared
+intro still plays first, followed automatically by the preferred branch and
+shared continuation. Narrative and untagged choices remain interactive; page
+load never starts playback automatically.
+
 The map return action is an icon button below the zoom controls with a persistent accessible name and title. Marker details have a left-aligned category and title, a copy-link icon, and a square close button in a fixed header; only the detail body scrolls. Duplicate category/title text is omitted. Shared marker links focus at zoom 2 or closer. Copy success is announced briefly, and clipboard errors remain actionable.
 
 All search fields offer a named clear control when populated and restore focus to the input. Clearing dialogue results cancels the pending request. The document reserves scrollbar space across routes; scrollbars use the shared thin theme. Compact map filters and responsive navigation must not overflow or shift sibling content.

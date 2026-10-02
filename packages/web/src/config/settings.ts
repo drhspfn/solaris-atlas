@@ -12,6 +12,7 @@ export const APP_SETTINGS = {
     colorMode: 'accent',
     customColor: '#9BD9C0',
     voiceLanguage: 'en',
+    preferredRover: 'ask',
   },
   limits: {
     catalogPage: 24,

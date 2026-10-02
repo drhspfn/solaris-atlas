@@ -10,8 +10,16 @@ import { useNarrativePreferences } from '../preferences/NarrativePreferences';
 export function SettingsPage() {
   const { user } = useAuth();
   const playerDisplay = usePlayerDisplay();
-  const { nameMode, colorMode, customColor, setNameMode, setColorMode, setCustomColor } =
-    useNarrativePreferences();
+  const {
+    nameMode,
+    colorMode,
+    customColor,
+    preferredRover,
+    setPreferredRover,
+    setNameMode,
+    setColorMode,
+    setCustomColor,
+  } = useNarrativePreferences();
 
   return (
     <div className="page-container settings-page">
@@ -31,6 +39,45 @@ export function SettingsPage() {
       </header>
 
       <div className="settings-grid">
+        <section className="content-panel settings-panel" aria-labelledby="rover-setting-title">
+          <div className="panel-title">
+            <span>
+              <UserRound size={15} />
+            </span>
+            <h2 id="rover-setting-title">Rover in cutscenes</h2>
+          </div>
+          <p className="settings-help">
+            Play your preferred Rover automatically when a cutscene has confirmed male and female
+            versions. Story choices still ask for your answer.
+          </p>
+          <div className="settings-options" role="radiogroup" aria-labelledby="rover-setting-title">
+            {(
+              [
+                ['ask', 'Ask each time', 'Choose a Rover when the versions diverge'],
+                ['male', 'Male Rover', 'Continue with the male version'],
+                ['female', 'Female Rover', 'Continue with the female version'],
+              ] as const
+            ).map(([value, label, description]) => (
+              <label
+                key={value}
+                className={`settings-option ${preferredRover === value ? 'selected' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="preferred-rover"
+                  value={value}
+                  checked={preferredRover === value}
+                  onChange={() => setPreferredRover(value)}
+                />
+                <span>
+                  <strong>{label}</strong>
+                  <small>{description}</small>
+                </span>
+              </label>
+            ))}
+          </div>
+          <p className="settings-help">Saved automatically in this browser.</p>
+        </section>
         <section className="content-panel settings-panel" aria-labelledby="name-setting-title">
           <div className="panel-title">
             <span>

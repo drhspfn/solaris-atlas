@@ -1,6 +1,8 @@
 import { Film, Maximize, Minimize, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
+import { preferredRoverTarget } from './preferredRover';
 import {
   type CutsceneFlow,
   type CutsceneNode,
@@ -36,6 +38,7 @@ function fallbackFlow(event: QuestMediaEvent): CutsceneFlow | null {
               kind: 'choice',
               prompt: 'Choose a variant',
               options: variants.map(({ gender }, index) => ({
+                rover: gender === 1 ? 'male' : gender === 0 ? 'female' : null,
                 label:
                   gender === 1
                     ? 'Male Rover'
@@ -63,9 +66,15 @@ function FlowPlayer({
   title: string;
   anchor?: string;
 }) {
-  const [step, setStep] = useState<string | null>(flow.entry);
+  const { preferredRover } = useNarrativePreferences();
+  const entry =
+    preferredRoverTarget(
+      flow.nodes.find((node) => node.id === flow.entry),
+      preferredRover,
+    ) || flow.entry;
+  const [step, setStep] = useState<string | null>(entry);
   const [clipId, setClipId] = useState(
-    (flow.nodes.find((node) => node.id === flow.entry && node.kind === 'clip') ||
+    (flow.nodes.find((node) => node.id === entry && node.kind === 'clip') ||
       flow.nodes.find((node) => node.kind === 'clip'))!.id,
   );
   const [failed, setFailed] = useState(false);
@@ -76,14 +85,15 @@ function FlowPlayer({
   const continuePlaying = useRef(false);
   const transitioning = useRef(false);
   const node = flow.nodes.find((entry) => entry.id === step);
+  const automaticTarget = preferredRoverTarget(node, preferredRover);
   const clip = flow.nodes.find((entry) => entry.id === clipId);
   const activeClip = clip?.kind === 'clip' ? clip : null;
   const source = activeClip ? flow.media[activeClip.segment || activeClip.asset] : null;
 
   useEffect(() => {
-    if (node?.kind === 'choice' && continuePlaying.current)
+    if (node?.kind === 'choice' && !automaticTarget && continuePlaying.current)
       choiceRef.current?.querySelector('button')?.focus();
-  }, [node]);
+  }, [node, automaticTarget]);
 
   const advance = useCallback(
     (next: string | null, play = true) => {
@@ -91,6 +101,8 @@ function FlowPlayer({
       transitioning.current = true;
       videoRef.current?.pause();
       continuePlaying.current = play;
+      const requested = flow.nodes.find((entry) => entry.id === next);
+      next = preferredRoverTarget(requested, preferredRover) || next;
       const target = flow.nodes.find((entry) => entry.id === next);
       if (target?.kind === 'clip') {
         setClipId(target.id);
@@ -103,8 +115,12 @@ function FlowPlayer({
       setFailed(false);
       if (target?.kind !== 'clip') transitioning.current = false;
     },
-    [clipId, flow.nodes],
+    [clipId, flow.nodes, preferredRover],
   );
+
+  useEffect(() => {
+    if (automaticTarget) advance(automaticTarget, continuePlaying.current);
+  }, [automaticTarget, advance]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -136,7 +152,7 @@ function FlowPlayer({
   }, [node]);
 
   if (!source || !activeClip) return null;
-  const interactive = node?.kind === 'choice' || !node;
+  const interactive = (node?.kind === 'choice' && !automaticTarget) || !node;
   return (
     <section className="quest-cutscene" aria-label={`Cutscene ${title}`}>
       <header>

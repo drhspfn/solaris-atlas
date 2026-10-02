@@ -31,7 +31,12 @@ export type CutsceneNode =
       end: number | null;
       next: string | null;
     }
-  | { id: string; kind: 'choice'; prompt: string; options: Array<{ label: string; next: string }> };
+  | {
+      id: string;
+      kind: 'choice';
+      prompt: string;
+      options: Array<{ label: string; next: string; rover?: 'male' | 'female' | null }>;
+    };
 export interface CutsceneFlow {
   version: 1;
   entry: string;
