@@ -70,7 +70,7 @@ def mark_category(label: str, icon: str) -> str:
     if "Shop" in icon or "MapNpc" in icon:
         return "shop"
 
-    if "sonance" in label or "casket" in label or "windchimer" in label:
+    if "sonance" in label or "casket" in label or "windchimer" in label or "unclaimed rafter kite" in label:
         return "collectible"
 
     if "treasure" in label:
@@ -155,6 +155,17 @@ def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dic
 
             monster_icons[text(row, 7)] = text(row, 3)
 
+    # Nearby collectible icons describe a type, not an authored placement.
+    nearby_marks = {}
+    with open_db(config / "db_map_mark.db") as db:
+        for mark_id, blob in db.execute("SELECT MarkId, BinData FROM mapmark WHERE MarkId = 15"):
+            row = table(blob)
+            nearby_marks[mark_id] = {
+                "names": translations.get(text(row, 18), {}),
+                "description": translations.get(text(row, 19), {}),
+                "icon_source": text(row, 21) or text(row, 20),
+            }
+
     markers = read_markers(config, map_ids)
 
     by_entity = {(m["game_map_id"], m["entity_id"]): m for m in markers}
@@ -183,11 +194,17 @@ def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dic
 
             entity_positions[map_id, entity_id] = (xyz, integer(row, 7))
 
-            if (map_id, entity_id) not in by_entity and blueprint in monsters:
+            components = json.loads(text(row, 10) or "{}")
+            base_info = {
+                **(templates.get(blueprint, {}).get("BaseInfoComponent") or {}),
+                **(components.get("BaseInfoComponent") or {}),
+            }
+            nearby_mark = nearby_marks.get(base_info.get("MapIcon"))
+            if (map_id, entity_id) not in by_entity and (blueprint in monsters or nearby_mark):
                 marker = {
                     "game_map_id": map_id,
                     "entity_id": entity_id,
-                    "category": "monster",
+                    "category": "collectible" if nearby_mark else "monster",
                     "blueprint_type": blueprint,
                     "world_x": xyz[0],
                     "world_y": xyz[1],
@@ -195,7 +212,11 @@ def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dic
                     "metadata_json": {
                         "area_id": integer(row, 7),
                         "hidden": flag(row, 6),
-                        "names": monsters[blueprint],
+                        "names": nearby_mark["names"] if nearby_mark else monsters[blueprint],
+                        "components": components,
+                        "in_sleep": flag(row, 5),
+                        "category_basis": "component_map_icon" if nearby_mark else "monster_blueprint",
+                        **(nearby_mark or {}),
                         "floor": None,
                     },
                 }
@@ -227,7 +248,7 @@ def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dic
             **overrides.get("BaseInfoComponent", {}),
         }
 
-        reward = {**template.get("RewardComponent", {}), **overrides.get("RewardComponent", {})}
+        reward = {**(template.get("RewardComponent") or {}), **(overrides.get("RewardComponent") or {})}
 
         meta.setdefault("names", translations.get(base_info.get("TidName", ""), {}))
 
