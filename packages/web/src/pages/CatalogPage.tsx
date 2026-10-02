@@ -1,5 +1,5 @@
 import { ChevronRight, Search, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import { api } from '../api/client';
@@ -10,6 +10,7 @@ import { categories, categoryTitle, type Entity } from '../data/entities';
 import { useLocale } from '../hooks/useLocale';
 
 export function Catalog() {
+  const searchInput = useRef<HTMLInputElement>(null);
   const { category = 'character' } = useParams();
   const locale = useLocale();
   const [query, setQuery] = useState('');
@@ -83,6 +84,8 @@ export function Catalog() {
         <form className="catalog-search" onSubmit={search}>
           <Search size={17} />
           <input
+            ref={searchInput}
+            aria-label="Search catalog"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={`Search ${title.toLowerCase()}...`}
@@ -90,9 +93,12 @@ export function Catalog() {
           {query && (
             <button
               type="button"
+              className="search-clear"
+              aria-label="Clear catalog search"
               onClick={() => {
                 setQuery('');
                 setSearchResults(null);
+                searchInput.current?.focus();
               }}
             >
               <X size={15} />

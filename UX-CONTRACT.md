@@ -40,3 +40,7 @@ The region rail keeps a fixed width on hover and focus. Full names are available
 Map controls share one top offset. Return to map restores the selected location bounds, or the current region when no location is selected, without changing filters, region, floor or selected object. Zooming out stops one level beyond the region overview. View recovery is transient and is not written to the shared URL.
 
 Frontend behavior defaults (map zoom, tile coordinate contract, paging limits, storage keys and narrative preferences) are owned by `packages/web/src/config/settings.ts`. CSS owns visual layout tokens; server settings remain in the existing server configuration.
+
+The map return action is an icon button below the zoom controls with a persistent accessible name and title. Marker details have a left-aligned category and title, a copy-link icon, and a square close button in a fixed header; only the detail body scrolls. Duplicate category/title text is omitted. Shared marker links focus at zoom 2 or closer. Copy success is announced briefly, and clipboard errors remain actionable.
+
+All search fields offer a named clear control when populated and restore focus to the input. Clearing dialogue results cancels the pending request. The document reserves scrollbar space across routes; scrollbars use the shared thin theme. Compact map filters and responsive navigation must not overflow or shift sibling content.

@@ -104,3 +104,7 @@ The existing CSS in `packages/web/src/styles/index.css` is the runtime owner. Gl
 - Do keep orbital background marks low contrast and respect reduced motion.
 - Don't imply a character relationship from co-presence or style a source reference as a narrative fact.
 - Don't use bright green, heavy glow, glass surfaces or decorative terminal labels.
+
+## Map and shared controls
+
+Map controls use compact square icon buttons with accessible names and native title tooltips. Marker cards align category and title on one left edge; their header stays visible while the body scrolls. Search clear buttons use the shared `search-clear` treatment and a restrained focus indicator. The global scrollbar baseline in `index.css` uses thin tracks and shared border/text tokens, with a stable document gutter to keep the header fixed across route changes. The map menu uses 46px item rows and 25px item icons; dense icon-only rows remain 44px high.

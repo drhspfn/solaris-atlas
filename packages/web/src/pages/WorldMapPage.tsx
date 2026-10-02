@@ -2,6 +2,7 @@ import 'leaflet/dist/leaflet.css';
 import '../styles/world-map.css';
 
 import L from 'leaflet';
+import { Check, FoldVertical, Link2, RotateCcw, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
@@ -61,7 +62,7 @@ type Marker = {
 const categories: Record<string, [string, string]> = {
   hologram: ['Tactical holograms', '#f18b7e'],
   combat_activity: ['Dream patrols', '#e3c176'],
-  teleport: ['Resonance beacons', '#82cbcd'],
+  teleport: ['Fast travel', '#82cbcd'],
   tacet_field: ['Tacet fields', '#b9a3ee'],
   chest: ['Chests', '#e3c176'],
   resource: ['Plants & materials', '#9bd9c0'],
@@ -322,7 +323,7 @@ function MapCanvas({
   }, [markers, selected, zoom, view, onSelect, onVisible, onCluster, base.icons]);
   useEffect(() => {
     if (!focus || !map.current) return;
-    if ('world' in focus)
+    if ('world' in focus) {
       map.current.setView(
         position(focus.world),
         Math.max(mapSettings.markerFocusMinZoom, map.current.getZoom()),
@@ -330,7 +331,13 @@ function MapCanvas({
           animate: false,
         },
       );
-    else
+      if (element.current && element.current.clientWidth <= mapSettings.compactViewportWidth) {
+        map.current.panBy(
+          [0, element.current.clientHeight * mapSettings.markerFocusVerticalOffset],
+          { animate: false },
+        );
+      }
+    } else
       map.current.fitBounds(
         L.latLngBounds(
           position([focus.bounds[0], focus.bounds[1]]),
@@ -393,6 +400,7 @@ export function WorldMapPage() {
   const [cluster, setCluster] = useState<Marker[]>([]);
   const [focus, setFocus] = useState<Place | Marker | null>(null);
   const [resetView, setResetView] = useState(0);
+  const searchInput = useRef<HTMLInputElement>(null);
   const [visible, setVisible] = useState<Set<number>>(new Set());
   const [listLimit, setListLimit] = useState<number>(mapSettings.listPageSize);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
@@ -579,6 +587,17 @@ export function WorldMapPage() {
     setFocus(marker);
     setShareStatus('');
   }, [markers, loading, base?.id, markerId]);
+  useEffect(() => {
+    setShareStatus('');
+  }, [selected?.id]);
+  useEffect(() => {
+    if (shareStatus !== 'Link copied.') return;
+    const timer = window.setTimeout(
+      () => setShareStatus(''),
+      APP_SETTINGS.presentation.feedbackDurationMs,
+    );
+    return () => window.clearTimeout(timer);
+  }, [shareStatus]);
   const markerLink =
     selected && chosen
       ? `${window.location.origin}/map?map=${chosen.id}&marker=${selected.id}`
@@ -588,7 +607,7 @@ export function WorldMapPage() {
       await navigator.clipboard.writeText(markerLink);
       setShareStatus('Link copied.');
     } catch {
-      setShareStatus('Copy the link below to share this marker.');
+      setShareStatus('Could not copy the link. Please try again.');
     }
   };
   const locations = base?.metadata.catalog?.locations ?? [];
@@ -746,19 +765,36 @@ export function WorldMapPage() {
               )}{' '}
             </select>{' '}
           </label>{' '}
-          <label>
-            {' '}
-            Find an object{' '}
-            <input
-              type="search"
-              placeholder="Plant, chest, beacon…"
-              value={search}
-              onChange={(e) => {
-                change('q', e.target.value);
-                setListLimit(mapSettings.listPageSize);
-              }}
-            />{' '}
-          </label>{' '}
+          <div className="atlas-search-field">
+            <label htmlFor="map-object-search">Find an object</label>
+            <div className="atlas-search-input">
+              <input
+                id="map-object-search"
+                ref={searchInput}
+                type="search"
+                placeholder="Plant, chest, beacon…"
+                value={search}
+                onChange={(e) => {
+                  change('q', e.target.value);
+                  setListLimit(mapSettings.listPageSize);
+                }}
+              />
+              {search && (
+                <button
+                  type="button"
+                  className="search-clear"
+                  aria-label="Clear object search"
+                  onClick={() => {
+                    change('q', '');
+                    setListLimit(mapSettings.listPageSize);
+                    searchInput.current?.focus();
+                  }}
+                >
+                  <X size={14} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          </div>{' '}
         </div>{' '}
         <details className="atlas-levels" open={Boolean(active)}>
           {' '}
@@ -902,9 +938,13 @@ export function WorldMapPage() {
               Hide all{' '}
             </button>{' '}
           </div>{' '}
-          <button onClick={() => setCollapsedGroups(new Set(menuGroups.map((group) => group.key)))}>
-            {' '}
-            Collapse groups{' '}
+          <button
+            className="atlas-collapse-all"
+            title="Collapse groups"
+            aria-label="Collapse groups"
+            onClick={() => setCollapsedGroups(new Set(menuGroups.map((group) => group.key)))}
+          >
+            <FoldVertical size={16} aria-hidden="true" />
           </button>{' '}
         </div>{' '}
         {menuGroups.map((group) => {
@@ -1116,14 +1156,16 @@ export function WorldMapPage() {
               : `${filtered.length.toLocaleString()} ${filtered.length === 1 ? 'object' : 'objects'} · ${chosen?.game_version ?? ''}`}{' '}
             <span>Scroll to zoom · drag to explore</span>
           </div>
-          <button
-            className="atlas-reset-view"
-            disabled={!base || loading}
-            onClick={() => setResetView((value) => value + 1)}
-          >
-            Return to map
-          </button>
-        </div>{' '}
+        </div>
+        <button
+          className="atlas-reset-view"
+          title="Return to map"
+          aria-label="Return to map"
+          disabled={!base || loading}
+          onClick={() => setResetView((value) => value + 1)}
+        >
+          <RotateCcw size={16} aria-hidden="true" />
+        </button>{' '}
         {shareStatus && (
           <p className="atlas-share-status" role="status">
             {shareStatus}
@@ -1163,55 +1205,68 @@ export function WorldMapPage() {
           </article>
         )}{' '}
         {selected && cluster.length === 0 && (
-          <article className="atlas-detail">
+          <article className="atlas-detail atlas-marker-detail">
             {' '}
-            <button
-              className="atlas-close"
-              aria-label="Close object details"
-              onClick={() => setSelected(null)}
-            >
-              {' '}
-              ×{' '}
-            </button>{' '}
-            <span className="eyebrow">
-              {' '}
-              {categories[selected.category]?.[0] ?? 'Map object'}{' '}
-            </span>{' '}
-            <h2>{objectName(selected)}</h2>{' '}
-            <div className="atlas-share-marker">
-              <a href={markerLink}>Open this marker</a>
-              <button onClick={copyMarkerLink}>Copy link</button>
-              <input
-                aria-label="Marker link"
-                value={markerLink}
-                readOnly
-                onFocus={(event) => event.currentTarget.select()}
-              />
+            <header className="atlas-detail-header">
+              <div className="atlas-detail-title">
+                {objectName(selected).toLowerCase() !==
+                  categories[selected.category]?.[0].toLowerCase() && (
+                  <span className="atlas-detail-category">
+                    {categories[selected.category]?.[0] ?? 'Map object'}
+                  </span>
+                )}
+                <h2>{objectName(selected)}</h2>
+              </div>
+              <button
+                className="atlas-icon-button"
+                aria-label="Copy marker link"
+                title={shareStatus === 'Link copied.' ? 'Link copied' : 'Copy marker link'}
+                onClick={copyMarkerLink}
+              >
+                {shareStatus === 'Link copied.' ? (
+                  <Check size={16} aria-hidden="true" />
+                ) : (
+                  <Link2 size={16} aria-hidden="true" />
+                )}
+              </button>
+              <button
+                className="atlas-icon-button"
+                aria-label="Close object details"
+                title="Close details"
+                onClick={() => {
+                  setSelected(null);
+                  setShareStatus('');
+                }}
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            </header>
+            <div className="atlas-detail-body">
+              {name(selected.metadata.description) && <p>{name(selected.metadata.description)}</p>}{' '}
+              <p>
+                {' '}
+                {selected.metadata.floor
+                  ? `Recorded floor: ${selected.metadata.floor}`
+                  : 'Floor not recorded'}{' '}
+              </p>{' '}
+              {Boolean(selected.metadata.condition_id) && (
+                <p>This mark appears under an in-game condition.</p>
+              )}{' '}
+              <small> Game placements may depend on progress or respawn state. </small>{' '}
+              <details>
+                {' '}
+                <summary>Position & source</summary>{' '}
+                <p>
+                  {' '}
+                  X {selected.world[0].toFixed(0)} · Y {selected.world[1].toFixed(0)} · Z{' '}
+                  {selected.world[2].toFixed(0)}{' '}
+                </p>{' '}
+                <p>
+                  {' '}
+                  {selected.blueprint_type} · {selected.entity_id}{' '}
+                </p>{' '}
+              </details>
             </div>
-            {name(selected.metadata.description) && <p>{name(selected.metadata.description)}</p>}{' '}
-            <p>
-              {' '}
-              {selected.metadata.floor
-                ? `Recorded floor: ${selected.metadata.floor}`
-                : 'Floor not recorded'}{' '}
-            </p>{' '}
-            {Boolean(selected.metadata.condition_id) && (
-              <p>This mark appears under an in-game condition.</p>
-            )}{' '}
-            <small> Game placements may depend on progress or respawn state. </small>{' '}
-            <details>
-              {' '}
-              <summary>Position & source</summary>{' '}
-              <p>
-                {' '}
-                X {selected.world[0].toFixed(0)} · Y {selected.world[1].toFixed(0)} · Z{' '}
-                {selected.world[2].toFixed(0)}{' '}
-              </p>{' '}
-              <p>
-                {' '}
-                {selected.blueprint_type} · {selected.entity_id}{' '}
-              </p>{' '}
-            </details>{' '}
           </article>
         )}{' '}
       </div>{' '}
