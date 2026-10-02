@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, Response
 from starlette.middleware.cors import CORSMiddleware
 
 from wuwa_story.api.errors import install_error_handlers
-from wuwa_story.api.routes import graph_paths, health, maps, nodes, releases, search, story
+from wuwa_story.api.routes import graph_paths, health, maps, media_jobs, nodes, releases, search, story
 from wuwa_story.auth.routes import router as auth_router
 from wuwa_story.auth.services import AuthError
 from wuwa_story.config.logging import configure_logging
@@ -61,6 +61,7 @@ async def auth_error_handler(_request: Request, exc: AuthError) -> JSONResponse:
 app.include_router(health.router)
 app.include_router(releases.router)
 app.include_router(maps.router)
+app.include_router(media_jobs.router)
 app.include_router(nodes.router)
 app.include_router(graph_paths.router)
 app.include_router(search.router)
