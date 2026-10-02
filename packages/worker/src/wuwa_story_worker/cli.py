@@ -31,6 +31,7 @@ from wuwa_story_worker.scheduler import (
     run_watch,
 )
 from wuwa_story_worker.snapshot_jobs import build_and_import_snapshot
+from wuwa_story_worker.voice_packages import discover_voice_plan, download_voice_plan
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -48,6 +49,18 @@ def _parser() -> argparse.ArgumentParser:
     asset_download.add_argument("plan", type=Path)
     asset_download.add_argument("--workspace", type=Path, required=True)
     asset_download.add_argument("--concurrency", type=int, default=4)
+    voice_plan = commands.add_parser(
+        "plan-voices", help="Pin all four official voice packs and character packs")
+    voice_plan.add_argument("--version", required=True)
+    voice_plan.add_argument("--public-config", type=Path, required=True)
+    voice_plan.add_argument("--config-crypto", type=Path, required=True)
+    voice_plan.add_argument("--output", type=Path, required=True)
+    voice_download = commands.add_parser(
+        "download-voices", help="Download a pinned multilingual voice plan")
+    voice_download.add_argument("plan", type=Path)
+    voice_download.add_argument("--workspace", type=Path, required=True)
+    voice_download.add_argument("--installed-game", type=Path)
+    voice_download.add_argument("--concurrency", type=int, default=4)
     asset_export = commands.add_parser("extract-assets", help="Export a completed client download using FModelCLI")
     asset_export.add_argument("root", type=Path)
     asset_export.add_argument("--fmodel", type=Path, required=True)
@@ -171,6 +184,15 @@ def main() -> None:
     elif args.command == "download-assets":
         root = download_plan(json.loads(args.plan.read_text(encoding="utf-8")), args.workspace.resolve(), args.concurrency)
         print(root)
+    elif args.command == "plan-voices":
+        plan = discover_voice_plan(
+            args.version, args.public_config, args.config_crypto)
+        save_json(args.output, plan)
+        print(json.dumps({"id": plan["id"], "languages": plan["languages"], "files": len(plan["files"]),
+                          "download_gib": round(sum(item["size"] for item in plan["files"]) / 1024 ** 3, 2)}))
+    elif args.command == "download-voices":
+        print(download_voice_plan(json.loads(args.plan.read_text(encoding="utf-8")), args.workspace,
+                                  args.installed_game, args.concurrency))
     elif args.command == "extract-assets":
         print(asyncio.run(export_assets(args.root.resolve(), args.fmodel, args.filter, args.upload)))
     elif args.command == "extract-maps":
