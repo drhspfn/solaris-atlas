@@ -104,13 +104,40 @@ async def dialogue_media(
     return result
 
 
+async def cutscene_videos(session: AsyncSession, asset_ids: list[int]) -> dict[int, dict]:
+    """Published playable files for exact authored asset identities, across text snapshots."""
+    if not asset_ids:
+        return {}
+    settings = get_settings()
+    storage = S3Storage(settings)
+    rows = await session.execute(
+        select(FileReference, FileLocation.object_key)
+        .join(FileLocation, FileLocation.file_id == FileReference.file_id)
+        .where(FileReference.owner_node_id.in_(asset_ids),
+               FileReference.reference_type == "cutscene_video",
+               FileLocation.backend == "s3", FileLocation.bucket == settings.s3_bucket,
+               FileLocation.available.is_(True), FileLocation.is_primary.is_(True))
+        .order_by(FileReference.id.desc())
+    )
+    videos = {}
+    for reference, object_key in rows:
+        videos.setdefault(reference.owner_node_id, {
+            "url": storage.public_url(object_key),
+            "asset_version": reference.metadata_json.get("asset_version"),
+            "has_audio": reference.metadata_json.get("has_audio", False),
+            "soundtrack": reference.metadata_json.get("soundtrack"),
+            "subtitles_included": reference.metadata_json.get("subtitles_included", False),
+        })
+    return videos
+
+
 @router.get("/quests/{game_quest_id}/media")
 async def quest_media(
     game_quest_id: int,
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    """Manifest for later FModel extraction; these are references, not playable files."""
+    """Authored media references with published playable files when available."""
     quest = await session.scalar(select(Quest).where(Quest.game_quest_id == game_quest_id))
     if quest is None:
         raise HTTPException(status_code=404, detail="quest not found")
@@ -134,6 +161,7 @@ async def quest_media(
     variants = await _links(session, cutscene_ids, ("has_variant", "uses_audio_event", "uses_audio_event_normalized", "uses_caption"), release_id)
     child_ids = [link["node_id"] for entries in variants.values() for link in entries]
     assets = await _links(session, child_ids, ("references_asset",), release_id)
+    playable = await cutscene_videos(session, [asset["node_id"] for entries in assets.values() for asset in entries])
     resource_rows = await session.execute(
         select(NodeRevision.node_id, SourceRecord.data)
         .join(SourceRecord, SourceRecord.id == NodeRevision.source_record_id)
@@ -174,7 +202,7 @@ async def quest_media(
                           "engine_path": asset["canonical_key"].removeprefix("asset:ue:")
                           if asset["canonical_key"].startswith("asset:ue:") else None,
                           "reference_kind": "unreal_asset_path", "basis": asset["basis"],
-                          "source": asset["source"]}
+                          "source": asset["source"], "video": playable.get(asset["node_id"])}
                          for asset in assets.get(child["node_id"], [])
                      ]}
                     for child in variants.get(link["node_id"], [])
@@ -190,7 +218,7 @@ async def quest_media(
     return {
         "quest": f"quest:{game_quest_id}",
         "game_version": (await session.get(GameRelease, release_id)).game_version,
-        "availability": "references_only",
+        "availability": "partial" if playable else "references_only",
         "events": events,
         "video_packages": [
             {"reference": link["canonical_key"], "basis": link["basis"],
