@@ -1,4 +1,5 @@
-const STORAGE_KEY = 'solaris-atlas:guest-player-title:v1';
+import { APP_SETTINGS } from '../config/settings';
+const STORAGE_KEY = APP_SETTINGS.storage.guestPlayerTitle;
 
 // Rover's in-world titles and epithets, catalogued by the community wiki.
 // Keep this list explicit: it is presentation-only and never changes source data.

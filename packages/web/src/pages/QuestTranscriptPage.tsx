@@ -11,6 +11,7 @@ import {
   QuestMediaReferences,
 } from '../components/story/QuestMediaReferences';
 import { EmptyInline, ErrorPanel, PageLoader } from '../components/ui/Feedback';
+import { APP_SETTINGS } from '../config/settings';
 import { entityPath } from '../data/entities';
 import type { QuestContinuity as QuestContinuityData } from '../data/story';
 import { useLocale } from '../hooks/useLocale';
@@ -77,7 +78,7 @@ export function QuestPage() {
     if (gameVersion) selection.set('game_version', gameVersion);
     Promise.all([
       api<any>(`/quests/${key}/profile?${selection}`),
-      api<any>(`/quests/${key}/transcript?${selection}&limit=2000`),
+      api<any>(`/quests/${key}/transcript?${selection}&limit=${APP_SETTINGS.limits.transcript}`),
       api<QuestContinuityData>(`/quests/${key}/continuity?${selection}`)
         .then((result) => ({ result, failure: '' }))
         .catch((reason: Error) => ({ result: null, failure: reason.message })),

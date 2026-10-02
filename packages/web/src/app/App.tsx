@@ -6,6 +6,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { Footer } from '../components/layout/Footer';
 import { LocaleSwitcher } from '../components/layout/LocaleSwitcher';
 import { PageLoader } from '../components/ui/Feedback';
+import { APP_SETTINGS } from '../config/settings';
 import { categories } from '../data/entities';
 import {
   AccountPage,
@@ -29,7 +30,7 @@ const WorldMapPage = lazy(() =>
   import('../pages/WorldMapPage').then((module) => ({ default: module.WorldMapPage })),
 );
 
-const apiDocsUrl = import.meta.env.VITE_API_DOCS_URL ?? 'http://localhost:8000/docs';
+const apiDocsUrl = import.meta.env.VITE_API_DOCS_URL ?? APP_SETTINGS.api.defaultDocsUrl;
 
 export function App() {
   const [mobileOpen, setMobileOpen] = useState(false);

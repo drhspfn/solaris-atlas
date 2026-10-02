@@ -5,6 +5,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { PlayerText } from '../components/dialogue/PlayerText';
 import { EmptyInline, ErrorPanel, PageLoader } from '../components/ui/Feedback';
+import { APP_SETTINGS } from '../config/settings';
 import { type Entity, entityPath } from '../data/entities';
 import { localizedText } from '../data/localized';
 import { interpolatePlayerName } from '../data/playerName';
@@ -42,7 +43,7 @@ export function NodeExplorerPage() {
     Promise.all([
       api<NodeDetail>(`/nodes/${encodeURIComponent(canonicalKey)}`),
       api<{ results: Related[] }>(
-        `/nodes/${encodeURIComponent(canonicalKey)}/related?locale=${locale}&limit=100`,
+        `/nodes/${encodeURIComponent(canonicalKey)}/related?locale=${locale}&limit=${APP_SETTINGS.limits.relatedNodes}`,
       ),
       api<any>(
         `/nodes/${encodeURIComponent(canonicalKey)}/narrative-context?locale=${locale}`,

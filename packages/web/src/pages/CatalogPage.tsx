@@ -5,6 +5,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { EntityCard } from '../components/cards/EntityCard';
 import { EmptyState, ErrorPanel } from '../components/ui/Feedback';
+import { APP_SETTINGS } from '../config/settings';
 import { categories, categoryTitle, type Entity } from '../data/entities';
 import { useLocale } from '../hooks/useLocale';
 
@@ -27,7 +28,7 @@ export function Catalog() {
     setLoading(true);
     setError('');
     api<{ results: Entity[]; total: number }>(
-      `/catalog?category=${category}&locale=${locale}&limit=24&offset=${offset}`,
+      `/catalog?category=${category}&locale=${locale}&limit=${APP_SETTINGS.limits.catalogPage}&offset=${offset}`,
     )
       .then((d) => {
         setItems(d.results);
@@ -46,7 +47,7 @@ export function Catalog() {
     setError('');
     try {
       const d = await api<{ results: Entity[] }>(
-        `/search?q=${encodeURIComponent(query)}&category=${category}&locale=${locale}&limit=50`,
+        `/search?q=${encodeURIComponent(query)}&category=${category}&locale=${locale}&limit=${APP_SETTINGS.limits.catalogSearch}`,
       );
       setSearchResults(d.results);
     } catch (err) {
@@ -115,7 +116,7 @@ export function Catalog() {
         <ErrorPanel message={error} />
       ) : loading ? (
         <div className="loading-grid">
-          {Array.from({ length: 8 }, (_, i) => (
+          {Array.from({ length: APP_SETTINGS.presentation.skeletonCount }, (_, i) => (
             <div className="skeleton" key={i} />
           ))}
         </div>
@@ -126,15 +127,21 @@ export function Catalog() {
               <EntityCard item={item} index={i} key={`${item.id}-${i}`} />
             ))}
           </div>
-          {!searchResults && total > 24 && (
+          {!searchResults && total > APP_SETTINGS.limits.catalogPage && (
             <div className="pagination">
-              <button disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 24))}>
+              <button
+                disabled={!offset}
+                onClick={() => setOffset(Math.max(0, offset - APP_SETTINGS.limits.catalogPage))}
+              >
                 Previous
               </button>
               <span>
                 {offset + 1}–{Math.min(offset + list.length, total)} of {total.toLocaleString()}
               </span>
-              <button disabled={offset + 24 >= total} onClick={() => setOffset(offset + 24)}>
+              <button
+                disabled={offset + APP_SETTINGS.limits.catalogPage >= total}
+                onClick={() => setOffset(offset + APP_SETTINGS.limits.catalogPage)}
+              >
                 Next
               </button>
             </div>

@@ -1,6 +1,8 @@
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from 'react';
 
-const STORAGE_KEY = 'solaris-atlas:narrative-preferences:v1';
+import { APP_SETTINGS } from '../config/settings';
+
+const STORAGE_KEY = APP_SETTINGS.storage.narrative;
 export type PlayerNameMode = 'nickname' | 'rover_title';
 export type PlayerNameColorMode = 'accent' | 'custom';
 
@@ -15,11 +17,7 @@ type PreferenceContextValue = Preferences & {
   setCustomColor: (value: string) => void;
 };
 
-const defaults: Preferences = {
-  nameMode: 'nickname',
-  colorMode: 'accent',
-  customColor: '#9BD9C0',
-};
+const defaults: Preferences = APP_SETTINGS.narrative;
 const PreferencesContext = createContext<PreferenceContextValue | null>(null);
 
 function loadPreferences(): Preferences {

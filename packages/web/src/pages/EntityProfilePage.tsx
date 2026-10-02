@@ -11,6 +11,7 @@ import { PlayerText } from '../components/dialogue/PlayerText';
 import { InlineDialogueSearch } from '../components/search/InlineDialogueSearch';
 import { EmptyInline, ErrorPanel, PageLoader } from '../components/ui/Feedback';
 import { PanelTitle } from '../components/ui/PanelTitle';
+import { APP_SETTINGS } from '../config/settings';
 import { categoryTitle, type Entity, entityPath } from '../data/entities';
 import { localizedText } from '../data/localized';
 import { useLocale } from '../hooks/useLocale';
@@ -111,7 +112,9 @@ export function Profile({ kind }: { kind: 'character' | 'item' | 'location' }) {
     }
   }
   const related = Array.from(relatedByIdentity.values());
-  const visibleRelated = showAllRelated ? related : related.slice(0, 18);
+  const visibleRelated = showAllRelated
+    ? related
+    : related.slice(0, APP_SETTINGS.limits.relatedPreview);
   const quests = data?.quests_with_dialogue || data?.quest_references || [];
   const itemQuestUses = kind === 'item' ? data?.quest_uses || [] : [];
   const characterMaterials = kind === 'character' ? data?.progression_materials || [] : [];
@@ -164,7 +167,9 @@ export function Profile({ kind }: { kind: 'character' | 'item' | 'location' }) {
           <p>
             {description ||
               (kind === 'character'
-                ? archive?.biography?.replace(/<[^>]*>/g, '').slice(0, 260)
+                ? archive?.biography
+                    ?.replace(/<[^>]*>/g, '')
+                    .slice(0, APP_SETTINGS.limits.biographyPreviewCharacters)
                 : null) ||
               (kind === 'character'
                 ? 'A character recorded in the Solaris Atlas story archive.'

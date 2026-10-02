@@ -7,6 +7,7 @@ import { useSearchParams } from 'react-router-dom';
 
 import { api } from '../api/client';
 import { iconNode, ObjectIcon } from '../components/MapIcons';
+import { APP_SETTINGS } from '../config/settings';
 import { useLocale } from '../hooks/useLocale';
 import { useMapPreferences } from '../hooks/useMapPreferences';
 import { compactMapLink, type MapPreferences } from '../state/mapPreferences';
@@ -100,13 +101,20 @@ const menuGroups = [
 ];
 const markerType = (m: Marker) =>
   `${m.category}:${m.metadata.item_id ? `item:${m.metadata.item_id}` : m.category === 'combat_activity' ? 'dream-patrol' : m.metadata.names?.en || m.metadata.icon_source || m.metadata.type_key || m.blueprint_type}`;
-const MAP_MAX_ZOOM = 3;
+const mapSettings = APP_SETTINGS.map;
 
-const position = (world: number[]) => L.latLng((-world[1] / 85000) * 256, (world[0] / 85000) * 256);
+const position = (world: number[]) =>
+  L.latLng(
+    (-world[1] / mapSettings.worldUnitsPerTile) * mapSettings.tilePixels,
+    (world[0] / mapSettings.worldUnitsPerTile) * mapSettings.tilePixels,
+  );
 const bounds = (a: Atlas) =>
   L.latLngBounds(
-    [(a.grid_bounds[1] - 1) * 256, (a.grid_bounds[0] - 1) * 256],
-    [a.grid_bounds[3] * 256, a.grid_bounds[2] * 256],
+    [
+      (a.grid_bounds[1] - 1) * mapSettings.tilePixels,
+      (a.grid_bounds[0] - 1) * mapSettings.tilePixels,
+    ],
+    [a.grid_bounds[3] * mapSettings.tilePixels, a.grid_bounds[2] * mapSettings.tilePixels],
   );
 function MapCanvas({
   base,
@@ -117,6 +125,8 @@ function MapCanvas({
   selected,
   onSelect,
   focus,
+  resetView,
+  resetLocation,
   onVisible,
   onCluster,
 }: {
@@ -128,39 +138,49 @@ function MapCanvas({
   selected: Marker | null;
   onSelect: (m: Marker) => void;
   focus: Place | Marker | null;
+  resetView: number;
+  resetLocation: Place | undefined;
   onVisible: (ids: Set<number>) => void;
   onCluster: (markers: Marker[]) => void;
 }) {
   const element = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const objects = useRef<L.LayerGroup | null>(null);
-  const [zoom, setZoom] = useState(-2);
+  const [zoom, setZoom] = useState<number>(mapSettings.initialZoom);
   const [view, setView] = useState(0);
   const [tileError, setTileError] = useState(false);
+  const lastResetView = useRef(0);
   useEffect(() => {
     const instance = L.map(element.current!, {
       crs: L.CRS.Simple,
-      minZoom: -6,
-      maxZoom: MAP_MAX_ZOOM,
+      minZoom: mapSettings.minZoom,
+      maxZoom: mapSettings.maxZoom,
       preferCanvas: true,
       attributionControl: false,
     });
     map.current = instance;
-    for (const [pane, z] of [
-      ['surface-preview', 200],
-      ['surface-detail', 220],
-      ['floor-preview', 240],
-      ['floor-detail', 260],
-    ] as const)
-      instance.createPane(pane).style.zIndex = String(z);
+    for (const [pane, z] of mapSettings.panes) instance.createPane(pane).style.zIndex = String(z);
     objects.current = L.layerGroup().addTo(instance);
-    instance.fitBounds(bounds(base), { padding: [25, 25] });
+    const updateMinZoom = () =>
+      instance.setMinZoom(
+        Math.max(
+          mapSettings.minZoom,
+          instance.getBoundsZoom(bounds(base)) - mapSettings.overviewZoomOutLevels,
+        ),
+      );
+    updateMinZoom();
+    instance.fitBounds(bounds(base), {
+      padding: [mapSettings.initialFitPadding, mapSettings.initialFitPadding],
+    });
     const update = () => {
       setZoom(instance.getZoom());
       setView((v) => v + 1);
     };
     instance.on('moveend zoomend', update);
-    const resize = new ResizeObserver(() => instance.invalidateSize());
+    const resize = new ResizeObserver(() => {
+      instance.invalidateSize();
+      updateMinZoom();
+    });
     resize.observe(element.current!);
     return () => {
       resize.disconnect();
@@ -183,7 +203,7 @@ function MapCanvas({
         preview.on('error', () => setTileError(true));
         layers.push(preview);
       }
-      if (zoom >= -1 && atlas.tiles) {
+      if (zoom >= mapSettings.detailMinZoom && atlas.tiles) {
         const lookup = new Map(atlas.tiles.map((t) => [`${t.x},${t.y}`, t.image?.url]));
         const Grid = L.GridLayer.extend({
           createTile(coords: L.Coords, done: L.DoneCallback) {
@@ -203,12 +223,12 @@ function MapCanvas({
         });
         layers.push(
           new (Grid as typeof L.GridLayer)({
-            tileSize: 256,
+            tileSize: mapSettings.tilePixels,
             pane: atlas.id === base.id ? 'surface-detail' : 'floor-detail',
-            minNativeZoom: 0,
-            maxNativeZoom: 0,
-            minZoom: -1,
-            maxZoom: MAP_MAX_ZOOM,
+            minNativeZoom: mapSettings.tileNativeZoom,
+            maxNativeZoom: mapSettings.tileNativeZoom,
+            minZoom: mapSettings.detailMinZoom,
+            maxZoom: mapSettings.maxZoom,
             opacity: alpha,
             bounds: bounds(atlas),
           }).addTo(instance),
@@ -228,7 +248,10 @@ function MapCanvas({
     const cells = new Map<string, Marker[]>();
     for (const marker of visible) {
       const point = instance.latLngToContainerPoint(position(marker.world));
-      const size = zoom < 2 ? 42 : 20;
+      const size =
+        zoom < mapSettings.clusterSplitZoom
+          ? mapSettings.clusterCellPixels
+          : mapSettings.closeClusterCellPixels;
       const key =
         selected?.id === marker.id
           ? `m${marker.id}`
@@ -253,17 +276,21 @@ function MapCanvas({
           icon: L.divIcon({
             className: 'atlas-point atlas-cluster',
             html: label,
-            iconSize: [32, 32],
+            iconSize: [mapSettings.clusterSize, mapSettings.clusterSize],
           }),
           title: `${cell.length} objects. Zoom in to explore.`,
         })
           .addTo(group)
           .on('click', () => {
-            if (zoom >= MAP_MAX_ZOOM) onCluster(cell);
+            if (zoom >= mapSettings.maxZoom) onCluster(cell);
             else
-              instance.setView(center, Math.min(MAP_MAX_ZOOM, zoom + 1), {
-                animate: false,
-              });
+              instance.setView(
+                center,
+                Math.min(mapSettings.maxZoom, zoom + mapSettings.clusterZoomStep),
+                {
+                  animate: false,
+                },
+              );
           });
         continue;
       }
@@ -272,8 +299,8 @@ function MapCanvas({
         icon: L.divIcon({
           className: isSelected ? 'atlas-point selected' : 'atlas-point',
           html: iconNode(marker, base.icons),
-          iconSize: [30, 30],
-          iconAnchor: [15, 15],
+          iconSize: [mapSettings.markerSize, mapSettings.markerSize],
+          iconAnchor: [mapSettings.markerSize / 2, mapSettings.markerSize / 2],
         }),
         title: marker.metadata.names?.en ?? categories[marker.category]?.[0] ?? 'Map object',
       }).addTo(group);
@@ -285,7 +312,10 @@ function MapCanvas({
       dot.bindTooltip(tooltip);
       dot.on('click', () => {
         if (cell.length > 1)
-          instance.setView(position(marker.world), Math.min(MAP_MAX_ZOOM, instance.getZoom() + 2));
+          instance.setView(
+            position(marker.world),
+            Math.min(mapSettings.maxZoom, instance.getZoom() + mapSettings.markerZoomStep),
+          );
         else onSelect(marker);
       });
     }
@@ -293,18 +323,42 @@ function MapCanvas({
   useEffect(() => {
     if (!focus || !map.current) return;
     if ('world' in focus)
-      map.current.setView(position(focus.world), Math.max(0, map.current.getZoom()), {
-        animate: false,
-      });
+      map.current.setView(
+        position(focus.world),
+        Math.max(mapSettings.markerFocusMinZoom, map.current.getZoom()),
+        {
+          animate: false,
+        },
+      );
     else
       map.current.fitBounds(
         L.latLngBounds(
           position([focus.bounds[0], focus.bounds[1]]),
           position([focus.bounds[2], focus.bounds[3]]),
         ),
-        { padding: [35, 35], maxZoom: 1, animate: false },
+        {
+          padding: [mapSettings.locationFitPadding, mapSettings.locationFitPadding],
+          maxZoom: mapSettings.locationMaxZoom,
+          animate: false,
+        },
       );
   }, [focus]);
+  useEffect(() => {
+    if (resetView === lastResetView.current || !map.current) return;
+    lastResetView.current = resetView;
+    const target = resetLocation
+      ? L.latLngBounds(
+          position([resetLocation.bounds[0], resetLocation.bounds[1]]),
+          position([resetLocation.bounds[2], resetLocation.bounds[3]]),
+        )
+      : bounds(base);
+    const padding = resetLocation ? mapSettings.locationFitPadding : mapSettings.initialFitPadding;
+    map.current.fitBounds(target, {
+      padding: [padding, padding],
+      maxZoom: mapSettings.locationMaxZoom,
+      animate: false,
+    });
+  }, [resetView, resetLocation, base]);
   return (
     <div className="atlas-canvas" ref={element} aria-label="Interactive world map">
       {' '}
@@ -338,8 +392,9 @@ export function WorldMapPage() {
   const [selected, setSelected] = useState<Marker | null>(null);
   const [cluster, setCluster] = useState<Marker[]>([]);
   const [focus, setFocus] = useState<Place | Marker | null>(null);
+  const [resetView, setResetView] = useState(0);
   const [visible, setVisible] = useState<Set<number>>(new Set());
-  const [listLimit, setListLimit] = useState(60);
+  const [listLimit, setListLimit] = useState<number>(mapSettings.listPageSize);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     () => new Set(menuGroups.filter((group) => group.key !== 'featured').map((group) => group.key)),
   );
@@ -371,14 +426,16 @@ export function WorldMapPage() {
   const active = filters.floor ?? '';
   const area = Number(filters.area ?? 0);
   const disabled = (filters.hide ?? '').split(',');
-  const opacityValue = Number(filters.opacity ?? 30);
-  const opacity = Number.isFinite(opacityValue) ? Math.min(100, Math.max(0, opacityValue)) : 30;
+  const opacityValue = Number(filters.opacity ?? mapSettings.surfaceOpacityPercent);
+  const opacity = Number.isFinite(opacityValue)
+    ? Math.min(100, Math.max(0, opacityValue))
+    : mapSettings.surfaceOpacityPercent;
   const unknown = filters.unknown !== '0';
   const includeHidden = filters.hidden === '1';
   useEffect(() => {
     const previous = document.title;
     document.title = 'Interactive map — Solaris Atlas';
-    const timer = window.setInterval(() => setRetry((n) => n + 1), 45 * 60 * 1000);
+    const timer = window.setInterval(() => setRetry((n) => n + 1), mapSettings.signedUrlRefreshMs);
     return () => {
       document.title = previous;
       window.clearInterval(timer);
@@ -416,7 +473,9 @@ export function WorldMapPage() {
     [maps],
   );
   const chosen =
-    roots.find((m) => String(m.id) === mapId) ?? roots.find((m) => m.game_map_id === 8) ?? roots[0];
+    roots.find((m) => String(m.id) === mapId) ??
+    roots.find((m) => m.game_map_id === mapSettings.defaultGameMapId) ??
+    roots[0];
   useEffect(() => {
     if (!chosen) return;
     let cancelled = false;
@@ -437,7 +496,7 @@ export function WorldMapPage() {
       let after: number | null = 0;
       while (after !== null) {
         const page: { items: Marker[]; next_after_id: number | null } = await api(
-          `/maps/${chosen.id}/markers?compact=true&include_hidden=true&limit=5000&after_id=${after}`,
+          `/maps/${chosen.id}/markers?compact=true&include_hidden=true&limit=${mapSettings.markerPageSize}&after_id=${after}`,
           { signal: controller.signal },
         );
         if (cancelled) return;
@@ -481,10 +540,10 @@ export function WorldMapPage() {
               id: m.id,
               names: {},
               bounds: [
-                (m.grid_bounds[0] - 1) * 85000,
-                -m.grid_bounds[3] * 85000,
-                m.grid_bounds[2] * 85000,
-                -(m.grid_bounds[1] - 1) * 85000,
+                (m.grid_bounds[0] - 1) * mapSettings.worldUnitsPerTile,
+                -m.grid_bounds[3] * mapSettings.worldUnitsPerTile,
+                m.grid_bounds[2] * mapSettings.worldUnitsPerTile,
+                -(m.grid_bounds[1] - 1) * mapSettings.worldUnitsPerTile,
               ],
             });
           }
@@ -542,10 +601,10 @@ export function WorldMapPage() {
         id: base.id,
         names: {},
         bounds: [
-          (base.grid_bounds[0] - 1) * 85000,
-          -base.grid_bounds[3] * 85000,
-          base.grid_bounds[2] * 85000,
-          -(base.grid_bounds[1] - 1) * 85000,
+          (base.grid_bounds[0] - 1) * mapSettings.worldUnitsPerTile,
+          -base.grid_bounds[3] * mapSettings.worldUnitsPerTile,
+          base.grid_bounds[2] * mapSettings.worldUnitsPerTile,
+          -(base.grid_bounds[1] - 1) * mapSettings.worldUnitsPerTile,
         ],
       });
   }, [area, base?.id]);
@@ -696,7 +755,7 @@ export function WorldMapPage() {
               value={search}
               onChange={(e) => {
                 change('q', e.target.value);
-                setListLimit(60);
+                setListLimit(mapSettings.listPageSize);
               }}
             />{' '}
           </label>{' '}
@@ -985,7 +1044,10 @@ export function WorldMapPage() {
               </button>
             ))}{' '}
           {filtered.filter((m) => visible.has(m.id)).length > listLimit && (
-            <button onClick={() => setListLimit((n) => n + 60)}> Show more objects </button>
+            <button onClick={() => setListLimit((n) => n + mapSettings.listPageSize)}>
+              {' '}
+              Show more objects{' '}
+            </button>
           )}{' '}
           {!loading && !filtered.length && (
             <p>No objects match. Clear the search or show all categories.</p>
@@ -1017,7 +1079,7 @@ export function WorldMapPage() {
                     .split(/\s+/)
                     .map((word) => word[0])
                     .join('')
-                    .slice(0, 3)}{' '}
+                    .slice(0, mapSettings.regionLabelCharacters)}{' '}
                 </span>{' '}
                 <span className="atlas-region-name">{title}</span>{' '}
               </button>
@@ -1040,16 +1102,27 @@ export function WorldMapPage() {
             selected={selected}
             onSelect={setSelected}
             focus={focus}
+            resetView={resetView}
+            resetLocation={locations.find((location) => location.id === area)}
             onVisible={setVisible}
             onCluster={setCluster}
           />
         )}{' '}
-        <div className="atlas-map-status" role="status">
-          {' '}
-          {loading
-            ? 'Loading map objects…'
-            : `${filtered.length.toLocaleString()} ${filtered.length === 1 ? 'object' : 'objects'} · ${chosen?.game_version ?? ''}`}{' '}
-          <span>Scroll to zoom · drag to explore</span>{' '}
+        <div className="atlas-map-status">
+          <div role="status">
+            {' '}
+            {loading
+              ? 'Loading map objects…'
+              : `${filtered.length.toLocaleString()} ${filtered.length === 1 ? 'object' : 'objects'} · ${chosen?.game_version ?? ''}`}{' '}
+            <span>Scroll to zoom · drag to explore</span>
+          </div>
+          <button
+            className="atlas-reset-view"
+            disabled={!base || loading}
+            onClick={() => setResetView((value) => value + 1)}
+          >
+            Return to map
+          </button>
         </div>{' '}
         {shareStatus && (
           <p className="atlas-share-status" role="status">

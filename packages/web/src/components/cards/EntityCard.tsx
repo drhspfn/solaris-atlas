@@ -1,6 +1,7 @@
 import { ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
+import { APP_SETTINGS } from '../../config/settings';
 import { display, type Entity, entityPath } from '../../data/entities';
 
 export function EntityCard({ item, index = 0 }: { item: Entity; index?: number }) {
@@ -9,7 +10,9 @@ export function EntityCard({ item, index = 0 }: { item: Entity; index?: number }
     <Link
       to={entityPath(item)}
       className="entity-card"
-      style={{ animationDelay: `${Math.min(index, 12) * 25}ms` }}
+      style={{
+        animationDelay: `${Math.min(index, APP_SETTINGS.presentation.cardStaggerMaxIndex) * APP_SETTINGS.presentation.cardStaggerMs}ms`,
+      }}
     >
       <div className={`entity-art art-${type}`}>
         <span className="art-glyph">

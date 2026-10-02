@@ -146,6 +146,7 @@
   border-color: var(--accent-mint);
 }
 .atlas-map-area {
+  --atlas-control-top: 10px;
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -159,14 +160,13 @@
 .atlas-map-status {
   position: absolute;
   z-index: 450;
-  top: 18px;
+  top: var(--atlas-control-top);
   left: 65px;
   padding: 10px 14px;
   border: 1px solid var(--border-default);
   background: #0f1617ed;
   border-radius: 6px;
   font-size: 12px;
-  pointer-events: none;
 }
 .atlas-map-status span {
   display: block;
@@ -245,8 +245,8 @@
   }
   .atlas-map-status {
     left: 55px;
-    right: 8px;
-    top: 10px;
+    right: 76px;
+    top: var(--atlas-control-top);
     padding: 8px;
     font-size: 10px;
   }
@@ -636,7 +636,7 @@
 .atlas-region-rail {
   position: absolute;
   right: 12px;
-  top: 12px;
+  top: var(--atlas-control-top);
   z-index: 800;
   display: flex;
   flex-direction: column;
@@ -767,4 +767,15 @@
 }
 .atlas-menu-group header .atlas-group-toggle {
   width: 100%;
+}
+
+.atlas-canvas .leaflet-top .leaflet-control {
+  margin-top: var(--atlas-control-top);
+}
+.atlas-reset-view {
+  display: block;
+  margin-top: 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--accent-mint);
 }

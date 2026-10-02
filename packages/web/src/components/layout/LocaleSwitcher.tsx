@@ -1,5 +1,6 @@
 import { ChevronDown, Globe2 } from 'lucide-react';
 
+import { APP_SETTINGS } from '../../config/settings';
 import { availableLocales } from '../../data/locales';
 import { useLocale } from '../../hooks/useLocale';
 
@@ -11,7 +12,7 @@ export function LocaleSwitcher() {
       <select
         value={locale}
         onChange={(e) => {
-          localStorage.setItem('wuwa-locale', e.target.value);
+          localStorage.setItem(APP_SETTINGS.storage.locale, e.target.value);
           window.dispatchEvent(new Event('locale-change'));
         }}
       >

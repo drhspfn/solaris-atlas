@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { api } from '../../api/client';
+import { APP_SETTINGS } from '../../config/settings';
 import { useLocale } from '../../hooks/useLocale';
 import { type PlayerDisplay, PlayerText } from '../dialogue/PlayerText';
 
@@ -30,7 +31,7 @@ export function InlineDialogueSearch({
         scope: 'dialogue',
         character,
         locale,
-        limit: '8',
+        limit: String(APP_SETTINGS.limits.inlineDialogueSearch),
       });
       if (questId) params.set('quest_id', questId);
       const data = await api<any>(`/search?${params}`);

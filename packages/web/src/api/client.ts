@@ -1,4 +1,5 @@
-const apiBase = (import.meta.env.VITE_API_BASE ?? '/api').replace(/\/$/, '');
+import { APP_SETTINGS } from '../config/settings';
+const apiBase = (import.meta.env.VITE_API_BASE ?? APP_SETTINGS.api.defaultBase).replace(/\/$/, '');
 
 export class ApiError extends Error {
   constructor(
