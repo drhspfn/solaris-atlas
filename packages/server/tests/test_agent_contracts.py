@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from wuwa_story.agents.budget import price
-from wuwa_story.agents.contracts import AnalysisResult, validate_citations
+from wuwa_story.agents.contracts import AnalysisResult, StoryAssertion, validate_citations
 from wuwa_story.agents.settings import AgentSettings
 
 
@@ -51,3 +51,49 @@ def test_paid_execution_is_opt_in_and_credentials_never_checkpointed():
         settings.require_enabled()
     assert "api_key" not in settings.public_config()
     assert "never-persist-this" not in str(settings.public_config())
+
+
+def assertion():
+    return {
+        "text": "A flashback is shown.",
+        "status": "unresolved",
+        "citations": [{"node_id": 1, "quote": "exact line"}],
+        "chronology_in_quest": {"order": 0, "anchor_node_id": 1, "label": "Opening flashback"},
+        "world_chronology": {"placement": "unknown", "explanation": "Its date is not established."},
+        "knowledge_state": "The player has seen the clue, but does not know its meaning.",
+        "later_resolution": [
+            {
+                "status": "partial",
+                "text": "A later source adds context.",
+                "revealed_in_node_id": 2,
+                "citations": [{"node_id": 2, "quote": "later line"}],
+            }
+        ],
+    }
+
+
+def test_temporal_assertions_preserve_unknown_time_and_validate_later_evidence():
+    old = result()
+    with pytest.raises(ValueError, match="assertions"):
+        old.validate_temporal_structure()
+    old.blocks[0].assertions = [StoryAssertion.model_validate(assertion())]
+    old.validate_temporal_structure()
+    validate_citations(old, {1: "exact line", 2: "later line"})
+    with pytest.raises(ValueError, match="Citation"):
+        validate_citations(old, {1: "exact line"})
+    assert old.blocks[0].assertions[0].status == "unresolved"
+    assert "does not know" in old.blocks[0].assertions[0].knowledge_state
+    assert "later source" in old.blocks[0].search_text()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"status": "certain"},
+        {"citations": []},
+        {"chronology_in_quest": {"order": -1, "anchor_node_id": 1, "label": "Bad"}},
+    ],
+)
+def test_atomic_claims_reject_missing_evidence_and_invalid_certainty(changes):
+    with pytest.raises(ValidationError):
+        StoryAssertion.model_validate({**assertion(), **changes})

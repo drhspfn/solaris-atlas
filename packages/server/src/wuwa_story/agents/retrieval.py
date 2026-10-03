@@ -105,20 +105,29 @@ async def public_document(
     ).all()
     ids = {c["node_id"] for block in document.body_ast for c in block.get("citations", [])}
     ids.update(value for block in document.body_ast for value in block.get("related_node_ids", []))
+    for block in document.body_ast:
+        ids.update(record["node_id"] for record in block.get("related_records", []))
+        for assertion in block.get("assertions", []):
+            ids.add(assertion["chronology_in_quest"]["anchor_node_id"])
+            ids.update(c["node_id"] for c in assertion["citations"])
+            for resolution in assertion["later_resolution"]:
+                ids.add(resolution["revealed_in_node_id"])
+                ids.update(c["node_id"] for c in resolution["citations"])
     ids.update(
         value
         for item in document.metadata_json.get("links", [])
         for value in (item["from_node_id"], item["to_node_id"])
     )
     nodes = []
-    for node, kind, label in (
+    for node, kind, label, inline_text in (
         await session.execute(
-            select(Node, NodeType.key, LocalizationValue.content)
+            select(Node, NodeType.key, LocalizationValue.content, DialogueLine.inline_text)
             .join(NodeType, NodeType.id == Node.type_id)
             .outerjoin(Character, Character.node_id == Node.id)
             .outerjoin(Item, Item.node_id == Node.id)
             .outerjoin(Location, Location.node_id == Node.id)
             .outerjoin(Quest, Quest.node_id == Node.id)
+            .outerjoin(DialogueLine, DialogueLine.node_id == Node.id)
             .outerjoin(
                 LocalizationValue,
                 and_(
@@ -128,6 +137,7 @@ async def public_document(
                         Item.name_key_id,
                         Location.name_key_id,
                         Quest.name_key_id,
+                        DialogueLine.localization_key_id,
                     ),
                     LocalizationValue.release_id == release.id,
                     LocalizationValue.locale_id == locale.id,
@@ -141,7 +151,9 @@ async def public_document(
                 "id": node.id,
                 "canonical_key": node.canonical_key,
                 "kind": kind,
-                "label": label
+                "label": ("Passage: " + (label or inline_text or "")[:180])
+                if kind == "dialogue_line" and (label or inline_text)
+                else label
                 or (
                     "Dialogue passage"
                     if kind == "dialogue_line"
@@ -150,10 +162,10 @@ async def public_document(
                 "href": await source_link(session, node, kind, release, locale),
             }
         )
-    blocks = []
-    for block in document.body_ast:
+
+    async def with_citations(group: dict[str, Any]) -> dict[str, Any]:
         citations = []
-        for citation in block.get("citations", []):
+        for citation in group.get("citations", []):
             source_locale = (
                 await session.scalar(select(Locale).where(Locale.code == citation.get("locale")))
                 if citation.get("locale")
@@ -177,7 +189,20 @@ async def public_document(
                     else None,
                 }
             )
-        blocks.append({**block, "citations": citations})
+        return {**group, "citations": citations}
+
+    blocks = []
+    for block in document.body_ast:
+        enriched = await with_citations(block)
+        assertions = []
+        for assertion in block.get("assertions", []):
+            item = await with_citations(assertion)
+            item["later_resolution"] = [
+                await with_citations(value) for value in assertion["later_resolution"]
+            ]
+            assertions.append(item)
+        enriched["assertions"] = assertions
+        blocks.append(enriched)
     return {
         "id": document.id,
         "quest_id": quest.game_quest_id,
@@ -189,7 +214,7 @@ async def public_document(
         "generated": True,
         "unresolved_questions": document.metadata_json.get("unresolved_questions", []),
         "events": [{"node_id": node_id, "title": title} for node_id, title in events],
-        "links": document.metadata_json.get("links", []),
+        "links": [await with_citations(item) for item in document.metadata_json.get("links", [])],
         "nodes": nodes,
     }
 

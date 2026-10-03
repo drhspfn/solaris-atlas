@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from wuwa_story.agents.contracts import AnalysisResult, Citation
+from wuwa_story.agents.contracts import AnalysisResult, Citation, citation_groups
 from wuwa_story.agents.evidence import hash_value
 from wuwa_story.db.models.agents import AgentJob, AgentNote, ExplanationEmbedding
 from wuwa_story.db.models.content import Document, DocumentHead, DocumentReference
@@ -47,12 +47,13 @@ async def publish_analysis(
         document_type=kind,
         revision=revision,
         title=result.title,
-        plain_text="\n\n".join(block.title + "\n" + block.text for block in result.blocks),
+        plain_text="\n\n".join(block.search_text() for block in result.blocks),
         body_ast=[block.model_dump() for block in result.blocks],
         source_hash=run.input_hash or hash_value(result.model_dump()),
         processor_run_id=run.id,
         metadata_json={
             "release_id": job.release_id,
+            "schema_version": run.prompt_version,
             "generated": True,
             "source_scope": "all_locales" if run.prompt_version != "story-v1" else "locale",
             "unresolved_questions": result.unresolved_questions,
@@ -72,11 +73,27 @@ async def publish_analysis(
     )
     refs: list[tuple[int, str, str | None]] = [
         (citation.node_id, "citation", citation.quote[:512])
-        for block in result.blocks
-        for citation in block.citations
+        for group in citation_groups(result)
+        for citation in group.citations
     ]
     refs += [
         (related, "related", None) for block in result.blocks for related in block.related_node_ids
+    ]
+    refs += [
+        (record.node_id, "related", record.label)
+        for block in result.blocks
+        for record in block.related_records
+    ]
+    refs += [
+        (item.chronology_in_quest.anchor_node_id, "chronology", item.chronology_in_quest.label)
+        for block in result.blocks
+        for item in block.assertions
+    ]
+    refs += [
+        (resolution.revealed_in_node_id, "later_resolution", resolution.text[:512])
+        for block in result.blocks
+        for item in block.assertions
+        for resolution in item.later_resolution
     ]
     claim_refs: list[tuple[int, int, str]] = []
 

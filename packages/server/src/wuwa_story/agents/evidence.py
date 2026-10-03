@@ -10,10 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from wuwa_story.agents.contracts import (
     SOURCE_LOCALE_PRIORITY,
     AnalysisResult,
-    ExplanationBlock,
-    InferredEvent,
-    InferredLink,
     NoteRequest,
+    citation_groups,
     validate_citations,
 )
 from wuwa_story.agents.providers import ToolCall
@@ -309,6 +307,7 @@ class EvidenceTools:
                 or ""
             )
             item: dict[str, Any] = {
+                "encounter_order": offset + len(lines),
                 "node_id": node.id,
                 "canonical_key": node.canonical_key,
                 "text": full_text[:2500],
@@ -584,11 +583,7 @@ class EvidenceTools:
     async def validate_result(self, result: AnalysisResult) -> None:
         validate_citations(result, self.evidence)
         # Recheck exact source text before publication, including sources outside this quest.
-        groups: list[ExplanationBlock | InferredLink | InferredEvent] = [
-            *result.blocks,
-            *result.links,
-            *result.events,
-        ]
+        groups = citation_groups(result)
         citations = [citation for group in groups for citation in group.citations]
         fresh_sources: dict[tuple[int, str | None], dict[str, Any]] = {}
         for citation in citations:
@@ -606,7 +601,50 @@ class EvidenceTools:
             end = max(end, offset + count)
         if self.total_lines is None or end < self.total_lines:
             raise ValueError("Read every page of the target quest before publishing")
+        if any(block.assertions for block in result.blocks):
+            states = await quest_states(self.session, self.quest.node_id, self.release_id)
+            anchors = list(
+                await self.session.scalars(
+                    select(DialogueLine.node_id)
+                    .join(QuestAction, QuestAction.node_id == DialogueLine.action_node_id)
+                    .join(QuestState, QuestState.node_id == QuestAction.quest_state_node_id)
+                    .where(
+                        QuestState.node_id.in_(states),
+                        DialogueLine.node_id.in_(observed_nodes(self.release_id)),
+                    )
+                    .order_by(
+                        QuestState.state_key,
+                        QuestAction.action_index,
+                        DialogueLine.source_index,
+                        DialogueLine.node_id,
+                    )
+                )
+            )
+            positions = {node_id: index for index, node_id in enumerate(anchors)}
+            for block in result.blocks:
+                for assertion in block.assertions:
+                    chronology = assertion.chronology_in_quest
+                    if positions.get(chronology.anchor_node_id) != chronology.order:
+                        raise ValueError("Use the target quest passage's exact encounter_order")
+                    for resolution in assertion.later_resolution:
+                        position = positions.get(resolution.revealed_in_node_id)
+                        if position is not None and position <= chronology.order:
+                            raise ValueError("A later revelation must follow the initial encounter")
         ids = {node_id for block in result.blocks for node_id in block.related_node_ids}
+        ids.update(record.node_id for block in result.blocks for record in block.related_records)
+        for block in result.blocks:
+            for assertion in block.assertions:
+                ids.add(assertion.chronology_in_quest.anchor_node_id)
+                ids.update(item.revealed_in_node_id for item in assertion.later_resolution)
+                if assertion.chronology_in_quest.anchor_node_id not in {
+                    c.node_id for c in assertion.citations
+                }:
+                    raise ValueError("Quest chronology must be anchored to a cited passage")
+                for resolution in assertion.later_resolution:
+                    if resolution.revealed_in_node_id not in {
+                        c.node_id for c in resolution.citations
+                    }:
+                        raise ValueError("Later resolution must cite its revelation source")
         ids.update(value for link in result.links for value in (link.from_node_id, link.to_node_id))
         ids.update(value for event in result.events for value in event.participant_node_ids)
         if ids - self.known_nodes.keys():

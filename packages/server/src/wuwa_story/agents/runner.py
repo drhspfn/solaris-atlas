@@ -55,6 +55,19 @@ def system_prompt(locale: str, relations: list[str]) -> str:
         "locale in each citation. Report unresolved translation conflicts; never invent missing text. "
         "Use related_node_ids for clickable references; no external URLs or HTML. "
         "Explain who, what, why and consequences, with concise section titles and passage annotations. "
+        "In every block, split all substantive claims into atomic assertions with exact citations and "
+        "status confirmed, observed_anomaly, inferred or unresolved. Apparent drowning is an inference; "
+        "a reported clear airway/dry clothes is an observed anomaly, not proof of drowning. "
+        "Keep chronology_in_quest (authored encounter order plus cited passage anchor) separate from "
+        "world_chronology (actual event time; mark unknown rather than inventing dates). Flashbacks "
+        "can be encountered now while depicting an unknown earlier time. knowledge_state contains "
+        "only information available at that encounter. Later revelations belong exclusively in "
+        "later_resolution, with their own exact citations and revealed_in_node_id; an empty list "
+        "means no established resolution. Do not put spoilers or later explanations in knowledge_state. "
+        "Do not conflate authored branches as one timeline. Preserve open clues even if later explained. "
+        "Use related_records with a readable label explaining why each source matters. Graph links "
+        "need a human relation_label, existing ontology relation, explanation, confidence and citations. "
+        "Only create links between discovered nodes; report missing entities/relations in notes. "
         f"Write in locale {locale}. Finish via finish_analysis as the ONLY tool call in that turn. "
         "Allowed relations: "
         + ", ".join(relations)
@@ -460,6 +473,8 @@ async def run_locked(
                         candidate = AnalysisResult.model_validate_json(
                             tool_call.arguments["result_json"]
                         )
+                        if run.prompt_version == "story-v3":
+                            candidate.validate_temporal_structure()
                         await evidence.validate_result(candidate)
                         result = candidate
                         output = {"validated": True}
@@ -503,7 +518,7 @@ async def run_locked(
     if settings.embedding_model:
         for ordinal in range(len(vectors), len(result.blocks)):
             block = result.blocks[ordinal]
-            content = block.title + "\n" + block.text
+            content = block.search_text()
             if settings.provider == "gemini":
                 route = f"/models/{settings.embedding_model}:embedContent"
                 payload = {

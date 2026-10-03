@@ -162,6 +162,27 @@ def result_for(nodes):
                 "title": "Why the route changes",
                 "text": "The destroyed bridge forces a change of route.",
                 "citations": [citation],
+                "related_records": [
+                    {"node_id": nodes[3].id, "label": "Bridge destruction forces another route"}
+                ],
+                "assertions": [
+                    {
+                        "text": "The bridge was destroyed.",
+                        "status": "confirmed",
+                        "citations": [citation],
+                        "chronology_in_quest": {
+                            "order": 0,
+                            "anchor_node_id": nodes[3].id,
+                            "label": "Bridge report",
+                        },
+                        "world_chronology": {
+                            "placement": "before_quest",
+                            "explanation": "Already destroyed when reported; exact time unknown.",
+                        },
+                        "knowledge_state": "The direct route is blocked.",
+                        "later_resolution": [],
+                    }
+                ],
             }
         ],
         "links": [
@@ -169,6 +190,7 @@ def result_for(nodes):
                 "from_node_id": nodes[3].id,
                 "to_node_id": nodes[4].id,
                 "relation": "EXPLAINS",
+                "relation_label": "explains the change of route",
                 "explanation": "The destroyed crossing explains the search for another route.",
                 "confidence": 0.9,
                 "citations": [citation],
@@ -231,6 +253,15 @@ async def test_full_pipeline_and_duplicate_delivery(world):
         job = await db.get(AgentJob, run_id)
         document = await db.get(Document, job.document_id)
         assert document.body_ast[0]["citations"][0]["node_id"] == nodes[3].id
+        assert (
+            document.body_ast[0]["assertions"][0]["world_chronology"]["placement"] == "before_quest"
+        )
+        response = await get_explanation(db, nodes[0].id, world[5].game_version, "en")
+        assert (
+            response["explanation"]["blocks"][0]["related_records"][0]["label"]
+            == "Bridge destruction forces another route"
+        )
+        assert response["explanation"]["blocks"][0]["assertions"][0]["citations"][0]["href"]
         assert "history" not in job.checkpoint
         assert (
             await db.scalar(
@@ -883,11 +914,61 @@ async def test_pagination_unread_citations_and_changed_sources(world):
             await tools.validate_result(result)
         await tools.read_quest(offset=1)
         await tools.validate_result(result)
+        assert first["lines"][0]["encounter_order"] == 0
+        result.blocks[0].assertions[0].chronology_in_quest.order = 1
+        with pytest.raises(ValueError, match="encounter_order"):
+            await tools.validate_result(result)
+        result.blocks[0].assertions[0].chronology_in_quest.order = 0
         (await db.get(DialogueLine, nodes[3].id)).inline_text = "A different passage."
         await db.flush()
         with pytest.raises(ValueError, match="changed"):
             await tools.validate_result(result)
         await db.rollback()
+
+
+async def test_later_revelations_publish_a_new_revision_without_rewriting_knowledge(world):
+    from wuwa_story.agents.contracts import LaterResolution
+    from wuwa_story.agents.publication import publish_analysis
+
+    engine, settings, request, nodes, locale, release, quest = world
+    run_id = await create(world)
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        tools = EvidenceTools(
+            db, run_id=run_id, quest=quest, release_id=release.id, locale=locale, settings=settings
+        )
+        await tools.read_quest()
+        result = AnalysisResult.model_validate(result_for(nodes))
+        await tools.validate_result(result)
+        job, run = await db.get(AgentJob, run_id), await db.get(ProcessingRun, run_id)
+        original = await publish_analysis(db, job, run, result, [])
+        await db.commit()
+        second_run = await enqueue_analysis(
+            db, request.model_copy(update={"generation": "later-revelation"}), settings
+        )
+        second_job = await db.get(AgentJob, second_run.id)
+        result.blocks[0].assertions[0].later_resolution = [
+            LaterResolution(
+                status="partial",
+                text="The later passage establishes the search for another route.",
+                revealed_in_node_id=nodes[4].id,
+                citations=[{"node_id": nodes[4].id, "quote": "We need another route."}],
+            )
+        ]
+        await tools.validate_result(result)
+        revised = await publish_analysis(db, second_job, second_run, result, [])
+        await db.commit()
+        await db.refresh(original)
+        assert original.body_ast[0]["assertions"][0]["later_resolution"] == []
+        assert (
+            revised.body_ast[0]["assertions"][0]["knowledge_state"]
+            == original.body_ast[0]["assertions"][0]["knowledge_state"]
+        )
+        assert revised.revision == original.revision + 1
+        public = (await get_explanation(db, request.quest_id, release.game_version, "en"))[
+            "explanation"
+        ]
+        assert public["id"] == revised.id
+        assert public["blocks"][0]["assertions"][0]["later_resolution"][0]["citations"][0]["href"]
 
 
 async def test_embeddings_search_and_stale_explanation(world):
