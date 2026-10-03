@@ -7,6 +7,7 @@ import {
   CharacterArchive,
   type CharacterArchiveData,
 } from '../components/characters/CharacterArchive';
+import { ItemAcquisition } from '../components/items/ItemAcquisition';
 import { PlayerText } from '../components/dialogue/PlayerText';
 import { InlineDialogueSearch } from '../components/search/InlineDialogueSearch';
 import { EmptyInline, ErrorPanel, PageLoader } from '../components/ui/Feedback';
@@ -213,81 +214,13 @@ export function Profile({ kind }: { kind: 'character' | 'item' | 'location' }) {
               kind === 'character'
                 ? 'Story appearances'
                 : kind === 'item'
-                  ? 'Where to find'
+                  ? 'Where to obtain'
                   : 'Quest references'
             }
-            count={kind === 'item' ? itemQuestUses.length : quests.length}
+            count={kind === 'item' ? undefined : quests.length}
           />
-          {kind === 'item' && data?.harvest_world_maps?.length > 0 && (
-            <div className="subsection item-region">
-              <h3>Gathering region</h3>
-              {data.harvest_world_maps.map((world: any, index: number) => {
-                const region = world.named_region;
-                const regionName = localizedText(region?.name, `Map ${world.map_id}`);
-                const regionLink = region?.canonical_key
-                  ? entityPath({ id: 0, canonical_key: region.canonical_key, node_type: 'area' })
-                  : undefined;
-                return (
-                  <div className="region-card" key={`${world.map_id}-${index}`}>
-                    <div className="region-heading">
-                      <span className="connection-index">⌖</span>
-                      <div>
-                        {regionLink ? (
-                          <Link to={regionLink}>
-                            <strong>{regionName}</strong>
-                          </Link>
-                        ) : (
-                          <strong>{regionName}</strong>
-                        )}
-                        <small>
-                          World map · Map #{world.map_id} · {world.entity_ids?.length || 0} spawn
-                          entity references
-                        </small>
-                      </div>
-                      {regionLink && (
-                        <Link to={regionLink} aria-label={`Open ${regionName}`}>
-                          <ArrowRight size={15} />
-                        </Link>
-                      )}
-                    </div>
-                    <p>
-                      Raw data locates collection references in this region; it does not provide a
-                      verified named sub-area or exact map coordinates.
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {kind === 'item' && itemQuestUses.length > 0 && (
-            <div className="subsection">
-              <h3>Quest requirements</h3>
-              {itemQuestUses.map((use: any, index: number) => {
-                const quest = use.quest || {};
-                const questId = quest.game_quest_id || quest.canonical_key?.split(':').at(-1);
-                return (
-                  <Link
-                    to={`/quests/${questId}`}
-                    className="connection-row"
-                    key={`${use.quest_node_key}-${index}`}
-                  >
-                    <span className="connection-index">{String(index + 1).padStart(2, '0')}</span>
-                    <div>
-                      <strong>{localizedText(quest.name, `Quest ${questId}`)}</strong>
-                      <small>
-                        Hand-in · {use.required_count ?? '—'} required · node {use.quest_node_key}
-                      </small>
-                    </div>
-                    <ArrowRight size={16} />
-                  </Link>
-                );
-              })}
-              <small className="source-caption">
-                Source: {itemQuestUses[0].source?.file}, row {itemQuestUses[0].source?.row}
-              </small>
-            </div>
-          )}
-          {quests.length ? (
+          {kind === 'item' && <ItemAcquisition data={data} locale={locale} />}
+          {kind !== 'item' && quests.length ? (
             <div className="list-stack">
               {quests.map((q: any, i: number) => {
                 const quest = q.quest || q;
@@ -337,7 +270,7 @@ export function Profile({ kind }: { kind: 'character' | 'item' | 'location' }) {
               kind === 'character'
                 ? 'Shared scenes & links'
                 : kind === 'item'
-                  ? 'Acquisition & locations'
+                  ? 'Uses & connections'
                   : 'Places & connections'
             }
             count={
@@ -346,6 +279,65 @@ export function Profile({ kind }: { kind: 'character' | 'item' | 'location' }) {
                 : related.length
             }
           />
+          {kind === 'item' && itemQuestUses.length > 0 && (
+            <div className="subsection">
+              <h3>Quest requirements</h3>
+              {itemQuestUses.map((use: any, index: number) => {
+                const quest = use.quest || {};
+                const questId = quest.game_quest_id || quest.canonical_key?.split(':').at(-1);
+                return (
+                  <Link
+                    to={`/quests/${questId}`}
+                    className="connection-row"
+                    key={`${use.quest_node_key}-${index}`}
+                  >
+                    <span className="connection-index">{String(index + 1).padStart(2, '0')}</span>
+                    <div>
+                      <strong>{localizedText(quest.name, `Quest ${questId}`)}</strong>
+                      <small>
+                        Hand-in · {use.required_count ?? '—'} required · node {use.quest_node_key}
+                      </small>
+                    </div>
+                    <ArrowRight size={16} />
+                  </Link>
+                );
+              })}
+              <small className="source-caption">
+                Source: {itemQuestUses[0].source?.file}, row {itemQuestUses[0].source?.row}
+              </small>
+            </div>
+          )}
+          {kind === 'item' && quests.length > 0 && <h3 className="subsection">Quest references</h3>}
+          {kind === 'item' && (
+            <>
+              {' '}
+              {quests.length ? (
+                <div className="list-stack">
+                  {quests.map((q: any, i: number) => {
+                    const quest = q.quest || q;
+                    const id = quest.game_quest_id || quest.canonical_key?.split(':').at(-1);
+                    return (
+                      <Link to={`/quests/${id}`} className="connection-row" key={i}>
+                        <span className="connection-index">{String(i + 1).padStart(2, '0')}</span>
+                        <div>
+                          <strong>
+                            {localizedText(quest.name, localizedText(quest.title, `Quest ${id}`))}
+                          </strong>
+                          <small>
+                            {quest.quest_type || 'Story quest'}
+                            {quest.game_quest_id ? ` · ${quest.game_quest_id}` : ''}
+                          </small>
+                        </div>
+                        <ArrowRight size={16} />
+                      </Link>
+                    );
+                  })}
+                </div>
+              ) : kind !== 'item' ? (
+                <EmptyInline text="No confirmed quest links in this snapshot." />
+              ) : null}
+            </>
+          )}
           {kind === 'character' && related.length ? (
             <div className="note-strip">
               <Sparkles size={15} />
@@ -615,43 +607,6 @@ export function Profile({ kind }: { kind: 'character' | 'item' | 'location' }) {
                   </details>
                 </div>
               )}
-            </div>
-          )}
-          {kind === 'item' && data?.shop_offers?.length > 0 && (
-            <div className="subsection">
-              <h3>Shop offers</h3>
-              {data.shop_offers.map((offer: any, index: number) => (
-                <div className="plain-row" key={`${offer.offer_id}-${index}`}>
-                  <span>
-                    <strong>{localizedText(offer.shop_name, `Shop #${offer.shop_id}`)}</strong>
-                    <small>
-                      {offer.prices
-                        ?.map(
-                          (price: any) =>
-                            `${price.amount} ${price.item?.label || `currency #${price.item_id}`}`,
-                        )
-                        .join(' + ')}{' '}
-                      · limit {offer.purchase_limit ?? '—'}
-                    </small>
-                  </span>
-                  <small>{offer.item_count}× per purchase</small>
-                </div>
-              ))}
-              <small className="source-caption">
-                Exact item offer in {data.shop_offers[0].source?.file}, row{' '}
-                {data.shop_offers[0].source?.row}.
-              </small>
-            </div>
-          )}
-          {kind === 'item' && data?.acquisition_paths?.length > 0 && (
-            <div className="subsection">
-              <h3>Ways to obtain</h3>
-              {data.acquisition_paths.map((a: any, i: number) => (
-                <div className="plain-row" key={i}>
-                  <span>{localizedText(a.description, `Access path ${a.id}`)}</span>
-                  <small>Source-linked</small>
-                </div>
-              ))}
             </div>
           )}
           {kind === 'location' && data?.hierarchy?.parent && (

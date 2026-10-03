@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api.item_acquisition import ITEM_QUEST_REWARD_LIMIT, item_map_sources
 from wuwa_story.api.routes.story.shared import (
     _character_progression_materials,
     _dialogue_payload,
@@ -74,6 +75,7 @@ async def item_profile(
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
         .where(
             SourceFile.logical_source_path == "BinData/accesspath/accesspath.json",
+            SourceRecord.release_id == release_id,
             SourceRecord.data["Id"].as_integer().in_(access_ids or [-1]),
         )
         .order_by(SourceRecord.data["SortIndex"].as_integer(), SourceRecord.row_index)
@@ -526,6 +528,7 @@ async def item_profile(
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
         .where(
             SourceFile.logical_source_path == "BinData/shop/shopfixed.json",
+            SourceRecord.release_id == release_id,
             SourceRecord.data["ItemId"].as_integer() == item.game_item_id,
         )
         .order_by(SourceRecord.row_index)
@@ -537,6 +540,7 @@ async def item_profile(
             .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
             .where(
                 SourceFile.logical_source_path == "BinData/shop/shopinfo.json",
+                SourceRecord.release_id == release_id,
                 SourceRecord.data["Id"].as_integer() == raw.get("ShopId", -1),
             )
             .order_by(SourceRecord.row_index)
@@ -589,6 +593,28 @@ async def item_profile(
                 },
             }
         )
+    reward_ids = list(await session.scalars(
+        select(SourceRecord.data["Id"].as_integer())
+        .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+        .where(SourceFile.logical_source_path == "BinData/drop/droppackage.json",
+               SourceRecord.release_id == release_id,
+               SourceRecord.data["DropPreview"].contains([{"Key": item.game_item_id}]))
+    ))
+    quest_rewards = []
+    reward_rows = await session.execute(
+        select(SourceRecord, Quest)
+        .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+        .join(Quest, Quest.game_quest_id == SourceRecord.data["QuestId"].as_integer())
+        .where(SourceFile.logical_source_path == "BinData/QuestData/questdata.json",
+               SourceRecord.release_id == release_id,
+               SourceRecord.data["Data"]["RewardId"].as_integer().in_(reward_ids or [-1]))
+        .order_by(Quest.game_quest_id).limit(ITEM_QUEST_REWARD_LIMIT + 1)
+    )
+    for record, quest in reward_rows:
+        quest_rewards.append({"quest": await _quest_info(session, quest, locale, game_version),
+                              "source": {"basis": "QuestData.Data.RewardId -> DropPackage.DropPreview.Key",
+                                         "row": record.row_index},
+                              "kind": "possible_quest_reward"})
     image_url = (await entity_image_urls(session, [node.id])).get(node.id)
     return {
         "item": {
@@ -614,6 +640,9 @@ async def item_profile(
             "show_types": raw.get("ShowTypes", []),
             "item_access_ids": raw.get("ItemAccess", []),
         },
+        "map_sources": await item_map_sources(session, item.game_item_id),
+        "quest_rewards": quest_rewards[:ITEM_QUEST_REWARD_LIMIT],
+        "quest_rewards_has_more": len(quest_rewards) > ITEM_QUEST_REWARD_LIMIT,
         "acquisition_paths": access_paths,
         "harvest_sources": enrichment_sources,
         "harvest_world_maps": world_map_payloads,

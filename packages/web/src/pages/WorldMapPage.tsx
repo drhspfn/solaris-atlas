@@ -9,6 +9,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { iconNode, ObjectIcon } from '../components/MapIcons';
 import { APP_SETTINGS } from '../config/settings';
+import { acquisitionMarkers, markerType } from '../data/mapAcquisition';
 import { useLocale } from '../hooks/useLocale';
 import { useMapPreferences } from '../hooks/useMapPreferences';
 import { compactMapLink, type MapPreferences } from '../state/mapPreferences';
@@ -56,6 +57,7 @@ type Marker = {
     condition_id?: number;
     icon_source?: string;
     item_id?: number;
+    drop_item_ids?: number[];
     resource_group?: string;
   };
 };
@@ -100,8 +102,6 @@ const menuGroups = [
   { key: 'ore', title: 'Ore', categories: ['resource'] },
   { key: 'gathering', title: 'Other resources', categories: ['resource'] },
 ];
-const markerType = (m: Marker) =>
-  `${m.category}:${m.metadata.item_id ? `item:${m.metadata.item_id}` : m.category === 'combat_activity' ? 'dream-patrol' : m.metadata.names?.en || m.metadata.icon_source || m.metadata.type_key || m.blueprint_type}`;
 const mapSettings = APP_SETTINGS.map;
 
 const position = (world: number[]) =>
@@ -384,6 +384,7 @@ export function WorldMapPage() {
   const [filters, setFilters] = useMapPreferences(params, Object.keys(categories).join(','));
   const [shareStatus, setShareStatus] = useState('');
   const openedMarker = useRef('');
+  const openedSource = useRef('');
   useEffect(() => {
     const compact = compactMapLink(params);
     if (compact.toString() !== params.toString()) setParams(compact, { replace: true });
@@ -563,6 +564,61 @@ export function WorldMapPage() {
       cancelled = true;
     };
   }, [active, chosen?.id, maps, retry]);
+  const sourceItem = Number(params.get('item'));
+  const sourceId = Number(params.get('source'));
+  const sourceMarkers = useMemo(
+    () => acquisitionMarkers(markers, sourceItem, sourceId),
+    [markers, sourceItem, sourceId],
+  );
+  const sourceMarkerIds = useMemo(() => new Set(sourceMarkers.map((m) => m.id)), [sourceMarkers]);
+  useEffect(() => {
+    if (loading || !base || !sourceItem || !sourceId) return;
+    const key = `${base.id}:${sourceItem}:${sourceId}`;
+    if (openedSource.current === key) return;
+    openedSource.current = key;
+    if (!sourceMarkers.length) {
+      setShareStatus('These acquisition sources are no longer available on this map.');
+      return;
+    }
+    const type = markerType(sourceMarkers[0]);
+    const category = sourceMarkers[0].category;
+    setFilters((current) => ({
+      ...current,
+      map: String(base.id),
+      area: '',
+      q: '',
+      floor: '',
+      hidden: sourceMarkers.some((m) => m.metadata.hidden) ? '1' : '',
+      unknown: '1',
+      hide: [
+        ...Object.keys(categories).filter((key) => key !== category),
+        ...new Set(
+          markers.filter((m) => m.category === category && markerType(m) !== type).map(markerType),
+        ),
+      ].join(','),
+    }));
+    setSelected(null);
+    setCluster([]);
+    setCollapsedGroups(
+      (current) =>
+        new Set(
+          [...current].filter(
+            (key) => !menuGroups.find((group) => group.key === key)?.categories.includes(category),
+          ),
+        ),
+    );
+    setFocus({
+      id: sourceId,
+      names: sourceMarkers[0].metadata.names ?? {},
+      bounds: [
+        Math.min(...sourceMarkers.map((m) => m.world[0])),
+        Math.min(...sourceMarkers.map((m) => m.world[1])),
+        Math.max(...sourceMarkers.map((m) => m.world[0])),
+        Math.max(...sourceMarkers.map((m) => m.world[1])),
+      ],
+    });
+    setShareStatus('');
+  }, [loading, base, sourceItem, sourceId, sourceMarkers, markers, setFilters]);
   const markerId = params.get('marker');
   useEffect(() => {
     if (loading || !base || !markerId) return;
@@ -612,6 +668,7 @@ export function WorldMapPage() {
   };
   const locations = base?.metadata.catalog?.locations ?? [];
   useEffect(() => {
+    if (sourceItem && sourceId) return;
     const location = locations.find((l) => l.id === area);
     if (location) setFocus(location);
     else if (markerId && selected && String(selected.id) === markerId) setFocus(selected);
@@ -626,7 +683,7 @@ export function WorldMapPage() {
           -(base.grid_bounds[1] - 1) * mapSettings.worldUnitsPerTile,
         ],
       });
-  }, [area, base?.id]);
+  }, [area, base?.id, sourceItem, sourceId]);
   const scoped = useMemo(
     () =>
       markers.filter(
@@ -642,6 +699,7 @@ export function WorldMapPage() {
   const types = useMemo(() => {
     const groups = new Map<string, { marker: Marker; count: number }>();
     for (const m of scoped) {
+      if (sourceItem && sourceId && !sourceMarkerIds.has(m.id)) continue;
       const key = markerType(m);
       const item = groups.get(key) ?? { marker: m, count: 0 };
       item.count++;
@@ -654,11 +712,12 @@ export function WorldMapPage() {
         a[1].marker.category.localeCompare(b[1].marker.category) ||
         b[1].count - a[1].count,
     );
-  }, [scoped]);
+  }, [scoped, sourceItem, sourceId, sourceMarkerIds]);
   const filtered = useMemo(
     () =>
       scoped.filter(
         (m) =>
+          (!sourceItem || !sourceId || sourceMarkerIds.has(m.id)) &&
           ((String(m.id) === markerId && selected?.id === m.id) ||
             (!disabled.includes(m.category) && !disabled.includes(markerType(m)))) &&
           (!search ||
@@ -666,7 +725,17 @@ export function WorldMapPage() {
               .toLowerCase()
               .includes(search.toLowerCase())),
       ),
-    [scoped, filters.hide, search, locale, markerId, selected?.id],
+    [
+      scoped,
+      filters.hide,
+      search,
+      locale,
+      markerId,
+      selected?.id,
+      sourceItem,
+      sourceId,
+      sourceMarkerIds,
+    ],
   );
   const [lastType, setLastType] = useState('');
   const toggleType = (type: string, marker: Marker) => {
@@ -796,6 +865,24 @@ export function WorldMapPage() {
             </div>
           </div>{' '}
         </div>{' '}
+        {sourceItem > 0 && sourceId > 0 && (
+          <div className="atlas-source-filter" role="status">
+            <span>
+              {loading
+                ? 'Loading acquisition sources…'
+                : `${sourceMarkers.length} acquisition locations`}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                openedSource.current = '';
+                setParams({ map: String(base?.id ?? mapId) }, { replace: true });
+              }}
+            >
+              Clear source filter
+            </button>
+          </div>
+        )}
         <details className="atlas-levels" open={Boolean(active)}>
           {' '}
           <summary>Layers & display</summary>{' '}
