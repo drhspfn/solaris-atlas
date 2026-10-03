@@ -102,6 +102,7 @@ async def quest_fingerprint(
     session: AsyncSession, quest: Quest, release_id: int, locale_id: int
 ) -> bytes:
     states = await quest_states(session, quest.node_id, release_id)
+    action_ids = select(QuestAction.node_id).where(QuestAction.quest_state_node_id.in_(states))
     line_ids = (
         select(DialogueLine.node_id)
         .join(QuestAction, QuestAction.node_id == DialogueLine.action_node_id)
@@ -117,6 +118,7 @@ async def quest_fingerprint(
                         NodeRevision.node_id == quest.node_id,
                         NodeRevision.node_id.in_(states),
                         NodeRevision.node_id.in_(line_ids),
+                        NodeRevision.node_id.in_(action_ids),
                     ),
                 )
                 .order_by(NodeRevision.node_id, NodeRevision.revision)
@@ -156,17 +158,32 @@ async def quest_fingerprint(
                         Edge.from_node_id == quest.node_id,
                         Edge.from_node_id.in_(states),
                         Edge.from_node_id.in_(line_ids),
+                        Edge.from_node_id.in_(action_ids),
                     ),
                 )
                 .order_by(Edge.id)
             )
         ).all()
     )
+    line_fields = (
+        await session.execute(
+            select(
+                DialogueLine.node_id,
+                DialogueLine.inline_text,
+                DialogueLine.localization_key_id,
+                DialogueLine.speaker_node_id,
+                DialogueLine.source_index,
+            )
+            .where(DialogueLine.node_id.in_(line_ids))
+            .order_by(DialogueLine.node_id)
+        )
+    ).all()
     return hash_value(
         {
             "revisions": [tuple(row) for row in revisions],
             "text": [tuple(row) for row in text_hashes],
             "edges": [tuple(row) for row in edges],
+            "line_fields": [tuple(row) for row in line_fields],
         }
     )
 

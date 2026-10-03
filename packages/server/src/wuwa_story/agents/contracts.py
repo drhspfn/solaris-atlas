@@ -50,6 +50,7 @@ class AnalysisRequest(StrictModel):
     quest_id: int = Field(gt=0)
     game_version: str = Field(min_length=1, max_length=64)
     locale: str = Field(default="en", min_length=2, max_length=16)
+    generation: str = Field(default="", max_length=64)
 
 
 class NoteRequest(StrictModel):

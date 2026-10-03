@@ -1,0 +1,259 @@
+"""Publish generated artifacts separately from imported facts, in one transaction."""
+
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from wuwa_story.agents.contracts import AnalysisResult, Citation
+from wuwa_story.agents.evidence import hash_value
+from wuwa_story.db.models.agents import AgentJob, AgentNote, ExplanationEmbedding
+from wuwa_story.db.models.content import Document, DocumentHead, DocumentReference
+from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeType
+from wuwa_story.db.models.ontology import RelationType
+from wuwa_story.db.models.ops import ProcessingRun
+from wuwa_story.db.models.search import EmbeddingModel
+from wuwa_story.db.models.story import Claim, ClaimEvidence, Event
+
+
+def document_type(release_id: int) -> str:
+    return f"story-explanation:{release_id}"
+
+
+async def publish_analysis(
+    session: AsyncSession,
+    job: AgentJob,
+    run: ProcessingRun,
+    result: AnalysisResult,
+    vectors: list[list[float]],
+) -> Document:
+    # Serialize document revisions across different model jobs for the same quest/locale/version.
+    assert run.target_node_id is not None
+    node = await session.scalar(select(Node).where(Node.id == run.target_node_id).with_for_update())
+    assert node is not None
+    kind = document_type(job.release_id)
+    revision = (
+        await session.scalar(
+            select(func.max(Document.revision)).where(
+                Document.node_id == node.id,
+                Document.locale_id == job.locale_id,
+                Document.document_type == kind,
+            )
+        )
+        or 0
+    ) + 1
+    document = Document(
+        node_id=node.id,
+        locale_id=job.locale_id,
+        document_type=kind,
+        revision=revision,
+        title=result.title,
+        plain_text="\n\n".join(block.title + "\n" + block.text for block in result.blocks),
+        body_ast=[block.model_dump() for block in result.blocks],
+        source_hash=run.input_hash or hash_value(result.model_dump()),
+        processor_run_id=run.id,
+        metadata_json={
+            "release_id": job.release_id,
+            "generated": True,
+            "unresolved_questions": result.unresolved_questions,
+            "links": [link.model_dump() for link in result.links],
+        },
+    )
+    session.add(document)
+    await session.flush()
+    await session.execute(
+        insert(DocumentHead)
+        .values(
+            node_id=node.id, locale_id=job.locale_id, document_type=kind, document_id=document.id
+        )
+        .on_conflict_do_update(
+            constraint="uq_document_head_identity", set_={"document_id": document.id}
+        )
+    )
+    refs: list[tuple[int, str, str | None]] = [
+        (citation.node_id, "citation", citation.quote[:512])
+        for block in result.blocks
+        for citation in block.citations
+    ]
+    refs += [
+        (related, "related", None) for block in result.blocks for related in block.related_node_ids
+    ]
+    claim_refs: list[tuple[int, int, str]] = []
+
+    async def link(
+        source: int,
+        target: int,
+        relation: str,
+        explanation: str,
+        confidence: float,
+        citations: list[Citation],
+    ) -> None:
+        relation_id = await session.scalar(
+            select(RelationType.id).where(RelationType.key == relation)
+        )
+        claim = Claim(
+            subject_node_id=source,
+            object_node_id=target,
+            predicate_type_id=relation_id,
+            object_text=explanation,
+            claim_kind="inference",
+            confidence=confidence,
+            status="generated",
+            processor_run_id=run.id,
+            metadata_json={
+                "release_id": job.release_id,
+                "locale_id": job.locale_id,
+                "citations": [c.model_dump() for c in citations],
+            },
+        )
+        session.add(claim)
+        await session.flush()
+        for citation_id in {c.node_id for c in citations}:
+            session.add(ClaimEvidence(claim_id=claim.id, evidence_node_id=citation_id, relevance=1))
+        edge_id = await session.scalar(
+            insert(Edge)
+            .values(
+                from_node_id=source,
+                to_node_id=target,
+                relation_type_id=relation_id,
+                layer="semantic",
+                basis="inference",
+                confidence=confidence,
+                processor_run_id=run.id,
+                created_release_id=job.release_id,
+            )
+            .on_conflict_do_nothing(constraint="uq_edge_identity")
+            .returning(Edge.id)
+        )
+        if edge_id is None:
+            edge_id = await session.scalar(
+                select(Edge.id).where(
+                    Edge.from_node_id == source,
+                    Edge.to_node_id == target,
+                    Edge.relation_type_id == relation_id,
+                    Edge.layer == "semantic",
+                    Edge.basis == "inference",
+                )
+            )
+        for index, citation in enumerate(citations):
+            session.add(
+                EdgeEvidence(
+                    edge_id=edge_id,
+                    release_id=job.release_id,
+                    evidence_node_id=citation.node_id,
+                    source_file_path=f"agent://run/{run.id}",
+                    source_raw_path=f"claim/{claim.id}/{index}",
+                    explanation=explanation + "\n" + citation.quote,
+                )
+            )
+        claim_refs.append((target, claim.id, relation))
+
+    for item in result.links:
+        await link(
+            item.from_node_id,
+            item.to_node_id,
+            item.relation,
+            item.explanation,
+            item.confidence,
+            item.citations,
+        )
+    for event in result.events:
+        key = "agent-event:" + hash_value({"run": run.id, "event": event.model_dump()}).hex()
+        event_node = Node(
+            type_id=await session.scalar(select(NodeType.id).where(NodeType.key == "event")),
+            canonical_key=key,
+            created_release_id=job.release_id,
+            metadata_json={"generated": True},
+        )
+        session.add(event_node)
+        await session.flush()
+        session.add(
+            Event(
+                node_id=event_node.id,
+                title=event.title,
+                semantic_status="generated",
+                processor_run_id=run.id,
+                metadata_json={
+                    "release_id": job.release_id,
+                    "locale_id": job.locale_id,
+                    "description": event.description,
+                    "citations": [c.model_dump() for c in event.citations],
+                },
+            )
+        )
+        refs.append((event_node.id, "event", event.title))
+        for participant in event.participant_node_ids:
+            await link(
+                event_node.id, participant, "INVOLVES", event.description, 1, event.citations
+            )
+    # References have stable contiguous ordinals within each immutable document.
+    for ordinal, (target, ref_kind, label) in enumerate(refs):
+        session.add(
+            DocumentReference(
+                document_id=document.id,
+                ordinal=ordinal,
+                target_node_id=target,
+                reference_type=ref_kind,
+                label=label,
+            )
+        )
+    for ordinal, (target, claim_id, relation) in enumerate(claim_refs, start=len(refs)):
+        session.add(
+            DocumentReference(
+                document_id=document.id,
+                ordinal=ordinal,
+                target_node_id=target,
+                claim_id=claim_id,
+                reference_type="inferred_link",
+                label=relation,
+            )
+        )
+    for question in result.unresolved_questions:
+        session.add(
+            AgentNote(
+                run_id=run.id,
+                node_id=node.id,
+                release_id=job.release_id,
+                locale_id=job.locale_id,
+                kind="missing_data",
+                text=question[:3000],
+                citations=[],
+            )
+        )
+    if vectors:
+        key = (
+            "story:"
+            + hash_value(
+                {
+                    "provider": job.config["provider"],
+                    "base_url": job.config["base_url"],
+                    "model": job.config["embedding_model"],
+                    "dimensions": job.config["embedding_dimensions"],
+                }
+            ).hex()
+        )
+        await session.execute(
+            insert(EmbeddingModel)
+            .values(
+                key=key,
+                provider=job.config["provider"],
+                model_name=job.config["embedding_model"],
+                dimensions=job.config["embedding_dimensions"],
+                distance_metric="cosine",
+                config={"base_url": job.config["base_url"]},
+                active=True,
+            )
+            .on_conflict_do_nothing(index_elements=[EmbeddingModel.key])
+        )
+        model_id = await session.scalar(select(EmbeddingModel.id).where(EmbeddingModel.key == key))
+        for ordinal, vector in enumerate(vectors):
+            session.add(
+                ExplanationEmbedding(
+                    document_id=document.id,
+                    ordinal=ordinal,
+                    model_id=model_id,
+                    content_hash=hash_value(result.blocks[ordinal].model_dump()),
+                    embedding=vector,
+                )
+            )
+    job.document_id = document.id
+    return document

@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from wuwa_story.agents.contracts import AnalysisRequest
+from wuwa_story.agents.jobs import enqueue_analysis
+from wuwa_story.agents.settings import get_agent_settings
 from wuwa_story.config.settings import get_settings
 from wuwa_story.ingestion.compiler_importer import CompiledDatasetImporter
 
@@ -24,6 +27,7 @@ from wuwa_story_worker.asset_jobs import (
 from wuwa_story_worker.broker import consume_jobs, replay_failed_jobs
 from wuwa_story_worker.client_assets import discover_plan, download_plan, save_json
 from wuwa_story_worker.entity_media import process_entity_media
+from wuwa_story_worker.story_agent import process_story_analysis
 from wuwa_story_worker.map_assets import build_maps, refresh_map_sources
 from wuwa_story_worker.queues import QUEUES, queue_concurrency
 from wuwa_story_worker.scheduler import (
@@ -38,6 +42,11 @@ from wuwa_story_worker.voice_packages import discover_voice_plan, download_voice
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wuwa-story-worker")
     commands = parser.add_subparsers(dest="command", required=True)
+    agent = commands.add_parser("enqueue-analysis", help="Queue source-cited story analysis")
+    agent.add_argument("--quest-id", type=int, required=True)
+    agent.add_argument("--version", required=True)
+    agent.add_argument("--locale", default="en")
+    agent.add_argument("--generation", default="", help="Explicit new generation token; default deduplicates")
     runner = commands.add_parser("run", help="Consume selected RabbitMQ jobs")
     runner.add_argument("--queue", action="append", choices=tuple(QUEUES), default=None)
     assets = commands.add_parser("plan-assets", help="Inspect official client archives without downloading")
@@ -161,7 +170,8 @@ async def _import_datasets(datasets: list[tuple[str, Path]], batch_size: int) ->
 
 async def _run(queues: list[str] | None = None) -> None:
     handlers = {"snapshot_build": build_and_import_snapshot, "asset_download": download_client_assets,
-                "asset_extract": extract_client_assets, "entity_media": process_entity_media}
+                "asset_extract": extract_client_assets, "entity_media": process_entity_media,
+                "story_agent": process_story_analysis}
     # Existing workers keep their snapshot-only role unless explicitly configured.
     await consume_jobs({key: handlers[key] for key in (queues or ["snapshot_build"])})
 
@@ -178,7 +188,16 @@ async def _replay_failed(args: argparse.Namespace) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = _parser().parse_args()
-    if args.command == "run":
+    if args.command == "enqueue-analysis":
+        from wuwa_story.db.session import SessionFactory
+
+        async def enqueue():
+            async with SessionFactory() as session:
+                run = await enqueue_analysis(session, AnalysisRequest(quest_id=args.quest_id, game_version=args.version, locale=args.locale, generation=args.generation), get_agent_settings())
+                print(json.dumps({"id": run.id, "status": run.status}))
+
+        asyncio.run(enqueue())
+    elif args.command == "run":
         queue_concurrency()
         asyncio.run(_run(args.queue))
     elif args.command == "plan-assets":
