@@ -1,5 +1,7 @@
 """Publish generated artifacts separately from imported facts, in one transaction."""
 
+from typing import Any
+
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +27,9 @@ async def publish_analysis(
     run: ProcessingRun,
     result: AnalysisResult,
     vectors: list[list[float]],
+    *,
+    source_receipts: list[dict[str, Any]] | None = None,
+    source_nodes: dict[str, str] | None = None,
 ) -> Document:
     # Serialize document revisions across different model jobs for the same quest/locale/version.
     assert run.target_node_id is not None
@@ -41,6 +46,14 @@ async def publish_analysis(
         )
         or 0
     ) + 1
+    reference_ids = {c.node_id for group in citation_groups(result) for c in group.citations}
+    reference_ids.update(value for block in result.blocks for value in block.related_node_ids)
+    reference_ids.update(
+        record.node_id for block in result.blocks for record in block.related_records
+    )
+    reference_ids.update(
+        value for link in result.links for value in (link.from_node_id, link.to_node_id)
+    )
     document = Document(
         node_id=node.id,
         locale_id=job.locale_id,
@@ -58,6 +71,13 @@ async def publish_analysis(
             "source_scope": "all_locales" if run.prompt_version != "story-v1" else "locale",
             "unresolved_questions": result.unresolved_questions,
             "links": [link.model_dump() for link in result.links],
+            "source_release_ids": run.metadata_json.get("source_release_ids", [job.release_id]),
+            "source_receipts": source_receipts or [],
+            "source_nodes": {
+                key: value
+                for key, value in (source_nodes or {}).items()
+                if int(key.split(":")[1]) in reference_ids
+            },
         },
     )
     session.add(document)
@@ -156,7 +176,7 @@ async def publish_analysis(
             session.add(
                 EdgeEvidence(
                     edge_id=edge_id,
-                    release_id=job.release_id,
+                    release_id=citation.snapshot_id or job.release_id,
                     evidence_node_id=citation.node_id,
                     source_file_path=f"agent://run/{run.id}",
                     source_raw_path=f"claim/{claim.id}/{index}",

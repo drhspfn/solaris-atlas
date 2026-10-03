@@ -13,7 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.agents.budget import BudgetExceeded, reserve, settle
 from wuwa_story.agents.contracts import SOURCE_LOCALE_PRIORITY
-from wuwa_story.agents.evidence import hash_value, quest_fingerprint, source_edges
+from wuwa_story.agents.evidence import (
+    EvidenceTools,
+    hash_value,
+    imported_snapshot_ids,
+    quest_fingerprint,
+    source_edges,
+)
 from wuwa_story.agents.providers import Provider, vector_values
 from wuwa_story.agents.publication import document_type
 from wuwa_story.agents.settings import AgentSettings
@@ -95,6 +101,26 @@ async def public_document(
         session, quest, release.id, fingerprint_locale
     ):
         return None
+    if document.metadata_json.get("schema_version") == "story-v4":
+        if document.metadata_json.get("source_release_ids") != await imported_snapshot_ids(session):
+            return None
+        tools = EvidenceTools(
+            session,
+            run_id=document.processor_run_id or 0,
+            quest=quest,
+            release_id=release.id,
+            locale=output_locale,
+            settings=AgentSettings(_env_file=None),
+            source_release_ids=document.metadata_json["source_release_ids"],
+        )
+        for receipt in document.metadata_json.get("source_receipts", []):
+            try:
+                context = await tools.context(receipt["snapshot_id"])
+                current = await context.read_node(receipt["node_id"], receipt["locale"])
+            except ValueError:
+                return None
+            if hash_value(current["text"]).hex() != receipt["text_hash"]:
+                return None
     events = (
         await session.execute(
             select(DocumentReference.target_node_id, DocumentReference.label).where(
@@ -119,6 +145,23 @@ async def public_document(
         for value in (item["from_node_id"], item["to_node_id"])
     )
     nodes = []
+    source_nodes = document.metadata_json.get("source_nodes", {})
+    node_snapshots: dict[int, int] = {}
+    for key in source_nodes:
+        snapshot_id, node_id = map(int, key.split(":"))
+        if node_id not in node_snapshots or snapshot_id == release.id:
+            node_snapshots[node_id] = snapshot_id
+    for block in document.body_ast:
+        for citation in block.get("citations", []):
+            node_snapshots.setdefault(
+                citation["node_id"], citation.get("snapshot_id") or release.id
+            )
+    snapshot_releases = {
+        value.id: value
+        for value in await session.scalars(
+            select(GameRelease).where(GameRelease.id.in_([release.id, *node_snapshots.values()]))
+        )
+    }
     for node, kind, label, inline_text in (
         await session.execute(
             select(Node, NodeType.key, LocalizationValue.content, DialogueLine.inline_text)
@@ -139,7 +182,10 @@ async def public_document(
                         Quest.name_key_id,
                         DialogueLine.localization_key_id,
                     ),
-                    LocalizationValue.release_id == release.id,
+                    LocalizationValue.release_id
+                    == case(node_snapshots, value=Node.id, else_=release.id)
+                    if node_snapshots
+                    else LocalizationValue.release_id == release.id,
                     LocalizationValue.locale_id == locale.id,
                 ),
             )
@@ -159,7 +205,13 @@ async def public_document(
                     if kind == "dialogue_line"
                     else node.slug or node.canonical_key
                 ),
-                "href": await source_link(session, node, kind, release, locale),
+                "href": await source_link(
+                    session,
+                    node,
+                    kind,
+                    snapshot_releases[node_snapshots.get(node.id, release.id)],
+                    locale,
+                ),
             }
         )
 
@@ -179,13 +231,17 @@ async def public_document(
                 if citation_node
                 else None
             )
+            citation_release = await session.get(
+                GameRelease, citation.get("snapshot_id") or release.id
+            )
             citations.append(
                 {
                     **citation,
+                    "game_version": citation_release.game_version if citation_release else None,
                     "href": await source_link(
-                        session, citation_node, citation_kind, release, source_locale
+                        session, citation_node, citation_kind, citation_release, source_locale
                     )
-                    if citation_node and citation_kind and source_locale
+                    if citation_node and citation_kind and source_locale and citation_release
                     else None,
                 }
             )
@@ -207,6 +263,9 @@ async def public_document(
         "id": document.id,
         "quest_id": quest.game_quest_id,
         "game_version": release.game_version,
+        "research_scope": "all_imported_snapshots"
+        if document.metadata_json.get("schema_version") == "story-v4"
+        else "target_snapshot",
         "locale": output_locale.code,
         "requested_locale": locale.code,
         "title": document.title,

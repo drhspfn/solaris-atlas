@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-PROMPT_VERSION = "story-v3"
+PROMPT_VERSION = "story-v4"
 
 # Reading order is independent of the language used to write the explanation.
 SOURCE_LOCALE_PRIORITY = ("en", "zh-Hans", "ja", "zh-Hant")
@@ -18,6 +18,7 @@ class Citation(StrictModel):
     node_id: int = Field(gt=0)
     quote: str = Field(min_length=1, max_length=1500)
     locale: str | None = Field(default=None, min_length=2, max_length=16)
+    snapshot_id: int | None = Field(default=None, gt=0)
 
 
 class RelatedRecord(StrictModel):

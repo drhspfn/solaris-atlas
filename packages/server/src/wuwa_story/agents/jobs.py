@@ -6,7 +6,13 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.agents.contracts import PROMPT_VERSION, AnalysisRequest
-from wuwa_story.agents.evidence import hash_value, quest_fingerprint, scope_for_request
+from wuwa_story.agents.evidence import (
+    hash_value,
+    imported_snapshot_ids,
+    imported_source_revision,
+    quest_fingerprint,
+    scope_for_request,
+)
 from wuwa_story.agents.providers import Provider
 from wuwa_story.agents.settings import AgentSettings
 from wuwa_story.db.models.agents import AgentCall, AgentJob
@@ -37,6 +43,8 @@ async def enqueue_analysis(
         session, **request.model_dump(exclude={"generation"})
     )
     source = await quest_fingerprint(session, quest, release.id)
+    source_release_ids = await imported_snapshot_ids(session)
+    source_revision = await imported_source_revision(session)
     config = settings.public_config()
     identity = hash_value(
         {
@@ -44,6 +52,8 @@ async def enqueue_analysis(
             "source": source.hex(),
             "config": config,
             "prompt": PROMPT_VERSION,
+            "source_release_ids": source_release_ids,
+            "source_revision": source_revision,
         }
     )
     await session.execute(
@@ -82,7 +92,7 @@ async def enqueue_analysis(
         prompt_version=PROMPT_VERSION,
         input_hash=source,
         status="queued",
-        metadata_json={"request": request.model_dump()},
+        metadata_json={"request": request.model_dump(), "source_release_ids": source_release_ids},
     )
     session.add(run)
     await session.flush()

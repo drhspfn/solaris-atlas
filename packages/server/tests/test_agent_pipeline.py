@@ -10,9 +10,9 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from wuwa_story.agents.contracts import AnalysisRequest, AnalysisResult
-from wuwa_story.agents.evidence import EvidenceTools
+from wuwa_story.agents.evidence import EvidenceTools, imported_snapshot_ids
 from wuwa_story.agents.jobs import enqueue_analysis, resume_analysis
-from wuwa_story.agents.providers import Provider
+from wuwa_story.agents.providers import Provider, ToolCall
 from wuwa_story.agents.retrieval import get_explanation, search_explanations
 from wuwa_story.agents.runner import execute_job
 from wuwa_story.agents.settings import AgentSettings
@@ -28,6 +28,7 @@ from wuwa_story.db.models.i18n import (
 )
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease, ProcessingRun
+from wuwa_story.db.models.search import SearchDocument
 from wuwa_story.db.models.story import Claim, Event
 
 DATABASE_URL = os.getenv("WUWA_TEST_DATABASE_URL")
@@ -60,6 +61,7 @@ async def world(monkeypatch):
             node = Node(
                 type_id=await db.scalar(select(NodeType.id).where(NodeType.key == kind)),
                 canonical_key=f"agent-test:{suffix}:{index}",
+                created_release_id=release.id,
             )
             db.add(node)
             await db.flush()
@@ -154,7 +156,11 @@ async def world(monkeypatch):
 
 
 def result_for(nodes):
-    citation = {"node_id": nodes[3].id, "quote": "The bridge was destroyed."}
+    citation = {
+        "node_id": nodes[3].id,
+        "quote": "The bridge was destroyed.",
+        "snapshot_id": nodes[3].created_release_id,
+    }
     return {
         "title": "A blocked crossing",
         "blocks": [
@@ -211,6 +217,319 @@ async def create(world):
     engine, settings, request, *_ = world
     async with AsyncSession(engine, expire_on_commit=False) as db:
         return (await enqueue_analysis(db, request, settings)).id
+
+
+@pytest.fixture
+async def other_patch(world):
+    engine, _, _, original_nodes, locale, original_release, _ = world
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        release = GameRelease(
+            sequence=(await db.scalar(select(func.max(GameRelease.sequence))) or 0) + 1,
+            game_version="later-" + uuid4().hex,
+            upstream_name="test",
+        )
+        db.add(release)
+        await db.flush()
+        nodes = []
+        for kind in ("quest", "quest_state", "quest_action", "dialogue_line"):
+            node = Node(
+                type_id=await db.scalar(select(NodeType.id).where(NodeType.key == kind)),
+                canonical_key="later-test:" + uuid4().hex,
+                created_release_id=release.id,
+            )
+            db.add(node)
+            await db.flush()
+            db.add(
+                NodeRevision(
+                    node_id=node.id, release_id=release.id, revision=1, content_hash=b"later"
+                )
+            )
+            nodes.append(node)
+        quest = Quest(node_id=nodes[0].id, game_quest_id=nodes[0].id)
+        db.add_all([quest, QuestState(node_id=nodes[1].id, state_key="later-state")])
+        await db.flush()
+        db.add(
+            QuestAction(
+                node_id=nodes[2].id,
+                quest_state_node_id=nodes[1].id,
+                action_index=0,
+                action_name="ShowTalk",
+            )
+        )
+        await db.flush()
+        db.add(
+            DialogueLine(
+                node_id=nodes[3].id,
+                action_node_id=nodes[2].id,
+                source_index=0,
+                inline_text="The bridge is repaired now.",
+            )
+        )
+        # One node observed in both patches has different localized text.
+        key = LocalizationKey(
+            key="cross-patch:" + uuid4().hex, first_release_id=original_release.id
+        )
+        db.add(key)
+        await db.flush()
+        (await db.get(DialogueLine, original_nodes[3].id)).localization_key_id = key.id
+        db.add(
+            NodeRevision(
+                node_id=original_nodes[3].id,
+                release_id=release.id,
+                revision=2,
+                content_hash=b"changed",
+            )
+        )
+        for snapshot_id, text in (
+            (original_release.id, "The bridge was destroyed."),
+            (release.id, "The bridge has another name now."),
+        ):
+            digest = hashlib.sha256(text.encode()).digest()
+            content = await db.scalar(
+                select(LocalizationContent).where(LocalizationContent.content_hash == digest)
+            )
+            if content is None:
+                content = LocalizationContent(content=text, content_hash=digest)
+                db.add(content)
+                await db.flush()
+            db.add(
+                LocalizationValue(
+                    release_id=snapshot_id,
+                    key_id=key.id,
+                    locale_id=locale.id,
+                    content_id=content.id,
+                    status="resolved_nonempty",
+                )
+            )
+        for source, target, relation in (
+            (nodes[0].id, nodes[1].id, "references_flow_state"),
+            (original_nodes[3].id, nodes[3].id, "EXPLAINS"),
+        ):
+            edge = Edge(
+                from_node_id=source,
+                to_node_id=target,
+                relation_type_id=await db.scalar(
+                    select(RelationType.id).where(RelationType.key == relation)
+                ),
+                layer="source",
+                basis="explicit_reference",
+            )
+            db.add(edge)
+            await db.flush()
+            db.add(EdgeEvidence(edge_id=edge.id, release_id=release.id))
+        db.add(
+            SearchDocument(
+                target_node_id=nodes[0].id,
+                category="quest",
+                locale_id=locale.id,
+                title="Bridge repair",
+                body="Bridge repair",
+                content_hash=b"later-search",
+                search_vector=func.to_tsvector("simple", "Bridge repair"),
+            )
+        )
+        await db.commit()
+    try:
+        yield release, quest, nodes
+    finally:
+        async with AsyncSession(engine) as db:
+            content_ids = list(
+                await db.scalars(
+                    select(LocalizationValue.content_id).where(
+                        LocalizationValue.release_id == release.id
+                    )
+                )
+            )
+            await db.execute(
+                delete(LocalizationValue).where(LocalizationValue.release_id == release.id)
+            )
+            await db.execute(delete(NodeRevision).where(NodeRevision.release_id == release.id))
+            await db.execute(delete(EdgeEvidence).where(EdgeEvidence.release_id == release.id))
+            await db.execute(delete(Node).where(Node.id.in_([n.id for n in nodes])))
+            await db.execute(delete(GameRelease).where(GameRelease.id == release.id))
+            await db.execute(
+                delete(LocalizationContent).where(
+                    LocalizationContent.id.in_(content_ids),
+                    ~select(LocalizationValue.key_id)
+                    .where(LocalizationValue.content_id == LocalizationContent.id)
+                    .exists(),
+                )
+            )
+            await db.commit()
+
+
+async def test_cross_patch_research_preserves_citation_identity_and_target_coverage(
+    world, other_patch
+):
+    engine, settings, _, nodes, locale, release, quest = world
+    later_release, later_quest, later_nodes = other_patch
+    run_id = await create(world)
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        scope_ids = await imported_snapshot_ids(db)
+        tools = EvidenceTools(
+            db,
+            run_id=run_id,
+            quest=quest,
+            release_id=release.id,
+            locale=locale,
+            settings=settings,
+            source_release_ids=scope_ids,
+        )
+        assert (await tools.snapshots())["target_snapshot_id"] == release.id
+        await tools.read_quest(limit=1)
+        graph = await tools.graph(nodes[3].id)
+        edge = next(edge for edge in graph["edges"] if edge["to"] == later_nodes[3].id)
+        assert edge["snapshot_ids"] == [later_release.id]
+        assert not (
+            await tools.call(
+                ToolCall(
+                    "narrow", "graph_neighbors", {"node_id": nodes[3].id, "snapshot_id": release.id}
+                )
+            )
+        )["edges"]
+        assert (await tools.graph(later_nodes[3].id))["edges"]
+        found = await tools.search("Bridge repair")
+        assert any(
+            row["id"] == later_quest.node_id and row["snapshot_ids"] == [later_release.id]
+            for row in found["results"]
+        )
+        future = await tools.call(
+            ToolCall("future", "read_quest", {"quest_id": later_quest.game_quest_id})
+        )
+        assert future["snapshot_id"] == later_release.id
+        assert future["lines"][0]["text"] == "The bridge is repaired now."
+        result = AnalysisResult.model_validate(result_for(nodes))
+        with pytest.raises(ValueError, match="every page"):
+            await tools.validate_result(result)
+        await tools.read_quest(offset=1)
+        await tools.call(
+            ToolCall(
+                "compare", "read_node", {"node_id": nodes[3].id, "snapshot_id": later_release.id}
+            )
+        )
+        # A quote from the same node in another snapshot cannot be attributed to 1.0.
+        result.blocks[0].citations[0].quote = "The bridge has another name now."
+        with pytest.raises(ValueError, match="explicit snapshot"):
+            await tools.validate_result(result)
+        result.blocks[0].citations[0].quote = "The bridge was destroyed."
+        with pytest.raises(ValueError, match="pinned"):
+            await tools.context(later_release.id + 100000)
+        # Research from a new patch can explicitly read the old quest too.
+        reverse = EvidenceTools(
+            db,
+            run_id=run_id,
+            quest=later_quest,
+            release_id=later_release.id,
+            locale=locale,
+            settings=settings,
+            source_release_ids=scope_ids,
+        )
+        past = await reverse.call(
+            ToolCall(
+                "past", "read_quest", {"quest_id": quest.game_quest_id, "snapshot_id": release.id}
+            )
+        )
+        assert past["lines"][0]["text"] == "The bridge was destroyed."
+
+
+async def test_cross_patch_publication_links_to_later_source_and_invalidates_changes(
+    world, other_patch
+):
+    from wuwa_story.agents.contracts import LaterResolution
+    from wuwa_story.agents.publication import publish_analysis
+
+    engine, settings, request, nodes, locale, release, quest = world
+    later_release, later_quest, later_nodes = other_patch
+    run_id = await create(world)
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        tools = EvidenceTools(
+            db,
+            run_id=run_id,
+            quest=quest,
+            release_id=release.id,
+            locale=locale,
+            settings=settings,
+            source_release_ids=await imported_snapshot_ids(db),
+        )
+        await tools.read_quest()
+        await tools.call(ToolCall("later", "read_quest", {"quest_id": later_quest.game_quest_id}))
+        result = AnalysisResult.model_validate(result_for(nodes))
+        result.blocks[0].assertions[0].later_resolution = [
+            LaterResolution(
+                status="resolved",
+                text="The later quest reports the repair.",
+                revealed_in_node_id=later_nodes[3].id,
+                citations=[
+                    {
+                        "node_id": later_nodes[3].id,
+                        "snapshot_id": later_release.id,
+                        "quote": "The bridge is repaired now.",
+                    }
+                ],
+            )
+        ]
+        await tools.validate_result(result)
+        job, run = await db.get(AgentJob, run_id), await db.get(ProcessingRun, run_id)
+        await publish_analysis(
+            db,
+            job,
+            run,
+            result,
+            [],
+            source_receipts=tools.validated_sources,
+            source_nodes=tools.source_nodes,
+        )
+        await db.commit()
+        public = (await get_explanation(db, request.quest_id, request.game_version, "en"))[
+            "explanation"
+        ]
+        assert public["research_scope"] == "all_imported_snapshots"
+        later = public["blocks"][0]["assertions"][0]["later_resolution"][0]["citations"][0]
+        assert f"/quests/{later_quest.game_quest_id}?" in later["href"]
+        assert f"game_version={later_release.game_version}" in later["href"]
+        assert (
+            public["blocks"][0]["assertions"][0]["knowledge_state"]
+            == "The direct route is blocked."
+        )
+        (await db.get(DialogueLine, later_nodes[3].id)).inline_text = "Changed future evidence."
+        await db.commit()
+        assert (await get_explanation(db, request.quest_id, request.game_version, "en"))[
+            "status"
+        ] == "pending"
+        # Requeueing after an external source change creates a fresh job too.
+        newer = await enqueue_analysis(db, request, settings)
+        assert newer.id != run_id
+
+
+async def test_new_import_changes_job_identity_without_widening_a_queued_run(world):
+    engine, settings, request, nodes, _, _, _ = world
+    first_id = await create(world)
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        first = await db.get(ProcessingRun, first_id)
+        pinned = list(first.metadata_json["source_release_ids"])
+        addition = GameRelease(
+            sequence=(await db.scalar(select(func.max(GameRelease.sequence))) or 0) + 1,
+            game_version="added-" + uuid4().hex,
+            upstream_name="test",
+        )
+        db.add(addition)
+        await db.flush()
+        db.add(
+            NodeRevision(
+                node_id=nodes[0].id, release_id=addition.id, revision=3, content_hash=b"additional"
+            )
+        )
+        await db.commit()
+        try:
+            newer = await enqueue_analysis(db, request, settings)
+            assert newer.id != first_id
+            assert addition.id in newer.metadata_json["source_release_ids"]
+            await db.refresh(first)
+            assert first.metadata_json["source_release_ids"] == pinned
+        finally:
+            await db.execute(delete(NodeRevision).where(NodeRevision.release_id == addition.id))
+            await db.execute(delete(GameRelease).where(GameRelease.id == addition.id))
+            await db.commit()
 
 
 async def test_full_pipeline_and_duplicate_delivery(world):
@@ -325,6 +644,7 @@ async def test_multilingual_sources_and_shared_publication(world):
         "node_id": nodes[3].id,
         "quote": "桥被摧毁了。",
         "locale": "zh-Hans",
+        "snapshot_id": release.id,
     }
 
     def transport(request):
