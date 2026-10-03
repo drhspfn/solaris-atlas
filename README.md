@@ -57,6 +57,14 @@ Browser authentication uses server-side opaque sessions in HttpOnly cookies, Arg
 
 See [docs/architecture.md](docs/architecture.md) for package ownership and [docs/ingestion.md](docs/ingestion.md) for snapshot ingestion and [docs/AUTH_IMPLEMENTATION_REPORT.md](docs/AUTH_IMPLEMENTATION_REPORT.md) for authentication routes and behavior.
 
+## Cited story analysis
+
+The explicit `story_agent` worker researches imported quests and publishes cited
+explanations, inferred events and connections. The quest page and story question
+search display these separately from source dialogue. Setup, the shared daily
+budget, provider/embedding options, recovery endpoints and verified limitations
+are documented in [docs/story-agent-pipeline.md](docs/story-agent-pipeline.md).
+
 ## Source-backed quest progression
 
 The compiler now joins QuestData to the game's quest type/chapter tables and QuestTree nodes. These links distinguish quest classification, explicit prerequisites, and authored quest-tree progression. After compiling and importing a snapshot with the current worker, browse them through:

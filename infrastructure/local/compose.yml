@@ -129,6 +129,23 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  story-agent:
+    build:
+      context: ../..
+      dockerfile: packages/worker/Dockerfile
+    env_file:
+      - ../../packages/worker/.env
+    profiles: ["story-agent"]
+    command: ["wuwa-story-worker", "run", "--queue", "story_agent"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://wuwa:wuwa@postgres:5432/wuwa_story
+      RABBITMQ_URL: amqp://wuwa:wuwa@rabbitmq:5672/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
   asset-worker:
     build:
       context: ../..

@@ -93,3 +93,18 @@ this request. Existing working DB migrations are not silently applied.
 - [Gemini embeddings](https://ai.google.dev/gemini-api/docs/embeddings)
 - [DeepSeek Chat](https://api-docs.deepseek.com/api/create-chat-completion/)
 - [Qwen function calling](https://docs.modelstudio.console.alibabacloud.com/en/model-studio/qwen-function-calling)
+
+## Delivered and verified
+
+All four slices are implemented on `codex/feat/story-agent-pipeline`: durable
+execution/budget/memory, three provider adapters, source tools and validated
+publication, optional vectors, admin/public APIs, quest explanations, event pages
+and question retrieval. The local API/worker daily allowance is **$1**; keys are
+present locally but have not been checked with a paid request. A working-database
+migration is still required for a real run. Detailed setup,
+recovery and current bounds are in `docs/story-agent-pipeline.md`.
+
+The first delivery processes explicitly queued quests. Patch-wide crawling,
+hierarchical analysis of quests that exceed context limits, retention automation
+and editorial evaluation against real model output remain separate work. They
+are not claimed as implemented by the current bounded pipeline.
