@@ -100,10 +100,41 @@ All instances share `ops.agent_daily_usage`, locked before each reservation.
 The budget day follows `AGENT_BUDGET_TIMEZONE`. Environment examples select
 Europe/Kyiv; the code fallback is Europe/Moscow. Keep API and worker aligned. USD
 uses Decimal with upward rounding, a 25% price margin and provider-reported token
-usage. The ledger counts settled usage and outstanding reservations. A second
-token ceiling defaults to two million/day. Application estimates depend on
+usage. Cache reads and writes use their configured rates, and input tokens outside
+those groups use the standard input rate. Set `AGENT_CACHED_INPUT_USD_PER_MILLION`
+and `AGENT_CACHE_WRITE_USD_PER_MILLION` for the selected provider/model; unset rates
+retain the standard input estimate. Before a response is available, reserves use
+the highest configured input rate, covering a cache miss/write.
+The ledger counts settled usage and outstanding reservations. A second
+token ceiling is optional: `AGENT_DAILY_TOKEN_LIMIT=0` disables it (the default),
+while positive values enforce an independent guard including cached input.
+The USD limit always remains enforced. Application estimates depend on
 correct configured rates and provider limits; configure the provider's external
 billing controls as well.
+
+Each research request reserves its own serialized byte bound plus output allowance,
+rather than the maximum permitted input context. Responses jobs verify a tight
+budget or oversized window with `/responses/input_tokens` before any paid request.
+Invalid counts do not authorize a request. Embeddings without reliable usage retain
+the full context reservation. Compaction retains its configured output reserve.
+
+To correct older recorded estimates, first back up the operational tables. Run
+`uv run python scripts/reprice_agent_usage.py --run-id ID --cached-rate 0.01
+--write-rate 0.125` from `packages/server` for a dry run, then add `--apply` after
+checking the model's actual rates. Repeat `--run-id` for multiple jobs. The command
+locks inactive Responses jobs, pins the explicit cache rates, adjusts only completed
+call costs and applies matching deltas to their original daily ledgers and run totals.
+It preserves the previous cost in private call metadata and is idempotent. Unknown,
+reconciled or excessive charges and all outstanding reservations remain untouched.
+No schema migration is needed. For rollback, restore the backed-up accounting and
+pinned configurations while the consumer is stopped; do not erase unknown charges.
+
+Budget reads refresh locked rows even in long-lived worker sessions, so parallel
+settlements and maintenance cannot be overwritten by stale in-memory balances.
+If older workers already caused ledger drift, add `--repair-ledger` to the same
+maintenance command. It rebuilds daily totals from recorded calls under budget locks,
+including all unsettled reservations; a dry run rolls back all changes. This option
+can run without `--run-id` when no repricing is needed.
 
 The worker commits call intent before HTTP, then commits the returned response
 and usage before processing tools. A crash can replay that saved response without
@@ -365,3 +396,23 @@ reformatted as part of the agent feature.
 - Built and restarted API, frontend and story consumer. No schema migration was
   needed. Working run 14 remains `paused_steps`; browser mutations used fixtures
   and did not enqueue paid work in the working database.
+
+### Cache-aware budget recovery, 2026-10-04
+
+- Kept the $1 daily USD cap and disabled the independent token guard locally.
+  Reserves now use each request's bound; tight/oversized Responses inputs use
+  the counter's supported input parameters. A real counter request returned 502
+  tokens without generating a model response.
+- Backed up operational tables before repricing completed calls in runs 11–14
+  from recorded cache reads/writes. Refreshed locked daily balances to prevent
+  stale worker sessions overwriting parallel changes. Rebuilt daily totals from
+  calls: $0.10513408 for 2026-10-04, including the safety multiplier. SQL verification
+  found zero differences between daily spend/reservations and recorded call sums.
+  Run 11's unresolved $0.03381000 hold remains on 2026-10-03.
+- Run 14 completed at step 56 and published its analysis. Its corrected estimate
+  is $0.05709574. No completed research calls were replayed for repricing.
+- Full server suite: 135 passed, 2 skipped (Redis infrastructure), with existing
+  dependency deprecation warnings. Ruff and strict mypy passed for changed agent
+  modules. Frontend resume-policy tests, changed-file ESLint/Prettier, TypeScript
+  and production build passed. Browser fixtures verified optional token-cap text
+  in both admin pages. Rebuilt/restarted API, frontend and the story consumer.

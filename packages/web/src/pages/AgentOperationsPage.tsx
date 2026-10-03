@@ -169,7 +169,10 @@ export function AgentOperationsPage({ kind }: { kind: 'alerts' | 'usage' }) {
           </div>
           <p>
             Cap {money(data.daily_budget_usd)} / day ·{' '}
-            {data.daily_token_limit.toLocaleString('en-US')} tokens · {data.timezone}
+            {data.daily_token_limit
+              ? `${data.daily_token_limit.toLocaleString('en-US')} token cap`
+              : 'No separate daily token cap'}{' '}
+            · {data.timezone}
           </p>
           <p>
             Today: {data.today}. Costs include the safety margin. Reservations remain held until

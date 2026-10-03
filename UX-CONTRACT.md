@@ -83,6 +83,12 @@ Usage is read-only. Tables scroll inside their panel on narrow screens; sidebar
 navigation wraps above content. Loading, empty, error and permission states are
 explicit, and action outcomes use live status text.
 
+Daily spend is an estimate from reported standard/cache-read/cache-write usage
+including the configured safety margin. The USD cap always applies. A separate
+daily token guard is optional; a disabled guard displays usage without a zero cap.
+Budget pauses mean the next request's reservation cannot fit, which can happen
+before displayed settled usage reaches a cap. Tokens include cached input.
+
 ## Interaction and persistence
 
 World, location, floor, surface opacity, category/subtype exclusions, search and hidden/unknown placement preferences are stored locally in localStorage, with an in-memory fallback. The URL accepts bounded numeric map and marker IDs for shared markers, or map/item/source IDs for acquisition groups. Existing URL filters are imported once and stripped using history replacement. All marker categories start disabled when no preferences have been saved. Preferences are stored as JSON without base64 encoding. Shared markers open their object card and center the map, clearing conflicting search, area and floor filters while preserving type selections. The shared marker remains visible even when its type is disabled. Pan and zoom are transient. Selecting a location fits its source-backed bounds; selecting a floor fits that layer. Floor images render above the surface, which defaults to 30% opacity while a floor is selected. Clusters open by click or keyboard; individual objects can always be opened from the list.

@@ -71,7 +71,7 @@ export function resumePolicy(job: AgentDetail): { allowed: boolean; help: string
   if (job.status === 'paused_budget')
     return {
       allowed: true,
-      help: 'The daily allowance is exhausted. Continue after the budget resets or the server allowance is updated. This action does not raise the budget.',
+      help: 'The daily allowance cannot cover the next request reservation. Continue after it resets or the server allowance is updated. This action does not raise the budget.',
     };
   if (job.status === 'paused_rate_limit')
     return {

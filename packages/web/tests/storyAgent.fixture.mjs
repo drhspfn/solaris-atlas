@@ -105,7 +105,7 @@ createServer(async (req, res) => {
   if (url.pathname === '/admin/story-agent/usage') {
     send(res, 200, {
       daily_budget_usd: '1',
-      daily_token_limit: 2000000,
+      daily_token_limit: 0,
       timezone: 'Europe/Moscow',
       today: '2026-10-04',
       days: [

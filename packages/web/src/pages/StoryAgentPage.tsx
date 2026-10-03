@@ -174,7 +174,7 @@ function AgentWorkspace() {
       </header>
       <section className="agent-budget" aria-label="Daily allowance">
         <div>
-          <span>Spent today</span>
+          <span>Estimated spend today</span>
           <strong>{usage ? money(today?.spent_usd) : '—'}</strong>
         </div>
         <div>
@@ -186,17 +186,17 @@ function AgentWorkspace() {
           <strong>{usage ? money(usage.daily_budget_usd) : '—'}</strong>
         </div>
         <div>
-          <span>Tokens today / cap</span>
+          <span>{usage?.daily_token_limit ? 'Tokens today / cap' : 'Tokens today'}</span>
           <strong>
             {usage
-              ? `${number((today?.spent_tokens ?? 0) + (today?.reserved_tokens ?? 0))} / ${number(usage.daily_token_limit)}`
+              ? `${number((today?.spent_tokens ?? 0) + (today?.reserved_tokens ?? 0))}${usage.daily_token_limit ? ` / ${number(usage.daily_token_limit)}` : ''}`
               : '—'}
           </strong>
         </div>
         <p>
           Estimated costs include the configured safety margin.{' '}
           {usage && `Budget day: ${usage.today} · ${usage.timezone}.`} Resuming never raises the
-          daily cap.
+          daily cap. {usage?.daily_token_limit === 0 && 'No separate daily token cap.'}
         </p>
       </section>
       {(error || actionError) && (
