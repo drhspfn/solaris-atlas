@@ -347,6 +347,7 @@ class EvidenceTools:
 
     async def read_node(self, node_id: int, locale: str | None = None) -> dict[str, Any]:
         node = await self.remember_node(node_id)
+        source_truncated = False
         kind = await self.session.scalar(select(NodeType.key).where(NodeType.id == node.type_id))
         line = await self.session.get(DialogueLine, node_id)
         choice = await self.session.get(PlayerChoice, node_id)
@@ -393,9 +394,9 @@ class EvidenceTools:
                 )
             ).first()
             raw_limit = 6000 if self.source_locale is not None else 3000
-            text = (
-                json.dumps(row[0], ensure_ascii=False)[:raw_limit] if row and locale is None else ""
-            )
+            raw_text = json.dumps(row[0], ensure_ascii=False) if row and locale is None else ""
+            source_truncated = len(raw_text) > raw_limit
+            text = raw_text[:raw_limit]
             model = {
                 "quest": Quest,
                 "character": Character,
@@ -414,6 +415,9 @@ class EvidenceTools:
                 if key in values
             ]
             if localized:
+                source_truncated = source_truncated or any(
+                    len(value) > 900 for value in values.values()
+                )
                 text += "\n" + "\n".join(
                     value["field"] + ": " + value["text"] for value in localized
                 )
@@ -447,7 +451,7 @@ class EvidenceTools:
             "locale": source_locale,
             "available_locales": available_locales,
             "localized_fields": localized if not (line or choice or speaker) else [],
-            "truncated": len(text) > 6000,
+            "truncated": source_truncated or len(text) > 6000,
             "meaning": "Imported source data; IDs and authored order are not inferred chronology.",
         }
 
