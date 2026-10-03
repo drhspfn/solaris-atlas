@@ -3,7 +3,14 @@ import json
 import httpx
 import pytest
 
-from wuwa_story.agents.providers import Provider, ProviderFailure, vector_values
+from wuwa_story.agents.providers import (
+    Provider,
+    ProviderFailure,
+    ProviderRejected,
+    reset_seconds,
+    retry_seconds,
+    vector_values,
+)
 from wuwa_story.agents.settings import AgentSettings
 
 
@@ -97,3 +104,49 @@ def test_vectors_and_missing_usage_are_rejected():
         provider = Provider(AgentSettings(_env_file=None), None)
         with pytest.raises(ProviderFailure, match="usage"):
             provider.parse({"output": []})
+
+
+@pytest.mark.parametrize(
+    "code,retryable",
+    [
+        ("rate_limit_exceeded", True),
+        ("slow_down", True),
+        ("insufficient_quota", False),
+        ("project_spend_limit_exceeded", False),
+        ("secret-code", False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_429_diagnostics_are_safe_and_quota_is_not_retryable(code, retryable):
+    settings = AgentSettings(_env_file=None, api_key="private")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                429,
+                json={"error": {"code": code, "message": "private account details"}},
+                headers={
+                    "retry-after": "56",
+                    "x-ratelimit-limit-tokens": "150000",
+                    "x-ratelimit-remaining-tokens": "0",
+                    "x-account": "private",
+                },
+            )
+        )
+    ) as client:
+        with pytest.raises(ProviderRejected) as error:
+            await Provider(settings, client).post("/responses", {})
+    assert error.value.retryable == retryable
+    assert error.value.retry_after == 56
+    assert error.value.limits["limit-tokens"] == 150000
+    assert "private" not in json.dumps(error.value.diagnostic())
+    assert "secret-code" not in str(error.value)
+
+
+def test_retry_delays_handle_dates_units_and_invalid_headers():
+    assert retry_seconds("2.5") == 2.5
+    assert retry_seconds("Sat, 03 Oct 2020 21:00:00 GMT") == 0
+    assert retry_seconds("invalid") is None
+    assert retry_seconds("NaN") is None
+    assert reset_seconds("6m0.5s") == 360.5
+    assert reset_seconds("200ms") == 0.2
+    assert reset_seconds("invalid") is None

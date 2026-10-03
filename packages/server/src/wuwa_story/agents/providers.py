@@ -2,7 +2,10 @@
 
 import json
 import math
+import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -12,6 +15,44 @@ from wuwa_story.agents.settings import AgentSettings
 
 class ProviderFailure(ValueError):
     """Safe error code only; provider bodies/headers can contain secrets."""
+
+
+class ProviderRejected(ProviderFailure):
+    def __init__(self, code: str, retry_after: float | None, limits: dict[str, float]) -> None:
+        super().__init__(code)
+        self.code, self.retry_after, self.limits = code, retry_after, limits
+        self.retryable = code in ("rate_limit_exceeded", "slow_down")
+
+    def diagnostic(self) -> dict[str, Any]:
+        return {
+            "http_status": 429,
+            "code": self.code,
+            "retry_after_seconds": self.retry_after,
+            "limits": self.limits,
+        }
+
+
+def retry_seconds(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            seconds = (parsedate_to_datetime(value) - datetime.now(UTC)).total_seconds()
+        except (ValueError, TypeError, OverflowError):
+            return None
+    return max(0.0, seconds) if math.isfinite(seconds) else None
+
+
+def reset_seconds(value: str | None) -> float | None:
+    if not value or not re.fullmatch(r"(?:\d+(?:\.\d+)?(?:ms|s|m|h))+", value):
+        return None
+    scale = {"ms": 0.001, "s": 1, "m": 60, "h": 3600}
+    return sum(
+        float(number) * scale[unit]
+        for number, unit in re.findall(r"(\d+(?:\.\d+)?)(ms|s|m|h)", value)
+    )
 
 
 @dataclass
@@ -129,13 +170,50 @@ class Provider:
                 headers=headers,
                 timeout=self.settings.http_timeout_seconds,
             ) as response:
-                if not response.is_success:
+                if not response.is_success and response.status_code != 429:
                     raise ProviderFailure(f"provider_http_{response.status_code}")
                 body = bytearray()
                 async for chunk in response.aiter_bytes():
                     body.extend(chunk)
                     if len(body) > self.settings.max_response_bytes:
                         raise ProviderFailure("provider_response_too_large")
+                if response.status_code == 429:
+                    try:
+                        error = json.loads(body).get("error", {})
+                        code = error.get("code") or error.get("type")
+                    except (ValueError, TypeError, AttributeError):
+                        code = None
+                    allowed = {
+                        "rate_limit_exceeded",
+                        "slow_down",
+                        "insufficient_quota",
+                        "billing_hard_limit_reached",
+                        "organization_spend_limit_exceeded",
+                        "project_spend_limit_exceeded",
+                    }
+                    code = (
+                        code if isinstance(code, str) and code in allowed else "provider_http_429"
+                    )
+                    limits = {}
+                    for name in (
+                        "limit-requests",
+                        "limit-tokens",
+                        "remaining-requests",
+                        "remaining-tokens",
+                        "limit-project-tokens",
+                        "remaining-project-tokens",
+                    ):
+                        value = response.headers.get("x-ratelimit-" + name)
+                        if value and value.isdigit():
+                            limits[name] = float(value)
+                    delay = retry_seconds(response.headers.get("retry-after"))
+                    if delay is None:
+                        resets = [
+                            reset_seconds(response.headers.get("x-ratelimit-reset-" + name))
+                            for name in ("requests", "tokens", "project-tokens")
+                        ]
+                        delay = max((value for value in resets if value is not None), default=None)
+                    raise ProviderRejected(code, delay, limits)
             result = json.loads(body)
             if not isinstance(result, dict):
                 raise ProviderFailure("invalid_provider_response")

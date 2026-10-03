@@ -25,6 +25,9 @@ class AgentSettings(BaseSettings):
     max_tool_calls_per_step: int = Field(default=8, ge=1, le=20)
     tool_result_chars: int = Field(default=18000, ge=1000, le=50000)
     http_timeout_seconds: float = Field(default=120, gt=0, le=600)
+    rate_limit_retries: int = Field(default=3, ge=0, le=10)
+    rate_limit_backoff_seconds: float = Field(default=30, ge=1, le=300)
+    rate_limit_wait_seconds: float = Field(default=180, ge=1, le=600)
     max_response_bytes: int = Field(default=2_000_000, ge=10000)
     reasoning_effort: str = "medium"
     chat_token_parameter: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
