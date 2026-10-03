@@ -66,6 +66,43 @@ Development checks used a disposable database and mocked providers. The local
 working database was subsequently backed up and upgraded through `0009`; see the
 deployment receipt below for the real-provider smoke test.
 
+## Assertion chronology and evidence
+
+New jobs use `story-v3`. Each explanation block contains atomic `assertions`,
+with exact citations and a status: `confirmed`, `observed_anomaly`, `inferred`,
+or `unresolved`. An observation is not proof of its apparent cause. For example,
+dry clothing can be observed while apparent drowning remains an inference.
+
+Each assertion records two independent time axes:
+
+- `chronology_in_quest`: authored encounter order, a cited passage anchor and a
+  readable label. The server checks the order against the imported transcript.
+  It does not establish a single playthrough through mutually exclusive branches.
+- `world_chronology`: before/during/after this quest or unknown, with an
+  explanation. Unknown dates must remain unknown.
+- `knowledge_state`: what is established at that encounter, without hindsight.
+- `later_resolution`: separately cited resolved/partial/contradicted revelations,
+  each anchored to a read source. A later passage in the same quest must follow
+  the original encounter; sources from other quests must have been read too.
+
+Later revelations are hidden behind an explicit spoiler disclosure on the site.
+Publishing a new analysis creates an immutable document revision and moves its
+head; previous knowledge and open clues remain in earlier revisions. Sources are
+limited to the selected imported snapshot, so missing future content cannot be
+treated as an established explanation. No automatic cross-version research is
+performed.
+
+`related_records` adds human-readable contextual labels beside record links.
+Graph edges show readable endpoints, a relation label, an explanation, confidence
+and citations. They remain agent interpretations: only existing discovered nodes
+and allowed ontology relations can be used, not arbitrary new relations or nodes.
+
+Legacy analyses and checkpoints remain readable/resumable under their original
+contract. To obtain chronology for an existing analysis, enqueue a new job; the
+new prompt version changes its identity. This does not launch paid work by itself.
+There is no schema migration: assertion structures live in document JSON and
+their searchable text includes knowledge and later explanations.
+
 ## Models and embeddings
 
 `AGENT_PROVIDER=responses` uses the OpenAI Responses API. `chat` supports an
@@ -416,3 +453,19 @@ reformatted as part of the agent feature.
   modules. Frontend resume-policy tests, changed-file ESLint/Prettier, TypeScript
   and production build passed. Browser fixtures verified optional token-cap text
   in both admin pages. Rebuilt/restarted API, frontend and the story consumer.
+
+### Assertion chronology, 2026-10-04
+
+- Added the `story-v3` assertion contract, validated encounter anchors/order,
+  separately sourced later revelations and readable graph/record labels.
+  Publication retains previous document revisions. No schema migration needed.
+- Full server suite: 140 passed, 2 skipped (Redis infrastructure); existing
+  dependency deprecation warnings remain. Ruff and strict mypy passed for agent
+  modules. Two frontend rendering regression tests passed, as did changed-file
+  ESLint/Prettier, TypeScript and the production build.
+- Browser checks used explicitly illustrative fixture data, not published story
+  facts: separate time axes, readable related records and graph paths, exact
+  source disclosure, keyboard spoiler toggle, 390px layout without horizontal
+  overflow, missing analysis, API failure and successful retry. No paid analysis
+  was launched. The broader static design audit reports 16 existing findings in
+  other forms and the vendored launcher, none in the changed components.

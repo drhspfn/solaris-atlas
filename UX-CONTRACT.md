@@ -91,6 +91,15 @@ before displayed settled usage reaches a cap. Tokens include cached input.
 
 ## Interaction and persistence
 
+Story notes separate atomic assertions by confirmed, observed anomaly, inferred
+and unresolved status, using text as well as color. Each assertion exposes its
+authored quest encounter, independent world chronology and knowledge at that
+point. Later explanations have their own citations and are hidden in a keyboard
+operable spoiler disclosure. Related records explain why a passage matters;
+Graph edges show readable endpoints and relationships with source disclosures.
+Older analyses remain readable without fabricated chronology. Generated links
+remain explicitly labeled agent interpretations.
+
 World, location, floor, surface opacity, category/subtype exclusions, search and hidden/unknown placement preferences are stored locally in localStorage, with an in-memory fallback. The URL accepts bounded numeric map and marker IDs for shared markers, or map/item/source IDs for acquisition groups. Existing URL filters are imported once and stripped using history replacement. All marker categories start disabled when no preferences have been saved. Preferences are stored as JSON without base64 encoding. Shared markers open their object card and center the map, clearing conflicting search, area and floor filters while preserving type selections. The shared marker remains visible even when its type is disabled. Pan and zoom are transient. Selecting a location fits its source-backed bounds; selecting a floor fits that layer. Floor images render above the surface, which defaults to 30% opacity while a floor is selected. Clusters open by click or keyboard; individual objects can always be opened from the list.
 
 The sidebar owns its scroll; the map owns its viewport. On phones the sidebar is a scrollable top panel. Neither panel changes sibling routes. Map objects use category colors plus named filters; color is not the only identifier.

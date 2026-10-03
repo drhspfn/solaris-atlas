@@ -6,6 +6,7 @@ import { api } from '../../api/client';
 import type { ExplanationResponse } from '../../data/explanations';
 import { availableLocales } from '../../data/locales';
 import { ExplanationBlocks } from './ExplanationBlocks';
+import { ExplanationSources } from './ExplanationSources';
 
 export function QuestExplanation({
   questId,
@@ -74,21 +75,41 @@ export function QuestExplanation({
             )}
             <ExplanationBlocks explanation={explanation} />
             {explanation.links.length > 0 && (
-              <details className="explanation-context">
-                <summary>Story connections · {explanation.links.length}</summary>
-                {explanation.links.map((link, index) => (
-                  <p key={index}>
-                    {link.explanation}{' '}
-                    <Link
-                      to={
-                        explanation.nodes.find((node) => node.id === link.to_node_id)?.href || '#'
-                      }
-                    >
-                      Explore connection <ArrowRight size={13} aria-hidden="true" />
-                    </Link>
-                  </p>
-                ))}
-              </details>
+              <section className="explanation-context" aria-label="Graph edges">
+                <h3>Graph edges</h3>
+                <p>Agent interpretations backed by source passages.</p>
+                {explanation.links.map((link, index) => {
+                  const from = explanation.nodes.find((node) => node.id === link.from_node_id);
+                  const to = explanation.nodes.find((node) => node.id === link.to_node_id);
+                  return (
+                    <article className="explanation-edge" key={index}>
+                      <div className="explanation-edge-path">
+                        {from ? (
+                          <Link to={from.href}>{from.label}</Link>
+                        ) : (
+                          <span>Source record</span>
+                        )}
+                        <span className="explanation-edge-relation">
+                          →{' '}
+                          {link.relation_label || link.relation.replaceAll('_', ' ').toLowerCase()}{' '}
+                          →
+                        </span>
+                        {to ? <Link to={to.href}>{to.label}</Link> : <span>Related record</span>}
+                      </div>
+                      <p>{link.explanation}</p>
+                      {link.confidence != null && (
+                        <span className="explanation-edge-confidence">
+                          Agent confidence · {Math.round(link.confidence * 100)}%
+                        </span>
+                      )}
+                      <ExplanationSources
+                        citations={link.citations || []}
+                        nodes={explanation.nodes}
+                      />
+                    </article>
+                  );
+                })}
+              </section>
             )}
             {explanation.events.length > 0 && (
               <div className="explanation-related">

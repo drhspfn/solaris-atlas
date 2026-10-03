@@ -140,6 +140,89 @@
   cursor: pointer;
   color: var(--text-primary);
 }
+.explanation-assertion {
+  margin: 20px 0;
+  padding-left: 18px;
+  border-left: 2px solid var(--border-default);
+}
+.assertion-status {
+  display: inline-block;
+  color: var(--mint);
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.assertion-status-observed_anomaly {
+  color: var(--accent-cyan);
+}
+.assertion-status-inferred,
+.assertion-status-unresolved {
+  color: var(--accent-warm);
+}
+.explanation-assertion .assertion-text {
+  color: var(--text-primary);
+}
+.assertion-chronology {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+  margin: 16px 0;
+  line-height: 1.7;
+  font-size: 13px;
+}
+.assertion-chronology dt,
+.assertion-knowledge > span,
+.assertion-unresolved,
+.explanation-edge-confidence {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.assertion-chronology dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.assertion-chronology a {
+  color: var(--mint);
+}
+.assertion-knowledge p {
+  font-size: 14px;
+  margin-top: 4px;
+}
+.assertion-resolution {
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.assertion-resolution summary {
+  color: var(--accent-warm);
+  cursor: pointer;
+}
+.assertion-resolution > div {
+  padding-top: 12px;
+}
+.explanation-edge {
+  padding: 16px 0;
+  border-top: 1px solid var(--border-default);
+}
+.explanation-edge-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  overflow-wrap: anywhere;
+}
+.explanation-edge-relation {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.explanation-edge p {
+  margin: 8px 0;
+}
+@media (max-width: 600px) {
+  .assertion-chronology {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .explanation-search-link {
   margin-top: 22px;
 }
