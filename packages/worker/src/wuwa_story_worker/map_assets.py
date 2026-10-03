@@ -11,7 +11,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from PIL import Image
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from wuwa_story.config.settings import get_settings
@@ -231,5 +231,42 @@ async def publish_maps(receipt: Path) -> None:
                                         "metadata_json" else key]
                           for key in values[0] if key not in
                           ("asset_job_id", "game_map_id", "entity_id")}))
+    finally:
+        await engine.dispose()
+
+
+async def refresh_map_sources(root: Path) -> dict:
+    """Refresh source evidence for existing placements without decoding map tiles."""
+    bundle = json.loads((root / "maps/manifest.json").read_text(encoding="utf-8"))
+    if bundle["game_version"] != "3.7.0":
+        raise ValueError("Map readers are verified for 3.7.0 only")
+    for source in bundle["sources"].values():
+        if _sha256(Path(source["path"])) != source["sha256"]:
+            raise ValueError("Pinned map source changed")
+    config = Path(bundle["sources"]["db_template.db"]["path"]).parent
+    markers, _, _ = await asyncio.to_thread(read_catalog, config,
+                                           {atlas["game_map_id"] for atlas in bundle["maps"]})
+    evidence = {(m["game_map_id"], m["entity_id"]): m["metadata_json"] for m in markers}
+    engine = create_async_engine(get_settings().database_url)
+    changed = 0
+    try:
+        async with async_sessionmaker(engine)() as session, session.begin():
+            await session.execute(text("SELECT pg_advisory_xact_lock(:id)"),
+                                  {"id": int(bundle["asset_job_id"][:15], 16)})
+            rows = await session.scalars(select(MapMarker).where(
+                MapMarker.asset_job_id == bundle["asset_job_id"]))
+            for marker in rows:
+                source = evidence.get((marker.game_map_id, marker.entity_id))
+                if source is None:
+                    continue
+                meta = dict(marker.metadata_json)
+                for field in ("drop_item_ids", "drop_source"):
+                    meta.pop(field, None)
+                    if field in source:
+                        meta[field] = source[field]
+                if meta != marker.metadata_json:
+                    marker.metadata_json = meta
+                    changed += 1
+        return {"updated_markers": changed, "asset_job_id": bundle["asset_job_id"]}
     finally:
         await engine.dispose()

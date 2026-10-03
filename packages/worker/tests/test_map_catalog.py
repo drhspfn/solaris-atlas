@@ -81,3 +81,11 @@ def test_nearby_kites_use_template_icon_and_preserve_positions(tmp_path):
     assert marker["metadata_json"]["icon_source"] == "/Game/Kite.Icon"
     assert marker["metadata_json"]["hidden"] is False
     assert read_catalog(tmp_path, {912})[0] == []
+
+
+def test_reward_preview_uses_placement_override_and_never_guesses_unknown_reward_type():
+    from wuwa_story_worker.map_catalog import reward_preview
+    template = {"RewardType": 0, "RewardId": 10}
+    assert reward_preview(template, {"RewardId": 20}, {10: [1], 20: [2, 2, 3]})["drop_item_ids"] == [2, 3]
+    assert reward_preview(template, {"Disabled": True}, {10: [1]}) == {}
+    assert reward_preview(template, {"RewardType": 99}, {10: [1]}) == {}

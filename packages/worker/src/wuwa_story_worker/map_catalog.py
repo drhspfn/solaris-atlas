@@ -70,7 +70,12 @@ def mark_category(label: str, icon: str) -> str:
     if "Shop" in icon or "MapNpc" in icon:
         return "shop"
 
-    if "sonance" in label or "casket" in label or "windchimer" in label or "unclaimed rafter kite" in label:
+    if (
+        "sonance" in label
+        or "casket" in label
+        or "windchimer" in label
+        or "unclaimed rafter kite" in label
+    ):
         return "collectible"
 
     if "treasure" in label:
@@ -80,6 +85,23 @@ def mark_category(label: str, icon: str) -> str:
         return "activity"
 
     return "exploration"
+
+
+def reward_preview(template, override, previews):
+    reward = {**(template or {}), **(override or {})}
+    if reward.get("Disabled", False) or reward.get("RewardType") not in (0, 2):
+        return {}
+    items = previews.get(reward.get("RewardId"), [])
+    if not items:
+        return {}
+    return {
+        "drop_item_ids": sorted(set(items)),
+        "drop_source": {
+            "package_id": reward["RewardId"],
+            "basis": "RewardComponent.RewardId -> DropPackage.DropPreview",
+            "precision": "possible_rewards; quantity and probability unknown",
+        },
+    }
 
 
 def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dict]:
@@ -122,6 +144,7 @@ def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dic
             templates[blueprint] = json.loads(text(table(blob), 3) or "{}")
 
     drops = {}
+    previews = {}
 
     with open_db(config / "db_drop.db") as db:
         for id, blob in db.execute("SELECT Id, BinData FROM droppackage"):
@@ -129,6 +152,14 @@ def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dic
 
             offset = row.Offset(12)
 
+            previews[id] = (
+                [
+                    integer(Table(blob, row.Indirect(row.Vector(offset) + index * 4)), 0)
+                    for index in range(row.VectorLen(offset))
+                ]
+                if offset
+                else []
+            )
             if offset and row.VectorLen(offset) == 1:
                 entry = Table(blob, row.Indirect(row.Vector(offset)))
 
@@ -215,7 +246,9 @@ def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dic
                         "names": nearby_mark["names"] if nearby_mark else monsters[blueprint],
                         "components": components,
                         "in_sleep": flag(row, 5),
-                        "category_basis": "component_map_icon" if nearby_mark else "monster_blueprint",
+                        "category_basis": "component_map_icon"
+                        if nearby_mark
+                        else "monster_blueprint",
                         **(nearby_mark or {}),
                         "floor": None,
                     },
@@ -248,8 +281,16 @@ def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dic
             **overrides.get("BaseInfoComponent", {}),
         }
 
-        reward = {**(template.get("RewardComponent") or {}), **(overrides.get("RewardComponent") or {})}
+        reward = {
+            **(template.get("RewardComponent") or {}),
+            **(overrides.get("RewardComponent") or {}),
+        }
 
+        meta.update(
+            reward_preview(
+                template.get("RewardComponent"), overrides.get("RewardComponent"), previews
+            )
+        )
         meta.setdefault("names", translations.get(base_info.get("TidName", ""), {}))
 
         item = resources.get((marker["game_map_id"], marker["entity_id"]))
@@ -284,6 +325,15 @@ def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dic
         elif marker["category"] == "monster":
             meta["icon_source"] = monster_icons.get(marker["blueprint_type"], "")
 
+        if not reward.get("Disabled", False) and reward.get("RewardType") in (0, 2):
+            preview = previews.get(reward.get("RewardId"), [])
+            if preview:
+                meta["drop_item_ids"] = sorted(set(preview))
+                meta["drop_source"] = {
+                    "package_id": reward["RewardId"],
+                    "basis": "RewardComponent.RewardId -> DropPackage.DropPreview",
+                    "precision": "possible_rewards; quantity and probability unknown",
+                }
         meta.setdefault("names", {})
 
         meta.update(
