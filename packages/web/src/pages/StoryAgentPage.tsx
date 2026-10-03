@@ -234,7 +234,7 @@ function AgentWorkspace() {
             />
           </label>
           <label>
-            Game version
+            Quest snapshot version
             <input name="version" required maxLength={64} placeholder="1.0.0" disabled={busy} />
           </label>
           <label>
@@ -252,8 +252,8 @@ function AgentWorkspace() {
             Queue analysis
           </button>
           <p>
-            Uses all available source languages by priority. Model and spending limits come from
-            server settings.
+            The version selects the quest transcript. Research can use all imported patches and
+            available source languages. Model and spending limits come from server settings.
           </p>
         </form>
       </details>

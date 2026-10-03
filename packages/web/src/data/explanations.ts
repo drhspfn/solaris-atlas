@@ -1,4 +1,6 @@
 export type SourceCitation = {
+  snapshot_id?: number | null;
+  game_version?: string | null;
   node_id: number;
   quote: string;
   locale?: string | null;

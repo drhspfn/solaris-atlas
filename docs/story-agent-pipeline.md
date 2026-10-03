@@ -1,9 +1,38 @@
 # Story research pipeline
 
-The worker researches one imported quest in a selected release and locale. It can
+The worker explains one quest transcript from a selected release and locale. It can
 read transcripts, inspect the source graph, search entities, re-read sources, save
 working notes and report missing data. Publication creates a cited explanation,
 inferred claims/links and generated events. Imported source edges are preserved.
+
+For `story-v4`, the selected game version is the **target transcript snapshot**,
+not a research cutoff. Graph neighbors, search and working memory can cover all
+imported snapshots. `list_snapshots` exposes the source inventory pinned at enqueue;
+`read_quest` and `read_node` accept an explicit `snapshot_id` to compare patches.
+Without it, reading prefers the target snapshot when the node exists there,
+otherwise the latest available observation. Graph traversal defaults to all pinned
+snapshots and can be narrowed to one. Version and import order never establish
+world chronology or the order of quests.
+
+Every v4 citation includes its exact snapshot ID and language. Validation requires
+the quote to have been read in that snapshot and rechecks it before publication.
+Links and source labels retain the source patch, independently of the target
+quest version. Older sources can support established background; future reveals
+remain separate spoilers rather than rewriting knowledge at the encounter.
+
+New imported snapshots and transactional revisions of imported source tables
+participate in job identity, so repeating a request after an import can create a
+fresh run. The run's inventory does not expand during research. Public retrieval
+checks the inventory and fingerprints of cited sources, including other patches;
+changed/deleted source text invalidates the explanation without charging a new
+analysis. Queuing remains an explicit administrator action. Existing v1–v3 jobs
+keep their original single-snapshot scope; start a new job to use v4.
+
+Entity/text search uses the existing shared lexical index to find candidates,
+then exact snapshot reads establish evidence. It is not an exhaustive historical
+text index: replaced wording may need an explicit node/quest comparison. Missing
+matches do not establish missing lore. The agent can only research patches that
+have actually been imported, not every released patch automatically.
 
 ## Setup
 
@@ -68,7 +97,8 @@ deployment receipt below for the real-provider smoke test.
 
 ## Assertion chronology and evidence
 
-New jobs use `story-v3`. Each explanation block contains atomic `assertions`,
+New jobs use `story-v4`, retaining the assertion structure introduced in v3.
+Each explanation block contains atomic `assertions`,
 with exact citations and a status: `confirmed`, `observed_anomaly`, `inferred`,
 or `unresolved`. An observation is not proof of its apparent cause. For example,
 dry clothing can be observed while apparent drowning remains an inference.
@@ -87,10 +117,10 @@ Each assertion records two independent time axes:
 
 Later revelations are hidden behind an explicit spoiler disclosure on the site.
 Publishing a new analysis creates an immutable document revision and moves its
-head; previous knowledge and open clues remain in earlier revisions. Sources are
-limited to the selected imported snapshot, so missing future content cannot be
-treated as an established explanation. No automatic cross-version research is
-performed.
+head; previous knowledge and open clues remain in earlier revisions. Sources from
+other imported patches may establish later context, but missing future content
+cannot be treated as an established explanation. The encounter anchor must cite
+the target snapshot, regardless of which other patches provide background.
 
 `related_records` adds human-readable contextual labels beside record links.
 Graph edges show readable endpoints, a relation label, an explanation, confidence
@@ -469,3 +499,20 @@ reformatted as part of the agent feature.
   overflow, missing analysis, API failure and successful retry. No paid analysis
   was launched. The broader static design audit reports 16 existing findings in
   other forms and the vendored launcher, none in the changed components.
+
+### Research across patches, 2026-10-04
+
+- Added v4 with a pinned imported-source inventory, explicit per-citation snapshot
+  identity, graph traversal across patches and exact source links. Generated
+  memory remains secondary evidence. No schema migration needed.
+- Regression coverage checks old-to-new and new-to-old reads, graph discovery,
+  candidate search, same-node/different-text isolation, full target pagination,
+  rejection of unpinned snapshots, later-source invalidation and fresh job identity
+  after an import or an external source change. Providers are mocked.
+- Full server suite: 143 passed, 2 skipped (Redis infrastructure), with the same
+  dependency deprecation warnings. Agent Ruff/strict mypy, three UI rendering
+  tests, changed-file ESLint/Prettier, TypeScript and production builds passed.
+- Rebuilt and restarted local API, web and story consumer; checked the v4 worker
+  contract and a legacy explanation's source-version caption in the browser.
+  No paid analysis was queued. The working story inventory currently contains
+  1.0.0 and 1.1.0; other story snapshots require import first.

@@ -19,6 +19,7 @@ export function ExplanationSources({
           <details key={`${citation.node_id}-${index}`}>
             <summary>
               <BookOpen size={13} aria-hidden="true" /> Source {index + 1}
+              {citation.game_version && <> · {citation.game_version}</>}
             </summary>
             <blockquote>{citation.quote}</blockquote>
             {href && (

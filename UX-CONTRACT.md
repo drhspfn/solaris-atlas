@@ -97,6 +97,10 @@ authored quest encounter, independent world chronology and knowledge at that
 point. Later explanations have their own citations and are hidden in a keyboard
 operable spoiler disclosure. Related records explain why a passage matters;
 Graph edges show readable endpoints and relationships with source disclosures.
+Source disclosures identify their own patch version; source links preserve it.
+The admin form's quest snapshot version selects the transcript being explained,
+while research may use any imported patch. Earlier jobs retain their original
+research scope; browsing does not enqueue a paid analysis.
 Older analyses remain readable without fabricated chronology. Generated links
 remain explicitly labeled agent interpretations.
 

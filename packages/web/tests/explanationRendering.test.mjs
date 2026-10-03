@@ -50,3 +50,15 @@ test('legacy explanations do not acquire invented confidence or chronology', () 
   assert.ok(!html.includes('Known at this point'));
   assert.ok(!html.includes('Confirmed'));
 });
+
+test('source disclosures identify their own patch version', () => {
+  const block = {
+    ...storyExplanation.blocks[0],
+    citations: storyExplanation.blocks[0].citations.map((citation) => ({
+      ...citation,
+      game_version: '2.1.0',
+      snapshot_id: 42,
+    })),
+  };
+  assert.ok(render({ ...storyExplanation, blocks: [block] }).includes('2.1.0'));
+});
