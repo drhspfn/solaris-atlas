@@ -114,6 +114,13 @@ async def world(monkeypatch):
         yield engine, settings, request, nodes, locale, release, quest
     finally:
         async with AsyncSession(engine) as db:
+            content_ids = list(
+                await db.scalars(
+                    select(LocalizationValue.content_id).where(
+                        LocalizationValue.release_id == release.id
+                    )
+                )
+            )
             runs = select(ProcessingRun.id).where(ProcessingRun.target_node_id == quest.node_id)
             events = list(
                 await db.scalars(select(Event.node_id).where(Event.processor_run_id.in_(runs)))
@@ -127,6 +134,14 @@ async def world(monkeypatch):
             await db.execute(delete(Node).where(Node.id.in_([node.id for node in nodes] + events)))
             await db.execute(
                 delete(LocalizationKey).where(LocalizationKey.first_release_id == release.id)
+            )
+            await db.execute(
+                delete(LocalizationContent).where(
+                    LocalizationContent.id.in_(content_ids),
+                    ~select(LocalizationValue.key_id)
+                    .where(LocalizationValue.content_id == LocalizationContent.id)
+                    .exists(),
+                )
             )
             await db.execute(delete(GameRelease).where(GameRelease.id == release.id))
             await db.execute(

@@ -113,6 +113,26 @@ class Provider:
             raise ProviderFailure("compaction_not_supported")
         return "/responses/compact", {"model": self.settings.model, "input": history}
 
+    async def count_input(self, payload: dict[str, Any]) -> dict[str, Any]:
+        # The counter accepts input configuration, not output/runtime parameters.
+        keys = {
+            "model",
+            "input",
+            "instructions",
+            "tools",
+            "tool_choice",
+            "reasoning",
+            "text",
+            "parallel_tool_calls",
+            "previous_response_id",
+            "conversation",
+            "personality",
+            "truncation",
+        }
+        return await self.post(
+            "/responses/input_tokens", {key: value for key, value in payload.items() if key in keys}
+        )
+
     @staticmethod
     def compact_output(raw: dict[str, Any]) -> list[dict[str, Any]]:
         output = raw.get("output")

@@ -2,10 +2,10 @@
 
 from datetime import UTC, datetime
 from decimal import ROUND_CEILING, Decimal
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, text
+from sqlalchemy import case, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -98,7 +98,10 @@ async def reserve(
     day = datetime.now(UTC).astimezone(ZoneInfo(settings.budget_timezone)).date()
     await session.execute(insert(AgentDailyUsage).values(day=day).on_conflict_do_nothing())
     usage = await session.scalar(
-        select(AgentDailyUsage).where(AgentDailyUsage.day == day).with_for_update()
+        select(AgentDailyUsage)
+        .where(AgentDailyUsage.day == day)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     assert usage is not None
     rate = (
@@ -161,9 +164,17 @@ async def settle(
     if initial is None:
         raise ValueError("Unknown agent call")
     usage = await session.scalar(
-        select(AgentDailyUsage).where(AgentDailyUsage.day == initial.day).with_for_update()
+        select(AgentDailyUsage)
+        .where(AgentDailyUsage.day == initial.day)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
-    call = await session.scalar(select(AgentCall).where(AgentCall.id == call_id).with_for_update())
+    call = await session.scalar(
+        select(AgentCall)
+        .where(AgentCall.id == call_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     assert call is not None and usage is not None
     if call.status in ("completed", "usage_exceeded"):
         return call.status == "completed"
@@ -215,8 +226,12 @@ async def reprice_run(
     for call in calls:
         if call.input_tokens is None or call.output_tokens is None or call.response is None:
             raise ValueError("Completed call is missing recorded usage")
+        await session.flush()
         usage = await session.scalar(
-            select(AgentDailyUsage).where(AgentDailyUsage.day == call.day).with_for_update()
+            select(AgentDailyUsage)
+            .where(AgentDailyUsage.day == call.day)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         assert usage is not None and call.cost_usd is not None
         cost = reported_price(
@@ -233,3 +248,62 @@ async def reprice_run(
     run.cost = float(Decimal(str(run.cost or 0)) + delta)
     job.config = config
     return {"run_id": run_id, "calls": len(calls), "delta_usd": format(delta, ".8f")}
+
+
+async def rebuild_daily_usage(session: AsyncSession) -> list[dict[str, Any]]:
+    """Reconcile derived daily totals under the same locks as reserve/settle."""
+    await session.flush()
+    days = list(await session.scalars(select(AgentDailyUsage.day).order_by(AgentDailyUsage.day)))
+    results = []
+    for day in days:
+        usage = await session.scalar(
+            select(AgentDailyUsage)
+            .where(AgentDailyUsage.day == day)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        assert usage is not None
+        totals = (
+            await session.execute(
+                select(
+                    func.coalesce(func.sum(AgentCall.cost_usd), 0),
+                    func.coalesce(
+                        func.sum(
+                            case((AgentCall.cost_usd.is_(None), AgentCall.reserved_usd), else_=0)
+                        ),
+                        0,
+                    ),
+                    func.coalesce(
+                        func.sum(
+                            case(
+                                (
+                                    AgentCall.cost_usd.is_not(None),
+                                    func.coalesce(AgentCall.input_tokens, 0)
+                                    + func.coalesce(AgentCall.output_tokens, 0),
+                                ),
+                                else_=0,
+                            )
+                        ),
+                        0,
+                    ),
+                    func.coalesce(
+                        func.sum(
+                            case((AgentCall.cost_usd.is_(None), AgentCall.reserved_tokens), else_=0)
+                        ),
+                        0,
+                    ),
+                ).where(AgentCall.day == day)
+            )
+        ).one()
+        results.append(
+            {
+                "day": str(day),
+                "previous_spent_usd": str(usage.spent_usd),
+                "spent_usd": str(totals[0]),
+                "reserved_usd": str(totals[1]),
+            }
+        )
+        spent, held, spent_tokens, held_tokens = cast(tuple[Decimal, Decimal, int, int], totals)
+        usage.spent_usd, usage.reserved_usd = spent, held
+        usage.spent_tokens, usage.reserved_tokens = spent_tokens, held_tokens
+    return results

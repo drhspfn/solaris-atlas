@@ -118,7 +118,7 @@ async def remote_call(
     counted_input = False
     if not fits and not embedding and settings.provider == "responses":
         try:
-            counted = await provider.post("/responses/input_tokens", payload)
+            counted = await provider.count_input(payload)
             tokens = counted.get("input_tokens")
             fits = type(tokens) is int and 0 <= tokens <= settings.max_input_tokens
             if type(tokens) is int and 0 <= tokens <= settings.max_input_tokens:
@@ -158,7 +158,7 @@ async def remote_call(
         except BudgetExceeded as error:
             if not counted_input and not embedding and settings.provider == "responses":
                 try:
-                    counted = await provider.post("/responses/input_tokens", payload)
+                    counted = await provider.count_input(payload)
                     tokens = counted.get("input_tokens")
                     if type(tokens) is not int or not 0 <= tokens <= settings.max_input_tokens:
                         raise ProviderFailure("invalid_input_count")

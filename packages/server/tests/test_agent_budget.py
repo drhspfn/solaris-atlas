@@ -165,3 +165,66 @@ async def test_optional_token_guard_and_cached_settlement_keep_usd_cap():
         finally:
             await db.rollback()
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_reused_sessions_refresh_locked_balances_and_repair_preserves_holds():
+    from sqlalchemy import delete
+
+    from wuwa_story.agents.budget import rebuild_daily_usage
+
+    engine = create_async_engine(DATABASE_URL)
+    settings = AgentSettings(
+        _env_file=None,
+        api_key="test",
+        daily_budget_usd="0.00015",
+        input_usd_per_million=1,
+        output_usd_per_million=0,
+        price_safety_multiplier=1,
+    )
+    ids = []
+    try:
+        async with (
+            AsyncSession(engine, expire_on_commit=False, autoflush=False) as first,
+            AsyncSession(engine, expire_on_commit=False) as second,
+        ):
+            call = await reserve(
+                first, settings, run_id=None, step=0, input_bound=60, output_bound=0
+            )
+            ids.append(call.id)
+            day = call.day
+            await first.commit()
+            other = await reserve(
+                second, settings, run_id=None, step=0, input_bound=60, output_bound=0
+            )
+            ids.append(other.id)
+            await second.commit()
+            with pytest.raises(BudgetExceeded, match="USD"):
+                await reserve(first, settings, run_id=None, step=1, input_bound=60, output_bound=0)
+            await first.rollback()
+            usage = await first.get(AgentDailyUsage, day)
+            assert await settle(second, ids[1], settings, 20, 0, {})
+            await second.commit()
+            assert await settle(first, ids[0], settings, 20, 0, {})
+            await first.commit()
+            assert usage.spent_usd == Decimal("0.00004000") and usage.reserved_usd == 0
+            held = await reserve(
+                first, settings, run_id=None, step=2, input_bound=50, output_bound=0
+            )
+            ids.append(held.id)
+            held.status = "uncertain"
+            usage.spent_usd = Decimal("0.00009999")
+            await first.commit()
+            await rebuild_daily_usage(first)
+            await first.commit()
+            assert usage.spent_usd == Decimal("0.00004000")
+            assert usage.reserved_usd == Decimal("0.00005000") and usage.reserved_tokens == 50
+    finally:
+        async with engine.begin() as db:
+            await db.execute(delete(AgentCall).where(AgentCall.id.in_(ids)))
+            await db.execute(
+                delete(AgentDailyUsage).where(
+                    ~select(AgentCall.id).where(AgentCall.day == AgentDailyUsage.day).exists()
+                )
+            )
+        await engine.dispose()

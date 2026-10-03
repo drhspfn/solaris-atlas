@@ -25,6 +25,27 @@ def test_compaction_preserves_the_entire_canonical_window():
         Provider.compact_output({"status": "incomplete", "output": output})
 
 
+async def test_input_counter_preserves_context_without_unsupported_output_options():
+    settings = AgentSettings(_env_file=None, api_key="test")
+    history = [{"type": "compaction", "encrypted_content": "opaque"}]
+    tools = [{"type": "function", "name": "read_node", "parameters": {"type": "object"}}]
+
+    def transport(request):
+        assert request.url.path == "/v1/responses/input_tokens"
+        assert json.loads(request.content) == {
+            "model": settings.model,
+            "input": history,
+            "tools": tools,
+            "reasoning": {"effort": settings.reasoning_effort},
+        }
+        return httpx.Response(200, json={"input_tokens": 502})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        provider = Provider(settings, client)
+        _, payload = provider.request(history, tools)
+        assert await provider.count_input(payload) == {"input_tokens": 502}
+
+
 @pytest.mark.parametrize("kind", ["responses", "chat", "gemini"])
 @pytest.mark.asyncio
 async def test_native_reasoning_is_preserved_and_tool_results_match_protocol(kind):
