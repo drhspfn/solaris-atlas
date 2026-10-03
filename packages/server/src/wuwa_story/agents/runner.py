@@ -33,6 +33,11 @@ def system_prompt(locale: str, relations: list[str]) -> str:
         "events that all occurred. Distinguish fact from interpretation and do not invent missing lore. "
         "Save notes/alerts for missing data, contradictions and broken joins. "
         "Every explanation block, inference and event must cite exact text from a node read in this run. "
+        "Source language is independent of output language: read by priority English, simplified Chinese, "
+        "Japanese, traditional Chinese, then other available translations. When a translation is "
+        "ambiguous, inconsistent or seems wrong, re-read the same node with locale zh-Hans and ja "
+        "and compare; the Chinese original takes precedence for meaning. Include the returned source "
+        "locale in each citation. Report unresolved translation conflicts; never invent missing text. "
         "Use related_node_ids for clickable references; no external URLs or HTML. "
         "Explain who, what, why and consequences, with concise section titles and passage annotations. "
         f"Write in locale {locale}. Finish via finish_analysis as the ONLY tool call in that turn. "
@@ -184,7 +189,11 @@ async def run_locked(
     if quest is None or locale is None:
         await pause(session, run, "stale", "Quest or locale was removed")
         return
-    if await quest_fingerprint(session, quest, job.release_id, locale.id) != run.input_hash:
+    fingerprint_locale = locale.id if run.prompt_version == "story-v1" else None
+    if (
+        await quest_fingerprint(session, quest, job.release_id, fingerprint_locale)
+        != run.input_hash
+    ):
         await pause(
             session, run, "stale", "Imported quest changed; create a new job for current sources"
         )
@@ -207,6 +216,7 @@ async def run_locked(
         settings=settings,
         evidence={int(k): v for k, v in cp.get("evidence", {}).items()},
         known_nodes={int(k): v for k, v in cp.get("known_nodes", {}).items()},
+        source_locale=locale.code if run.prompt_version == "story-v1" else None,
     )
     evidence.coverage = {int(k): v for k, v in cp.get("coverage", {}).items()}
     evidence.total_lines = cp.get("total_lines")
@@ -325,7 +335,10 @@ async def run_locked(
             cp["vectors"] = vectors
             job.checkpoint = dict(cp)
             await session.commit()
-    if await quest_fingerprint(session, quest, job.release_id, locale.id) != run.input_hash:
+    if (
+        await quest_fingerprint(session, quest, job.release_id, fingerprint_locale)
+        != run.input_hash
+    ):
         await pause(
             session, run, "stale", "Quest changed during analysis; result was not published"
         )

@@ -2,7 +2,10 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
-PROMPT_VERSION = "story-v1"
+PROMPT_VERSION = "story-v2"
+
+# Reading order is independent of the language used to write the explanation.
+SOURCE_LOCALE_PRIORITY = ("en", "zh-Hans", "ja", "zh-Hant")
 
 
 class StrictModel(BaseModel):
@@ -12,6 +15,7 @@ class StrictModel(BaseModel):
 class Citation(StrictModel):
     node_id: int = Field(gt=0)
     quote: str = Field(min_length=1, max_length=1500)
+    locale: str | None = Field(default=None, min_length=2, max_length=16)
 
 
 class ExplanationBlock(StrictModel):

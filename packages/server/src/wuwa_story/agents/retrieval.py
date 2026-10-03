@@ -8,10 +8,11 @@ from urllib.parse import quote, urlencode
 import httpx
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.agents.budget import BudgetExceeded, reserve, settle
+from wuwa_story.agents.contracts import SOURCE_LOCALE_PRIORITY
 from wuwa_story.agents.evidence import hash_value, quest_fingerprint, source_edges
 from wuwa_story.agents.providers import Provider, vector_values
 from wuwa_story.agents.publication import document_type
@@ -85,7 +86,14 @@ async def scope(
 async def public_document(
     session: AsyncSession, document: Document, quest: Quest, release: GameRelease, locale: Locale
 ) -> dict[str, Any] | None:
-    if document.source_hash != await quest_fingerprint(session, quest, release.id, locale.id):
+    output_locale = await session.get(Locale, document.locale_id)
+    assert output_locale is not None
+    fingerprint_locale = (
+        None if document.metadata_json.get("source_scope") == "all_locales" else output_locale.id
+    )
+    if document.source_hash != await quest_fingerprint(
+        session, quest, release.id, fingerprint_locale
+    ):
         return None
     events = (
         await session.execute(
@@ -142,13 +150,42 @@ async def public_document(
                 "href": await source_link(session, node, kind, release, locale),
             }
         )
+    blocks = []
+    for block in document.body_ast:
+        citations = []
+        for citation in block.get("citations", []):
+            source_locale = (
+                await session.scalar(select(Locale).where(Locale.code == citation.get("locale")))
+                if citation.get("locale")
+                else output_locale
+            )
+            citation_node = await session.get(Node, citation["node_id"])
+            citation_kind = (
+                await session.scalar(
+                    select(NodeType.key).where(NodeType.id == citation_node.type_id)
+                )
+                if citation_node
+                else None
+            )
+            citations.append(
+                {
+                    **citation,
+                    "href": await source_link(
+                        session, citation_node, citation_kind, release, source_locale
+                    )
+                    if citation_node and citation_kind and source_locale
+                    else None,
+                }
+            )
+        blocks.append({**block, "citations": citations})
     return {
         "id": document.id,
         "quest_id": quest.game_quest_id,
         "game_version": release.game_version,
-        "locale": locale.code,
+        "locale": output_locale.code,
+        "requested_locale": locale.code,
         "title": document.title,
-        "blocks": document.body_ast,
+        "blocks": blocks,
         "generated": True,
         "unresolved_questions": document.metadata_json.get("unresolved_questions", []),
         "events": [{"node_id": node_id, "title": title} for node_id, title in events],
@@ -164,23 +201,34 @@ async def get_explanation(
     quest = await session.scalar(select(Quest).where(Quest.game_quest_id == quest_id))
     if quest is None:
         raise ValueError("Quest not found")
-    document = await session.scalar(
+    documents = await session.scalars(
         select(Document)
         .join(DocumentHead, DocumentHead.document_id == Document.id)
         .where(
             Document.node_id == quest.node_id,
-            Document.locale_id == language.id,
             Document.document_type == document_type(release.id),
         )
+        .order_by(language_priority(language.code))
     )
-    payload = (
-        await public_document(session, document, quest, release, language) if document else None
-    )
+    payload = None
+    for document in documents:
+        payload = await public_document(session, document, quest, release, language)
+        if payload:
+            break
     return {
         "status": "available" if payload else "pending",
         "explanation": payload,
         "game_version": release.game_version,
     }
+
+
+def language_priority(requested: str) -> Any:
+    codes = list(dict.fromkeys((requested, *SOURCE_LOCALE_PRIORITY)))
+    return case(
+        {code: index for index, code in enumerate(codes)},
+        value=select(Locale.code).where(Locale.id == Document.locale_id).scalar_subquery(),
+        else_=len(codes),
+    )
 
 
 async def query_vector(
@@ -270,9 +318,7 @@ async def search_explanations(
         select(Document, Quest)
         .join(DocumentHead, DocumentHead.document_id == Document.id)
         .join(Quest, Quest.node_id == Document.node_id)
-        .where(
-            Document.locale_id == language.id, Document.document_type == document_type(release.id)
-        )
+        .where(Document.document_type == document_type(release.id))
     )
     score = func.ts_rank_cd(
         func.to_tsvector("simple", Document.plain_text), func.plainto_tsquery("simple", query)
@@ -295,7 +341,7 @@ async def search_explanations(
                 base.add_columns(ExplanationEmbedding.ordinal, (1 - distance).label("score"))
                 .join(ExplanationEmbedding, ExplanationEmbedding.document_id == Document.id)
                 .where(ExplanationEmbedding.model_id == model_id)
-                .order_by(distance)
+                .order_by(distance, language_priority(language.code))
                 .limit(limit * 2)
             )
             mode = "vector"
@@ -305,29 +351,33 @@ async def search_explanations(
         statement = (
             base.add_columns(score.label("score"), fuzzy.label("fuzzy"))
             .where((score > 0) | (fuzzy > 0.04))
-            .order_by((score + fuzzy).desc())
+            .order_by((score + fuzzy).desc(), language_priority(language.code))
             .limit(limit * 2)
         )
     rows = (await session.execute(statement)).all()
     results = []
+    seen = set()
     for row in rows:
         document, quest = cast(Document, row[0]), cast(Quest, row[1])
+        if quest.node_id in seen:
+            continue
         ordinal_or_score, score_or_fuzzy = cast(float, row[2]), cast(float, row[3])
         payload = await public_document(session, document, quest, release, language)
         if payload is None:
             continue
         if mode == "vector":
-            blocks = [document.body_ast[int(ordinal_or_score)]]
+            blocks = [payload["blocks"][int(ordinal_or_score)]]
             rank = float(score_or_fuzzy)
         else:
             words = query.casefold().split()
             blocks = sorted(
-                document.body_ast,
+                payload["blocks"],
                 key=lambda block: sum(word in block["text"].casefold() for word in words),
                 reverse=True,
             )[:2]
             rank = float(ordinal_or_score) + float(score_or_fuzzy)
         results.append({**payload, "blocks": blocks, "score": rank})
+        seen.add(quest.node_id)
         if len(results) >= limit:
             break
     return {

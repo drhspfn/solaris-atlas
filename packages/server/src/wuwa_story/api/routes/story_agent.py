@@ -294,7 +294,6 @@ async def generated_event(
         event is None
         or event.semantic_status != "generated"
         or event.metadata_json.get("release_id") != release.id
-        or event.metadata_json.get("locale_id") != language.id
     ):
         raise HTTPException(404, "Generated event not found in this version/language")
     run = await session.get(ProcessingRun, event.processor_run_id)

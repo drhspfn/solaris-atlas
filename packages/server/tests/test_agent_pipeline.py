@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from uuid import uuid4
@@ -17,7 +18,12 @@ from wuwa_story.db.models.agents import AgentCall, AgentDailyUsage, AgentJob, Ex
 from wuwa_story.db.models.content import Document
 from wuwa_story.db.models.core import DialogueLine, Quest, QuestAction, QuestState
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision, NodeType
-from wuwa_story.db.models.i18n import Locale
+from wuwa_story.db.models.i18n import (
+    Locale,
+    LocalizationContent,
+    LocalizationKey,
+    LocalizationValue,
+)
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease, ProcessingRun
 from wuwa_story.db.models.story import Claim, Event
@@ -113,7 +119,13 @@ async def world(monkeypatch):
             await db.execute(delete(AgentCall).where(AgentCall.run_id.in_(runs)))
             await db.execute(delete(Claim).where(Claim.processor_run_id.in_(runs)))
             await db.execute(delete(ProcessingRun).where(ProcessingRun.id.in_(runs)))
+            await db.execute(
+                delete(LocalizationValue).where(LocalizationValue.release_id == release.id)
+            )
             await db.execute(delete(Node).where(Node.id.in_([node.id for node in nodes] + events)))
+            await db.execute(
+                delete(LocalizationKey).where(LocalizationKey.first_release_id == release.id)
+            )
             await db.execute(delete(GameRelease).where(GameRelease.id == release.id))
             await db.execute(
                 delete(AgentDailyUsage).where(
@@ -217,6 +229,125 @@ async def test_full_pipeline_and_duplicate_delivery(world):
             )
             == 1
         )
+
+
+async def test_multilingual_sources_and_shared_publication(world):
+    engine, settings, request, nodes, _, release, _ = world
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        locales = {}
+        for code in ("en", "zh-Hans", "ja"):
+            language = await db.scalar(select(Locale).where(Locale.code == code))
+            if language is None:
+                language = Locale(id=20 + len(locales), code=code, name=code)
+                db.add(language)
+                await db.flush()
+            locales[code] = language.id
+        values_by_line = [
+            {"en": "The bridge was destroyed.", "zh-Hans": "桥被摧毁了。", "ja": "橋が壊された。"},
+            {"zh-Hans": "我们需要另一条路。", "ja": "別の道が必要だ。"},
+        ]
+        for node, translations in zip(nodes[3:], values_by_line, strict=True):
+            key = LocalizationKey(key=node.canonical_key, first_release_id=release.id)
+            db.add(key)
+            await db.flush()
+            (await db.get(DialogueLine, node.id)).localization_key_id = key.id
+            for code, text in translations.items():
+                digest = hashlib.sha256(text.encode()).digest()
+                content = await db.scalar(
+                    select(LocalizationContent).where(LocalizationContent.content_hash == digest)
+                )
+                if content is None:
+                    content = LocalizationContent(content=text, content_hash=digest)
+                    db.add(content)
+                    await db.flush()
+                db.add(
+                    LocalizationValue(
+                        release_id=release.id,
+                        key_id=key.id,
+                        locale_id=locales[code],
+                        content_id=content.id,
+                        status="resolved_nonempty",
+                    )
+                )
+        await db.commit()
+    run_id = await create(world)
+    calls = []
+    result = result_for(nodes)
+    result["blocks"][0]["citations"][0] = {
+        "node_id": nodes[3].id,
+        "quote": "桥被摧毁了。",
+        "locale": "zh-Hans",
+    }
+
+    def transport(request):
+        calls.append(json.loads(request.content))
+        steps = [
+            ("read_quest", {}),
+            ("read_node", {"node_id": nodes[3].id, "locale": "zh-Hans"}),
+            ("read_node", {"node_id": nodes[3].id, "locale": "ja"}),
+            ("finish_analysis", {"result_json": json.dumps(result)}),
+        ]
+        name, args = steps[len(calls) - 1]
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "usage": {"input_tokens": 100, "output_tokens": 30},
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": str(len(calls)),
+                        "name": name,
+                        "arguments": json.dumps(args),
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        await execute_job(run_id, engine, settings, client)
+    primary = json.loads(calls[1]["input"][-1]["output"])
+    assert [(line["text"], line["locale"]) for line in primary["lines"]] == [
+        ("The bridge was destroyed.", "en"),
+        ("我们需要另一条路。", "zh-Hans"),
+    ]
+    async with AsyncSession(engine) as db:
+        assert (await db.get(ProcessingRun, run_id)).status == "completed"
+        for code in ("en", "zh-Hans", "ja"):
+            response = await get_explanation(db, request.quest_id, request.game_version, code)
+            assert response["status"] == "available"
+            assert response["explanation"]["locale"] == "en"
+            assert "locale=zh-Hans" in response["explanation"]["blocks"][0]["citations"][0]["href"]
+        search = await search_explanations(db, "destroyed bridge", request.game_version, "ja", 5)
+        assert len(search["results"]) == 1 and search["results"][0]["quest_id"] == request.quest_id
+        tools = EvidenceTools(
+            db,
+            run_id=run_id,
+            quest=world[-1],
+            release_id=release.id,
+            locale=await db.get(Locale, locales["ja"]),
+            settings=settings,
+        )
+        await tools.read_quest()
+        await tools.read_node(nodes[3].id, locale="zh-Hans")
+        wrong_language = result_for(nodes)
+        wrong_language["blocks"][0]["citations"][0]["locale"] = "ja"
+        with pytest.raises(ValueError, match="Cited source changed"):
+            await tools.validate_result(AnalysisResult.model_validate(wrong_language))
+        value = await db.get(
+            LocalizationValue,
+            (
+                release.id,
+                (await db.get(DialogueLine, nodes[3].id)).localization_key_id,
+                locales["ja"],
+            ),
+        )
+        value.status = "missing"
+        await db.flush()
+        assert (await get_explanation(db, request.quest_id, request.game_version, "en"))[
+            "status"
+        ] == "pending"
+        await db.rollback()
 
 
 async def test_unknown_outcome_does_not_repeat_paid_request(world):

@@ -54,6 +54,7 @@ async def publish_analysis(
         metadata_json={
             "release_id": job.release_id,
             "generated": True,
+            "source_scope": "all_locales" if run.prompt_version != "story-v1" else "locale",
             "unresolved_questions": result.unresolved_questions,
             "links": [link.model_dump() for link in result.links],
         },

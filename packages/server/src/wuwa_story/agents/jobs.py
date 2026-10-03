@@ -36,7 +36,7 @@ async def enqueue_analysis(
     quest, release, locale = await scope_for_request(
         session, **request.model_dump(exclude={"generation"})
     )
-    source = await quest_fingerprint(session, quest, release.id, locale.id)
+    source = await quest_fingerprint(session, quest, release.id)
     config = settings.public_config()
     identity = hash_value(
         {
