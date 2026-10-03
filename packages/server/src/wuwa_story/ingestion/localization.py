@@ -6,7 +6,12 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from wuwa_story.db.models.i18n import Locale, LocalizationKey, LocalizationValue
+from wuwa_story.db.models.i18n import (
+    Locale,
+    LocalizationContent,
+    LocalizationKey,
+    LocalizationValue,
+)
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 
 
@@ -94,6 +99,8 @@ async def import_localization_batch(
             if resolution not in ("resolved_nonempty", "resolved_empty", "broken_redirect"):
                 raise ValueError(f"Unknown localization resolution: {resolution!r}")
             content = value.get("content")
+            if content is not None and not isinstance(content, str):
+                raise ValueError("Localization content must be a string or null")
             if resolution == "resolved_nonempty" and not content:
                 raise ValueError(
                     "resolved_nonempty localization value must contain nonempty content"
@@ -126,6 +133,38 @@ async def import_localization_batch(
             )
     value_result = None
     if values:
+        # Stable ordering reduces lock-order inversions between concurrent imports.
+        contents = {
+            value["content_hash"]: value["content"]
+            for value in values
+            if value["content_hash"] is not None
+        }
+        content_ids: dict[bytes, int] = {}
+        ordered_hashes = sorted(contents)
+        for offset in range(0, len(ordered_hashes), 1000):
+            hashes = ordered_hashes[offset : offset + 1000]
+            await session.execute(
+                insert(LocalizationContent)
+                .values(
+                    [{"content_hash": digest, "content": contents[digest]} for digest in hashes]
+                )
+                .on_conflict_do_nothing(index_elements=[LocalizationContent.content_hash])
+            )
+            stored = await session.execute(
+                select(
+                    LocalizationContent.id,
+                    LocalizationContent.content_hash,
+                    LocalizationContent.content,
+                ).where(LocalizationContent.content_hash.in_(hashes))
+            )
+            for content_id, digest, content in stored:
+                if content != contents[digest]:
+                    raise ValueError("Localization content hash collision or corrupt dictionary")
+                content_ids[digest] = content_id
+        for value in values:
+            digest = value.pop("content_hash")
+            value.pop("content")
+            value["content_id"] = content_ids[digest] if digest is not None else None
         value_result = await session.execute(
             insert(LocalizationValue)
             .values(values)
