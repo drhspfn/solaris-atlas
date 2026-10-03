@@ -14,9 +14,11 @@ class AgentSettings(BaseSettings):
     base_url: str = "https://api.openai.com/v1"
     api_key: SecretStr = SecretStr("")
     daily_budget_usd: Decimal = Field(default=Decimal(0), ge=0)
-    daily_token_limit: int = Field(default=2_000_000, ge=1)
+    daily_token_limit: int = Field(default=0, ge=0)
     budget_timezone: str = "Europe/Moscow"
     input_usd_per_million: Decimal = Field(default=Decimal("0.10"), ge=0)
+    cached_input_usd_per_million: Decimal | None = Field(default=None, ge=0)
+    cache_write_usd_per_million: Decimal | None = Field(default=None, ge=0)
     output_usd_per_million: Decimal = Field(default=Decimal("0.50"), ge=0)
     price_safety_multiplier: Decimal = Field(default=Decimal("1.25"), ge=1)
     max_steps: int = Field(default=16, ge=1, le=100)

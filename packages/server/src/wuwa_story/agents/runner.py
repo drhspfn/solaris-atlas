@@ -111,15 +111,19 @@ async def remote_call(
                 "A previous remote call has an unknown or excessive charge; reconcile billing before proceeding",
             )
             return None
-    # Bytes overestimate multilingual text and encrypted reasoning. For an oversized
-    # compaction window, verify with the model's input counter before any paid call.
-    fits = request_bound(payload) <= settings.max_input_tokens
-    if not fits and compaction and settings.provider == "responses":
+    # Reserve this request's byte bound, not the configured context maximum.
+    # Responses can verify an oversized window or a tight budget with exact counts.
+    input_bound = request_bound(payload)
+    fits = input_bound <= settings.max_input_tokens
+    counted_input = False
+    if not fits and not embedding and settings.provider == "responses":
         try:
             counted = await provider.post("/responses/input_tokens", payload)
             tokens = counted.get("input_tokens")
             fits = type(tokens) is int and 0 <= tokens <= settings.max_input_tokens
-            if fits:
+            if type(tokens) is int and 0 <= tokens <= settings.max_input_tokens:
+                input_bound = tokens
+                counted_input = True
                 logger.info(
                     "agent.compaction_input_count run_id=%s step=%s tokens=%s", run.id, step, tokens
                 )
@@ -134,32 +138,52 @@ async def remote_call(
         )
         return None
     if call is None:
+        output_bound = (
+            0
+            if embedding
+            else settings.compaction_output_tokens
+            if compaction
+            else settings.max_output_tokens
+        )
         try:
             call = await reserve(
                 session,
                 settings,
                 run_id=run.id,
                 step=step,
-                input_bound=settings.max_input_tokens,
-                output_bound=(
-                    0
-                    if embedding
-                    else settings.compaction_output_tokens
-                    if compaction
-                    else settings.max_output_tokens
-                ),
+                input_bound=settings.max_input_tokens if embedding else input_bound,
+                output_bound=output_bound,
                 kind="embedding" if embedding else "compaction" if compaction else "analysis",
             )
         except BudgetExceeded as error:
-            await pause(session, run, "paused_budget", str(error))
-            return None
+            if not counted_input and not embedding and settings.provider == "responses":
+                try:
+                    counted = await provider.post("/responses/input_tokens", payload)
+                    tokens = counted.get("input_tokens")
+                    if type(tokens) is not int or not 0 <= tokens <= settings.max_input_tokens:
+                        raise ProviderFailure("invalid_input_count")
+                    call = await reserve(
+                        session,
+                        settings,
+                        run_id=run.id,
+                        step=step,
+                        input_bound=tokens,
+                        output_bound=output_bound,
+                        kind="compaction" if compaction else "analysis",
+                    )
+                except (ProviderFailure, BudgetExceeded):
+                    await pause(session, run, "paused_budget", str(error))
+                    return None
+            else:
+                await pause(session, run, "paused_budget", str(error))
+                return None
         await session.commit()
     metadata = dict(call.response or {})
     usage = await session.get(AgentDailyUsage, call.day)
     assert usage is not None
-    if (
-        usage.spent_usd + usage.reserved_usd > settings.daily_budget_usd
-        or usage.spent_tokens + usage.reserved_tokens > settings.daily_token_limit
+    if usage.spent_usd + usage.reserved_usd > settings.daily_budget_usd or (
+        settings.daily_token_limit
+        and usage.spent_tokens + usage.reserved_tokens > settings.daily_token_limit
     ):
         await pause(
             session,

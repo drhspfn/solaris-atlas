@@ -535,6 +535,8 @@ async def test_context_pause_requires_larger_bound_and_reuses_checkpoint(world):
     calls = []
 
     def transport(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"input_tokens": 20000})
         calls.append(json.loads(request.content))
         first = len(calls) == 1
         name, args = (
@@ -656,7 +658,7 @@ async def test_compaction_preserves_evidence_and_replays_paid_window(
         assert compact_call.output_tokens == 5000
         assert (
             compact_call.reserved_tokens
-            == settings.max_input_tokens + settings.compaction_output_tokens
+            < settings.max_input_tokens + settings.compaction_output_tokens
         )
 
 
@@ -722,6 +724,87 @@ async def test_oversized_compaction_uses_exact_count_before_reserving(world, cou
             else:
                 assert raw is None and not calls and run.status == "paused_context"
                 assert paths == ["/v1/responses/input_tokens"]
+
+
+@pytest.mark.parametrize("count", [100, None, True, 999999])
+async def test_tight_budget_counts_request_without_raising_caps(world, count):
+    from wuwa_story.agents.runner import remote_call
+
+    engine, settings, *_ = world
+    settings.daily_token_limit, settings.max_output_tokens = 1000, 128
+    run_id = await create(world)
+    payload = {"model": settings.model, "input": "A" * 5000}
+    paths = []
+
+    def transport(req):
+        paths.append(req.url.path)
+        if req.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"input_tokens": count})
+        return httpx.Response(200, json={"usage": {"input_tokens": 100, "output_tokens": 30}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            run = await db.get(ProcessingRun, run_id)
+            raw = await remote_call(
+                db, run, settings, Provider(settings, client), 0, "/responses", payload
+            )
+            calls = list(await db.scalars(select(AgentCall).where(AgentCall.run_id == run_id)))
+            if type(count) is int and count == 100:
+                assert raw is not None and calls[0].reserved_tokens == 228
+                assert paths == ["/v1/responses/input_tokens", "/v1/responses"]
+            else:
+                assert raw is None and not calls and run.status == "paused_budget"
+                assert paths == ["/v1/responses/input_tokens"]
+
+
+async def test_repricing_is_idempotent_and_retains_unknown_reservations(world):
+    from decimal import Decimal
+
+    from wuwa_story.agents.budget import reprice_run, reserve
+    from wuwa_story.agents.runner import remote_call
+
+    engine, settings, *_ = world
+    run_id = await create(world)
+    raw = {
+        "usage": {
+            "input_tokens": 1000,
+            "output_tokens": 10,
+            "input_tokens_details": {"cached_tokens": 900, "cache_write_tokens": 100},
+        }
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json=raw))
+    ) as client:
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            run = await db.get(ProcessingRun, run_id)
+            await remote_call(
+                db,
+                run,
+                settings,
+                Provider(settings, client),
+                0,
+                "/responses",
+                {"model": settings.model, "input": "test"},
+            )
+            unknown = await reserve(
+                db, settings, run_id=run_id, step=1, input_bound=1000, output_bound=128
+            )
+            unknown.status = "uncertain"
+            run.status = "paused_uncertain"
+            await db.commit()
+            usage = await db.get(AgentDailyUsage, unknown.day)
+            reserved, tokens = usage.reserved_usd, usage.spent_tokens
+            old_cost = usage.spent_usd
+            result = await reprice_run(db, run_id, Decimal("0.01"), Decimal("0.125"))
+            await db.commit()
+            assert result["calls"] == 1 and usage.spent_usd < old_cost
+            assert usage.reserved_usd == reserved and usage.spent_tokens == tokens
+            assert unknown.status == "uncertain" and run.status == "paused_uncertain"
+            assert run.cost == pytest.approx(float(usage.spent_usd))
+            assert (await reprice_run(db, run_id, Decimal("0.01"), Decimal("0.125")))[
+                "delta_usd"
+            ] == "0.00000000"
+            await db.commit()
 
 
 async def test_recorded_turn_replays_after_explicit_tool_limit_increase(world):
