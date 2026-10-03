@@ -5,10 +5,23 @@ from urllib.parse import parse_qs
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from redis.asyncio import Redis
+from redis.backoff import NoBackoff
+from redis.retry import Retry
 from starlette.middleware.cors import CORSMiddleware
 
+from wuwa_story.api.cache import PublicResponseCache
 from wuwa_story.api.errors import install_error_handlers
-from wuwa_story.api.routes import graph_paths, health, maps, media_jobs, nodes, releases, search, story
+from wuwa_story.api.routes import (
+    graph_paths,
+    health,
+    maps,
+    media_jobs,
+    nodes,
+    releases,
+    search,
+    story,
+)
 from wuwa_story.auth.routes import router as auth_router
 from wuwa_story.auth.services import AuthError
 from wuwa_story.config.logging import configure_logging
@@ -17,14 +30,26 @@ from wuwa_story.config.settings import get_settings
 settings = get_settings()
 configure_logging(settings.log_level)
 logger = logging.getLogger("wuwa_story.auth")
+response_cache = Redis.from_url(
+    settings.redis_url.get_secret_value(),
+    socket_connect_timeout=settings.api_cache_timeout_seconds,
+    socket_timeout=settings.api_cache_timeout_seconds,
+    max_connections=50,
+    retry=Retry(NoBackoff(), 0),
+) if settings.redis_url else None
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    yield
+    try:
+        yield
+    finally:
+        if response_cache is not None:
+            await response_cache.aclose()
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+app.add_middleware(PublicResponseCache, settings=settings, redis=response_cache)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
