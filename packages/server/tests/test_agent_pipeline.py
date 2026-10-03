@@ -340,6 +340,10 @@ async def other_patch(world):
                     )
                 )
             )
+            runs = select(AgentJob.run_id).where(AgentJob.release_id == release.id)
+            await db.execute(delete(AgentCall).where(AgentCall.run_id.in_(runs)))
+            await db.execute(delete(Claim).where(Claim.processor_run_id.in_(runs)))
+            await db.execute(delete(ProcessingRun).where(ProcessingRun.id.in_(runs)))
             await db.execute(
                 delete(LocalizationValue).where(LocalizationValue.release_id == release.id)
             )
@@ -530,6 +534,30 @@ async def test_new_import_changes_job_identity_without_widening_a_queued_run(wor
             await db.execute(delete(NodeRevision).where(NodeRevision.release_id == addition.id))
             await db.execute(delete(GameRelease).where(GameRelease.id == addition.id))
             await db.commit()
+
+
+async def test_quest_only_request_resolves_and_pins_latest_observed_snapshot(world, other_patch):
+    engine, settings, request, nodes, _, release, _ = world
+    later_release, _, _ = other_patch
+    explicit_id = await create(world)
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        automatic = await enqueue_analysis(db, AnalysisRequest(quest_id=request.quest_id), settings)
+        assert automatic.id == explicit_id
+        assert automatic.metadata_json["request"]["game_version"] == release.game_version
+        assert automatic.metadata_json["request"]["locale"] == "en"
+        db.add(
+            NodeRevision(
+                node_id=nodes[0].id,
+                release_id=later_release.id,
+                revision=2,
+                content_hash=b"latest-quest",
+            )
+        )
+        await db.commit()
+        newer = await enqueue_analysis(db, AnalysisRequest(quest_id=request.quest_id), settings)
+        assert newer.id != explicit_id
+        assert (await db.get(AgentJob, newer.id)).release_id == later_release.id
+        assert newer.metadata_json["request"]["game_version"] == later_release.game_version
 
 
 async def test_full_pipeline_and_duplicate_delivery(world):
@@ -1393,7 +1421,7 @@ async def test_public_http_is_read_only_and_admin_requires_auth(world):
         assert (await client.get("/admin/story-agent/usage")).status_code == 401
 
 
-async def test_admin_job_progress_and_resume_contract(world):
+async def test_admin_job_progress_and_resume_contract(world, monkeypatch):
     from types import SimpleNamespace
 
     from fastapi import FastAPI
@@ -1424,11 +1452,19 @@ async def test_admin_job_progress_and_resume_contract(world):
     app.dependency_overrides[get_auth_context] = auth
     app.dependency_overrides[require_csrf] = csrf
     app.dependency_overrides[story_agent.get_agent_settings] = lambda: settings
+    monkeypatch.setattr(story_agent, "get_agent_settings", lambda: settings)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         assert (await client.get("/admin/story-agent/jobs")).status_code == 403
         role = UserRole.ADMIN
+        created = await client.post("/admin/story-agent/jobs", json={"quest_id": world[2].quest_id})
+        assert created.status_code == 202 and created.json()["id"] == run_id
+        assert (
+            await client.post(
+                "/admin/story-agent/jobs", json={"quest_id": world[2].quest_id, "locale": "ja"}
+            )
+        ).status_code == 422
         listing = (await client.get("/admin/story-agent/jobs", params={"limit": 1})).json()
         assert listing["jobs"][0]["id"] == run_id
         assert listing["jobs"][0]["max_steps"] == settings.max_steps

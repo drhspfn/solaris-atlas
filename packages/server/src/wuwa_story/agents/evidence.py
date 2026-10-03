@@ -107,16 +107,22 @@ async def quest_states(session: AsyncSession, quest_id: int, release_id: int) ->
 
 
 async def scope_for_request(
-    session: AsyncSession, quest_id: int, game_version: str, locale: str
+    session: AsyncSession, quest_id: int, game_version: str | None, locale: str
 ) -> tuple[Quest, GameRelease, Locale]:
-    release = await session.scalar(
-        select(GameRelease)
-        .where(GameRelease.game_version == game_version)
-        .order_by(GameRelease.sequence.desc())
-        .limit(1)
-    )
     language = await session.scalar(select(Locale).where(Locale.code == locale))
     quest = await session.scalar(select(Quest).where(Quest.game_quest_id == quest_id))
+    if quest is None or language is None:
+        raise ValueError("Quest or locale not found")
+    statement = select(GameRelease).order_by(GameRelease.sequence.desc()).limit(1)
+    if game_version is not None:
+        statement = statement.where(GameRelease.game_version == game_version)
+    else:
+        statement = statement.where(
+            select(NodeRevision.id)
+            .where(NodeRevision.node_id == quest.node_id, NodeRevision.release_id == GameRelease.id)
+            .exists()
+        )
+    release = await session.scalar(statement)
     if release is None or language is None or quest is None:
         raise ValueError("Quest, imported version or locale not found")
     if not await session.scalar(

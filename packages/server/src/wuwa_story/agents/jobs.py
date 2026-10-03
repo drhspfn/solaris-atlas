@@ -42,6 +42,9 @@ async def enqueue_analysis(
     quest, release, locale = await scope_for_request(
         session, **request.model_dump(exclude={"generation"})
     )
+    request = request.model_copy(
+        update={"game_version": release.game_version, "locale": locale.code}
+    )
     source = await quest_fingerprint(session, quest, release.id)
     source_release_ids = await imported_snapshot_ids(session)
     source_revision = await imported_source_revision(session)
@@ -49,6 +52,7 @@ async def enqueue_analysis(
     identity = hash_value(
         {
             "request": request.model_dump(),
+            "target_snapshot_id": release.id,
             "source": source.hex(),
             "config": config,
             "prompt": PROMPT_VERSION,

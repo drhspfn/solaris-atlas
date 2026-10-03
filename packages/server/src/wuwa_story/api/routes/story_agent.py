@@ -1,7 +1,7 @@
 """Admin orchestration and public cited explanations; never expose native model reasoning."""
 
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -38,9 +38,13 @@ class ReconcileRequest(StrictModel):
     output_tokens: int = Field(ge=0)
 
 
+class AdminAnalysisRequest(AnalysisRequest):
+    locale: Literal["en"] = "en"
+
+
 @admin.post("/jobs", status_code=202, dependencies=[Depends(require_csrf)])
 async def create_job(
-    request: AnalysisRequest, session: AsyncSession = Depends(get_session)
+    request: AdminAnalysisRequest, session: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
     try:
         run = await enqueue_analysis(session, request, get_agent_settings())
