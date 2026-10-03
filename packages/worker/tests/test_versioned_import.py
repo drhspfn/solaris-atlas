@@ -50,6 +50,30 @@ def test_discovery_rejects_malformed_manifest(tmp_path: Path) -> None:
         discover_versioned_datasets(tmp_path, "3.0", "3.0")
 
 
+def test_series_crosses_major_versions_without_inventing_minor_releases(tmp_path: Path) -> None:
+    versions = ["1.0.0", "1.1.0", "2.0.0", "2.1.0", "3.0.0", "3.1.0"]
+    for version in reversed(versions):
+        _snapshot(tmp_path, version, version)
+    assert [version for version, _ in discover_versioned_datasets(tmp_path, "1.0", "3.1")] == versions
+
+
+@pytest.mark.parametrize("missing", ["1.0.0", "2.0.0", "2.1.0", "3.1.0"])
+def test_cross_major_series_still_rejects_gaps_and_missing_endpoints(tmp_path: Path, missing: str) -> None:
+    versions = ["1.0.0", "1.1.0", "2.0.0", "2.1.0", "2.2.0", "3.0.0", "3.1.0"]
+    for version in versions:
+        if version != missing:
+            _snapshot(tmp_path, version, version)
+    with pytest.raises(FileNotFoundError, match=missing.rsplit(".", 1)[0]):
+        discover_versioned_datasets(tmp_path, "1.0", "3.1")
+
+
+def test_cross_major_series_rejects_missing_entire_major(tmp_path: Path) -> None:
+    _snapshot(tmp_path, "1.0.0", "1.0.0")
+    _snapshot(tmp_path, "3.0.0", "3.0.0")
+    with pytest.raises(FileNotFoundError, match="2.0"):
+        discover_versioned_datasets(tmp_path, "1.0", "3.0")
+
+
 def test_remote_heads_selects_numeric_release_branches_and_sorts() -> None:
     refs = """111 refs/heads/3.6
 222 refs/heads/3.0

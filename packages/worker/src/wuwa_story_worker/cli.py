@@ -129,10 +129,16 @@ def discover_versioned_datasets(root: Path, first: str, last: str) -> list[tuple
             snapshots.append(((version + (0, 0, 0))[:3], raw_version, manifest_path.parent))
     snapshots.sort(key=lambda item: (item[0], str(item[2])))
     available = {version[:2] for version, _, _ in snapshots}
-    missing = [f"{major}.{minor}" for major in range(first_parts[0], last_parts[0] + 1)
-               for minor in range(first_parts[1] if major == first_parts[0] else 0,
-                                  last_parts[1] + 1 if major == last_parts[0] else 100)
-               if (major, minor) not in available]
+    # A major release ends at its last available minor, not at an invented .99.
+    # Keep checking interior gaps and explicit range endpoints.
+    missing = []
+    for major in range(first_parts[0], last_parts[0] + 1):
+        lower = first_parts[1] if major == first_parts[0] else 0
+        upper = last_parts[1] if major == last_parts[0] else max(
+            (minor for candidate, minor in available if candidate == major), default=lower
+        )
+        missing.extend(f"{major}.{minor}" for minor in range(lower, max(lower, upper) + 1)
+                       if (major, minor) not in available)
     if missing:
         raise FileNotFoundError("No compiled snapshot found for required game versions: " + ", ".join(missing))
     return [(version, path) for _, version, path in snapshots]
