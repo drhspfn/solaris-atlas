@@ -40,3 +40,38 @@ Most selected textures are 1024×1024. Two JH floor textures are 1028×1024; the
 - Marker endpoints return the game map's placements and explicitly report unresolved floor assignment. They support world bounds, category, hidden flag and cursor pagination.
 - Source game map IDs are not conflated with existing story `core.location` identities.
 - Database rollback removes only the new spatial tables. Uploaded content is retained; automatic garbage collection is not included.
+
+
+## Item acquisition links
+
+Published marker metadata includes `drop_item_ids` and `drop_source` when the
+merged template/placement RewardComponent has a supported RewardType (0 or 2),
+is enabled, and its RewardId resolves to DropPackage.DropPreview. These are
+possible rewards; a zero preview quantity does not mean guaranteed zero drops,
+and probabilities or final quantities are not inferred. The item profile joins
+only the same map asset job and world, choosing the latest published version.
+`/map?map=45&item=41100012&source=100564` identifies one authored source type via
+a numeric representative marker; filtering still checks each placement's exact
+item/reward reference. All matching placements are fitted in the viewport.
+
+For existing published maps, update only source metadata without decoding tiles:
+
+```powershell
+uv run --project packages/worker --env-file packages/worker/.env wuwa-story-worker refresh-map-sources CLIENT_ROOT
+```
+
+The refresh verifies every source hash in the published manifest, uses the same
+asset-job lock as map publication, and preserves unrelated marker metadata. The
+local 3.7 refresh updated 28,844 markers. MF Whisperin Core resolves 46 source
+groups and its 1.1 shop offer resolves once to Weapon Shop; source-shop tables
+are scoped to the requested story snapshot. No exact ShopInfo.Id-to-map-marker
+join was found for shop 101, so its position is not inferred from the display name.
+
+
+Verification: 18 targeted server/worker/frontend tests passed; two existing
+infrastructure-gated map tests skipped. Frontend build and targeted lint passed
+(existing WorldMapPage hook warnings remain). Browser checks covered region
+disclosures, Weapon Shop name/price/limit and an acquisition link selecting 68
+Whiff Whaff placements with a matching 68-location menu count. The strict design
+auditor reports 16 existing native-select/form/vendor-source findings outside
+this acquisition change; it is not a clean repository-wide audit.

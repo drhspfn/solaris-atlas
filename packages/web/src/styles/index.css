@@ -5693,3 +5693,48 @@ button.search-clear:focus-visible {
   right: 12px;
   z-index: 2;
 }
+
+.acquisition-map-link > svg {
+  flex-shrink: 0;
+  color: var(--mint);
+}
+.acquisition-map-link .small-link {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  margin-left: auto;
+}
+@media (max-width: 640px) {
+  .acquisition-map-link {
+    flex-wrap: wrap;
+  }
+  .acquisition-map-link .small-link {
+    margin-left: 0;
+  }
+}
+
+.acquisition-world {
+  border-bottom: 1px solid var(--border);
+}
+.acquisition-world summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 0;
+  cursor: pointer;
+}
+.acquisition-world summary::before {
+  content: '▸';
+  color: var(--mint);
+}
+.acquisition-world[open] summary::before {
+  content: '▾';
+}
+.acquisition-world summary strong {
+  margin-right: auto;
+}
+.acquisition-world summary small {
+  color: var(--text-muted);
+  text-align: right;
+}

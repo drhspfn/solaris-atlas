@@ -24,7 +24,7 @@ export function readMapPreferences(
 
 export function compactMapLink(params: URLSearchParams): URLSearchParams {
   const result = new URLSearchParams();
-  for (const key of ['map', 'marker']) {
+  for (const key of ['map', 'marker', 'item', 'source']) {
     const value = params.get(key);
     if (value && /^\d{1,16}$/.test(value)) result.set(key, value);
   }

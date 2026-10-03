@@ -35,7 +35,7 @@ Read-only game atlas at `/map`, using published map manifests, positioned entiti
 
 ## Interaction and persistence
 
-World, location, floor, surface opacity, category/subtype exclusions, search and hidden/unknown placement preferences are stored locally in localStorage, with an in-memory fallback. The URL only accepts numeric map and marker IDs for shared links. Existing URL filters are imported once and stripped using history replacement. All marker categories start disabled when no preferences have been saved. Preferences are stored as JSON without base64 encoding. Shared markers open their object card and center the map, clearing conflicting search, area and floor filters while preserving type selections. The shared marker remains visible even when its type is disabled. Pan and zoom are transient. Selecting a location fits its source-backed bounds; selecting a floor fits that layer. Floor images render above the surface, which defaults to 30% opacity while a floor is selected. Clusters open by click or keyboard; individual objects can always be opened from the list.
+World, location, floor, surface opacity, category/subtype exclusions, search and hidden/unknown placement preferences are stored locally in localStorage, with an in-memory fallback. The URL accepts bounded numeric map and marker IDs for shared markers, or map/item/source IDs for acquisition groups. Existing URL filters are imported once and stripped using history replacement. All marker categories start disabled when no preferences have been saved. Preferences are stored as JSON without base64 encoding. Shared markers open their object card and center the map, clearing conflicting search, area and floor filters while preserving type selections. The shared marker remains visible even when its type is disabled. Pan and zoom are transient. Selecting a location fits its source-backed bounds; selecting a floor fits that layer. Floor images render above the surface, which defaults to 30% opacity while a floor is selected. Clusters open by click or keyboard; individual objects can always be opened from the list.
 
 The sidebar owns its scroll; the map owns its viewport. On phones the sidebar is a scrollable top panel. Neither panel changes sibling routes. Map objects use category colors plus named filters; color is not the only identifier.
 
@@ -75,3 +75,13 @@ story snapshot; a matching source path does not establish historical byte identi
 The map return action is an icon button below the zoom controls with a persistent accessible name and title. Marker details have a left-aligned category and title, a copy-link icon, and a square close button in a fixed header; only the detail body scrolls. Duplicate category/title text is omitted. Shared marker links focus at zoom 2 or closer. Copy success is announced briefly, and clipboard errors remain actionable.
 
 All search fields offer a named clear control when populated and restore focus to the input. Clearing dialogue results cancels the pending request. The document reserves scrollbar space across routes; scrollbars use the shared thin theme. Compact map filters and responsive navigation must not overflow or shift sibling content.
+
+
+Item acquisition combines published gathering placements, possible reward sources,
+quest reward previews, confirmed regions and snapshot-scoped shop offers in one
+section. Sources are grouped in native region disclosures; hand-in requirements
+and general quest references remain in the usage section. Acquisition links
+select only placements with an exact item or reward-preview reference, fit the
+view to their bounds, clear conflicting filters and offer Clear source filter.
+The menu count reflects the acquisition scope. Missing sources do not invent a
+merchant position, loot probability or a guaranteed quest reward.
