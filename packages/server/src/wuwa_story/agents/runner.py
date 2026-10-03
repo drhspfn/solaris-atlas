@@ -111,8 +111,21 @@ async def remote_call(
                 "A previous remote call has an unknown or excessive charge; reconcile billing before proceeding",
             )
             return None
-    # UTF-8 bytes conservatively bound visible text tokens; reserve the full configured context.
-    if request_bound(payload) > settings.max_input_tokens:
+    # Bytes overestimate multilingual text and encrypted reasoning. For an oversized
+    # compaction window, verify with the model's input counter before any paid call.
+    fits = request_bound(payload) <= settings.max_input_tokens
+    if not fits and compaction and settings.provider == "responses":
+        try:
+            counted = await provider.post("/responses/input_tokens", payload)
+            tokens = counted.get("input_tokens")
+            fits = type(tokens) is int and 0 <= tokens <= settings.max_input_tokens
+            if fits:
+                logger.info(
+                    "agent.compaction_input_count run_id=%s step=%s tokens=%s", run.id, step, tokens
+                )
+        except ProviderFailure:
+            fits = False  # Counting failure must not authorize an unbounded paid request.
+    if not fits:
         await pause(
             session,
             run,

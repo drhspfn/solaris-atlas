@@ -171,7 +171,11 @@ durably recorded call (step `2000 + research_step`), using the same daily budget
 bounded throttling retries. A crash replays its stored response without paying again.
 The endpoint has no output-length parameter: `AGENT_COMPACTION_OUTPUT_TOKENS=32000`
 is a conservative billing reservation, not a provider limit. Excess usage pauses
-for review. If the full history cannot fit the input bound, or the returned window
+for review. If serialized history exceeds the bound, the worker verifies its exact
+input-token count through `/responses/input_tokens` before reserving a paid compaction
+call. This handles multilingual text and opaque reasoning without raising the cap;
+invalid/missing counts or counting errors stop safely. If the full history still
+cannot fit the input bound, or the returned window
 still cannot fit a research request, the job pauses instead of repeatedly compacting
 the same step. Chat/Gemini jobs retain the existing context-pause behavior.
 

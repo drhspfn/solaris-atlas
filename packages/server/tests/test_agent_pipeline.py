@@ -678,6 +678,50 @@ async def test_context_resume_can_request_compaction_without_raising_bound(world
             await resume_analysis(db, run_id, compact_context=True)
 
 
+@pytest.mark.parametrize("count", [100, 999999, True, None])
+async def test_oversized_compaction_uses_exact_count_before_reserving(world, count):
+    from wuwa_story.agents.runner import remote_call
+
+    engine, settings, *_ = world
+    run_id = await create(world)
+    paths = []
+    payload = {"model": settings.model, "input": [{"role": "user", "content": "中文" * 40000}]}
+
+    def transport(req):
+        paths.append(req.url.path)
+        assert json.loads(req.content) == payload
+        if req.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"input_tokens": count})
+        return httpx.Response(
+            200,
+            json={
+                "usage": {"input_tokens": 100, "output_tokens": 30},
+                "output": [{"type": "compaction", "encrypted_content": "opaque"}],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            run = await db.get(ProcessingRun, run_id)
+            raw = await remote_call(
+                db,
+                run,
+                settings,
+                Provider(settings, client),
+                2000,
+                "/responses/compact",
+                payload,
+                compaction=True,
+            )
+            calls = list(await db.scalars(select(AgentCall).where(AgentCall.run_id == run_id)))
+            if type(count) is int and count == 100:
+                assert raw is not None and len(calls) == 1 and calls[0].status == "completed"
+                assert paths == ["/v1/responses/input_tokens", "/v1/responses/compact"]
+            else:
+                assert raw is None and not calls and run.status == "paused_context"
+                assert paths == ["/v1/responses/input_tokens"]
+
+
 async def test_recorded_turn_replays_after_explicit_tool_limit_increase(world):
     engine, settings, _, nodes, *_ = world
     settings.max_tool_calls_per_step = 1
