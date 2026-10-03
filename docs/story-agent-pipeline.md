@@ -134,6 +134,29 @@ expose raw provider responses, conversation checkpoints or API keys.
 
 ## Operations API
 
+### Admin panel
+
+Open `/admin` from the account menu. The shared sidebar groups Story agent under
+Content and Alerts / Usage under Operations. Access requires the existing admin
+role; promote a verified account with the server's `wuwa-story-admin promote EMAIL`
+CLI, then refresh the browser. The role is checked in the database for each API
+request; no frontend credential or role override is introduced.
+
+For `paused_steps`, select the saved run, enter Additional steps and click Resume
+analysis. For example, adding 16 to a 16-step run permits 32 total research steps.
+The backend rejects a resume without a positive extension and caps research at
+100 steps. Completed calls remain recorded and the daily allowance is unchanged.
+The panel also supports creating quest jobs, explicit Responses compaction resume,
+request history, open alerts and the recent daily ledger. Uncertain billing is
+shown without a resume action; verified reconciliation remains an operations API
+procedure. Jobs refresh every ten seconds while the page is visible.
+
+Browser scenarios use `packages/web/tests/storyAgent.fixture.mjs` on port 8012,
+with a dev frontend on 5174 and `VITE_API_BASE=http://localhost:8012`. This isolated
+fixture has no game database, queue or provider access. It covers resume, CSRF,
+duplicate job creation, alerts, usage, API failures and access states without
+spending money. It must not be used as a deployed API.
+
 All administrative routes require administrator authentication. Mutations also
 require the existing session CSRF header/cookie mechanism.
 
@@ -200,7 +223,7 @@ contain validated exact snippets; source URLs are constructed by the application
 ## Current bounds
 
 - The worker processes explicitly queued quests. Autonomous crawling of every
-  patch, a patch overview job and an admin dashboard are subsequent delivery work.
+  patch and a patch overview job are subsequent delivery work.
 - Defaults allow 16 tool turns, 65,536 conservatively bounded input tokens and
   4,096 output tokens. Responses jobs use native context compaction; very long
   quests can still pause on step/context limits. Hierarchical splitting across
@@ -323,3 +346,22 @@ reformatted as part of the agent feature.
   window preservation, paid-response replay after a crash, explicit compaction
   resume, valid exact counts and refusal of invalid/over-limit counts. Ruff and
   strict mypy passed. API and story-agent images were rebuilt and restarted.
+
+### Admin panel, 2026-10-04
+
+- Added `/admin` with a shared sidebar, run management, alerts and usage. Step
+  resume requires a positive extension; progress polling reads only the stored
+  step/configuration rather than loading private conversation checkpoints.
+- **46 agent tests** and **3 frontend resume-policy tests** passed. Changed
+  frontend files passed ESLint and Prettier; TypeScript, the production build,
+  Ruff and strict mypy passed. The full frontend lint command still fails on the
+  pre-existing import-sort error in `EntityProfilePage.tsx`. The UI audit finds
+  seven existing form-ownership violations in other pages, none in the new panel.
+- Isolated browser checks covered saved-step resume with CSRF, duplicate request
+  reuse, invalid quest feedback, language selection, billing-review protection,
+  alerts/usage, connection failure, ordinary-account denial and a 390px viewport
+  without horizontal overflow. The working deployment's guest access gate and
+  HTTP 401 admin API response were checked separately.
+- Built and restarted API, frontend and story consumer. No schema migration was
+  needed. Working run 14 remains `paused_steps`; browser mutations used fixtures
+  and did not enqueue paid work in the working database.

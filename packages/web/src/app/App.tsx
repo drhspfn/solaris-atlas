@@ -1,6 +1,6 @@
 import { ExternalLink, Menu, Settings, Sparkles, X } from 'lucide-react';
 import { lazy, Suspense, useState } from 'react';
-import { Link, NavLink, Route, Routes } from 'react-router-dom';
+import { Link, Navigate, NavLink, Route, Routes } from 'react-router-dom';
 
 import { useAuth } from '../auth/AuthProvider';
 import { Footer } from '../components/layout/Footer';
@@ -8,6 +8,7 @@ import { LocaleSwitcher } from '../components/layout/LocaleSwitcher';
 import { PageLoader } from '../components/ui/Feedback';
 import { APP_SETTINGS } from '../config/settings';
 import { categories } from '../data/entities';
+import { AdminLayout } from '../pages/AdminPage';
 import {
   AccountPage,
   GoogleCompletePage,
@@ -29,6 +30,14 @@ import { StoryMapPage } from '../pages/StoryMapPage';
 
 const WorldMapPage = lazy(() =>
   import('../pages/WorldMapPage').then((module) => ({ default: module.WorldMapPage })),
+);
+const StoryAgentPage = lazy(() =>
+  import('../pages/StoryAgentPage').then((module) => ({ default: module.StoryAgentPage })),
+);
+const AgentOperationsPage = lazy(() =>
+  import('../pages/AgentOperationsPage').then((module) => ({
+    default: module.AgentOperationsPage,
+  })),
 );
 
 const apiDocsUrl = import.meta.env.VITE_API_DOCS_URL ?? APP_SETTINGS.api.defaultDocsUrl;
@@ -93,6 +102,7 @@ export function App() {
               <summary>{user.nickname}</summary>
               <div className="auth-menu-popover">
                 <Link to="/account">Account</Link>
+                {user.role === 'admin' && <Link to="/admin">Admin panel</Link>}
                 <button onClick={() => void logout()}>Sign out</button>
               </div>
             </details>
@@ -139,6 +149,33 @@ export function App() {
           <Route path="/auth/google/link-existing" element={<GoogleExistingLinkPage />} />
           <Route path="/auth/google/success" element={<GoogleSuccessPage />} />
           <Route path="/account" element={<AccountPage />} />
+          <Route path="/admin" element={<AdminLayout />}>
+            <Route index element={<Navigate to="story-agent" replace />} />
+            <Route
+              path="story-agent"
+              element={
+                <Suspense fallback={<PageLoader />}>
+                  <StoryAgentPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="alerts"
+              element={
+                <Suspense fallback={<PageLoader />}>
+                  <AgentOperationsPage key="alerts" kind="alerts" />
+                </Suspense>
+              }
+            />
+            <Route
+              path="usage"
+              element={
+                <Suspense fallback={<PageLoader />}>
+                  <AgentOperationsPage key="usage" kind="usage" />
+                </Suspense>
+              }
+            />
+          </Route>
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

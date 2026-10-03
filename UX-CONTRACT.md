@@ -57,6 +57,31 @@ Read-only game atlas at `/map`, using published map manifests, positioned entiti
 | Navigation | React Router and App topbar | App.tsx | `/map` route and URL filter state | Back/forward and reload |
 | Map viewport | Leaflet CRS.Simple | Game world coordinates and map manifest | Preview at overview, visible original tiles at close zoom | Region alignment, floors and zoom |
 | Feedback | Inline page status and retry panel | API request lifecycle | Map remains readable during marker loading | Loading, empty dataset, errors and retry |
+| Form | Native HTML form and shared auth-form styles | Browser constraints and server DTO validation | Admin forms use noValidate plus explicit reportValidity on submit | Required fields, bounded steps, retained input after API failure |
+
+## Administration
+
+`/admin` has one persistent sidebar: Content (Story agent) and Operations
+(Alerts, Usage). The account menu exposes Admin panel only to administrators.
+AdminLayout owns the client access gate; server require_admin and CSRF remain
+authoritative for every request. Guests get a sign-in link retaining their route;
+ordinary accounts see an access explanation without mounting admin data views.
+
+Story agent shows cursor-paginated runs, saved research progress, safe request
+history and today's shared budget. It refreshes every ten seconds while visible,
+cancels obsolete requests and retains usable data on refresh failure. Selected
+run and pagination stay in the URL. Native selects own explanation-language
+selection; source reading remains multilingual. Creating the same request reuses
+its run. Submissions disable duplicate actions and preserve form values on error.
+
+Step pauses require a positive extension, up to 100 total steps. Responses context
+pauses offer explicit compaction; budget/provider/cooldown pauses offer explicit
+resume. Uncertain charges cannot resume through the panel. Continuing a checkpoint
+preserves completed calls and never raises spending limits. Private model history
+and credentials are not exposed. Alerts may be marked resolved after investigation;
+Usage is read-only. Tables scroll inside their panel on narrow screens; sidebar
+navigation wraps above content. Loading, empty, error and permission states are
+explicit, and action outcomes use live status text.
 
 ## Interaction and persistence
 
