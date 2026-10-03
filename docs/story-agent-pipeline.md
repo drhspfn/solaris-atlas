@@ -207,7 +207,8 @@ contain validated exact snippets; source URLs are constructed by the application
   jobs is not implemented. No incomplete
   explanation is presented as a finished publication.
 - Quotes and node identities are validated, but an inference's meaning still needs
-  editorial evaluation. Real GPT-6 Luna output quality has not been evaluated yet.
+  editorial evaluation. One real GPT-6 Luna quest analysis has been checked for
+  publication and source navigation; this is not a corpus-wide quality evaluation.
 - Entity search uses the current search index, filtered to node IDs observed in
   the chosen snapshot. Release-localized text and raw source reads are scoped;
   existing typed inline/action records follow the importer's canonical identity
@@ -298,3 +299,27 @@ reformatted as part of the agent feature.
 - Updating the consumer does not retry paused run 11. Enqueuing this quest under
   `story-v2` creates a new research job; its paid calls remain subject to the
   existing daily ledger and provider limits.
+
+### Throttling recovery and native compaction, 2026-10-04
+
+- Run **12** resumed its existing `story-v2` checkpoint. Recorded 429 responses
+  identified the token limit as **200,000 TPM**; bounded waits of 6.9 and 14.2
+  seconds recovered successfully. No completed paid research call was repeated.
+- At research step 20, the conservative request bound reached **256,767 bytes**.
+  The exact input counter reported **67,110 tokens**, within the unchanged
+  250,000-token reservation bound. GPT-6 Luna `/responses/compact` succeeded:
+  **67,128 input / 2,983 output tokens**, estimated cost **$0.01025538**.
+  The next research request shrank to **30,360 bytes**; independent source
+  evidence and coverage were retained.
+- The job completed at checkpoint step **29**, publishing document **1**:
+  **6 explanation blocks, 24 citations, 3 unresolved questions**. Total estimated
+  spend for run 12 is **$0.09216682**, including compaction and the configured
+  price multiplier. Its daily ledger has no outstanding reservation. Run 11's
+  earlier unresolved reservation remains untouched on its original budget day.
+- Verified the English quest page shows the published notes; followed a citation
+  to its exact imported dialogue and matching transcript passage. A Japanese
+  explanation request returns the same document with `requested_locale=ja`.
+- **36 targeted agent tests passed** in `solaris_agent_test`, including native
+  window preservation, paid-response replay after a crash, explicit compaction
+  resume, valid exact counts and refusal of invalid/over-limit counts. Ruff and
+  strict mypy passed. API and story-agent images were rebuilt and restarted.
