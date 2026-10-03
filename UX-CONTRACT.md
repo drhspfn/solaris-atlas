@@ -41,6 +41,14 @@ The sidebar owns its scroll; the map owns its viewport. On phones the sidebar is
 
 ## Data and asynchronous behavior
 
+The region selector names regions, not client versions. It shows the latest
+available map dataset for each game-map/layer identity; inverted layers remain
+distinct. Saved region preferences follow newer datasets. Explicit shared map
+links retain their snapshot and marker IDs, with an older selected option labeled
+as map data. Client version is disclosed as "Map data" inside Layers & display,
+never presented as the region's introduction patch. Names and map IDs do not
+establish when a region became playable.
+
 All marker pages are loaded before the final object count is shown. Cancel obsolete requests on world change; ignore stale results. Refresh signed image URLs before expiry. Exact floor assignments are preserved; unknown assignments remain explicit and can be excluded. Hidden source placements are off by default. Game progress and respawn conditions are not inferred. Missing source names retain identifiable source types rather than invented item names.
 
 ## Language and accessibility
