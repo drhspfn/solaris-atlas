@@ -22,6 +22,9 @@ class AgentSettings(BaseSettings):
     max_steps: int = Field(default=16, ge=1, le=100)
     max_input_tokens: int = Field(default=65536, ge=1000, le=250000)
     max_output_tokens: int = Field(default=4096, ge=128, le=32000)
+    context_compaction: bool = True
+    compaction_threshold_ratio: float = Field(default=0.8, ge=0.25, le=0.95)
+    compaction_output_tokens: int = Field(default=32000, ge=4096, le=128000)
     max_tool_calls_per_step: int = Field(default=8, ge=1, le=20)
     tool_result_chars: int = Field(default=18000, ge=1000, le=50000)
     http_timeout_seconds: float = Field(default=120, gt=0, le=600)

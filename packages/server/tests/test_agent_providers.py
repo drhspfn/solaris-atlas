@@ -14,6 +14,17 @@ from wuwa_story.agents.providers import (
 from wuwa_story.agents.settings import AgentSettings
 
 
+def test_compaction_preserves_the_entire_canonical_window():
+    retained = {"role": "user", "content": "Keep this task"}
+    output = [retained, {"type": "compaction", "encrypted_content": "opaque"}]
+    assert Provider.compact_output({"output": output}) is output
+    for malformed in ([], [retained], [{"type": "compaction", "encrypted_content": ""}], [None]):
+        with pytest.raises(ProviderFailure, match="invalid_compaction"):
+            Provider.compact_output({"output": malformed})
+    with pytest.raises(ProviderFailure):
+        Provider.compact_output({"status": "incomplete", "output": output})
+
+
 @pytest.mark.parametrize("kind", ["responses", "chat", "gemini"])
 @pytest.mark.asyncio
 async def test_native_reasoning_is_preserved_and_tool_results_match_protocol(kind):

@@ -142,7 +142,7 @@ require the existing session CSRF header/cookie mechanism.
 | `POST /jobs` | Queue `{quest_id, game_version, locale, generation?}` |
 | `GET /jobs` | Cursor-paginated runs and usage |
 | `GET /jobs/{id}` | Safe status, steps, call IDs, costs and final result |
-| `POST /jobs/{id}/resume` | Resume a pause or replay a validated recorded turn; optional `{extra_steps, context_tokens, tool_calls_per_step}` |
+| `POST /jobs/{id}/resume` | Resume a pause or replay a validated recorded turn; optional `{extra_steps, context_tokens, tool_calls_per_step, compact_context}` |
 | `GET /usage` | Recent shared spend/reservations and current cap |
 | `GET /alerts` | Missing data, contradictions and worker failures |
 | `POST /alerts/{id}/resolve` | Resolve an investigated alert |
@@ -154,10 +154,26 @@ unavailable. An explicit new `generation` is needed to spend again. Never clear 
 reservation merely because a request timed out. Resume is intentionally refused
 for uncertain or stale runs. Budget pauses can be resumed after the next budget
 day or an intentional allowance change; step pauses can add bounded extra steps.
-Context pauses require an explicitly larger `context_tokens` value, up to 250,000.
+Context pauses can request `{ "compact_context": true }` for the Responses provider,
+or an explicitly larger `context_tokens` value, up to 250,000.
 This changes the conservative reservation bound and retains previous tool results;
 it does not raise the daily USD/token allowance or repeat completed calls. The
 environment examples use this larger bound; the code fallback remains 65,536.
+
+Responses jobs automatically compact at 80% of the conservative serialized-request
+bound (`AGENT_CONTEXT_COMPACTION`, `AGENT_COMPACTION_THRESHOLD_RATIO`). The native
+`/responses/compact` call receives the full history without pruning opaque reasoning.
+Its complete output becomes the next conversation window, as required by the
+[OpenAI compaction guide](https://developers.openai.com/api/docs/guides/compaction).
+Exact source evidence, discovered nodes and quest coverage stay in the independent
+checkpoint and remain subject to publication validation. Compaction is a paid,
+durably recorded call (step `2000 + research_step`), using the same daily budget and
+bounded throttling retries. A crash replays its stored response without paying again.
+The endpoint has no output-length parameter: `AGENT_COMPACTION_OUTPUT_TOKENS=32000`
+is a conservative billing reservation, not a provider limit. Excess usage pauses
+for review. If the full history cannot fit the input bound, or the returned window
+still cannot fit a research request, the job pauses instead of repeatedly compacting
+the same step. Chat/Gemini jobs retain the existing context-pause behavior.
 
 A completed, paid response that failed local tool parsing can be replayed with an
 explicit `tool_calls_per_step` limit, up to 20. Resume first validates the stored
@@ -182,8 +198,9 @@ contain validated exact snippets; source URLs are constructed by the application
 - The worker processes explicitly queued quests. Autonomous crawling of every
   patch, a patch overview job and an admin dashboard are subsequent delivery work.
 - Defaults allow 16 tool turns, 65,536 conservatively bounded input tokens and
-  4,096 output tokens. Very long quests can pause on step/context limits; automatic
-  hierarchical splitting and summarization are not implemented. No incomplete
+  4,096 output tokens. Responses jobs use native context compaction; very long
+  quests can still pause on step/context limits. Hierarchical splitting across
+  jobs is not implemented. No incomplete
   explanation is presented as a finished publication.
 - Quotes and node identities are validated, but an inference's meaning still needs
   editorial evaluation. Real GPT-6 Luna output quality has not been evaluated yet.

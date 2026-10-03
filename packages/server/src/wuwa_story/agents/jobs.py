@@ -104,6 +104,7 @@ async def resume_analysis(
     extra_steps: int = 0,
     context_tokens: int | None = None,
     tool_calls_per_step: int | None = None,
+    compact_context: bool = False,
 ) -> ProcessingRun:
     job = await session.get(AgentJob, run_id)
     run = await session.get(ProcessingRun, run_id)
@@ -128,10 +129,14 @@ async def resume_analysis(
         raise ValueError(
             "This job cannot be resumed; uncertain calls require billing reconciliation"
         )
-    if run.status == "paused_context" and (
-        context_tokens is None or context_tokens <= job.config["max_input_tokens"]
+    if (
+        run.status == "paused_context"
+        and not compact_context
+        and (context_tokens is None or context_tokens <= job.config["max_input_tokens"])
     ):
-        raise ValueError("Increase context_tokens to resume a context pause")
+        raise ValueError(
+            "Increase context_tokens or request compact_context to resume a context pause"
+        )
     config_values = dict(job.config)
     if context_tokens is not None:
         config_values["max_input_tokens"] = context_tokens
@@ -140,6 +145,12 @@ async def resume_analysis(
     if extra_steps:
         config_values["max_steps"] = min(100, config_values["max_steps"] + extra_steps)
     config = AgentSettings(_env_file=None, **config_values)
+    if compact_context:
+        if config.provider != "responses":
+            raise ValueError("Context compaction requires the Responses provider")
+        if job.checkpoint.get("compacted_at_step") == job.checkpoint.get("step", 0):
+            raise ValueError("This step was already compacted; increase context_tokens instead")
+        config.context_compaction = True
     if recover_recorded:
         call = await session.scalar(
             select(AgentCall).where(
@@ -159,6 +170,8 @@ async def resume_analysis(
             raise ValueError(
                 "Recorded response cannot be replayed with the selected limits"
             ) from error
+    if compact_context:
+        job.checkpoint = {**job.checkpoint, "compact_requested": True}
     job.config = config.public_config()
     run.status, run.error = "queued", None
     return await publish_job(session, run)

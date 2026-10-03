@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from wuwa_story.agents.contracts import AnalysisRequest, AnalysisResult
 from wuwa_story.agents.evidence import EvidenceTools
 from wuwa_story.agents.jobs import enqueue_analysis, resume_analysis
+from wuwa_story.agents.providers import Provider
 from wuwa_story.agents.retrieval import get_explanation, search_explanations
 from wuwa_story.agents.runner import execute_job
 from wuwa_story.agents.settings import AgentSettings
@@ -526,6 +528,7 @@ async def test_step_pause_resumes_from_checkpoint_without_repeating_calls(world)
 async def test_context_pause_requires_larger_bound_and_reuses_checkpoint(world):
     engine, settings, _, nodes, *_ = world
     settings.max_input_tokens = 16000
+    settings.context_compaction = False
     run_id = await create(world)
     calls = []
 
@@ -566,6 +569,113 @@ async def test_context_pause_requires_larger_bound_and_reuses_checkpoint(world):
     assert any(item.get("type") == "reasoning" for item in calls[1]["input"])
     async with AsyncSession(engine) as db:
         assert (await db.get(ProcessingRun, run_id)).status == "completed"
+
+
+@pytest.mark.parametrize("crash_after_payment", [False, True])
+async def test_compaction_preserves_evidence_and_replays_paid_window(
+    world, monkeypatch, crash_after_payment
+):
+    engine, settings, request, nodes, *_ = world
+    settings.max_steps = 1
+    run_id = await create(world)
+    paths, compacted = [], []
+
+    def transport(req):
+        payload = json.loads(req.content)
+        paths.append(req.url.path)
+        if req.url.path.endswith("/compact"):
+            assert "tools" not in payload and "max_output_tokens" not in payload
+            assert any(item.get("encrypted_content") == "x" * 47000 for item in payload["input"])
+            compacted.extend(
+                [
+                    payload["input"][0],
+                    payload["input"][1],
+                    {"type": "compaction", "encrypted_content": "condensed"},
+                ]
+            )
+            return httpx.Response(
+                200,
+                json={"output": compacted, "usage": {"input_tokens": 12000, "output_tokens": 5000}},
+            )
+        first = len(paths) == 1
+        if not first:
+            assert payload["input"] == compacted
+        name, args = (
+            ("read_quest", {})
+            if first
+            else ("finish_analysis", {"result_json": json.dumps(result_for(nodes))})
+        )
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "usage": {"input_tokens": 100, "output_tokens": 30},
+                "output": [
+                    *([{"type": "reasoning", "encrypted_content": "x" * 47000}] if first else []),
+                    {
+                        "type": "function_call",
+                        "call_id": str(len(paths)),
+                        "name": name,
+                        "arguments": json.dumps(args),
+                    },
+                ],
+            },
+        )
+
+    original = Provider.compact_output
+
+    def crash_once(raw):
+        monkeypatch.setattr(Provider, "compact_output", staticmethod(original))
+        raise asyncio.CancelledError()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        await execute_job(run_id, engine, settings, client)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            before = dict((await db.get(AgentJob, run_id)).checkpoint)
+            assert before["evidence"] and before["coverage"]
+            await resume_analysis(db, run_id, extra_steps=1)
+        if crash_after_payment:
+            monkeypatch.setattr(Provider, "compact_output", staticmethod(crash_once))
+            with pytest.raises(asyncio.CancelledError):
+                await execute_job(run_id, engine, settings, client)
+        await execute_job(run_id, engine, settings, client)
+    assert paths == ["/v1/responses", "/v1/responses/compact", "/v1/responses"]
+    async with AsyncSession(engine) as db:
+        job = await db.get(AgentJob, run_id)
+        assert job.checkpoint["evidence"] == before["evidence"]
+        assert job.checkpoint["coverage"] == before["coverage"]
+        assert (await db.get(ProcessingRun, run_id)).status == "completed"
+        assert (await get_explanation(db, request.quest_id, request.game_version, "en"))[
+            "status"
+        ] == "available"
+        calls = list(await db.scalars(select(AgentCall).where(AgentCall.run_id == run_id)))
+        assert len(calls) == 3 and all(call.status == "completed" for call in calls)
+        compact_call = next(call for call in calls if call.kind == "compaction")
+        assert compact_call.output_tokens == 5000
+        assert (
+            compact_call.reserved_tokens
+            == settings.max_input_tokens + settings.compaction_output_tokens
+        )
+
+
+async def test_context_resume_can_request_compaction_without_raising_bound(world):
+    engine, settings, *_ = world
+    settings.context_compaction = False
+    run_id = await create(world)
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        run = await db.get(ProcessingRun, run_id)
+        run.status = "paused_context"
+        await db.commit()
+        await resume_analysis(db, run_id, compact_context=True)
+        job = await db.get(AgentJob, run_id)
+        assert job.config["context_compaction"] is True
+        assert job.config["max_input_tokens"] == settings.max_input_tokens
+        assert job.checkpoint["compact_requested"] is True
+        run.status = "paused_context"
+        job.checkpoint = {"step": 0, "compacted_at_step": 0}
+        await db.commit()
+        with pytest.raises(ValueError, match="already compacted"):
+            await resume_analysis(db, run_id, compact_context=True)
 
 
 async def test_recorded_turn_replays_after_explicit_tool_limit_increase(world):

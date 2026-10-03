@@ -31,6 +31,13 @@ from wuwa_story.db.models.ops import ProcessingRun
 
 logger = logging.getLogger(__name__)
 
+# Disjoint from research steps 0..99 and embeddings starting at 1000.
+COMPACTION_STEP_BASE = 2000
+
+
+def request_bound(payload: dict[str, Any]) -> int:
+    return len(json.dumps(payload, ensure_ascii=False).encode()) + 1024
+
 
 def system_prompt(locale: str, relations: list[str]) -> str:
     return (
@@ -88,6 +95,7 @@ async def remote_call(
     payload: dict[str, Any],
     *,
     embedding: bool = False,
+    compaction: bool = False,
 ) -> dict[str, Any] | None:
     call = await session.scalar(
         select(AgentCall).where(AgentCall.run_id == run.id, AgentCall.step == step)
@@ -104,7 +112,7 @@ async def remote_call(
             )
             return None
     # UTF-8 bytes conservatively bound visible text tokens; reserve the full configured context.
-    if len(json.dumps(payload, ensure_ascii=False).encode()) + 1024 > settings.max_input_tokens:
+    if request_bound(payload) > settings.max_input_tokens:
         await pause(
             session,
             run,
@@ -120,8 +128,14 @@ async def remote_call(
                 run_id=run.id,
                 step=step,
                 input_bound=settings.max_input_tokens,
-                output_bound=0 if embedding else settings.max_output_tokens,
-                kind="embedding" if embedding else "analysis",
+                output_bound=(
+                    0
+                    if embedding
+                    else settings.compaction_output_tokens
+                    if compaction
+                    else settings.max_output_tokens
+                ),
+                kind="embedding" if embedding else "compaction" if compaction else "analysis",
             )
         except BudgetExceeded as error:
             await pause(session, run, "paused_budget", str(error))
@@ -326,6 +340,58 @@ async def run_locked(
     if result is None:
         for step in range(cp.get("step", 0), settings.max_steps):
             route, payload = provider.request(history, definitions())
+            if (
+                settings.provider == "responses"
+                and settings.context_compaction
+                and cp.get("compacted_at_step") != step
+                and (
+                    cp.get("compact_requested")
+                    or request_bound(payload)
+                    >= settings.max_input_tokens * settings.compaction_threshold_ratio
+                )
+            ):
+                before = request_bound(payload)
+                compact_route, compact_payload = provider.compact_request(history)
+                compact_raw = await remote_call(
+                    session,
+                    run,
+                    settings,
+                    provider,
+                    COMPACTION_STEP_BASE + step,
+                    compact_route,
+                    compact_payload,
+                    compaction=True,
+                )
+                if compact_raw is None:
+                    return
+                try:
+                    history = provider.compact_output(compact_raw)
+                except ProviderFailure:
+                    await pause(
+                        session,
+                        run,
+                        "failed",
+                        "Malformed compaction window; recorded usage is retained",
+                    )
+                    return
+                cp = {
+                    **cp,
+                    "history": history,
+                    "compacted_at_step": step,
+                    "compact_requested": False,
+                }
+                job.checkpoint = cp
+                await (
+                    session.commit()
+                )  # Persist before the next paid call; replay is free after a crash.
+                route, payload = provider.request(history, definitions())
+                logger.info(
+                    "agent.compacted run_id=%s step=%s bytes_before=%s bytes_after=%s",
+                    run.id,
+                    step,
+                    before,
+                    request_bound(payload),
+                )
             raw = await remote_call(session, run, settings, provider, step, route, payload)
             if raw is None:
                 return
@@ -374,6 +440,7 @@ async def run_locked(
                     }
                 history.append(provider.tool_result(tool_call, output))
             cp = {
+                **cp,
                 "step": step + 1,
                 "history": history,
                 "evidence": evidence.evidence,

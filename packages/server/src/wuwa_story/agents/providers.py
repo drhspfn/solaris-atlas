@@ -108,6 +108,30 @@ class Provider:
     def initial(self, system: str, user: str) -> list[dict[str, Any]]:
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
+    def compact_request(self, history: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+        if self.settings.provider != "responses":
+            raise ProviderFailure("compaction_not_supported")
+        return "/responses/compact", {"model": self.settings.model, "input": history}
+
+    @staticmethod
+    def compact_output(raw: dict[str, Any]) -> list[dict[str, Any]]:
+        output = raw.get("output")
+        if (
+            raw.get("error")
+            or raw.get("status") not in (None, "completed")
+            or not isinstance(output, list)
+            or not all(isinstance(item, dict) for item in output)
+            or not any(
+                item.get("type") == "compaction"
+                and isinstance(item.get("encrypted_content"), str)
+                and item["encrypted_content"]
+                for item in output
+            )
+        ):
+            raise ProviderFailure("invalid_compaction_output")
+        # The entire returned window is canonical, including retained messages/tools.
+        return output
+
     def request(
         self, history: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> tuple[str, dict[str, Any]]:
