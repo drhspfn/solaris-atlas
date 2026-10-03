@@ -13,6 +13,14 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://wuwa:wuwa@localhost:5432/wuwa_story"
     s3_endpoint_url: str = "http://localhost:9000"
     s3_public_endpoint_url: str | None = None
+    # Complete bucket root; a CDN custom domain does not include the bucket name.
+    media_public_base_url: str | None = None
+    media_cache_control: str = "public, max-age=31536000, immutable"
+    redis_url: SecretStr | None = None
+    api_cache_namespace: str = "solaris-api-v1"
+    api_cache_ttl_seconds: int = Field(default=3600, ge=1)
+    api_cache_max_body_bytes: int = Field(default=8 * 1024 * 1024, ge=1)
+    api_cache_timeout_seconds: float = Field(default=0.3, gt=0)
     s3_access_key_id: str = "minio"
     s3_secret_access_key: SecretStr = Field(default=SecretStr("minioadmin"))
     s3_bucket: str = "wuwa"

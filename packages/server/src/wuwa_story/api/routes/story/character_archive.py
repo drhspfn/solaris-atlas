@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -146,6 +146,8 @@ async def character_archive(
         text_keys.extend((record.data.get("Title"), record.data.get("Content")))
     localized = await _localized_strings(session, release_id, locale, text_keys)
 
+    settings = get_settings()
+    storage = S3Storage(settings)
     file_rows = await session.execute(
         select(FileReference, FileObject, FileLocation)
         .join(FileObject, FileObject.id == FileReference.file_id)
@@ -154,12 +156,14 @@ async def character_archive(
             FileReference.owner_node_id == node.id,
             FileLocation.available.is_(True),
             FileLocation.is_primary.is_(True),
+            FileLocation.backend == "s3",
+            FileLocation.bucket == settings.s3_bucket,
         ).order_by(FileReference.id)
     )
-    files: dict[tuple[str, str | None], tuple[int, str | None]] = {}
-    for reference, file, _location in file_rows:
+    files: dict[tuple[str, str | None], tuple[str, str | None]] = {}
+    for reference, file, location in file_rows:
         if reference.source_path:
-            files[(reference.source_path, reference.source_name)] = (file.id, file.mime_type)
+            files[(reference.source_path, reference.source_name)] = (storage.public_url(location.object_key), file.mime_type)
 
     def media_url(path: str | None, mime_prefix: str, language: str | None = None) -> str | None:
         if not path:
@@ -172,7 +176,7 @@ async def character_archive(
             "image/": {"image/png", "image/jpeg", "image/webp", "image/avif", "image/gif"},
             "audio/": {"audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/webm", "audio/aac"},
         }
-        return f"/api/media/files/{linked[0]}" if linked[1] in supported[mime_prefix] else None
+        return linked[0] if linked[1] in supported[mime_prefix] else None
 
     artwork_fields = ("RoleHeadIcon", "RoleHeadIconBig", "RoleHeadIconLarge", "RoleHeadIconCircle", "Card", "FormationRoleCard", "RolePortrait", "RoleStand", "Icon")
     artwork = [
@@ -269,7 +273,7 @@ async def character_archive(
 @router.get("/media/files/{file_id}")
 async def character_media_file(
     file_id: int, session: AsyncSession = Depends(get_session)
-) -> StreamingResponse:
+) -> RedirectResponse:
     file = await session.get(FileObject, file_id)
     if file is None or not (file.mime_type or "").startswith(("image/", "audio/")):
         raise HTTPException(status_code=404, detail="media file not found")
@@ -295,9 +299,6 @@ async def character_media_file(
     if location is None:
         raise HTTPException(status_code=404, detail="media file not available")
     storage = S3Storage(settings)
-    if await storage.stat(location.object_key) is None:
-        raise HTTPException(status_code=404, detail="media file not available")
-    headers = {"Cache-Control": "public, max-age=86400"}
-    if file.size_bytes is not None:
-        headers["Content-Length"] = str(file.size_bytes)
-    return StreamingResponse(storage.get(location.object_key), media_type=file.mime_type, headers=headers)
+    # Preserve old links without proxying bytes or breaking media Range requests.
+    return RedirectResponse(storage.public_url(location.object_key), status_code=307,
+                            headers={"Cache-Control": "no-cache"})
