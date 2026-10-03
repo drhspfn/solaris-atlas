@@ -4,6 +4,12 @@
 
 ## Preconditions
 
+Localization imports require migration `0007_localization_content`. Text is stored
+once in `i18n.localization_content`, while every release/key/locale keeps its own
+resolution and source association. No text normalization or cross-version fallback
+is performed during deduplication. See [database upgrade and rollback](database.md#upgrade-and-rollback)
+before updating an existing installation.
+
 Dataset root must include a versioned `manifest.json`, `coverage.json`, `raw-evidence/index.json`, entity JSONL files, and `graphs/global.jsonl`. Every indexed raw source file is SHA-256 and byte-size checked before reading. Canonical edge records must carry endpoints, type, basis, source, raw path, and version. The adapter fails on malformed rows or missing provenance.
 
 Raw source rows remain release-scoped and are tied to SHA-256-verified source files. Decimal tokens are normalized to JSON numeric values for JSONB. Unpaired UTF-16 surrogate escapes and NUL escapes, which PostgreSQL JSONB rejects, are stored as reversible literal `\\uXXXX` sequences; the exact original bytes remain available in the indexed source file. Localization `resolved_empty` values are retained; absent keys remain absent rather than receiving synthetic text. Graph edge evidence points to the original source file/record and raw field path. Source identity and version are carried into canonical records.

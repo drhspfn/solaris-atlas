@@ -19,7 +19,7 @@ from wuwa_story.db.models import (
     Quest,
     Speaker,
 )
-from wuwa_story.db.models.i18n import LocalizationValue
+from wuwa_story.db.models.i18n import LocalizationContent, LocalizationValue
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.search import SearchDocument
 
@@ -49,13 +49,13 @@ async def _source_rows(
 ) -> AsyncIterator[dict[str, Any]]:
     key_id = getattr(model, key_field)
     statement = (
-        select(model.node_id, LocalizationValue.locale_id, LocalizationValue.content)
+        select(model.node_id, LocalizationValue.locale_id, LocalizationContent.content)
         .join(LocalizationValue, LocalizationValue.key_id == key_id)
+        .join(LocalizationContent, LocalizationContent.id == LocalizationValue.content_id)
         .where(
             LocalizationValue.release_id == release_id,
             LocalizationValue.status == "resolved_nonempty",
-            LocalizationValue.content.is_not(None),
-            LocalizationValue.content != "",
+            LocalizationContent.content != "",
         )
     )
     last: tuple[int, int] | None = None
