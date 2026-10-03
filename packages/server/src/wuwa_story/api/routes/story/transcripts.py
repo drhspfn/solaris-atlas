@@ -3,16 +3,16 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api.routes.story.media import dialogue_media
 from wuwa_story.api.routes.story.shared import (
     _dialogue_payload,
     _quest_info,
     _quest_state_ids,
     _release_id,
 )
-from wuwa_story.api.routes.story.media import dialogue_media
 from wuwa_story.db.models.core import (
     DialogueLine,
     Quest,
@@ -113,6 +113,7 @@ async def quest_transcript(
     game_version: str | None = None,
     limit: int = Query(500, ge=1, le=2000),
     offset: int = Query(0, ge=0),
+    focus_line: str | None = Query(default=None, max_length=512),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     quest = await session.scalar(select(Quest).where(Quest.game_quest_id == game_quest_id))
@@ -154,16 +155,24 @@ async def quest_transcript(
                 DialogueLine.inline_text.ilike(f"%{q}%"),
             )
         )
-    statement = (
-        statement.order_by(
-            QuestState.state_key,
-            QuestAction.action_index,
-            DialogueLine.source_index,
-            DialogueLine.node_id,
-        )
-        .offset(offset)
-        .limit(limit)
+    ordering = (
+        QuestState.state_key,
+        QuestAction.action_index,
+        DialogueLine.source_index,
+        DialogueLine.node_id,
     )
+    if focus_line:
+        ranked = statement.with_only_columns(
+            Node.canonical_key.label("key"),
+            func.row_number().over(order_by=ordering).label("position"),
+        ).subquery()
+        position = await session.scalar(
+            select(ranked.c.position).where(ranked.c.key == focus_line)
+        )
+        if position is None:
+            raise HTTPException(status_code=404, detail="Cited passage not found in this quest")
+        offset = max(0, int(position) - 1 - limit // 2)
+    statement = statement.order_by(*ordering).offset(offset).limit(limit)
     rows = list((await session.execute(statement)).all())
     plot_steps = (
         select(Edge.to_node_id)

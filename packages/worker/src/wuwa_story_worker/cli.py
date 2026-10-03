@@ -27,7 +27,6 @@ from wuwa_story_worker.asset_jobs import (
 from wuwa_story_worker.broker import consume_jobs, replay_failed_jobs
 from wuwa_story_worker.client_assets import discover_plan, download_plan, save_json
 from wuwa_story_worker.entity_media import process_entity_media
-from wuwa_story_worker.story_agent import process_story_analysis
 from wuwa_story_worker.map_assets import build_maps, refresh_map_sources
 from wuwa_story_worker.queues import QUEUES, queue_concurrency
 from wuwa_story_worker.scheduler import (
@@ -36,6 +35,7 @@ from wuwa_story_worker.scheduler import (
     run_watch,
 )
 from wuwa_story_worker.snapshot_jobs import build_and_import_snapshot
+from wuwa_story_worker.story_agent import process_story_analysis
 from wuwa_story_worker.voice_packages import discover_voice_plan, download_voice_plan
 
 

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from wuwa_story.agents.contracts import AnalysisRequest, AnalysisResult
 from wuwa_story.agents.evidence import EvidenceTools
-from wuwa_story.agents.jobs import enqueue_analysis
+from wuwa_story.agents.jobs import enqueue_analysis, resume_analysis
 from wuwa_story.agents.retrieval import get_explanation, search_explanations
 from wuwa_story.agents.runner import execute_job
 from wuwa_story.agents.settings import AgentSettings
@@ -242,6 +242,50 @@ async def test_unknown_outcome_does_not_repeat_paid_request(world):
         assert call.status == "uncertain" and call.reserved_usd > 0
 
 
+async def test_step_pause_resumes_from_checkpoint_without_repeating_calls(world):
+    engine, settings, request, nodes, *_ = world
+    settings.max_steps = 1
+    run_id = await create(world)
+    calls = []
+
+    def transport(request):
+        calls.append(json.loads(request.content))
+        name, args = (
+            ("read_quest", {})
+            if len(calls) == 1
+            else ("finish_analysis", {"result_json": json.dumps(result_for(nodes))})
+        )
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "usage": {"input_tokens": 100, "output_tokens": 30},
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": str(len(calls)),
+                        "name": name,
+                        "arguments": json.dumps(args),
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        await execute_job(run_id, engine, settings, client)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            assert (await db.get(ProcessingRun, run_id)).status == "paused_steps"
+            await resume_analysis(db, run_id, extra_steps=1)
+        await execute_job(run_id, engine, settings, client)
+    assert len(calls) == 2
+    assert any(item.get("type") == "function_call_output" for item in calls[1]["input"])
+    async with AsyncSession(engine) as db:
+        assert (await db.get(ProcessingRun, run_id)).status == "completed"
+        assert (await get_explanation(db, request.quest_id, request.game_version, "en"))[
+            "status"
+        ] == "available"
+
+
 async def test_pagination_unread_citations_and_changed_sources(world):
     engine, settings, _, nodes, locale, release, quest = world
     run_id = await create(world)
@@ -365,3 +409,43 @@ async def test_public_http_is_read_only_and_admin_requires_auth(world):
             )
         ).status_code == 422
         assert (await client.get("/admin/story-agent/usage")).status_code == 401
+
+
+async def test_source_links_and_bounded_transcript_focus(world):
+    from fastapi import FastAPI
+
+    from wuwa_story.agents.retrieval import source_link
+    from wuwa_story.api.routes.story import transcripts
+    from wuwa_story.db.session import get_session
+
+    engine, _, request, nodes, locale, release, _ = world
+    async with AsyncSession(engine) as db:
+        href = await source_link(db, nodes[4], "dialogue_line", release, locale)
+        assert href.startswith(f"/quests/{request.quest_id}?")
+        assert "line=" in href and "locale=en" in href
+    app = FastAPI()
+    app.include_router(transcripts.router)
+
+    async def session():
+        async with AsyncSession(engine) as db:
+            yield db
+
+    app.dependency_overrides[get_session] = session
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        params = {"game_version": request.game_version, "limit": 1}
+        initial = await client.get(f"/quests/{request.quest_id}/transcript", params=params)
+        assert initial.status_code == 200
+        assert initial.json()["lines"][0]["id"] == nodes[3].canonical_key
+        focused = await client.get(
+            f"/quests/{request.quest_id}/transcript",
+            params={**params, "focus_line": nodes[4].canonical_key},
+        )
+        assert focused.status_code == 200
+        assert focused.json()["offset"] == 1
+        assert focused.json()["lines"][0]["id"] == nodes[4].canonical_key
+        missing = await client.get(
+            f"/quests/{request.quest_id}/transcript", params={**params, "focus_line": "missing"}
+        )
+        assert missing.status_code == 404

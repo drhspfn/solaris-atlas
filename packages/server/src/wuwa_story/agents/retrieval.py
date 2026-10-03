@@ -3,24 +3,70 @@
 import json
 from collections.abc import Awaitable
 from typing import Any, cast
+from urllib.parse import quote, urlencode
 
 import httpx
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.agents.budget import BudgetExceeded, reserve, settle
-from wuwa_story.agents.evidence import hash_value, quest_fingerprint
+from wuwa_story.agents.evidence import hash_value, quest_fingerprint, source_edges
 from wuwa_story.agents.providers import Provider, vector_values
 from wuwa_story.agents.publication import document_type
 from wuwa_story.agents.settings import AgentSettings
 from wuwa_story.db.models.agents import ExplanationEmbedding
 from wuwa_story.db.models.content import Document, DocumentHead, DocumentReference
-from wuwa_story.db.models.core import Quest
-from wuwa_story.db.models.i18n import Locale
+from wuwa_story.db.models.core import (
+    Character,
+    DialogueLine,
+    Item,
+    Location,
+    Quest,
+    QuestAction,
+    QuestNode,
+)
+from wuwa_story.db.models.graph import Edge, Node, NodeType
+from wuwa_story.db.models.i18n import Locale, LocalizationValue
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.search import EmbeddingModel
+
+
+async def source_link(
+    session: AsyncSession, node: Node, kind: str, release: GameRelease, language: Locale
+) -> str:
+    params = {"game_version": release.game_version, "locale": language.code}
+    if kind == "dialogue_line":
+        state_id = await session.scalar(
+            select(QuestAction.quest_state_node_id)
+            .join(DialogueLine, DialogueLine.action_node_id == QuestAction.node_id)
+            .where(DialogueLine.node_id == node.id)
+        )
+        owners = select(Edge.from_node_id).where(
+            Edge.to_node_id == state_id, Edge.id.in_(source_edges(release.id))
+        )
+        quest_id = await session.scalar(
+            select(Quest.game_quest_id)
+            .where(
+                or_(
+                    Quest.node_id.in_(owners),
+                    Quest.game_quest_id.in_(
+                        select(QuestNode.game_quest_id).where(QuestNode.node_id.in_(owners))
+                    ),
+                )
+            )
+            .order_by(Quest.game_quest_id)
+            .limit(1)
+        )
+        if quest_id:
+            return f"/quests/{quest_id}?" + urlencode({**params, "line": node.canonical_key})
+    if kind == "quest":
+        quest_id = await session.scalar(select(Quest.game_quest_id).where(Quest.node_id == node.id))
+        if quest_id:
+            return f"/quests/{quest_id}?" + urlencode(params)
+    path = {"character": "characters", "location": "locations", "item": "items"}.get(kind, "nodes")
+    return f"/{path}/{quote(node.canonical_key, safe='')}?" + urlencode(params)
 
 
 async def scope(
@@ -49,6 +95,53 @@ async def public_document(
             )
         )
     ).all()
+    ids = {c["node_id"] for block in document.body_ast for c in block.get("citations", [])}
+    ids.update(value for block in document.body_ast for value in block.get("related_node_ids", []))
+    ids.update(
+        value
+        for item in document.metadata_json.get("links", [])
+        for value in (item["from_node_id"], item["to_node_id"])
+    )
+    nodes = []
+    for node, kind, label in (
+        await session.execute(
+            select(Node, NodeType.key, LocalizationValue.content)
+            .join(NodeType, NodeType.id == Node.type_id)
+            .outerjoin(Character, Character.node_id == Node.id)
+            .outerjoin(Item, Item.node_id == Node.id)
+            .outerjoin(Location, Location.node_id == Node.id)
+            .outerjoin(Quest, Quest.node_id == Node.id)
+            .outerjoin(
+                LocalizationValue,
+                and_(
+                    LocalizationValue.key_id
+                    == func.coalesce(
+                        Character.name_key_id,
+                        Item.name_key_id,
+                        Location.name_key_id,
+                        Quest.name_key_id,
+                    ),
+                    LocalizationValue.release_id == release.id,
+                    LocalizationValue.locale_id == locale.id,
+                ),
+            )
+            .where(Node.id.in_(ids))
+        )
+    ).all():
+        nodes.append(
+            {
+                "id": node.id,
+                "canonical_key": node.canonical_key,
+                "kind": kind,
+                "label": label
+                or (
+                    "Dialogue passage"
+                    if kind == "dialogue_line"
+                    else node.slug or node.canonical_key
+                ),
+                "href": await source_link(session, node, kind, release, locale),
+            }
+        )
     return {
         "id": document.id,
         "quest_id": quest.game_quest_id,
@@ -60,6 +153,7 @@ async def public_document(
         "unresolved_questions": document.metadata_json.get("unresolved_questions", []),
         "events": [{"node_id": node_id, "title": title} for node_id, title in events],
         "links": document.metadata_json.get("links", []),
+        "nodes": nodes,
     }
 
 
