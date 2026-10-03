@@ -10,6 +10,7 @@ import { api } from '../api/client';
 import { iconNode, ObjectIcon } from '../components/MapIcons';
 import { APP_SETTINGS } from '../config/settings';
 import { acquisitionMarkers, markerType } from '../data/mapAcquisition';
+import { latestMapRoots } from '../data/mapSnapshots';
 import { useLocale } from '../hooks/useLocale';
 import { useMapPreferences } from '../hooks/useMapPreferences';
 import { compactMapLink, type MapPreferences } from '../state/mapPreferences';
@@ -469,22 +470,19 @@ export function WorldMapPage() {
       cancelled = true;
     };
   }, [retry]);
-  const roots = useMemo(
-    () =>
-      maps
-        .filter((m) => !m.layer.startsWith('floor:'))
-        .sort(
-          (a, b) =>
-            b.game_version.localeCompare(a.game_version, undefined, {
-              numeric: true,
-            }) || a.game_map_id - b.game_map_id,
-        ),
-    [maps],
-  );
+  const roots = useMemo(() => latestMapRoots(maps), [maps]);
+  const requestedMap = maps.find((m) => !m.layer.startsWith('floor:') && String(m.id) === mapId);
+  // Explicit links retain their snapshot and marker IDs. Saved preferences follow
+  // the newest available data for the same region/layer.
   const chosen =
-    roots.find((m) => String(m.id) === mapId) ??
+    (params.has('map') ? requestedMap : undefined) ??
+    roots.find(
+      (m) => m.game_map_id === requestedMap?.game_map_id && m.layer === requestedMap.layer,
+    ) ??
     roots.find((m) => m.game_map_id === mapSettings.defaultGameMapId) ??
     roots[0];
+  const archivedMap = chosen && !roots.some((m) => m.id === chosen.id);
+  const regionOptions = archivedMap ? [chosen, ...roots] : roots;
   useEffect(() => {
     if (!chosen) return;
     let cancelled = false;
@@ -793,7 +791,7 @@ export function WorldMapPage() {
         </div>{' '}
         <label>
           {' '}
-          World & version{' '}
+          Region{' '}
           <select
             value={chosen?.id ?? ''}
             onChange={(e) => {
@@ -801,10 +799,11 @@ export function WorldMapPage() {
             }}
           >
             {' '}
-            {roots.map((m) => (
+            {regionOptions.map((m) => (
               <option key={m.id} value={m.id}>
                 {' '}
-                {name(m.metadata.catalog?.names, `Map ${m.game_map_id}`)} · {m.game_version}{' '}
+                {name(m.metadata.catalog?.names, `Map ${m.game_map_id}`)}{' '}
+                {archivedMap && m.id === chosen.id ? ` · Map data ${m.game_version}` : ''}
                 {m.layer === 'gravity:2' ? ' · Inverted' : ''}{' '}
               </option>
             ))}{' '}
@@ -890,6 +889,7 @@ export function WorldMapPage() {
         <details className="atlas-levels" open={Boolean(active)}>
           {' '}
           <summary>Layers & display</summary>{' '}
+          {chosen && <p className="muted">Map data · {chosen.game_version}</p>}
           <label className="atlas-check">
             {' '}
             <input
@@ -1244,7 +1244,7 @@ export function WorldMapPage() {
             {' '}
             {loading
               ? 'Loading map objects…'
-              : `${filtered.length.toLocaleString()} ${filtered.length === 1 ? 'object' : 'objects'} · ${chosen?.game_version ?? ''}`}{' '}
+              : `${filtered.length.toLocaleString()} ${filtered.length === 1 ? 'object' : 'objects'}`}{' '}
             <span>Scroll to zoom · drag to explore</span>
           </div>
         </div>
