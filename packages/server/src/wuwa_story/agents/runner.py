@@ -95,7 +95,7 @@ async def remote_call(
             session,
             run,
             "paused_context",
-            "Request exceeds conservative context bound; split this quest into smaller analysis scopes",
+            "Request exceeds conservative context bound; resume with a larger context_tokens bound or split the quest",
         )
         return None
     try:

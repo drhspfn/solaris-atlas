@@ -286,6 +286,96 @@ async def test_step_pause_resumes_from_checkpoint_without_repeating_calls(world)
         ] == "available"
 
 
+async def test_context_pause_requires_larger_bound_and_reuses_checkpoint(world):
+    engine, settings, _, nodes, *_ = world
+    settings.max_input_tokens = 16000
+    run_id = await create(world)
+    calls = []
+
+    def transport(request):
+        calls.append(json.loads(request.content))
+        first = len(calls) == 1
+        name, args = (
+            ("read_quest", {})
+            if first
+            else ("finish_analysis", {"result_json": json.dumps(result_for(nodes))})
+        )
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "usage": {"input_tokens": 100, "output_tokens": 30},
+                "output": [
+                    *([{"type": "reasoning", "encrypted_content": "x" * 20000}] if first else []),
+                    {
+                        "type": "function_call",
+                        "call_id": str(len(calls)),
+                        "name": name,
+                        "arguments": json.dumps(args),
+                    },
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        await execute_job(run_id, engine, settings, client)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            assert (await db.get(ProcessingRun, run_id)).status == "paused_context"
+            with pytest.raises(ValueError, match="Increase context_tokens"):
+                await resume_analysis(db, run_id)
+            await resume_analysis(db, run_id, context_tokens=65536)
+        await execute_job(run_id, engine, settings, client)
+    assert len(calls) == 2
+    assert any(item.get("type") == "reasoning" for item in calls[1]["input"])
+    async with AsyncSession(engine) as db:
+        assert (await db.get(ProcessingRun, run_id)).status == "completed"
+
+
+async def test_recorded_turn_replays_after_explicit_tool_limit_increase(world):
+    engine, settings, _, nodes, *_ = world
+    settings.max_tool_calls_per_step = 1
+    run_id = await create(world)
+    calls = []
+
+    def transport(request):
+        calls.append(json.loads(request.content))
+        if len(calls) == 1:
+            items = [("read_quest", {}), ("read_node", {"node_id": nodes[3].id})]
+        else:
+            items = [("finish_analysis", {"result_json": json.dumps(result_for(nodes))})]
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "usage": {"input_tokens": 100, "output_tokens": 30},
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": f"{len(calls)}-{index}",
+                        "name": name,
+                        "arguments": json.dumps(args),
+                    }
+                    for index, (name, args) in enumerate(items)
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        await execute_job(run_id, engine, settings, client)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            assert (await db.get(ProcessingRun, run_id)).status == "failed"
+            with pytest.raises(ValueError, match="cannot be resumed"):
+                await resume_analysis(db, run_id)
+            with pytest.raises(ValueError, match="cannot be replayed"):
+                await resume_analysis(db, run_id, tool_calls_per_step=1)
+            await resume_analysis(db, run_id, tool_calls_per_step=2)
+        await execute_job(run_id, engine, settings, client)
+    assert len(calls) == 2
+    async with AsyncSession(engine) as db:
+        run = await db.get(ProcessingRun, run_id)
+        assert run.status == "completed" and run.tokens_input == 200
+
+
 async def test_pagination_unread_citations_and_changed_sources(world):
     engine, settings, _, nodes, locale, release, quest = world
     run_id = await create(world)

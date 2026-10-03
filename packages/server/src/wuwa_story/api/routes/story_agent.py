@@ -26,6 +26,8 @@ admin = APIRouter(
 
 class ResumeRequest(StrictModel):
     extra_steps: int = Field(default=0, ge=0, le=100)
+    context_tokens: int | None = Field(default=None, ge=1000, le=250000)
+    tool_calls_per_step: int | None = Field(default=None, ge=1, le=20)
 
 
 class ReconcileRequest(StrictModel):
@@ -119,7 +121,13 @@ async def resume(
     run_id: int, request: ResumeRequest, session: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
     try:
-        run = await resume_analysis(session, run_id, request.extra_steps)
+        run = await resume_analysis(
+            session,
+            run_id,
+            request.extra_steps,
+            request.context_tokens,
+            request.tool_calls_per_step,
+        )
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
     except Exception as error:

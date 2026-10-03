@@ -39,8 +39,9 @@ inferred claims/links and generated events. Imported source edges are preserved.
 5. Open the quest page. Published notes appear above its authored transcript.
    Search at `/search?mode=story` retrieves readable explanations and citations.
 
-Setup was verified against a disposable database and mocked providers. The working
-database has not been migrated, and no paid provider request was made during development.
+Development checks used a disposable database and mocked providers. The local
+working database was subsequently backed up and upgraded through `0009`; see the
+deployment receipt below for the real-provider smoke test.
 
 ## Models and embeddings
 
@@ -103,7 +104,7 @@ require the existing session CSRF header/cookie mechanism.
 | `POST /jobs` | Queue `{quest_id, game_version, locale, generation?}` |
 | `GET /jobs` | Cursor-paginated runs and usage |
 | `GET /jobs/{id}` | Safe status, steps, call IDs, costs and final result |
-| `POST /jobs/{id}/resume` | Resume budget/config/step/enqueue pause; optional `{extra_steps}` |
+| `POST /jobs/{id}/resume` | Resume a pause or replay a validated recorded turn; optional `{extra_steps, context_tokens, tool_calls_per_step}` |
 | `GET /usage` | Recent shared spend/reservations and current cap |
 | `GET /alerts` | Missing data, contradictions and worker failures |
 | `POST /alerts/{id}/resolve` | Resolve an investigated alert |
@@ -115,6 +116,16 @@ unavailable. An explicit new `generation` is needed to spend again. Never clear 
 reservation merely because a request timed out. Resume is intentionally refused
 for uncertain or stale runs. Budget pauses can be resumed after the next budget
 day or an intentional allowance change; step pauses can add bounded extra steps.
+Context pauses require an explicitly larger `context_tokens` value, up to 250,000.
+This changes the conservative reservation bound and retains previous tool results;
+it does not raise the daily USD/token allowance or repeat completed calls. The
+environment examples use this larger bound; the code fallback remains 65,536.
+
+A completed, paid response that failed local tool parsing can be replayed with an
+explicit `tool_calls_per_step` limit, up to 20. Resume first validates the stored
+response with the selected limits without making an HTTP request. It refuses
+unknown, incomplete or still-invalid responses. The example environments allow
+20 calls per turn; the code fallback is eight.
 
 Public routes:
 
@@ -189,3 +200,28 @@ reformatted as part of the agent feature.
   keyboard disclosure, query results, no matches and request failure/retry were
   checked. At 390px the story search had no horizontal overflow.
   Temporary demo data and API/frontend processes were cleaned up afterward.
+
+### Working deployment, 2026-10-03
+
+- Backed up `wuwa_story` to
+  `E:/Backups/solaris-atlas/wuwa-before-story-agent-20261003-232659.dump`
+  (301,163,674 bytes); verified the custom-format archive with `pg_restore --list`.
+- Upgraded the working schema from `0006` through `0009_story_agent`. Built and
+  started API, frontend, snapshot worker, asset worker and the dedicated story
+  consumer. PostgreSQL, RabbitMQ, Redis and MinIO are running.
+- Both local environments use GPT-6 Luna, the shared $1/day cap, a 250,000 input
+  reservation bound and 20 tool calls per turn. Local credentials remain ignored.
+  Embeddings remain disabled; lexical story search is available.
+- Queued run **11**, quest **139000025**, release **1.0.0**, locale **en**. The
+  real provider completed 13 calls. The worker read all **229** transcript lines
+  and continued graph research. Context and tool-limit recovery reused saved
+  checkpoints/responses without paying for completed requests again.
+- OpenAI returned **HTTP 429** on step 13. The run is `paused_uncertain`, with no
+  publication: estimated settled spend is **$0.04751428**, and **$0.03381000** is
+  retained as an unresolved reservation. The current adapter does not retain the
+  provider's error body, so the particular rate/quota limit and billing outcome
+  cannot be determined from the stored call. No automatic retry was sent. Check
+  provider usage and limits before billing reconciliation or a fresh generation.
+- Added context-resume and recorded-turn replay regression tests: **16 targeted
+  agent tests passed**, including existing budget/provider tests. Ruff and strict
+  mypy passed for the changed service and API files.
