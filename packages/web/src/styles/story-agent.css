@@ -185,8 +185,8 @@
   vertical-align: middle;
   margin-right: 8px;
 }
-.agent-create-form {
-  grid-template-columns: 1fr 1fr 1fr auto;
+.auth-form.agent-create-form {
+  grid-template-columns: minmax(0, 360px) max-content;
   align-items: end;
   padding: 0 20px 20px;
 }
@@ -196,19 +196,8 @@
   color: var(--text-secondary);
   margin: 0;
 }
-.agent-create-form select {
-  height: 44px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  background: var(--surface-1);
-  color: var(--text-primary);
-  padding: 0 10px;
-  min-width: 0;
-  width: 100%;
-}
-.agent-create-form select:focus-visible {
-  outline: 2px solid var(--accent-cyan);
-  outline-offset: 2px;
+.agent-create-form > button {
+  justify-self: start;
 }
 .agent-workspace {
   display: grid;
@@ -423,7 +412,7 @@
     font-size: 17px;
     overflow-wrap: anywhere;
   }
-  .agent-create-form {
+  .auth-form.agent-create-form {
     grid-template-columns: 1fr;
   }
   .agent-detail-body {

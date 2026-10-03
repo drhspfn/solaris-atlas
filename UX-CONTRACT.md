@@ -70,8 +70,9 @@ ordinary accounts see an access explanation without mounting admin data views.
 Story agent shows cursor-paginated runs, saved research progress, safe request
 history and today's shared budget. It refreshes every ten seconds while visible,
 cancels obsolete requests and retains usable data on refresh failure. Selected
-run and pagination stay in the URL. Native selects own explanation-language
-selection; source reading remains multilingual. Creating the same request reuses
+run and pagination stay in the URL. The creation form accepts only a quest ID;
+analysis is always English and source reading remains multilingual. The server
+pins the latest imported snapshot containing that quest. Creating the same request reuses
 its run. Submissions disable duplicate actions and preserve form values on error.
 
 Step pauses require a positive extension, up to 100 total steps. Responses context
@@ -98,8 +99,9 @@ point. Later explanations have their own citations and are hidden in a keyboard
 operable spoiler disclosure. Related records explain why a passage matters;
 Graph edges show readable endpoints and relationships with source disclosures.
 Source disclosures identify their own patch version; source links preserve it.
-The admin form's quest snapshot version selects the transcript being explained,
-while research may use any imported patch. Earlier jobs retain their original
+The server selects the latest available quest transcript for admin submissions,
+while research may use any imported patch. The resolved snapshot remains visible
+in run details and source links. Earlier jobs retain their original
 research scope; browsing does not enqueue a paid analysis.
 Older analyses remain readable without fabricated chronology. Generated links
 remain explicitly labeled agent interpretations.

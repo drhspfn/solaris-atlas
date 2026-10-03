@@ -1,11 +1,17 @@
 # Story research pipeline
 
-The worker explains one quest transcript from a selected release and locale. It can
+The worker explains one quest transcript from a resolved release and locale. It can
 read transcripts, inspect the source graph, search entities, re-read sources, save
 working notes and report missing data. Publication creates a cited explanation,
 inferred claims/links and generated events. Imported source edges are preserved.
 
-For `story-v4`, the selected game version is the **target transcript snapshot**,
+The admin creation form accepts only a quest ID and always requests English.
+When `game_version` is omitted, the server selects the latest imported snapshot
+that actually contains the quest, then records that version in the saved request.
+Explicit versions remain available for CLI and API callers; the admin API rejects
+non-English explanation locales. Source reading remains multilingual.
+
+For `story-v4`, the resolved game version is the **target transcript snapshot**,
 not a research cutoff. Graph neighbors, search and working memory can cover all
 imported snapshots. `list_snapshots` exposes the source inventory pinned at enqueue;
 `read_quest` and `read_node` accept an explicit `snapshot_id` to compare patches.
@@ -57,7 +63,9 @@ have actually been imported, not every released patch automatically.
    ```
 
    This consumer does not download the game or run asset extraction.
-4. Queue a quest using its actual imported snapshot name:
+4. Open `/admin/story-agent`, enter a quest ID and select **Queue analysis**.
+   The server selects its latest available transcript; the explanation is English.
+   For an explicit historical snapshot, use its actual imported name in the CLI:
 
    ```powershell
    uv run wuwa-story-worker enqueue-analysis --quest-id 139000025 --version 1.0.0 --locale en
@@ -516,3 +524,18 @@ reformatted as part of the agent feature.
   contract and a legacy explanation's source-version caption in the browser.
   No paid analysis was queued. The working story inventory currently contains
   1.0.0 and 1.1.0; other story snapshots require import first.
+
+### Quest-only admin submissions, 2026-10-04
+
+- Removed version and language fields. The server resolves and pins the latest
+  imported snapshot containing the quest; admin explanations are English.
+  Explicit historical versions remain supported for advanced callers.
+- Full server suite: 144 passed, 2 skipped (Redis infrastructure), with existing
+  dependency deprecation warnings. Agent/route Ruff and strict mypy passed;
+  changed-file ESLint/Prettier, TypeScript and production build passed.
+- Browser checks against a local fixture verified one form field, retained input
+  after an unknown-quest error, the exact quest-only POST body and a 390px layout
+  without horizontal overflow. No paid analysis was queued.
+- Rebuilt/restarted local API, web and story consumer. Database health, existing
+  published explanation retrieval and the anonymous admin 401 gate passed.
+  No schema migration is required.

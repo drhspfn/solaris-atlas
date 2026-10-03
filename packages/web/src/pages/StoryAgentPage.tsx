@@ -7,7 +7,6 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
 import { APP_SETTINGS } from '../config/settings';
-import { availableLocales } from '../data/locales';
 import {
   type AgentDetail,
   type AgentJob,
@@ -116,8 +115,6 @@ function AgentWorkspace() {
         method: 'POST',
         body: {
           quest_id: Number(values.get('quest')),
-          game_version: String(values.get('version')).trim(),
-          locale: values.get('locale'),
         },
       });
       setParams({ job: String(result.id) });
@@ -233,27 +230,13 @@ function AgentWorkspace() {
               disabled={busy}
             />
           </label>
-          <label>
-            Quest snapshot version
-            <input name="version" required maxLength={64} placeholder="1.0.0" disabled={busy} />
-          </label>
-          <label>
-            Explanation language
-            <select name="locale" defaultValue="en" disabled={busy}>
-              {availableLocales.map((locale) => (
-                <option key={locale.code} value={locale.code}>
-                  {locale.label}
-                </option>
-              ))}
-            </select>
-          </label>
           <button className="agent-button primary" disabled={busy}>
             <Play size={14} />
             Queue analysis
           </button>
           <p>
-            The version selects the quest transcript. Research can use all imported patches and
-            available source languages. Model and spending limits come from server settings.
+            English analysis using the latest available quest transcript and sources from all
+            imported patches.
           </p>
         </form>
       </details>
