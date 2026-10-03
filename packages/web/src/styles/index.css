@@ -1,3 +1,211 @@
+/* Story explanations share the atlas surfaces; evidence stays a quiet disclosure. */
+.quest-explanation {
+  margin: 28px 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  overflow: clip;
+}
+.explanation-heading,
+.explanation-result-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 28px;
+  list-style: none;
+  min-width: 0;
+}
+.explanation-heading {
+  cursor: pointer;
+}
+.explanation-heading::-webkit-details-marker {
+  display: none;
+}
+.explanation-heading:hover {
+  background: var(--surface-2);
+}
+.explanation-heading > svg {
+  flex-shrink: 0;
+  color: var(--mint);
+}
+.explanation-heading h2,
+.explanation-result-heading h2 {
+  margin: 6px 0 0;
+  font-size: 22px;
+}
+.explanation-heading > div,
+.explanation-result-heading > div {
+  min-width: 0;
+  flex: 1;
+}
+.explanation-badge {
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.explanation-chevron {
+  transition: transform 160ms;
+}
+.quest-explanation:not([open]) .explanation-chevron {
+  transform: rotate(-90deg);
+}
+.explanation-content {
+  padding: 0 28px 24px;
+  border-top: 1px solid var(--border-default);
+}
+.explanation-block {
+  padding: 24px 0;
+  border-bottom: 1px solid var(--border-default);
+}
+.explanation-block h3 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 600;
+}
+.explanation-block p,
+.explanation-event p {
+  max-width: 76ch;
+  color: var(--text-secondary);
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.explanation-block p {
+  margin: 0 0 14px;
+}
+.explanation-sources {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}
+.explanation-sources details {
+  max-width: 100%;
+}
+.explanation-sources summary {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  cursor: pointer;
+  color: var(--accent-cyan);
+  font-size: 12px;
+  padding: 5px 0;
+}
+.explanation-sources summary:hover,
+.explanation-related a:hover,
+.explanation-search-link:hover {
+  color: var(--accent-mint-strong);
+}
+.explanation-sources blockquote,
+.explanation-event blockquote {
+  max-width: 68ch;
+  margin: 10px 0;
+  border-left: 2px solid var(--mint);
+  padding: 8px 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.explanation-sources a,
+.explanation-related a,
+.explanation-search-link,
+.explanation-result-heading > a,
+.explanation-context a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--mint);
+  font-size: 13px;
+}
+.explanation-related {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin: 18px 0;
+}
+.explanation-related > span {
+  width: 100%;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.explanation-context {
+  padding: 18px 0;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.8;
+}
+.explanation-context summary {
+  cursor: pointer;
+  color: var(--text-primary);
+}
+.explanation-search-link {
+  margin-top: 22px;
+}
+.explanation-status {
+  min-height: 96px;
+  padding: 20px 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.7;
+}
+.explanation-status button {
+  min-height: 36px;
+  padding: 7px 14px;
+  color: var(--mint);
+  background: var(--surface-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+.explanation-status button:hover {
+  background: var(--surface-3);
+}
+.explanation-status a {
+  color: var(--mint);
+}
+.explanation-result-heading {
+  border-bottom: 1px solid var(--border-default);
+}
+.explanation-results .explanation-blocks {
+  padding: 0 28px;
+}
+.explanation-event {
+  padding: 28px;
+}
+.explanation-event h1 {
+  font-size: clamp(28px, 4vw, 42px);
+}
+.transcript-line.cited-passage {
+  background: var(--surface-3);
+  box-shadow: inset 3px 0 var(--mint);
+  scroll-margin-block: 110px;
+}
+@media (max-width: 640px) {
+  .explanation-heading,
+  .explanation-result-heading {
+    padding: 20px 18px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .explanation-heading h2,
+  .explanation-result-heading h2 {
+    font-size: 19px;
+  }
+  .explanation-badge {
+    order: 4;
+    margin-left: 32px;
+    width: calc(100% - 32px);
+  }
+  .explanation-content,
+  .explanation-results .explanation-blocks {
+    padding-inline: 18px;
+  }
+  .explanation-event {
+    padding: 22px 18px;
+  }
+}
+
 :root {
   font-family: 'DM Sans', sans-serif;
   color: #e9ede7;

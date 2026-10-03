@@ -1,5 +1,30 @@
 # Interactive map UX contract
 
+## Cited story explanations
+
+Quest pages show published AI interpretations in a separate native details section,
+below continuity and above the source transcript. Interpretations never replace
+authored dialogue. Source buttons are native disclosures: Enter/Space opens the
+exact quote, and Read source opens the owning quest with version, locale and a
+bounded passage focus. The cited line is highlighted, scrolled into view and
+focused; conflicting transcript filters are cleared. Long transcripts load a
+bounded window around the citation rather than silently omitting it.
+
+Generated events have their own read-only page, quotes and a return link to the
+same quest/version/language. Related records and inferred connections use internal
+source routes. AI interpretation labels are persistent. UI labels remain English;
+explanation content follows the selected locale. Existing DESIGN.md tokens own
+surfaces, spacing, typography, focus and responsive behavior.
+
+Search has Source records and Story explanations modes. The existing SearchBox
+owns the input, clear button, IME behavior and submit navigation; the form uses
+noValidate. Committed question, mode, version and locale stay in the URL. Changing
+the question cancels stale requests. Loading, missing analysis, no matches and
+request failures have explicit text; failed explanation/search requests offer a
+retry. Source disclosures work by click and keyboard. Neither reading a quest nor
+searching explanations enqueues an analysis job. Public query embeddings are an
+explicit backend option, guarded by Redis and the shared spending ledger.
+
 ## Dialogue voice playback
 
 Available quest cutscenes appear in the transcript column with native video

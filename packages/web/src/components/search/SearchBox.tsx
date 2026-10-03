@@ -15,17 +15,31 @@ export function SearchBox({ initial = '', category }: { initial?: string; catego
     if (category && category !== 'all') next.set('category', category);
     for (const c of params.getAll('category'))
       if (!next.has('category')) next.append('category', c);
+    for (const field of ['mode', 'game_version', 'locale']) {
+      const selected = params.get(field);
+      if (selected) next.set(field, selected);
+    }
     navigate(`/search?${next}`);
   };
   return (
-    <form className="search-box" onSubmit={submit}>
+    <form className="search-box" noValidate onSubmit={submit}>
       <Search size={19} />
       <input
         ref={input}
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        placeholder="Search characters, events, factions, places..."
-        aria-label="Search the archive"
+        placeholder={
+          params.get('mode') === 'story'
+            ? 'Why did it happen? Who was involved?'
+            : 'Search characters, events, factions, places...'
+        }
+        aria-label={
+          params.get('mode') === 'story' ? 'Search story explanations' : 'Search the archive'
+        }
+        maxLength={512}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault();
+        }}
       />
       {value && (
         <button

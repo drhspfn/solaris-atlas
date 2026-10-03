@@ -18,6 +18,7 @@ export const APP_SETTINGS = {
     catalogPage: 24,
     catalogSearch: 50,
     search: 60,
+    explanationSearch: 8,
     inlineDialogueSearch: 8,
     relatedNodes: 100,
     transcript: 2000,
