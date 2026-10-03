@@ -21,7 +21,7 @@ export function ExplanationBlocks({ explanation }: { explanation: StoryExplanati
                   </summary>
                   <blockquote>{citation.quote}</blockquote>
                   {source && (
-                    <Link to={source.href}>
+                    <Link to={citation.href || source.href}>
                       Read source <ArrowUpRight size={13} aria-hidden="true" />
                     </Link>
                   )}

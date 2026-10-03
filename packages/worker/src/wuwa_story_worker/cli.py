@@ -45,7 +45,7 @@ def _parser() -> argparse.ArgumentParser:
     agent = commands.add_parser("enqueue-analysis", help="Queue source-cited story analysis")
     agent.add_argument("--quest-id", type=int, required=True)
     agent.add_argument("--version", required=True)
-    agent.add_argument("--locale", default="en")
+    agent.add_argument("--locale", default="en", help="Explanation language; source reading uses all available translations")
     agent.add_argument("--generation", default="", help="Explicit new generation token; default deduplicates")
     runner = commands.add_parser("run", help="Consume selected RabbitMQ jobs")
     runner.add_argument("--queue", action="append", choices=tuple(QUEUES), default=None)

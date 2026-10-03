@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 
 import { api } from '../../api/client';
 import type { ExplanationResponse } from '../../data/explanations';
+import { availableLocales } from '../../data/locales';
 import { ExplanationBlocks } from './ExplanationBlocks';
 
 export function QuestExplanation({
@@ -59,10 +60,18 @@ export function QuestExplanation({
           </p>
         ) : !explanation ? (
           <p className="explanation-status">
-            This quest has not been analyzed for the selected version and language yet.
+            Story notes are not available for this quest in the selected version yet.
           </p>
         ) : (
           <>
+            {explanation.locale && explanation.locale !== locale && (
+              <p className="explanation-status">
+                These story notes are available in{' '}
+                {availableLocales.find((language) => language.code === explanation.locale)?.label ||
+                  explanation.locale}
+                . Source passages retain their original language.
+              </p>
+            )}
             <ExplanationBlocks explanation={explanation} />
             {explanation.links.length > 0 && (
               <details className="explanation-context">

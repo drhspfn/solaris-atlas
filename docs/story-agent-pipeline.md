@@ -34,6 +34,29 @@ inferred claims/links and generated events. Imported source edges are preserved.
    uv run wuwa-story-worker enqueue-analysis --quest-id 139000025 --version 1.0.0 --locale en
    ```
 
+   From the repository root with the running Docker consumer:
+
+   ```powershell
+   docker compose -f infrastructure/local/compose.yml exec -T story-agent wuwa-story-worker enqueue-analysis --quest-id 139000025 --version 1.0.0
+   ```
+
+   `--locale` selects the language of the written explanation (English by
+   default), independently of source reading. New jobs read sources by priority
+   `en → zh-Hans → ja → zh-Hant → other available locales`, falling back per
+   passage when a translation is missing. Tools accept a `locale` argument to
+   compare the same node in another language; the prompt requests Chinese and
+   Japanese checks for ambiguous or inconsistent translations. This is a model
+   instruction, not a guarantee that every poor translation will be detected.
+   Citations retain their source language and open that transcript translation.
+   The source fingerprint includes all quest translations, so changing any of
+   them invalidates the shared analysis. Existing `story-v1` jobs and documents
+   retain their original fingerprint rules.
+
+   A published explanation is available across site languages: prefer a matching
+   written translation, otherwise show an existing explanation by the same
+   priority. Browsing another locale does not launch or charge a new analysis.
+   Story search includes these fallback explanations without duplicate quests.
+
    Repeating the same request reuses its job. `--generation review-2` explicitly
    requests a fresh generation with the same source/configuration.
 5. Open the quest page. Published notes appear above its authored transcript.
@@ -133,7 +156,8 @@ Public routes:
 - `GET /story-analysis/search?q=...&game_version=...&locale=...`
 - `GET /story-analysis/events/{node_id}?game_version=...&locale=...`
 
-Documents are scoped by release and language. Only published heads are returned;
+Documents retain their release and written language; source reading and public
+fallback are multilingual. Only published heads are returned;
 changed quest inputs hide stale explanations. Publication invalidates the existing
 public cache through transactional content/graph revisions. Source citations
 contain validated exact snippets; source URLs are constructed by the application.
@@ -225,3 +249,16 @@ reformatted as part of the agent feature.
 - Added context-resume and recorded-turn replay regression tests: **16 targeted
   agent tests passed**, including existing budget/provider tests. Ruff and strict
   mypy passed for the changed service and API files.
+
+### Multilingual research, 2026-10-03
+
+- `story-v2` separates source reading from explanation language. No schema
+  migration is needed; old documents remain readable under their original rules.
+- **17 targeted agent tests passed**, including priority fallback, Chinese and
+  Japanese comparison, shared publication/search, source-language links, rejected
+  mismatched-language quotes and invalidation on a Japanese source change.
+- Ruff and strict mypy passed for agent modules and API routes; frontend ESLint
+  and the production build passed. The worker's two queue/CLI tests passed.
+- Updating the consumer does not retry paused run 11. Enqueuing this quest under
+  `story-v2` creates a new research job; its paid calls remain subject to the
+  existing daily ledger and provider limits.

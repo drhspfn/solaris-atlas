@@ -1,4 +1,9 @@
-export type SourceCitation = { node_id: number; quote: string };
+export type SourceCitation = {
+  node_id: number;
+  quote: string;
+  locale?: string | null;
+  href?: string | null;
+};
 export type ExplanationBlock = {
   title: string;
   text: string;
@@ -10,6 +15,8 @@ export type StoryExplanation = {
   id: number;
   quest_id: number;
   game_version: string;
+  locale?: string;
+  requested_locale?: string;
   title: string;
   blocks: ExplanationBlock[];
   unresolved_questions: string[];
