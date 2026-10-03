@@ -17,6 +17,9 @@ target_metadata = Base.metadata
 
 
 def include_object(_object, _name, type_, reflected, _compare_to):
+    # Maintained with statement triggers by migration 0008, not ORM metadata.
+    if type_ == "table" and _name == "public_cache_revision" and getattr(_object, "schema", None) == "ops":
+        return False
     if type_ == "schema":
         return _name in SCHEMAS
     if type_ == "table":

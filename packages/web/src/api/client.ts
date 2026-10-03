@@ -1,4 +1,5 @@
 import { APP_SETTINGS } from '../config/settings';
+import { requestCredentials } from './requestPolicy';
 const apiBase = (import.meta.env.VITE_API_BASE ?? APP_SETTINGS.api.defaultBase).replace(/\/$/, '');
 
 export class ApiError extends Error {
@@ -29,7 +30,7 @@ export async function api<T>(
     method,
     signal: options.signal,
     headers,
-    credentials: 'include',
+    credentials: requestCredentials(path, method),
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
   const result = await response.json().catch(() => null);

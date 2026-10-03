@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import boto3
 from botocore.exceptions import ClientError
@@ -15,6 +16,10 @@ class S3Storage:
 
     def __init__(self, settings: Settings) -> None:
         self.bucket = settings.s3_bucket
+        self.public_base_url = settings.media_public_base_url or (
+            f"{(settings.s3_public_endpoint_url or settings.s3_endpoint_url).rstrip('/')}/{quote(self.bucket, safe='')}"
+        )
+        self.cache_control = settings.media_cache_control
         self.client = boto3.client(
             "s3",
             endpoint_url=settings.s3_endpoint_url,
@@ -30,8 +35,12 @@ class S3Storage:
             region_name=settings.s3_region, use_ssl=settings.s3_use_ssl,
         )
 
-    def public_url(self, object_key: str, expires: int = 3600) -> str:
-        """Sign browser access without exposing the internal Docker endpoint."""
+    def public_url(self, object_key: str) -> str:
+        """Game media is public and content addressed; these URLs never expire."""
+        return f"{self.public_base_url.rstrip('/')}/{quote(object_key, safe='/')}"
+
+    def signed_url(self, object_key: str, expires: int = 3600) -> str:
+        """For a separate private bucket, never exposed through the public CDN."""
         return str(self.public_client.generate_presigned_url(
             "get_object", Params={"Bucket": self.bucket, "Key": object_key}, ExpiresIn=expires,
         ))
@@ -52,6 +61,9 @@ class S3Storage:
         self, source: Path, object_key: str, content_type: str | None = None
     ) -> ObjectInfo:
         extra: dict[str, Any] = {"ContentType": content_type} if content_type else {}
+        # Only hash-addressed objects are immutable. Other keys may be overwritten.
+        if object_key.startswith("objects/"):
+            extra["CacheControl"] = self.cache_control
         await asyncio.to_thread(
             self.client.upload_file, str(source), self.bucket, object_key, ExtraArgs=extra
         )
@@ -85,3 +97,23 @@ class S3Storage:
 
     async def delete(self, object_key: str) -> None:
         await asyncio.to_thread(self.client.delete_object, Bucket=self.bucket, Key=object_key)
+
+    async def refresh_public_cache_header(self, object_key: str, *, apply: bool = False) -> bool:
+        """Idempotent metadata backfill; never download or change object bytes."""
+        if not object_key.startswith("objects/"):
+            raise ValueError("Immutable cache headers require content-addressed objects")
+        head = await asyncio.to_thread(self.client.head_object, Bucket=self.bucket, Key=object_key)
+        if head.get("CacheControl") == self.cache_control:
+            return False
+        if apply:
+            preserved = {name: head[name] for name in (
+                "ContentType", "ContentDisposition", "ContentEncoding", "ContentLanguage",
+                "Expires", "StorageClass",
+            ) if name in head}
+            await asyncio.to_thread(
+                self.client.copy_object, Bucket=self.bucket, Key=object_key,
+                CopySource={"Bucket": self.bucket, "Key": object_key},
+                MetadataDirective="REPLACE", Metadata=head.get("Metadata", {}),
+                CacheControl=self.cache_control, **preserved,
+            )
+        return True

@@ -62,7 +62,7 @@ async def map_manifest(map_id: int, session: AsyncSession = Depends(get_session)
     storage = S3Storage(settings)
     locations = {file.id: {"file_id": file.id, "sha256": file.sha256.hex() if file.sha256 else None,
                            "url": storage.public_url(location.object_key)} for file, location in files}
-    return {**describe_map(row), "url_expires_in": 3600,
+    return {**describe_map(row), "url_expires_in": None,
             "icons": {source: locations[file_id] for source, file_id in row.metadata_json.get("icon_file_ids", {}).items() if file_id in locations},
             "preview": locations.get(row.preview_file_id) if row.preview_file_id is not None else None,
             "tiles": [{"x": tile.x, "y": tile.y,
