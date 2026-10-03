@@ -37,6 +37,8 @@ def retry_seconds(value: str | None) -> float | None:
         return None
     try:
         seconds = float(value)
+        if seconds < 0:
+            return None
     except ValueError:
         try:
             seconds = (parsedate_to_datetime(value) - datetime.now(UTC)).total_seconds()
@@ -49,10 +51,11 @@ def reset_seconds(value: str | None) -> float | None:
     if not value or not re.fullmatch(r"(?:\d+(?:\.\d+)?(?:ms|s|m|h))+", value):
         return None
     scale = {"ms": 0.001, "s": 1, "m": 60, "h": 3600}
-    return sum(
+    seconds = sum(
         float(number) * scale[unit]
         for number, unit in re.findall(r"(\d+(?:\.\d+)?)(ms|s|m|h)", value)
     )
+    return seconds if math.isfinite(seconds) else None
 
 
 @dataclass
@@ -191,6 +194,8 @@ class Provider:
                         "organization_spend_limit_exceeded",
                         "project_spend_limit_exceeded",
                     }
+                    if code == "rate_limit_error":
+                        code = "rate_limit_exceeded"
                     code = (
                         code if isinstance(code, str) and code in allowed else "provider_http_429"
                     )
@@ -204,7 +209,7 @@ class Provider:
                         "remaining-project-tokens",
                     ):
                         value = response.headers.get("x-ratelimit-" + name)
-                        if value and value.isdigit():
+                        if value and len(value) <= 15 and value.isdigit():
                             limits[name] = float(value)
                     delay = retry_seconds(response.headers.get("retry-after"))
                     if delay is None:

@@ -373,6 +373,112 @@ async def test_unknown_outcome_does_not_repeat_paid_request(world):
         assert call.status == "uncertain" and call.reserved_usd > 0
 
 
+async def test_throttled_call_retries_with_one_reservation_and_charges_once(world, monkeypatch):
+    engine, settings, _, nodes, *_ = world
+    run_id = await create(world)
+    requests, delays = [], []
+
+    async def sleep(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr("wuwa_story.agents.runner.asyncio.sleep", sleep)
+    monkeypatch.setattr("wuwa_story.agents.runner.random.uniform", lambda *_: 0)
+
+    def transport(request):
+        requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            return httpx.Response(
+                429, json={"error": {"code": "rate_limit_exceeded"}}, headers={"retry-after": "56"}
+            )
+        name, args = (
+            ("read_quest", {})
+            if len(requests) == 2
+            else ("finish_analysis", {"result_json": json.dumps(result_for(nodes))})
+        )
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "usage": {"input_tokens": 100, "output_tokens": 30},
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": str(len(requests)),
+                        "name": name,
+                        "arguments": json.dumps(args),
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        await execute_job(run_id, engine, settings, client)
+        await execute_job(run_id, engine, settings, client)
+    assert len(requests) == 3 and requests[0] == requests[1]
+    assert delays == [56]
+    async with AsyncSession(engine) as db:
+        run = await db.get(ProcessingRun, run_id)
+        assert run.status == "completed" and run.tokens_input == 200
+        calls = list(
+            await db.scalars(
+                select(AgentCall).where(AgentCall.run_id == run_id).order_by(AgentCall.step)
+            )
+        )
+        assert len(calls) == 2 and calls[0].response["_retry_metadata"]["attempts"] == 2
+        assert (await db.get(AgentDailyUsage, calls[0].day)).reserved_usd == 0
+
+
+@pytest.mark.parametrize("code", ["insufficient_quota", "project_spend_limit_exceeded", "unknown"])
+async def test_quota_and_unclassified_429_pause_without_automatic_retry(world, code):
+    engine, settings, *_ = world
+    run_id = await create(world)
+    requests = []
+
+    def transport(request):
+        requests.append(request)
+        return httpx.Response(429, json={"error": {"code": code, "message": "private"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        await execute_job(run_id, engine, settings, client)
+        await execute_job(run_id, engine, settings, client)
+    assert len(requests) == 1
+    async with AsyncSession(engine) as db:
+        assert (await db.get(ProcessingRun, run_id)).status == "paused_provider"
+        call = await db.scalar(select(AgentCall).where(AgentCall.run_id == run_id))
+        assert call.status == "provider_rejected" and call.input_tokens is None
+        assert "private" not in json.dumps(call.response)
+        assert (await db.get(AgentDailyUsage, call.day)).reserved_usd == call.reserved_usd
+
+
+async def test_rate_pause_resumes_same_call_and_obeys_long_server_delay(world, monkeypatch):
+    engine, settings, *_ = world
+    run_id = await create(world)
+    requests = []
+
+    async def sleep(_delay):
+        pytest.fail("A long Retry-After must defer rather than sleep/retry early")
+
+    monkeypatch.setattr("wuwa_story.agents.runner.asyncio.sleep", sleep)
+
+    def transport(request):
+        requests.append(request)
+        return httpx.Response(
+            429, json={"error": {"code": "rate_limit_exceeded"}}, headers={"retry-after": "3600"}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        await execute_job(run_id, engine, settings, client)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            assert (await db.get(ProcessingRun, run_id)).status == "paused_rate_limit"
+            await resume_analysis(db, run_id)
+        await execute_job(run_id, engine, settings, client)
+    assert len(requests) == 1
+    async with AsyncSession(engine) as db:
+        call = await db.scalar(select(AgentCall).where(AgentCall.run_id == run_id))
+        assert call.status == "rate_limited" and call.response["attempts"] == 1
+        assert (await db.get(ProcessingRun, run_id)).status == "paused_rate_limit"
+
+
 async def test_step_pause_resumes_from_checkpoint_without_repeating_calls(world):
     engine, settings, request, nodes, *_ = world
     settings.max_steps = 1

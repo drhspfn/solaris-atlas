@@ -147,6 +147,7 @@ def test_retry_delays_handle_dates_units_and_invalid_headers():
     assert retry_seconds("Sat, 03 Oct 2020 21:00:00 GMT") == 0
     assert retry_seconds("invalid") is None
     assert retry_seconds("NaN") is None
+    assert retry_seconds("-1") is None
     assert reset_seconds("6m0.5s") == 360.5
     assert reset_seconds("200ms") == 0.2
     assert reset_seconds("invalid") is None

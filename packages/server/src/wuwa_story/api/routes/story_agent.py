@@ -110,6 +110,12 @@ async def job_status(run_id: int, session: AsyncSession = Depends(get_session)) 
                 "cost_usd": str(call.cost_usd) if call.cost_usd is not None else None,
                 "input_tokens": call.input_tokens,
                 "output_tokens": call.output_tokens,
+                "provider_error": (call.response or {}).get("provider_error")
+                if call.status in ("rate_limited", "provider_rejected")
+                else None,
+                "retry_at": (call.response or {}).get("retry_at")
+                if call.status == "rate_limited"
+                else None,
             }
             for call in calls
         ],

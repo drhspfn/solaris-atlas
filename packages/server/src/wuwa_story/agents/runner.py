@@ -1,8 +1,10 @@
 """Checkpointed tool loop. Unknown remote outcomes never trigger automatic paid retries."""
 
+import asyncio
 import json
 import logging
-from datetime import UTC, datetime
+import random
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -12,10 +14,16 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from wuwa_story.agents.budget import BudgetExceeded, reserve, settle
 from wuwa_story.agents.contracts import AnalysisResult
 from wuwa_story.agents.evidence import EvidenceTools, definitions, quest_fingerprint
-from wuwa_story.agents.providers import Provider, ProviderFailure, token_usage, vector_values
+from wuwa_story.agents.providers import (
+    Provider,
+    ProviderFailure,
+    ProviderRejected,
+    token_usage,
+    vector_values,
+)
 from wuwa_story.agents.publication import publish_analysis
 from wuwa_story.agents.settings import AgentSettings
-from wuwa_story.db.models.agents import AgentCall, AgentJob, AgentNote
+from wuwa_story.db.models.agents import AgentCall, AgentDailyUsage, AgentJob, AgentNote
 from wuwa_story.db.models.core import Quest
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.ontology import RelationType
@@ -87,13 +95,14 @@ async def remote_call(
     if call:
         if call.status == "completed" and call.response is not None:
             return call.response
-        await pause(
-            session,
-            run,
-            "paused_uncertain",
-            "A previous remote call has an unknown or excessive charge; reconcile billing before proceeding",
-        )
-        return None
+        if call.status not in ("rate_limited", "provider_rejected"):
+            await pause(
+                session,
+                run,
+                "paused_uncertain",
+                "A previous remote call has an unknown or excessive charge; reconcile billing before proceeding",
+            )
+            return None
     # UTF-8 bytes conservatively bound visible text tokens; reserve the full configured context.
     if len(json.dumps(payload, ensure_ascii=False).encode()) + 1024 > settings.max_input_tokens:
         await pause(
@@ -103,22 +112,112 @@ async def remote_call(
             "Request exceeds conservative context bound; resume with a larger context_tokens bound or split the quest",
         )
         return None
-    try:
-        call = await reserve(
+    if call is None:
+        try:
+            call = await reserve(
+                session,
+                settings,
+                run_id=run.id,
+                step=step,
+                input_bound=settings.max_input_tokens,
+                output_bound=0 if embedding else settings.max_output_tokens,
+                kind="embedding" if embedding else "analysis",
+            )
+        except BudgetExceeded as error:
+            await pause(session, run, "paused_budget", str(error))
+            return None
+        await session.commit()
+    metadata = dict(call.response or {})
+    usage = await session.get(AgentDailyUsage, call.day)
+    assert usage is not None
+    if (
+        usage.spent_usd + usage.reserved_usd > settings.daily_budget_usd
+        or usage.spent_tokens + usage.reserved_tokens > settings.daily_token_limit
+    ):
+        await pause(
             session,
-            settings,
-            run_id=run.id,
-            step=step,
-            input_bound=settings.max_input_tokens,
-            output_bound=0 if embedding else settings.max_output_tokens,
-            kind="embedding" if embedding else "analysis",
+            run,
+            "paused_budget",
+            "Existing reservation exceeds the current daily allowance",
         )
-    except BudgetExceeded as error:
-        await pause(session, run, "paused_budget", str(error))
         return None
-    await session.commit()  # Persist intent BEFORE sending a billable request.
+    attempts = metadata.get("attempts", 0)
+    waited = 0.0
+    next_retry = metadata.get("retry_at")
+    delay = (
+        max(0.0, (datetime.fromisoformat(next_retry) - datetime.now(UTC)).total_seconds())
+        if next_retry
+        else 0.0
+    )
+    for retry in range(settings.rate_limit_retries + 1):
+        if waited + delay > settings.rate_limit_wait_seconds:
+            await pause(
+                session,
+                run,
+                "paused_rate_limit",
+                "Provider requested a longer cooldown; resume after retry_at",
+            )
+            return None
+        if delay:
+            logger.info("agent.rate_limit_wait run_id=%s step=%s seconds=%.1f", run.id, step, delay)
+            await asyncio.sleep(delay)
+            waited += delay
+        attempts += 1
+        call.status = "reserved"
+        metadata = {**metadata, "attempts": attempts}
+        call.response = metadata
+        await (
+            session.commit()
+        )  # Each attempt has durable intent before HTTP; a crash stays uncertain.
+        try:
+            raw = await provider.post(route, payload)
+        except ProviderRejected as error:
+            delay = (
+                error.retry_after
+                if error.retry_after is not None
+                else settings.rate_limit_backoff_seconds * 2**retry
+            ) + random.uniform(0, 1)
+            try:
+                retry_at = datetime.now(UTC) + timedelta(seconds=delay)
+            except OverflowError:
+                retry_at = datetime.max.replace(tzinfo=UTC)
+            metadata = {
+                "attempts": attempts,
+                "provider_error": error.diagnostic(),
+                "retry_at": retry_at.isoformat(),
+            }
+            call.status = "rate_limited" if error.retryable else "provider_rejected"
+            call.response = metadata
+            await session.commit()
+            logger.info(
+                "agent.provider_rejected run_id=%s step=%s code=%s limits=%s",
+                run.id,
+                step,
+                error.code,
+                error.limits,
+            )
+            if not error.retryable or retry == settings.rate_limit_retries:
+                await pause(
+                    session,
+                    run,
+                    "paused_rate_limit" if error.retryable else "paused_provider",
+                    f"Provider HTTP 429: {error.code}; response diagnostics recorded, reservation retained",
+                )
+                return None
+            continue
+        except ProviderFailure:
+            call.status = "uncertain"
+            await pause(
+                session,
+                run,
+                "paused_uncertain",
+                "Remote request failed; reservation retained, no automatic retry",
+            )
+            return None
+        break
     try:
-        raw = await provider.post(route, payload)
+        if metadata.get("provider_error"):
+            raw = {**raw, "_retry_metadata": metadata}
         if embedding:
             input_tokens = raw.get("usage", {}).get("prompt_tokens")
             if type(input_tokens) is not int:

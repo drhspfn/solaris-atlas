@@ -113,7 +113,22 @@ recoverable by submitting the same request. A lost confirmation can already have
 delivered a message, so no new run is created for the repeat.
 
 Timeouts, invalid/missing usage and ambiguous outcomes retain their full reserve.
-No automatic paid retry is performed. Model-native reasoning items are kept for
+No automatic retry is performed for those uncertain outcomes. Temporary HTTP 429
+errors with `rate_limit_exceeded` or `slow_down` are different: the worker records
+the safe error code, numeric rate-limit headers and the next retry time, retaining
+one reservation for the current step. It retries at most three times, honoring
+`Retry-After` (seconds or HTTP date), then reset headers, or exponential backoff
+with jitter. Defaults cap the total waiting time at 180 seconds; a longer server
+delay defers the job instead of retrying early. Change these bounds through
+`AGENT_RATE_LIMIT_RETRIES`, `AGENT_RATE_LIMIT_BACKOFF_SECONDS` and
+`AGENT_RATE_LIMIT_WAIT_SECONDS`.
+
+Quota/spend-limit and unclassified 429 responses pause as `paused_provider` without
+automatic retry. Temporary throttling that exhausts the retry allowance pauses as
+`paused_rate_limit`; resume retains its cooldown and original reservation. Provider
+error messages, credentials and arbitrary headers are never logged or returned.
+This follows [OpenAI's rate-limit guidance](https://developers.openai.com/api/docs/guides/rate-limits).
+Model-native reasoning items are kept for
 continuation in private operational state; neither public nor admin endpoints
 expose raw provider responses, conversation checkpoints or API keys.
 

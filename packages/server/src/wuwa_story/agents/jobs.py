@@ -121,6 +121,8 @@ async def resume_analysis(
         "paused_config",
         "paused_steps",
         "paused_context",
+        "paused_rate_limit",
+        "paused_provider",
         "enqueue_failed",
     ):
         raise ValueError(
