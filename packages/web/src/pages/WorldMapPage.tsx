@@ -572,7 +572,11 @@ export function WorldMapPage() {
   );
   const sourceMarkerIds = useMemo(() => new Set(sourceMarkers.map((m) => m.id)), [sourceMarkers]);
   useEffect(() => {
-    if (loading || !base || !sourceItem || !sourceId) return;
+    if (!sourceItem || !sourceId) {
+      openedSource.current = '';
+      return;
+    }
+    if (loading || !base) return;
     const key = `${base.id}:${sourceItem}:${sourceId}`;
     if (openedSource.current === key) return;
     openedSource.current = key;
