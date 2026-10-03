@@ -1,7 +1,7 @@
 """Admin orchestration and public cited explanations; never expose native model reasoning."""
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -58,14 +58,17 @@ async def jobs(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     statement = (
-        select(ProcessingRun, AgentJob)
+        select(ProcessingRun, AgentJob.config, AgentJob.checkpoint["step"].as_integer())
         .join(AgentJob, AgentJob.run_id == ProcessingRun.id)
         .order_by(ProcessingRun.id.desc())
         .limit(limit)
     )
     if before:
         statement = statement.where(ProcessingRun.id < before)
-    rows = list((await session.execute(statement)).all())
+    rows = cast(
+        list[tuple[ProcessingRun, dict[str, Any], int | None]],
+        list((await session.execute(statement)).tuples().all()),
+    )
     return {
         "jobs": [
             {
@@ -76,11 +79,11 @@ async def jobs(
                 "tokens_input": run.tokens_input,
                 "tokens_output": run.tokens_output,
                 "cost_usd": run.cost,
-                "step": job.checkpoint.get("step", 0),
-                "max_steps": job.config["max_steps"],
-                "model": job.config["model"],
+                "step": step or 0,
+                "max_steps": config["max_steps"],
+                "model": config["model"],
             }
-            for run, job in rows
+            for run, config, step in rows
         ],
         "next_before": rows[-1][0].id if len(rows) == limit else None,
     }
