@@ -145,6 +145,8 @@ async def resume_analysis(
     if extra_steps:
         config_values["max_steps"] = min(100, config_values["max_steps"] + extra_steps)
     config = AgentSettings(_env_file=None, **config_values)
+    if run.status == "paused_steps" and config.max_steps <= job.checkpoint.get("step", 0):
+        raise ValueError("Increase extra_steps to resume; at most 100 research steps are allowed")
     if compact_context:
         if config.provider != "responses":
             raise ValueError("Context compaction requires the Responses provider")

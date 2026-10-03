@@ -514,6 +514,8 @@ async def test_step_pause_resumes_from_checkpoint_without_repeating_calls(world)
         await execute_job(run_id, engine, settings, client)
         async with AsyncSession(engine, expire_on_commit=False) as db:
             assert (await db.get(ProcessingRun, run_id)).status == "paused_steps"
+            with pytest.raises(ValueError, match="Increase extra_steps"):
+                await resume_analysis(db, run_id)
             await resume_analysis(db, run_id, extra_steps=1)
         await execute_job(run_id, engine, settings, client)
     assert len(calls) == 2
@@ -890,6 +892,64 @@ async def test_public_http_is_read_only_and_admin_requires_auth(world):
             )
         ).status_code == 422
         assert (await client.get("/admin/story-agent/usage")).status_code == 401
+
+
+async def test_admin_job_progress_and_resume_contract(world):
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+
+    from wuwa_story.api.routes import story_agent
+    from wuwa_story.auth.constants import UserRole
+    from wuwa_story.auth.dependencies import get_auth_context, require_csrf
+    from wuwa_story.db.session import get_session
+
+    engine, settings, *_ = world
+    run_id = await create(world)
+    app = FastAPI()
+    app.include_router(story_agent.admin)
+
+    async def session():
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            yield db
+
+    role = UserRole.USER
+
+    async def auth():
+        return SimpleNamespace(user=SimpleNamespace(role=role))
+
+    async def csrf():
+        pass
+
+    app.dependency_overrides[get_session] = session
+    app.dependency_overrides[get_auth_context] = auth
+    app.dependency_overrides[require_csrf] = csrf
+    app.dependency_overrides[story_agent.get_agent_settings] = lambda: settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        assert (await client.get("/admin/story-agent/jobs")).status_code == 403
+        role = UserRole.ADMIN
+        listing = (await client.get("/admin/story-agent/jobs", params={"limit": 1})).json()
+        assert listing["jobs"][0]["id"] == run_id
+        assert listing["jobs"][0]["max_steps"] == settings.max_steps
+        detail = (await client.get(f"/admin/story-agent/jobs/{run_id}")).json()
+        assert detail["limits"]["model"] == settings.model
+        assert "checkpoint" not in detail and "history" not in detail
+        assert "today" in (await client.get("/admin/story-agent/usage")).json()
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            run = await db.get(ProcessingRun, run_id)
+            run.status = "paused_steps"
+            job = await db.get(AgentJob, run_id)
+            job.checkpoint = {"step": settings.max_steps}
+            await db.commit()
+        assert (
+            await client.post(f"/admin/story-agent/jobs/{run_id}/resume", json={})
+        ).status_code == 422
+        resumed = await client.post(
+            f"/admin/story-agent/jobs/{run_id}/resume", json={"extra_steps": 2}
+        )
+        assert resumed.json()["status"] == "queued"
 
 
 async def test_source_links_and_bounded_transcript_focus(world):

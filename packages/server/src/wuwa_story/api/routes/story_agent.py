@@ -1,6 +1,8 @@
 """Admin orchestration and public cited explanations; never expose native model reasoning."""
 
+from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import Field
@@ -56,14 +58,14 @@ async def jobs(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     statement = (
-        select(ProcessingRun)
+        select(ProcessingRun, AgentJob)
         .join(AgentJob, AgentJob.run_id == ProcessingRun.id)
         .order_by(ProcessingRun.id.desc())
         .limit(limit)
     )
     if before:
         statement = statement.where(ProcessingRun.id < before)
-    runs = list(await session.scalars(statement))
+    rows = list((await session.execute(statement)).all())
     return {
         "jobs": [
             {
@@ -74,10 +76,13 @@ async def jobs(
                 "tokens_input": run.tokens_input,
                 "tokens_output": run.tokens_output,
                 "cost_usd": run.cost,
+                "step": job.checkpoint.get("step", 0),
+                "max_steps": job.config["max_steps"],
+                "model": job.config["model"],
             }
-            for run in runs
+            for run, job in rows
         ],
-        "next_before": runs[-1].id if len(runs) == limit else None,
+        "next_before": rows[-1][0].id if len(rows) == limit else None,
     }
 
 
@@ -100,6 +105,19 @@ async def job_status(run_id: int, session: AsyncSession = Depends(get_session)) 
         "request": run.metadata_json.get("request"),
         "result": run.raw_output,
         "error": run.error,
+        "cost_usd": run.cost,
+        "tokens_input": run.tokens_input,
+        "tokens_output": run.tokens_output,
+        "limits": {
+            key: job.config.get(key)
+            for key in (
+                "max_steps",
+                "max_input_tokens",
+                "max_tool_calls_per_step",
+                "provider",
+                "model",
+            )
+        },
         "calls": [
             {
                 "id": call.id,
@@ -193,6 +211,7 @@ async def usage(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
         "daily_budget_usd": str(settings.daily_budget_usd),
         "daily_token_limit": settings.daily_token_limit,
         "timezone": settings.budget_timezone,
+        "today": str(datetime.now(UTC).astimezone(ZoneInfo(settings.budget_timezone)).date()),
         "days": [
             {
                 "day": str(day.day),
