@@ -35,7 +35,12 @@ from wuwa_story.db.models.core import (
     VoiceReference,
 )
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision, NodeType
-from wuwa_story.db.models.i18n import Locale, LocalizationKey, LocalizationValue
+from wuwa_story.db.models.i18n import (
+    Locale,
+    LocalizationContent,
+    LocalizationKey,
+    LocalizationValue,
+)
 from wuwa_story.db.models.maps import MapMarker, MapTile, TileMap
 from wuwa_story.db.models.ontology import (
     EventType,
@@ -123,6 +128,7 @@ __all__ = [
     "NodeType",
     "Locale",
     "LocalizationKey",
+    "LocalizationContent",
     "LocalizationValue",
     "EventType",
     "NodeTag",
