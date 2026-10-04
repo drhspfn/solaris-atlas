@@ -54,6 +54,11 @@ Manual tests:
 7. At 390px width the sidebar scrolls above the map and the card's action fits
    within the viewport. Region switching does not transfer marks to the other
    source game-map identity.
+8. Switch to Statistics. Every eligible type has an icon, name, found/total count
+   and progress bar; plants, services and other ineligible types are absent.
+   Mark/undo from the selected card updates its row immediately, including its
+   completion indicator. Search and category visibility do not alter totals.
+   Switching back to Markers retains filters and the selected region.
 
 The feature was checked through these browser flows, domain tests and the web
 build. Broader existing lint/design-audit findings are separate from this change.

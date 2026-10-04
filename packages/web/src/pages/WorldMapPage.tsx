@@ -393,6 +393,7 @@ export function WorldMapPage() {
   const [filters, setFilters] = useMapPreferences(params, Object.keys(categories).join(','));
   const { found, showFound, storageError, setFound, setShowFound } = useMapProgress();
   const [shareStatus, setShareStatus] = useState('');
+  const [sidebarView, setSidebarView] = useState<'markers' | 'statistics'>('markers');
   const openedMarker = useRef('');
   const openedSource = useRef('');
   useEffect(() => {
@@ -724,6 +725,20 @@ export function WorldMapPage() {
   );
   const collection = scoped.filter(canMarkFound);
   const foundCount = collection.filter((m) => foundIds.has(m.id)).length;
+  const collectionTypes = useMemo(() => {
+    const groups = new Map<string, { marker: Marker; total: number; found: number }>();
+    for (const marker of scoped) {
+      if (!canMarkFound(marker)) continue;
+      const key = markerType(marker);
+      const group = groups.get(key) ?? { marker, total: 0, found: 0 };
+      group.total++;
+      if (foundIds.has(marker.id)) group.found++;
+      groups.set(key, group);
+    }
+    return [...groups.entries()].sort(
+      (a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0]),
+    );
+  }, [scoped, foundIds]);
   const types = useMemo(() => {
     const groups = new Map<string, { marker: Marker; count: number }>();
     for (const m of scoped) {
@@ -1014,7 +1029,7 @@ export function WorldMapPage() {
           )}{' '}
           <small> Floor placement is shown only where the game records it. </small>{' '}
         </details>{' '}
-        {search && (
+        {sidebarView === 'markers' && search && (
           <div className="atlas-search-result">
             {' '}
             <span>
@@ -1031,7 +1046,27 @@ export function WorldMapPage() {
             <button onClick={() => change('q', '')}>Clear search</button>{' '}
           </div>
         )}{' '}
-        <div className="atlas-global-controls" aria-label="All map markers">
+        <nav className="atlas-sidebar-views" aria-label="Map sidebar view">
+          <button
+            type="button"
+            aria-pressed={sidebarView === 'markers'}
+            onClick={() => setSidebarView('markers')}
+          >
+            Markers
+          </button>
+          <button
+            type="button"
+            aria-pressed={sidebarView === 'statistics'}
+            onClick={() => setSidebarView('statistics')}
+          >
+            Statistics
+          </button>
+        </nav>
+        <div
+          className="atlas-global-controls"
+          aria-label="All map markers"
+          hidden={sidebarView !== 'markers'}
+        >
           {' '}
           <span>Map markers</span>{' '}
           <div>
@@ -1098,153 +1133,216 @@ export function WorldMapPage() {
             </p>
           )}
         </section>
-        {menuGroups.map((group) => {
-          const entries = types.filter(
-            ([, item]) =>
-              group.categories.includes(item.marker.category) &&
-              (group.key === 'unidentified'
-                ? !item.marker.metadata.names?.en
-                : group.key !== 'featured' ||
-                  item.marker.category !== 'collectible' ||
-                  Boolean(item.marker.metadata.names?.en)) &&
-              (item.marker.category !== 'resource' ||
-                (item.marker.metadata.resource_group ?? 'gathering') === group.key) &&
-              (!search ||
-                `${objectName(item.marker)} ${item.marker.metadata.names?.en ?? ''} ${categories[item.marker.category]?.[0]} ${item.marker.blueprint_type}`
-                  .toLowerCase()
-                  .includes(search.toLowerCase())),
-          );
-          if (!entries.length) return null;
-          const keys = entries.map(([key]) => key);
-          const selectAll = () => {
-            const excluded = new Set(disabled.filter(Boolean));
-            for (const category of group.categories)
-              if (excluded.has(category)) {
-                excluded.delete(category);
-                markers
-                  .filter((m) => m.category === category)
-                  .forEach((m) => excluded.add(markerType(m)));
-              }
-            keys.forEach((key) => excluded.delete(key));
-            change('hide', [...excluded].join(','));
-          };
-          return (
-            <section className="atlas-menu-group" key={group.key}>
-              {' '}
-              <header
-                onClick={(event) => {
-                  if (!(event.target as Element).closest('button')) toggleGroup(group.key);
-                }}
-              >
-                {' '}
-                <h2>
-                  {' '}
-                  <button
-                    className="atlas-group-toggle"
-                    aria-expanded={!collapsedGroups.has(group.key)}
-                    aria-controls={`atlas-group-${group.key}`}
-                    onClick={() => toggleGroup(group.key)}
-                  >
-                    {' '}
-                    <span aria-hidden="true">
-                      {' '}
-                      {collapsedGroups.has(group.key) ? '+' : '−'}{' '}
-                    </span>{' '}
-                    {group.title}{' '}
-                  </button>{' '}
-                </h2>{' '}
-                <div>
-                  {' '}
-                  <button onClick={selectAll} aria-label={`Select all ${group.title}`}>
-                    {' '}
-                    Select all{' '}
-                  </button>{' '}
-                  <button
-                    onClick={() =>
-                      change('hide', [...new Set([...disabled.filter(Boolean), ...keys])].join(','))
-                    }
-                    aria-label={`Clear ${group.title}`}
-                  >
-                    {' '}
-                    Clear{' '}
-                  </button>{' '}
-                </div>{' '}
-              </header>{' '}
-              <div
-                id={`atlas-group-${group.key}`}
-                hidden={collapsedGroups.has(group.key)}
-                className={
-                  group.key === 'gathering' ? 'atlas-type-grid compact' : 'atlas-type-grid'
-                }
-              >
-                {' '}
-                {entries.map(([type, item]) => {
-                  const enabled =
-                    !disabled.includes(item.marker.category) && !disabled.includes(type);
-                  const title =
-                    item.marker.category === 'combat_activity'
-                      ? 'Dream Patrol'
-                      : objectName(item.marker);
+        {sidebarView === 'statistics' && (
+          <section
+            className="atlas-statistics"
+            aria-label="Collection statistics"
+            aria-busy={loading}
+          >
+            <h2>Collection statistics</h2>
+            <p className="atlas-statistics-scope">
+              Selected location and floor · all collectible types. Search and marker filters do not
+              affect these totals.
+            </p>
+            {loading ? (
+              <p role="status">Loading collection statistics…</p>
+            ) : error ? (
+              <p role="status">Statistics are unavailable until map data loads.</p>
+            ) : collectionTypes.length === 0 ? (
+              <p>
+                No trackable collectibles in this area. Try another location or include hidden game
+                placements.
+              </p>
+            ) : (
+              <ul className="atlas-statistics-list">
+                {collectionTypes.map(([type, group]) => {
+                  const title = objectName(group.marker);
                   return (
-                    <button
-                      key={type}
-                      className={enabled ? 'atlas-type-tile enabled' : 'atlas-type-tile'}
-                      aria-pressed={enabled}
-                      aria-label={`${title}, ${item.count} locations`}
-                      title={`${title} · ${item.count} locations`}
-                      onClick={() => toggleType(type, item.marker)}
-                      onFocus={() => setLastType(title)}
-                    >
-                      {' '}
-                      <ObjectIcon marker={item.marker} icons={base?.icons} />{' '}
-                      <span className="atlas-tile-name">{title}</span>{' '}
-                      <span className="atlas-tile-count"> {item.count.toLocaleString()} </span>{' '}
-                    </button>
+                    <li key={type} className={group.found === group.total ? 'is-complete' : ''}>
+                      <ObjectIcon marker={group.marker} icons={base?.icons} />
+                      <div className="atlas-statistics-type">
+                        <span>{title}</span>
+                        <div className="atlas-statistics-count">
+                          <span>
+                            {group.found.toLocaleString()} / {group.total.toLocaleString()} found
+                          </span>
+                          {group.found === group.total && (
+                            <CircleCheck size={14} aria-label="Complete" />
+                          )}
+                        </div>
+                        <progress
+                          value={group.found}
+                          max={group.total}
+                          aria-label={`${title}: found`}
+                        />
+                      </div>
+                    </li>
                   );
-                })}{' '}
-              </div>{' '}
-            </section>
-          );
-        })}{' '}
-        {lastType && (
-          <p className="atlas-last-type" role="status">
-            {' '}
-            {lastType}{' '}
-          </p>
-        )}{' '}
-        <details className="atlas-object-list">
-          {' '}
-          <summary>
-            {' '}
-            In this view · {filtered.filter((m) => visible.has(m.id)).length.toLocaleString()}{' '}
-          </summary>{' '}
-          {filtered
-            .filter((m) => visible.has(m.id))
-            .slice(0, listLimit)
-            .map((m) => (
-              <button
-                key={m.id}
-                className={`${selected?.id === m.id ? 'selected' : ''}${foundIds.has(m.id) ? ' is-found' : ''}`}
-                onClick={() => {
-                  setSelected(m);
-                  setFocus(m);
-                }}
-              >
+                })}
+              </ul>
+            )}
+          </section>
+        )}
+        {sidebarView === 'markers' && (
+          <>
+            {menuGroups.map((group) => {
+              const entries = types.filter(
+                ([, item]) =>
+                  group.categories.includes(item.marker.category) &&
+                  (group.key === 'unidentified'
+                    ? !item.marker.metadata.names?.en
+                    : group.key !== 'featured' ||
+                      item.marker.category !== 'collectible' ||
+                      Boolean(item.marker.metadata.names?.en)) &&
+                  (item.marker.category !== 'resource' ||
+                    (item.marker.metadata.resource_group ?? 'gathering') === group.key) &&
+                  (!search ||
+                    `${objectName(item.marker)} ${item.marker.metadata.names?.en ?? ''} ${categories[item.marker.category]?.[0]} ${item.marker.blueprint_type}`
+                      .toLowerCase()
+                      .includes(search.toLowerCase())),
+              );
+              if (!entries.length) return null;
+              const keys = entries.map(([key]) => key);
+              const selectAll = () => {
+                const excluded = new Set(disabled.filter(Boolean));
+                for (const category of group.categories)
+                  if (excluded.has(category)) {
+                    excluded.delete(category);
+                    markers
+                      .filter((m) => m.category === category)
+                      .forEach((m) => excluded.add(markerType(m)));
+                  }
+                keys.forEach((key) => excluded.delete(key));
+                change('hide', [...excluded].join(','));
+              };
+              return (
+                <section className="atlas-menu-group" key={group.key}>
+                  {' '}
+                  <header
+                    onClick={(event) => {
+                      if (!(event.target as Element).closest('button')) toggleGroup(group.key);
+                    }}
+                  >
+                    {' '}
+                    <h2>
+                      {' '}
+                      <button
+                        className="atlas-group-toggle"
+                        aria-expanded={!collapsedGroups.has(group.key)}
+                        aria-controls={`atlas-group-${group.key}`}
+                        onClick={() => toggleGroup(group.key)}
+                      >
+                        {' '}
+                        <span aria-hidden="true">
+                          {' '}
+                          {collapsedGroups.has(group.key) ? '+' : '−'}{' '}
+                        </span>{' '}
+                        {group.title}{' '}
+                      </button>{' '}
+                    </h2>{' '}
+                    <div>
+                      {' '}
+                      <button onClick={selectAll} aria-label={`Select all ${group.title}`}>
+                        {' '}
+                        Select all{' '}
+                      </button>{' '}
+                      <button
+                        onClick={() =>
+                          change(
+                            'hide',
+                            [...new Set([...disabled.filter(Boolean), ...keys])].join(','),
+                          )
+                        }
+                        aria-label={`Clear ${group.title}`}
+                      >
+                        {' '}
+                        Clear{' '}
+                      </button>{' '}
+                    </div>{' '}
+                  </header>{' '}
+                  <div
+                    id={`atlas-group-${group.key}`}
+                    hidden={collapsedGroups.has(group.key)}
+                    className={
+                      group.key === 'gathering' ? 'atlas-type-grid compact' : 'atlas-type-grid'
+                    }
+                  >
+                    {' '}
+                    {entries.map(([type, item]) => {
+                      const enabled =
+                        !disabled.includes(item.marker.category) && !disabled.includes(type);
+                      const title =
+                        item.marker.category === 'combat_activity'
+                          ? 'Dream Patrol'
+                          : objectName(item.marker);
+                      return (
+                        <button
+                          key={type}
+                          className={enabled ? 'atlas-type-tile enabled' : 'atlas-type-tile'}
+                          aria-pressed={enabled}
+                          aria-label={`${title}, ${item.count} locations`}
+                          title={`${title} · ${item.count} locations`}
+                          onClick={() => toggleType(type, item.marker)}
+                          onFocus={() => setLastType(title)}
+                        >
+                          {' '}
+                          <ObjectIcon marker={item.marker} icons={base?.icons} />{' '}
+                          <span className="atlas-tile-name">{title}</span>{' '}
+                          <span className="atlas-tile-count">
+                            {' '}
+                            {item.count.toLocaleString()}{' '}
+                          </span>{' '}
+                        </button>
+                      );
+                    })}{' '}
+                  </div>{' '}
+                </section>
+              );
+            })}{' '}
+            {lastType && (
+              <p className="atlas-last-type" role="status">
                 {' '}
-                <ObjectIcon marker={m} icons={base?.icons} /> {objectName(m)}{' '}
-                {foundIds.has(m.id) && <span className="atlas-found-label">Found</span>}
-              </button>
-            ))}{' '}
-          {filtered.filter((m) => visible.has(m.id)).length > listLimit && (
-            <button onClick={() => setListLimit((n) => n + mapSettings.listPageSize)}>
+                {lastType}{' '}
+              </p>
+            )}{' '}
+            <details className="atlas-object-list">
               {' '}
-              Show more objects{' '}
-            </button>
-          )}{' '}
-          {!loading && !filtered.length && (
-            <p>No objects match. Clear the search, show all categories or show found markers.</p>
-          )}{' '}
-        </details>{' '}
+              <summary>
+                {' '}
+                In this view ·{' '}
+                {filtered.filter((m) => visible.has(m.id)).length.toLocaleString()}{' '}
+              </summary>{' '}
+              {filtered
+                .filter((m) => visible.has(m.id))
+                .slice(0, listLimit)
+                .map((m) => (
+                  <button
+                    key={m.id}
+                    className={`${selected?.id === m.id ? 'selected' : ''}${foundIds.has(m.id) ? ' is-found' : ''}`}
+                    onClick={() => {
+                      setSelected(m);
+                      setFocus(m);
+                    }}
+                  >
+                    {' '}
+                    <ObjectIcon marker={m} icons={base?.icons} /> {objectName(m)}{' '}
+                    {foundIds.has(m.id) && <span className="atlas-found-label">Found</span>}
+                  </button>
+                ))}{' '}
+              {filtered.filter((m) => visible.has(m.id)).length > listLimit && (
+                <button onClick={() => setListLimit((n) => n + mapSettings.listPageSize)}>
+                  {' '}
+                  Show more objects{' '}
+                </button>
+              )}{' '}
+              {!loading && !filtered.length && (
+                <p>
+                  No objects match. Clear the search, show all categories or show found markers.
+                </p>
+              )}{' '}
+            </details>{' '}
+          </>
+        )}
       </aside>{' '}
       <div className="atlas-map-area">
         {' '}

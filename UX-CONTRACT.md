@@ -63,6 +63,15 @@ announced accessibly. Other tabs refresh from storage events. Failed storage
 writes keep session state and show an inline warning. This does not infer game
 completion, change game data or synchronize accounts/devices.
 
+The map sidebar switches between Markers and Statistics using native pressed
+buttons. Switching preserves the region, location, floor, filters and selected
+object. Statistics lists every eligible collection type in the same scope as the
+overall count, with its existing icon, localized name, found/total count and a
+native progress bar. Completed types also have a named completion icon. Search,
+category visibility and Show found markers never change these totals. Counts
+update immediately on mark/undo; loading, unavailable data and an empty collection
+scope are explicit. Sidebar view selection is transient.
+
 ## Data and asynchronous behavior
 
 The region selector names regions, not client versions. It shows the latest
