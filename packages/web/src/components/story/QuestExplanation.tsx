@@ -6,6 +6,7 @@ import { api } from '../../api/client';
 import type { ExplanationResponse } from '../../data/explanations';
 import { availableLocales } from '../../data/locales';
 import { ExplanationBlocks } from './ExplanationBlocks';
+import { ExplanationContext, ExplanationFollowUps } from './ExplanationContext';
 import { ExplanationSources } from './ExplanationSources';
 
 export function QuestExplanation({
@@ -73,7 +74,9 @@ export function QuestExplanation({
                 . Source passages retain their original language.
               </p>
             )}
+            <ExplanationContext explanation={explanation} />
             <ExplanationBlocks explanation={explanation} />
+            <ExplanationFollowUps explanation={explanation} />
             {explanation.links.length > 0 && (
               <section className="explanation-context" aria-label="Graph edges">
                 <h3>Graph edges</h3>
@@ -97,6 +100,9 @@ export function QuestExplanation({
                         {to ? <Link to={to.href}>{to.label}</Link> : <span>Related record</span>}
                       </div>
                       <p>{link.explanation}</p>
+                      {link.certainty && (
+                        <span className="explanation-badge">{link.certainty}</span>
+                      )}
                       {link.confidence != null && (
                         <span className="explanation-edge-confidence">
                           Agent confidence · {Math.round(link.confidence * 100)}%

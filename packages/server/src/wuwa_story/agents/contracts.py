@@ -204,6 +204,7 @@ class InferredEvent(StrictModel):
 
 class HookReview(StrictModel):
     hook_key: str = Field(pattern=r"^[a-z][a-z0-9_-]{2,63}$")
+    priority: Priority
     status: Literal[
         "resolved", "partial", "suggested", "contradicted", "unresolved_in_loaded_corpus"
     ]

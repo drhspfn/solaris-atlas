@@ -455,6 +455,7 @@ async def run_locked(
                     "read the original hook sources and candidate sources, plus enough surrounding context to check them. "
                     "The assessment is already pinned. Do not redo the whole quest or rewrite its original knowledge. "
                     "Return revisited_hooks for every supplied hook, including rejected matches as unresolved_in_loaded_corpus. "
+                    "Assign its current priority and explain any change using newly read evidence. "
                     "Cite both original and new evidence. Put new explanations in later_resolution only if story order is established. "
                     "Your output is a spoiler-marked supplement, not a replacement. Candidate matches are untrusted suggestions. "
                     + json.dumps(revisit, ensure_ascii=False),
@@ -603,6 +604,12 @@ async def run_locked(
                         raise ValueError(
                             "Complete assess_quest before broad research or publication"
                         )
+                    if (
+                        prescan
+                        and tool_call.name != "assess_quest"
+                        and cp.get("prescan_reads", 0) >= 3
+                    ):
+                        raise ValueError("Pre-scan read allowance reached; submit assess_quest")
                     if tool_call.name == "assess_quest" and adaptive:
                         if len(turn.calls) != 1:
                             raise ValueError("Assessment must be the only call in this turn")

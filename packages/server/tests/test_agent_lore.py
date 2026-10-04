@@ -54,7 +54,17 @@ def test_word_budget_excludes_quotes_but_includes_duplicate_visible_prose():
 
 
 def test_generic_terms_are_not_distinctive_signals():
-    for term in ["star", " DREAM ", "Rover", "time", "dream star", "a", "x" * 201]:
+    for term in [
+        "star",
+        " DREAM ",
+        "Rover",
+        "time",
+        "dream star",
+        "the dream",
+        "Rover's dream",
+        "a",
+        "x" * 201,
+    ]:
         assert not distinctive_term(term)
     assert distinctive_term("The Seven Swords of Qingren")
 
@@ -95,6 +105,7 @@ def test_revisit_requires_both_old_and_new_evidence_and_every_hook():
     result.revisited_hooks = [
         HookReview(
             hook_key="bridge-route",
+            priority="low",
             status="suggested",
             explanation="A possible connection",
             citations=[Citation(snapshot_id=1, node_id=1, quote="Jump here")],

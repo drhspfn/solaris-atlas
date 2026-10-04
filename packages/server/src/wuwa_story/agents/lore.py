@@ -21,8 +21,42 @@ BASE_DEPTH: dict[str, Depth] = {
     "tutorial_activity": "very_short",
     "service_repeatable": "very_short",
 }
+WEIGHT_WORD_LIMITS = {
+    "service_repeatable": 100,
+    "tutorial_activity": 200,
+    "side_flavor": 400,
+    "worldbuilding": 400,
+    "side_hook": 800,
+    "region_lore": 1200,
+    "character_arc": 1800,
+    "main_plot": 3000,
+}
 GENERIC_TERMS = frozenset(
-    {"star", "dream", "hero", "light", "darkness", "memory", "time", "echo", "rover"}
+    {
+        "star",
+        "dream",
+        "hero",
+        "light",
+        "darkness",
+        "memory",
+        "time",
+        "echo",
+        "rover",
+        "the",
+        "a",
+        "an",
+        "of",
+        "and",
+        "to",
+        "in",
+        "on",
+        "at",
+        "for",
+        "with",
+        "from",
+        "about",
+        "s",
+    }
 )
 
 
@@ -47,7 +81,12 @@ def assessment_policy(assessment: QuestAssessment) -> dict[str, Any]:
         if not assessment.upgrade_reason:
             raise ValueError("Explain why this small quest requires medium analysis")
         depth = "medium"
-    return {"depth": depth, **PROFILES[depth]}
+    policy = {"depth": depth, **PROFILES[depth]}
+    if depth == BASE_DEPTH[assessment.narrative_weight]:
+        policy["words"] = min(
+            PROFILES[depth]["words"], WEIGHT_WORD_LIMITS[assessment.narrative_weight]
+        )
+    return policy
 
 
 def prose_words(value: Any, key: str = "") -> int:
@@ -113,5 +152,10 @@ def validate_lore_result(result: AnalysisResult, assessment: QuestAssessment) ->
         kinds = {signal.kind for signal in link.signals}
         if not kinds or any(not distinctive_term(signal.value) for signal in link.signals):
             raise ValueError("Graph links require distinctive sourced signals")
-        if link.confidence >= 0.75 and "direct_reference" not in kinds and len(kinds) < 2:
+        values = {" ".join(signal.value.casefold().split()) for signal in link.signals}
+        if (
+            link.confidence >= 0.75
+            and "direct_reference" not in kinds
+            and (len(kinds) < 2 or len(values) < 2)
+        ):
             raise ValueError("Strong links need a direct reference or two independent signal types")

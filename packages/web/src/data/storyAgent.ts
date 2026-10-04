@@ -2,6 +2,7 @@ import { APP_SETTINGS } from '../config/settings.ts';
 
 export type AgentRequest = { quest_id: number; game_version: string; locale: string };
 export type AgentJob = {
+  mode?: 'analysis' | 'revisit';
   id: number;
   status: string;
   request: AgentRequest | null;
@@ -27,6 +28,8 @@ export type AgentCall = {
   provider_error: { code: string; retry_after_seconds: number | null } | null;
 };
 export type AgentDetail = Omit<AgentJob, 'max_steps' | 'model'> & {
+  assessment?: { narrative_weight: string; hook_priority: string; reason: string } | null;
+  policy?: { depth: string; words: number } | null;
   limits: {
     max_steps: number;
     max_input_tokens: number;

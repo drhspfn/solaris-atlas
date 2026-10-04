@@ -769,6 +769,7 @@ async def test_import_revisit_outbox_recovers_and_preserves_original(world, monk
         final.revisited_hooks = [
             HookReview(
                 hook_key="crossing-route",
+                priority="low",
                 status="unresolved_in_loaded_corpus",
                 explanation="The newly inspected line still does not identify the route.",
                 citations=[
@@ -1838,7 +1839,9 @@ async def test_admin_job_progress_and_resume_contract(world, monkeypatch):
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
         assert (await client.get("/admin/story-agent/jobs")).status_code == 403
+        assert (await client.get("/admin/story-agent/revisits")).status_code == 403
         role = UserRole.ADMIN
+        assert (await client.get("/admin/story-agent/revisits")).status_code == 200
         created = await client.post("/admin/story-agent/jobs", json={"quest_id": world[2].quest_id})
         assert created.status_code == 202 and created.json()["id"] == run_id
         assert (

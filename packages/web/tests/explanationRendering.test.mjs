@@ -6,13 +6,18 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { createServer } from 'vite';
 
-import { storyExplanation } from './fixtures/storyExplanation.mjs';
+import { adaptiveExplanation, storyExplanation } from './fixtures/storyExplanation.mjs';
 
 let vite;
 let ExplanationBlocks;
+let ExplanationContext;
+let ExplanationFollowUps;
 before(async () => {
   vite = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
   ({ ExplanationBlocks } = await vite.ssrLoadModule('/src/components/story/ExplanationBlocks.tsx'));
+  ({ ExplanationContext, ExplanationFollowUps } = await vite.ssrLoadModule(
+    '/src/components/story/ExplanationContext.tsx',
+  ));
 });
 after(async () => {
   await vite?.close();
@@ -61,4 +66,40 @@ test('source disclosures identify their own patch version', () => {
     })),
   };
   assert.ok(render({ ...storyExplanation, blocks: [block] }).includes('2.1.0'));
+});
+
+test('adaptive knowledge, corpus limits and supplemental spoilers remain separate', () => {
+  const html = renderToStaticMarkup(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(ExplanationContext, { explanation: adaptiveExplanation }),
+      createElement(ExplanationFollowUps, { explanation: adaptiveExplanation }),
+    ),
+  );
+  for (const text of [
+    'main plot',
+    'What this quest establishes',
+    'Cannot conclude',
+    'Open threads',
+    'Flagged for review',
+    'New context · spoilers',
+    'high priority after review',
+  ])
+    assert.ok(html.includes(text), text);
+  assert.ok(!html.includes('<details open'));
+  assert.ok(!html.includes('href="#"'));
+});
+
+test('choice occurrence and character speculation cannot look like unconditional facts', () => {
+  const fixture = structuredClone(storyExplanation);
+  const claim = fixture.blocks[0].assertions[0];
+  claim.status = 'character_speculation';
+  claim.occurrence = 'player_choice';
+  claim.condition = 'Only when this answer is selected';
+  const html = render(fixture);
+  assert.ok(html.includes('Character speculation'));
+  assert.ok(html.includes('player choice'));
+  assert.ok(html.includes(claim.condition));
+  assert.ok(html.includes('in the loaded corpus'));
 });

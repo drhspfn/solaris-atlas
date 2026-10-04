@@ -2,6 +2,15 @@
 
 ## Cited story explanations
 
+V5 explanations disclose narrative role, loaded source versions and known/unknown/
+cannot-conclude boundaries. Assertion certainty and branch occurrence are separate
+labels. Absence claims are limited to the loaded corpus. Open threads show priority
+and whether new imports should trigger review. New context appears in a closed
+spoiler disclosure with its own citations; the original analysis is retained.
+These sections reuse ExplanationSources and native details/summary keyboard and
+touch behavior. The admin's import review list uses cursor pagination, the same
+run status labels, explicit loading/empty/error/retry states and existing run links.
+
 Quest pages show published AI interpretations in a separate native details section,
 below continuity and above the source transcript. Interpretations never replace
 authored dialogue. Source buttons are native disclosures: Enter/Space opens the
