@@ -53,6 +53,33 @@ test('placement keys survive reimport IDs and isolate different regions', () => 
   assert.notEqual(mapProgressKey(8, { entity_id: 120 }), mapProgressKey(102, { entity_id: 120 }));
 });
 
+test('source collection identity works without English labels and rejects unknown types', () => {
+  for (const kind of [
+    'sonance_casket',
+    'sonance_casket_ragunna',
+    'sonance_casket_septimont',
+    'windchimer',
+    'unclaimed_rafter_kite',
+    'tape_of_last_words',
+    'blobfly',
+    'frostbug',
+  ]) {
+    assert.equal(
+      canMarkFound({ entity_id: 1, category: 'collectible', metadata: { collection_kind: kind } }),
+      true,
+      kind,
+    );
+  }
+  assert.equal(
+    canMarkFound({
+      entity_id: 1,
+      category: 'collectible',
+      metadata: { collection_kind: 'plant', names: { en: 'Sonance Casket' } },
+    }),
+    false,
+  );
+});
+
 test('damaged or unsupported storage is ignored without accepting unsafe identities', () => {
   for (const saved of [null, '{', 'null', '[]', '{"version":2,"found":["8:120"]}']) {
     assert.equal(readMapProgress(saved).found.size, 0);

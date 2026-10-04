@@ -10,11 +10,34 @@ patch. New exports retain progress when the source placement identity is retaine
 The store does not assume that unrelated source identities represent the same
 object. Account/device synchronization is not implemented.
 
-Only chests and explicitly named Sonance Casket, Windchimer and Unclaimed Rafter
-Kite pickups are eligible. Older imports also categorize respawning plants and
-permanent collectors as `collectible`; they must not receive completion controls.
-New collectible types need confirmed source classification before eligibility
-is extended. Hidden source pickups also require Include hidden game placements.
+Chests and verified `collection_kind` placements are eligible: Sonance Casket
+(Huanglong, Ragunna, Septimont), Windchimer, Unclaimed Rafter Kite, Tape of Last
+Words, Blobfly and Frostbug. The compact marker API retains this identity so
+completion does not depend on English display names. Older imports retain a
+strict name fallback for Caskets, Windchimers and Kites. Respawning plants and
+permanent collectors must not receive completion controls.
+
+The 3.7 reader identifies these placements using `BaseInfoComponent.Category.
+ExploratoryDegree` and an enabled server reward plan. It merges placement
+overrides before classification. Shared MapIcon/blueprint names alone cannot
+identify a pickup: quest props reuse them. Windchimers can have a disabled
+CollectComponent because they are claimed by hitting them. Item names/icons
+provide the canonical Casket groups; Blobfly/Frostbug use map type icons.
+Server reward plans do not establish client drop-preview evidence.
+
+The source audit found 126 Huanglong Caskets (one hidden), 95 Ragunna Caskets,
+85 Septimont Caskets, 61 Windchimers, 130 Tapes, 90 typed Kites, 43 Blobflies
+and 10 Frostbugs on published map IDs. These are source placements, not verified
+playable completion totals. Hidden placements still require Include hidden game
+placements. Published marker IDs and browser progress identities survive upserts.
+
+Cross-check references: [Casket family](https://wutheringwaves.fandom.com/wiki/Casket),
+[exploration categories](https://game8.co/games/Wuthering-Waves/archives/490735),
+[Soliskins](https://game8.co/games/Wuthering-Waves/archives/572345).
+Soliskin / Soliseed of Essehalo needs separate placement evidence: the 3.7
+ExploratoryTypeConfig key 61 has no matching published level entities, and the
+server reward plan alone does not prove which props award the item. Viewpoints,
+quests and puzzles are not made markable through a guessed collectible label.
 
 ## Verification
 

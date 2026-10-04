@@ -62,6 +62,7 @@ type Marker = {
     item_id?: number;
     drop_item_ids?: number[];
     resource_group?: string;
+    collection_kind?: string;
   };
 };
 const categories: Record<string, [string, string]> = {

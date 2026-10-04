@@ -1,13 +1,25 @@
 type CollectionMarker = {
   entity_id: number;
   category: string;
-  metadata: { names?: Record<string, string> };
+  metadata: { names?: Record<string, string>; collection_kind?: string };
 };
 
 /** Collectible is also used for respawning plants in older map imports. */
 export function canMarkFound(marker: CollectionMarker): boolean {
   if (marker.category === 'chest') return true;
   if (marker.category !== 'collectible') return false;
+  if (marker.metadata.collection_kind) {
+    return [
+      'sonance_casket',
+      'sonance_casket_ragunna',
+      'sonance_casket_septimont',
+      'windchimer',
+      'unclaimed_rafter_kite',
+      'tape_of_last_words',
+      'blobfly',
+      'frostbug',
+    ].includes(marker.metadata.collection_kind);
+  }
   const name = marker.metadata.names?.en?.trim() ?? '';
   return /^(?:sonance casket(?:\s*[:(].*)?|windchimer|unclaimed rafter kite)$/i.test(name);
 }

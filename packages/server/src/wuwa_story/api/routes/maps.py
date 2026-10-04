@@ -112,6 +112,6 @@ async def map_markers(map_id: int, category: str | None = None,
          "pixel": [(marker.world_x - (row.min_x - 1) * row.world_tile_size) * scale,
                    (marker.world_y + row.max_y * row.world_tile_size) * scale],
          "metadata": ({key: value for key, value in marker.metadata_json.items()
-                       if key in ("names", "description", "type_key", "area_ids", "floor", "hidden", "condition_id", "item_id", "icon_source", "resource_group", "drop_item_ids")}
+                       if key in ("names", "description", "type_key", "area_ids", "floor", "hidden", "condition_id", "item_id", "icon_source", "resource_group", "drop_item_ids", "collection_kind")}
                       if compact else marker.metadata_json)} for marker in markers],
         "next_after_id": markers[-1].id if more else None}
