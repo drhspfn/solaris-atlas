@@ -1,5 +1,6 @@
 import { type RefObject, useEffect, useRef, useState } from 'react';
 
+import { playbackVolume } from './cutsceneTimeline';
 import type { CutsceneAudioTrack } from './QuestMediaReferences';
 
 /** Video is the clock; all stems use the uncut movie timeline. */
@@ -8,11 +9,13 @@ export function CutsceneSound({
   tracks,
   offset,
   volume,
+  musicVolume,
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
   tracks: CutsceneAudioTrack[];
   offset: number;
   volume: number;
+  musicVolume: number;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -138,9 +141,9 @@ export function CutsceneSound({
   }, [identity, offset, videoRef]);
   useEffect(() => {
     root.current?.querySelectorAll('audio').forEach((track) => {
-      track.volume = volume;
+      track.volume = playbackVolume(volume, musicVolume, track.dataset.cutsceneStem || '');
     });
-  }, [volume, identity]);
+  }, [volume, musicVolume, identity]);
   return (
     <div ref={root}>
       {tracks.map((track) => (

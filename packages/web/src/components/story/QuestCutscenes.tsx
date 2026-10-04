@@ -1,10 +1,13 @@
-import { Film, Maximize, Minimize, Music2, RotateCcw } from 'lucide-react';
+import { Film } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { APP_SETTINGS } from '../../config/settings';
 import { usePlayerDisplay } from '../../hooks/usePlayerDisplay';
 import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
 import { PlayerText } from '../dialogue/PlayerText';
+import { CutsceneControls } from './CutsceneControls';
 import { CutsceneSound } from './CutsceneSound';
+import { cutsceneTimeline, timelineTarget } from './cutsceneTimeline';
 import { preferredRoverTarget } from './preferredRover';
 import {
   type CutsceneFlow,
@@ -73,9 +76,14 @@ function FlowPlayer({
 }) {
   const { preferredRover, voiceLanguage, setVoiceLanguage } = useNarrativePreferences();
   const playerDisplay = usePlayerDisplay();
-  const [musicEnabled, setMusicEnabled] = useState(true);
+  const [musicVolume, setMusicVolume] = useState<number>(APP_SETTINGS.cutscene.musicLevel);
+  const [playing, setPlaying] = useState(false);
+  const [choices, setChoices] = useState<Record<string, string>>({});
+  const [durations, setDurations] = useState<Record<string, number>>({});
+  const pendingTime = useRef<number | null>(null);
+  const pendingSeek = useRef<number | null>(null);
   const [subtitles, setSubtitles] = useState(true);
-  const [volume, setVolume] = useState(1);
+  const [volume, setVolume] = useState<number>(APP_SETTINGS.cutscene.masterVolume);
   const [time, setTime] = useState(0);
   const entry =
     preferredRoverTarget(
@@ -103,11 +111,15 @@ function FlowPlayer({
   const languages =
     tracks?.filter((track) => track.role === 'voice').map((track) => track.language) || [];
   const selectedTracks =
-    tracks?.filter(
-      (track) =>
-        (track.role !== 'voice' || track.language === voiceLanguage) &&
-        (track.role !== 'music' || musicEnabled),
-    ) || [];
+    tracks?.filter((track) => track.role !== 'voice' || track.language === voiceLanguage) || [];
+  const timeline = cutsceneTimeline(flow, choices, preferredRover, durations);
+  const timelineClip = timeline.clips.find((entry) => entry.id === clipId);
+  const position =
+    node?.kind === 'choice'
+      ? timeline.decisions.find((entry) => entry.id === node.id)?.time || 0
+      : !node
+        ? timeline.total
+        : (timelineClip?.start || 0) + Math.max(0, time - (activeClip?.start || 0));
   const cues = captions?.[voiceLanguage] || [];
   const absoluteTime = time + (source?.timeline_offset || 0);
 
@@ -123,12 +135,18 @@ function FlowPlayer({
       videoRef.current?.pause();
       continuePlaying.current = play;
       const requested = flow.nodes.find((entry) => entry.id === next);
-      next = preferredRoverTarget(requested, preferredRover) || next;
+      next =
+        (requested?.kind === 'choice' ? choices[requested.id] : null) ||
+        preferredRoverTarget(requested, preferredRover) ||
+        next;
       const target = flow.nodes.find((entry) => entry.id === next);
       if (target?.kind === 'clip') {
         setClipId(target.id);
-        if (target.id === clipId && videoRef.current) {
-          videoRef.current.currentTime = target.start;
+        if (target.id === clipId && videoRef.current && videoRef.current.readyState >= 1) {
+          videoRef.current.currentTime = pendingTime.current ?? target.start;
+          pendingTime.current = null;
+          setTime(videoRef.current.currentTime);
+          if (play) void videoRef.current.play().catch(() => setFailed(true));
           transitioning.current = false;
         }
       }
@@ -136,7 +154,7 @@ function FlowPlayer({
       setFailed(false);
       if (target?.kind !== 'clip') transitioning.current = false;
     },
-    [clipId, flow.nodes, preferredRover],
+    [clipId, flow.nodes, preferredRover, choices],
   );
 
   useEffect(() => {
@@ -165,12 +183,45 @@ function FlowPlayer({
     return () => video.cancelVideoFrameCallback(callbackId);
   }, [node, advance]);
 
-  useEffect(() => {
+  const seek = (position: number) => {
+    const target = timelineTarget(timeline, position);
+    if (!target) return;
+    if (position >= timeline.total && target.time !== null) {
+      transitioning.current = false;
+      pendingTime.current = null;
+      pendingSeek.current = null;
+      advance(null, false);
+      return;
+    }
+    pendingSeek.current = target.time === null ? position : null;
+    pendingTime.current = target.time;
+    transitioning.current = false;
+    advance(target.id, !videoRef.current?.paused);
+  };
+  const togglePlay = () => {
     const video = videoRef.current;
-    if (node?.kind !== 'clip' || !video || video.readyState < 1) return;
-    video.currentTime = node.start;
-    if (continuePlaying.current) void video.play().catch(() => {});
-  }, [node]);
+    if (!video) return;
+    if (!node) {
+      transitioning.current = false;
+      advance(flow.entry);
+    } else if (node.kind === 'clip') {
+      if (video.paused) void video.play().catch(() => setFailed(true));
+      else {
+        continuePlaying.current = false;
+        video.pause();
+      }
+    } else choiceRef.current?.querySelector('button')?.focus();
+  };
+  const fullscreen = () => {
+    setFullscreenFailed(false);
+    const operation = document.fullscreenElement
+      ? document.exitFullscreen()
+      : stageRef.current?.requestFullscreen();
+    void operation?.catch(() => setFullscreenFailed(true));
+  };
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.volume = volume;
+  }, [volume, clipId]);
 
   if (!source || !activeClip) return null;
   const interactive = (node?.kind === 'choice' && !automaticTarget) || !node;
@@ -180,113 +231,32 @@ function FlowPlayer({
         <h3>
           <Film size={18} /> Cutscene · {title}
         </h3>
-        <div className="cutscene-actions">
-          <button
-            className="cutscene-restart"
-            type="button"
-            title="Fullscreen"
-            aria-label="Fullscreen"
-            onClick={() => {
-              setFullscreenFailed(false);
-              const operation = document.fullscreenElement
-                ? document.exitFullscreen()
-                : stageRef.current?.requestFullscreen();
-              void operation?.catch(() => setFullscreenFailed(true));
-            }}
-          >
-            <Maximize size={16} />
-          </button>
-          <button
-            className="cutscene-restart"
-            type="button"
-            title="Restart cutscene"
-            aria-label="Restart cutscene"
-            onClick={() => {
-              transitioning.current = false;
-              advance(flow.entry, false);
-            }}
-          >
-            <RotateCcw size={16} />
-          </button>
-        </div>
       </header>
-      <div className="cutscene-settings">
-        {tracks && languages.length > 0 && (
-          <label>
-            Voice
-            <select
-              aria-label={`Voice language for ${title}`}
-              value={voiceLanguage}
-              onChange={(event) => setVoiceLanguage(event.target.value as typeof voiceLanguage)}
-            >
-              {(
-                [
-                  ['en', 'English'],
-                  ['ja', 'Japanese'],
-                  ['ko', 'Korean'],
-                  ['zh', 'Chinese'],
-                ] as const
-              ).map(([code, label]) => (
-                <option key={code} value={code} disabled={!languages.includes(code)}>
-                  {label}
-                  {!languages.includes(code) ? ' · unavailable' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <label>
-          <input
-            type="checkbox"
-            checked={subtitles}
-            disabled={!cues.length}
-            onChange={(event) => setSubtitles(event.target.checked)}
-          />
-          Subtitles
-        </label>
-        {tracks?.some((track) => track.role === 'music') && (
-          <button
-            type="button"
-            aria-pressed={musicEnabled}
-            onClick={() => setMusicEnabled((value) => !value)}
-          >
-            <Music2 size={15} aria-hidden="true" />
-            Music {musicEnabled ? 'on' : 'off'}
-          </button>
-        )}
-        {tracks && (
-          <label>
-            Volume
-            <input
-              aria-label={`Volume for ${title}`}
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value={volume}
-              onChange={(event) => setVolume(Number(event.target.value))}
-            />
-          </label>
-        )}
-      </div>
       {tracks && languages.length > 0 && !languages.includes(voiceLanguage) && (
         <p role="status">Selected voice language is unavailable for this scene.</p>
       )}
-      <div className="cutscene-stage" ref={stageRef}>
-        <button
-          className="cutscene-exit-fullscreen cutscene-restart"
-          type="button"
-          title="Exit fullscreen"
-          aria-label="Exit fullscreen"
-          onClick={() => void document.exitFullscreen().catch(() => setFullscreenFailed(true))}
-        >
-          <Minimize size={16} />
-        </button>
+      <div
+        className="cutscene-stage"
+        ref={stageRef}
+        tabIndex={0}
+        aria-label={`Player for ${title}`}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget && event.target !== videoRef.current) return;
+          const key = event.key.toLowerCase();
+          if ([' ', 'k', 'm', 'f', 'c', 'arrowleft', 'arrowright'].includes(key))
+            event.preventDefault();
+          if (key === ' ' || key === 'k') togglePlay();
+          if (key === 'm') setVolume((value) => (value ? 0 : APP_SETTINGS.cutscene.masterVolume));
+          if (key === 'f') fullscreen();
+          if (key === 'c' && cues.length) setSubtitles((value) => !value);
+          if (key === 'arrowleft' || key === 'arrowright')
+            seek(position + (key === 'arrowleft' ? -1 : 1) * APP_SETTINGS.cutscene.seekSeconds);
+        }}
+      >
         <video
           key={clipId}
           ref={videoRef}
-          controls={!interactive}
-          controlsList="nofullscreen"
+          controls={false}
           disablePictureInPicture
           playsInline
           preload="metadata"
@@ -294,8 +264,16 @@ function FlowPlayer({
           src={source.url}
           aria-label="Cutscene video"
           onLoadedMetadata={(event) => {
-            event.currentTarget.currentTime = activeClip.start;
-            setTime(activeClip.start);
+            if (event.currentTarget !== videoRef.current) return;
+            event.currentTarget.currentTime = pendingTime.current ?? activeClip.start;
+            pendingTime.current = null;
+            setTime(event.currentTarget.currentTime);
+            const duration = event.currentTarget.duration;
+            if (Number.isFinite(duration))
+              setDurations((values) => ({
+                ...values,
+                [activeClip.segment || activeClip.asset]: duration,
+              }));
             transitioning.current = false;
             if (node?.kind === 'clip' && continuePlaying.current)
               void event.currentTarget.play().catch(() => {});
@@ -305,6 +283,7 @@ function FlowPlayer({
               event.currentTarget.pause();
               return;
             }
+            setPlaying(true);
             continuePlaying.current = true;
             document.querySelectorAll<HTMLMediaElement>('audio, video').forEach((other) => {
               if (
@@ -313,6 +292,14 @@ function FlowPlayer({
               )
                 other.pause();
             });
+          }}
+          onPause={() => setPlaying(false)}
+          onClick={() => {
+            if (!interactive) {
+              const video = videoRef.current!;
+              if (video.paused) void video.play().catch(() => setFailed(true));
+              else video.pause();
+            }
           }}
           onTimeUpdate={(event) => {
             setTime(event.currentTarget.currentTime);
@@ -355,7 +342,25 @@ function FlowPlayer({
                   type="button"
                   onClick={() => {
                     transitioning.current = false;
-                    advance(option.next);
+                    setChoices((values) => ({ ...values, [node.id]: option.next }));
+                    const desired = pendingSeek.current;
+                    pendingSeek.current = null;
+                    if (desired !== null) {
+                      const path = cutsceneTimeline(
+                        flow,
+                        { ...choices, [node.id]: option.next },
+                        preferredRover,
+                        durations,
+                      );
+                      const target = timelineTarget(path, desired);
+                      if (desired >= path.total && target?.time !== null) {
+                        pendingTime.current = null;
+                        advance(null, false);
+                        return;
+                      }
+                      pendingTime.current = target?.time ?? null;
+                      advance(target?.id || option.next);
+                    } else advance(option.next);
                   }}
                 >
                   {option.label}
@@ -374,16 +379,76 @@ function FlowPlayer({
             )}
           </div>
         )}
-      </div>
-      {tracks && (
-        <CutsceneSound
-          key={clipId}
-          videoRef={videoRef}
-          tracks={selectedTracks}
-          offset={source.timeline_offset || 0}
+        <CutsceneControls
+          timeline={timeline}
+          position={position}
+          playing={playing}
           volume={volume}
+          musicVolume={musicVolume}
+          subtitles={subtitles}
+          hasCaptions={!!cues.length}
+          hasMusic={!!tracks?.some((track) => track.role === 'music')}
+          languages={languages}
+          language={voiceLanguage}
+          onLanguage={setVoiceLanguage}
+          onVolume={setVolume}
+          onMusicVolume={setMusicVolume}
+          onSubtitles={() => setSubtitles((value) => !value)}
+          onSeek={seek}
+          onPlay={togglePlay}
+          onRestart={() => {
+            transitioning.current = false;
+            pendingTime.current = null;
+            pendingSeek.current = null;
+            advance(flow.entry, false);
+          }}
+          onFullscreen={fullscreen}
+          onChoice={(id) => {
+            transitioning.current = false;
+            setChoices((values) => {
+              const updated = { ...values };
+              delete updated[id];
+              return updated;
+            });
+            videoRef.current?.pause();
+            setStep(id);
+          }}
         />
-      )}
+        {tracks && (
+          <CutsceneSound
+            key={clipId}
+            videoRef={videoRef}
+            tracks={selectedTracks}
+            offset={source.timeline_offset || 0}
+            volume={volume}
+            musicVolume={musicVolume}
+          />
+        )}
+      </div>
+      {Object.entries(flow.media)
+        .filter(
+          ([key]) =>
+            !Object.hasOwn(durations, key) &&
+            flow.nodes.some(
+              (entry) =>
+                entry.kind === 'clip' &&
+                (entry.segment || entry.asset) === key &&
+                entry.end === null,
+            ),
+        )
+        .map(([key, media]) => (
+          <video
+            hidden
+            key={key}
+            src={media.url}
+            preload="metadata"
+            onLoadedMetadata={(event) => {
+              const duration = event.currentTarget.duration;
+              if (Number.isFinite(duration))
+                setDurations((values) => ({ ...values, [key]: duration }));
+            }}
+          />
+        ))}
       {fullscreenFailed && <p role="status">Fullscreen could not open. Use the inline player.</p>}
       {failed && <p role="alert">Video could not load. Refresh the page to retry.</p>}
       <footer>

@@ -237,8 +237,11 @@ QuestCutscenes owns cutscene controls; voice language reuses NarrativePreference
 and native Select/Listbox semantics, like the transcript voice selector. The page
 locale selects caption text independently of voice timing. Music can be switched
 only for an explicitly separated music stem. A mixed source has no misleading
-music switch. Native video play/seek controls remain available; the adjacent
-volume slider controls independent audio. Missing captions and languages are
+music switch. Custom play, seek, subtitle, volume, restart and fullscreen controls share
+one overlay inside the stage. The segmented timeline follows the selected path;
+unresolved choices show a provisional duration and stop seeking until selected.
+Explicit Rover preferences still bypass only verified Rover choices. Master
+volume scales every track; music level multiplies the separated music stem. Missing captions and languages are
 explicit. Video buffering pauses its audio; failed audio pauses playback and
 exposes Retry audio. Changing the language preserves position and playback intent.
 
