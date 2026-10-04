@@ -39,6 +39,30 @@ World, location, floor, surface opacity, category/subtype exclusions, search and
 
 The sidebar owns its scroll; the map owns its viewport. On phones the sidebar is a scrollable top panel. Neither panel changes sibling routes. Map objects use category colors plus named filters; color is not the only identifier.
 
+Collection progress is personal browser state. Chest placements and confirmed
+Sonance Casket, Windchimer and Unclaimed Rafter Kite pickup types offer Mark as
+found / Mark as not found in the object card. Permanent services, teleportation,
+bosses, Tacet fields, plants, ore, unknown collectibles and collection hand-in
+points do not offer this action. A generic Collectibles category does not prove
+that a placement is collected only once.
+
+Found markers are hidden by default, including from clusters and object lists.
+Show found markers restores them at 40% opacity with a named Found state. Found
+and remaining placements cluster separately. The selected card remains open
+after marking, allowing immediate undo. A shared found-marker link still opens
+and focuses its card; its map icon respects Show found markers. Share links do
+not include personal progress. The compact sidebar count covers eligible
+placements in the selected area/floor and placement visibility scope, independent
+of category toggles and text search. Counts remain Loading until all pages arrive.
+
+The versioned localStorage store keys progress by source game-map ID and entity
+ID, preserving marks across newer asset jobs and database row IDs. Region/layer
+views of the same source placement share progress. Native checkbox, progress and
+button controls own these interactions; card status and changed counts are
+announced accessibly. Other tabs refresh from storage events. Failed storage
+writes keep session state and show an inline warning. This does not infer game
+completion, change game data or synchronize accounts/devices.
+
 ## Data and asynchronous behavior
 
 The region selector names regions, not client versions. It shows the latest

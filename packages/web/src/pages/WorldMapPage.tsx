@@ -2,7 +2,7 @@ import 'leaflet/dist/leaflet.css';
 import '../styles/world-map.css';
 
 import L from 'leaflet';
-import { Check, FoldVertical, Link2, RotateCcw, X } from 'lucide-react';
+import { Check, CircleCheck, FoldVertical, Link2, RotateCcw, Undo2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
@@ -13,7 +13,9 @@ import { acquisitionMarkers, markerType } from '../data/mapAcquisition';
 import { latestMapRoots } from '../data/mapSnapshots';
 import { useLocale } from '../hooks/useLocale';
 import { useMapPreferences } from '../hooks/useMapPreferences';
+import { useMapProgress } from '../hooks/useMapProgress';
 import { compactMapLink, type MapPreferences } from '../state/mapPreferences';
+import { canMarkFound, mapProgressKey } from '../state/mapProgress';
 type Names = Record<string, string>;
 type Place = {
   id: number;
@@ -124,6 +126,7 @@ function MapCanvas({
   active,
   opacity,
   markers,
+  foundIds,
   selected,
   onSelect,
   focus,
@@ -137,6 +140,7 @@ function MapCanvas({
   active: string;
   opacity: number;
   markers: Marker[];
+  foundIds: ReadonlySet<number>;
   selected: Marker | null;
   onSelect: (m: Marker) => void;
   focus: Place | Marker | null;
@@ -257,7 +261,7 @@ function MapCanvas({
       const key =
         selected?.id === marker.id
           ? `m${marker.id}`
-          : `${Math.floor(point.x / size)},${Math.floor(point.y / size)}`;
+          : `${Math.floor(point.x / size)},${Math.floor(point.y / size)}:${foundIds.has(marker.id) ? 'found' : 'remaining'}`;
       const cell = cells.get(key) ?? [];
       cell.push(marker);
       cells.set(key, cell);
@@ -276,11 +280,12 @@ function MapCanvas({
         label.append(count);
         L.marker(center, {
           icon: L.divIcon({
-            className: 'atlas-point atlas-cluster',
+            className: `atlas-point atlas-cluster${foundIds.has(marker.id) ? ' is-found' : ''}`,
             html: label,
             iconSize: [mapSettings.clusterSize, mapSettings.clusterSize],
           }),
           title: `${cell.length} objects. Zoom in to explore.`,
+          opacity: foundIds.has(marker.id) ? mapSettings.foundMarkerOpacity : 1,
         })
           .addTo(group)
           .on('click', () => {
@@ -299,12 +304,15 @@ function MapCanvas({
       const isSelected = selected?.id === marker.id;
       const dot = L.marker(position(marker.world), {
         icon: L.divIcon({
-          className: isSelected ? 'atlas-point selected' : 'atlas-point',
+          className: `atlas-point${isSelected ? ' selected' : ''}${foundIds.has(marker.id) ? ' is-found' : ''}`,
           html: iconNode(marker, base.icons),
           iconSize: [mapSettings.markerSize, mapSettings.markerSize],
           iconAnchor: [mapSettings.markerSize / 2, mapSettings.markerSize / 2],
         }),
-        title: marker.metadata.names?.en ?? categories[marker.category]?.[0] ?? 'Map object',
+        title:
+          (marker.metadata.names?.en ?? categories[marker.category]?.[0] ?? 'Map object') +
+          (foundIds.has(marker.id) ? ' · Found' : ''),
+        opacity: foundIds.has(marker.id) ? mapSettings.foundMarkerOpacity : 1,
       }).addTo(group);
       const tooltip = document.createElement('span');
       tooltip.textContent =
@@ -321,7 +329,7 @@ function MapCanvas({
         else onSelect(marker);
       });
     }
-  }, [markers, selected, zoom, view, onSelect, onVisible, onCluster, base.icons]);
+  }, [markers, foundIds, selected, zoom, view, onSelect, onVisible, onCluster, base.icons]);
   useEffect(() => {
     if (!focus || !map.current) return;
     if ('world' in focus) {
@@ -383,6 +391,7 @@ export function WorldMapPage() {
   const locale = useLocale();
   const [params, setParams] = useSearchParams();
   const [filters, setFilters] = useMapPreferences(params, Object.keys(categories).join(','));
+  const { found, showFound, storageError, setFound, setShowFound } = useMapProgress();
   const [shareStatus, setShareStatus] = useState('');
   const openedMarker = useRef('');
   const openedSource = useRef('');
@@ -698,6 +707,23 @@ export function WorldMapPage() {
       ),
     [markers, area, active, unknown, includeHidden],
   );
+  const progressMapId = base?.game_map_id;
+  const foundIds = useMemo(
+    () =>
+      new Set(
+        markers
+          .filter(
+            (m) =>
+              progressMapId !== undefined &&
+              canMarkFound(m) &&
+              found.has(mapProgressKey(progressMapId, m)),
+          )
+          .map((m) => m.id),
+      ),
+    [markers, progressMapId, found],
+  );
+  const collection = scoped.filter(canMarkFound);
+  const foundCount = collection.filter((m) => foundIds.has(m.id)).length;
   const types = useMemo(() => {
     const groups = new Map<string, { marker: Marker; count: number }>();
     for (const m of scoped) {
@@ -719,6 +745,7 @@ export function WorldMapPage() {
     () =>
       scoped.filter(
         (m) =>
+          (showFound || !foundIds.has(m.id)) &&
           (!sourceItem || !sourceId || sourceMarkerIds.has(m.id)) &&
           ((String(m.id) === markerId && selected?.id === m.id) ||
             (!disabled.includes(m.category) && !disabled.includes(markerType(m)))) &&
@@ -737,6 +764,8 @@ export function WorldMapPage() {
       sourceItem,
       sourceId,
       sourceMarkerIds,
+      showFound,
+      foundIds,
     ],
   );
   const [lastType, setLastType] = useState('');
@@ -779,6 +808,8 @@ export function WorldMapPage() {
           ? 'Unidentified collectible'
           : `${categories[m.category]?.[0] ?? 'Object'} · ${m.blueprint_type}`,
     );
+  const visibleCluster = cluster.filter((m) => showFound || !foundIds.has(m.id));
+  const selectedFound = selected ? foundIds.has(selected.id) : false;
   return (
     <section className="world-map-page">
       {' '}
@@ -1038,6 +1069,35 @@ export function WorldMapPage() {
             <FoldVertical size={16} aria-hidden="true" />
           </button>{' '}
         </div>{' '}
+        <section className="atlas-collection" aria-label="Collection progress">
+          <div className="atlas-collection-heading">
+            <span>Collection progress</span>
+            <strong aria-live="polite">
+              {loading
+                ? 'Loading…'
+                : `${foundCount.toLocaleString()} / ${collection.length.toLocaleString()} found`}
+            </strong>
+          </div>
+          <progress
+            value={foundCount}
+            max={collection.length || 1}
+            aria-label="Collected objects in this area"
+          />
+          <label className="atlas-check">
+            <input
+              type="checkbox"
+              checked={showFound}
+              onChange={(event) => setShowFound(event.target.checked)}
+            />
+            Show found markers
+          </label>
+          <small>Chests & collectibles · saved in this browser</small>
+          {storageError && (
+            <p className="atlas-progress-error" role="alert">
+              Browser storage is unavailable. Changes are kept for this session only.
+            </p>
+          )}
+        </section>
         {menuGroups.map((group) => {
           const entries = types.filter(
             ([, item]) =>
@@ -1164,7 +1224,7 @@ export function WorldMapPage() {
             .map((m) => (
               <button
                 key={m.id}
-                className={selected?.id === m.id ? 'selected' : ''}
+                className={`${selected?.id === m.id ? 'selected' : ''}${foundIds.has(m.id) ? ' is-found' : ''}`}
                 onClick={() => {
                   setSelected(m);
                   setFocus(m);
@@ -1172,6 +1232,7 @@ export function WorldMapPage() {
               >
                 {' '}
                 <ObjectIcon marker={m} icons={base?.icons} /> {objectName(m)}{' '}
+                {foundIds.has(m.id) && <span className="atlas-found-label">Found</span>}
               </button>
             ))}{' '}
           {filtered.filter((m) => visible.has(m.id)).length > listLimit && (
@@ -1181,7 +1242,7 @@ export function WorldMapPage() {
             </button>
           )}{' '}
           {!loading && !filtered.length && (
-            <p>No objects match. Clear the search or show all categories.</p>
+            <p>No objects match. Clear the search, show all categories or show found markers.</p>
           )}{' '}
         </details>{' '}
       </aside>{' '}
@@ -1230,6 +1291,7 @@ export function WorldMapPage() {
             active={active}
             opacity={opacity}
             markers={filtered}
+            foundIds={foundIds}
             selected={selected}
             onSelect={setSelected}
             focus={focus}
@@ -1268,7 +1330,7 @@ export function WorldMapPage() {
             <p>{error}</p> <button onClick={() => setRetry((n) => n + 1)}>Retry</button>{' '}
           </div>
         )}{' '}
-        {cluster.length > 0 && (
+        {visibleCluster.length > 0 && (
           <article className="atlas-detail atlas-cluster-detail">
             {' '}
             <button
@@ -1279,10 +1341,11 @@ export function WorldMapPage() {
               {' '}
               ×{' '}
             </button>{' '}
-            <h2>{cluster.length} objects here</h2>{' '}
-            {cluster.map((m) => (
+            <h2>{visibleCluster.length} objects here</h2>{' '}
+            {visibleCluster.map((m) => (
               <button
                 key={m.id}
+                className={foundIds.has(m.id) ? 'is-found' : ''}
                 onClick={() => {
                   setSelected(m);
                   setCluster([]);
@@ -1291,11 +1354,12 @@ export function WorldMapPage() {
               >
                 {' '}
                 <ObjectIcon marker={m} icons={base?.icons} /> {objectName(m)}{' '}
+                {foundIds.has(m.id) && <span className="atlas-found-label">Found</span>}
               </button>
             ))}{' '}
           </article>
         )}{' '}
-        {selected && cluster.length === 0 && (
+        {selected && visibleCluster.length === 0 && (
           <article className="atlas-detail atlas-marker-detail">
             {' '}
             <header className="atlas-detail-header">
@@ -1333,20 +1397,44 @@ export function WorldMapPage() {
               </button>
             </header>
             <div className="atlas-detail-body">
+              {canMarkFound(selected) && (
+                <div className="atlas-found-control">
+                  <div className="atlas-found-state" role="status">
+                    {selectedFound ? <CircleCheck size={15} aria-hidden="true" /> : null}
+                    <span>{selectedFound ? 'Found' : 'Not found'}</span>
+                    {selectedFound && !showFound && <small>Hidden from the map</small>}
+                  </div>
+                  <button
+                    type="button"
+                    className={`atlas-found-button${selectedFound ? ' is-found' : ''}`}
+                    disabled={!base || loading}
+                    onClick={() => {
+                      if (base)
+                        setFound(mapProgressKey(base.game_map_id, selected), !selectedFound);
+                    }}
+                  >
+                    {selectedFound ? (
+                      <Undo2 size={16} aria-hidden="true" />
+                    ) : (
+                      <Check size={16} aria-hidden="true" />
+                    )}
+                    {selectedFound ? 'Mark as not found' : 'Mark as found'}
+                  </button>
+                </div>
+              )}
               {name(selected.metadata.description) && <p>{name(selected.metadata.description)}</p>}{' '}
-              <p>
-                {' '}
-                {selected.metadata.floor
-                  ? `Recorded floor: ${selected.metadata.floor}`
-                  : 'Floor not recorded'}{' '}
-              </p>{' '}
               {Boolean(selected.metadata.condition_id) && (
                 <p>This mark appears under an in-game condition.</p>
               )}{' '}
-              <small> Game placements may depend on progress or respawn state. </small>{' '}
               <details>
                 {' '}
                 <summary>Position & source</summary>{' '}
+                <p>
+                  {selected.metadata.floor
+                    ? `Recorded floor: ${selected.metadata.floor}`
+                    : 'Floor not recorded'}
+                </p>
+                <small>Game placements may depend on progress or respawn state.</small>
                 <p>
                   {' '}
                   X {selected.world[0].toFixed(0)} · Y {selected.world[1].toFixed(0)} · Z{' '}
