@@ -108,6 +108,23 @@ class Provider:
     def initial(self, system: str, user: str) -> list[dict[str, Any]]:
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
+    def output_limited(self, raw: dict[str, Any]) -> bool:
+        if self.settings.provider == "responses":
+            details = raw.get("incomplete_details")
+            return (
+                raw.get("status") == "incomplete"
+                and isinstance(details, dict)
+                and details.get("reason") == "max_output_tokens"
+            )
+        if self.settings.provider == "chat":
+            candidates, field, reason = raw.get("choices"), "finish_reason", "length"
+        else:
+            candidates, field, reason = raw.get("candidates"), "finishReason", "MAX_TOKENS"
+        return isinstance(candidates, list) and any(
+            isinstance(candidate, dict) and candidate.get(field) == reason
+            for candidate in candidates
+        )
+
     def compact_request(self, history: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
         if self.settings.provider != "responses":
             raise ProviderFailure("compaction_not_supported")
@@ -275,6 +292,8 @@ class Provider:
         calls: list[ToolCall] = []
         texts: list[str] = []
         if self.settings.provider == "responses":
+            if raw.get("status") != "completed":
+                return Turn([], [], "", source, output, raw, False)
             items = raw.get("output", [])
             for item in items:
                 if item.get("type") == "function_call":

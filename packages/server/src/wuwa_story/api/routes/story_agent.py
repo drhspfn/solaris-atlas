@@ -31,6 +31,7 @@ class ResumeRequest(StrictModel):
     context_tokens: int | None = Field(default=None, ge=1000, le=250000)
     tool_calls_per_step: int | None = Field(default=None, ge=1, le=20)
     compact_context: bool = False
+    output_tokens: int | None = Field(default=None, ge=128, le=32000)
 
 
 class ReconcileRequest(StrictModel):
@@ -120,6 +121,7 @@ async def job_status(run_id: int, session: AsyncSession = Depends(get_session)) 
             for key in (
                 "max_steps",
                 "max_input_tokens",
+                "max_output_tokens",
                 "max_tool_calls_per_step",
                 "provider",
                 "model",
@@ -160,6 +162,7 @@ async def resume(
             request.context_tokens,
             request.tool_calls_per_step,
             request.compact_context,
+            request.output_tokens,
         )
     except ValueError as error:
         raise HTTPException(422, str(error)) from error

@@ -119,6 +119,7 @@ async def resume_analysis(
     context_tokens: int | None = None,
     tool_calls_per_step: int | None = None,
     compact_context: bool = False,
+    output_tokens: int | None = None,
 ) -> ProcessingRun:
     job = await session.get(AgentJob, run_id)
     run = await session.get(ProcessingRun, run_id)
@@ -131,14 +132,24 @@ async def resume_analysis(
         and run.error == "Malformed provider turn; recorded usage is retained"
         and tool_calls_per_step is not None
     )
-    if not recover_recorded and run.status not in (
-        "paused_budget",
-        "paused_config",
-        "paused_steps",
-        "paused_context",
-        "paused_rate_limit",
-        "paused_provider",
-        "enqueue_failed",
+    recover_output = run.status == "paused_output" or (
+        run.status == "failed"
+        and run.error == "Malformed provider turn; recorded usage is retained"
+        and output_tokens is not None
+    )
+    if (
+        not recover_recorded
+        and not recover_output
+        and run.status
+        not in (
+            "paused_budget",
+            "paused_config",
+            "paused_steps",
+            "paused_context",
+            "paused_rate_limit",
+            "paused_provider",
+            "enqueue_failed",
+        )
     ):
         raise ValueError(
             "This job cannot be resumed; uncertain calls require billing reconciliation"
@@ -156,9 +167,40 @@ async def resume_analysis(
         config_values["max_input_tokens"] = context_tokens
     if tool_calls_per_step is not None:
         config_values["max_tool_calls_per_step"] = tool_calls_per_step
+    if output_tokens is not None:
+        config_values["max_output_tokens"] = output_tokens
     if extra_steps:
         config_values["max_steps"] = min(100, config_values["max_steps"] + extra_steps)
     config = AgentSettings(_env_file=None, **config_values)
+    if recover_output:
+        if output_tokens is None or output_tokens <= job.config["max_output_tokens"]:
+            raise ValueError("Increase output_tokens to resume an output limit pause")
+        call = await session.scalar(
+            select(AgentCall).where(
+                AgentCall.run_id == run_id,
+                AgentCall.step == job.checkpoint.get("step", 0),
+                AgentCall.status == "completed",
+            )
+        )
+        async with httpx.AsyncClient() as client:
+            provider = Provider(config, client)
+            if call is None or call.response is None or not provider.output_limited(call.response):
+                raise ValueError("No recorded output-limited response is available to recover")
+            next_step = job.checkpoint.get("step", 0) + 1
+            if config.max_steps <= next_step:
+                raise ValueError("Increase extra_steps to allow a new response after truncation")
+            # The paid truncated turn remains in the ledger. Start a new call after
+            # the last fully processed turn; never execute or resend partial items.
+            history = list(job.checkpoint.get("history", []))
+            history.extend(
+                provider.initial(
+                    "",
+                    "Your previous response reached the output token limit. No partial tool calls "
+                    "were executed. Continue from the saved research and return a complete, concise "
+                    "tool call. The output allowance has been increased.",
+                )[1:]
+            )
+            job.checkpoint = {**job.checkpoint, "step": next_step, "history": history}
     if run.status == "paused_steps" and config.max_steps <= job.checkpoint.get("step", 0):
         raise ValueError("Increase extra_steps to resume; at most 100 research steps are allowed")
     if compact_context:
@@ -167,7 +209,7 @@ async def resume_analysis(
         if job.checkpoint.get("compacted_at_step") == job.checkpoint.get("step", 0):
             raise ValueError("This step was already compacted; increase context_tokens instead")
         config.context_compaction = True
-    if recover_recorded:
+    if recover_recorded and not recover_output:
         call = await session.scalar(
             select(AgentCall).where(
                 AgentCall.run_id == run_id,

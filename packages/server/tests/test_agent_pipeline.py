@@ -1201,6 +1201,114 @@ async def test_repricing_is_idempotent_and_retains_unknown_reservations(world):
             await db.commit()
 
 
+@pytest.mark.parametrize("legacy_failure", [False, True])
+async def test_truncated_output_recovers_without_replaying_research_or_charges(
+    world, legacy_failure
+):
+    engine, settings, _, nodes, *_ = world
+    settings.max_steps = 2
+    run_id = await create(world)
+    requests = []
+
+    def transport(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        ordinal = len(requests)
+        if ordinal == 1:
+            name, arguments = "read_quest", "{}"
+        elif ordinal == 2:
+            name, arguments = "finish_analysis", '{"result_json":"cut off'
+        else:
+            assert payload["max_output_tokens"] == 16384
+            assert all(item.get("call_id") != "turn-2" for item in payload["input"])
+            name, arguments = (
+                "finish_analysis",
+                json.dumps({"result_json": json.dumps(result_for(nodes))}),
+            )
+        return httpx.Response(
+            200,
+            json={
+                "status": "incomplete" if ordinal == 2 else "completed",
+                "incomplete_details": {"reason": "max_output_tokens"} if ordinal == 2 else None,
+                "usage": {"input_tokens": 100, "output_tokens": 30},
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": f"turn-{ordinal}",
+                        "name": name,
+                        "arguments": arguments,
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        await execute_job(run_id, engine, settings, client)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            run = await db.get(ProcessingRun, run_id)
+            job = await db.get(AgentJob, run_id)
+            assert run.status == "paused_output" and job.checkpoint["step"] == 1
+            assert run.tokens_input == 200
+            recorded = await db.scalar(
+                select(AgentCall).where(AgentCall.run_id == run_id, AgentCall.step == 1)
+            )
+            old_cost, old_response = recorded.cost_usd, recorded.response
+            assert recorded.status == "completed"
+            history, evidence = job.checkpoint["history"], job.checkpoint["evidence"]
+            if legacy_failure:
+                run.status = "failed"
+                run.error = "Malformed provider turn; recorded usage is retained"
+                await db.commit()
+            with pytest.raises(ValueError, match="Increase output_tokens|cannot be resumed"):
+                await resume_analysis(db, run_id)
+            with pytest.raises(ValueError, match="Increase output_tokens"):
+                await resume_analysis(db, run_id, output_tokens=4096)
+            with pytest.raises(ValueError, match="Increase extra_steps"):
+                await resume_analysis(db, run_id, output_tokens=16384)
+            assert job.checkpoint["step"] == 1
+            await resume_analysis(db, run_id, output_tokens=16384, extra_steps=1)
+            assert job.checkpoint["step"] == 2 and job.checkpoint["evidence"] == evidence
+            assert job.checkpoint["history"][:-1] == history
+            assert recorded.cost_usd == old_cost and recorded.response == old_response
+            assert run.tokens_input == 200
+        await execute_job(run_id, engine, settings, client)
+        await execute_job(run_id, engine, settings, client)
+    assert len(requests) == 3
+    async with AsyncSession(engine) as db:
+        run = await db.get(ProcessingRun, run_id)
+        assert run.status == "completed" and run.tokens_input == 300
+        assert len(list(await db.scalars(select(AgentCall).where(AgentCall.run_id == run_id)))) == 3
+
+
+async def test_output_limit_recovery_rejects_other_provider_failures(world):
+    engine, settings, _, _, *_ = world
+    run_id = await create(world)
+    async with httpx.AsyncClient() as client:
+        provider = Provider(settings, client)
+        raw = {
+            "status": "incomplete",
+            "incomplete_details": {"reason": "content_filter"},
+            "usage": {"input_tokens": 100, "output_tokens": 30},
+            "output": [{"type": "function_call", "arguments": "{"}],
+        }
+        assert not provider.output_limited(raw)
+        assert not provider.output_limited({"status": "incomplete", "incomplete_details": "bad"})
+        assert not provider.parse(raw).complete
+        for provider_name, limited in [
+            ("chat", {"choices": [{"finish_reason": "length"}]}),
+            ("gemini", {"candidates": [{"finishReason": "MAX_TOKENS"}]}),
+        ]:
+            provider.settings = settings.model_copy(update={"provider": provider_name})
+            assert provider.output_limited(limited)
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        run = await db.get(ProcessingRun, run_id)
+        run.status, run.error = "failed", "Malformed provider turn; recorded usage is retained"
+        await db.commit()
+        with pytest.raises(ValueError, match="No recorded output-limited response"):
+            await resume_analysis(db, run_id, output_tokens=16384)
+        assert run.status == "failed"
+
+
 async def test_recorded_turn_replays_after_explicit_tool_limit_increase(world):
     engine, settings, _, nodes, *_ = world
     settings.max_tool_calls_per_step = 1
@@ -1470,6 +1578,14 @@ async def test_admin_job_progress_and_resume_contract(world, monkeypatch):
         assert listing["jobs"][0]["max_steps"] == settings.max_steps
         detail = (await client.get(f"/admin/story-agent/jobs/{run_id}")).json()
         assert detail["limits"]["model"] == settings.model
+        assert detail["limits"]["max_output_tokens"] == settings.max_output_tokens
+        for invalid_output in [127, 32001]:
+            assert (
+                await client.post(
+                    f"/admin/story-agent/jobs/{run_id}/resume",
+                    json={"output_tokens": invalid_output},
+                )
+            ).status_code == 422
         assert "checkpoint" not in detail and "history" not in detail
         assert "today" in (await client.get("/admin/story-agent/usage")).json()
         async with AsyncSession(engine, expire_on_commit=False) as db:

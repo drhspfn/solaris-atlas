@@ -467,6 +467,15 @@ async def run_locked(
             raw = await remote_call(session, run, settings, provider, step, route, payload)
             if raw is None:
                 return
+            if provider.output_limited(raw):
+                await pause(
+                    session,
+                    run,
+                    "paused_output",
+                    "Provider response reached the output token limit; increase output_tokens and resume. "
+                    "Research and recorded usage are retained; partial tool calls were not executed.",
+                )
+                return
             try:
                 turn = provider.parse(raw)
             except (ValueError, KeyError, TypeError, IndexError):
