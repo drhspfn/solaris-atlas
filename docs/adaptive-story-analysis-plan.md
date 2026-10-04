@@ -48,3 +48,43 @@ and compaction. Branch uncertainty, loaded-corpus limits and hook priority reach
 the reader. Duplicate imports/messages do not duplicate jobs or charges. Revisit
 candidate matching rejects generic-word coincidence and preserves prior claims.
 The old v1-v4 pipelines and publications remain readable and resumable.
+
+## Delivery and verification · 2026-10-04
+
+Implemented on `codex/feat/adaptive-lore-analysis` in independently committed
+policy, runner, import outbox, reader/admin and retrieval slices. The local API,
+web and story-agent images run the new code; the protocol is `story-v5`.
+
+- Server suite: 155 passed, 2 skipped. After the final retrieval change, all 51
+  targeted contract, pipeline and lore tests passed again, including a term found
+  only in a reviewed hook. Providers were mocked throughout.
+- Worker story-agent tests: 2 passed with the current server source on PYTHONPATH.
+- Web tests: 22 passed; the 5 rendering regressions passed again after the final
+  spoiler-title and hook-status changes. TypeScript/Vite and Docker builds passed.
+- Changed-file Ruff, ESLint and formatter checks passed. Whole-project gates still
+  report existing import-order errors in `api/routes/story/__init__.py` and
+  `EntityProfilePage.tsx`, plus unrelated frontend warnings/formatting findings.
+  These are not changed by this feature.
+- Browser checks used illustrative fixtures: disclosures, keyboard interaction,
+  390px layout without horizontal overflow, API error/retry, and review pagination.
+  No fixture lore was inserted into the working database.
+- Migration 0010 upgrade/downgrade was tested on an isolated database. Before
+  local application, schema and affected agent/document data were backed up under
+  `E:/Backups/solaris-atlas/adaptive-lore-before-*`. The working database now reports
+  `0010_agent_revisit`; the previous prologue explanation still returns HTTP 200.
+- The daily allowance remains $1. The working model-call ledger remained at
+  176 rows (max ID 176): no paid analysis was started for verification.
+
+### Operational limits
+
+New jobs use the new protocol. Existing publications retain their original
+classification and need explicit reanalysis to acquire v5 hooks. New imports can
+then schedule focused reviews under the same budget; budget or uncertain-call
+pauses still need normal administrator handling.
+
+Deterministic tests validate provenance, budgets, recovery, publication and UI
+wiring. They cannot establish the literary quality or semantic correctness of a
+real model's analysis. Review representative real outputs before bulk rollout.
+Candidate retrieval is deliberately bounded and lexical, so an empty result does
+not prove a mystery has no later explanation. Migration rollback instructions and
+runtime configuration are in `story-agent-pipeline.md`.

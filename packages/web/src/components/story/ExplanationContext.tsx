@@ -64,8 +64,9 @@ export function ExplanationHookReviews({
   return explanation.revisited_hooks?.map((review) => (
     <article className="explanation-edge" key={review.hook_key}>
       <h4>{hooks?.find((hook) => hook.key === review.hook_key)?.question || 'Reviewed thread'}</h4>
-      <span className="explanation-badge">{review.status.replaceAll('_', ' ')}</span>
-      <span className="explanation-badge">{review.priority} priority after review</span>
+      <span className="explanation-badge">
+        {review.status.replaceAll('_', ' ')} · {review.priority} priority after review
+      </span>
       <p>{review.explanation}</p>
       <ExplanationSources citations={review.citations} nodes={explanation.nodes} />
     </article>

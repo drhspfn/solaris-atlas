@@ -204,6 +204,11 @@ disclosure. Admin **Reviews after new imports** exposes pending, no-candidate,
 queued and paused work with links to the ordinary run controls. Budget/context/
 output pauses require an administrator's normal resume action.
 
+Current supplements participate in explanation search while their original
+document remains the published head. Reviewed-hook explanations are included in
+both lexical text and the first block's embedding input. Search hides supplemental
+titles and findings behind a closed spoiler disclosure, just like the quest page.
+
 Existing v1–v4 documents do not acquire invented hooks. Reanalyze selected quests
 to publish v5 hooks before expecting import-triggered review. Importing another
 snapshot never silently expands a running job's evidence inventory.
