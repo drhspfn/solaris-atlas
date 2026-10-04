@@ -567,6 +567,7 @@ async def test_quest_only_request_resolves_and_pins_latest_observed_snapshot(wor
 
 async def test_adaptive_prescan_is_required_checkpointed_and_published(world):
     engine, settings, _, nodes, _, release, _ = world
+    settings.max_steps = 3
     run_id = await create(world, adaptive=True)
     final = result_for(nodes)
     final["narrative_function"] = "Explains a local obstacle and the change of route."
@@ -636,6 +637,11 @@ async def test_adaptive_prescan_is_required_checkpointed_and_published(world):
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
         await execute_job(run_id, engine, settings, client)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            assert (await db.get(ProcessingRun, run_id)).status == "paused_steps"
+            assert (await db.get(AgentJob, run_id)).checkpoint["assessment"]
+            await resume_analysis(db, run_id, extra_steps=5)
+        await execute_job(run_id, engine, settings, client)
         await execute_job(run_id, engine, settings, client)
     assert len(requests) == 4
     async with AsyncSession(engine) as db:
@@ -646,6 +652,183 @@ async def test_adaptive_prescan_is_required_checkpointed_and_published(world):
         doc = await db.get(Document, job.document_id)
         assert doc.metadata_json["assessment"]["narrative_weight"] == "side_flavor"
         assert doc.metadata_json["review"]["branches_separated"]
+
+
+async def test_import_revisit_outbox_recovers_and_preserves_original(world, monkeypatch):
+    from wuwa_story.agents.contracts import QuestAssessment
+    from wuwa_story.agents.publication import publish_analysis
+    from wuwa_story.agents.revisits import dispatch_revisits, schedule_revisits
+    from wuwa_story.db.models.agents import AgentRevisit
+
+    engine, settings, request, nodes, locale, release, quest = world
+    run_id = await create(world, adaptive=True)
+    original = AnalysisResult.model_validate(result_for(nodes))
+    original.links = []
+    original.narrative_function = "Establishes an obstacle."
+    original.assessment = QuestAssessment(
+        narrative_weight="side_flavor",
+        hook_priority="low",
+        reason="A local obstacle",
+        citations=original.blocks[0].citations,
+    )
+    from wuwa_story.agents.contracts import AnalysisReview, OpenHook
+
+    original.review = AnalysisReview(**dict.fromkeys(AnalysisReview.model_fields, True))
+    original.hooks = [
+        OpenHook(
+            key="crossing-route",
+            question="Where does another route lead?",
+            priority="low",
+            kind="mundane_outcome",
+            revisit_on_new_versions=True,
+            revisit_reason="A named route might appear in subsequent imported records",
+            search_terms=["another route"],
+            citations=original.blocks[0].citations,
+        )
+    ]
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        evidence = EvidenceTools(
+            db,
+            run_id=run_id,
+            quest=quest,
+            release_id=release.id,
+            locale=locale,
+            settings=settings,
+            source_release_ids=await imported_snapshot_ids(db),
+        )
+        await evidence.read_quest(offset=0, limit=50)
+        await evidence.validate_result(original)
+        run, job = await db.get(ProcessingRun, run_id), await db.get(AgentJob, run_id)
+        parent = await publish_analysis(
+            db,
+            job,
+            run,
+            original,
+            [],
+            source_receipts=evidence.validated_sources,
+            source_nodes=evidence.source_nodes,
+        )
+        run.status = "completed"
+        await db.commit()
+        parent_id, original_body = parent.id, parent.body_ast
+        newer = GameRelease(
+            sequence=release.sequence + 1,
+            game_version="revisit-" + uuid4().hex,
+            upstream_name="test",
+        )
+        db.add(newer)
+        await db.flush()
+        later_id = newer.id
+        db.add(
+            NodeRevision(node_id=nodes[4].id, release_id=later_id, revision=2, content_hash=b"new")
+        )
+        db.add(
+            SearchDocument(
+                target_node_id=nodes[4].id,
+                category="dialogue",
+                locale_id=locale.id,
+                title="Another route",
+                body="We need another route.",
+                content_hash=b"new",
+                search_vector=func.to_tsvector("simple", "We need another route."),
+            )
+        )
+        await schedule_revisits(db, later_id)
+        await schedule_revisits(db, later_id)
+        await db.commit()
+        tasks = list(
+            await db.scalars(select(AgentRevisit).where(AgentRevisit.document_id == parent_id))
+        )
+        assert len(tasks) == 1
+    try:
+        deliveries = []
+
+        async def broken_queue(payload, *_):
+            deliveries.append(payload["run_id"])
+            raise ConnectionError("lost confirmation")
+
+        monkeypatch.setattr("wuwa_story.agents.jobs.publish_media_job", broken_queue)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            await dispatch_revisits(db, settings)
+            task = await db.get(AgentRevisit, tasks[0].id)
+            child_id = task.run_id
+            assert task.error and child_id
+            assert (await db.get(ProcessingRun, child_id)).status == "enqueue_failed"
+
+        async def working_queue(payload, *_):
+            deliveries.append(payload["run_id"])
+
+        monkeypatch.setattr("wuwa_story.agents.jobs.publish_media_job", working_queue)
+        async with AsyncSession(engine, expire_on_commit=False) as db:
+            await dispatch_revisits(db, settings)
+        assert deliveries == [child_id, child_id]
+        final = original.model_copy(deep=True)
+        final.hooks = []
+        from wuwa_story.agents.contracts import HookReview
+
+        final.revisited_hooks = [
+            HookReview(
+                hook_key="crossing-route",
+                status="unresolved_in_loaded_corpus",
+                explanation="The newly inspected line still does not identify the route.",
+                citations=[
+                    *original.hooks[0].citations,
+                    {
+                        "node_id": nodes[4].id,
+                        "snapshot_id": later_id,
+                        "quote": "We need another route.",
+                    },
+                ],
+            )
+        ]
+        calls = []
+
+        def transport(req):
+            calls.append(json.loads(req.content))
+            actions = (
+                [
+                    ("read_node", {"node_id": nodes[3].id, "snapshot_id": release.id}),
+                    ("read_node", {"node_id": nodes[4].id, "snapshot_id": later_id}),
+                ]
+                if len(calls) == 1
+                else [("finish_analysis", {"result_json": final.model_dump_json()})]
+            )
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "usage": {"input_tokens": 100, "output_tokens": 30},
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "call_id": f"{len(calls)}-{i}",
+                            "name": name,
+                            "arguments": json.dumps(args),
+                        }
+                        for i, (name, args) in enumerate(actions)
+                    ],
+                },
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+            await execute_job(child_id, engine, settings, client)
+            await execute_job(child_id, engine, settings, client)
+        assert len(calls) == 2
+        async with AsyncSession(engine) as db:
+            assert (await db.get(ProcessingRun, child_id)).status == "completed"
+            assert (await db.get(Document, parent_id)).body_ast == original_body
+            payload = (await get_explanation(db, request.quest_id, release.game_version, "en"))[
+                "explanation"
+            ]
+            assert payload["id"] == parent_id and payload["corpus_changed"]
+            assert len(payload["supplements"]) == 1
+            review = payload["supplements"][0]["revisited_hooks"][0]
+            assert review["status"] == "unresolved_in_loaded_corpus"
+            assert all(c["href"] for c in review["citations"])
+    finally:
+        async with AsyncSession(engine) as db:
+            await db.execute(delete(GameRelease).where(GameRelease.id == later_id))
+            await db.commit()
 
 
 async def test_full_pipeline_and_duplicate_delivery(world):

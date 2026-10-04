@@ -202,7 +202,17 @@ class InferredEvent(StrictModel):
     participant_node_ids: list[int] = Field(default_factory=list, max_length=20)
 
 
+class HookReview(StrictModel):
+    hook_key: str = Field(pattern=r"^[a-z][a-z0-9_-]{2,63}$")
+    status: Literal[
+        "resolved", "partial", "suggested", "contradicted", "unresolved_in_loaded_corpus"
+    ]
+    explanation: str = Field(min_length=1, max_length=1000)
+    citations: list[Citation] = Field(min_length=1, max_length=8)
+
+
 class AnalysisResult(StrictModel):
+    revisited_hooks: list[HookReview] = Field(default_factory=list, max_length=12)
     assessment: QuestAssessment | None = None
     title: str = Field(min_length=1, max_length=200)
     blocks: list[ExplanationBlock] = Field(min_length=1, max_length=60)
@@ -249,6 +259,7 @@ def citation_groups(
     | LinkSignal
     | QuestAssessment
     | LoreSignal
+    | HookReview
 ]:
     groups: list[
         NoteRequest
@@ -261,6 +272,7 @@ def citation_groups(
         | LinkSignal
         | QuestAssessment
         | LoreSignal
+        | HookReview
     ] = (
         [result]
         if isinstance(result, NoteRequest)
@@ -270,6 +282,7 @@ def citation_groups(
         if result.assessment:
             groups.extend([result.assessment, *result.assessment.signals])
         groups.extend(result.hooks)
+        groups.extend(result.revisited_hooks)
         groups.extend(signal for link in result.links for signal in link.signals)
         for block in result.blocks:
             groups.extend(block.assertions)

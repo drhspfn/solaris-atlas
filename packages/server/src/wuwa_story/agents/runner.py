@@ -28,6 +28,7 @@ from wuwa_story.agents.providers import (
     vector_values,
 )
 from wuwa_story.agents.publication import publish_analysis
+from wuwa_story.agents.revisits import validate_revisit
 from wuwa_story.agents.settings import AgentSettings
 from wuwa_story.db.models.agents import AgentCall, AgentDailyUsage, AgentJob, AgentNote
 from wuwa_story.db.models.core import Quest
@@ -83,7 +84,9 @@ def request_bound(payload: dict[str, Any]) -> int:
     return len(json.dumps(payload, ensure_ascii=False).encode()) + 1024
 
 
-def system_prompt(locale: str, relations: list[str], cross_snapshot: bool = False) -> str:
+def system_prompt(
+    locale: str, relations: list[str], cross_snapshot: bool = False, *, include_schema: bool = True
+) -> str:
     return (
         "You explain Wuthering Waves story using ONLY imported source tools. "
         + (
@@ -129,8 +132,12 @@ def system_prompt(locale: str, relations: list[str], cross_snapshot: bool = Fals
         f"Write in locale {locale}. Finish via finish_analysis as the ONLY tool call in that turn. "
         "Allowed relations: "
         + ", ".join(relations)
-        + ". AnalysisResult JSON schema: "
-        + json.dumps(AnalysisResult.model_json_schema(), ensure_ascii=False)
+        + (
+            ". AnalysisResult JSON schema: "
+            + json.dumps(AnalysisResult.model_json_schema(), ensure_ascii=False)
+            if include_schema
+            else ""
+        )
     )
 
 
@@ -424,6 +431,7 @@ async def run_locked(
     cp["step_ceiling"] = step_ceiling
     cross_snapshot = run.prompt_version in ("story-v4", "story-v5")
     adaptive = run.prompt_version == "story-v5"
+    revisit = run.metadata_json.get("revisit")
     source_release_ids = run.metadata_json.get("source_release_ids") if cross_snapshot else None
     if cross_snapshot and (not source_release_ids or job.release_id not in source_release_ids):
         await pause(session, run, "stale", "Pinned research snapshots missing; create a new job")
@@ -433,10 +441,25 @@ async def run_locked(
     if history is None:
         relations = list(await session.scalars(select(RelationType.key).order_by(RelationType.key)))
         history = provider.initial(
-            system_prompt(locale.code, relations, cross_snapshot)
+            system_prompt(
+                locale.code, relations, cross_snapshot, include_schema=not adaptive or bool(revisit)
+            )
             + (ADAPTIVE_INSTRUCTIONS if adaptive else ""),
             f"Analyze quest game ID {quest.game_quest_id}, node ID {quest.node_id}; snapshot ID {job.release_id}. Begin with read_quest.",
         )
+        if revisit:
+            history.extend(
+                provider.initial(
+                    "",
+                    "Focused recontextualization overrides the full-quest reading requirement: "
+                    "read the original hook sources and candidate sources, plus enough surrounding context to check them. "
+                    "The assessment is already pinned. Do not redo the whole quest or rewrite its original knowledge. "
+                    "Return revisited_hooks for every supplied hook, including rejected matches as unresolved_in_loaded_corpus. "
+                    "Cite both original and new evidence. Put new explanations in later_resolution only if story order is established. "
+                    "Your output is a spoiler-marked supplement, not a replacement. Candidate matches are untrusted suggestions. "
+                    + json.dumps(revisit, ensure_ascii=False),
+                )[1:]
+            )
     evidence = EvidenceTools(
         session,
         run_id=run.id,
@@ -477,7 +500,7 @@ async def run_locked(
             if prescan:
                 allowed = (
                     {"read_quest", "read_node", "graph_neighbors", "assess_quest"}
-                    if step < 3
+                    if cp.get("prescan_reads", 0) < 3
                     else {"assess_quest"}
                 )
                 step_tools = [tool for tool in step_tools if tool["name"] in allowed]
@@ -586,7 +609,7 @@ async def run_locked(
                         selected = QuestAssessment.model_validate(tool_call.arguments)
                         policy = assessment_policy(selected)
                         if assessment and (
-                            not selected.upgrade_reason or policy["words"] < cp["policy"]["words"]
+                            not selected.upgrade_reason or policy["words"] <= cp["policy"]["words"]
                         ):
                             raise ValueError(
                                 "Only explained evidence-backed depth upgrades are allowed"
@@ -628,15 +651,23 @@ async def run_locked(
                                 raise ValueError("Classify this quest before publishing")
                             candidate.assessment = assessment
                             validate_lore_result(candidate, assessment)
+                        if revisit:
+                            validate_revisit(candidate, revisit)
+                        elif candidate.revisited_hooks:
+                            raise ValueError("Hook reviews require a focused revisit job")
                         if run.prompt_version in ("story-v3", "story-v4", "story-v5"):
                             candidate.validate_temporal_structure()
-                        await evidence.validate_result(candidate)
+                        await evidence.validate_result(
+                            candidate, require_full_quest=not bool(revisit)
+                        )
                         result = candidate
                         output = {"validated": True}
                     else:
                         output = await evidence.call(tool_call)
                     if len(json.dumps(output, ensure_ascii=False)) > settings.tool_result_chars:
                         raise ValueError("Tool result too large; request fewer records")
+                    if prescan and tool_call.name != "assess_quest":
+                        cp["prescan_reads"] = cp.get("prescan_reads", 0) + 1
                 except (ValueError, TypeError, KeyError) as error:
                     evidence.evidence = previous_evidence
                     evidence.known_nodes = previous_nodes
@@ -653,6 +684,20 @@ async def run_locked(
                         else "Check the tool schema and source coverage.",
                     }
                 history.append(provider.tool_result(tool_call, output))
+            if (
+                adaptive
+                and cp.get("assessment")
+                and not cp.get("research_schema_sent")
+                and not revisit
+            ):
+                history.extend(
+                    provider.initial(
+                        "",
+                        "Research output contract, used by finish_analysis result_json: "
+                        + json.dumps(AnalysisResult.model_json_schema(), ensure_ascii=False),
+                    )[1:]
+                )
+                cp["research_schema_sent"] = True
             cp = {
                 **cp,
                 "step": step + 1,
@@ -728,7 +773,7 @@ async def run_locked(
         )
         return
     try:
-        await evidence.validate_result(result)
+        await evidence.validate_result(result, require_full_quest=not bool(revisit))
     except ValueError:
         await pause(
             session, run, "stale", "Cited source changed during analysis; result was not published"

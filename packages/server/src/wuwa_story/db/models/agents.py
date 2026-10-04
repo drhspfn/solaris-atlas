@@ -42,6 +42,32 @@ class AgentJob(Base):
     )
 
 
+class AgentRevisit(Base):
+    """Durable import outbox; broker confirmation is not the task identity."""
+
+    __tablename__ = "agent_revisit"
+    __table_args__ = (
+        UniqueConstraint("document_id", "release_id", name="uq_agent_revisit_source"),
+        {"schema": "ops"},
+    )
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("content.document.id", ondelete="CASCADE"), nullable=False
+    )
+    release_id: Mapped[int] = mapped_column(
+        ForeignKey("ops.game_release.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending", index=True)
+    run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ops.processing_run.id", ondelete="SET NULL")
+    )
+    candidates: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class AgentDailyUsage(Base):
     __tablename__ = "agent_daily_usage"
     __table_args__ = ({"schema": "ops"},)

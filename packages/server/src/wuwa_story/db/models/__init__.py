@@ -5,6 +5,7 @@ from wuwa_story.db.models.agents import (
     AgentDailyUsage,
     AgentJob,
     AgentNote,
+    AgentRevisit,
     ExplanationEmbedding,
 )
 from wuwa_story.db.models.auth import (

@@ -35,7 +35,7 @@ from wuwa_story_worker.scheduler import (
     run_watch,
 )
 from wuwa_story_worker.snapshot_jobs import build_and_import_snapshot
-from wuwa_story_worker.story_agent import process_story_analysis
+from wuwa_story_worker.story_agent import dispatch_story_revisits, process_story_analysis
 from wuwa_story_worker.voice_packages import discover_voice_plan, download_voice_plan
 
 
@@ -173,7 +173,13 @@ async def _run(queues: list[str] | None = None) -> None:
                 "asset_extract": extract_client_assets, "entity_media": process_entity_media,
                 "story_agent": process_story_analysis}
     # Existing workers keep their snapshot-only role unless explicitly configured.
-    await consume_jobs({key: handlers[key] for key in (queues or ["snapshot_build"])})
+    selected = {key: handlers[key] for key in (queues or ["snapshot_build"])}
+    if "story_agent" in selected:
+        async with asyncio.TaskGroup() as tasks:
+            tasks.create_task(dispatch_story_revisits())
+            tasks.create_task(consume_jobs(selected))
+    else:
+        await consume_jobs(selected)
 
 
 async def _enqueue(args: argparse.Namespace) -> None:

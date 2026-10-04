@@ -35,7 +35,12 @@ async def publish_analysis(
     assert run.target_node_id is not None
     node = await session.scalar(select(Node).where(Node.id == run.target_node_id).with_for_update())
     assert node is not None
-    kind = document_type(job.release_id)
+    revisit = run.metadata_json.get("revisit")
+    kind = (
+        f"story-recontextualization:{revisit['document_id']}:{revisit['release_id']}"
+        if revisit
+        else document_type(job.release_id)
+    )
     revision = (
         await session.scalar(
             select(func.max(Document.revision)).where(
@@ -68,6 +73,8 @@ async def publish_analysis(
             "release_id": job.release_id,
             "schema_version": run.prompt_version,
             "generated": True,
+            "revisit": revisit,
+            "revisited_hooks": [review.model_dump() for review in result.revisited_hooks],
             "source_scope": "all_locales" if run.prompt_version != "story-v1" else "locale",
             "unresolved_questions": result.unresolved_questions,
             "assessment": result.assessment.model_dump() if result.assessment else None,

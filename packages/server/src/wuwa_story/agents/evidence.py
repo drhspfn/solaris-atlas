@@ -750,7 +750,9 @@ class EvidenceTools:
                 ):
                     raise ValueError("Citation must quote a read source in its explicit snapshot")
 
-    async def validate_result(self, result: AnalysisResult) -> None:
+    async def validate_result(
+        self, result: AnalysisResult, *, require_full_quest: bool = True
+    ) -> None:
         validate_citations(result, self.evidence)
         if self.cross_snapshot:
             self.validate_source_identity(result)
@@ -782,7 +784,7 @@ class EvidenceTools:
             if offset > end:
                 break
             end = max(end, offset + count)
-        if self.total_lines is None or end < self.total_lines:
+        if require_full_quest and (self.total_lines is None or end < self.total_lines):
             raise ValueError("Read every page of the target quest before publishing")
         if any(block.assertions for block in result.blocks):
             states = await quest_states(self.session, self.quest.node_id, self.release_id)

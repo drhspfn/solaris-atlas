@@ -28,7 +28,8 @@ GENERIC_TERMS = frozenset(
 
 def distinctive_term(value: str) -> bool:
     text = " ".join(value.casefold().split())
-    return 3 <= len(text) <= 200 and text not in GENERIC_TERMS
+    words = set(re.findall(r"\w+", text))
+    return 3 <= len(text) <= 200 and bool(words - GENERIC_TERMS)
 
 
 def assessment_policy(assessment: QuestAssessment) -> dict[str, Any]:

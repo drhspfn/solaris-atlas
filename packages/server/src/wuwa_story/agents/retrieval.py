@@ -136,6 +136,8 @@ async def public_document(
     ids = {c["node_id"] for block in document.body_ast for c in block.get("citations", [])}
     for hook in document.metadata_json.get("hooks", []):
         ids.update(c["node_id"] for c in hook["citations"])
+    for review in document.metadata_json.get("revisited_hooks", []):
+        ids.update(c["node_id"] for c in review["citations"])
     ids.update(value for block in document.body_ast for value in block.get("related_node_ids", []))
     for block in document.body_ast:
         ids.update(record["node_id"] for record in block.get("related_records", []))
@@ -279,6 +281,10 @@ async def public_document(
         "narrative_function": document.metadata_json.get("narrative_function"),
         "knowledge_boundary": document.metadata_json.get("knowledge_boundary"),
         "hooks": [await with_citations(hook) for hook in document.metadata_json.get("hooks", [])],
+        "revisited_hooks": [
+            await with_citations(review)
+            for review in document.metadata_json.get("revisited_hooks", [])
+        ],
         "corpus_changed": corpus_changed,
         "loaded_versions": list(
             await session.scalars(
@@ -320,6 +326,19 @@ async def get_explanation(
     for document in documents:
         payload = await public_document(session, document, quest, release, language)
         if payload:
+            supplements = await session.scalars(
+                select(Document)
+                .join(DocumentHead, DocumentHead.document_id == Document.id)
+                .where(
+                    Document.document_type.startswith(f"story-recontextualization:{document.id}:")
+                )
+                .order_by(Document.id)
+            )
+            payload["supplements"] = []
+            for supplement in supplements:
+                published = await public_document(session, supplement, quest, release, language)
+                if published:
+                    payload["supplements"].append(published)
             break
     return {
         "status": "available" if payload else "pending",

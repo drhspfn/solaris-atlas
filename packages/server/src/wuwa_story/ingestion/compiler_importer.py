@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.agents.revisits import schedule_revisits
 from wuwa_story.db.models.ops import ImportRun
 from wuwa_story.ingestion.canonical import CanonicalRecordAdapter, detect_compiled_dataset
 from wuwa_story.ingestion.canonical_import import import_canonical_edges, import_canonical_entities
@@ -83,6 +84,7 @@ class CompiledDatasetImporter(Importer):
             run.records_seen = seen
             run.records_created = created
             run.records_updated = 0
+            await schedule_revisits(session, release.id)
             await session.commit()
             return ImportSummary(release.id, run_id, seen, created, 0, "succeeded")
         except Exception as exc:

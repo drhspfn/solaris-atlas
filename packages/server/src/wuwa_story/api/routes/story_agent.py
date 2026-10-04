@@ -15,7 +15,13 @@ from wuwa_story.agents.jobs import enqueue_analysis, resume_analysis
 from wuwa_story.agents.retrieval import get_explanation, query_vector, scope, search_explanations
 from wuwa_story.agents.settings import AgentSettings, get_agent_settings
 from wuwa_story.auth.dependencies import require_admin, require_csrf
-from wuwa_story.db.models.agents import AgentCall, AgentDailyUsage, AgentJob, AgentNote
+from wuwa_story.db.models.agents import (
+    AgentCall,
+    AgentDailyUsage,
+    AgentJob,
+    AgentNote,
+    AgentRevisit,
+)
 from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.models.story import Event
 from wuwa_story.db.session import get_session
@@ -41,6 +47,37 @@ class ReconcileRequest(StrictModel):
 
 class AdminAnalysisRequest(AnalysisRequest):
     locale: Literal["en"] = "en"
+
+
+@admin.get("/revisits")
+async def revisit_jobs(
+    before: int | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    statement = (
+        select(AgentRevisit, ProcessingRun.status)
+        .outerjoin(ProcessingRun, ProcessingRun.id == AgentRevisit.run_id)
+        .order_by(AgentRevisit.id.desc())
+        .limit(30)
+    )
+    if before:
+        statement = statement.where(AgentRevisit.id < before)
+    rows = (await session.execute(statement)).all()
+    return {
+        "revisits": [
+            {
+                "id": task.id,
+                "document_id": task.document_id,
+                "release_id": task.release_id,
+                "status": status or task.status,
+                "run_id": task.run_id,
+                "candidate_count": len(task.candidates),
+                "error": task.error,
+            }
+            for task, status in rows
+        ],
+        "next_before": rows[-1][0].id if len(rows) == 30 else None,
+    }
 
 
 @admin.post("/jobs", status_code=202, dependencies=[Depends(require_csrf)])
@@ -80,6 +117,7 @@ async def jobs(
                 "id": run.id,
                 "status": run.status,
                 "request": run.metadata_json.get("request"),
+                "mode": "revisit" if run.metadata_json.get("revisit") else "analysis",
                 "error": run.error,
                 "tokens_input": run.tokens_input,
                 "tokens_output": run.tokens_output,
@@ -112,6 +150,10 @@ async def job_status(run_id: int, session: AsyncSession = Depends(get_session)) 
         "document_id": job.document_id,
         "request": run.metadata_json.get("request"),
         "result": run.raw_output,
+        "assessment": job.checkpoint.get("assessment"),
+        "policy": job.checkpoint.get("policy"),
+        "stage": job.checkpoint.get("stage"),
+        "revisit": run.metadata_json.get("revisit"),
         "error": run.error,
         "cost_usd": run.cost,
         "tokens_input": run.tokens_input,

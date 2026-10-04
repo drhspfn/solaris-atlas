@@ -54,9 +54,58 @@ def test_word_budget_excludes_quotes_but_includes_duplicate_visible_prose():
 
 
 def test_generic_terms_are_not_distinctive_signals():
-    for term in ["star", " DREAM ", "Rover", "time", "a", "x" * 201]:
+    for term in ["star", " DREAM ", "Rover", "time", "dream star", "a", "x" * 201]:
         assert not distinctive_term(term)
     assert distinctive_term("The Seven Swords of Qingren")
+
+
+def test_strong_links_require_independent_sourced_signals():
+    from wuwa_story.agents.contracts import InferredLink, LinkSignal
+
+    result = minimal_result()
+    citation = result.blocks[0].citations
+    link = InferredLink(
+        from_node_id=1,
+        to_node_id=2,
+        relation="related_to",
+        relation_label="Possibly shares a site",
+        explanation="A possible shared site",
+        confidence=0.8,
+        citations=citation,
+        signals=[LinkSignal(kind="location", value="Qingren Bridge", citations=citation)],
+    )
+    result.links = [link]
+    with pytest.raises(ValueError, match="independent"):
+        validate_lore_result(result, assessment())
+    link.signals.append(LinkSignal(kind="specific_phrase", value="Jump here", citations=citation))
+    validate_lore_result(result, assessment())
+
+
+def test_revisit_requires_both_old_and_new_evidence_and_every_hook():
+    from wuwa_story.agents.contracts import Citation, HookReview
+    from wuwa_story.agents.revisits import validate_revisit
+
+    result = minimal_result()
+    context = {
+        "release_id": 2,
+        "hooks": [{"key": "bridge-route", "citations": [{"snapshot_id": 1, "node_id": 1}]}],
+    }
+    with pytest.raises(ValueError, match="every requested"):
+        validate_revisit(result, context)
+    result.revisited_hooks = [
+        HookReview(
+            hook_key="bridge-route",
+            status="suggested",
+            explanation="A possible connection",
+            citations=[Citation(snapshot_id=1, node_id=1, quote="Jump here")],
+        )
+    ]
+    with pytest.raises(ValueError, match="new-import"):
+        validate_revisit(result, context)
+    result.revisited_hooks[0].citations.append(
+        Citation(snapshot_id=2, node_id=2, quote="The bridge")
+    )
+    validate_revisit(result, context)
 
 
 def minimal_result():
