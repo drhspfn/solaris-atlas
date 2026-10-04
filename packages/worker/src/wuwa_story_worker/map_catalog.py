@@ -9,6 +9,33 @@ from flatbuffers.table import Table
 from wuwa_story_worker.map_sources import flag, integer, open_db, read_markers, table, text
 
 
+# 3.7 ExploratoryTypeConfig keys, checked against templates and localized items.
+# MapIcon alone is not an identity: quest props reuse the same icons.
+COLLECTION_TYPES = {
+    7: ("blobfly", None, 11),
+    8: ("sonance_casket", 40040001, 1),
+    16: ("windchimer", 40040002, 4),
+    17: ("frostbug", None, 12),
+    34: ("sonance_casket_ragunna", 40040004, 7),
+    42: ("sonance_casket_septimont", 40040005, 7),
+    60: ("tape_of_last_words", 40040006, 14),
+    87: ("unclaimed_rafter_kite", 40040008, 15),
+}
+
+
+def collection_type(template, overrides):
+    base = {**(template.get("BaseInfoComponent") or {}),
+            **(overrides.get("BaseInfoComponent") or {})}
+    reward = {**(template.get("RewardComponent") or {}),
+              **(overrides.get("RewardComponent") or {})}
+    # RewardType 1 is a server drop plan, not a client DropPackage. No reward
+    # means a prop, not a collectible. Disabled CollectComponent is valid for
+    # Windchimers, which are claimed by hitting them.
+    if reward.get("Disabled") or reward.get("RewardType") != 1 or not reward.get("RewardId"):
+        return None
+    return COLLECTION_TYPES.get((base.get("Category") or {}).get("ExploratoryDegree"))
+
+
 def int_list(row: Table, field: int) -> list[int]:
 
     from flatbuffers.number_types import Int32Flags
@@ -40,7 +67,7 @@ def labels(config: Path) -> dict[str, dict[str, str]]:
                 for key, value in db.execute(
                     "SELECT Id, Content FROM MultiText WHERE "
                     "Id LIKE 'Area_%' OR Id LIKE 'MapMark_%' OR Id LIKE 'ItemInfo_%' OR "
-                    "Id LIKE 'MonsterInfo_%' OR Id LIKE 'Country_%' OR Id LIKE 'MultiMap_%' OR Id LIKE 'Entity_%'"
+                    "Id LIKE 'MonsterInfo_%' OR Id LIKE 'Country_%' OR Id LIKE 'MultiMap_%' OR Id LIKE 'Entity_%' OR Id LIKE 'ExploreProgress_%'"
                 ):
                     if value:
                         result[key].setdefault(directory.name, value)
@@ -189,7 +216,7 @@ def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dic
     # Nearby collectible icons describe a type, not an authored placement.
     nearby_marks = {}
     with open_db(config / "db_map_mark.db") as db:
-        for mark_id, blob in db.execute("SELECT MarkId, BinData FROM mapmark WHERE MarkId = 15"):
+        for mark_id, blob in db.execute("SELECT MarkId, BinData FROM mapmark WHERE MarkId IN (1, 4, 7, 11, 12, 14, 15)"):
             row = table(blob)
             nearby_marks[mark_id] = {
                 "names": translations.get(text(row, 18), {}),
@@ -230,12 +257,15 @@ def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dic
                 **(templates.get(blueprint, {}).get("BaseInfoComponent") or {}),
                 **(components.get("BaseInfoComponent") or {}),
             }
-            nearby_mark = nearby_marks.get(base_info.get("MapIcon"))
-            if (map_id, entity_id) not in by_entity and (blueprint in monsters or nearby_mark):
+            collection = collection_type(templates.get(blueprint, {}), components)
+            nearby_mark = nearby_marks.get(15) if base_info.get("MapIcon") == 15 else None
+            if collection:
+                nearby_mark = nearby_marks.get(collection[2], {})
+            if (map_id, entity_id) not in by_entity and (blueprint in monsters or nearby_mark or collection):
                 marker = {
                     "game_map_id": map_id,
                     "entity_id": entity_id,
-                    "category": "collectible" if nearby_mark else "monster",
+                    "category": "collectible" if nearby_mark or collection else "monster",
                     "blueprint_type": blueprint,
                     "world_x": xyz[0],
                     "world_y": xyz[1],
@@ -243,7 +273,7 @@ def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dic
                     "metadata_json": {
                         "area_id": integer(row, 7),
                         "hidden": flag(row, 6),
-                        "names": nearby_mark["names"] if nearby_mark else monsters[blueprint],
+                        "names": (nearby_mark or {}).get("names", monsters.get(blueprint, {})),
                         "components": components,
                         "in_sleep": flag(row, 5),
                         "category_basis": "component_map_icon"
@@ -325,6 +355,27 @@ def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dic
         elif marker["category"] == "monster":
             meta["icon_source"] = monster_icons.get(marker["blueprint_type"], "")
 
+        collection = collection_type(template, overrides)
+        if collection:
+            kind, collection_item, map_icon = collection
+            type_mark = nearby_marks.get(map_icon, {})
+            marker["category"] = "collectible"
+            meta.update(
+                collection_kind=kind,
+                category_basis="exploratory_degree_with_reward",
+                names=items.get(collection_item) or type_mark.get("names") or meta["names"],
+                icon_source=item_icons.get(collection_item) or type_mark.get("icon_source", ""),
+                description=type_mark.get("description", {}),
+            )
+            if collection_item:
+                meta["item_id"] = collection_item
+                meta["description"] = item_descriptions.get(collection_item, {})
+        elif base_info.get("MapIcon") == 15 and reward.get("Disabled"):
+            # Keep previously imported source identity, but do not count the
+            # explicitly disabled Kite prop as an obtainable pickup.
+            marker["category"] = "exploration"
+            meta["category_basis"] = "disabled_collectible_reward"
+
         if not reward.get("Disabled", False) and reward.get("RewardType") in (0, 2):
             preview = previews.get(reward.get("RewardId"), [])
             if preview:
@@ -337,7 +388,7 @@ def read_catalog(config: Path, map_ids: set[int]) -> tuple[list[dict], dict, dic
         meta.setdefault("names", {})
 
         meta.update(
-            type_key=f"item:{item}" if item else marker["blueprint_type"],
+            type_key=f"collection:{collection[0]}" if collection else f"item:{item}" if item else marker["blueprint_type"],
             area_ids=ancestors(meta.get("area_id", 0)),
             source_kind="entity",
         )
