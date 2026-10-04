@@ -566,9 +566,18 @@ def _quest_state_links():
         .join(scenes, scenes.c.parent == steps.c.child),
     ).subquery()
     references = source_edges("references_flow_state")
-    return select(owners.c.quest_id, references.c.child.label("state_id")).join(
+    direct = select(owners.c.quest_id, references.c.child.label("state_id")).join(
         references, references.c.parent == owners.c.owner_id
     ).distinct().subquery()
+    actions = source_edges("contains_action")
+    movies = source_edges("plays_cutscene")
+    transcripts = source_edges("has_transcript_state")
+    return select(direct.c.quest_id, direct.c.state_id).union(
+        select(direct.c.quest_id, transcripts.c.child)
+        .join(actions, actions.c.parent == direct.c.state_id)
+        .join(movies, movies.c.parent == actions.c.child)
+        .join(transcripts, transcripts.c.parent == movies.c.child)
+    ).subquery()
 
 
 async def _quest_state_ids(session: AsyncSession, quest_node_id: int) -> list[int]:

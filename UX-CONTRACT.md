@@ -22,7 +22,10 @@ bounded window around the citation rather than silently omitting it.
 Dialogue source pages reuse that passage navigation: each confirmed quest card
 opens the exact line with the displayed locale and resolved snapshot version.
 Forward transcripts and reverse quest lookup share explicit source ownership
-paths (quest, quest node, or plot-handbook scene). Multiple owners remain separate
+paths (quest, quest node, or plot-handbook scene). Video dialogue also resolves
+through an owned PlayMovie action when the complete multiset of subtitle
+localization keys equals that of the dialogue state. Partial text matches and
+similar asset names do not establish ownership. Multiple owners remain separate
 links; an unlinked line shows an explanation and nearby dialogue, without guessing
 ownership from a shared flow name or an inferred graph edge.
 

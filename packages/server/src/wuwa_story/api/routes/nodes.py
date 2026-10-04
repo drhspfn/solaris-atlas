@@ -367,7 +367,7 @@ async def node_narrative_context(
         "quests": quests,
         "game_version": (await session.get(GameRelease, release_id)).game_version if release_id else None,
         "quest_resolution": {
-            "basis": "source references_flow_state from quest, has_quest_node child, or has_plot_step/presents_scene scene",
+            "basis": "source quest/quest-node/scene flow references, including PlayMovie transcripts matched by complete caption localization keys",
             "quest_node_refs": owner_keys,
             "unresolved": not bool(quests),
         },

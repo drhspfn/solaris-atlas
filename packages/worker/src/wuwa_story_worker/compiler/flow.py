@@ -14,6 +14,41 @@ CHOICE_TYPES = {"Option", "SystemOption", "QTE"}
 NARRATION_TYPES = {"CenterText", "AvgNarration", "AvgCenterText"}
 
 
+def cutscene_transcript_links(states, captions):
+    """Match complete authored dialogue to video subtitles by localization identity.
+
+    No title, asset-name prefix, translated text, or flow proximity matching.
+    Partial matches cannot make unrelated dialogue part of a quest.
+    """
+    groups = {}
+    for index, caption in enumerate(captions):
+        name, key = caption.get("CgName"), caption.get("CaptionText")
+        if isinstance(name, str) and isinstance(key, str) and key:
+            groups.setdefault(name, []).append((index, key))
+    by_keys = {}
+    for name, entries in groups.items():
+        signature = tuple(sorted(key for _, key in entries))
+        by_keys.setdefault(signature, []).append((name, [i for i, _ in entries]))
+    for index, state in enumerate(states):
+        try:
+            actions = json.loads(state.get("Actions") or "[]")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(actions, list):
+            continue
+        items = []
+        for action in actions:
+            params = action.get("Params") if isinstance(action, dict) else None
+            talk = params.get("TalkItems") if isinstance(params, dict) else None
+            if isinstance(talk, list):
+                items.extend(item for item in talk if isinstance(item, dict))
+        keys = [item.get("TidTalk") for item in items]
+        if not keys or not all(isinstance(key, str) and key for key in keys):
+            continue
+        for name, caption_rows in by_keys.get(tuple(sorted(keys)), []):
+            yield name, state["StateKey"], index, caption_rows
+
+
 def _nested_actions(actions: Any, prefix: str):
     if not isinstance(actions, list):
         return
@@ -28,6 +63,14 @@ def compile_flow(root: Path, writer: Writer, english: dict[str, dict[str, Any]],
                  known_action_names: set[str] | None = None) -> dict[str, int]:
     source = "BinData/flowState/flowstate.json"
     rows = read_json(root / source)
+    captions_path = root / "BinData/cgVedio/videocaption.json"
+    captions = read_json(captions_path) if captions_path.is_file() else []
+    for cg, state_key, row, caption_rows in cutscene_transcript_links(rows, captions):
+        writer.edge(f"cutscene:{cg}", f"flow_state:{state_key}", "has_transcript_state",
+                    f"complete CaptionText = TidTalk multiset; videocaption.json rows {caption_rows}",
+                    source, f"$[{row}].Actions",
+                    {"relation": "exact_join", "caption_source": "BinData/cgVedio/videocaption.json",
+                     "caption_rows": caption_rows})
     flow_source = "BinData/flow/flow.json"
     flows = read_json(root / flow_source)
     flow_by_id = {flow.get("Id"): flow for flow in flows if isinstance(flow, dict)}
