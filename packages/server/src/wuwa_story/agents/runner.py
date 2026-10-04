@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import random
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -30,6 +31,7 @@ from wuwa_story.agents.providers import (
 from wuwa_story.agents.publication import publish_analysis
 from wuwa_story.agents.revisits import validate_revisit
 from wuwa_story.agents.settings import AgentSettings
+from wuwa_story.agents.trace import preview, signature, validation_message
 from wuwa_story.db.models.agents import AgentCall, AgentDailyUsage, AgentJob, AgentNote
 from wuwa_story.db.models.core import Quest
 from wuwa_story.db.models.i18n import Locale
@@ -587,11 +589,20 @@ async def run_locked(
                 await pause(session, run, "failed", "Provider output was truncated or blocked")
                 return
             history.extend(turn.items)
+            trace = {"recorded": True, "text": preview(turn.text, 8000), "tools": []}
+            signatures = dict(cp.get("tool_signatures", {}))
             if not turn.calls:
                 history.extend(
                     provider.initial("", "Use tools to research or finish_analysis to publish.")[1:]
                 )
             for tool_call in turn.calls:
+                started = time.monotonic()
+                fingerprint = signature(tool_call.name, tool_call.arguments)
+                repeats = signatures.get(fingerprint, 0)
+                signatures[fingerprint] = repeats + 1
+                validation = None
+                logger.info("agent.tool_started run_id=%s step=%s tool=%s repeat=%s",
+                            run.id, step, tool_call.name, repeats)
                 output: dict[str, Any]
                 previous_evidence = dict(evidence.evidence)
                 previous_nodes = dict(evidence.known_nodes)
@@ -676,6 +687,7 @@ async def run_locked(
                     if prescan and tool_call.name != "assess_quest":
                         cp["prescan_reads"] = cp.get("prescan_reads", 0) + 1
                 except (ValueError, TypeError, KeyError) as error:
+                    validation = validation_message(error)
                     evidence.evidence = previous_evidence
                     evidence.known_nodes = previous_nodes
                     evidence.coverage = previous_coverage
@@ -684,12 +696,21 @@ async def run_locked(
                     evidence.source_nodes = previous_source_nodes
                     output = {
                         "error": "Invalid arguments, unread/changed citation, incomplete quest, unknown node/relation or oversized result. Read missing sources and retry with bounded arguments.",
-                        "validation": str(error)[:600]
-                        if adaptive
-                        and isinstance(error, ValueError)
-                        and not hasattr(error, "errors")
-                        else "Check the tool schema and source coverage.",
+                        "validation": validation,
                     }
+                event = {
+                    "name": tool_call.name, "call_id": tool_call.id,
+                    "arguments": preview(tool_call.arguments),
+                    "status": "error" if "error" in output else "ok",
+                    "validation": validation, "result": preview(output),
+                    "duration_ms": round((time.monotonic() - started) * 1000),
+                    "repeat_count": repeats,
+                    "new_evidence": len(evidence.evidence) - len(previous_evidence),
+                }
+                trace["tools"].append(event)
+                logger.info("agent.tool_finished run_id=%s step=%s tool=%s status=%s ms=%s repeat=%s new_evidence=%s validation=%s",
+                            run.id, step, tool_call.name, event["status"], event["duration_ms"],
+                            repeats, event["new_evidence"], validation)
                 history.append(provider.tool_result(tool_call, output))
             if (
                 adaptive
@@ -708,6 +729,7 @@ async def run_locked(
             cp = {
                 **cp,
                 "step": step + 1,
+                "tool_signatures": signatures,
                 "history": history,
                 "evidence": evidence.evidence,
                 "known_nodes": evidence.known_nodes,
@@ -719,6 +741,10 @@ async def run_locked(
             if result:
                 cp["result"] = result.model_dump()
             job.checkpoint = cp
+            recorded_call = await session.scalar(select(AgentCall).where(
+                AgentCall.run_id == run.id, AgentCall.step == step))
+            if recorded_call is not None:
+                recorded_call.response = {**(recorded_call.response or {}), "execution_trace": trace}
             await session.commit()  # Tool writes and checkpoint advance atomically.
             if result:
                 break

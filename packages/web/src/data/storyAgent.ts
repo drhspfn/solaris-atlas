@@ -15,6 +15,8 @@ export type AgentJob = {
   tokens_output: number | null;
 };
 export type AgentCall = {
+  tool_errors?: number;
+  repeated_tools?: number;
   id: number;
   step: number;
   kind: string;

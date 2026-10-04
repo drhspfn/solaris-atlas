@@ -86,6 +86,12 @@ AdminLayout owns the client access gate; server require_admin and CSRF remain
 authoritative for every request. Guests get a sign-in link retaining their route;
 ordinary accounts see an access explanation without mounting admin data views.
 
+Step details in the existing admin request history load on demand behind native
+disclosures. They expose bounded model text, tool arguments/results, validation
+errors, duration and exact-request repeat counts. Execution traces persist with
+the checkpoint transaction outside compacted history; legacy requests explicitly
+state that execution results were not retained. Provider reasoning is never shown.
+
 Story agent shows cursor-paginated runs, saved research progress, safe request
 history and today's shared budget. It refreshes every ten seconds while visible,
 cancels obsolete requests and retains usable data on refresh failure. Selected

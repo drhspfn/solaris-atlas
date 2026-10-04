@@ -7,6 +7,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
 import { AgentRevisits } from '../components/story/AgentRevisits';
+import { AgentStepTrace } from '../components/story/AgentStepTrace';
 import { APP_SETTINGS } from '../config/settings';
 import {
   type AgentDetail,
@@ -492,9 +493,14 @@ function RunDetail({
                       <td>
                         {call.kind === 'analysis' ? call.step + 1 : call.kind}
                         <small>{call.model}</small>
+                        <AgentStepTrace runId={job.id} callId={call.id} />
                       </td>
                       <td>
                         {call.status.replaceAll('_', ' ')}
+                        {!!call.tool_errors && <small>{call.tool_errors} tool errors</small>}
+                        {!!call.repeated_tools && (
+                          <small>{call.repeated_tools} repeated requests</small>
+                        )}
                         {call.provider_error && <small>{call.provider_error.code}</small>}
                         {call.retry_at && (
                           <small>

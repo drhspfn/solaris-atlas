@@ -652,6 +652,11 @@ async def test_adaptive_prescan_is_required_checkpointed_and_published(world):
         doc = await db.get(Document, job.document_id)
         assert doc.metadata_json["assessment"]["narrative_weight"] == "side_flavor"
         assert doc.metadata_json["review"]["branches_separated"]
+        first_call = await db.scalar(select(AgentCall).where(
+            AgentCall.run_id == run_id, AgentCall.step == 0))
+        tool = first_call.response["execution_trace"]["tools"][0]
+        assert tool["status"] == "error"
+        assert "assess_quest" in tool["validation"]
 
 
 async def test_import_revisit_outbox_recovers_and_preserves_original(world, monkeypatch):
@@ -885,6 +890,15 @@ async def test_full_pipeline_and_duplicate_delivery(world):
         )
         assert response["explanation"]["blocks"][0]["assertions"][0]["citations"][0]["href"]
         assert "history" not in job.checkpoint
+        recorded_calls = list(await db.scalars(select(AgentCall).where(
+            AgentCall.run_id == run_id).order_by(AgentCall.step)))
+        assert len(recorded_calls) == 2
+        assert recorded_calls[0].response["execution_trace"]["tools"][0]["name"] == "read_quest"
+        assert recorded_calls[1].response["execution_trace"]["tools"][0]["status"] == "ok"
+        from wuwa_story.api.routes.story_agent import call_trace
+        detail = await call_trace(run_id, recorded_calls[0].id, db)
+        assert detail["recorded"] is True
+        assert "output" not in detail  # Native provider payload is never served.
         assert (
             await db.scalar(
                 select(func.count()).select_from(Claim).where(Claim.processor_run_id == run_id)
@@ -1326,6 +1340,8 @@ async def test_compaction_preserves_evidence_and_replays_paid_window(
         calls = list(await db.scalars(select(AgentCall).where(AgentCall.run_id == run_id)))
         assert len(calls) == 3 and all(call.status == "completed" for call in calls)
         compact_call = next(call for call in calls if call.kind == "compaction")
+        assert all(call.response.get("execution_trace", {}).get("recorded")
+                   for call in calls if call.kind == "analysis")
         assert compact_call.output_tokens == 5000
         assert (
             compact_call.reserved_tokens

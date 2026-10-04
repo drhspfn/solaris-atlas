@@ -14,6 +14,7 @@ from wuwa_story.agents.contracts import AnalysisRequest, StrictModel
 from wuwa_story.agents.jobs import enqueue_analysis, resume_analysis
 from wuwa_story.agents.retrieval import get_explanation, query_vector, scope, search_explanations
 from wuwa_story.agents.settings import AgentSettings, get_agent_settings
+from wuwa_story.agents.trace import legacy_trace
 from wuwa_story.auth.dependencies import require_admin, require_csrf
 from wuwa_story.db.models.agents import (
     AgentCall,
@@ -180,6 +181,10 @@ async def job_status(run_id: int, session: AsyncSession = Depends(get_session)) 
                 "cost_usd": str(call.cost_usd) if call.cost_usd is not None else None,
                 "input_tokens": call.input_tokens,
                 "output_tokens": call.output_tokens,
+                "tool_errors": sum(1 for item in (call.response or {}).get("execution_trace", {}).get("tools", [])
+                                   if item.get("status") == "error"),
+                "repeated_tools": sum(1 for item in (call.response or {}).get("execution_trace", {}).get("tools", [])
+                                      if item.get("repeat_count", 0) > 0),
                 "provider_error": (call.response or {}).get("provider_error")
                 if call.status in ("rate_limited", "provider_rejected")
                 else None,
@@ -190,6 +195,20 @@ async def job_status(run_id: int, session: AsyncSession = Depends(get_session)) 
             for call in calls
         ],
     }
+
+
+@admin.get("/jobs/{run_id}/calls/{call_id}")
+async def call_trace(run_id: int, call_id: int, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    call = await session.get(AgentCall, call_id)
+    if call is None or call.run_id != run_id:
+        raise HTTPException(404, "Request not found in this run")
+    raw = call.response or {}
+    trace = raw.get("execution_trace")
+    if trace is None:
+        # Compact output contains old conversation messages, not a new model turn.
+        trace = legacy_trace(raw) if call.kind == "analysis" else {
+            "recorded": False, "text": "", "tools": []}
+    return {"id": call.id, "created_at": call.created_at, **trace}
 
 
 @admin.post("/jobs/{run_id}/resume", dependencies=[Depends(require_csrf)])

@@ -336,6 +336,22 @@
 .agent-calls {
   border-top: 1px solid var(--border-default);
 }
+.agent-step-trace {
+  margin-top: 8px;
+  max-width: 480px;
+  overflow-wrap: anywhere;
+}
+.agent-step-trace section {
+  border-top: 1px solid var(--border-default);
+  padding-block: 12px;
+}
+.agent-step-trace pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 280px;
+  overflow: auto;
+  font-size: 11px;
+}
 .agent-calls summary span {
   font-size: 11px;
   color: var(--text-secondary);
