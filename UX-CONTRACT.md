@@ -19,6 +19,13 @@ bounded passage focus. The cited line is highlighted, scrolled into view and
 focused; conflicting transcript filters are cleared. Long transcripts load a
 bounded window around the citation rather than silently omitting it.
 
+Dialogue source pages reuse that passage navigation: each confirmed quest card
+opens the exact line with the displayed locale and resolved snapshot version.
+Forward transcripts and reverse quest lookup share explicit source ownership
+paths (quest, quest node, or plot-handbook scene). Multiple owners remain separate
+links; an unlinked line shows an explanation and nearby dialogue, without guessing
+ownership from a shared flow name or an inferred graph edge.
+
 Generated events have their own read-only page, quotes and a return link to the
 same quest/version/language. Related records and inferred connections use internal
 source routes. AI interpretation labels are persistent. UI labels remain English;

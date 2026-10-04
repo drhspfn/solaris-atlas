@@ -65,3 +65,14 @@ export type QuestContinuity = {
   }[];
   required_by: { quest: string; name: LocalizedText; source: { file: string; raw_path: string } }[];
 };
+/** Keep source identity intact, including non-Latin keys and URL punctuation. */
+export function questPassagePath(
+  questId: string | number,
+  line: string,
+  locale: string,
+  version?: string,
+) {
+  const params = new URLSearchParams({ line, locale });
+  if (version) params.set('game_version', version);
+  return `/quests/${encodeURIComponent(questId)}?${params}`;
+}

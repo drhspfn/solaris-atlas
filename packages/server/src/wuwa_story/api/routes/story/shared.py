@@ -549,25 +549,31 @@ async def _dialogue_payload(
         "provenance": _provenance(record, source_file),
     }
 
+def _quest_state_links():
+    """The same explicit ownership paths for transcript and reverse navigation."""
+    def source_edges(relation):
+        return select(Edge.from_node_id.label("parent"), Edge.to_node_id.label("child")).join(
+            RelationType, RelationType.id == Edge.relation_type_id
+        ).where(Edge.layer == "source", RelationType.key == relation).subquery()
+
+    children = source_edges("has_quest_node")
+    steps = source_edges("has_plot_step")
+    scenes = source_edges("presents_scene")
+    owners = select(Quest.node_id.label("quest_id"), Quest.node_id.label("owner_id")).union(
+        select(Quest.node_id, children.c.child).join(children, children.c.parent == Quest.node_id),
+        select(Quest.node_id, scenes.c.child)
+        .join(steps, steps.c.parent == Quest.node_id)
+        .join(scenes, scenes.c.parent == steps.c.child),
+    ).subquery()
+    references = source_edges("references_flow_state")
+    return select(owners.c.quest_id, references.c.child.label("state_id")).join(
+        references, references.c.parent == owners.c.owner_id
+    ).distinct().subquery()
+
+
 async def _quest_state_ids(session: AsyncSession, quest_node_id: int) -> list[int]:
-    relation_ids = select(RelationType.id).where(RelationType.key == "references_flow_state")
-    child_quest_nodes = (
-        select(Edge.to_node_id)
-        .join(RelationType, Edge.relation_type_id == RelationType.id)
-        .where(
-            Edge.from_node_id == quest_node_id,
-            RelationType.key == "has_quest_node",
-            Edge.layer == "source",
-        )
-    )
-    ids = await session.scalars(
-        select(Edge.to_node_id).where(
-            or_(Edge.from_node_id == quest_node_id, Edge.from_node_id.in_(child_quest_nodes)),
-            Edge.relation_type_id.in_(relation_ids),
-            Edge.layer == "source",
-        )
-    )
-    return list(ids)
+    links = _quest_state_links()
+    return list(await session.scalars(select(links.c.state_id).where(links.c.quest_id == quest_node_id)))
 
 async def _quest_info(
     session: AsyncSession,
