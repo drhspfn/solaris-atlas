@@ -5,7 +5,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from wuwa_story.agents.contracts import PROMPT_VERSION, AnalysisRequest
+from wuwa_story.agents.contracts import PROMPT_VERSION, AnalysisRequest, QuestAssessment
 from wuwa_story.agents.evidence import (
     hash_value,
     imported_snapshot_ids,
@@ -13,9 +13,11 @@ from wuwa_story.agents.evidence import (
     quest_fingerprint,
     scope_for_request,
 )
+from wuwa_story.agents.lore import assessment_policy
 from wuwa_story.agents.providers import Provider
 from wuwa_story.agents.settings import AgentSettings
-from wuwa_story.db.models.agents import AgentCall, AgentJob
+from wuwa_story.db.models.agents import AgentCall, AgentJob, AgentRevisit
+from wuwa_story.db.models.content import Document
 from wuwa_story.db.models.ops import AIModel, ProcessingRun, Processor
 from wuwa_story.ingestion.media_jobs import publish_media_job
 
@@ -37,7 +39,11 @@ async def publish_job(session: AsyncSession, run: ProcessingRun) -> ProcessingRu
 
 
 async def enqueue_analysis(
-    session: AsyncSession, request: AnalysisRequest, settings: AgentSettings
+    session: AsyncSession,
+    request: AnalysisRequest,
+    settings: AgentSettings,
+    *,
+    revisit: AgentRevisit | None = None,
 ) -> ProcessingRun:
     quest, release, locale = await scope_for_request(
         session, **request.model_dump(exclude={"generation"})
@@ -49,6 +55,25 @@ async def enqueue_analysis(
     source_release_ids = await imported_snapshot_ids(session)
     source_revision = await imported_source_revision(session)
     config = settings.public_config()
+    review_context = None
+    checkpoint = {}
+    if revisit:
+        parent = await session.get(Document, revisit.document_id)
+        if parent is None:
+            raise ValueError("Original explanation no longer exists")
+        assessment = QuestAssessment.model_validate(parent.metadata_json["assessment"])
+        policy = assessment_policy(assessment)
+        checkpoint = {"assessment": assessment.model_dump(), "policy": policy, "stage": "revisit"}
+        config["max_steps"] = min(settings.max_steps, 8)
+        config["max_output_tokens"] = max(settings.max_output_tokens, policy["output_tokens"])
+        matched = {candidate["hook_key"] for candidate in revisit.candidates}
+        review_context = {
+            "task_id": revisit.id,
+            "document_id": parent.id,
+            "release_id": revisit.release_id,
+            "hooks": [hook for hook in parent.metadata_json["hooks"] if hook["key"] in matched],
+            "candidates": revisit.candidates,
+        }
     identity = hash_value(
         {
             "request": request.model_dump(),
@@ -58,6 +83,7 @@ async def enqueue_analysis(
             "prompt": PROMPT_VERSION,
             "source_release_ids": source_release_ids,
             "source_revision": source_revision,
+            "revisit_id": revisit.id if revisit else None,
         }
     )
     await session.execute(
@@ -69,6 +95,8 @@ async def enqueue_analysis(
         .where(AgentJob.identity_hash == identity)
     )
     if existing:
+        if revisit:
+            revisit.run_id, revisit.status, revisit.error = existing.id, "queued", None
         if existing.status not in ("queued", "enqueue_failed"):
             return existing
         existing.status, existing.error = "queued", None
@@ -96,7 +124,11 @@ async def enqueue_analysis(
         prompt_version=PROMPT_VERSION,
         input_hash=source,
         status="queued",
-        metadata_json={"request": request.model_dump(), "source_release_ids": source_release_ids},
+        metadata_json={
+            "request": request.model_dump(),
+            "source_release_ids": source_release_ids,
+            "revisit": review_context,
+        },
     )
     session.add(run)
     await session.flush()
@@ -107,8 +139,11 @@ async def enqueue_analysis(
             locale_id=locale.id,
             identity_hash=identity,
             config=config,
+            checkpoint=checkpoint,
         )
     )
+    if revisit:
+        revisit.run_id, revisit.status, revisit.error = run.id, "queued", None
     return await publish_job(session, run)
 
 

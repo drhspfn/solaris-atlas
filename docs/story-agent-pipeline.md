@@ -11,7 +11,7 @@ that actually contains the quest, then records that version in the saved request
 Explicit versions remain available for CLI and API callers; the admin API rejects
 non-English explanation locales. Source reading remains multilingual.
 
-For `story-v4`, the resolved game version is the **target transcript snapshot**,
+For `story-v4` and `story-v5`, the resolved game version is the **target transcript snapshot**,
 not a research cutoff. Graph neighbors, search and working memory can cover all
 imported snapshots. `list_snapshots` exposes the source inventory pinned at enqueue;
 `read_quest` and `read_node` accept an explicit `snapshot_id` to compare patches.
@@ -31,8 +31,13 @@ participate in job identity, so repeating a request after an import can create a
 fresh run. The run's inventory does not expand during research. Public retrieval
 checks the inventory and fingerprints of cited sources, including other patches;
 changed/deleted source text invalidates the explanation without charging a new
-analysis. Queuing remains an explicit administrator action. Existing v1–v3 jobs
-keep their original single-snapshot scope; start a new job to use v4.
+analysis. Full analysis is queued explicitly by an administrator. V5 additionally
+schedules focused reviews for flagged hooks after a successful import. Existing
+v1–v4 jobs retain their original protocol; start a new job to use v5.
+
+For v5, a growing source inventory no longer hides an otherwise valid explanation.
+The page reports its loaded corpus and displays newly cited supplements separately.
+Changed original/cited text still invalidates that document.
 
 Entity/text search uses the existing shared lexical index to find candidates,
 then exact snapshot reads establish evidence. It is not an exhaustive historical
@@ -42,9 +47,12 @@ have actually been imported, not every released patch automatically.
 
 ## Setup
 
-1. Back up the working database, then apply the new `0009_story_agent` migration
-   from `packages/server`: `uv run alembic upgrade head`. The migration adds five
-   small tables and a cache revision trigger; it does not rewrite imported text.
+1. Back up the working database, then apply migrations through `0010_agent_revisit`
+   from `packages/server`: `uv run alembic upgrade head`. Migration 0010 adds one
+   small outbox table; it does not rewrite imported text. Apply it before starting
+   the new API, importer or story worker. Roll back application images first;
+   retain this additive table to preserve pending reviews. Downgrading to 0009
+   drops only the revisit outbox, so export it first if work must be retained.
 2. Set the agent values in **both** `packages/server/.env` and
    `packages/worker/.env`. Examples use `responses`, `gpt-6-luna` and a shared
    **$1/day** cap. Add `AGENT_API_KEY` locally, never to a frontend variable.
@@ -105,7 +113,7 @@ deployment receipt below for the real-provider smoke test.
 
 ## Assertion chronology and evidence
 
-New jobs use `story-v4`, retaining the assertion structure introduced in v3.
+New jobs use `story-v5`, retaining the assertion structure introduced in v3.
 Each explanation block contains atomic `assertions`,
 with exact citations and a status: `confirmed`, `observed_anomaly`, `inferred`,
 or `unresolved`. An observation is not proof of its apparent cause. For example,
@@ -138,8 +146,72 @@ and allowed ontology relations can be used, not arbitrary new relations or nodes
 Legacy analyses and checkpoints remain readable/resumable under their original
 contract. To obtain chronology for an existing analysis, enqueue a new job; the
 new prompt version changes its identity. This does not launch paid work by itself.
-There is no schema migration: assertion structures live in document JSON and
+Assertion structures live in document JSON and
 their searchable text includes knowledge and later explanations.
+
+## Adaptive analysis and import reviews (v5)
+
+The first stage only exposes bounded source reads and `assess_quest`. After three
+successful pre-scan reads, it must classify before further research. Invalid calls
+do not consume the read allowance, but still count against the total step budget.
+The full output schema is supplied only after classification. The server stores
+the cited assessment, depth policy, coverage and stage in the checkpoint; resume
+and compaction retain them. A later upgrade requires new cited reasons and a
+strictly larger depth policy. It cannot raise the administrator's overall step
+ceiling or the shared daily budget.
+
+| Narrative weight | Normal depth | Maximum visible prose words |
+| --- | --- | --- |
+| service_repeatable | very_short | 100 |
+| tutorial_activity | very_short | 200 |
+| side_flavor / worldbuilding | short | 400 |
+| side_hook | medium | 800 |
+| region_lore | medium | 1200 |
+| character_arc | full | 1800 |
+| main_plot | full | 3000 |
+
+High-priority or substantive Rover/regional/time-memory signals can upgrade a
+small quest to medium. Profiles bound sections and research steps as well as
+prose; citations are excluded from prose counts. Output token allowance scales
+to 4096/8192/16384/32000, reserved through the existing cost ledger. A paused or
+uncertain run is never automatically restarted by the revisit dispatcher.
+
+Certainty is separate from occurrence: a confirmed player option is not an event
+that necessarily happened. Conditional/optional/player-choice assertions require
+their condition. Medium/full outputs include known/unknown/cannot-conclude notes;
+all v5 outputs include narrative function and a structured self-review. Strong
+links require a cited direct reference or two distinct signal types. Theory is
+stored as a candidate in the explanation and does not create a semantic edge.
+These checks validate structure and provenance, not the truth of a model's
+interpretation; independent editorial evaluation is still needed for lore quality.
+
+Successful compiled imports atomically insert `ops.agent_revisit` entries for
+current v5 explanations with flagged hooks. `(document_id, release_id)` is unique.
+The story consumer scans bounded batches every minute, rotating the cursor so
+older failed deliveries cannot starve newer work. The existing lexical GIN index
+finds phrase candidates observed in the new snapshot. Generic-only terms are
+rejected; no candidates means no paid job, **not** a resolved mystery. This is a
+bounded candidate search, not exhaustive historical or semantic recall.
+
+A matched review pins its original explanation, hook keys, candidate IDs and new
+snapshot. It uses the same agent job/call ledger and budget. Queue confirmation
+failures retry the persisted run ID, including after a dispatcher restart. The
+review must reread exact original and new evidence; it can skip unrelated pages
+of the original quest. Each requested hook gets a status and updated priority.
+The original document remains immutable; supplements have separate heads per
+original document and imported snapshot. They are hidden behind a spoiler
+disclosure. Admin **Reviews after new imports** exposes pending, no-candidate,
+queued and paused work with links to the ordinary run controls. Budget/context/
+output pauses require an administrator's normal resume action.
+
+Current supplements participate in explanation search while their original
+document remains the published head. Reviewed-hook explanations are included in
+both lexical text and the first block's embedding input. Search hides supplemental
+titles and findings behind a closed spoiler disclosure, just like the quest page.
+
+Existing v1–v4 documents do not acquire invented hooks. Reanalyze selected quests
+to publish v5 hooks before expecting import-triggered review. Importing another
+snapshot never silently expands a running job's evidence inventory.
 
 ## Models and embeddings
 

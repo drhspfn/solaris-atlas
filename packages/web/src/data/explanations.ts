@@ -7,6 +7,7 @@ export type SourceCitation = {
   href?: string | null;
 };
 export type ExplanationBlock = {
+  scene_importance?: string;
   title: string;
   text: string;
   kind: 'summary' | 'explanation' | 'annotation';
@@ -17,7 +18,16 @@ export type ExplanationBlock = {
 };
 export type StoryAssertion = {
   text: string;
-  status: 'confirmed' | 'observed_anomaly' | 'inferred' | 'unresolved';
+  status:
+    | 'confirmed'
+    | 'observed_anomaly'
+    | 'inferred'
+    | 'unresolved'
+    | 'suggested'
+    | 'character_speculation'
+    | 'theory';
+  occurrence?: 'mandatory' | 'player_choice' | 'conditional' | 'optional' | 'unknown';
+  condition?: string | null;
   citations: SourceCitation[];
   chronology_in_quest: { order: number; anchor_node_id: number; label: string };
   world_chronology: {
@@ -26,13 +36,35 @@ export type StoryAssertion = {
   };
   knowledge_state: string;
   later_resolution: {
-    status: 'resolved' | 'partial' | 'contradicted';
+    status: 'resolved' | 'partial' | 'contradicted' | 'suggested';
     text: string;
     revealed_in_node_id: number;
     citations: SourceCitation[];
   }[];
 };
 export type StoryExplanation = {
+  is_supplement?: boolean;
+  assessment?: { narrative_weight: string; hook_priority: string; reason: string } | null;
+  narrative_function?: string | null;
+  knowledge_boundary?: { known: string[]; unknown: string[]; cannot_conclude: string[] } | null;
+  loaded_versions?: string[];
+  corpus_changed?: boolean;
+  hooks?: {
+    key: string;
+    question: string;
+    priority: string;
+    revisit_on_new_versions: boolean;
+    revisit_reason: string;
+    citations: SourceCitation[];
+  }[];
+  revisited_hooks?: {
+    hook_key: string;
+    priority: string;
+    status: string;
+    explanation: string;
+    citations: SourceCitation[];
+  }[];
+  supplements?: StoryExplanation[];
   id: number;
   quest_id: number;
   game_version: string;
@@ -50,6 +82,7 @@ export type StoryExplanation = {
     relation_label?: string | null;
     explanation: string;
     confidence?: number;
+    certainty?: 'confirmed' | 'suggested' | 'inferred' | 'theory';
     citations?: SourceCitation[];
   }[];
 };

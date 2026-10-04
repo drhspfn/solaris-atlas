@@ -35,7 +35,12 @@ async def publish_analysis(
     assert run.target_node_id is not None
     node = await session.scalar(select(Node).where(Node.id == run.target_node_id).with_for_update())
     assert node is not None
-    kind = document_type(job.release_id)
+    revisit = run.metadata_json.get("revisit")
+    kind = (
+        f"story-recontextualization:{revisit['document_id']}:{revisit['release_id']}"
+        if revisit
+        else document_type(job.release_id)
+    )
     revision = (
         await session.scalar(
             select(func.max(Document.revision)).where(
@@ -60,7 +65,7 @@ async def publish_analysis(
         document_type=kind,
         revision=revision,
         title=result.title,
-        plain_text="\n\n".join(block.search_text() for block in result.blocks),
+        plain_text="\n\n".join(result.search_text(i) for i in range(len(result.blocks))),
         body_ast=[block.model_dump() for block in result.blocks],
         source_hash=run.input_hash or hash_value(result.model_dump()),
         processor_run_id=run.id,
@@ -68,8 +73,17 @@ async def publish_analysis(
             "release_id": job.release_id,
             "schema_version": run.prompt_version,
             "generated": True,
+            "revisit": revisit,
+            "revisited_hooks": [review.model_dump() for review in result.revisited_hooks],
             "source_scope": "all_locales" if run.prompt_version != "story-v1" else "locale",
             "unresolved_questions": result.unresolved_questions,
+            "assessment": result.assessment.model_dump() if result.assessment else None,
+            "narrative_function": result.narrative_function,
+            "knowledge_boundary": result.knowledge_boundary.model_dump()
+            if result.knowledge_boundary
+            else None,
+            "hooks": [hook.model_dump() for hook in result.hooks],
+            "review": result.review.model_dump() if result.review else None,
             "links": [link.model_dump() for link in result.links],
             "source_release_ids": run.metadata_json.get("source_release_ids", [job.release_id]),
             "source_receipts": source_receipts or [],
@@ -186,6 +200,8 @@ async def publish_analysis(
         claim_refs.append((target, claim.id, relation))
 
     for item in result.links:
+        if item.certainty == "theory":
+            continue
         await link(
             item.from_node_id,
             item.to_node_id,
@@ -289,7 +305,7 @@ async def publish_analysis(
                     document_id=document.id,
                     ordinal=ordinal,
                     model_id=model_id,
-                    content_hash=hash_value(result.blocks[ordinal].model_dump()),
+                    content_hash=hash_value(result.search_text(ordinal)),
                     embedding=vector,
                 )
             )

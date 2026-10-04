@@ -101,8 +101,12 @@ async def public_document(
         session, quest, release.id, fingerprint_locale
     ):
         return None
-    if document.metadata_json.get("schema_version") == "story-v4":
-        if document.metadata_json.get("source_release_ids") != await imported_snapshot_ids(session):
+    corpus_changed = False
+    if document.metadata_json.get("schema_version") in ("story-v4", "story-v5"):
+        corpus_changed = document.metadata_json.get(
+            "source_release_ids"
+        ) != await imported_snapshot_ids(session)
+        if corpus_changed and document.metadata_json.get("schema_version") == "story-v4":
             return None
         tools = EvidenceTools(
             session,
@@ -130,6 +134,10 @@ async def public_document(
         )
     ).all()
     ids = {c["node_id"] for block in document.body_ast for c in block.get("citations", [])}
+    for hook in document.metadata_json.get("hooks", []):
+        ids.update(c["node_id"] for c in hook["citations"])
+    for review in document.metadata_json.get("revisited_hooks", []):
+        ids.update(c["node_id"] for c in review["citations"])
     ids.update(value for block in document.body_ast for value in block.get("related_node_ids", []))
     for block in document.body_ast:
         ids.update(record["node_id"] for record in block.get("related_records", []))
@@ -264,13 +272,34 @@ async def public_document(
         "quest_id": quest.game_quest_id,
         "game_version": release.game_version,
         "research_scope": "all_imported_snapshots"
-        if document.metadata_json.get("schema_version") == "story-v4"
+        if document.metadata_json.get("schema_version") in ("story-v4", "story-v5")
         else "target_snapshot",
         "locale": output_locale.code,
         "requested_locale": locale.code,
         "title": document.title,
+        "assessment": document.metadata_json.get("assessment"),
+        "narrative_function": document.metadata_json.get("narrative_function"),
+        "knowledge_boundary": document.metadata_json.get("knowledge_boundary"),
+        "hooks": [await with_citations(hook) for hook in document.metadata_json.get("hooks", [])],
+        "revisited_hooks": [
+            await with_citations(review)
+            for review in document.metadata_json.get("revisited_hooks", [])
+        ],
+        "corpus_changed": corpus_changed,
+        "loaded_versions": list(
+            await session.scalars(
+                select(GameRelease.game_version)
+                .where(
+                    GameRelease.id.in_(
+                        document.metadata_json.get("source_release_ids", [release.id])
+                    )
+                )
+                .order_by(GameRelease.sequence)
+            )
+        ),
         "blocks": blocks,
         "generated": True,
+        "is_supplement": bool(document.metadata_json.get("revisit")),
         "unresolved_questions": document.metadata_json.get("unresolved_questions", []),
         "events": [{"node_id": node_id, "title": title} for node_id, title in events],
         "links": [await with_citations(item) for item in document.metadata_json.get("links", [])],
@@ -298,6 +327,19 @@ async def get_explanation(
     for document in documents:
         payload = await public_document(session, document, quest, release, language)
         if payload:
+            supplements = await session.scalars(
+                select(Document)
+                .join(DocumentHead, DocumentHead.document_id == Document.id)
+                .where(
+                    Document.document_type.startswith(f"story-recontextualization:{document.id}:")
+                )
+                .order_by(Document.id)
+            )
+            payload["supplements"] = []
+            for supplement in supplements:
+                published = await public_document(session, supplement, quest, release, language)
+                if published:
+                    payload["supplements"].append(published)
             break
     return {
         "status": "available" if payload else "pending",
@@ -397,12 +439,24 @@ async def search_explanations(
     settings: AgentSettings | None = None,
 ) -> dict[str, Any]:
     release, language = await scope(session, game_version, locale)
+    # A supplement is current only while its original explanation is still the head.
+    parent_heads = select(DocumentHead.document_id).where(
+        DocumentHead.document_type == document_type(release.id)
+    )
     # Restrict to current published heads; older generated revisions are never search results.
     base = (
         select(Document, Quest)
         .join(DocumentHead, DocumentHead.document_id == Document.id)
         .join(Quest, Quest.node_id == Document.node_id)
-        .where(Document.document_type == document_type(release.id))
+        .where(
+            or_(
+                Document.document_type == document_type(release.id),
+                and_(
+                    Document.document_type.startswith("story-recontextualization:"),
+                    Document.metadata_json["revisit"]["document_id"].as_integer().in_(parent_heads),
+                ),
+            )
+        )
     )
     score = func.ts_rank_cd(
         func.to_tsvector("simple", Document.plain_text), func.plainto_tsquery("simple", query)

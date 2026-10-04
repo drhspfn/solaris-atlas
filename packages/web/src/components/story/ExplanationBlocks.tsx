@@ -9,6 +9,9 @@ const assertionLabels = {
   observed_anomaly: 'Observed anomaly',
   inferred: 'Inferred',
   unresolved: 'Unresolved',
+  suggested: 'Suggested',
+  character_speculation: 'Character speculation',
+  theory: 'Theory',
 };
 const worldLabels = {
   before_quest: 'Before this quest',
@@ -24,6 +27,9 @@ export function ExplanationBlocks({ explanation }: { explanation: StoryExplanati
       {explanation.blocks.map((block, index) => (
         <article className="explanation-block" key={`${index}-${block.title}`}>
           <h3>{block.title}</h3>
+          {block.scene_importance && (
+            <span className="explanation-badge">Scene importance · {block.scene_importance}</span>
+          )}
           <p>{block.text}</p>
           <ExplanationSources citations={block.citations} nodes={explanation.nodes} />
           {block.assertions?.map((assertion, assertionIndex) => (
@@ -36,6 +42,14 @@ export function ExplanationBlocks({ explanation }: { explanation: StoryExplanati
                 {assertionLabels[assertion.status]}
               </span>
               <p className="assertion-text">{assertion.text}</p>
+              {assertion.occurrence && assertion.occurrence !== 'mandatory' && (
+                <p className="assertion-unresolved">
+                  {assertion.occurrence === 'unknown'
+                    ? 'Branch occurrence not established'
+                    : assertion.occurrence.replaceAll('_', ' ')}
+                  {assertion.condition ? ` · ${assertion.condition}` : ''}
+                </p>
+              )}
               <dl className="assertion-chronology">
                 <div>
                   <dt>Encountered in quest</dt>
@@ -69,7 +83,9 @@ export function ExplanationBlocks({ explanation }: { explanation: StoryExplanati
                           ? 'Partially explained'
                           : resolution.status === 'contradicted'
                             ? 'Contradicted later'
-                            : 'Explained later'}
+                            : resolution.status === 'suggested'
+                              ? 'Possible connection'
+                              : 'Explained later'}
                       </span>
                       <p>{resolution.text}</p>
                       <ExplanationSources
@@ -80,7 +96,9 @@ export function ExplanationBlocks({ explanation }: { explanation: StoryExplanati
                   ))}
                 </details>
               ) : (
-                <span className="assertion-unresolved">No later explanation established.</span>
+                <span className="assertion-unresolved">
+                  No later explanation established in the loaded corpus.
+                </span>
               )}
             </section>
           ))}

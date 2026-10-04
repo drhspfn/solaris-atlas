@@ -6,6 +6,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 
 import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
+import { AgentRevisits } from '../components/story/AgentRevisits';
 import { APP_SETTINGS } from '../config/settings';
 import {
   type AgentDetail,
@@ -264,7 +265,10 @@ function AgentWorkspace() {
               aria-pressed={String(job.id) === selected}
             >
               <span className="agent-run-top">
-                <strong>Run #{job.id}</strong>
+                <strong>
+                  Run #{job.id}
+                  {job.mode === 'revisit' ? ' · Review' : ''}
+                </strong>
                 <Status status={job.status} />
               </span>
               <span>
@@ -304,6 +308,7 @@ function AgentWorkspace() {
           </section>
         )}
       </div>
+      <AgentRevisits refresh={refresh} />
       {usage &&
         usage.days.some((day) => Number(day.reserved_usd) > 0 && day.day !== usage.today) && (
           <details className="content-panel agent-ledger">
@@ -398,6 +403,19 @@ function RunDetail({
                 aria-label="Completed research steps"
               />
             </div>
+            {job.assessment && (
+              <div className="agent-reason">
+                <strong>
+                  {job.assessment.narrative_weight.replaceAll('_', ' ')} ·{' '}
+                  {job.policy?.depth.replaceAll('_', ' ')} analysis
+                </strong>
+                <p>{job.assessment.reason}</p>
+                <small>
+                  {job.policy?.words} prose words maximum · {job.assessment.hook_priority} hook
+                  priority
+                </small>
+              </div>
+            )}
             <div className="agent-detail-meta">
               <span>
                 {number(job.tokens_input)} input · {number(job.tokens_output)} output tokens

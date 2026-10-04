@@ -91,3 +91,47 @@ export const storyExplanation = {
   events: [],
   unresolved_questions: ['Where did Rover arrive from?'],
 };
+
+// Deliberately illustrative UI data, never imported into the story database.
+export const adaptiveExplanation = {
+  ...storyExplanation,
+  assessment: {
+    narrative_weight: 'main_plot',
+    hook_priority: 'high',
+    reason: 'Introduces the central mystery.',
+  },
+  narrative_function: 'Establishes an unexplained arrival without resolving its cause.',
+  loaded_versions: ['1.0.0', '1.1.0'],
+  corpus_changed: true,
+  knowledge_boundary: {
+    known: ['An examination takes place.'],
+    unknown: ['How the arrival happened.'],
+    cannot_conclude: ['Apparent drowning proves actual drowning.'],
+  },
+  hooks: [
+    {
+      key: 'arrival-origin',
+      question: 'What caused the unexplained arrival?',
+      priority: 'high',
+      revisit_on_new_versions: true,
+      revisit_reason: 'Review explicit references to the arrival in new imported sources.',
+      citations: storyExplanation.blocks[0].citations,
+    },
+  ],
+  supplements: [
+    {
+      ...storyExplanation,
+      id: 2,
+      title: 'Illustrative follow-up',
+      revisited_hooks: [
+        {
+          hook_key: 'arrival-origin',
+          priority: 'high',
+          status: 'suggested',
+          explanation: 'A candidate needs further evidence; this fixture asserts no new game fact.',
+          citations: storyExplanation.blocks[0].citations,
+        },
+      ],
+    },
+  ],
+};

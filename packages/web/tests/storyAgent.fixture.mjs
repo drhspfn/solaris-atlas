@@ -1,5 +1,6 @@
 // Local browser-test API. No game DB, credentials, queue or paid provider calls.
 import { createServer } from 'node:http';
+import { adaptiveExplanation } from './fixtures/storyExplanation.mjs';
 
 const request = { quest_id: 139000025, game_version: '1.0.0', locale: 'en' };
 const jobs = [
@@ -75,6 +76,42 @@ createServer(async (req, res) => {
     return;
   }
   if (mode === 'slow') await new Promise((resolve) => setTimeout(resolve, 1500));
+  if (url.pathname === '/quests/139000025/explanation') {
+    send(res, 200, {
+      status: mode === 'empty' ? 'pending' : 'available',
+      explanation: mode === 'empty' ? null : adaptiveExplanation,
+    });
+    return;
+  }
+  if (url.pathname === '/admin/story-agent/revisits') {
+    send(res, 200, {
+      revisits:
+        mode === 'empty' || url.searchParams.has('before')
+          ? []
+          : [
+              {
+                id: 2,
+                document_id: 1,
+                release_id: 2,
+                run_id: 14,
+                status: 'paused_steps',
+                candidate_count: 3,
+                error: null,
+              },
+              {
+                id: 1,
+                document_id: 1,
+                release_id: 2,
+                run_id: null,
+                status: 'no_candidates',
+                candidate_count: 0,
+                error: null,
+              },
+            ],
+      next_before: url.searchParams.has('before') ? null : 1,
+    });
+    return;
+  }
   if (url.pathname === '/admin/story-agent/alerts') {
     send(res, 200, {
       alerts: resolved
