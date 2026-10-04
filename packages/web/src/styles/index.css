@@ -6029,3 +6029,60 @@ button.search-clear:focus-visible {
   color: var(--text-muted);
   text-align: right;
 }
+.cutscene-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+.cutscene-settings label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+.cutscene-settings select,
+.cutscene-settings button {
+  background: var(--surface-1);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  min-height: 40px;
+  padding: 6px 10px;
+}
+.cutscene-settings button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cutscene-settings button[aria-pressed='true'] {
+  color: var(--mint);
+  border-color: var(--mint);
+}
+.cutscene-settings input[type='range'] {
+  width: 85px;
+  accent-color: var(--mint);
+}
+.cutscene-settings input[type='checkbox'] {
+  accent-color: var(--mint);
+}
+.cutscene-captions {
+  position: absolute;
+  inset: auto 5% 58px;
+  pointer-events: none;
+  text-align: center;
+  color: #fff;
+  font-size: clamp(14px, 1.6vw, 23px);
+  line-height: 1.45;
+}
+.cutscene-captions p {
+  margin: 4px auto;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 10px;
+  background: #090e0fe6;
+  border-radius: 4px;
+}

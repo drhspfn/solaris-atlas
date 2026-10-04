@@ -144,7 +144,7 @@ transaction can leave unreferenced objects for normal storage cleanup.
 
 ## API and player
 
-Quest media includes published graph nodes and signed media URLs. A flow is
+Quest media includes published graph nodes and public CDN media URLs. A flow is
 served only when all its assets are available in the exact recorded asset
 version; it never combines an older flow with newer recordings. Unpublished
 quests retain `references_only`; published media uses `partial` because other
@@ -184,9 +184,8 @@ from the authored hierarchy (for example, wwiser with Init.bnk and master gain
 random/sequence containers. Preserve muted source gains rather than normalizing
 them. Also inspect PlayMovie.Mp4FrameEvents for PostAkEvent tracks absent from
 VideoSound. The planner does not yet resolve those events or Wwise switches.
-Subtitles and subtitle-triggered localized
-voices are not included yet. Unsupported cases fail rather than silently publishing
-incorrect sound. Quality switching and historical asset matching remain separate
+Subtitle-triggered voices outside the authored soundtrack still require a separate
+verified export. Unsupported cases fail rather than silently publishing incorrect sound. Quality switching and historical asset matching remain separate
 work. The UI states missing subtitle coverage.
 
 ## Verification
@@ -197,3 +196,57 @@ source timing, gender-specific audio, safe paths, bank layouts, asset build
 matching and unavailable branches. The opening was actually imported and replayed
 idempotently; both variants returned HTTP 206 video/mp4. Browser playback decoded
 1080p frames, paused for Rover choice, continued the selected branch and restarted.
+
+
+## Independent audio bundles and captions (3.7)
+
+`python -m wuwa_story_worker.cutscene_audio --recipe recipe.json --root export-root --ffmpeg /path/to/ffmpeg`
+accepts a `CutsceneAudioRecipe`: exact asset identity/build, complete movie duration,
+and stems with `role`, optional `language`, WAV `path`, original `sources`, and
+human-readable `evidence`. Roles are `voice`, `music`, `effects`, or a single
+`mixed` track. Voice languages are en/ja/ko/zh. Sources must be confined to root;
+WAVs must be aligned to the original movie, 48 kHz mono/stereo, with full duration.
+Derive offsets, gain, gender switches and envelopes from the game, not filename guesses.
+
+The publisher encodes independent Opus files and remuxes existing full movies and
+segments without audio (no picture re-encode). A transaction publishes a
+`cutscene_audio_bundle` only after every file exists. Old mixed movies remain as
+fallback. Bundles are scoped to the exact build; incomplete bundles are hidden.
+No migration is needed. Remove the bundle reference to return to legacy playback.
+Media is content addressed; subsequent exports reuse deterministic hashes.
+
+The player uses video time plus each segment's original-frame offset as its clock.
+Changing voice language preserves the video position; music toggles only a verified
+music stem. Seeking, pause, playback rate and volume apply to the selected stems.
+A single original mix exposes no independent music/language promises. An unavailable
+preferred voice is shown explicitly, never silently replaced with English.
+
+Caption text follows the page locale; timing follows the voice language. The 3.7
+client uses 30 fps, with whole-track fallback from En/Ja/Ko timing fields to the
+base timing when no localized durations exist. Missing text/timing is not fabricated.
+Cutscenes appear within the existing transcript state/action ordering. An explicit
+`has_transcript_state` edge takes precedence over the separate PlayMovie wrapper.
+This does not turn branches into a claimed canonical playthrough.
+
+Verified example: quest 886000002 has five movies and both Rover variants. M0389,
+M0388, M0390 and M0385 have four voices plus effects/music. M3_13_03_1 retains its
+single original mix. M0389/M0388/M0385 have 18/5/2 authored English caption cues;
+M0390 and M3_13_03_1 have no VideoCaption dialogue cues. Song-lyric events are not
+substituted for dialogue captions.
+
+M0390's main bank sets state 2267264624=4278155591. The matching switch lives in
+`play_story_music_3_7_boss_tianyansuxin`, whose authored trims/envelopes/sequence are
+rendered from that state entry. Its `_lyric` bank is a muted carrier, not the music.
+Recipes retain the bank, WEM and TXTP provenance. Bank-role discovery and background
+state rendering currently require verified recipe preparation; the publisher does
+not guess arbitrary Wwise state graphs or automatically download every cutscene.
+
+
+Validation for localized playback: 20 targeted Python tests (bundle completeness,
+exact-build selection, silent segment routing, frame offsets and caption fallback),
+4 frontend placement tests, TypeScript and production build passed. Browser checks
+covered Rover choice, EN/JA switch without restart, pause/seek, independent music,
+caption rendering, and the 390px control layout. Existing transcript `any` lint
+warnings remain. The design auditor still reports seven pre-existing form-validation
+ownership findings in auth/search/catalog; the new native voice selector follows
+the documented native Select/Listbox policy.
