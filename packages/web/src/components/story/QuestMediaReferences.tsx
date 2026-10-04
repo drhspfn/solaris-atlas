@@ -18,7 +18,22 @@ export interface MediaAssetReference {
     has_audio: boolean;
     soundtrack: string;
     subtitles_included: boolean;
+    timeline_offset?: number;
+    audio_tracks?: CutsceneAudioTrack[] | null;
   } | null;
+}
+
+export interface CutsceneAudioTrack {
+  role: 'voice' | 'music' | 'effects' | 'mixed';
+  language: 'en' | 'ja' | 'ko' | 'zh' | null;
+  url: string;
+}
+
+export interface CutsceneCaption {
+  start: number;
+  end: number;
+  text: string;
+  key: string;
 }
 
 export type CutsceneNode =
@@ -51,6 +66,9 @@ export interface QuestMediaEvent {
   playback?: CutsceneFlow | null;
   action: string;
   flow_state: string;
+  action_index: number;
+  transcript_states?: string[];
+  captions?: Record<string, CutsceneCaption[]>;
   reference: string;
   engine_path: string | null;
   source: MediaSource;

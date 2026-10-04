@@ -36,6 +36,36 @@ def test_sound_and_music_source_layouts():
         )
 
 
+def test_layered_bank_requires_verified_source_selection():
+    objects = []
+    for media_id in (101, 202, 303):
+        obj = struct.pack("<II", media_id + 1, 0x00140001) + b"\x02" + struct.pack("<I", media_id)
+        objects.append(b"\x02" + struct.pack("<I", len(obj)) + obj)
+    hierarchy = struct.pack("<I", len(objects)) + b"".join(objects)
+    data = (
+        b"BKHD"
+        + struct.pack("<II", 4, 172)
+        + b"HIRC"
+        + struct.pack("<I", len(hierarchy))
+        + hierarchy
+    )
+    with pytest.raises(ValueError, match="single-source"):
+        bank_media_id(data)
+    assert bank_media_id(data, 101) == 101
+    assert bank_media_id(data, 202) == 202
+    with pytest.raises(ValueError, match="not present"):
+        bank_media_id(data, 404)
+
+
+def test_explicit_track_preserves_authored_muted_gain():
+    from wuwa_story.ingestion.cutscenes import Soundtrack
+
+    track = Soundtrack(bank="lyrics.bnk", media_id=123, gain_db=-99)
+    assert track.model_dump()["gain_db"] == -99
+    with pytest.raises(ValueError):
+        Soundtrack(bank="lyrics.bnk", media_id=0)
+
+
 @pytest.mark.parametrize("data", [b"", b"BKHD", bank(2, b"x"), bank(2, b"x")[:-2]])
 def test_malformed_banks_fail_closed(data):
     with pytest.raises(ValueError):

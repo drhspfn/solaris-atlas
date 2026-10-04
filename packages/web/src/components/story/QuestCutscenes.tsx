@@ -1,7 +1,10 @@
-import { Film, Maximize, Minimize, RotateCcw } from 'lucide-react';
+import { Film, Maximize, Minimize, Music2, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { usePlayerDisplay } from '../../hooks/usePlayerDisplay';
 import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
+import { PlayerText } from '../dialogue/PlayerText';
+import { CutsceneSound } from './CutsceneSound';
 import { preferredRoverTarget } from './preferredRover';
 import {
   type CutsceneFlow,
@@ -61,12 +64,19 @@ function FlowPlayer({
   flow,
   title,
   anchor,
+  captions,
 }: {
   flow: CutsceneFlow;
   title: string;
   anchor?: string;
+  captions?: QuestMediaEvent['captions'];
 }) {
-  const { preferredRover } = useNarrativePreferences();
+  const { preferredRover, voiceLanguage, setVoiceLanguage } = useNarrativePreferences();
+  const playerDisplay = usePlayerDisplay();
+  const [musicEnabled, setMusicEnabled] = useState(true);
+  const [subtitles, setSubtitles] = useState(true);
+  const [volume, setVolume] = useState(1);
+  const [time, setTime] = useState(0);
   const entry =
     preferredRoverTarget(
       flow.nodes.find((node) => node.id === flow.entry),
@@ -89,6 +99,17 @@ function FlowPlayer({
   const clip = flow.nodes.find((entry) => entry.id === clipId);
   const activeClip = clip?.kind === 'clip' ? clip : null;
   const source = activeClip ? flow.media[activeClip.segment || activeClip.asset] : null;
+  const tracks = source?.audio_tracks;
+  const languages =
+    tracks?.filter((track) => track.role === 'voice').map((track) => track.language) || [];
+  const selectedTracks =
+    tracks?.filter(
+      (track) =>
+        (track.role !== 'voice' || track.language === voiceLanguage) &&
+        (track.role !== 'music' || musicEnabled),
+    ) || [];
+  const cues = captions?.[voiceLanguage] || [];
+  const absoluteTime = time + (source?.timeline_offset || 0);
 
   useEffect(() => {
     if (node?.kind === 'choice' && !automaticTarget && continuePlaying.current)
@@ -189,6 +210,68 @@ function FlowPlayer({
           </button>
         </div>
       </header>
+      <div className="cutscene-settings">
+        {tracks && languages.length > 0 && (
+          <label>
+            Voice
+            <select
+              aria-label={`Voice language for ${title}`}
+              value={voiceLanguage}
+              onChange={(event) => setVoiceLanguage(event.target.value as typeof voiceLanguage)}
+            >
+              {(
+                [
+                  ['en', 'English'],
+                  ['ja', 'Japanese'],
+                  ['ko', 'Korean'],
+                  ['zh', 'Chinese'],
+                ] as const
+              ).map(([code, label]) => (
+                <option key={code} value={code} disabled={!languages.includes(code)}>
+                  {label}
+                  {!languages.includes(code) ? ' · unavailable' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label>
+          <input
+            type="checkbox"
+            checked={subtitles}
+            disabled={!cues.length}
+            onChange={(event) => setSubtitles(event.target.checked)}
+          />
+          Subtitles
+        </label>
+        {tracks?.some((track) => track.role === 'music') && (
+          <button
+            type="button"
+            aria-pressed={musicEnabled}
+            onClick={() => setMusicEnabled((value) => !value)}
+          >
+            <Music2 size={15} aria-hidden="true" />
+            Music {musicEnabled ? 'on' : 'off'}
+          </button>
+        )}
+        {tracks && (
+          <label>
+            Volume
+            <input
+              aria-label={`Volume for ${title}`}
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={volume}
+              onChange={(event) => setVolume(Number(event.target.value))}
+            />
+          </label>
+        )}
+      </div>
+      {tracks && languages.length > 0 && !languages.includes(voiceLanguage) && (
+        <p role="status">Selected voice language is unavailable for this scene.</p>
+      )}
       <div className="cutscene-stage" ref={stageRef}>
         <button
           className="cutscene-exit-fullscreen cutscene-restart"
@@ -207,10 +290,12 @@ function FlowPlayer({
           disablePictureInPicture
           playsInline
           preload="metadata"
+          muted={Boolean(tracks)}
           src={source.url}
           aria-label="Cutscene video"
           onLoadedMetadata={(event) => {
             event.currentTarget.currentTime = activeClip.start;
+            setTime(activeClip.start);
             transitioning.current = false;
             if (node?.kind === 'clip' && continuePlaying.current)
               void event.currentTarget.play().catch(() => {});
@@ -222,10 +307,15 @@ function FlowPlayer({
             }
             continuePlaying.current = true;
             document.querySelectorAll<HTMLMediaElement>('audio, video').forEach((other) => {
-              if (other !== event.currentTarget) other.pause();
+              if (
+                other !== event.currentTarget &&
+                other.closest('.quest-cutscene') !== event.currentTarget.closest('.quest-cutscene')
+              )
+                other.pause();
             });
           }}
           onTimeUpdate={(event) => {
+            setTime(event.currentTarget.currentTime);
             if (node?.kind !== 'clip' || transitioning.current) return;
             if (event.currentTarget.currentTime < node.start)
               event.currentTarget.currentTime = node.start;
@@ -239,6 +329,17 @@ function FlowPlayer({
           }}
           onError={() => setFailed(true)}
         />
+        {subtitles && !interactive && (
+          <div className="cutscene-captions" aria-label="Subtitles">
+            {cues
+              .filter((cue) => absoluteTime >= cue.start && absoluteTime < cue.end)
+              .map((cue) => (
+                <p key={`${cue.key}-${cue.start}`}>
+                  <PlayerText display={playerDisplay} value={{ content: cue.text }} />
+                </p>
+              ))}
+          </div>
+        )}
         {interactive && (
           <div
             className="cutscene-choice"
@@ -274,12 +375,27 @@ function FlowPlayer({
           </div>
         )}
       </div>
+      {tracks && (
+        <CutsceneSound
+          key={clipId}
+          videoRef={videoRef}
+          tracks={selectedTracks}
+          offset={source.timeline_offset || 0}
+          volume={volume}
+        />
+      )}
       {fullscreenFailed && <p role="status">Fullscreen could not open. Use the inline player.</p>}
       {failed && <p role="alert">Video could not load. Refresh the page to retry.</p>}
       <footer>
         <span>
-          {source.has_audio ? 'Sound included' : 'No audio track'} ·{' '}
-          {source.subtitles_included ? 'Subtitles included' : 'Subtitles not available yet'}
+          {tracks
+            ? 'Separate audio tracks'
+            : source.has_audio
+              ? 'Sound included'
+              : 'No audio track'}
+          {!cues.length && ' · Subtitles unavailable for this scene'}
+          {tracks?.some((track) => track.role === 'mixed') &&
+            ' · Music is part of the original mix'}
         </span>
         {anchor && <a href={`#${anchor}`}>Continue to dialogue ↗</a>}
         <details>
@@ -296,7 +412,7 @@ function FlowPlayer({
   );
 }
 
-function Cutscene({ event, anchor }: { event: QuestMediaEvent; anchor?: string }) {
+export function Cutscene({ event, anchor }: { event: QuestMediaEvent; anchor?: string }) {
   const flow = useMemo(() => event.playback || fallbackFlow(event), [event]);
   return flow ? (
     <FlowPlayer
@@ -304,6 +420,7 @@ function Cutscene({ event, anchor }: { event: QuestMediaEvent; anchor?: string }
       flow={flow}
       title={event.reference.replace('cutscene:', '')}
       anchor={anchor}
+      captions={event.captions}
     />
   ) : null;
 }

@@ -229,3 +229,21 @@ select only placements with an exact item or reward-preview reference, fit the
 view to their bounds, clear conflicting filters and offer Clear source filter.
 The menu count reflects the acquisition scope. Missing sources do not invent a
 merchant position, loot probability or a guaranteed quest reward.
+
+
+## Cutscene playback
+
+QuestCutscenes owns cutscene controls; voice language reuses NarrativePreferences
+and native Select/Listbox semantics, like the transcript voice selector. The page
+locale selects caption text independently of voice timing. Music can be switched
+only for an explicitly separated music stem. A mixed source has no misleading
+music switch. Native video play/seek controls remain available; the adjacent
+volume slider controls independent audio. Missing captions and languages are
+explicit. Video buffering pauses its audio; failed audio pauses playback and
+exposes Retry audio. Changing the language preserves position and playback intent.
+
+Cutscenes sit beside their confirmed transcript states/actions, preserving the
+existing branch-aware transcript order. Filtered text/choice views omit players;
+focused transcript windows do not append unrelated movies. Choices remain
+keyboard buttons. Captions stay inside the fullscreen stage. New controls wrap
+at narrow widths and reuse the site's surface, border, focus and mint tokens.

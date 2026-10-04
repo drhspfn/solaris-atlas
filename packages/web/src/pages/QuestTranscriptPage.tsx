@@ -1,11 +1,12 @@
 import { ArrowUp, BookOpen, ChevronRight, Users } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 
 import { api } from '../api/client';
 import { PlayerText } from '../components/dialogue/PlayerText';
+import { cutsceneSlots } from '../components/story/cutscenePlacement';
 import { QuestContinuity } from '../components/story/QuestContinuity';
-import { QuestCutscenes } from '../components/story/QuestCutscenes';
+import { Cutscene, QuestCutscenes } from '../components/story/QuestCutscenes';
 import { QuestExplanation } from '../components/story/QuestExplanation';
 import {
   DialogueAudioReference,
@@ -208,6 +209,11 @@ export function QuestPage() {
     anchor: `flow-state-${index}`,
   }));
   const stateAnchors = new Map(stateIndex.map((state) => [state.key, state.anchor]));
+  const videoSlots = cutsceneSlots(
+    shown,
+    onlyLines || onlyChoices ? [] : media?.events || [],
+    Boolean(transcript.offset || lines.length >= transcript.limit),
+  );
   const lineAnchors = new Map<string, string>();
   const firstLineInState = new Set<string>();
   shown.forEach((line: any, index: number) => {
@@ -284,6 +290,7 @@ export function QuestPage() {
           </p>
           <p>Its place in the story and source links are still shown on this page.</p>
           {hasMediaReferences && <QuestMediaReferences manifest={media} stateAnchors={new Map()} />}
+          <QuestCutscenes manifest={media} stateAnchors={new Map()} />
         </section>
       ) : (
         <>
@@ -369,103 +376,122 @@ export function QuestPage() {
               <QuestMediaReferences manifest={media} stateAnchors={stateAnchors} />
             </aside>
             <div className="transcript">
-              <QuestCutscenes manifest={media} stateAnchors={stateAnchors} />
               {shown.length ? (
                 shown.map((line: any, i: number) => {
                   const branch = branchByLine.get(line.id);
                   const active = branch?.choice.id === activeChoiceId;
                   return (
-                    <article
-                      className={`transcript-line${branch ? ' branch-line' : ''}${active ? ' branch-line-active' : ''}${line.id === citedLine ? ' cited-passage' : ''}`}
-                      data-dialogue-key={line.id}
-                      tabIndex={-1}
-                      id={lineAnchors.get(line.id)}
-                      key={line.id || i}
-                    >
-                      <div className="line-rail">
-                        <span>{String((transcript.offset || 0) + i + 1).padStart(3, '0')}</span>
-                        <i />
-                      </div>
-                      <div className="line-body">
-                        {(joins.get(line.id) || 0) > 1 && (
-                          <div className="branch-join">Branches meet here</div>
-                        )}
-                        {branch && branch.lineIds[0] === line.id && (
-                          <div className="branch-marker">
-                            <span>
-                              CHOICE {String(branch.optionIndex + 1).padStart(2, '0')} ·{' '}
-                              {branch.lineIds.length}{' '}
-                              {branch.lineIds.length === 1 ? 'LINE' : 'LINES'}
-                            </span>
-                            <strong>
-                              <PlayerText
-                                display={playerDisplay}
-                                value={branch.choice.text}
-                                fallback="Choice text unavailable"
-                              />
-                            </strong>
-                            {active && (
-                              <button type="button" onClick={() => setActiveChoiceId(null)}>
-                                Clear highlight
-                              </button>
+                    <Fragment key={line.id || i}>
+                      {videoSlots.get(i)?.map((event) => (
+                        <Cutscene key={`${event.action}-${event.reference}`} event={event} />
+                      ))}
+                      <article
+                        className={`transcript-line${branch ? ' branch-line' : ''}${active ? ' branch-line-active' : ''}${line.id === citedLine ? ' cited-passage' : ''}`}
+                        data-dialogue-key={line.id}
+                        tabIndex={-1}
+                        id={lineAnchors.get(line.id)}
+                        key={line.id || i}
+                      >
+                        <div className="line-rail">
+                          <span>{String((transcript.offset || 0) + i + 1).padStart(3, '0')}</span>
+                          <i />
+                        </div>
+                        <div className="line-body">
+                          {(joins.get(line.id) || 0) > 1 && (
+                            <div className="branch-join">Branches meet here</div>
+                          )}
+                          {branch && branch.lineIds[0] === line.id && (
+                            <div className="branch-marker">
+                              <span>
+                                CHOICE {String(branch.optionIndex + 1).padStart(2, '0')} ·{' '}
+                                {branch.lineIds.length}{' '}
+                                {branch.lineIds.length === 1 ? 'LINE' : 'LINES'}
+                              </span>
+                              <strong>
+                                <PlayerText
+                                  display={playerDisplay}
+                                  value={branch.choice.text}
+                                  fallback="Choice text unavailable"
+                                />
+                              </strong>
+                              {active && (
+                                <button type="button" onClick={() => setActiveChoiceId(null)}>
+                                  Clear highlight
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          <div className="speaker-row">
+                            <span className="speaker-dot" />
+                            <strong>{line.speaker?.label || 'Narration / Unknown speaker'}</strong>
+                            <span className="line-state">{line.flow_state || 'Story'}</span>
+                            {line.action?.name && (
+                              <span className="action-tag">{line.action.name}</span>
                             )}
                           </div>
-                        )}
-                        <div className="speaker-row">
-                          <span className="speaker-dot" />
-                          <strong>{line.speaker?.label || 'Narration / Unknown speaker'}</strong>
-                          <span className="line-state">{line.flow_state || 'Story'}</span>
-                          {line.action?.name && (
-                            <span className="action-tag">{line.action.name}</span>
-                          )}
-                        </div>
-                        <DialogueAudioReference media={line.media}>
-                          <p>
-                            {line.text?.content || line.text?.inline_text ? (
-                              <PlayerText
-                                display={playerDisplay}
-                                value={line.text}
-                                fallback={line.text?.inline_text || ''}
-                              />
-                            ) : (
-                              <i className="missing">Text unavailable in this locale</i>
-                            )}
-                          </p>
-                        </DialogueAudioReference>
-                        {line.player_choices?.length > 0 && (
-                          <div className="choice-block">
-                            <div className="choice-heading">
-                              <span /> PLAYER CHOICE
-                              {line.player_choices.length > 1 ? 'S' : ''}
-                            </div>
-                            {line.player_choices.map((choice: any, j: number) => (
-                              <div className="choice-option" key={j}>
-                                <span className="choice-diamond">
-                                  {String(j + 1).padStart(2, '0')}
-                                </span>
-                                {lineAnchors.has(choice.target_line_id) ? (
-                                  <button
-                                    type="button"
-                                    className="choice-branch-button"
-                                    aria-pressed={activeChoiceId === choice.id}
-                                    onClick={() => {
-                                      const next =
-                                        activeChoiceId === choice.id ||
-                                        !branchesByChoice.has(choice.id)
-                                          ? null
-                                          : choice.id;
-                                      setActiveChoiceId(next);
-                                      if (activeChoiceId !== choice.id)
-                                        requestAnimationFrame(() =>
-                                          document
-                                            .getElementById(lineAnchors.get(choice.target_line_id)!)
-                                            ?.scrollIntoView({
-                                              behavior: 'smooth',
-                                              block: 'start',
-                                            }),
-                                        );
-                                    }}
-                                  >
+                          <DialogueAudioReference media={line.media}>
+                            <p>
+                              {line.text?.content || line.text?.inline_text ? (
+                                <PlayerText
+                                  display={playerDisplay}
+                                  value={line.text}
+                                  fallback={line.text?.inline_text || ''}
+                                />
+                              ) : (
+                                <i className="missing">Text unavailable in this locale</i>
+                              )}
+                            </p>
+                          </DialogueAudioReference>
+                          {line.player_choices?.length > 0 && (
+                            <div className="choice-block">
+                              <div className="choice-heading">
+                                <span /> PLAYER CHOICE
+                                {line.player_choices.length > 1 ? 'S' : ''}
+                              </div>
+                              {line.player_choices.map((choice: any, j: number) => (
+                                <div className="choice-option" key={j}>
+                                  <span className="choice-diamond">
+                                    {String(j + 1).padStart(2, '0')}
+                                  </span>
+                                  {lineAnchors.has(choice.target_line_id) ? (
+                                    <button
+                                      type="button"
+                                      className="choice-branch-button"
+                                      aria-pressed={activeChoiceId === choice.id}
+                                      onClick={() => {
+                                        const next =
+                                          activeChoiceId === choice.id ||
+                                          !branchesByChoice.has(choice.id)
+                                            ? null
+                                            : choice.id;
+                                        setActiveChoiceId(next);
+                                        if (activeChoiceId !== choice.id)
+                                          requestAnimationFrame(() =>
+                                            document
+                                              .getElementById(
+                                                lineAnchors.get(choice.target_line_id)!,
+                                              )
+                                              ?.scrollIntoView({
+                                                behavior: 'smooth',
+                                                block: 'start',
+                                              }),
+                                          );
+                                      }}
+                                    >
+                                      <span>
+                                        <PlayerText
+                                          display={playerDisplay}
+                                          value={choice.text}
+                                          fallback="Choice text unavailable"
+                                        />
+                                      </span>
+                                      <small>
+                                        {branchesByChoice.has(choice.id)
+                                          ? `${branchesByChoice.get(choice.id)!.lineIds.length} ${branchesByChoice.get(choice.id)!.lineIds.length === 1 ? 'line' : 'lines'}${branchesByChoice.get(choice.id)!.continuationLineId === line.id ? ' · returns here' : ''}`
+                                          : 'View reply'}
+                                      </small>
+                                    </button>
+                                  ) : (
                                     <span>
                                       <PlayerText
                                         display={playerDisplay}
@@ -473,63 +499,53 @@ export function QuestPage() {
                                         fallback="Choice text unavailable"
                                       />
                                     </span>
-                                    <small>
-                                      {branchesByChoice.has(choice.id)
-                                        ? `${branchesByChoice.get(choice.id)!.lineIds.length} ${branchesByChoice.get(choice.id)!.lineIds.length === 1 ? 'line' : 'lines'}${branchesByChoice.get(choice.id)!.continuationLineId === line.id ? ' · returns here' : ''}`
-                                        : 'View reply'}
-                                    </small>
-                                  </button>
-                                ) : (
-                                  <span>
-                                    <PlayerText
-                                      display={playerDisplay}
-                                      value={choice.text}
-                                      fallback="Choice text unavailable"
-                                    />
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <div className="line-foot">
-                          <span>
-                            {line.source_type || 'dialogue'}
-                            {line.game_ids?.talk_item_id
-                              ? ` · Talk ${line.game_ids.talk_item_id}`
-                              : ''}
-                          </span>
-                          {line.provenance?.source_file && (
-                            <span title={line.provenance.source_file}>
-                              {line.provenance.source_file.split('/').at(-1)}
-                              {line.provenance.source_row != null
-                                ? ` · row ${line.provenance.source_row}`
-                                : ''}
-                            </span>
-                          )}
-                        </div>
-                        {branch &&
-                          branch.lineIds.at(-1) === line.id &&
-                          branch.continuationLineId &&
-                          lineAnchors.has(branch.continuationLineId) && (
-                            <div className="branch-end">
-                              <span>
-                                {branch.continuationLineId === branch.sourceLineId
-                                  ? 'Returns to the choice'
-                                  : 'Continues after this branch'}
-                              </span>
-                              <a href={`#${lineAnchors.get(branch.continuationLineId)}`}>
-                                Go there ↑
-                              </a>
+                                  )}
+                                </div>
+                              ))}
                             </div>
                           )}
-                      </div>
-                    </article>
+                          <div className="line-foot">
+                            <span>
+                              {line.source_type || 'dialogue'}
+                              {line.game_ids?.talk_item_id
+                                ? ` · Talk ${line.game_ids.talk_item_id}`
+                                : ''}
+                            </span>
+                            {line.provenance?.source_file && (
+                              <span title={line.provenance.source_file}>
+                                {line.provenance.source_file.split('/').at(-1)}
+                                {line.provenance.source_row != null
+                                  ? ` · row ${line.provenance.source_row}`
+                                  : ''}
+                              </span>
+                            )}
+                          </div>
+                          {branch &&
+                            branch.lineIds.at(-1) === line.id &&
+                            branch.continuationLineId &&
+                            lineAnchors.has(branch.continuationLineId) && (
+                              <div className="branch-end">
+                                <span>
+                                  {branch.continuationLineId === branch.sourceLineId
+                                    ? 'Returns to the choice'
+                                    : 'Continues after this branch'}
+                                </span>
+                                <a href={`#${lineAnchors.get(branch.continuationLineId)}`}>
+                                  Go there ↑
+                                </a>
+                              </div>
+                            )}
+                        </div>
+                      </article>
+                    </Fragment>
                   );
                 })
               ) : (
                 <EmptyInline text="No dialogue lines matched this view." />
               )}
+              {videoSlots.get(shown.length)?.map((event) => (
+                <Cutscene key={`${event.action}-${event.reference}`} event={event} />
+              ))}
             </div>
           </div>
         </>
