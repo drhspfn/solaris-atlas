@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.api.routes.story.captions import caption_texts, caption_tracks
+from wuwa_story.api.routes.story.cutscene_audio import audio_bundles
 from wuwa_story.api.routes.story.shared import _quest_state_ids, _release_id
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.core import Quest, QuestAction, QuestState, VoiceReference
@@ -150,6 +151,14 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
         nodes = list(await session.scalars(select(Node).where(Node.canonical_key.in_(keys))))
         videos = await cutscene_videos(session, [node.id for node in nodes], reference.metadata_json["asset_version"])
         media = {node.canonical_key: videos[node.id] for node in nodes if node.id in videos}
+        settings = get_settings()
+        storage = S3Storage(settings)
+        bundles = await audio_bundles(session, [node.id for node in nodes],
+                                      reference.metadata_json["asset_version"], settings, storage)
+        for asset in nodes:
+            if asset.canonical_key in media and asset.id in bundles:
+                media[asset.canonical_key] = {**media[asset.canonical_key],
+                                             "audio_tracks": bundles[asset.id], "timeline_offset": 0}
         segment_nodes = [node for node in flow.nodes if isinstance(node, Clip) and node.segment]
         if segment_nodes:
             settings = get_settings()
@@ -168,7 +177,9 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
                 media.setdefault(key, {"url": storage.public_url(object_key),
                     "asset_version": segment_reference.metadata_json["asset_version"],
                     "has_audio": segment_reference.metadata_json.get("has_audio", False),
-                    "soundtrack": segment_reference.metadata_json.get("soundtrack"), "subtitles_included": False})
+                    "soundtrack": segment_reference.metadata_json.get("soundtrack"), "subtitles_included": False,
+                    "timeline_offset": segment_reference.metadata_json["start_frame"] / segment_reference.metadata_json["fps"],
+                    "audio_tracks": bundles.get(segment_reference.owner_node_id)})
         required = {node.segment or node.asset for node in flow.nodes if isinstance(node, Clip)}
         # Publish the whole path or none of it; a broken branch is not a playable flow.
         if required.issubset(media):
