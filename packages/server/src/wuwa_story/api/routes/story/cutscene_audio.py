@@ -21,6 +21,7 @@ async def audio_bundles(session, owner_ids, version, settings, storage):
     for reference in references:
         selected.setdefault(reference.owner_node_id, reference.metadata_json)
     ids = {track["file_id"] for data in selected.values() for track in data["tracks"]}
+    ids.update(file_id for data in selected.values() for file_id in data.get("videos", {}).values())
     if not ids:
         return {}
     locations = dict(
@@ -39,13 +40,23 @@ async def audio_bundles(session, owner_ids, version, settings, storage):
     result = {}
     for owner, data in selected.items():
         # An incomplete bundle must never silently lose voices or effects.
-        if all(track["file_id"] in locations for track in data["tracks"]):
-            result[owner] = [
-                {
-                    "role": track["role"],
-                    "language": track["language"],
-                    "url": storage.public_url(locations[track["file_id"]]),
-                }
-                for track in data["tracks"]
-            ]
+        if (
+            data.get("videos", {}).get("full")
+            and all(file_id in locations for file_id in data["videos"].values())
+            and all(track["file_id"] in locations for track in data["tracks"])
+        ):
+            result[owner] = {
+                "tracks": [
+                    {
+                        "role": track["role"],
+                        "language": track["language"],
+                        "url": storage.public_url(locations[track["file_id"]]),
+                    }
+                    for track in data["tracks"]
+                ],
+                "videos": {
+                    key: storage.public_url(locations[file_id])
+                    for key, file_id in data["videos"].items()
+                },
+            }
     return result

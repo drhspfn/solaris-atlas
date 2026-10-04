@@ -9,7 +9,7 @@ from pathlib import Path
 from sqlalchemy import select, text
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.graph import Node
-from wuwa_story.db.models.storage import FileReference
+from wuwa_story.db.models.storage import FileLocation, FileReference
 from wuwa_story.db.session import SessionFactory
 from wuwa_story.ingestion.cutscene_audio import CutsceneAudioRecipe
 from wuwa_story.storage.s3 import S3Storage
@@ -48,6 +48,12 @@ async def publish_audio(recipe: Path, root: Path, ffmpeg: Path) -> dict:
                     "-y",
                     "-i",
                     str(source),
+                    "-map_metadata",
+                    "-1",
+                    "-fflags",
+                    "+bitexact",
+                    "-flags:a",
+                    "+bitexact",
                     "-c:a",
                     "libopus",
                     "-b:a",
@@ -91,10 +97,56 @@ async def publish_audio(recipe: Path, root: Path, ffmpeg: Path) -> dict:
                         "evidence": stem.evidence,
                     }
                 )
+            silent_videos = {}
+            rows = await session.execute(
+                select(FileReference, FileLocation.object_key)
+                .join(FileLocation, FileLocation.file_id == FileReference.file_id)
+                .where(
+                    FileReference.owner_node_id == node.id,
+                    FileReference.reference_type.in_(["cutscene_video", "cutscene_segment"]),
+                    FileReference.metadata_json["asset_version"].astext == spec.asset_version,
+                    FileLocation.backend == "s3",
+                    FileLocation.bucket == storage.bucket,
+                    FileLocation.is_primary.is_(True),
+                    FileLocation.available.is_(True),
+                )
+            )
+            for reference, object_key in rows:
+                source = Path(temporary) / f"video-{reference.id}.mp4"
+                with source.open("wb") as stream:
+                    async for chunk in storage.get(object_key):
+                        stream.write(chunk)
+                silent = Path(temporary) / f"silent-{reference.id}.mp4"
+                await run_tool(
+                    [
+                        str(ffmpeg),
+                        "-v",
+                        "error",
+                        "-y",
+                        "-i",
+                        str(source),
+                        "-map",
+                        "0:v:0",
+                        "-c:v",
+                        "copy",
+                        "-an",
+                        "-movflags",
+                        "+faststart",
+                        str(silent),
+                    ]
+                )
+                file = await service.register_file(
+                    session, silent, "video_mp4", mime_type="video/mp4"
+                )
+                await service.register_variant(
+                    session, reference.file_id, file.id, "cutscene_silent_video"
+                )
+                silent_videos[reference.metadata_json.get("segment_id", "full")] = file.id
             manifest = {
                 "asset_version": spec.asset_version,
                 "duration_seconds": spec.duration,
                 "tracks": tracks,
+                "videos": silent_videos,
             }
             manifest_path = Path(temporary) / "audio.json"
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")

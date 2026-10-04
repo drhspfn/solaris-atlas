@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from unittest.mock import AsyncMock
 
 from wuwa_story.api.routes.story import media
 
@@ -26,6 +27,7 @@ async def test_latest_exact_asset_file_keeps_recording_version(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_flow_does_not_mix_asset_builds_or_publish_missing_branch(monkeypatch):
+    monkeypatch.setattr(media, "audio_bundles", AsyncMock(return_value={}))
     monkeypatch.setattr(media, "get_settings", lambda: SimpleNamespace(s3_bucket="sample"))
     monkeypatch.setattr(media, "S3Storage", lambda _: SimpleNamespace(public_url=lambda key: key))
     asset = "asset:ue:/Game/Test.Test"
@@ -45,7 +47,10 @@ async def test_flow_does_not_mix_asset_builds_or_publish_missing_branch(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_segment_flow_requires_every_exported_fragment(monkeypatch):
+@pytest.mark.parametrize("separate", [False, True])
+async def test_segment_flow_requires_every_exported_fragment(monkeypatch, separate):
+    bundle = {5: {"tracks": [{"role": "voice", "language": "ja", "url": "ja.ogg"}], "videos": {"full": "silent.mp4", "segment-intro": "silent-intro.mp4", "segment-tail": "silent-tail.mp4"}}}
+    monkeypatch.setattr(media, "audio_bundles", AsyncMock(return_value=bundle if separate else {}))
     monkeypatch.setattr(media, "get_settings", lambda: SimpleNamespace(s3_bucket="sample"))
     monkeypatch.setattr(media, "S3Storage", lambda _: SimpleNamespace(public_url=lambda key: key))
     asset = "asset:ue:/Game/Test.Test"
@@ -64,7 +69,11 @@ async def test_segment_flow_requires_every_exported_fragment(monkeypatch):
             self.execute_calls += 1
             if self.execute_calls == 1:
                 return [(SimpleNamespace(owner_node_id=5, metadata_json={"asset_version": "3.7.0"}), "whole.mp4")]
-            return [(SimpleNamespace(metadata_json={"asset_version": "3.7.0", "segment_id": key}), key + ".mp4") for key in (["segment-intro", "segment-tail"] if self.complete else ["segment-intro"])]
+            return [(SimpleNamespace(owner_node_id=5, metadata_json={"asset_version": "3.7.0", "segment_id": key, "start_frame": 30, "fps": 30}), key + ".mp4") for key in (["segment-intro", "segment-tail"] if self.complete else ["segment-intro"])]
     result = await media.cutscene_flows(Session(True), [1])
     assert set(result[1]["media"]) == {"segment-intro", "segment-tail"}
+    assert result[1]["media"]["segment-intro"]["timeline_offset"] == 1
+    if separate:
+        assert result[1]["media"]["segment-intro"]["url"] == "silent-intro.mp4"
+        assert result[1]["media"]["segment-intro"]["audio_tracks"][0]["language"] == "ja"
     assert await media.cutscene_flows(Session(False), [1]) == {}
