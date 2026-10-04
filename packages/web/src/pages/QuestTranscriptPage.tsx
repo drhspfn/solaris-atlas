@@ -423,7 +423,13 @@ export function QuestPage() {
                           )}
                           <div className="speaker-row">
                             <span className="speaker-dot" />
-                            <strong>{line.speaker?.label || 'Narration / Unknown speaker'}</strong>
+                            <strong>
+                              <PlayerText
+                                display={playerDisplay}
+                                value={line.speaker?.label}
+                                fallback="Narration / Unknown speaker"
+                              />
+                            </strong>
                             <span className="line-state">{line.flow_state || 'Story'}</span>
                             {line.action?.name && (
                               <span className="action-tag">{line.action.name}</span>

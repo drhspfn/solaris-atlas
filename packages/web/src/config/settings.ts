@@ -8,6 +8,7 @@ export const APP_SETTINGS = {
     narrative: 'solaris-atlas:narrative-preferences:v1',
     guestPlayerTitle: 'solaris-atlas:guest-player-title:v1',
   },
+  cutscene: { masterVolume: 0.7, musicLevel: 0.3, seekSeconds: 5 },
   narrative: {
     nameMode: 'nickname',
     colorMode: 'accent',

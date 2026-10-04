@@ -1,5 +1,6 @@
-import { memo } from 'react';
+import { Fragment, memo } from 'react';
 
+import { gameTextRuns } from '../../data/gameText';
 import { localizedText } from '../../data/localized';
 import type { PlayerNameColorMode } from '../../preferences/NarrativePreferences';
 
@@ -18,23 +19,31 @@ export const PlayerText = memo(function PlayerText({
   fallback?: string;
   display: PlayerDisplay;
 }) {
-  const text = localizedText(value, fallback);
-  const parts = text.split(/(\{PlayerName\})/gi);
+  const runs = gameTextRuns(localizedText(value, fallback));
   return (
     <>
-      {parts.map((part, index) =>
-        /^\{PlayerName\}$/i.test(part) ? (
-          <span
-            className="narrative-player-name"
-            style={display.colorMode === 'custom' ? { color: display.customColor } : undefined}
-            key={index}
-          >
-            {display.name}
+      {runs.map((run, index) => {
+        const content = run.text.split(/(\{PlayerName\})/gi).map((part, partIndex) =>
+          /^\{PlayerName\}$/i.test(part) ? (
+            <span
+              className="narrative-player-name"
+              style={{ color: display.colorMode === 'custom' ? display.customColor : run.color }}
+              key={partIndex}
+            >
+              {display.name}
+            </span>
+          ) : (
+            part
+          ),
+        );
+        return run.color ? (
+          <span key={index} style={{ color: run.color }}>
+            {content}
           </span>
         ) : (
-          part
-        ),
-      )}
+          <Fragment key={index}>{content}</Fragment>
+        );
+      })}
     </>
   );
 });

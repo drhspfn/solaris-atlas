@@ -4141,7 +4141,7 @@ select {
   font-size: 16px;
 }
 .source-graph-details[open] summary:before {
-  content: '−';
+  content: 'в€’';
 }
 .source-graph-details > p {
   margin: 10px 0;
@@ -4287,7 +4287,7 @@ select {
   margin-right: 2px;
 }
 .shared-scene[open] summary:before {
-  content: '−';
+  content: 'в€’';
 }
 .shared-scene summary span {
   overflow-wrap: anywhere;
@@ -4819,7 +4819,7 @@ select {
   display: none;
 }
 .auth-menu summary:after {
-  content: '⌄';
+  content: 'вЊ„';
   margin-left: 9px;
   color: var(--accent-mint);
 }
@@ -5942,22 +5942,6 @@ button.search-clear:focus-visible {
   background: var(--surface-3);
   border-color: var(--mint);
 }
-.cutscene-restart {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  background: var(--surface-1);
-  border: 1px solid var(--border-default);
-  border-radius: 6px;
-  color: var(--text-secondary);
-}
-
-.cutscene-actions {
-  display: flex;
-  gap: 6px;
-}
 .cutscene-stage:fullscreen {
   display: grid;
   place-items: center;
@@ -5972,17 +5956,6 @@ button.search-clear:focus-visible {
 .cutscene-choice button {
   flex-shrink: 0;
   min-height: 44px;
-}
-
-.cutscene-exit-fullscreen {
-  display: none;
-}
-.cutscene-stage:fullscreen .cutscene-exit-fullscreen {
-  display: grid;
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 2;
 }
 
 .acquisition-map-link > svg {
@@ -6016,11 +5989,11 @@ button.search-clear:focus-visible {
   cursor: pointer;
 }
 .acquisition-world summary::before {
-  content: '▸';
+  content: 'в–ё';
   color: var(--mint);
 }
 .acquisition-world[open] summary::before {
-  content: '▾';
+  content: 'в–ѕ';
 }
 .acquisition-world summary strong {
   margin-right: auto;
@@ -6029,49 +6002,9 @@ button.search-clear:focus-visible {
   color: var(--text-muted);
   text-align: right;
 }
-.cutscene-settings {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 18px;
-  margin: 0 0 12px;
-  color: var(--text-secondary);
-  font-size: 0.8rem;
-}
-.cutscene-settings label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 40px;
-}
-.cutscene-settings select,
-.cutscene-settings button {
-  background: var(--surface-1);
-  color: var(--text-primary);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  min-height: 40px;
-  padding: 6px 10px;
-}
-.cutscene-settings button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.cutscene-settings button[aria-pressed='true'] {
-  color: var(--mint);
-  border-color: var(--mint);
-}
-.cutscene-settings input[type='range'] {
-  width: 85px;
-  accent-color: var(--mint);
-}
-.cutscene-settings input[type='checkbox'] {
-  accent-color: var(--mint);
-}
 .cutscene-captions {
   position: absolute;
-  inset: auto 5% 58px;
+  inset: auto 5% 100px;
   pointer-events: none;
   text-align: center;
   color: #fff;
@@ -6085,4 +6018,219 @@ button.search-clear:focus-visible {
   padding: 3px 10px;
   background: #090e0fe6;
   border-radius: 4px;
+}
+
+/* One clock and one control surface for the selected cutscene path. */
+.cutscene-stage {
+  background: #000;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.cutscene-stage > video {
+  display: block;
+  width: 100%;
+  min-height: 240px;
+}
+.cutscene-controls {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 3;
+  padding: 32px 16px 10px;
+  background: linear-gradient(transparent, rgb(0 0 0 / 90%));
+  color: #fff;
+}
+.cutscene-control-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+.cutscene-control-row button,
+.cutscene-decision {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.cutscene-control-row button:hover {
+  background: rgb(255 255 255 / 12%);
+}
+.cutscene-control-row button[aria-pressed='true'] {
+  color: var(--mint);
+  box-shadow: inset 0 -2px var(--mint);
+}
+.cutscene-control-row button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.cutscene-control-spacer {
+  flex: 1;
+}
+.cutscene-time {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.cutscene-master-volume {
+  width: 76px;
+  accent-color: var(--mint);
+}
+.cutscene-seek {
+  position: relative;
+  height: 22px;
+  margin: 0 6px 4px;
+}
+.cutscene-segments {
+  display: flex;
+  gap: 4px;
+  position: absolute;
+  inset: 9px 0;
+  pointer-events: none;
+}
+.cutscene-segments span {
+  flex-basis: 0;
+  min-width: 1px;
+  border-radius: 2px;
+}
+.cutscene-seek > input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.cutscene-seek > input::-webkit-slider-runnable-track {
+  background: transparent;
+  height: 4px;
+}
+.cutscene-seek > input::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--mint);
+  margin-top: -4px;
+}
+.cutscene-seek > input::-moz-range-track {
+  background: transparent;
+}
+.cutscene-seek > input::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--mint);
+}
+.cutscene-seek .cutscene-decision {
+  position: absolute;
+  top: -4px;
+  width: 22px;
+  height: 22px;
+  transform: translateX(-50%);
+  background: var(--surface-1);
+  color: var(--mint);
+  border: 1px solid var(--border-default);
+}
+.cutscene-options {
+  position: absolute;
+  right: 12px;
+  bottom: 94px;
+  width: min(300px, calc(100% - 24px));
+  max-height: calc(100vh - 150px);
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+}
+.cutscene-options header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.cutscene-options header button {
+  padding: 6px 10px;
+  color: var(--mint);
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+.cutscene-options label {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  font-size: 13px;
+}
+.cutscene-options label input {
+  width: 100%;
+  accent-color: var(--mint);
+}
+.cutscene-options select {
+  padding: 8px;
+  max-width: 65%;
+  color: var(--text-primary);
+  background: var(--surface-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+.cutscene-options small,
+.cutscene-options p {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.cutscene-choice {
+  padding-bottom: 100px;
+}
+.cutscene-stage:fullscreen {
+  width: 100vw;
+  height: 100vh;
+}
+@media (max-width: 600px) {
+  .cutscene-controls {
+    padding: 24px 6px 6px;
+  }
+  .cutscene-control-row {
+    gap: 2px;
+  }
+  .cutscene-control-row button {
+    width: 32px;
+  }
+  .cutscene-master-volume {
+    display: none;
+  }
+  .cutscene-time {
+    font-size: 11px;
+  }
+  .cutscene-captions {
+    bottom: 86px;
+  }
+  .cutscene-options {
+    bottom: 82px;
+  }
+}
+
+.cutscene-stage > div > p[role='alert'] {
+  position: absolute;
+  inset: 12px 12px auto;
+  z-index: 4;
+  padding: 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
 }
