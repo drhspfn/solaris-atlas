@@ -436,7 +436,11 @@ function RunDetail({
                 )}
                 <button className="agent-button primary" disabled={busy} aria-busy={busy}>
                   <Play size={14} />
-                  {job.status === 'paused_context' ? 'Compact and resume' : 'Resume analysis'}
+                  {job.status === 'paused_context'
+                    ? 'Compact and resume'
+                    : job.status === 'paused_output'
+                      ? 'Increase response limit and resume'
+                      : 'Resume analysis'}
                 </button>
               </form>
             )}

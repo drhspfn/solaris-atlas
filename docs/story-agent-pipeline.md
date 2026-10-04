@@ -539,3 +539,32 @@ reformatted as part of the agent feature.
 - Rebuilt/restarted local API, web and story consumer. Database health, existing
   published explanation retrieval and the anonymous admin 401 gate passed.
   No schema migration is required.
+
+### Output-limit recovery, 2026-10-04
+
+Responses `incomplete` with `max_output_tokens`, Chat Completions `length` and
+Gemini `MAX_TOKENS` now pause as `paused_output` before tool arguments are parsed.
+Incomplete tool calls are not executed. The admin action raises the response
+allowance to at least 16,384 tokens (up to 32,000), adding one research step only
+when the current step ceiling requires it. The resume API accepts `output_tokens`
+and requires a strictly larger allowance and a recorded settled output-limited
+response. It also supports older runs mislabeled as malformed turns.
+
+Resumption advances past that paid attempt, retains the last fully processed
+conversation and evidence, and asks for a complete concise response. Completed
+research and charges are not replayed; the replacement request consumes the daily
+allowance normally. Blocked responses, malformed completed output and uncertain
+billing are not treated as output-limit recovery.
+
+- Server suite: 147 passed, 2 skipped (Redis infrastructure), with existing
+  dependency deprecation warnings. Ruff and strict mypy passed; frontend recovery
+  policy tests, changed-file ESLint/Prettier, TypeScript and production build passed.
+- Browser fixture checks covered keyboard recovery, queue failure, successful
+  retry, the exact `{output_tokens: 16384, extra_steps: 1}` payload and a 390px
+  viewport without horizontal overflow. Static UI audit reports 15 existing
+  findings outside the changed components.
+- Backed up operational data to
+  `E:/Backups/solaris-atlas/story-agent-before-output-recovery-20261004.sql`.
+  Reclassified working run 16 as `paused_output` only after verifying its settled
+  response was truncated at step 15. Its checkpoint, response and usage are retained;
+  no paid request was queued. No schema migration is required.

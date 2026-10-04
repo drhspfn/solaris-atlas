@@ -31,7 +31,13 @@ export const APP_SETTINGS = {
     cardStaggerMs: 25,
     cardStaggerMaxIndex: 12,
   },
-  storyAgent: { pageSize: 20, refreshMs: 10000, extraSteps: 16 },
+  storyAgent: {
+    pageSize: 20,
+    refreshMs: 10000,
+    extraSteps: 16,
+    outputRecoveryMinTokens: 16384,
+    maxOutputTokens: 32000,
+  },
   map: {
     minZoom: -6,
     overviewZoomOutLevels: 1,

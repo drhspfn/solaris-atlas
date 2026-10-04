@@ -79,7 +79,14 @@ Step pauses require a positive extension, up to 100 total steps. Responses conte
 pauses offer explicit compaction; budget/provider/cooldown pauses offer explicit
 resume. Uncertain charges cannot resume through the panel. Continuing a checkpoint
 preserves completed calls and never raises spending limits. Private model history
-and credentials are not exposed. Alerts may be marked resolved after investigation;
+and credentials are not exposed.
+
+Output-limit pauses offer Increase response limit and resume. It raises the
+response allowance within 32,000 tokens and adds only the step needed to regenerate
+the incomplete response. Earlier research is retained; partial tool calls are
+discarded and the billed truncated response remains in usage history. The action
+uses the existing daily allowance and never bypasses uncertain billing review.
+Alerts may be marked resolved after investigation;
 Usage is read-only. Tables scroll inside their panel on narrow screens; sidebar
 navigation wraps above content. Loading, empty, error and permission states are
 explicit, and action outcomes use live status text.

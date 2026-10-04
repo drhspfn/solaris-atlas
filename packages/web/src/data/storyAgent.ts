@@ -1,3 +1,5 @@
+import { APP_SETTINGS } from '../config/settings.ts';
+
 export type AgentRequest = { quest_id: number; game_version: string; locale: string };
 export type AgentJob = {
   id: number;
@@ -28,6 +30,7 @@ export type AgentDetail = Omit<AgentJob, 'max_steps' | 'model'> & {
   limits: {
     max_steps: number;
     max_input_tokens: number;
+    max_output_tokens: number;
     max_tool_calls_per_step: number;
     provider: string;
     model: string;
@@ -50,6 +53,16 @@ export type AgentUsage = {
 };
 
 export function resumePolicy(job: AgentDetail): { allowed: boolean; help: string } {
+  if (job.status === 'paused_output') {
+    const allowed =
+      job.limits.max_output_tokens < APP_SETTINGS.storyAgent.maxOutputTokens && job.step < 99;
+    return {
+      allowed,
+      help: allowed
+        ? `The response reached its ${job.limits.max_output_tokens.toLocaleString('en-US')}-token limit. Continue with a larger allowance from saved research. The incomplete response remains charged; the next response uses the daily budget.`
+        : 'The response reached the maximum allowance or step limit. Split the analysis before starting another run.',
+    };
+  }
   if (job.status === 'paused_steps')
     return {
       allowed: job.limits.max_steps < 100,
@@ -101,6 +114,14 @@ export function resumePolicy(job: AgentDetail): { allowed: boolean; help: string
 
 export function resumeBody(job: AgentDetail, extraSteps: number): Record<string, number | boolean> {
   if (!resumePolicy(job).allowed) throw new Error('This run cannot be resumed from the panel.');
+  if (job.status === 'paused_output')
+    return {
+      output_tokens: Math.min(
+        APP_SETTINGS.storyAgent.maxOutputTokens,
+        Math.max(APP_SETTINGS.storyAgent.outputRecoveryMinTokens, job.limits.max_output_tokens * 2),
+      ),
+      extra_steps: Math.max(0, job.step + 2 - job.limits.max_steps),
+    };
   if (job.status === 'paused_steps') {
     if (!Number.isInteger(extraSteps) || extraSteps < 1 || extraSteps > 100 - job.limits.max_steps)
       throw new Error('Choose a positive number of steps within the remaining limit.');
@@ -116,6 +137,7 @@ export function statusLabel(status: string): string {
     completed: 'Published',
     paused_steps: 'Step limit',
     paused_context: 'Context limit',
+    paused_output: 'Response limit',
     paused_budget: 'Budget limit',
     paused_rate_limit: 'Cooldown',
     paused_provider: 'Provider rejected',

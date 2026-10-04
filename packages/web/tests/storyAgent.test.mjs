@@ -27,3 +27,28 @@ test('uncertain charges, active runs and terminal failures cannot be restarted',
     assert.throws(() => resumeBody({ ...job, status }, 16));
   }
 });
+test('output recovery raises only the response bound and adds a step when required', () => {
+  const truncated = {
+    ...job,
+    status: 'paused_output',
+    step: 15,
+    limits: { ...job.limits, max_output_tokens: 4096 },
+  };
+  assert.equal(resumePolicy(truncated).allowed, true);
+  assert.deepEqual(resumeBody(truncated, 16), { output_tokens: 16384, extra_steps: 1 });
+  assert.deepEqual(resumeBody({ ...truncated, step: 4 }, 16), {
+    output_tokens: 16384,
+    extra_steps: 0,
+  });
+  assert.deepEqual(
+    resumeBody({ ...truncated, limits: { ...truncated.limits, max_output_tokens: 16384 } }, 16),
+    { output_tokens: 32000, extra_steps: 1 },
+  );
+  for (const exhausted of [
+    { ...truncated, step: 99 },
+    { ...truncated, limits: { ...truncated.limits, max_output_tokens: 32000 } },
+  ]) {
+    assert.equal(resumePolicy(exhausted).allowed, false);
+    assert.throws(() => resumeBody(exhausted, 16));
+  }
+});
