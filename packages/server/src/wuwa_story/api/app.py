@@ -21,6 +21,7 @@ from wuwa_story.api.routes import (
     releases,
     search,
     story,
+    story_agent,
 )
 from wuwa_story.auth.routes import router as auth_router
 from wuwa_story.auth.services import AuthError
@@ -49,6 +50,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+app.state.agent_query_redis = response_cache
 app.add_middleware(PublicResponseCache, settings=settings, redis=response_cache)
 app.add_middleware(
     CORSMiddleware,
@@ -91,4 +93,6 @@ app.include_router(nodes.router)
 app.include_router(graph_paths.router)
 app.include_router(search.router)
 app.include_router(story.router)
+app.include_router(story_agent.router)
+app.include_router(story_agent.admin)
 app.include_router(auth_router)

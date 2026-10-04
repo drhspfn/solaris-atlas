@@ -1,11 +1,12 @@
 import { ArrowUp, BookOpen, ChevronRight, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 
 import { api } from '../api/client';
 import { PlayerText } from '../components/dialogue/PlayerText';
 import { QuestContinuity } from '../components/story/QuestContinuity';
 import { QuestCutscenes } from '../components/story/QuestCutscenes';
+import { QuestExplanation } from '../components/story/QuestExplanation';
 import {
   DialogueAudioReference,
   type QuestMediaManifest,
@@ -31,7 +32,10 @@ export function QuestPage() {
   const { key = '' } = useParams();
   const [searchParams] = useSearchParams();
   const gameVersion = searchParams.get('game_version') || '';
-  const locale = useLocale();
+  const selectedLocale = useLocale();
+  const locale = searchParams.get('locale') || selectedLocale;
+  const citedLine = searchParams.get('line');
+  const navigation = useLocation();
   const playerDisplay = usePlayerDisplay();
   const { voiceLanguage, setVoiceLanguage } = useNarrativePreferences();
   const [profile, setProfile] = useState<any>(null);
@@ -45,6 +49,20 @@ export function QuestPage() {
   const [onlyLines, setOnlyLines] = useState(false);
   const [activeChoiceId, setActiveChoiceId] = useState<string | null>(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
+  useEffect(() => {
+    if (!citedLine) return;
+    setOnlyChoices(false);
+    setOnlyLines(false);
+    if (loading) return;
+    const frame = requestAnimationFrame(() => {
+      const target = Array.from(document.querySelectorAll<HTMLElement>('[data-dialogue-key]')).find(
+        (element) => element.dataset.dialogueKey === citedLine,
+      );
+      target?.scrollIntoView({ block: 'center' });
+      target?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [citedLine, loading, transcript, navigation.key]);
   useEffect(() => {
     if (!activeChoiceId) return;
     let enteredBranch = false;
@@ -79,9 +97,13 @@ export function QuestPage() {
     setContinuityError('');
     const selection = new URLSearchParams({ locale });
     if (gameVersion) selection.set('game_version', gameVersion);
+    const transcriptSelection = new URLSearchParams(selection);
+    if (citedLine) transcriptSelection.set('focus_line', citedLine);
     Promise.all([
       api<any>(`/quests/${key}/profile?${selection}`),
-      api<any>(`/quests/${key}/transcript?${selection}&limit=${APP_SETTINGS.limits.transcript}`),
+      api<any>(
+        `/quests/${key}/transcript?${transcriptSelection}&limit=${APP_SETTINGS.limits.transcript}`,
+      ),
       api<QuestContinuityData>(`/quests/${key}/continuity?${selection}`)
         .then((result) => ({ result, failure: '' }))
         .catch((reason: Error) => ({ result: null, failure: reason.message })),
@@ -104,7 +126,7 @@ export function QuestPage() {
     return () => {
       active = false;
     };
-  }, [key, locale, gameVersion]);
+  }, [key, locale, gameVersion, citedLine]);
   if (loading) return <PageLoader />;
   if (error)
     return (
@@ -242,6 +264,11 @@ export function QuestPage() {
           Story path unavailable: {continuityError}
         </div>
       )}
+      <QuestExplanation
+        questId={quest.game_quest_id}
+        version={gameVersion || continuity?.selected_game_version || ''}
+        locale={locale}
+      />
       {lines.length === 0 ? (
         <section className="quest-no-transcript" aria-labelledby="quest-no-transcript-title">
           <span className="eyebrow left">SOURCE RECORD · NO DIALOGUE TRANSCRIPT</span>
@@ -349,12 +376,14 @@ export function QuestPage() {
                   const active = branch?.choice.id === activeChoiceId;
                   return (
                     <article
-                      className={`transcript-line${branch ? ' branch-line' : ''}${active ? ' branch-line-active' : ''}`}
+                      className={`transcript-line${branch ? ' branch-line' : ''}${active ? ' branch-line-active' : ''}${line.id === citedLine ? ' cited-passage' : ''}`}
+                      data-dialogue-key={line.id}
+                      tabIndex={-1}
                       id={lineAnchors.get(line.id)}
                       key={line.id || i}
                     >
                       <div className="line-rail">
-                        <span>{String(i + 1).padStart(3, '0')}</span>
+                        <span>{String((transcript.offset || 0) + i + 1).padStart(3, '0')}</span>
                         <i />
                       </div>
                       <div className="line-body">

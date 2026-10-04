@@ -1,5 +1,30 @@
 # Interactive map UX contract
 
+## Cited story explanations
+
+Quest pages show published AI interpretations in a separate native details section,
+below continuity and above the source transcript. Interpretations never replace
+authored dialogue. Source buttons are native disclosures: Enter/Space opens the
+exact quote, and Read source opens the owning quest with version, locale and a
+bounded passage focus. The cited line is highlighted, scrolled into view and
+focused; conflicting transcript filters are cleared. Long transcripts load a
+bounded window around the citation rather than silently omitting it.
+
+Generated events have their own read-only page, quotes and a return link to the
+same quest/version/language. Related records and inferred connections use internal
+source routes. AI interpretation labels are persistent. UI labels remain English;
+explanation content follows the selected locale. Existing DESIGN.md tokens own
+surfaces, spacing, typography, focus and responsive behavior.
+
+Search has Source records and Story explanations modes. The existing SearchBox
+owns the input, clear button, IME behavior and submit navigation; the form uses
+noValidate. Committed question, mode, version and locale stay in the URL. Changing
+the question cancels stale requests. Loading, missing analysis, no matches and
+request failures have explicit text; failed explanation/search requests offer a
+retry. Source disclosures work by click and keyboard. Neither reading a quest nor
+searching explanations enqueues an analysis job. Public query embeddings are an
+explicit backend option, guarded by Redis and the shared spending ledger.
+
 ## Dialogue voice playback
 
 Available quest cutscenes appear in the transcript column with native video
@@ -32,8 +57,61 @@ Read-only game atlas at `/map`, using published map manifests, positioned entiti
 | Navigation | React Router and App topbar | App.tsx | `/map` route and URL filter state | Back/forward and reload |
 | Map viewport | Leaflet CRS.Simple | Game world coordinates and map manifest | Preview at overview, visible original tiles at close zoom | Region alignment, floors and zoom |
 | Feedback | Inline page status and retry panel | API request lifecycle | Map remains readable during marker loading | Loading, empty dataset, errors and retry |
+| Form | Native HTML form and shared auth-form styles | Browser constraints and server DTO validation | Admin forms use noValidate plus explicit reportValidity on submit | Required fields, bounded steps, retained input after API failure |
+
+## Administration
+
+`/admin` has one persistent sidebar: Content (Story agent) and Operations
+(Alerts, Usage). The account menu exposes Admin panel only to administrators.
+AdminLayout owns the client access gate; server require_admin and CSRF remain
+authoritative for every request. Guests get a sign-in link retaining their route;
+ordinary accounts see an access explanation without mounting admin data views.
+
+Story agent shows cursor-paginated runs, saved research progress, safe request
+history and today's shared budget. It refreshes every ten seconds while visible,
+cancels obsolete requests and retains usable data on refresh failure. Selected
+run and pagination stay in the URL. The creation form accepts only a quest ID;
+analysis is always English and source reading remains multilingual. The server
+pins the latest imported snapshot containing that quest. Creating the same request reuses
+its run. Submissions disable duplicate actions and preserve form values on error.
+
+Step pauses require a positive extension, up to 100 total steps. Responses context
+pauses offer explicit compaction; budget/provider/cooldown pauses offer explicit
+resume. Uncertain charges cannot resume through the panel. Continuing a checkpoint
+preserves completed calls and never raises spending limits. Private model history
+and credentials are not exposed.
+
+Output-limit pauses offer Increase response limit and resume. It raises the
+response allowance within 32,000 tokens and adds only the step needed to regenerate
+the incomplete response. Earlier research is retained; partial tool calls are
+discarded and the billed truncated response remains in usage history. The action
+uses the existing daily allowance and never bypasses uncertain billing review.
+Alerts may be marked resolved after investigation;
+Usage is read-only. Tables scroll inside their panel on narrow screens; sidebar
+navigation wraps above content. Loading, empty, error and permission states are
+explicit, and action outcomes use live status text.
+
+Daily spend is an estimate from reported standard/cache-read/cache-write usage
+including the configured safety margin. The USD cap always applies. A separate
+daily token guard is optional; a disabled guard displays usage without a zero cap.
+Budget pauses mean the next request's reservation cannot fit, which can happen
+before displayed settled usage reaches a cap. Tokens include cached input.
 
 ## Interaction and persistence
+
+Story notes separate atomic assertions by confirmed, observed anomaly, inferred
+and unresolved status, using text as well as color. Each assertion exposes its
+authored quest encounter, independent world chronology and knowledge at that
+point. Later explanations have their own citations and are hidden in a keyboard
+operable spoiler disclosure. Related records explain why a passage matters;
+Graph edges show readable endpoints and relationships with source disclosures.
+Source disclosures identify their own patch version; source links preserve it.
+The server selects the latest available quest transcript for admin submissions,
+while research may use any imported patch. The resolved snapshot remains visible
+in run details and source links. Earlier jobs retain their original
+research scope; browsing does not enqueue a paid analysis.
+Older analyses remain readable without fabricated chronology. Generated links
+remain explicitly labeled agent interpretations.
 
 World, location, floor, surface opacity, category/subtype exclusions, search and hidden/unknown placement preferences are stored locally in localStorage, with an in-memory fallback. The URL accepts bounded numeric map and marker IDs for shared markers, or map/item/source IDs for acquisition groups. Existing URL filters are imported once and stripped using history replacement. All marker categories start disabled when no preferences have been saved. Preferences are stored as JSON without base64 encoding. Shared markers open their object card and center the map, clearing conflicting search, area and floor filters while preserving type selections. The shared marker remains visible even when its type is disabled. Pan and zoom are transient. Selecting a location fits its source-backed bounds; selecting a floor fits that layer. Floor images render above the surface, which defaults to 30% opacity while a floor is selected. Clusters open by click or keyboard; individual objects can always be opened from the list.
 

@@ -14,6 +14,7 @@ class QueueSpec:
 
 
 QUEUES = {
+    "story_agent": QueueSpec(key="story_agent", name="wuwa.story-agent.v1", default_concurrency=1),
     "entity_media": QueueSpec(key="entity_media", name="wuwa.entity-media.v1", default_concurrency=1),
     "asset_extract": QueueSpec(
         key="asset_extract",

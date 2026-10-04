@@ -24,7 +24,7 @@ from wuwa_story.db.session import engine
 logger = logging.getLogger(__name__)
 PUBLIC_ROOTS = {
     "catalog", "categories", "items", "locations", "characters", "quests",
-    "dialogue", "story-map", "maps", "nodes", "graph", "search", "releases",
+    "dialogue", "story-map", "maps", "nodes", "graph", "search", "releases", "story-analysis",
 }
 REVISION_SQL = text("""
     SELECT md5(string_agg(table_name || ':' || transaction_id::text, ',' ORDER BY table_name))

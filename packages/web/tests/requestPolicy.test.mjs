@@ -7,6 +7,7 @@ test('public game reads omit account cookies so signed-in users can use shared c
   assert.equal(requestCredentials('/quests/139000025/transcript?locale=ja', 'GET'), 'omit');
   assert.equal(requestCredentials('/maps/102/markers?type=chest', 'get'), 'omit');
   assert.equal(requestCredentials('/items/item%3A41100012/profile', 'GET'), 'omit');
+  assert.equal(requestCredentials('/story-analysis/search?q=why', 'GET'), 'omit');
 });
 
 test('account, admin, unknown routes and mutations retain session credentials', () => {
@@ -14,6 +15,7 @@ test('account, admin, unknown routes and mutations retain session credentials', 
     '/auth/me',
     '/auth/csrf',
     '/admin/media-jobs/1',
+    '/admin/story-agent/jobs',
     '/health',
     '/catalog-private',
   ]) {

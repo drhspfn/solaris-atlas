@@ -18,6 +18,7 @@ export const APP_SETTINGS = {
     catalogPage: 24,
     catalogSearch: 50,
     search: 60,
+    explanationSearch: 8,
     inlineDialogueSearch: 8,
     relatedNodes: 100,
     transcript: 2000,
@@ -29,6 +30,13 @@ export const APP_SETTINGS = {
     skeletonCount: 8,
     cardStaggerMs: 25,
     cardStaggerMaxIndex: 12,
+  },
+  storyAgent: {
+    pageSize: 20,
+    refreshMs: 10000,
+    extraSteps: 16,
+    outputRecoveryMinTokens: 16384,
+    maxOutputTokens: 32000,
   },
   map: {
     minZoom: -6,

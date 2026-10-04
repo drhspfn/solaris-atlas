@@ -8,6 +8,7 @@ const PUBLIC_GAME_ROUTES = new Set([
   'quests',
   'dialogue',
   'story-map',
+  'story-analysis',
   'maps',
   'nodes',
   'graph',

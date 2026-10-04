@@ -14,7 +14,7 @@ from wuwa_story.ingestion.entity_media import MediaRequest, entity_media_targets
 MEDIA_QUEUE = "wuwa.entity-media.v1"
 
 
-async def publish_media_job(payload: dict, job_id: str) -> None:
+async def publish_media_job(payload: dict, job_id: str, queue_name: str = MEDIA_QUEUE) -> None:
     connection = await aio_pika.connect_robust(get_settings().rabbitmq_url.get_secret_value())
     try:
         channel = await connection.channel(publisher_confirms=True)
@@ -25,16 +25,16 @@ async def publish_media_job(payload: dict, job_id: str) -> None:
             "wuwa.jobs.failed.v1", aio_pika.ExchangeType.DIRECT, durable=True
         )
         queue = await channel.declare_queue(
-            MEDIA_QUEUE,
+            queue_name,
             durable=True,
             arguments={
                 "x-dead-letter-exchange": failed.name,
-                "x-dead-letter-routing-key": MEDIA_QUEUE,
+                "x-dead-letter-routing-key": queue_name,
             },
         )
-        await queue.bind(exchange, routing_key=MEDIA_QUEUE)
-        dead = await channel.declare_queue(MEDIA_QUEUE + ".failed", durable=True)
-        await dead.bind(failed, routing_key=MEDIA_QUEUE)
+        await queue.bind(exchange, routing_key=queue_name)
+        dead = await channel.declare_queue(queue_name + ".failed", durable=True)
+        await dead.bind(failed, routing_key=queue_name)
         await exchange.publish(
             aio_pika.Message(
                 body=json.dumps(payload).encode(),
@@ -42,7 +42,7 @@ async def publish_media_job(payload: dict, job_id: str) -> None:
                 delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
                 message_id=job_id,
             ),
-            routing_key=MEDIA_QUEUE,
+            routing_key=queue_name,
             mandatory=True,
         )
     finally:
