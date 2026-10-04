@@ -6,7 +6,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.api.source_labels import source_family_label
-from wuwa_story.db.models.core import DialogueLine, Quest, QuestAction, QuestNode, QuestState
+from wuwa_story.db.models.core import DialogueLine, Quest, QuestAction, QuestState
 from wuwa_story.db.models.graph import Edge, Node, NodeRevision, NodeType
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.ontology import RelationType
@@ -264,6 +264,7 @@ async def node_narrative_context(
         return {"canonical_key": canonical_key, "available": False, "reason": "no normalized DialogueLine is linked to this node"}
 
     from wuwa_story.api.routes.story import _dialogue_payload, _quest_info, _release_id
+    from wuwa_story.api.routes.story.shared import _quest_state_links
 
     release_id = await _release_id(session, game_version)
     line_query = (
@@ -327,13 +328,12 @@ async def node_narrative_context(
             Edge.layer == "source",
         )
     )
+    ownership = _quest_state_links()
     quest_rows = await session.scalars(
         select(Quest)
         .where(
-            Quest.game_quest_id.in_(
-                select(QuestNode.game_quest_id).where(
-                    QuestNode.node_id.in_(state_owners), QuestNode.game_quest_id.is_not(None)
-                )
+            Quest.node_id.in_(
+                select(ownership.c.quest_id).where(ownership.c.state_id == target_state.node_id)
             )
         )
         .order_by(Quest.game_quest_id)
@@ -365,8 +365,9 @@ async def node_narrative_context(
             },
         },
         "quests": quests,
+        "game_version": (await session.get(GameRelease, release_id)).game_version if release_id else None,
         "quest_resolution": {
-            "basis": "explicit references_flow_state edge from QuestNodeData node to this flow state, then QuestNode.game_quest_id",
+            "basis": "source quest/quest-node/scene flow references, including PlayMovie transcripts matched by complete caption localization keys",
             "quest_node_refs": owner_keys,
             "unresolved": not bool(quests),
         },

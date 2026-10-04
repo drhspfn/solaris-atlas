@@ -1,6 +1,6 @@
 import { ArrowRight, ChevronRight, ExternalLink, Network } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 
 import { api } from '../api/client';
 import { PlayerText } from '../components/dialogue/PlayerText';
@@ -9,6 +9,7 @@ import { APP_SETTINGS } from '../config/settings';
 import { type Entity, entityPath } from '../data/entities';
 import { localizedText } from '../data/localized';
 import { interpolatePlayerName } from '../data/playerName';
+import { questPassagePath } from '../data/story';
 import { useLocale } from '../hooks/useLocale';
 import { usePlayerDisplay } from '../hooks/usePlayerDisplay';
 
@@ -28,7 +29,10 @@ type Related = {
 
 export function NodeExplorerPage() {
   const { key = '' } = useParams();
-  const locale = useLocale();
+  const selectedLocale = useLocale();
+  const [params] = useSearchParams();
+  const locale = params.get('locale') || selectedLocale;
+  const gameVersion = params.get('game_version') || '';
   const playerDisplay = usePlayerDisplay();
   const [node, setNode] = useState<NodeDetail | null>(null);
   const [related, setRelated] = useState<Related[]>([]);
@@ -37,26 +41,37 @@ export function NodeExplorerPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    let active = true;
     setLoading(true);
     setError('');
-    const canonicalKey = decodeURIComponent(key);
+    const canonicalKey = key;
+    const selection = new URLSearchParams({ locale });
+    if (gameVersion) selection.set('game_version', gameVersion);
     Promise.all([
       api<NodeDetail>(`/nodes/${encodeURIComponent(canonicalKey)}`),
       api<{ results: Related[] }>(
         `/nodes/${encodeURIComponent(canonicalKey)}/related?locale=${locale}&limit=${APP_SETTINGS.limits.relatedNodes}`,
       ),
-      api<any>(
-        `/nodes/${encodeURIComponent(canonicalKey)}/narrative-context?locale=${locale}`,
-      ).catch(() => null),
+      api<any>(`/nodes/${encodeURIComponent(canonicalKey)}/narrative-context?${selection}`).catch(
+        () => null,
+      ),
     ])
       .then(([detail, links, context]) => {
+        if (!active) return;
         setNode(detail);
         setRelated(links.results);
         setNarrative(context?.available ? context : null);
       })
-      .catch((reason: Error) => setError(reason.message))
-      .finally(() => setLoading(false));
-  }, [key, locale]);
+      .catch((reason: Error) => {
+        if (active) setError(reason.message);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [key, locale, gameVersion]);
 
   if (loading) return <PageLoader />;
   if (error || !node)
@@ -165,19 +180,27 @@ export function NodeExplorerPage() {
                 return (
                   <Link
                     className="node-quest-card"
-                    to={`/quests/${id}`}
+                    to={questPassagePath(
+                      id,
+                      narrative.dialogue.id,
+                      locale,
+                      narrative.game_version || gameVersion,
+                    )}
                     key={quest.canonical_key || id}
                   >
                     <span>
                       <strong>{localizedText(quest.name, `Quest ${id}`)}</strong>
-                      <small>Quest {id} · explicit QuestNodeData → flow-state reference</small>
+                      <small>Open quest at this line →</small>
                     </span>
                     <ArrowRight size={15} />
                   </Link>
                 );
               })
             ) : (
-              <p>No quest is explicitly linked to this flow-state in the current snapshot.</p>
+              <p>
+                No confirmed quest link is available for this line in the imported data. Nearby
+                dialogue is shown below.
+              </p>
             )}
           </div>
           <div className="node-context-transcript">
