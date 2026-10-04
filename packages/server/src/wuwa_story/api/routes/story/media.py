@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api.routes.story.captions import caption_texts, caption_tracks
 from wuwa_story.api.routes.story.shared import _quest_state_ids, _release_id
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.core import Quest, QuestAction, QuestState, VoiceReference
@@ -180,6 +181,7 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
 async def quest_media(
     game_quest_id: int,
     game_version: str | None = None,
+    locale: str = "en",
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Authored media references with published playable files when available."""
@@ -214,6 +216,19 @@ async def quest_media(
         .where(NodeRevision.node_id.in_(child_ids), NodeRevision.release_id == release_id)
     ) if child_ids else []
     resource_raw = {node_id: raw for node_id, raw in resource_rows}
+    captions = [raw for raw in resource_raw.values() if "CaptionText" in raw]
+    texts = await caption_texts(session, captions, locale, release_id)
+    transcript_states: dict[int, list[str]] = defaultdict(list)
+    if cutscene_ids:
+        for cutscene_id, state_key in await session.execute(
+            select(Edge.from_node_id, QuestState.state_key)
+            .join(RelationType, RelationType.id == Edge.relation_type_id)
+            .join(QuestState, QuestState.node_id == Edge.to_node_id)
+            .join(EdgeEvidence, EdgeEvidence.edge_id == Edge.id)
+            .where(Edge.from_node_id.in_(cutscene_ids), RelationType.key == "has_transcript_state",
+                   Edge.layer == "source", EdgeEvidence.release_id == release_id)
+        ):
+            transcript_states[cutscene_id].append(state_key)
     events = []
     for action, state, action_key in action_rows:
         for link in action_links.get(action.node_id, []):
@@ -230,6 +245,13 @@ async def quest_media(
             }
             if link["relation"] == "plays_cutscene":
                 entry["playback"] = flows.get(link["node_id"])
+                entry["transcript_states"] = sorted(set(transcript_states[link["node_id"]]))
+                # Timing schema is verified against the current client, not assumed for old builds.
+                entry["captions"] = caption_tracks([
+                    resource_raw[child["node_id"]]
+                    for child in variants.get(link["node_id"], [])
+                    if child["relation"] == "uses_caption" and child["node_id"] in resource_raw
+                ], texts) if entry["playback"] and entry["playback"]["asset_version"] == "3.7.0" else {}
                 entry["resources"] = [
                     {"kind": child["relation"], "reference": child["canonical_key"],
                      "basis": child["basis"], "source": child["source"],
