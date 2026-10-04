@@ -4,6 +4,7 @@ export const APP_SETTINGS = {
   storage: {
     locale: 'wuwa-locale',
     mapFilters: 'atlas-map-filters',
+    mapProgress: 'solaris-atlas:map-progress:v1',
     narrative: 'solaris-atlas:narrative-preferences:v1',
     guestPlayerTitle: 'solaris-atlas:guest-player-title:v1',
   },
@@ -46,6 +47,7 @@ export const APP_SETTINGS = {
     clusterCellPixels: 42,
     closeClusterCellPixels: 20,
     markerSize: 30,
+    foundMarkerOpacity: 0.4,
     clusterSize: 32,
     initialFitPadding: 25,
     locationFitPadding: 35,
