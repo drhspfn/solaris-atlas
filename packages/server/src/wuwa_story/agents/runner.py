@@ -735,8 +735,7 @@ async def run_locked(
     vectors = cp.get("vectors", [])
     if settings.embedding_model:
         for ordinal in range(len(vectors), len(result.blocks)):
-            block = result.blocks[ordinal]
-            content = block.search_text()
+            content = result.search_text(ordinal)
             if settings.provider == "gemini":
                 route = f"/models/{settings.embedding_model}:embedContent"
                 payload = {

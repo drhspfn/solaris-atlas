@@ -65,7 +65,7 @@ async def publish_analysis(
         document_type=kind,
         revision=revision,
         title=result.title,
-        plain_text="\n\n".join(block.search_text() for block in result.blocks),
+        plain_text="\n\n".join(result.search_text(i) for i in range(len(result.blocks))),
         body_ast=[block.model_dump() for block in result.blocks],
         source_hash=run.input_hash or hash_value(result.model_dump()),
         processor_run_id=run.id,
@@ -305,7 +305,7 @@ async def publish_analysis(
                     document_id=document.id,
                     ordinal=ordinal,
                     model_id=model_id,
-                    content_hash=hash_value(result.blocks[ordinal].model_dump()),
+                    content_hash=hash_value(result.search_text(ordinal)),
                     embedding=vector,
                 )
             )

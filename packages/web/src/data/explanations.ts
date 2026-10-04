@@ -43,6 +43,7 @@ export type StoryAssertion = {
   }[];
 };
 export type StoryExplanation = {
+  is_supplement?: boolean;
   assessment?: { narrative_weight: string; hook_priority: string; reason: string } | null;
   narrative_function?: string | null;
   knowledge_boundary?: { known: string[]; unknown: string[]; cannot_conclude: string[] } | null;

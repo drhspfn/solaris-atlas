@@ -54,6 +54,24 @@ export function ExplanationContext({ explanation }: { explanation: StoryExplanat
   );
 }
 
+export function ExplanationHookReviews({
+  explanation,
+  hooks,
+}: {
+  explanation: StoryExplanation;
+  hooks?: StoryExplanation['hooks'];
+}) {
+  return explanation.revisited_hooks?.map((review) => (
+    <article className="explanation-edge" key={review.hook_key}>
+      <h4>{hooks?.find((hook) => hook.key === review.hook_key)?.question || 'Reviewed thread'}</h4>
+      <span className="explanation-badge">{review.status.replaceAll('_', ' ')}</span>
+      <span className="explanation-badge">{review.priority} priority after review</span>
+      <p>{review.explanation}</p>
+      <ExplanationSources citations={review.citations} nodes={explanation.nodes} />
+    </article>
+  ));
+}
+
 export function ExplanationFollowUps({ explanation }: { explanation: StoryExplanation }) {
   return (
     <>
@@ -78,20 +96,10 @@ export function ExplanationFollowUps({ explanation }: { explanation: StoryExplan
       ) : null}
       {explanation.supplements?.map((supplement) => (
         <details className="explanation-context assertion-resolution" key={supplement.id}>
-          <summary>New context · spoilers · {supplement.title}</summary>
+          <summary>New context · spoilers</summary>
+          <h3>{supplement.title}</h3>
           <p>This supplement leaves the original analysis and what was known then unchanged.</p>
-          {supplement.revisited_hooks?.map((review) => (
-            <article className="explanation-edge" key={review.hook_key}>
-              <h4>
-                {explanation.hooks?.find((hook) => hook.key === review.hook_key)?.question ||
-                  'Reviewed thread'}
-              </h4>
-              <span className="explanation-badge">{review.status.replaceAll('_', ' ')}</span>
-              <span className="explanation-badge">{review.priority} priority after review</span>
-              <p>{review.explanation}</p>
-              <ExplanationSources citations={review.citations} nodes={supplement.nodes} />
-            </article>
-          ))}
+          <ExplanationHookReviews explanation={supplement} hooks={explanation.hooks} />
           <ExplanationBlocks explanation={supplement} />
         </details>
       ))}

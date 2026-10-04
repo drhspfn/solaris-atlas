@@ -771,7 +771,7 @@ async def test_import_revisit_outbox_recovers_and_preserves_original(world, monk
                 hook_key="crossing-route",
                 priority="low",
                 status="unresolved_in_loaded_corpus",
-                explanation="The newly inspected line still does not identify the route.",
+                explanation="Routewatch evidence still does not identify the route.",
                 citations=[
                     *original.hooks[0].citations,
                     {
@@ -826,6 +826,9 @@ async def test_import_revisit_outbox_recovers_and_preserves_original(world, monk
             review = payload["supplements"][0]["revisited_hooks"][0]
             assert review["status"] == "unresolved_in_loaded_corpus"
             assert all(c["href"] for c in review["citations"])
+            search = await search_explanations(db, "Routewatch", release.game_version, "en", 10)
+            assert search["results"][0]["is_supplement"]
+            assert search["results"][0]["id"] != parent_id
     finally:
         async with AsyncSession(engine) as db:
             await db.execute(delete(GameRelease).where(GameRelease.id == later_id))

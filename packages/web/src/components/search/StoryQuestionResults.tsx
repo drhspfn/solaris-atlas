@@ -6,6 +6,7 @@ import { api } from '../../api/client';
 import { APP_SETTINGS } from '../../config/settings';
 import type { ExplanationResults } from '../../data/explanations';
 import { ExplanationBlocks } from '../story/ExplanationBlocks';
+import { ExplanationHookReviews } from '../story/ExplanationContext';
 
 export function StoryQuestionResults({
   query,
@@ -85,7 +86,7 @@ export function StoryQuestionResults({
           <header className="explanation-result-heading">
             <div>
               <span className="eyebrow left">QUEST {result.quest_id} · AI INTERPRETATION</span>
-              <h2>{result.title}</h2>
+              <h2>{result.is_supplement ? 'New context for this quest' : result.title}</h2>
             </div>
             <Link
               to={`/quests/${result.quest_id}?game_version=${encodeURIComponent(result.game_version)}&locale=${locale}`}
@@ -93,7 +94,16 @@ export function StoryQuestionResults({
               Read quest <ArrowUpRight size={15} aria-hidden="true" />
             </Link>
           </header>
-          <ExplanationBlocks explanation={result} />
+          {result.is_supplement ? (
+            <details className="explanation-context assertion-resolution">
+              <summary>New context · spoilers</summary>
+              <h3>{result.title}</h3>
+              <ExplanationHookReviews explanation={result} />
+              <ExplanationBlocks explanation={result} />
+            </details>
+          ) : (
+            <ExplanationBlocks explanation={result} />
+          )}
         </section>
       ))}
     </div>

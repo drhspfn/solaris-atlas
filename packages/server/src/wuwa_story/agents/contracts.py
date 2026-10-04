@@ -225,6 +225,12 @@ class AnalysisResult(StrictModel):
     hooks: list[OpenHook] = Field(default_factory=list, max_length=12)
     review: AnalysisReview | None = None
 
+    def search_text(self, ordinal: int) -> str:
+        text = self.blocks[ordinal].search_text()
+        if ordinal == 0 and self.revisited_hooks:
+            text += "\n\n" + "\n\n".join(review.explanation for review in self.revisited_hooks)
+        return text
+
     def validate_temporal_structure(self) -> None:
         if any(not block.assertions for block in self.blocks):
             raise ValueError(

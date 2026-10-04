@@ -88,6 +88,9 @@ test('adaptive knowledge, corpus limits and supplemental spoilers remain separat
   ])
     assert.ok(html.includes(text), text);
   assert.ok(!html.includes('<details open'));
+  assert.ok(
+    !html.includes(`<summary>New context · spoilers · ${adaptiveExplanation.supplements[0].title}`),
+  );
   assert.ok(!html.includes('href="#"'));
 });
 

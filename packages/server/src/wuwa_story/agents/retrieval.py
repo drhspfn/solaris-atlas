@@ -299,6 +299,7 @@ async def public_document(
         ),
         "blocks": blocks,
         "generated": True,
+        "is_supplement": bool(document.metadata_json.get("revisit")),
         "unresolved_questions": document.metadata_json.get("unresolved_questions", []),
         "events": [{"node_id": node_id, "title": title} for node_id, title in events],
         "links": [await with_citations(item) for item in document.metadata_json.get("links", [])],
@@ -438,12 +439,24 @@ async def search_explanations(
     settings: AgentSettings | None = None,
 ) -> dict[str, Any]:
     release, language = await scope(session, game_version, locale)
+    # A supplement is current only while its original explanation is still the head.
+    parent_heads = select(DocumentHead.document_id).where(
+        DocumentHead.document_type == document_type(release.id)
+    )
     # Restrict to current published heads; older generated revisions are never search results.
     base = (
         select(Document, Quest)
         .join(DocumentHead, DocumentHead.document_id == Document.id)
         .join(Quest, Quest.node_id == Document.node_id)
-        .where(Document.document_type == document_type(release.id))
+        .where(
+            or_(
+                Document.document_type == document_type(release.id),
+                and_(
+                    Document.document_type.startswith("story-recontextualization:"),
+                    Document.metadata_json["revisit"]["document_id"].as_integer().in_(parent_heads),
+                ),
+            )
+        )
     )
     score = func.ts_rank_cd(
         func.to_tsvector("simple", Document.plain_text), func.plainto_tsquery("simple", query)
