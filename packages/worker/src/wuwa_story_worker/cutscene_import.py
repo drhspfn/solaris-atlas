@@ -29,8 +29,8 @@ def movie_path(data: bytes) -> str:
     return "Client/Content/" + paths[0].decode("ascii")
 
 
-def bank_media_id(data: bytes) -> int:
-    """Only the verified single-source Sound/MusicTrack layout in Wwise bank v172."""
+def bank_media_id(data: bytes, selected: int | None = None) -> int:
+    """Resolve a v172 source, requiring explicit selection for layered/switch banks."""
     if len(data) < 12 or data[:4] != b"BKHD" or struct.unpack_from("<I", data, 8)[0] != 172:
         raise ValueError("Unsupported Wwise bank version")
     position = 0
@@ -70,6 +70,10 @@ def bank_media_id(data: bytes) -> int:
                 sources.append(struct.unpack_from("<I", obj, source_offset)[0])
                 offset += 5 + length
         position += 8 + size
+    if selected is not None:
+        if selected not in sources:
+            raise ValueError("Selected soundtrack media is not present in the bank")
+        return selected
     if len(sources) != 1:
         raise ValueError("Only single-source soundtrack banks are supported")
     return sources[0]
@@ -144,8 +148,9 @@ async def import_cutscene_recipe(
                 streams.append("[0:a:0]")
             for track_index, track in enumerate(video.soundtrack, 1):
                 bank = confined(assets, track.bank)
-                if bank not in decoded:
-                    media_id = bank_media_id(bank.read_bytes())
+                media_id = bank_media_id(bank.read_bytes(), track.media_id)
+                cache_key = (bank, media_id)
+                if cache_key not in decoded:
                     matches = list(audio.rglob(f"{media_id}.wem"))
                     if len(matches) != 1:
                         raise ValueError(f"Expected exactly one soundtrack WEM: {media_id}")
@@ -154,8 +159,8 @@ async def import_cutscene_recipe(
                         [str(decoder.resolve()), "-i", "-o", str(wav), str(matches[0].resolve())],
                         120,
                     )
-                    decoded[bank] = (bank, matches[0], wav)
-                bank_file, wem, wav = decoded[bank]
+                    decoded[cache_key] = (bank, matches[0], wav)
+                bank_file, wem, wav = decoded[cache_key]
                 source_paths.append((bank_file, wem, wav))
                 command.extend(["-i", str(wav)])
                 length = (track.end_seconds or duration) - track.start_seconds

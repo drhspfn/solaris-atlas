@@ -174,8 +174,17 @@ Game CDN is an import source; website playback uses our storage.
 
 Automatic video CDN planning/download/extraction is not yet wired into the queue.
 The recipe importer accepts other exported cutscenes, but configuration planning
-is verified only for 3.7 and soundtrack bank parsing only for single-source Sound
-or MusicTrack objects in Wwise v172. Subtitles and subtitle-triggered localized
+is verified only for 3.7. Soundtrack sources support Sound or single-source
+MusicTrack objects in Wwise v172. Layered/switch banks require explicit `media_id`
+per soundtrack entry; the importer verifies each ID belongs to its bank and caches
+decoded audio by bank **and** media ID. Never select all sources automatically:
+that would mix mutually exclusive Rover voices. Derive selections, gains and timing
+from the authored hierarchy (for example, wwiser with Init.bnk and master gain
+0 dB), record the evidence in the recipe, and fail on unsupported envelopes or
+random/sequence containers. Preserve muted source gains rather than normalizing
+them. Also inspect PlayMovie.Mp4FrameEvents for PostAkEvent tracks absent from
+VideoSound. The planner does not yet resolve those events or Wwise switches.
+Subtitles and subtitle-triggered localized
 voices are not included yet. Unsupported cases fail rather than silently publishing
 incorrect sound. Quality switching and historical asset matching remain separate
 work. The UI states missing subtitle coverage.
