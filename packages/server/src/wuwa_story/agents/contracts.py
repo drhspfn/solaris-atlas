@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-PROMPT_VERSION = "story-v4"
+PROMPT_VERSION = "story-v5"
 
 # Reading order is independent of the language used to write the explanation.
 SOURCE_LOCALE_PRIORITY = ("en", "zh-Hans", "ja", "zh-Hant")
@@ -203,6 +203,7 @@ class InferredEvent(StrictModel):
 
 
 class AnalysisResult(StrictModel):
+    assessment: QuestAssessment | None = None
     title: str = Field(min_length=1, max_length=200)
     blocks: list[ExplanationBlock] = Field(min_length=1, max_length=60)
     links: list[InferredLink] = Field(default_factory=list, max_length=60)
@@ -246,6 +247,8 @@ def citation_groups(
     | LaterResolution
     | OpenHook
     | LinkSignal
+    | QuestAssessment
+    | LoreSignal
 ]:
     groups: list[
         NoteRequest
@@ -256,12 +259,16 @@ def citation_groups(
         | LaterResolution
         | OpenHook
         | LinkSignal
+        | QuestAssessment
+        | LoreSignal
     ] = (
         [result]
         if isinstance(result, NoteRequest)
         else [*result.blocks, *result.links, *result.events]
     )
     if isinstance(result, AnalysisResult):
+        if result.assessment:
+            groups.extend([result.assessment, *result.assessment.signals])
         groups.extend(result.hooks)
         groups.extend(signal for link in result.links for signal in link.signals)
         for block in result.blocks:

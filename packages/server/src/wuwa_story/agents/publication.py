@@ -70,6 +70,13 @@ async def publish_analysis(
             "generated": True,
             "source_scope": "all_locales" if run.prompt_version != "story-v1" else "locale",
             "unresolved_questions": result.unresolved_questions,
+            "assessment": result.assessment.model_dump() if result.assessment else None,
+            "narrative_function": result.narrative_function,
+            "knowledge_boundary": result.knowledge_boundary.model_dump()
+            if result.knowledge_boundary
+            else None,
+            "hooks": [hook.model_dump() for hook in result.hooks],
+            "review": result.review.model_dump() if result.review else None,
             "links": [link.model_dump() for link in result.links],
             "source_release_ids": run.metadata_json.get("source_release_ids", [job.release_id]),
             "source_receipts": source_receipts or [],
@@ -186,6 +193,8 @@ async def publish_analysis(
         claim_refs.append((target, claim.id, relation))
 
     for item in result.links:
+        if item.certainty == "theory":
+            continue
         await link(
             item.from_node_id,
             item.to_node_id,

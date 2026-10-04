@@ -213,10 +213,15 @@ def result_for(nodes):
     }
 
 
-async def create(world):
+async def create(world, *, adaptive=False):
     engine, settings, request, *_ = world
     async with AsyncSession(engine, expire_on_commit=False) as db:
-        return (await enqueue_analysis(db, request, settings)).id
+        run = await enqueue_analysis(db, request, settings)
+        if not adaptive:
+            # These fixtures exercise backwards-compatible v4 checkpoints/providers.
+            run.prompt_version = "story-v4"
+            await db.commit()
+        return run.id
 
 
 @pytest.fixture
@@ -558,6 +563,89 @@ async def test_quest_only_request_resolves_and_pins_latest_observed_snapshot(wor
         assert newer.id != explicit_id
         assert (await db.get(AgentJob, newer.id)).release_id == later_release.id
         assert newer.metadata_json["request"]["game_version"] == later_release.game_version
+
+
+async def test_adaptive_prescan_is_required_checkpointed_and_published(world):
+    engine, settings, _, nodes, _, release, _ = world
+    run_id = await create(world, adaptive=True)
+    final = result_for(nodes)
+    final["narrative_function"] = "Explains a local obstacle and the change of route."
+    final["review"] = dict.fromkeys(
+        [
+            "choices_labeled",
+            "future_knowledge_separated",
+            "proportional_depth",
+            "unresolved_preserved",
+            "speculation_labeled",
+            "revisit_checked",
+            "branches_separated",
+        ],
+        True,
+    )
+    final["links"][0]["signals"] = [
+        {
+            "kind": "direct_reference",
+            "value": "Destroyed bridge",
+            "citations": final["links"][0]["citations"],
+        }
+    ]
+    selected = {
+        "narrative_weight": "side_flavor",
+        "hook_priority": "low",
+        "reason": "A local travel obstacle",
+        "citations": [
+            {
+                "node_id": nodes[3].id,
+                "snapshot_id": release.id,
+                "quote": "The bridge was destroyed.",
+            }
+        ],
+    }
+    requests = []
+
+    def transport(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        actions = [
+            ("finish_analysis", {"result_json": json.dumps(final)}),
+            ("read_quest", {}),
+            ("assess_quest", selected),
+            ("finish_analysis", {"result_json": json.dumps(final)}),
+        ]
+        name, args = actions[len(requests) - 1]
+        if len(requests) <= 3:
+            assert "finish_analysis" not in {tool["name"] for tool in payload["tools"]}
+            assert payload["max_output_tokens"] == 2048
+        else:
+            assert payload["max_output_tokens"] == 8192
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "usage": {"input_tokens": 100, "output_tokens": 30},
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": str(len(requests)),
+                        "name": name,
+                        "arguments": json.dumps(args),
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        await execute_job(run_id, engine, settings, client)
+        await execute_job(run_id, engine, settings, client)
+    assert len(requests) == 4
+    async with AsyncSession(engine) as db:
+        run, job = await db.get(ProcessingRun, run_id), await db.get(AgentJob, run_id)
+        assert run.status == "completed"
+        assert job.checkpoint["assessment"]["narrative_weight"] == "side_flavor"
+        assert job.checkpoint["policy"]["depth"] == "short"
+        doc = await db.get(Document, job.document_id)
+        assert doc.metadata_json["assessment"]["narrative_weight"] == "side_flavor"
+        assert doc.metadata_json["review"]["branches_separated"]
 
 
 async def test_full_pipeline_and_duplicate_delivery(world):
@@ -980,6 +1068,8 @@ async def test_compaction_preserves_evidence_and_replays_paid_window(
 
     def transport(req):
         payload = json.loads(req.content)
+        if req.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"input_tokens": 14000})
         paths.append(req.url.path)
         if req.url.path.endswith("/compact"):
             assert "tools" not in payload and "max_output_tokens" not in payload

@@ -12,8 +12,14 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from wuwa_story.agents.budget import BudgetExceeded, reserve, settle
-from wuwa_story.agents.contracts import AnalysisResult
+from wuwa_story.agents.contracts import (
+    AnalysisResult,
+    NoteRequest,
+    QuestAssessment,
+    validate_citations,
+)
 from wuwa_story.agents.evidence import EvidenceTools, definitions, quest_fingerprint
+from wuwa_story.agents.lore import assessment_policy, validate_lore_result
 from wuwa_story.agents.providers import (
     Provider,
     ProviderFailure,
@@ -33,6 +39,44 @@ logger = logging.getLogger(__name__)
 
 # Disjoint from research steps 0..99 and embeddings starting at 1000.
 COMPACTION_STEP_BASE = 2000
+
+ADAPTIVE_INSTRUCTIONS = """
+Adaptive protocol: begin with a cheap pre-scan of target quest metadata/dialogue and
+authored branches. In at most three turns call assess_quest as the only tool call.
+Use a provisional narrative_weight: main_plot, character_arc, region_lore,
+worldbuilding, side_hook, side_flavor, tutorial_activity or service_repeatable.
+Importance is a narrative role, not keyword presence: generic star/dream/hero/light,
+Rover's routine presence, ordinary Echo rewards and namedrops do not justify deep
+research. A real Rover identity/absorption anomaly, regional protection/Sentinel
+system, historical catastrophe, character transformation or contradictory time/
+memory needs a substantive explanation and exact citations in signals.
+The server chooses depth and word/step bounds. Unknown coverage is uncertainty,
+not evidence that a quest has no lore. After classification read ALL target pages.
+Keep very_short/short output compact; do not inflate minor dangling outcomes into
+mysteries. Medium/full needs knowledge_boundary: known, unknown, cannot_conclude.
+Before finishing perform these passes within the assigned budget: branch and
+certainty review; cross-quest research using distinctive names/phrases/items;
+Rover anomalies, regional systems and time/memory only when supported by signals.
+Read every candidate source before using it. A strong cross-quest connection needs
+a direct reference or multiple independent sourced signal types; mere resemblance
+is suggested/theory and never a confirmed cause. Set each link's certainty and
+signals. A theory remains a candidate, not a semantic graph edge.
+Mark each assertion's occurrence mandatory/player_choice/conditional/optional/
+unknown and state the condition for nonmandatory branches. 'Confirmed' in a choice
+confirms an authored option, not that the player said it. Character speculation is
+not a world fact. Never merge success/failure paths. Set scene_importance per block.
+Preserve exact encounter anchors, world chronology, and later revelations as
+separate sourced claims. Never infer chronology from patch numbers. Say 'not found
+in the loaded corpus', never a global absence. Save concrete hooks with stable
+keys, priority, mystery versus mundane_outcome, distinctive search_terms and
+revisit_on_new_versions/revisit_reason. Keep mundane outcomes low/flavor priority.
+If substantive new evidence warrants more depth, call assess_quest again with
+upgrade_reason and citations BEFORE producing a larger analysis. Give every result
+a narrative_function and all seven review checks. Do not repeat the same facts
+across summary/assertions to fill space. finish_analysis validates length, source
+coverage, chronology, branch conditions, hook terms and graph signals; correct
+specific validation errors without rereading already available sources.
+"""
 
 
 def request_bound(payload: dict[str, Any]) -> int:
@@ -376,7 +420,10 @@ async def run_locked(
         )
         return
     cp = dict(job.checkpoint)
-    cross_snapshot = run.prompt_version == "story-v4"
+    step_ceiling = max(settings.max_steps, cp.get("step_ceiling", 0))
+    cp["step_ceiling"] = step_ceiling
+    cross_snapshot = run.prompt_version in ("story-v4", "story-v5")
+    adaptive = run.prompt_version == "story-v5"
     source_release_ids = run.metadata_json.get("source_release_ids") if cross_snapshot else None
     if cross_snapshot and (not source_release_ids or job.release_id not in source_release_ids):
         await pause(session, run, "stale", "Pinned research snapshots missing; create a new job")
@@ -386,7 +433,8 @@ async def run_locked(
     if history is None:
         relations = list(await session.scalars(select(RelationType.key).order_by(RelationType.key)))
         history = provider.initial(
-            system_prompt(locale.code, relations, cross_snapshot),
+            system_prompt(locale.code, relations, cross_snapshot)
+            + (ADAPTIVE_INSTRUCTIONS if adaptive else ""),
             f"Analyze quest game ID {quest.game_quest_id}, node ID {quest.node_id}; snapshot ID {job.release_id}. Begin with read_quest.",
         )
     evidence = EvidenceTools(
@@ -410,8 +458,36 @@ async def run_locked(
     logger.info("agent.started run_id=%s step=%s", run.id, cp.get("step", 0))
     result = AnalysisResult.model_validate(cp["result"]) if "result" in cp else None
     if result is None:
-        for step in range(cp.get("step", 0), settings.max_steps):
-            route, payload = provider.request(history, definitions())
+        for step in range(cp.get("step", 0), step_ceiling):
+            assessment = (
+                QuestAssessment.model_validate(cp["assessment"]) if cp.get("assessment") else None
+            )
+            prescan = adaptive and assessment is None
+            step_tools = definitions()
+            if adaptive:
+                step_tools.append(
+                    {
+                        "type": "function",
+                        "name": "assess_quest",
+                        "description": "Submit a cited pre-scan before broad research. Later calls may upgrade depth with new evidence and upgrade_reason.",
+                        "parameters": QuestAssessment.model_json_schema(),
+                        "strict": False,
+                    }
+                )
+            if prescan:
+                allowed = (
+                    {"read_quest", "read_node", "graph_neighbors", "assess_quest"}
+                    if step < 3
+                    else {"assess_quest"}
+                )
+                step_tools = [tool for tool in step_tools if tool["name"] in allowed]
+            call_settings = (
+                settings.model_copy(update={"max_output_tokens": 2048})
+                if prescan and settings.max_output_tokens <= 4096
+                else settings
+            )
+            provider = Provider(call_settings, client)
+            route, payload = provider.request(history, step_tools)
             if (
                 settings.provider == "responses"
                 and settings.context_compaction
@@ -456,7 +532,7 @@ async def run_locked(
                 await (
                     session.commit()
                 )  # Persist before the next paid call; replay is free after a crash.
-                route, payload = provider.request(history, definitions())
+                route, payload = provider.request(history, step_tools)
                 logger.info(
                     "agent.compacted run_id=%s step=%s bytes_before=%s bytes_after=%s",
                     run.id,
@@ -464,7 +540,7 @@ async def run_locked(
                     before,
                     request_bound(payload),
                 )
-            raw = await remote_call(session, run, settings, provider, step, route, payload)
+            raw = await remote_call(session, run, call_settings, provider, step, route, payload)
             if raw is None:
                 return
             if provider.output_limited(raw):
@@ -500,13 +576,59 @@ async def run_locked(
                 previous_source_evidence = dict(evidence.source_evidence)
                 previous_source_nodes = dict(evidence.source_nodes)
                 try:
-                    if tool_call.name == "finish_analysis":
+                    if prescan and tool_call.name not in {tool["name"] for tool in step_tools}:
+                        raise ValueError(
+                            "Complete assess_quest before broad research or publication"
+                        )
+                    if tool_call.name == "assess_quest" and adaptive:
+                        if len(turn.calls) != 1:
+                            raise ValueError("Assessment must be the only call in this turn")
+                        selected = QuestAssessment.model_validate(tool_call.arguments)
+                        policy = assessment_policy(selected)
+                        if assessment and (
+                            not selected.upgrade_reason or policy["words"] < cp["policy"]["words"]
+                        ):
+                            raise ValueError(
+                                "Only explained evidence-backed depth upgrades are allowed"
+                            )
+                        for citations in [
+                            selected.citations,
+                            *(signal.citations for signal in selected.signals),
+                        ]:
+                            evidence_note = NoteRequest(
+                                text="Assessment evidence", citations=citations
+                            )
+                            validate_citations(evidence_note, evidence.evidence)
+                            evidence.validate_source_identity(evidence_note)
+                        if not any(c.snapshot_id == job.release_id for c in selected.citations):
+                            raise ValueError("Assessment must cite the target quest snapshot")
+                        output = {
+                            "policy": policy,
+                            "instruction": "Read remaining target pages, investigate substantive signals, then finish with self-review. Output prose must fit this policy.",
+                        }
+                        cp = {
+                            **cp,
+                            "assessment": selected.model_dump(),
+                            "policy": policy,
+                            "stage": "research",
+                        }
+                        settings.max_steps = min(step_ceiling, step + 1 + policy["research_steps"])
+                        settings.max_output_tokens = max(
+                            settings.max_output_tokens, policy["output_tokens"]
+                        )
+                        job.config = settings.public_config()
+                    elif tool_call.name == "finish_analysis":
                         if len(turn.calls) != 1:
                             raise ValueError("Finish must be the only call in a turn")
                         candidate = AnalysisResult.model_validate_json(
                             tool_call.arguments["result_json"]
                         )
-                        if run.prompt_version in ("story-v3", "story-v4"):
+                        if adaptive:
+                            if assessment is None:
+                                raise ValueError("Classify this quest before publishing")
+                            candidate.assessment = assessment
+                            validate_lore_result(candidate, assessment)
+                        if run.prompt_version in ("story-v3", "story-v4", "story-v5"):
                             candidate.validate_temporal_structure()
                         await evidence.validate_result(candidate)
                         result = candidate
@@ -515,7 +637,7 @@ async def run_locked(
                         output = await evidence.call(tool_call)
                     if len(json.dumps(output, ensure_ascii=False)) > settings.tool_result_chars:
                         raise ValueError("Tool result too large; request fewer records")
-                except (ValueError, TypeError, KeyError):
+                except (ValueError, TypeError, KeyError) as error:
                     evidence.evidence = previous_evidence
                     evidence.known_nodes = previous_nodes
                     evidence.coverage = previous_coverage
@@ -523,7 +645,12 @@ async def run_locked(
                     evidence.source_evidence = previous_source_evidence
                     evidence.source_nodes = previous_source_nodes
                     output = {
-                        "error": "Invalid arguments, unread/changed citation, incomplete quest, unknown node/relation or oversized result. Read missing sources and retry with bounded arguments."
+                        "error": "Invalid arguments, unread/changed citation, incomplete quest, unknown node/relation or oversized result. Read missing sources and retry with bounded arguments.",
+                        "validation": str(error)[:600]
+                        if adaptive
+                        and isinstance(error, ValueError)
+                        and not hasattr(error, "errors")
+                        else "Check the tool schema and source coverage.",
                     }
                 history.append(provider.tool_result(tool_call, output))
             cp = {
@@ -542,6 +669,8 @@ async def run_locked(
             job.checkpoint = cp
             await session.commit()  # Tool writes and checkpoint advance atomically.
             if result:
+                break
+            if step + 1 >= settings.max_steps:
                 break
         if result is None:
             await pause(

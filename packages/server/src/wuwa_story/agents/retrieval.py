@@ -101,8 +101,12 @@ async def public_document(
         session, quest, release.id, fingerprint_locale
     ):
         return None
-    if document.metadata_json.get("schema_version") == "story-v4":
-        if document.metadata_json.get("source_release_ids") != await imported_snapshot_ids(session):
+    corpus_changed = False
+    if document.metadata_json.get("schema_version") in ("story-v4", "story-v5"):
+        corpus_changed = document.metadata_json.get(
+            "source_release_ids"
+        ) != await imported_snapshot_ids(session)
+        if corpus_changed and document.metadata_json.get("schema_version") == "story-v4":
             return None
         tools = EvidenceTools(
             session,
@@ -130,6 +134,8 @@ async def public_document(
         )
     ).all()
     ids = {c["node_id"] for block in document.body_ast for c in block.get("citations", [])}
+    for hook in document.metadata_json.get("hooks", []):
+        ids.update(c["node_id"] for c in hook["citations"])
     ids.update(value for block in document.body_ast for value in block.get("related_node_ids", []))
     for block in document.body_ast:
         ids.update(record["node_id"] for record in block.get("related_records", []))
@@ -264,11 +270,27 @@ async def public_document(
         "quest_id": quest.game_quest_id,
         "game_version": release.game_version,
         "research_scope": "all_imported_snapshots"
-        if document.metadata_json.get("schema_version") == "story-v4"
+        if document.metadata_json.get("schema_version") in ("story-v4", "story-v5")
         else "target_snapshot",
         "locale": output_locale.code,
         "requested_locale": locale.code,
         "title": document.title,
+        "assessment": document.metadata_json.get("assessment"),
+        "narrative_function": document.metadata_json.get("narrative_function"),
+        "knowledge_boundary": document.metadata_json.get("knowledge_boundary"),
+        "hooks": [await with_citations(hook) for hook in document.metadata_json.get("hooks", [])],
+        "corpus_changed": corpus_changed,
+        "loaded_versions": list(
+            await session.scalars(
+                select(GameRelease.game_version)
+                .where(
+                    GameRelease.id.in_(
+                        document.metadata_json.get("source_release_ids", [release.id])
+                    )
+                )
+                .order_by(GameRelease.sequence)
+            )
+        ),
         "blocks": blocks,
         "generated": True,
         "unresolved_questions": document.metadata_json.get("unresolved_questions", []),
