@@ -123,7 +123,9 @@ export function NodeExplorerPage() {
                 node_type: narrative.dialogue.speaker.type,
               } as Entity)}
             >
-              Spoken by {narrative.dialogue.speaker.label} <ArrowRight size={13} />
+              Spoken by{' '}
+              <PlayerText display={playerDisplay} value={narrative.dialogue.speaker.label} />{' '}
+              <ArrowRight size={13} />
             </Link>
           )}
           <p>{node.canonical_key}</p>
@@ -214,7 +216,13 @@ export function NodeExplorerPage() {
                 }
                 key={line.id}
               >
-                <span>{line.speaker?.label || 'Unknown speaker'}</span>
+                <span>
+                  <PlayerText
+                    display={playerDisplay}
+                    value={line.speaker?.label}
+                    fallback="Unknown speaker"
+                  />
+                </span>
                 <p>
                   <PlayerText
                     display={playerDisplay}

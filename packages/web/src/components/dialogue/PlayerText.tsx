@@ -1,5 +1,6 @@
 import { memo } from 'react';
 
+import { gameText } from '../../data/gameText';
 import { localizedText } from '../../data/localized';
 import type { PlayerNameColorMode } from '../../preferences/NarrativePreferences';
 
@@ -18,7 +19,7 @@ export const PlayerText = memo(function PlayerText({
   fallback?: string;
   display: PlayerDisplay;
 }) {
-  const text = localizedText(value, fallback);
+  const text = gameText(localizedText(value, fallback));
   const parts = text.split(/(\{PlayerName\})/gi);
   return (
     <>

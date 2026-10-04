@@ -7,8 +7,8 @@ import {
   CharacterArchive,
   type CharacterArchiveData,
 } from '../components/characters/CharacterArchive';
-import { ItemAcquisition } from '../components/items/ItemAcquisition';
 import { PlayerText } from '../components/dialogue/PlayerText';
+import { ItemAcquisition } from '../components/items/ItemAcquisition';
 import { InlineDialogueSearch } from '../components/search/InlineDialogueSearch';
 import { EmptyInline, ErrorPanel, PageLoader } from '../components/ui/Feedback';
 import { PanelTitle } from '../components/ui/PanelTitle';
@@ -410,9 +410,11 @@ export function Profile({ kind }: { kind: 'character' | 'item' | 'location' }) {
                                   key={`${line.id || lineIndex}`}
                                 >
                                   <strong>
-                                    {line.speaker?.label ||
-                                      line.speaker?.canonical_key ||
-                                      'Unknown speaker'}
+                                    <PlayerText
+                                      display={playerDisplay}
+                                      value={line.speaker?.label}
+                                      fallback={line.speaker?.canonical_key || 'Unknown speaker'}
+                                    />
                                   </strong>
                                   <p>
                                     <PlayerText
