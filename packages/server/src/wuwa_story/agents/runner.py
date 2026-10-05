@@ -461,6 +461,9 @@ async def run_locked(
     cp = dict(job.checkpoint)
     step_ceiling = max(settings.max_steps, cp.get("step_ceiling", 0))
     cp["step_ceiling"] = step_ceiling
+    finalization_end = cp.get("finalization_end")
+    if finalization_end:
+        step_ceiling = finalization_end
     cross_snapshot = run.prompt_version in ("story-v4", "story-v5", "story-v6", "story-v7")
     adaptive = run.prompt_version in ("story-v5", "story-v6", "story-v7")
     revisit = run.metadata_json.get("revisit")
@@ -515,13 +518,33 @@ async def run_locked(
     logger.info("agent.started run_id=%s step=%s", run.id, cp.get("step", 0))
     result = AnalysisResult.model_validate(cp["result"]) if "result" in cp else None
     if result is None:
+        visual_inventory = await evidence.cutscene_inventory(quest) if adaptive else []
         for step in range(cp.get("step", 0), step_ceiling):
             assessment = (
                 QuestAssessment.model_validate(cp["assessment"]) if cp.get("assessment") else None
             )
             prescan = adaptive and assessment is None
             step_tools = definitions()
-            if adaptive:
+            remaining = (finalization_end or settings.max_steps) - step
+            covered = 0
+            for offset, count in sorted(evidence.coverage.items()):
+                if offset > covered:
+                    break
+                covered = max(covered, offset + count)
+            missing_visual = []
+            for asset in visual_inventory:
+                receipt = evidence.visual_evidence.get(str(asset["visual_reference_id"]), {})
+                unread = sorted(set(range(asset["observation_count"])) - set(receipt.get("indices", [])))
+                if unread:
+                    missing_visual.append({"asset_node_id": asset["asset_node_id"], "offset": unread[0], "limit": 20})
+            history.extend(provider.initial("", f"Server progress: {remaining} turns remain. Target dialogue covered through offset {covered}; total={evidence.total_lines}. Read only missing pages via returned next_offset; do not reread covered pages. Finish with finish_analysis before the turn budget ends. Pagination limits: read_quest <=50, read_cutscene_visual <=20. Correct validation errors using saved evidence.")[1:])
+            if missing_visual:
+                history.extend(provider.initial("", "Required unread visual pages (batch these reads within the per-turn tool limit): " + json.dumps(missing_visual))[1:])
+            if finalization_end:
+                history.extend(provider.initial("", "Finalization only: use existing research, read required missing dialogue/visual pages or exact cited sources, then submit finish_analysis. Do not explore new connections or reassess depth. All citation, coverage and budget checks remain enforced.")[1:])
+                allowed = {"finish_analysis", "read_quest", "read_cutscene_visual", "read_node"}
+                step_tools = [tool for tool in step_tools if tool["name"] in allowed]
+            if adaptive and not finalization_end:
                 step_tools.append(
                     {
                         "type": "function",
@@ -611,7 +634,7 @@ async def run_locked(
                 )
                 return
             try:
-                turn = provider.parse(raw)
+                turn = provider.parse(raw, enforce_tool_limit=False)
             except (ValueError, KeyError, TypeError, IndexError):
                 await pause(
                     session, run, "failed", "Malformed provider turn; recorded usage is retained"
@@ -627,7 +650,7 @@ async def run_locked(
                 history.extend(
                     provider.initial("", "Use tools to research or finish_analysis to publish.")[1:]
                 )
-            for tool_call in turn.calls:
+            for tool_index, tool_call in enumerate(turn.calls):
                 started = time.monotonic()
                 fingerprint = signature(tool_call.name, tool_call.arguments)
                 repeats = signatures.get(fingerprint, 0)
@@ -648,6 +671,13 @@ async def run_locked(
                 previous_source_evidence = dict(evidence.source_evidence)
                 previous_source_nodes = dict(evidence.source_nodes)
                 try:
+                    if finalization_end and tool_call.name not in {"finish_analysis", "read_quest", "read_cutscene_visual", "read_node"}:
+                        raise ValueError("Finalization permits only missing required sources and finish_analysis")
+                    if tool_index >= settings.max_tool_calls_per_step:
+                        raise ValueError(
+                            f"Tool call limit reached ({settings.max_tool_calls_per_step}); "
+                            "this call was not executed. Request remaining tools in another turn."
+                        )
                     if prescan and tool_call.name not in {tool["name"] for tool in step_tools}:
                         raise ValueError(
                             "Complete assess_quest before broad research or publication"
@@ -820,7 +850,7 @@ async def run_locked(
             await session.commit()
             if result:
                 break
-            if step + 1 >= settings.max_steps:
+            if step + 1 >= (finalization_end or settings.max_steps):
                 break
         if result is None:
             await pause(

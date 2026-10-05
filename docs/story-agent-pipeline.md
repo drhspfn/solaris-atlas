@@ -1,5 +1,22 @@
 # Story research pipeline
 
+## Bounded finalization after the research limit
+
+Quest encounter ordinals are derived from imported dialogue ordering on the server,
+using the cited anchor node. `read_node` exposes this ordinal for target dialogue.
+Publication normalizes a model-supplied ordinal while rejecting anchors outside the
+target quest; exact citations and later-resolution ordering remain mandatory.
+
+After 100 research turns, an administrator can submit `{"finalize": true}` to
+`POST /admin/story-agent/jobs/{run_id}/resume`. The existing checkpoint gets one
+finalization pass of at most six turns. Only missing transcript/visual pages,
+exact source reads and `finish_analysis` are permitted. Further exploration and
+depth upgrades are rejected, including unsolicited provider tool calls.
+The daily spending cap, citation validation and full source coverage requirements
+remain enforced. A failed finalization cannot be extended into another pass.
+Budget/context pauses can resume within the original finalization allowance.
+No schema migration is required; finalization state lives in the existing checkpoint.
+
 The worker explains one quest transcript from a resolved release and locale. It can
 read transcripts, inspect the source graph, search entities, re-read sources, save
 working notes and report missing data. Publication creates a cited explanation,

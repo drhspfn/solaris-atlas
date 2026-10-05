@@ -5,6 +5,7 @@ import { APP_SETTINGS } from '../../config/settings';
 import { usePlayerDisplay } from '../../hooks/usePlayerDisplay';
 import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
 import { PlayerText } from '../dialogue/PlayerText';
+import { AnalysisActions } from './AnalysisActions';
 import { CutsceneControls } from './CutsceneControls';
 import { CutsceneSound } from './CutsceneSound';
 import { chapterPosition, cutsceneTimeline, timelineTarget } from './cutsceneTimeline';
@@ -123,6 +124,13 @@ function FlowPlayer({
   const cues = captions?.[voiceLanguage] || [];
   const absoluteTime = time + (source?.timeline_offset || 0);
 
+  const playVideo = useCallback((video: HTMLVideoElement) => {
+    void video.play().catch(() => {
+      // Seeking and audio buffering can abort play() without a media load failure.
+      if (video === videoRef.current && video.error) setFailed(true);
+    });
+  }, []);
+
   useEffect(() => {
     if (node?.kind === 'choice' && !automaticTarget && continuePlaying.current)
       choiceRef.current?.querySelector('button')?.focus();
@@ -146,7 +154,7 @@ function FlowPlayer({
           videoRef.current.currentTime = pendingTime.current ?? target.start;
           pendingTime.current = null;
           setTime(videoRef.current.currentTime);
-          if (play) void videoRef.current.play().catch(() => setFailed(true));
+          if (play) playVideo(videoRef.current);
           transitioning.current = false;
         }
       }
@@ -154,7 +162,7 @@ function FlowPlayer({
       setFailed(false);
       if (target?.kind !== 'clip') transitioning.current = false;
     },
-    [clipId, flow.nodes, preferredRover, choices],
+    [clipId, flow.nodes, preferredRover, choices, playVideo],
   );
 
   useEffect(() => {
@@ -205,7 +213,7 @@ function FlowPlayer({
       transitioning.current = false;
       advance(flow.entry);
     } else if (node.kind === 'clip') {
-      if (video.paused) void video.play().catch(() => setFailed(true));
+      if (video.paused) playVideo(video);
       else {
         continuePlaying.current = false;
         video.pause();
@@ -231,6 +239,19 @@ function FlowPlayer({
         <h3>
           <Film size={18} /> Cutscene · {title}
         </h3>
+        <AnalysisActions
+          target={{
+            kind: 'cutscene',
+            version: flow.asset_version,
+            assetIds: [
+              ...new Set(
+                Object.values(flow.media).flatMap((media) =>
+                  media.asset_node_id ? [media.asset_node_id] : [],
+                ),
+              ),
+            ],
+          }}
+        />
       </header>
       {tracks && languages.length > 0 && !languages.includes(voiceLanguage) && (
         <p role="status">Selected voice language is unavailable for this scene.</p>
@@ -254,7 +275,7 @@ function FlowPlayer({
         }}
       >
         <video
-          key={clipId}
+          key={`video:${clipId}`}
           ref={videoRef}
           controls={false}
           disablePictureInPicture
@@ -275,8 +296,10 @@ function FlowPlayer({
                 [activeClip.segment || activeClip.asset]: duration,
               }));
             transitioning.current = false;
-            if (node?.kind === 'clip' && continuePlaying.current)
-              void event.currentTarget.play().catch(() => {});
+            if (node?.kind === 'clip' && continuePlaying.current) playVideo(event.currentTarget);
+          }}
+          onPlaying={(event) => {
+            if (event.currentTarget === videoRef.current) setFailed(false);
           }}
           onPlay={(event) => {
             if (interactive) {
@@ -297,7 +320,7 @@ function FlowPlayer({
           onClick={() => {
             if (!interactive) {
               const video = videoRef.current!;
-              if (video.paused) void video.play().catch(() => setFailed(true));
+              if (video.paused) playVideo(video);
               else video.pause();
             }
           }}
@@ -314,7 +337,10 @@ function FlowPlayer({
           onEnded={() => {
             if (node?.kind === 'clip') advance(node.next);
           }}
-          onError={() => setFailed(true)}
+          onError={(event) => {
+            if (event.currentTarget === videoRef.current && event.currentTarget.error)
+              setFailed(true);
+          }}
         />
         {subtitles && !interactive && (
           <div className="cutscene-captions" aria-label="Subtitles">
@@ -416,13 +442,18 @@ function FlowPlayer({
         />
         {tracks && (
           <CutsceneSound
-            key={clipId}
+            key={`audio:${clipId}`}
             videoRef={videoRef}
             tracks={selectedTracks}
             offset={source.timeline_offset || 0}
             volume={volume}
             musicVolume={musicVolume}
           />
+        )}
+        {failed && (
+          <p className="cutscene-error" role="alert">
+            Video could not load. Refresh the page to retry.
+          </p>
         )}
       </div>
       {Object.entries(flow.media)
@@ -450,7 +481,6 @@ function FlowPlayer({
           />
         ))}
       {fullscreenFailed && <p role="status">Fullscreen could not open. Use the inline player.</p>}
-      {failed && <p role="alert">Video could not load. Refresh the page to retry.</p>}
       <footer>
         {source.description && (
           <details className="cutscene-description">

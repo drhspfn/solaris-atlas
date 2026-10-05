@@ -1120,7 +1120,7 @@ async def test_multilingual_sources_and_shared_publication(world):
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
         await execute_job(run_id, engine, settings, client)
-    primary = json.loads(calls[1]["input"][-1]["output"])
+    primary = json.loads(next(item["output"] for item in calls[1]["input"] if item.get("type") == "function_call_output"))
     assert [(line["text"], line["locale"]) for line in primary["lines"]] == [
         ("The bridge was destroyed.", "en"),
         ("我们需要另一条路。", "zh-Hans"),
@@ -1731,7 +1731,7 @@ async def test_output_limit_recovery_rejects_other_provider_failures(world):
         assert run.status == "failed"
 
 
-async def test_recorded_turn_replays_after_explicit_tool_limit_increase(world):
+async def test_recorded_excess_turn_replays_without_raising_tool_limit(world, monkeypatch):
     engine, settings, _, nodes, *_ = world
     settings.max_tool_calls_per_step = 1
     run_id = await create(world)
@@ -1741,6 +1741,8 @@ async def test_recorded_turn_replays_after_explicit_tool_limit_increase(world):
         calls.append(json.loads(request.content))
         if len(calls) == 1:
             items = [("read_quest", {}), ("read_node", {"node_id": nodes[3].id})]
+        elif len(calls) == 2:
+            items = [("read_node", {"node_id": nodes[3].id})]
         else:
             items = [("finish_analysis", {"result_json": json.dumps(result_for(nodes))})]
         return httpx.Response(
@@ -1761,19 +1763,66 @@ async def test_recorded_turn_replays_after_explicit_tool_limit_increase(world):
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
-        await execute_job(run_id, engine, settings, client)
+        # Reproduce a historical run paused by the old strict parser.
+        with monkeypatch.context() as legacy:
+            def reject(*args, **kwargs):
+                raise ValueError("invalid_tool_calls")
+            legacy.setattr(Provider, "parse", reject)
+            await execute_job(run_id, engine, settings, client)
         async with AsyncSession(engine, expire_on_commit=False) as db:
             assert (await db.get(ProcessingRun, run_id)).status == "failed"
             with pytest.raises(ValueError, match="cannot be resumed"):
                 await resume_analysis(db, run_id)
-            with pytest.raises(ValueError, match="cannot be replayed"):
-                await resume_analysis(db, run_id, tool_calls_per_step=1)
-            await resume_analysis(db, run_id, tool_calls_per_step=2)
+            await resume_analysis(db, run_id, tool_calls_per_step=1)
         await execute_job(run_id, engine, settings, client)
-    assert len(calls) == 2
+    assert len(calls) == 3
+    outputs = [item for item in calls[1]["input"] if item.get("type") == "function_call_output"]
+    assert len(outputs) == 2
+    assert "not executed" in outputs[1]["output"]
     async with AsyncSession(engine) as db:
         run = await db.get(ProcessingRun, run_id)
-        assert run.status == "completed" and run.tokens_input == 200
+        assert run.status == "completed" and run.tokens_input == 300
+        job = await db.get(AgentJob, run_id)
+        assert job.config["max_tool_calls_per_step"] == 1
+
+
+async def test_finalization_uses_saved_run_and_cannot_restart_or_explore(world):
+    engine, settings, _, nodes, *_ = world
+    run_id = await create(world)
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        run, job = await db.get(ProcessingRun, run_id), await db.get(AgentJob, run_id)
+        run.status = "paused_steps"
+        job.config = {**job.config, "max_steps": 100}
+        job.checkpoint = {"step": 100}
+        await db.commit()
+        await resume_analysis(db, run_id, finalize=True)
+        assert job.checkpoint["finalization_end"] == 106
+        assert job.config["max_steps"] == 100
+        run.status = "paused_steps"
+        await db.commit()
+        await resume_analysis(db, run_id)
+        assert job.checkpoint["finalization_end"] == 106
+    calls = []
+    actions = [("search_entities", {"query": "new discovery"}), ("read_quest", {}),
+               ("finish_analysis", {"result_json": json.dumps(result_for(nodes))})]
+    def transport(request):
+        payload = json.loads(request.content)
+        calls.append(payload)
+        assert {tool["name"] for tool in payload["tools"]} == {"read_quest", "read_node", "read_cutscene_visual", "finish_analysis"}
+        name, args = actions[len(calls) - 1]
+        return httpx.Response(200, json={"status": "completed", "usage": {"input_tokens": 100, "output_tokens": 30},
+            "output": [{"type": "function_call", "call_id": str(len(calls)), "name": name, "arguments": json.dumps(args)}]})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+        await execute_job(run_id, engine, settings, client)
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        run = await db.get(ProcessingRun, run_id)
+        assert run.status == "completed", run.error
+        rejected = await db.scalar(select(AgentCall).where(AgentCall.run_id == run_id, AgentCall.step == 100))
+        assert rejected.response["execution_trace"]["tools"][0]["status"] == "error"
+        run.status = "paused_steps"
+        await db.commit()
+        with pytest.raises(ValueError, match="available once"):
+            await resume_analysis(db, run_id, finalize=True)
 
 
 async def test_pagination_unread_citations_and_changed_sources(world):
@@ -1791,12 +1840,21 @@ async def test_pagination_unread_citations_and_changed_sources(world):
         with pytest.raises(ValueError, match="every page"):
             await tools.validate_result(result)
         await tools.read_quest(offset=1)
+        await tools.read_quest(limit=50)
+        await tools.read_quest(limit=1)
+        assert tools.coverage[0] == 2
+        await tools.read_quest(offset=100)
+        assert tools.total_lines == 2
         await tools.validate_result(result)
         assert first["lines"][0]["encounter_order"] == 0
         result.blocks[0].assertions[0].chronology_in_quest.order = 1
-        with pytest.raises(ValueError, match="encounter_order"):
+        await tools.validate_result(result)
+        assert result.blocks[0].assertions[0].chronology_in_quest.order == 0
+        assert (await tools.read_node(nodes[3].id))["encounter_order"] == 0
+        result.blocks[0].assertions[0].chronology_in_quest.anchor_node_id = nodes[0].id
+        with pytest.raises(ValueError, match="not a dialogue passage"):
             await tools.validate_result(result)
-        result.blocks[0].assertions[0].chronology_in_quest.order = 0
+        result.blocks[0].assertions[0].chronology_in_quest.anchor_node_id = nodes[3].id
         (await db.get(DialogueLine, nodes[3].id)).inline_text = "A different passage."
         await db.flush()
         with pytest.raises(ValueError, match="changed"):

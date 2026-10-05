@@ -130,6 +130,7 @@ async def cutscene_videos(session: AsyncSession, asset_ids: list[int], asset_ver
     videos = {}
     for reference, object_key in rows:
         videos.setdefault(reference.owner_node_id, {
+            "asset_node_id": reference.owner_node_id,
             "url": storage.public_url(object_key),
             "asset_version": reference.metadata_json.get("asset_version"),
             "has_audio": reference.metadata_json.get("has_audio", False),

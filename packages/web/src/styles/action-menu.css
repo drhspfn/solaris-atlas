@@ -1,0 +1,82 @@
+.action-menu {
+  position: relative;
+  flex: 0 0 auto;
+  width: 40px;
+}
+.action-menu > summary {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  list-style: none;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+}
+.action-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.action-menu > summary:focus-visible,
+.action-menu-panel :focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 2px;
+}
+.action-menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  width: min(280px, calc(100vw - 40px));
+  padding: 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--surface-2);
+  display: grid;
+  gap: 10px;
+}
+.action-menu-panel button,
+.action-menu-panel a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  min-height: 40px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: var(--surface-3);
+  text-align: left;
+  cursor: pointer;
+}
+.action-menu-panel button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.action-menu-panel small,
+.action-menu-panel p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.action-menu-panel [role='alert'] {
+  color: var(--accent-warm);
+}
+.quest-cutscene > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.quest-intro > .quest-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.quest-title-row h1 {
+  min-width: 0;
+}

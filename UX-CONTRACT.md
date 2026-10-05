@@ -270,3 +270,21 @@ existing branch-aware transcript order. Filtered text/choice views omit players;
 focused transcript windows do not append unrelated movies. Choices remain
 keyboard buttons. Captions stay inside the fullscreen stage. New controls wrap
 at narrow widths and reuse the site's surface, border, focus and mint tokens.
+
+## Analysis administration
+
+Administrator-only quest and cutscene actions reuse the shared `ActionMenu`
+disclosure: a square vertical-ellipsis trigger, native keyboard activation,
+Escape returning focus to the trigger and outside-click dismissal. Actions show
+pending, success and retryable error feedback inside the disclosure. No analysis
+starts on opening it. Cutscene actions include every unique imported variant;
+quest actions use the existing English pipeline. User accounts cannot see these
+paid actions and server administrator/CSRF checks remain authoritative.
+
+The Cutscene analysis admin tab searches imported variants by video name and
+shows paginated jobs, analyzed/remaining frames, costs and safe errors. It polls
+only while visible and ignores stale requests. Duplicate submissions reuse the
+same job. Resume respects checkpoint and billing rules; unknown charges cannot
+be retried. The daily budget is shared with story analysis and is never raised
+by these controls. Visual evidence and a published quest description are separate
+stages; the completed task tells administrators to analyze the quest next.

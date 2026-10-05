@@ -35,6 +35,11 @@ const WorldMapPage = lazy(() =>
 const StoryAgentPage = lazy(() =>
   import('../pages/StoryAgentPage').then((module) => ({ default: module.StoryAgentPage })),
 );
+const CutsceneAnalysisPage = lazy(() =>
+  import('../pages/CutsceneAnalysisPage').then((module) => ({
+    default: module.CutsceneAnalysisPage,
+  })),
+);
 const AgentOperationsPage = lazy(() =>
   import('../pages/AgentOperationsPage').then((module) => ({
     default: module.AgentOperationsPage,
@@ -155,6 +160,14 @@ export function App() {
           <Route path="/auth/google/success" element={<GoogleSuccessPage />} />
           <Route path="/account" element={<AccountPage />} />
           <Route path="/admin" element={<AdminLayout />}>
+            <Route
+              path="cutscene-analysis"
+              element={
+                <Suspense fallback={<PageLoader />}>
+                  <CutsceneAnalysisPage />
+                </Suspense>
+              }
+            />
             <Route index element={<Navigate to="story-agent" replace />} />
             <Route
               path="story-agent"

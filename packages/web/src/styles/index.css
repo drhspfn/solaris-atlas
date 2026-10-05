@@ -5881,7 +5881,7 @@ button.search-clear:focus-visible {
   margin: 0;
   font-size: 16px;
 }
-.quest-cutscene video {
+.quest-cutscene video:not([hidden]) {
   display: block;
   width: 100%;
   aspect-ratio: 16 / 9;
@@ -5947,7 +5947,7 @@ button.search-clear:focus-visible {
   place-items: center;
   background: var(--bg-root);
 }
-.cutscene-stage:fullscreen video {
+.cutscene-stage:fullscreen video:not([hidden]) {
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -6026,7 +6026,7 @@ button.search-clear:focus-visible {
   border-radius: var(--radius-sm);
   overflow: hidden;
 }
-.cutscene-stage > video {
+.cutscene-stage > video:not([hidden]) {
   display: block;
   width: 100%;
   min-height: 240px;
@@ -6225,7 +6225,8 @@ button.search-clear:focus-visible {
   }
 }
 
-.cutscene-stage > div > p[role='alert'] {
+.cutscene-stage > div > p[role='alert'],
+.cutscene-stage > .cutscene-error {
   position: absolute;
   inset: 12px 12px auto;
   z-index: 4;

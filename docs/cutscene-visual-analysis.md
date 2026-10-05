@@ -32,7 +32,9 @@ are never concatenated into one supposedly canonical playthrough.
 
 ### Enable and run
 
-Set `AGENT_VISION_ENABLED=true` in `packages/worker/.env`. This uses the existing
+Set `AGENT_VISION_ENABLED=true` in `packages/worker/.env` and, for administrator
+controls, `packages/server/.env`. Keep the model, rates and shared budget settings
+consistent on both services. This uses the existing
 `AGENT_PROVIDER`, `AGENT_MODEL`, endpoint and prices, and the same $1 daily ledger
 as quest analysis. The configured model must accept images. Defaults: one frame
 every approximately 3 seconds, at most 600 frames, four frames per request and
@@ -46,6 +48,16 @@ docker compose -f infrastructure/local/compose.yml --profile cutscene-vision up 
 docker compose -f infrastructure/local/compose.yml exec cutscene-vision wuwa-story-worker enqueue-cutscene-vision --version 3.7.0 --limit 20 --offset 0
 docker compose -f infrastructure/local/compose.yml exec cutscene-vision wuwa-story-worker cutscene-vision-status --limit 20
 ```
+
+Administrators can also open `/admin/cutscene-analysis`, search imported video
+names, queue individual variants, inspect paginated tasks and continue known
+paused jobs. The quest and cutscene header action menus offer the same operations:
+cutscene analysis queues every unique imported variant in its player, while quest
+analysis uses the existing English story pipeline. All write endpoints enforce
+administrator access and CSRF verification. Matching visual jobs are reused;
+completed evidence is not charged again. Uncertain charges cannot be resumed.
+The visual consumer must be running to process pending jobs. After visual evidence
+completes, analyze the quest to publish its reader-facing description.
 
 New cutscene imports automatically persist jobs when enabled. For existing videos,
 use the backfill command, advancing `--offset`; `--asset-node-id` targets one exact

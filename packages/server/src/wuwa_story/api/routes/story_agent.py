@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from zoneinfo import ZoneInfo
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import Field
 from sqlalchemy import select, text
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from wuwa_story.agents.budget import settle
 from wuwa_story.agents.contracts import AnalysisRequest, StrictModel
 from wuwa_story.agents.jobs import enqueue_analysis, resume_analysis
+from wuwa_story.agents.providers import Provider
 from wuwa_story.agents.retrieval import (
     get_connection,
     get_explanation,
@@ -21,6 +23,7 @@ from wuwa_story.agents.retrieval import (
 )
 from wuwa_story.agents.settings import AgentSettings, get_agent_settings
 from wuwa_story.agents.trace import legacy_trace
+from wuwa_story.api.routes.cutscene_analysis import router as cutscene_admin
 from wuwa_story.auth.dependencies import require_admin, require_csrf
 from wuwa_story.db.models.agents import (
     AgentCall,
@@ -37,9 +40,11 @@ router = APIRouter(tags=["story explanations"])
 admin = APIRouter(
     prefix="/admin/story-agent", tags=["story agent"], dependencies=[Depends(require_admin)]
 )
+admin.include_router(cutscene_admin)
 
 
 class ResumeRequest(StrictModel):
+    finalize: bool = False
     extra_steps: int = Field(default=0, ge=0, le=100)
     context_tokens: int | None = Field(default=None, ge=1000, le=250000)
     tool_calls_per_step: int | None = Field(default=None, ge=1, le=20)
@@ -150,8 +155,20 @@ async def job_status(run_id: int, session: AsyncSession = Depends(get_session)) 
             select(AgentCall).where(AgentCall.run_id == run_id).order_by(AgentCall.step)
         )
     )
+    recovery = None
+    if run.status == "failed" and run.error == "Malformed provider turn; recorded usage is retained":
+        recorded = next((call for call in calls if call.step == job.checkpoint.get("step", 0) and call.status == "completed" and call.kind == "analysis"), None)
+        if recorded and recorded.response:
+            try:
+                async with httpx.AsyncClient() as client:
+                    parsed = Provider(AgentSettings(_env_file=None, **job.config), client).parse(recorded.response, enforce_tool_limit=False)
+                if parsed.complete and parsed.calls:
+                    recovery = "recorded_tools"
+            except (ValueError, KeyError, TypeError, IndexError):
+                pass
     return {
         "id": run.id,
+        "recovery": recovery,
         "status": run.status,
         "step": job.checkpoint.get("step", 0),
         "document_id": job.document_id,
@@ -160,6 +177,7 @@ async def job_status(run_id: int, session: AsyncSession = Depends(get_session)) 
         "assessment": job.checkpoint.get("assessment"),
         "policy": job.checkpoint.get("policy"),
         "stage": job.checkpoint.get("stage"),
+        "finalization_end": job.checkpoint.get("finalization_end"),
         "revisit": run.metadata_json.get("revisit"),
         "error": run.error,
         "cost_usd": run.cost,
@@ -230,6 +248,7 @@ async def resume(
             request.tool_calls_per_step,
             request.compact_context,
             request.output_tokens,
+            request.finalize,
         )
     except ValueError as error:
         raise HTTPException(422, str(error)) from error

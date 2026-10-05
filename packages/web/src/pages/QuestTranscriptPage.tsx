@@ -4,6 +4,7 @@ import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom'
 
 import { api } from '../api/client';
 import { PlayerText } from '../components/dialogue/PlayerText';
+import { AnalysisActions } from '../components/story/AnalysisActions';
 import { cutsceneSlots } from '../components/story/cutscenePlacement';
 import { QuestContinuity } from '../components/story/QuestContinuity';
 import { Cutscene, QuestCutscenes } from '../components/story/QuestCutscenes';
@@ -240,10 +241,13 @@ export function QuestPage() {
         </div>
         <div className="quest-intro">
           <span className="eyebrow left">QUEST DOSSIER / {quest.quest_type || 'NARRATIVE'}</span>
-          <h1>
-            {quest.name?.content || `Quest ${key}`}
-            <span className="heading-period">.</span>
-          </h1>
+          <div className="quest-title-row">
+            <h1>
+              {quest.name?.content || `Quest ${key}`}
+              <span className="heading-period">.</span>
+            </h1>
+            <AnalysisActions target={{ kind: 'quest', questId: Number(quest.game_quest_id) }} />
+          </div>
           <div className="quest-meta">
             <span>
               QUEST ID <b>{quest.game_quest_id}</b>
