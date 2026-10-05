@@ -12,12 +12,14 @@ let vite;
 let ExplanationBlocks;
 let ExplanationContext;
 let ExplanationFollowUps;
+let StoryProse;
 before(async () => {
-  vite = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
+  vite = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' });
   ({ ExplanationBlocks } = await vite.ssrLoadModule('/src/components/story/ExplanationBlocks.tsx'));
   ({ ExplanationContext, ExplanationFollowUps } = await vite.ssrLoadModule(
     '/src/components/story/ExplanationContext.tsx',
   ));
+  ({ StoryProse } = await vite.ssrLoadModule('/src/components/story/StoryProse.tsx'));
 });
 after(async () => {
   await vite?.close();
@@ -41,6 +43,46 @@ test('claims show separate chronology and knowledge with spoilers closed', () =>
     assert.ok(html.includes(label), label);
   assert.match(html, /<details class="assertion-resolution"><summary>/);
   assert.ok(!html.includes('href="#"'));
+  assert.match(html, /<details class="explanation-evidence"><summary>Sources and reasoning/);
+  assert.ok(!html.includes('<details class="explanation-evidence" open'));
+});
+
+test('narrative renders safe Markdown with contextual connection links', () => {
+  const explanation = {
+    ...storyExplanation,
+    links: storyExplanation.links.map((link) => ({
+      ...link,
+      href: '/story-analysis/connections/1/0?locale=en',
+    })),
+  };
+  const text =
+    '## The encounter\n\nA **sourced** explanation [because of the encounter](connection:0).\n\n- A short consequence\n- [Read the source](record:1)';
+  const html = renderToStaticMarkup(
+    createElement(MemoryRouter, null, createElement(StoryProse, { text, explanation })),
+  );
+  assert.match(html, /<h4>The encounter<\/h4>/);
+  assert.match(html, /<strong>sourced<\/strong>/);
+  assert.ok(html.includes('href="/story-analysis/connections/1/0?locale=en"'));
+  assert.ok(html.includes('because of the encounter'));
+  assert.match(html, /<ul>/);
+  assert.ok(!html.includes('connection:0'));
+});
+
+test('prose cannot execute HTML, load remote images or link to arbitrary URLs', () => {
+  const text =
+    '<script>alert(1)</script>\n\n[Bad](javascript:alert%281%29) [External](https://example.com) ![image](https://example.com/a.png) [Unknown](connection:999)';
+  const html = renderToStaticMarkup(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(StoryProse, { text, explanation: storyExplanation }),
+    ),
+  );
+  assert.ok(!html.includes('<script'));
+  assert.ok(!html.includes('<img'));
+  assert.ok(!html.includes('href='));
+  assert.ok(html.includes('External'));
+  assert.ok(html.includes('Unknown'));
 });
 
 test('legacy explanations do not acquire invented confidence or chronology', () => {

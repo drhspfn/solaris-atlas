@@ -29,6 +29,7 @@ export const APP_SETTINGS = {
   },
   presentation: {
     feedbackDurationMs: 2500,
+    connectionPreviewCloseMs: 150,
     skeletonCount: 8,
     cardStaggerMs: 25,
     cardStaggerMaxIndex: 12,

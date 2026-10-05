@@ -81,6 +81,7 @@ export type StoryExplanation = {
   nodes: { id: number; canonical_key: string; kind: string; label: string; href: string }[];
   events: { node_id: number; title: string }[];
   links: {
+    href?: string;
     from_node_id: number;
     to_node_id: number;
     relation: string;
@@ -90,6 +91,17 @@ export type StoryExplanation = {
     certainty?: 'confirmed' | 'suggested' | 'inferred' | 'theory';
     citations?: SourceCitation[];
   }[];
+};
+export type StoryConnection = StoryExplanation['links'][number] & {
+  title: string;
+  document_id: number;
+  revision: number;
+  quest_id: number;
+  game_version: string;
+  locale: string;
+  from_node: StoryExplanation['nodes'][number] | null;
+  to_node: StoryExplanation['nodes'][number] | null;
+  nodes: StoryExplanation['nodes'];
 };
 export type ExplanationResponse = {
   status: 'available' | 'pending';

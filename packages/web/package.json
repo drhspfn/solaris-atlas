@@ -18,6 +18,7 @@
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "latest",
     "typescript": "latest",
     "vite": "latest"
