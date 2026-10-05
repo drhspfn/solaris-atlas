@@ -2,6 +2,15 @@
 
 ## Cited story explanations
 
+V6 uses authored main-quest classification as the primary narrative role; secondary
+functions remain separate. Unknown branch occurrence is disclosed once per analysis,
+while real choices and conditions retain their per-claim labels. Visual descriptions
+are explicitly AI interpretations of sampled frames, attached to the exact published
+video variant. Their native disclosure in the cutscene player offers optional timed
+chapters through the existing timeline seek behavior. Seeking across an unresolved
+Rover choice still opens that choice. Missing or stale visual reports show no generated
+description; dialogue and video remain available. Descriptions do not autoplay video.
+
 V5 explanations disclose narrative role, loaded source versions and known/unknown/
 cannot-conclude boundaries. Assertion certainty and branch occurrence are separate
 labels. Absence claims are limited to the loaded corpus. Open threads show priority

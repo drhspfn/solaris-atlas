@@ -6234,3 +6234,43 @@ button.search-clear:focus-visible {
   border: 1px solid var(--border-default);
   color: var(--text-primary);
 }
+
+.quest-cutscene .cutscene-description {
+  flex-basis: 100%;
+  width: 100%;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-default);
+}
+.cutscene-description summary {
+  color: var(--mint);
+  cursor: pointer;
+}
+.cutscene-description p {
+  font-size: 14px;
+  color: var(--text-primary);
+  max-width: 78ch;
+  margin: 12px 0;
+  line-height: 1.6;
+}
+.cutscene-description section {
+  border-left: 2px solid var(--border-default);
+  padding-left: 12px;
+  margin: 16px 0;
+}
+.cutscene-description section button {
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  padding: 6px 10px;
+  text-align: left;
+  height: auto;
+}
+.cutscene-description section button:hover {
+  border-color: var(--mint);
+  color: var(--mint);
+}
+.cutscene-description section button:focus-visible {
+  outline: 2px solid var(--mint);
+  outline-offset: 3px;
+}

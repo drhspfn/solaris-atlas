@@ -41,6 +41,11 @@ class AgentSettings(BaseSettings):
     embedding_input_usd_per_million: Decimal = Field(default=Decimal("0.02"), ge=0)
     public_query_embeddings: bool = False
     query_requests_per_hour: int = Field(default=30, ge=1, le=1000)
+    vision_enabled: bool = False
+    vision_frame_interval: float = Field(default=3, ge=1, le=30)
+    vision_max_frames: int = Field(default=600, ge=2, le=1200)
+    vision_batch_frames: int = Field(default=4, ge=1, le=8)
+    vision_output_tokens: int = Field(default=4096, ge=1024, le=16000)
 
     @field_validator("budget_timezone")
     @classmethod

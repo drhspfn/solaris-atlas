@@ -42,14 +42,14 @@ export function ExplanationBlocks({ explanation }: { explanation: StoryExplanati
                 {assertionLabels[assertion.status]}
               </span>
               <p className="assertion-text">{assertion.text}</p>
-              {assertion.occurrence && assertion.occurrence !== 'mandatory' && (
-                <p className="assertion-unresolved">
-                  {assertion.occurrence === 'unknown'
-                    ? 'Branch occurrence not established'
-                    : assertion.occurrence.replaceAll('_', ' ')}
-                  {assertion.condition ? ` · ${assertion.condition}` : ''}
-                </p>
-              )}
+              {assertion.occurrence &&
+                assertion.occurrence !== 'mandatory' &&
+                assertion.occurrence !== 'unknown' && (
+                  <p className="assertion-unresolved">
+                    {assertion.occurrence.replaceAll('_', ' ')}
+                    {assertion.condition ? ` · ${assertion.condition}` : ''}
+                  </p>
+                )}
               <dl className="assertion-chronology">
                 <div>
                   <dt>Encountered in quest</dt>

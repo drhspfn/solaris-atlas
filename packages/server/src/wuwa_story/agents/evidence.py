@@ -15,6 +15,7 @@ from wuwa_story.agents.contracts import (
     citation_groups,
     validate_citations,
 )
+from wuwa_story.agents.cutscene_vision import validate_description, visual_reference
 from wuwa_story.agents.providers import ToolCall
 from wuwa_story.agents.settings import AgentSettings
 from wuwa_story.db.models.agents import AgentNote
@@ -134,8 +135,47 @@ async def scope_for_request(
     return quest, release, language
 
 
+async def quest_cutscene_assets(session: AsyncSession, quest_id: int, release_id: int):
+    states = await quest_states(session, quest_id, release_id)
+    actions = select(QuestAction.node_id).where(QuestAction.quest_state_node_id.in_(states))
+    cutscenes = (
+        select(Edge.to_node_id)
+        .join(RelationType)
+        .where(
+            Edge.from_node_id.in_(actions),
+            RelationType.key == "plays_cutscene",
+            Edge.id.in_(source_edges(release_id)),
+        )
+    )
+    variants = (
+        select(Edge.to_node_id)
+        .join(RelationType)
+        .where(
+            Edge.from_node_id.in_(cutscenes),
+            RelationType.key == "has_variant",
+            Edge.id.in_(source_edges(release_id)),
+        )
+    )
+    return await session.execute(
+        select(Edge.from_node_id, Node.id, Node.canonical_key)
+        .join(RelationType)
+        .join(Node, Node.id == Edge.to_node_id)
+        .where(
+            Edge.from_node_id.in_(variants),
+            RelationType.key == "references_asset",
+            Edge.id.in_(source_edges(release_id)),
+        )
+        .order_by(Node.id)
+    )
+
+
 async def quest_fingerprint(
-    session: AsyncSession, quest: Quest, release_id: int, locale_id: int | None = None
+    session: AsyncSession,
+    quest: Quest,
+    release_id: int,
+    locale_id: int | None = None,
+    *,
+    include_visual: bool = False,
 ) -> bytes:
     states = await quest_states(session, quest.node_id, release_id)
     action_ids = select(QuestAction.node_id).where(QuestAction.quest_state_node_id.in_(states))
@@ -215,14 +255,23 @@ async def quest_fingerprint(
             .order_by(DialogueLine.node_id)
         )
     ).all()
-    return hash_value(
-        {
-            "revisions": [tuple(row) for row in revisions],
-            "text": [tuple(row) for row in text_hashes],
-            "edges": [tuple(row) for row in edges],
-            "line_fields": [tuple(row) for row in line_fields],
-        }
-    )
+    payload = {
+        "revisions": [tuple(row) for row in revisions],
+        "text": [tuple(row) for row in text_hashes],
+        "edges": [tuple(row) for row in edges],
+        "line_fields": [tuple(row) for row in line_fields],
+    }
+    if include_visual:
+        visual = []
+        for _, asset_id, _ in await quest_cutscene_assets(session, quest.node_id, release_id):
+            report = await visual_reference(session, asset_id)
+            if report:
+                visual.append(
+                    (asset_id, report.id, hash_value(report.metadata_json).hex())
+                )
+        if visual:
+            payload["visual"] = visual
+    return hash_value(payload)
 
 
 class EvidenceTools:
@@ -241,6 +290,7 @@ class EvidenceTools:
         source_release_ids: list[int] | None = None,
         source_evidence: dict[str, str] | None = None,
         source_nodes: dict[str, str] | None = None,
+        visual_evidence: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self.session, self.run_id, self.quest = session, run_id, quest
         self.release_id, self.locale, self.settings = release_id, locale, settings
@@ -255,6 +305,7 @@ class EvidenceTools:
         self.source_evidence = source_evidence if source_evidence is not None else {}
         self.source_nodes = source_nodes if source_nodes is not None else {}
         self.validated_sources: list[dict[str, Any]] = []
+        self.visual_evidence = visual_evidence if visual_evidence is not None else {}
 
     async def context(self, snapshot_id: int) -> "EvidenceTools":
         if snapshot_id not in self.source_release_ids:
@@ -274,7 +325,81 @@ class EvidenceTools:
             source_release_ids=[snapshot_id],
             source_evidence=self.source_evidence,
             source_nodes=self.source_nodes,
+            visual_evidence=self.visual_evidence,
         )
+
+    async def cutscene_inventory(self, quest: Quest) -> list[dict[str, Any]]:
+        rows = await quest_cutscene_assets(self.session, quest.node_id, self.release_id)
+        result = []
+        for variant, asset_id, key in rows:
+            report = await visual_reference(self.session, asset_id)
+            result.append(
+                {
+                    "variant_node_id": variant,
+                    "asset_node_id": asset_id,
+                    "canonical_key": key,
+                    "visual_reference_id": report.id if report else None,
+                    "recording_version": report.metadata_json["asset_version"] if report else None,
+                    "visual_status": "available" if report else "not_analyzed",
+                }
+            )
+        return result
+
+    async def authored_quest_type(self, quest: Quest | None = None) -> str | None:
+        quest = quest or self.quest
+        raw = await self.session.scalar(select(SourceRecord.data)
+            .join(NodeRevision, NodeRevision.source_record_id == SourceRecord.id)
+            .where(NodeRevision.node_id == quest.node_id, NodeRevision.release_id == self.release_id)
+            .order_by(NodeRevision.revision.desc()).limit(1))
+        if raw is None:
+            return quest.quest_type
+        if not isinstance(raw, dict):
+            return None
+        data = raw.get("Data", {})
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except ValueError:
+                return None
+        return str(data["Type"]) if isinstance(data, dict) and type(data.get("Type")) is int else None
+
+    async def read_cutscene_visual(
+        self, asset_node_id: int, offset: int = 0, limit: int = 12
+    ) -> dict:
+        if offset < 0 or not 1 <= limit <= 20:
+            raise ValueError("Invalid visual pagination")
+        await self.remember_node(asset_node_id)
+        # Restrict to an authored cutscene asset linked to the target quest.
+        if asset_node_id not in {
+            item["asset_node_id"] for item in await self.cutscene_inventory(self.quest)
+        }:
+            raise ValueError("Asset is not a cutscene variant in this quest")
+        report = await visual_reference(self.session, asset_node_id)
+        if report is None:
+            return {"asset_node_id": asset_node_id, "status": "not_analyzed"}
+        metadata = report.metadata_json
+        events = metadata["events"][offset : offset + limit]
+        receipt = self.visual_evidence.get(
+            str(report.id), {"hash": hash_value(metadata).hex(), "indices": []}
+        )
+        receipt["indices"] = sorted(
+            set(receipt["indices"]) | set(range(offset, offset + len(events)))
+        )
+        receipt["snapshot_id"] = self.release_id
+        self.visual_evidence[str(report.id)] = receipt
+        return {
+            "asset_node_id": asset_node_id,
+            "visual_reference_id": report.id,
+            "snapshot_id": self.release_id,
+            "asset_version": metadata["asset_version"],
+            "evidence_type": metadata["evidence_type"],
+            "duration": metadata["duration"],
+            "limitations": "AI observations of sampled frames in the stated recording version, not proof of historical visuals. Variant-specific, not game-authored dialogue; gaps do not prove absence.",
+            "events": [{"index": offset + index, **event} for index, event in enumerate(events)],
+            "next_offset": offset + len(events)
+            if offset + len(events) < len(metadata["events"])
+            else None,
+        }
 
     async def snapshot_for_node(self, node_id: int) -> int:
         releases = set(
@@ -439,6 +564,8 @@ class EvidenceTools:
             "name": values.get(quest.name_key_id or -1),
             "description": (values.get(quest.description_key_id or -1) or "")[:1000],
             "ordering": ORDERING,
+            "quest_type": await self.authored_quest_type(quest),
+            "cutscenes": await self.cutscene_inventory(quest) if offset == 0 else [],
             "offset": offset,
             "lines": lines,
             "next_offset": offset + len(lines) if len(rows) > len(lines) else None,
@@ -714,12 +841,12 @@ class EvidenceTools:
         args = dict(call.arguments)
         if call.name == "list_snapshots":
             return await self.snapshots()
-        if call.name in ("read_quest", "read_node", "graph_neighbors"):
+        if call.name in ("read_quest", "read_node", "graph_neighbors", "read_cutscene_visual"):
             snapshot_id = args.pop("snapshot_id", None)
             if call.name == "graph_neighbors":
                 return await self.graph(**args, snapshot_id=snapshot_id)
             if snapshot_id is None and call.name != "graph_neighbors":
-                node_id = args.get("node_id", self.quest.node_id)
+                node_id = args.get("node_id", args.get("asset_node_id", self.quest.node_id))
                 if call.name == "read_quest" and args.get("quest_id") is not None:
                     node_id = await self.session.scalar(
                         select(Quest.node_id).where(Quest.game_quest_id == args["quest_id"])
@@ -732,6 +859,8 @@ class EvidenceTools:
                 return await target.read_quest(**args)
             if call.name == "read_node":
                 return await target.read_node(**args)
+            if call.name == "read_cutscene_visual":
+                return await target.read_cutscene_visual(**args)
         if call.name == "search_entities":
             return await self.search(**args)
         if call.name == "read_memory":
@@ -751,8 +880,42 @@ class EvidenceTools:
                     raise ValueError("Citation must quote a read source in its explicit snapshot")
 
     async def validate_result(
-        self, result: AnalysisResult, *, require_full_quest: bool = True
+        self,
+        result: AnalysisResult,
+        *,
+        require_full_quest: bool = True,
+        require_visual: bool = False,
     ) -> None:
+        if require_visual:
+            available = {
+                item["asset_node_id"]
+                for item in await self.cutscene_inventory(self.quest)
+                if item["visual_status"] == "available"
+            }
+            described = {item.asset_node_id for item in result.cutscene_descriptions}
+            if not available <= described:
+                raise ValueError(
+                    "Read and describe every available cutscene variant before publishing"
+                )
+            if len(described) != len(result.cutscene_descriptions):
+                raise ValueError("Duplicate cutscene variant descriptions")
+        for description in result.cutscene_descriptions:
+            receipt = self.visual_evidence.get(str(description.visual_reference_id))
+            if receipt is None:
+                raise ValueError("Read visual evidence before describing a cutscene")
+            context = await self.context(receipt["snapshot_id"])
+            report = await visual_reference(self.session, description.asset_node_id)
+            if (
+                report is None
+                or report.id != description.visual_reference_id
+                or hash_value(report.metadata_json).hex() != receipt["hash"]
+            ):
+                raise ValueError("Visual source changed before publication")
+            if description.asset_node_id not in {
+                item["asset_node_id"] for item in await context.cutscene_inventory(context.quest)
+            }:
+                raise ValueError("Cutscene description is outside this quest")
+            validate_description(description, report.metadata_json, receipt["indices"])
         validate_citations(result, self.evidence)
         if self.cross_snapshot:
             self.validate_source_identity(result)
@@ -915,6 +1078,17 @@ def definitions() -> list[dict[str, Any]]:
             "Read a source node. available_locales lists translations; call again with locale to compare Chinese/Japanese. Cite returned text with its locale.",
             {"node_id": integer, "locale": locale, "snapshot_id": snapshot},
             ["node_id"],
+        ),
+        tool(
+            "read_cutscene_visual",
+            "Read paginated AI visual observations for an authored cutscene variant. These are sampled visual evidence, NOT exact dialogue. Follow next_offset; preserve variant identity.",
+            {
+                "asset_node_id": integer,
+                "offset": integer,
+                "limit": integer,
+                "snapshot_id": snapshot,
+            },
+            ["asset_node_id"],
         ),
         tool(
             "graph_neighbors",

@@ -7,7 +7,7 @@ import { useNarrativePreferences } from '../../preferences/NarrativePreferences'
 import { PlayerText } from '../dialogue/PlayerText';
 import { CutsceneControls } from './CutsceneControls';
 import { CutsceneSound } from './CutsceneSound';
-import { cutsceneTimeline, timelineTarget } from './cutsceneTimeline';
+import { chapterPosition, cutsceneTimeline, timelineTarget } from './cutsceneTimeline';
 import { preferredRoverTarget } from './preferredRover';
 import {
   type CutsceneFlow,
@@ -452,6 +452,36 @@ function FlowPlayer({
       {fullscreenFailed && <p role="status">Fullscreen could not open. Use the inline player.</p>}
       {failed && <p role="alert">Video could not load. Refresh the page to retry.</p>}
       <footer>
+        {source.description && (
+          <details className="cutscene-description">
+            <summary>{source.description.title} · AI description</summary>
+            <p>{source.description.text}</p>
+            {source.description.chapters.map((chapter) => (
+              <section key={chapter.start}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const position = chapterPosition(
+                      flow,
+                      timeline,
+                      source.asset_node_id,
+                      chapter.start,
+                    );
+                    if (position !== null) seek(position);
+                  }}
+                >
+                  {Math.floor(chapter.start / 60)}:
+                  {String(Math.floor(chapter.start % 60)).padStart(2, '0')} · {chapter.title}
+                </button>
+                <p>{chapter.text}</p>
+              </section>
+            ))}
+            <small>
+              Based on sampled visual observations and quest context. This description follows the
+              selected video variant.
+            </small>
+          </details>
+        )}
         <span>
           {tracks
             ? 'Separate audio tracks'

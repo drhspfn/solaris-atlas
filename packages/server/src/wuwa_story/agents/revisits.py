@@ -30,7 +30,7 @@ async def schedule_revisits(session: AsyncSession, release_id: int) -> None:
         .join(DocumentHead, DocumentHead.document_id == Document.id)
         .where(
             Document.document_type.startswith("story-explanation:"),
-            Document.metadata_json["schema_version"].as_string() == "story-v5",
+            Document.metadata_json["schema_version"].as_string().in_(["story-v5", "story-v6"]),
         )
         .execution_options(yield_per=100)
     )

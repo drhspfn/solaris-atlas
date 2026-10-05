@@ -12,7 +12,23 @@ export function ExplanationContext({ explanation }: { explanation: StoryExplanat
             {explanation.assessment.narrative_weight.replaceAll('_', ' ')}
           </span>
           <p>{explanation.narrative_function || explanation.assessment.reason}</p>
+          {!!explanation.assessment.secondary_functions?.length && (
+            <p>
+              Secondary functions ·{' '}
+              {explanation.assessment.secondary_functions
+                .map((role) => role.replaceAll('_', ' '))
+                .join(' · ')}
+            </p>
+          )}
         </section>
+      )}
+      {explanation.blocks.some((block) =>
+        block.assertions?.some((assertion) => assertion.occurrence === 'unknown'),
+      ) && (
+        <p className="explanation-status">
+          Occurrence of some source passages has not been established from quest flow. Explicit
+          choices and conditions are marked beside their claims.
+        </p>
       )}
       {explanation.loaded_versions?.length ? (
         <details className="explanation-context">

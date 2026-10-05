@@ -1,10 +1,10 @@
 """Validated model/tool output, not arbitrary URLs, SQL or graph mutations."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-PROMPT_VERSION = "story-v5"
+PROMPT_VERSION = "story-v6"
 
 # Reading order is independent of the language used to write the explanation.
 SOURCE_LOCALE_PRIORITY = ("en", "zh-Hans", "ja", "zh-Hant")
@@ -40,6 +40,9 @@ class LoreSignal(StrictModel):
 
 
 class QuestAssessment(StrictModel):
+    secondary_functions: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
+        default_factory=list, max_length=8
+    )
     narrative_weight: Literal[
         "main_plot",
         "character_arc",
@@ -212,7 +215,25 @@ class HookReview(StrictModel):
     citations: list[Citation] = Field(min_length=1, max_length=8)
 
 
+class CutsceneChapter(StrictModel):
+    start: float = Field(ge=0, allow_inf_nan=False)
+    end: float = Field(gt=0, allow_inf_nan=False)
+    title: str = Field(min_length=1, max_length=120)
+    text: str = Field(min_length=1, max_length=1500)
+    observation_indices: list[int] = Field(min_length=1, max_length=20)
+
+
+class CutsceneDescription(StrictModel):
+    asset_node_id: int = Field(gt=0)
+    visual_reference_id: int = Field(gt=0)
+    title: str = Field(min_length=1, max_length=200)
+    text: str = Field(min_length=1, max_length=2500)
+    chapters: list[CutsceneChapter] = Field(default_factory=list, max_length=12)
+    observation_indices: list[int] = Field(min_length=1, max_length=40)
+
+
 class AnalysisResult(StrictModel):
+    cutscene_descriptions: list[CutsceneDescription] = Field(default_factory=list, max_length=30)
     revisited_hooks: list[HookReview] = Field(default_factory=list, max_length=12)
     assessment: QuestAssessment | None = None
     title: str = Field(min_length=1, max_length=200)

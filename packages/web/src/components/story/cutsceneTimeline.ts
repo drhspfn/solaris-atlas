@@ -54,3 +54,27 @@ export function timelineTarget(timeline: ReturnType<typeof cutsceneTimeline>, po
 export function playbackVolume(master: number, music: number, role: string) {
   return Math.max(0, Math.min(1, master * (role === 'music' ? music : 1)));
 }
+
+export function chapterPosition(
+  flow: CutsceneFlow,
+  timeline: ReturnType<typeof cutsceneTimeline>,
+  assetId: number | undefined,
+  originalTime: number,
+) {
+  if (assetId === undefined || !Number.isFinite(originalTime)) return null;
+  for (const clip of timeline.clips) {
+    const node = flow.nodes.find((entry) => entry.id === clip.id);
+    if (node?.kind !== 'clip') continue;
+    const media = flow.media[node.segment || node.asset];
+    if (!media) continue;
+    const start = (media.timeline_offset || 0) + clip.mediaStart;
+    if (
+      media.asset_node_id === assetId &&
+      originalTime >= start &&
+      originalTime < start + clip.duration
+    ) {
+      return clip.start + originalTime - start;
+    }
+  }
+  return null;
+}
