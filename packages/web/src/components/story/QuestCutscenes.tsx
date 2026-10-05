@@ -268,7 +268,7 @@ function FlowPlayer({
         }}
       >
         <video
-          key={clipId}
+          key={`video:${clipId}`}
           ref={videoRef}
           controls={false}
           disablePictureInPicture
@@ -430,7 +430,7 @@ function FlowPlayer({
         />
         {tracks && (
           <CutsceneSound
-            key={clipId}
+            key={`audio:${clipId}`}
             videoRef={videoRef}
             tracks={selectedTracks}
             offset={source.timeline_offset || 0}
