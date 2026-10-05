@@ -66,6 +66,19 @@ def distinctive_term(value: str) -> bool:
     return 3 <= len(text) <= 200 and bool(words - GENERIC_TERMS)
 
 
+def primary_quest_role(assessment: QuestAssessment, quest_type: str | None) -> QuestAssessment:
+    # ConfigDB QuestType/MainType 1 is the authored main-quest category.
+    # A narrative focus on a region must not downgrade an authored main quest.
+    if quest_type == "1" and assessment.narrative_weight != "main_plot":
+        secondary = list(
+            dict.fromkeys([assessment.narrative_weight, *assessment.secondary_functions])
+        )
+        return assessment.model_copy(
+            update={"narrative_weight": "main_plot", "secondary_functions": secondary[:8]}
+        )
+    return assessment
+
+
 def assessment_policy(assessment: QuestAssessment) -> dict[str, Any]:
     depth = BASE_DEPTH[assessment.narrative_weight]
     if assessment.hook_priority in ("high", "critical") and not assessment.signals:
