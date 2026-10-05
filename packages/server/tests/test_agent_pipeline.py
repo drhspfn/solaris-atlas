@@ -1848,9 +1848,13 @@ async def test_pagination_unread_citations_and_changed_sources(world):
         await tools.validate_result(result)
         assert first["lines"][0]["encounter_order"] == 0
         result.blocks[0].assertions[0].chronology_in_quest.order = 1
-        with pytest.raises(ValueError, match="encounter_order"):
+        await tools.validate_result(result)
+        assert result.blocks[0].assertions[0].chronology_in_quest.order == 0
+        assert (await tools.read_node(nodes[3].id))["encounter_order"] == 0
+        result.blocks[0].assertions[0].chronology_in_quest.anchor_node_id = nodes[0].id
+        with pytest.raises(ValueError, match="not a dialogue passage"):
             await tools.validate_result(result)
-        result.blocks[0].assertions[0].chronology_in_quest.order = 0
+        result.blocks[0].assertions[0].chronology_in_quest.anchor_node_id = nodes[3].id
         (await db.get(DialogueLine, nodes[3].id)).inline_text = "A different passage."
         await db.flush()
         with pytest.raises(ValueError, match="changed"):

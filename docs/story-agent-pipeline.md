@@ -2,6 +2,11 @@
 
 ## Bounded finalization after the research limit
 
+Quest encounter ordinals are derived from imported dialogue ordering on the server,
+using the cited anchor node. `read_node` exposes this ordinal for target dialogue.
+Publication normalizes a model-supplied ordinal while rejecting anchors outside the
+target quest; exact citations and later-resolution ordering remain mandatory.
+
 After 100 research turns, an administrator can submit `{"finalize": true}` to
 `POST /admin/story-agent/jobs/{run_id}/resume`. The existing checkpoint gets one
 finalization pass of at most six turns. Only missing transcript/visual pages,

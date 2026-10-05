@@ -298,6 +298,7 @@ class EvidenceTools:
         self.known_nodes = known_nodes if known_nodes is not None else {}
         self.coverage: dict[int, int] = {}
         self.total_lines: int | None = None
+        self._target_positions: dict[int, int] | None = None
         self.text_locales: dict[int, str] = {}
         self.source_locale = source_locale
         self.source_release_ids = source_release_ids or [release_id]
@@ -572,6 +573,19 @@ class EvidenceTools:
             "next_offset": offset + len(lines) if len(rows) > len(lines) else None,
         }
 
+    async def target_positions(self) -> dict[int, int]:
+        if self._target_positions is None:
+            states = await quest_states(self.session, self.quest.node_id, self.release_id)
+            anchors = await self.session.scalars(
+                select(DialogueLine.node_id)
+                .join(QuestAction, QuestAction.node_id == DialogueLine.action_node_id)
+                .join(QuestState, QuestState.node_id == QuestAction.quest_state_node_id)
+                .where(QuestState.node_id.in_(states), DialogueLine.node_id.in_(observed_nodes(self.release_id)))
+                .order_by(QuestState.state_key, QuestAction.action_index, DialogueLine.source_index, DialogueLine.node_id)
+            )
+            self._target_positions = {node_id: index for index, node_id in enumerate(anchors)}
+        return self._target_positions
+
     async def read_node(self, node_id: int, locale: str | None = None) -> dict[str, Any]:
         node = await self.remember_node(node_id)
         source_truncated = False
@@ -675,6 +689,7 @@ class EvidenceTools:
             "node_id": node.id,
             "canonical_key": node.canonical_key,
             "type": kind,
+            "encounter_order": (await self.target_positions()).get(node.id) if line else None,
             "text": returned,
             "locale": source_locale,
             "available_locales": available_locales,
@@ -954,30 +969,14 @@ class EvidenceTools:
         if require_full_quest and (self.total_lines is None or end < self.total_lines):
             raise ValueError(f"Read every page of the target quest before publishing: next missing read_quest offset={end}, limit=50; follow next_offset until null, do not reread covered pages")
         if any(block.assertions for block in result.blocks):
-            states = await quest_states(self.session, self.quest.node_id, self.release_id)
-            anchors = list(
-                await self.session.scalars(
-                    select(DialogueLine.node_id)
-                    .join(QuestAction, QuestAction.node_id == DialogueLine.action_node_id)
-                    .join(QuestState, QuestState.node_id == QuestAction.quest_state_node_id)
-                    .where(
-                        QuestState.node_id.in_(states),
-                        DialogueLine.node_id.in_(observed_nodes(self.release_id)),
-                    )
-                    .order_by(
-                        QuestState.state_key,
-                        QuestAction.action_index,
-                        DialogueLine.source_index,
-                        DialogueLine.node_id,
-                    )
-                )
-            )
-            positions = {node_id: index for index, node_id in enumerate(anchors)}
+            positions = await self.target_positions()
             for block in result.blocks:
                 for assertion in block.assertions:
                     chronology = assertion.chronology_in_quest
-                    if positions.get(chronology.anchor_node_id) != chronology.order:
-                        raise ValueError("Use the target quest passage's exact encounter_order")
+                    if chronology.anchor_node_id not in positions:
+                        raise ValueError(f"Chronology anchor {chronology.anchor_node_id} is not a dialogue passage in the target quest")
+                    # This ordinal is imported metadata, not a model interpretation.
+                    chronology.order = positions[chronology.anchor_node_id]
                     if self.cross_snapshot and not any(
                         c.node_id == chronology.anchor_node_id and c.snapshot_id == self.release_id
                         for c in assertion.citations
