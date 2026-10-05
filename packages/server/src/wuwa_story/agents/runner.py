@@ -89,6 +89,14 @@ a narrative_function and all seven review checks. Do not repeat the same facts
 across summary/assertions to fill space. finish_analysis validates length, source
 coverage, chronology, branch conditions, hook terms and graph signals; correct
 specific validation errors without rereading already available sources.
+After reading the entire target quest, perform a whole-quest reconciliation pass:
+match early mysteries and reported unknowns against later dialogue and visual evidence
+in THIS quest before declaring them unresolved. Keep knowledge_state local to its
+encounter; later_resolution records subsequent answers, including partial answers.
+knowledge_boundary and narrative_function describe the end-of-quest state, not the
+opening scene. Explain the setup, discoveries and resolution across the full quest.
+Do not convert an English identity metaphor into literal identity when Chinese or
+Japanese sources qualify it. Compare those translations for ambiguous central claims.
 """
 
 
@@ -519,6 +527,11 @@ async def run_locked(
     result = AnalysisResult.model_validate(cp["result"]) if "result" in cp else None
     if result is None:
         visual_inventory = await evidence.cutscene_inventory(quest) if adaptive else []
+        required_read_turns = (
+            (len(await evidence.target_positions()) + 49) // 50
+            + sum((asset["observation_count"] + 19) // 20 for asset in visual_inventory)
+            if adaptive else 0
+        )
         for step in range(cp.get("step", 0), step_ceiling):
             assessment = (
                 QuestAssessment.model_validate(cp["assessment"]) if cp.get("assessment") else None
@@ -726,7 +739,7 @@ async def run_locked(
                             "policy": policy,
                             "stage": "research",
                         }
-                        settings.max_steps = min(step_ceiling, step + 1 + policy["research_steps"])
+                        settings.max_steps = min(step_ceiling, step + 1 + required_read_turns + policy["research_steps"])
                         settings.max_output_tokens = max(
                             settings.max_output_tokens, policy["output_tokens"]
                         )

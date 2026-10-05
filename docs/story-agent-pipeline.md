@@ -1,5 +1,16 @@
 # Story research pipeline
 
+Research and browsing share `db.repositories.quest_scope.quest_state_links`.
+The research scope includes direct quest references, quest nodes, plot-step scenes,
+and the transcript states of their cutscenes. Every hop must have source evidence
+in the pinned release; semantic links and partial paths never establish ownership.
+This scope also drives transcript coverage, encounter ordinals, visual inventory
+and the input fingerprint. Older analyses made with a narrower scope are stale
+and require a new run rather than replaying their incomplete result.
+After full reading the agent reconciles early unknowns with subsequent revelations
+in the same quest. Encounter knowledge remains local, while the final summary and
+knowledge boundary describe what is established by the end of the quest.
+
 ## Bounded finalization after the research limit
 
 Quest encounter ordinals are derived from imported dialogue ordering on the server,

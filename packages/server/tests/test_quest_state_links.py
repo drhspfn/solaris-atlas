@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects import sqlite
 
 from wuwa_story.api.routes.story.shared import _quest_state_links
+from wuwa_story.db.repositories.quest_scope import quest_state_links
 
 
 def test_forward_and_reverse_ownership_use_only_complete_source_paths():
@@ -12,14 +13,15 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
             db.execute(f"ATTACH DATABASE ':memory:' AS {schema}")
         db.execute("CREATE TABLE core.quest (node_id INTEGER)")
         db.execute("CREATE TABLE ontology.relation_type (id INTEGER, key TEXT)")
-        db.execute("CREATE TABLE graph.edge (from_node_id INTEGER, to_node_id INTEGER, relation_type_id INTEGER, layer TEXT)")
+        db.execute("CREATE TABLE graph.edge (id INTEGER PRIMARY KEY, from_node_id INTEGER, to_node_id INTEGER, relation_type_id INTEGER, layer TEXT)")
+        db.execute("CREATE TABLE graph.edge_evidence (id INTEGER PRIMARY KEY, edge_id INTEGER, release_id INTEGER)")
         db.executemany("INSERT INTO core.quest VALUES (?)", [(1,), (2,)])
         db.executemany("INSERT INTO ontology.relation_type VALUES (?, ?)", [
             (1, "references_flow_state"), (2, "has_quest_node"),
             (3, "has_plot_step"), (4, "presents_scene"),
             (5, "contains_action"), (6, "plays_cutscene"), (7, "has_transcript_state"),
         ])
-        db.executemany("INSERT INTO graph.edge VALUES (?, ?, ?, ?)", [
+        db.executemany("INSERT INTO graph.edge (from_node_id, to_node_id, relation_type_id, layer) VALUES (?, ?, ?, ?)", [
             (1, 101, 1, "source"),  # Direct quest reference.
             (1, 10, 2, "source"), (10, 102, 1, "source"),
             (1, 20, 3, "source"), (20, 30, 4, "source"), (30, 103, 1, "source"),
@@ -42,3 +44,12 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
         assert rows(select(links.c.quest_id).where(links.c.state_id == 103)) == {(1,), (2,)}
         for orphan in (104, 105, 106, 108):
             assert rows(select(links.c.quest_id).where(links.c.state_id == orphan)) == set()
+
+        db.execute("INSERT INTO graph.edge_evidence (edge_id, release_id) SELECT id, 1 FROM graph.edge")
+        pinned = quest_state_links(1)
+        assert rows(select(pinned.c.state_id).where(pinned.c.quest_id == 1)) == {(101,), (102,), (103,), (107,)}
+        # Every hop must exist in the pinned snapshot, not just the final state.
+        db.execute("UPDATE graph.edge_evidence SET release_id=2 WHERE edge_id IN (SELECT id FROM graph.edge WHERE (from_node_id=20 AND to_node_id=30) OR (from_node_id=80 AND to_node_id=107))")
+        assert rows(select(pinned.c.state_id).where(pinned.c.quest_id == 1)) == {(101,), (102,)}
+        another = quest_state_links(2)
+        assert rows(select(another.c.state_id).where(another.c.quest_id == 1)) == set()

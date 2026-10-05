@@ -35,6 +35,7 @@ from wuwa_story.db.models.i18n import Locale, LocalizationValue
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
+from wuwa_story.db.repositories.quest_scope import quest_state_links
 from wuwa_story.db.repositories.search import lexical_search
 
 ORDERING = "Authored state/action/talk order, including alternatives. This is not a single guaranteed playthrough; inspect graph links for choices and conditions."
@@ -86,25 +87,8 @@ async def imported_source_revision(session: AsyncSession) -> str:
 
 
 async def quest_states(session: AsyncSession, quest_id: int, release_id: int) -> list[int]:
-    children = (
-        select(Edge.to_node_id)
-        .join(RelationType, RelationType.id == Edge.relation_type_id)
-        .where(
-            Edge.from_node_id == quest_id,
-            RelationType.key == "has_quest_node",
-            Edge.id.in_(source_edges(release_id)),
-        )
-    )
-    states = (
-        select(Edge.to_node_id)
-        .join(RelationType, RelationType.id == Edge.relation_type_id)
-        .where(
-            or_(Edge.from_node_id == quest_id, Edge.from_node_id.in_(children)),
-            RelationType.key == "references_flow_state",
-            Edge.id.in_(source_edges(release_id)),
-        )
-    )
-    return list(await session.scalars(states.distinct()))
+    links = quest_state_links(release_id)
+    return list(await session.scalars(select(links.c.state_id).where(links.c.quest_id == quest_id)))
 
 
 async def scope_for_request(
