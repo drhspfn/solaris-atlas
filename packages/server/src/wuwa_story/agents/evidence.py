@@ -886,6 +886,9 @@ class EvidenceTools:
         require_full_quest: bool = True,
         require_visual: bool = False,
     ) -> None:
+        from wuwa_story.agents.narrative import validate_narrative_links
+
+        validate_narrative_links(result)
         if require_visual:
             available = {
                 item["asset_node_id"]
