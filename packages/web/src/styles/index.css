@@ -6225,7 +6225,8 @@ button.search-clear:focus-visible {
   }
 }
 
-.cutscene-stage > div > p[role='alert'] {
+.cutscene-stage > div > p[role='alert'],
+.cutscene-stage > .cutscene-error {
   position: absolute;
   inset: 12px 12px auto;
   z-index: 4;
