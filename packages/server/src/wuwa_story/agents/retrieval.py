@@ -102,11 +102,16 @@ async def public_document(
         quest,
         release.id,
         fingerprint_locale,
-        include_visual=document.metadata_json.get("schema_version") == "story-v6",
+        include_visual=document.metadata_json.get("schema_version") in ("story-v6", "story-v7"),
     ):
         return None
     corpus_changed = False
-    if document.metadata_json.get("schema_version") in ("story-v4", "story-v5", "story-v6"):
+    if document.metadata_json.get("schema_version") in (
+        "story-v4",
+        "story-v5",
+        "story-v6",
+        "story-v7",
+    ):
         corpus_changed = document.metadata_json.get(
             "source_release_ids"
         ) != await imported_snapshot_ids(session)
@@ -276,7 +281,8 @@ async def public_document(
         "quest_id": quest.game_quest_id,
         "game_version": release.game_version,
         "research_scope": "all_imported_snapshots"
-        if document.metadata_json.get("schema_version") in ("story-v4", "story-v5", "story-v6")
+        if document.metadata_json.get("schema_version")
+        in ("story-v4", "story-v5", "story-v6", "story-v7")
         else "target_snapshot",
         "locale": output_locale.code,
         "requested_locale": locale.code,

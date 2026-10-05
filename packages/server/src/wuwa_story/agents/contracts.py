@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-PROMPT_VERSION = "story-v6"
+PROMPT_VERSION = "story-v7"
 
 # Reading order is independent of the language used to write the explanation.
 SOURCE_LOCALE_PRIORITY = ("en", "zh-Hans", "ja", "zh-Hant")

@@ -5,6 +5,28 @@ read transcripts, inspect the source graph, search entities, re-read sources, sa
 working notes and report missing data. Publication creates a cited explanation,
 inferred claims/links and generated events. Imported source edges are preserved.
 
+## Readable explanations and connections (V7)
+
+New runs use `story-v7`, so queuing an already analyzed quest can create a new run
+instead of returning the completed V6 job. Existing V4–V6 analyses remain readable;
+the visual-evidence and source validation rules still apply. Nothing is reanalyzed
+automatically on page load.
+
+`blocks[].text` is the reader-facing Markdown narrative. Headings, paragraphs,
+emphasis and short lists are supported. Link targets are bounded references to
+objects in the same result: `[context](connection:0)`, `[event](event:0)` and
+`[source](record:123)`. Connection/event indices are zero-based; record IDs must be
+cited or listed as related records in that block. The UI does not render HTML,
+external links or remote images. Structured assertions retain chronology,
+certainty, branch conditions and source receipts behind closed disclosures.
+
+The public connection URL identifies the published document revision and link
+ordinal: `/story-analysis/connections/{document_id}/{index}?locale=en`. Its API
+returns a readable description, endpoint records and resolved citations only for
+a completed published analysis with still-valid source receipts. Republishing
+can refine the description without rewriting old interpretations or source edges.
+The existing response cache covers this endpoint and invalidates transactionally.
+
 The admin creation form accepts only a quest ID and always requests English.
 When `game_version` is omitted, the server selects the latest imported snapshot
 that actually contains the quest, then records that version in the saved request.

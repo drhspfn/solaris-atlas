@@ -450,7 +450,7 @@ async def run_locked(
             quest,
             job.release_id,
             fingerprint_locale,
-            include_visual=run.prompt_version == "story-v6",
+            include_visual=run.prompt_version in ("story-v6", "story-v7"),
         )
         != run.input_hash
     ):
@@ -461,8 +461,8 @@ async def run_locked(
     cp = dict(job.checkpoint)
     step_ceiling = max(settings.max_steps, cp.get("step_ceiling", 0))
     cp["step_ceiling"] = step_ceiling
-    cross_snapshot = run.prompt_version in ("story-v4", "story-v5", "story-v6")
-    adaptive = run.prompt_version in ("story-v5", "story-v6")
+    cross_snapshot = run.prompt_version in ("story-v4", "story-v5", "story-v6", "story-v7")
+    adaptive = run.prompt_version in ("story-v5", "story-v6", "story-v7")
     revisit = run.metadata_json.get("revisit")
     source_release_ids = run.metadata_json.get("source_release_ids") if cross_snapshot else None
     if cross_snapshot and (not source_release_ids or job.release_id not in source_release_ids):
@@ -663,7 +663,7 @@ async def run_locked(
                             raise ValueError("Assessment must be the only call in this turn")
                         selected = QuestAssessment.model_validate(tool_call.arguments)
                         authored_type = None
-                        if run.prompt_version == "story-v6":
+                        if run.prompt_version in ("story-v6", "story-v7"):
                             authored_type = await evidence.authored_quest_type()
                             selected = primary_quest_role(selected, authored_type)
                         policy = assessment_policy(selected, authored_main=authored_type == "1")
@@ -711,17 +711,28 @@ async def run_locked(
                             if assessment is None:
                                 raise ValueError("Classify this quest before publishing")
                             candidate.assessment = assessment
-                            validate_lore_result(candidate, assessment, authored_main=cp.get("authored_quest_type") == "1")
+                            validate_lore_result(
+                                candidate,
+                                assessment,
+                                authored_main=cp.get("authored_quest_type") == "1",
+                            )
                         if revisit:
                             validate_revisit(candidate, revisit)
                         elif candidate.revisited_hooks:
                             raise ValueError("Hook reviews require a focused revisit job")
-                        if run.prompt_version in ("story-v3", "story-v4", "story-v5", "story-v6"):
+                        if run.prompt_version in (
+                            "story-v3",
+                            "story-v4",
+                            "story-v5",
+                            "story-v6",
+                            "story-v7",
+                        ):
                             candidate.validate_temporal_structure()
                         await evidence.validate_result(
                             candidate,
                             require_full_quest=not bool(revisit),
-                            require_visual=run.prompt_version == "story-v6" and not bool(revisit),
+                            require_visual=run.prompt_version in ("story-v6", "story-v7")
+                            and not bool(revisit),
                         )
                         result = candidate
                         output = {"validated": True}
@@ -744,10 +755,12 @@ async def run_locked(
                         "validation": validation,
                     }
                 event = {
-                    "name": tool_call.name, "call_id": tool_call.id,
+                    "name": tool_call.name,
+                    "call_id": tool_call.id,
                     "arguments": preview(tool_call.arguments),
                     "status": "error" if "error" in output else "ok",
-                    "validation": validation, "result": preview(output),
+                    "validation": validation,
+                    "result": preview(output),
                     "duration_ms": round((time.monotonic() - started) * 1000),
                     "repeat_count": repeats,
                     "new_evidence": len(evidence.evidence) - len(previous_evidence),
@@ -795,8 +808,9 @@ async def run_locked(
             if result:
                 cp["result"] = result.model_dump()
             job.checkpoint = cp
-            recorded_call = await session.scalar(select(AgentCall).where(
-                AgentCall.run_id == run.id, AgentCall.step == step))
+            recorded_call = await session.scalar(
+                select(AgentCall).where(AgentCall.run_id == run.id, AgentCall.step == step)
+            )
             if recorded_call is not None:
                 recorded_call.response = {
                     **(recorded_call.response or {}),
@@ -860,7 +874,7 @@ async def run_locked(
             quest,
             job.release_id,
             fingerprint_locale,
-            include_visual=run.prompt_version == "story-v6",
+            include_visual=run.prompt_version in ("story-v6", "story-v7"),
         )
         != run.input_hash
     ):
@@ -872,7 +886,7 @@ async def run_locked(
         await evidence.validate_result(
             result,
             require_full_quest=not bool(revisit),
-            require_visual=run.prompt_version == "story-v6" and not bool(revisit),
+            require_visual=run.prompt_version in ("story-v6", "story-v7") and not bool(revisit),
         )
     except ValueError:
         await pause(
