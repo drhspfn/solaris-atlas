@@ -4,6 +4,7 @@ import {
   cutsceneTimeline,
   timelineTarget,
   playbackVolume,
+  chapterPosition,
 } from '../src/components/story/cutsceneTimeline.ts';
 const clip = (id, end, next = null, start = 0) => ({
   id,
@@ -31,6 +32,41 @@ const flow = {
     clip('outro', null),
   ],
 };
+
+test('chapter links map original recording time onto exported segments', () => {
+  const segmented = {
+    entry: 'intro',
+    nodes: [
+      { ...clip('intro', 5, 'branch'), segment: 'intro' },
+      { ...clip('branch', 10), segment: 'branch' },
+    ],
+    media: {
+      intro: { asset_node_id: 5, timeline_offset: 0 },
+      branch: { asset_node_id: 6, timeline_offset: 20 },
+    },
+  };
+  const path = cutsceneTimeline(segmented, {}, 'ask', {});
+  assert.equal(chapterPosition(segmented, path, 6, 23), 8);
+  assert.equal(chapterPosition(segmented, path, 5, 0), 0);
+  assert.equal(chapterPosition(segmented, path, 5, 23), null);
+  assert.equal(chapterPosition(segmented, path, undefined, 0), null);
+});
+
+test('chapter seek still stops at an unresolved branch choice', () => {
+  const recording = {
+    ...flow,
+    media: {
+      intro: { asset_node_id: 5 },
+      male: { asset_node_id: 6 },
+      female: { asset_node_id: 7 },
+      outro: { asset_node_id: 5 },
+    },
+  };
+  const path = cutsceneTimeline(recording, {}, 'ask', { outro: 5 });
+  const position = chapterPosition(recording, path, 6, 3);
+  assert.equal(timelineTarget(path, position).id, 'rover');
+  assert.equal(timelineTarget(path, position).time, null);
+});
 test('includes shared clips once and follows the selected branch duration', () => {
   const path = cutsceneTimeline(flow, { rover: 'female' }, 'ask', { outro: 5 });
   assert.equal(path.total, 40);

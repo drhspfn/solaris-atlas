@@ -20,6 +20,12 @@ export interface MediaAssetReference {
     subtitles_included: boolean;
     timeline_offset?: number;
     audio_tracks?: CutsceneAudioTrack[] | null;
+    asset_node_id?: number;
+    description?: {
+      title: string;
+      text: string;
+      chapters: { start: number; end: number; title: string; text: string }[];
+    };
   } | null;
 }
 

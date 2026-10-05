@@ -7,12 +7,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.agents.cutscene_vision import visual_reference
+from wuwa_story.agents.evidence import quest_fingerprint
 from wuwa_story.api.routes.story.captions import caption_texts, caption_tracks
 from wuwa_story.api.routes.story.cutscene_audio import audio_bundles
 from wuwa_story.api.routes.story.shared import _quest_state_ids, _release_id
 from wuwa_story.config.settings import get_settings
+from wuwa_story.db.models.content import Document, DocumentHead
 from wuwa_story.db.models.core import Quest, QuestAction, QuestState, VoiceReference
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
+from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceRecord
@@ -157,7 +161,8 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
         videos = await cutscene_videos(
             session, [node.id for node in nodes], reference.metadata_json["asset_version"]
         )
-        media = {node.canonical_key: videos[node.id] for node in nodes if node.id in videos}
+        media = {node.canonical_key: {**videos[node.id], "asset_node_id": node.id}
+                 for node in nodes if node.id in videos}
         settings = get_settings()
         storage = S3Storage(settings)
         bundles = await audio_bundles(
@@ -204,6 +209,7 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
                     key,
                     {
                         "url": storage.public_url(object_key),
+                        "asset_node_id": segment_reference.owner_node_id,
                         "asset_version": segment_reference.metadata_json["asset_version"],
                         "has_audio": segment_reference.metadata_json.get("has_audio", False),
                         "soundtrack": segment_reference.metadata_json.get("soundtrack"),
@@ -259,6 +265,32 @@ async def quest_media(
     cutscene_ids = [link["node_id"] for entries in action_links.values() for link in entries
                     if link["relation"] == "plays_cutscene"]
     flows = await cutscene_flows(session, cutscene_ids)
+    explanation = await session.scalar(
+        select(Document)
+        .join(DocumentHead, DocumentHead.document_id == Document.id)
+        .join(Locale, Locale.id == Document.locale_id)
+        .where(
+            Document.node_id == quest.node_id,
+            Document.document_type == f"story-explanation:{release_id}",
+        )
+        .order_by(
+            (Locale.code == locale).desc(), (Locale.code == "en").desc(), Document.revision.desc()
+        )
+        .limit(1)
+    )
+    if explanation and explanation.metadata_json.get("cutscene_descriptions") and (
+        explanation.source_hash == await quest_fingerprint(
+            session, quest, release_id, include_visual=True)
+    ):
+        for description in explanation.metadata_json.get("cutscene_descriptions", []):
+            for flow in flows.values():
+                for media in flow["media"].values():
+                    if media.get("asset_node_id") == description["asset_node_id"]:
+                        report = await visual_reference(
+                            session, description["asset_node_id"], media["asset_version"]
+                        )
+                        if report and report.id == description["visual_reference_id"]:
+                            media["description"] = description
     variants = await _links(session, cutscene_ids, ("has_variant", "uses_audio_event", "uses_audio_event_normalized", "uses_caption"), release_id)
     child_ids = [link["node_id"] for entries in variants.values() for link in entries]
     assets = await _links(session, child_ids, ("references_asset",), release_id)

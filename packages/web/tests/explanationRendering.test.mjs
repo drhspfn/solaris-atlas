@@ -106,3 +106,25 @@ test('choice occurrence and character speculation cannot look like unconditional
   assert.ok(html.includes(claim.condition));
   assert.ok(html.includes('in the loaded corpus'));
 });
+
+test('unknown occurrence is disclosed once and secondary functions keep their own role', () => {
+  const fixture = structuredClone(adaptiveExplanation);
+  fixture.assessment.secondary_functions = ['region_lore', 'Sentinel_arc'];
+  fixture.blocks
+    .flatMap((block) => block.assertions || [])
+    .forEach((claim) => {
+      claim.occurrence = 'unknown';
+    });
+  const html = renderToStaticMarkup(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(ExplanationContext, { explanation: fixture }),
+      createElement(ExplanationBlocks, { explanation: fixture }),
+    ),
+  );
+  assert.equal((html.match(/Occurrence of some source passages/g) || []).length, 1);
+  assert.ok(!html.includes('Branch occurrence not established'));
+  assert.ok(html.includes('Secondary functions'));
+  assert.ok(html.includes('main plot'));
+});
