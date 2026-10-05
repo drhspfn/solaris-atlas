@@ -10,6 +10,11 @@ and require a new run rather than replaying their incomplete result.
 After full reading the agent reconciles early unknowns with subsequent revelations
 in the same quest. Encounter knowledge remains local, while the final summary and
 knowledge boundary describe what is established by the end of the quest.
+After the pre-scan, whole-quest intake requests up to 50 lines per page within
+the serialized tool-result bound, including the media inventory. Smaller pages
+remain available for pre-scan, translation comparisons and other quests. Traces
+retain both requested and executed arguments. Depth budgets reserve reading turns
+in addition to research turns, without exceeding the administrator's run ceiling.
 
 ## Bounded finalization after the research limit
 
