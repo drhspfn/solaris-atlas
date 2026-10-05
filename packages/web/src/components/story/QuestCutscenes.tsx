@@ -5,6 +5,7 @@ import { APP_SETTINGS } from '../../config/settings';
 import { usePlayerDisplay } from '../../hooks/usePlayerDisplay';
 import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
 import { PlayerText } from '../dialogue/PlayerText';
+import { AnalysisActions } from './AnalysisActions';
 import { CutsceneControls } from './CutsceneControls';
 import { CutsceneSound } from './CutsceneSound';
 import { chapterPosition, cutsceneTimeline, timelineTarget } from './cutsceneTimeline';
@@ -231,6 +232,19 @@ function FlowPlayer({
         <h3>
           <Film size={18} /> Cutscene · {title}
         </h3>
+        <AnalysisActions
+          target={{
+            kind: 'cutscene',
+            version: flow.asset_version,
+            assetIds: [
+              ...new Set(
+                Object.values(flow.media).flatMap((media) =>
+                  media.asset_node_id ? [media.asset_node_id] : [],
+                ),
+              ),
+            ],
+          }}
+        />
       </header>
       {tracks && languages.length > 0 && !languages.includes(voiceLanguage) && (
         <p role="status">Selected voice language is unavailable for this scene.</p>
