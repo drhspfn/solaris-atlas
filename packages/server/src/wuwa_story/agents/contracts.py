@@ -323,8 +323,19 @@ def citation_groups(
 
 
 def validate_citations(result: AnalysisResult | NoteRequest, evidence: dict[int, str]) -> None:
-    for group in citation_groups(result):
-        for citation in group.citations:
+    failures: list[str] = []
+    for group_index, group in enumerate(citation_groups(result)):
+        for citation_index, citation in enumerate(group.citations):
             source = evidence.get(citation.node_id)
             if source is None or citation.quote not in source:
-                raise ValueError("Citation must quote evidence read in this run exactly")
+                if len(failures) < 8:
+                    failures.append(
+                        f"{type(group).__name__}[{group_index}].citations[{citation_index}] "
+                        f"node_id={citation.node_id}, quote={citation.quote[:200]!r}: "
+                        + ("node has not been read; use read_node" if source is None else
+                           f"does not match read text. Source excerpt={source[:500]!r}. "
+                           "Copy an exact substring, preserving game markup such as <ano> and <color>; "
+                           "use read_node if the excerpt does not cover the quote")
+                    )
+    if failures:
+        raise ValueError("Citation must quote evidence read in this run exactly. " + "\n".join(failures))

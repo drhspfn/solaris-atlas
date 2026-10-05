@@ -100,12 +100,19 @@ async def test_visual_variant_pages_are_required_and_published_with_story(world)
     final['cutscene_descriptions'] = [{'asset_node_id': asset_id, 'visual_reference_id': report_id,
         'title': 'The crossing', 'text': 'A figure turns away from the damaged crossing.',
         'observation_indices': [0, 1], 'chapters': []}]
+    invalid = json.loads(json.dumps(final))
+    invalid['blocks'][0]['citations'][0]['quote'] = 'Invented wording'
+    invalid['hooks'] = [{'key': 'crossing_core', 'question': 'What happened to the crossing?',
+        'priority': 'low', 'kind': 'mystery', 'revisit_on_new_versions': True,
+        'revisit_reason': 'Later explanation', 'search_terms': ['Rover'],
+        'citations': final['blocks'][0]['citations']}]
     actions = [('read_quest', {}), ('assess_quest', {'narrative_weight': 'side_flavor', 'hook_priority': 'low',
         'reason': 'A local obstacle', 'citations': final['blocks'][0]['citations']}),
         ('read_quest', {'limit': 1}),
         ('finish_analysis', {'result_json': json.dumps(final)}), # unread visuals must reject publication
         ('read_cutscene_visual', {'asset_node_id': asset_id, 'offset': 0, 'limit': 1}),
         ('read_cutscene_visual', {'asset_node_id': asset_id, 'offset': 1, 'limit': 1}),
+        ('finish_analysis', {'result_json': json.dumps(invalid)}),
         ('finish_analysis', {'result_json': json.dumps(final)})]
     requests = []
     def transport(request):
@@ -129,6 +136,10 @@ async def test_visual_variant_pages_are_required_and_published_with_story(world)
             assert json.loads(trace['requested_arguments'])['limit'] == 1
             failed = await db.scalar(select(AgentCall).where(AgentCall.run_id == run_id, AgentCall.step == 3))
             assert failed.response['execution_trace']['tools'][0]['status'] == 'error'
+            repair = await db.scalar(select(AgentCall).where(AgentCall.run_id == run_id, AgentCall.step == 6))
+            errors = repair.response['execution_trace']['tools'][0]['validation']
+            assert 'crossing_core' in errors
+            assert 'Invented wording' in errors
             assert (await get_explanation(db, quest.game_quest_id, release.game_version, locale.code))['explanation']['cutscene_descriptions']
     finally:
         async with AsyncSession(engine) as db:

@@ -157,9 +157,17 @@ def validate_lore_result(
         )
     if len({hook.key for hook in result.hooks}) != len(result.hooks):
         raise ValueError("Hook keys must be unique and stable across reviews")
+    invalid_terms = {
+        hook.key: [term for term in hook.search_terms if not distinctive_term(term)]
+        for hook in result.hooks
+        if any(not distinctive_term(term) for term in hook.search_terms)
+    }
+    if invalid_terms:
+        raise ValueError(
+            f"Hook searches need distinctive names/phrases, not generic terms: {invalid_terms!r}. "
+            "Remove these terms or replace them with distinctive phrases supported by read evidence"
+        )
     for hook in result.hooks:
-        if any(not distinctive_term(term) for term in hook.search_terms):
-            raise ValueError("Hook searches need distinctive names/phrases, not generic terms")
         if hook.kind == "mundane_outcome" and hook.priority not in ("low", "flavor"):
             raise ValueError("An ordinary unreported outcome is a low-priority hook")
     for block in result.blocks:
