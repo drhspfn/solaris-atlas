@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import Field
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.agents.contracts import StrictModel
@@ -54,16 +55,17 @@ async def assets(
     limit: int = Query(30, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    version = FileReference.metadata_json["asset_version"].astext
     latest = (
         select(FileReference.id)
         .where(
             FileReference.reference_type == "cutscene_video",
             FileReference.owner_node_id.is_not(None),
         )
-        .distinct(FileReference.owner_node_id, FileReference.metadata_json["asset_version"].astext)
+        .ext(distinct_on(FileReference.owner_node_id, version))
         .order_by(
             FileReference.owner_node_id,
-            FileReference.metadata_json["asset_version"].astext,
+            version,
             FileReference.id.desc(),
         )
     )
@@ -109,7 +111,7 @@ async def create_visual_jobs(request: VisualRequest, session: AsyncSession = Dep
                 FileReference.owner_node_id.in_(ids),
                 FileReference.metadata_json["asset_version"].astext == request.game_version,
             )
-            .distinct(FileReference.owner_node_id)
+            .ext(distinct_on(FileReference.owner_node_id))
             .order_by(FileReference.owner_node_id, FileReference.id.desc())
         )
     )
@@ -127,6 +129,7 @@ async def create_visual_jobs(request: VisualRequest, session: AsyncSession = Dep
 @router.get("/jobs")
 async def visual_jobs(
     before: int | None = None,
+    run_id: int | None = None,
     limit: int = Query(30, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
 ):
@@ -140,6 +143,8 @@ async def visual_jobs(
     )
     if before is not None:
         statement = statement.where(ProcessingRun.id < before)
+    if run_id is not None:
+        statement = statement.where(ProcessingRun.id == run_id)
     rows = (await session.execute(statement)).all()
     return {
         "jobs": [{**public_job(run), "reference": key} for run, key in rows],
@@ -151,6 +156,8 @@ async def visual_jobs(
 async def resume_visual(
     run_id: int, request: VisualResumeRequest, session: AsyncSession = Depends(get_session)
 ):
+    if not get_agent_settings().vision_enabled:
+        raise HTTPException(409, "Enable AGENT_VISION_ENABLED on the API and visual worker")
     try:
         run = await resume_visual_job(session, run_id, request.output_tokens)
         await session.commit()

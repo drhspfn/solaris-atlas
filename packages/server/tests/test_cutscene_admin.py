@@ -1,10 +1,55 @@
+import hashlib
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from wuwa_story.api.routes.cutscene_analysis import VisualRequest, create_visual_jobs, public_job
+
+
+@pytest.mark.asyncio
+async def test_http_actions_enforce_admin_and_csrf():
+    import httpx
+    from fastapi import FastAPI
+
+    from wuwa_story.api.routes import story_agent
+    from wuwa_story.auth.constants import UserRole
+    from wuwa_story.auth.dependencies import get_auth_context
+    from wuwa_story.db.session import get_session
+
+    app = FastAPI()
+    app.include_router(story_agent.admin)
+
+    async def database():
+        yield AsyncMock()
+
+    role = UserRole.USER
+
+    async def auth():
+        return SimpleNamespace(user=SimpleNamespace(role=role))
+
+    app.dependency_overrides[get_session] = database
+    app.dependency_overrides[get_auth_context] = auth
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        for path in ["/admin/story-agent/cutscenes/jobs", "/admin/story-agent/cutscenes/assets"]:
+            assert (await client.get(path)).status_code == 403
+        payload = {"asset_node_ids": [1], "game_version": "3.7.0"}
+        assert (
+            await client.post("/admin/story-agent/cutscenes/jobs", json=payload)
+        ).status_code == 403
+        role = UserRole.ADMIN
+        response = await client.post("/admin/story-agent/cutscenes/jobs", json=payload)
+        assert response.status_code == 403 and response.json()["detail"]["code"] == "CSRF_INVALID"
+        assert (
+            await client.post("/admin/story-agent/cutscenes/jobs/1/resume", json={})
+        ).status_code == 403
 
 
 @pytest.mark.asyncio
@@ -81,3 +126,52 @@ def test_public_status_contains_progress_without_raw_prompts():
     status = public_job(run())
     assert status["frames_done"] == 2 and status["frames_remaining"] == 3
     assert "settings" not in status and "raw_output" not in status
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("WUWA_TEST_DATABASE_URL"), reason="Isolated PostgreSQL required")
+async def test_postgres_assets_select_latest_versioned_bytes_and_filtered_jobs():
+    from wuwa_story.api.routes.cutscene_analysis import assets, visual_jobs
+    from wuwa_story.db.models.graph import Node, NodeType
+    from wuwa_story.db.models.storage import FileObject, FileReference, FileType
+
+    engine = create_async_engine(os.environ["WUWA_TEST_DATABASE_URL"])
+    try:
+        async with engine.connect() as connection:
+            transaction = await connection.begin()
+            async with AsyncSession(connection, expire_on_commit=False) as db:
+                suffix = uuid4().hex
+                node = Node(
+                    type_id=await db.scalar(
+                        select(NodeType.id).where(NodeType.key == "asset_reference")
+                    ),
+                    canonical_key="admin-vision:" + suffix,
+                )
+                db.add(node)
+                await db.flush()
+                file = FileObject(
+                    file_type_id=await db.scalar(select(FileType.id).limit(1)),
+                    sha256=hashlib.sha256(suffix.encode()).digest(),
+                )
+                db.add(file)
+                await db.flush()
+                for version in ["3.6.0", "3.7.0", "3.7.0"]:
+                    db.add(
+                        FileReference(
+                            owner_node_id=node.id,
+                            file_id=file.id,
+                            reference_type="cutscene_video",
+                            metadata_json={"asset_version": version},
+                        )
+                    )
+                    await db.flush()
+                result = await assets(q=suffix, before=None, limit=30, session=db)
+                assert len(result["assets"]) == 2
+                assert {item["game_version"] for item in result["assets"]} == {"3.6.0", "3.7.0"}
+                assert await visual_jobs(before=None, run_id=-1, limit=30, session=db) == {
+                    "jobs": [],
+                    "next_before": None,
+                }
+            await transaction.rollback()
+    finally:
+        await engine.dispose()
