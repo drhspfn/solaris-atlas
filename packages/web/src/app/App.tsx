@@ -25,6 +25,7 @@ import { NotFound } from '../pages/NotFoundPage';
 import { QuestPage } from '../pages/QuestTranscriptPage';
 import { SearchPage } from '../pages/SearchPage';
 import { SettingsPage } from '../pages/SettingsPage';
+import { StoryConnectionPage } from '../pages/StoryConnectionPage';
 import { StoryEventPage } from '../pages/StoryEventPage';
 import { StoryMapPage } from '../pages/StoryMapPage';
 
@@ -142,6 +143,10 @@ export function App() {
           <Route path="/quests/:key" element={<QuestPage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/story-analysis/events/:key" element={<StoryEventPage />} />
+          <Route
+            path="/story-analysis/connections/:documentId/:index"
+            element={<StoryConnectionPage />}
+          />
           <Route path="/nodes/:key" element={<NodeExplorerPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />

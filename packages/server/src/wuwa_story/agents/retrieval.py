@@ -36,7 +36,7 @@ from wuwa_story.db.models.core import (
 )
 from wuwa_story.db.models.graph import Edge, Node, NodeType
 from wuwa_story.db.models.i18n import Locale, LocalizationValue
-from wuwa_story.db.models.ops import GameRelease
+from wuwa_story.db.models.ops import GameRelease, ProcessingRun
 from wuwa_story.db.models.search import EmbeddingModel
 
 
@@ -102,11 +102,16 @@ async def public_document(
         quest,
         release.id,
         fingerprint_locale,
-        include_visual=document.metadata_json.get("schema_version") == "story-v6",
+        include_visual=document.metadata_json.get("schema_version") in ("story-v6", "story-v7"),
     ):
         return None
     corpus_changed = False
-    if document.metadata_json.get("schema_version") in ("story-v4", "story-v5", "story-v6"):
+    if document.metadata_json.get("schema_version") in (
+        "story-v4",
+        "story-v5",
+        "story-v6",
+        "story-v7",
+    ):
         corpus_changed = document.metadata_json.get(
             "source_release_ids"
         ) != await imported_snapshot_ids(session)
@@ -276,7 +281,8 @@ async def public_document(
         "quest_id": quest.game_quest_id,
         "game_version": release.game_version,
         "research_scope": "all_imported_snapshots"
-        if document.metadata_json.get("schema_version") in ("story-v4", "story-v5", "story-v6")
+        if document.metadata_json.get("schema_version")
+        in ("story-v4", "story-v5", "story-v6", "story-v7")
         else "target_snapshot",
         "locale": output_locale.code,
         "requested_locale": locale.code,
@@ -307,8 +313,56 @@ async def public_document(
         "is_supplement": bool(document.metadata_json.get("revisit")),
         "unresolved_questions": document.metadata_json.get("unresolved_questions", []),
         "events": [{"node_id": node_id, "title": title} for node_id, title in events],
-        "links": [await with_citations(item) for item in document.metadata_json.get("links", [])],
+        "links": [
+            {
+                **await with_citations(item),
+                "href": f"/story-analysis/connections/{document.id}/{index}?"
+                + urlencode({"locale": locale.code}),
+            }
+            for index, item in enumerate(document.metadata_json.get("links", []))
+        ],
         "nodes": nodes,
+    }
+
+
+async def get_connection(
+    session: AsyncSession, document_id: int, index: int, locale: str
+) -> dict[str, Any]:
+    document = await session.get(Document, document_id)
+    run = await session.get(ProcessingRun, document.processor_run_id) if document else None
+    if (
+        not document
+        or not run
+        or run.status != "completed"
+        or not document.metadata_json.get("generated")
+    ):
+        raise ValueError("Published connection not found")
+    release_id = document.metadata_json.get("release_id")
+    if document.document_type != document_type(
+        release_id
+    ) and not document.document_type.startswith("story-recontextualization:"):
+        raise ValueError("Published connection not found")
+    release = await session.get(GameRelease, release_id)
+    language = await session.scalar(select(Locale).where(Locale.code == locale))
+    quest = await session.scalar(select(Quest).where(Quest.node_id == document.node_id))
+    if not release or not language or not quest:
+        raise ValueError("Connection source not found")
+    payload = await public_document(session, document, quest, release, language)
+    if not payload or index < 0 or index >= len(payload["links"]):
+        raise ValueError("Connection unavailable or its source passages have changed")
+    link = payload["links"][index]
+    nodes = {node["id"]: node for node in payload["nodes"]}
+    return {
+        **link,
+        "document_id": document.id,
+        "revision": document.revision,
+        "quest_id": quest.game_quest_id,
+        "game_version": release.game_version,
+        "locale": payload["locale"],
+        "title": link.get("relation_label") or link["relation"],
+        "from_node": nodes.get(link["from_node_id"]),
+        "to_node": nodes.get(link["to_node_id"]),
+        "nodes": payload["nodes"],
     }
 
 

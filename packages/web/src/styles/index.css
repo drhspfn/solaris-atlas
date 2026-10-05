@@ -6274,3 +6274,94 @@ button.search-clear:focus-visible {
   outline: 2px solid var(--mint);
   outline-offset: 3px;
 }
+
+.story-reading-title {
+  margin: 28px 0 0;
+  font-size: 24px;
+  font-weight: 500;
+}
+.story-prose {
+  max-width: 72ch;
+  font-size: 16px;
+  line-height: 1.8;
+}
+.explanation-block .story-prose p,
+.story-prose li {
+  color: var(--text-primary);
+  white-space: normal;
+}
+.story-prose a,
+.story-connection-link {
+  color: var(--mint);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--border-default);
+}
+.story-prose a:hover,
+.story-connection-link:hover {
+  text-decoration-color: var(--mint);
+}
+.story-prose h4 {
+  font-size: 17px;
+  margin: 24px 0 10px;
+}
+.story-prose ul,
+.story-prose ol {
+  padding-left: 24px;
+  margin: 12px 0;
+}
+.explanation-evidence {
+  margin-top: 16px;
+  font-size: 13px;
+}
+.explanation-evidence > summary,
+.story-research-details > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 8px 0;
+}
+.explanation-evidence[open] > summary {
+  margin-bottom: 12px;
+}
+.story-connection-preview {
+  position: fixed;
+  z-index: 100;
+  width: min(320px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px #0006;
+  color: var(--text-primary);
+}
+.story-connection-preview strong,
+.story-connection-preview small {
+  display: block;
+}
+.story-connection-preview small {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.story-connection-preview strong {
+  margin-top: 8px;
+  font-size: 15px;
+}
+.story-connection-preview p {
+  margin: 10px 0;
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.story-connection-page {
+  max-width: 800px;
+}
+.story-connection-page .explanation-edge-path a {
+  color: var(--mint);
+}
+.story-connection-page h2 {
+  font-size: 18px;
+  margin-top: 32px;
+}

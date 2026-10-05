@@ -587,6 +587,58 @@ async def test_cross_patch_publication_links_to_later_source_and_invalidates_cha
         assert newer.id != run_id
 
 
+async def test_readable_connections_preserve_revisions_and_reject_stale_or_unpublished(world):
+    from wuwa_story.agents.publication import publish_analysis
+    from wuwa_story.agents.retrieval import get_connection
+
+    engine, settings, request, nodes, locale, release, quest = world
+    run_id = await create(world)
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        tools = EvidenceTools(db, run_id=run_id, quest=quest, release_id=release.id,
+            locale=locale, settings=settings, source_release_ids=await imported_snapshot_ids(db))
+        await tools.read_quest()
+        result = AnalysisResult.model_validate(result_for(nodes))
+        result.blocks[0].text = "The route changes [because the bridge is destroyed](connection:0)."
+        await tools.validate_result(result)
+        job, run = await db.get(AgentJob, run_id), await db.get(ProcessingRun, run_id)
+        first = await publish_analysis(db, job, run, result, [],
+            source_receipts=tools.validated_sources, source_nodes=tools.source_nodes)
+        await db.commit()
+        with pytest.raises(ValueError, match="Published connection"):
+            await get_connection(db, first.id, 0, "en")
+        run.status = "completed"
+        await db.commit()
+        connection = await get_connection(db, first.id, 0, "en")
+        assert connection["explanation"] == result.links[0].explanation
+        assert connection["from_node"]["id"] == nodes[3].id
+        assert connection["citations"][0]["quote"] == "The bridge was destroyed."
+        assert connection["href"].startswith(f"/story-analysis/connections/{first.id}/0?")
+        with pytest.raises(ValueError):
+            await get_connection(db, first.id, -1, "en")
+        with pytest.raises(ValueError):
+            await get_connection(db, first.id, 1, "en")
+
+        original = result.links[0].explanation
+        result.links[0].explanation = "The blocked crossing requires a detour; the damage is already present when reported."
+        settings.model += "-revision"
+        next_run = await enqueue_analysis(db, request, settings)
+        next_run.prompt_version = "story-v4"
+        next_run.status = "completed"
+        next_job = await db.get(AgentJob, next_run.id)
+        second = await publish_analysis(db, next_job, next_run, result, [],
+            source_receipts=tools.validated_sources, source_nodes=tools.source_nodes)
+        await db.commit()
+        assert (await get_connection(db, first.id, 0, "en"))["explanation"] == original
+        assert (await get_connection(db, second.id, 0, "en"))["explanation"] == result.links[0].explanation
+        assert await db.scalar(select(func.count()).select_from(Edge).where(
+            Edge.from_node_id == nodes[3].id, Edge.to_node_id == nodes[4].id,
+            Edge.layer == "semantic", Edge.basis == "inference")) == 1
+        (await db.get(DialogueLine, nodes[3].id)).inline_text = "Changed source evidence."
+        await db.commit()
+        with pytest.raises(ValueError, match="source passages have changed"):
+            await get_connection(db, second.id, 0, "en")
+
+
 async def test_new_import_changes_job_identity_without_widening_a_queued_run(world):
     engine, settings, request, nodes, _, _, _ = world
     first_id = await create(world)

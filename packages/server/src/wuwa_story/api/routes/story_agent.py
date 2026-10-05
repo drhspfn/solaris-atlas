@@ -12,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from wuwa_story.agents.budget import settle
 from wuwa_story.agents.contracts import AnalysisRequest, StrictModel
 from wuwa_story.agents.jobs import enqueue_analysis, resume_analysis
-from wuwa_story.agents.retrieval import get_explanation, query_vector, scope, search_explanations
+from wuwa_story.agents.retrieval import (
+    get_connection,
+    get_explanation,
+    query_vector,
+    scope,
+    search_explanations,
+)
 from wuwa_story.agents.settings import AgentSettings, get_agent_settings
 from wuwa_story.agents.trace import legacy_trace
 from wuwa_story.auth.dependencies import require_admin, require_csrf
@@ -348,6 +354,19 @@ async def explanation(
 ) -> dict[str, Any]:
     try:
         return await get_explanation(session, quest_id, game_version, locale)
+    except ValueError as error:
+        raise HTTPException(404, str(error)) from error
+
+
+@router.get("/story-analysis/connections/{document_id}/{index}")
+async def connection(
+    document_id: int,
+    index: int,
+    locale: str = "en",
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    try:
+        return await get_connection(session, document_id, index, locale)
     except ValueError as error:
         raise HTTPException(404, str(error)) from error
 

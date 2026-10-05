@@ -2,6 +2,17 @@
 
 ## Cited story explanations
 
+The primary explanation is readable prose with section headings and bounded
+Markdown formatting. The agent may embed contextual links to its own sourced
+connections, events and records; arbitrary URLs, HTML and remote images are not
+rendered. Sources, chronology, confidence and related graph records remain in
+closed disclosures. A connection link opens a read-only description with source
+passages. Its hover/focus preview is dismissible with Escape and stays within the
+viewport; touch users can open the same page directly. URLs identify an immutable
+published analysis revision and link ordinal. New analyses may refine an
+interpretation without rewriting the old description or imported game facts.
+Changed source receipts invalidate the description. Browsing never starts analysis.
+
 V6 uses authored main-quest classification as the primary narrative role; secondary
 functions remain separate. Unknown branch occurrence is disclosed once per analysis,
 while real choices and conditions retain their per-claim labels. Visual descriptions

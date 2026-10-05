@@ -126,7 +126,15 @@ def system_prompt(
         "ambiguous, inconsistent or seems wrong, re-read the same node with locale zh-Hans and ja "
         "and compare; the Chinese original takes precedence for meaning. Include the returned source "
         "locale in each citation. Report unresolved translation conflicts; never invent missing text. "
-        "Use related_node_ids for clickable references; no external URLs or HTML. "
+        "Write block.text as readable Markdown prose: explain what happens, why it matters and "
+        "how people/events are connected. Block titles are section headings; do not repeat them "
+        "inside the text. Use paragraphs, occasional emphasis and short lists, not a technical report. "
+        "Keep certainty, chronology and evidence in assertions; qualify genuinely uncertain claims "
+        "in the prose without repeating technical disclaimers. Future revelations stay in "
+        "later_resolution, never in the main narrative. Embed contextual links like "
+        "[because of the incident](connection:0), where 0 is the zero-based index in result.links. "
+        "Use [the event](event:0) for result.events, or [a source](record:123) for a block's "
+        "related_records/related_node_ids or cited node. Never guess IDs or link to external URLs/HTML. "
         "Explain who, what, why and consequences, with concise section titles and passage annotations. "
         "In every block, split all substantive claims into atomic assertions with exact citations and "
         "status confirmed, observed_anomaly, inferred or unresolved. Apparent drowning is an inference; "
@@ -140,6 +148,9 @@ def system_prompt(
         "Do not conflate authored branches as one timeline. Preserve open clues even if later explained. "
         "Use related_records with a readable label explaining why each source matters. Graph links "
         "need a human relation_label, existing ontology relation, explanation, confidence and citations. "
+        "Explain the relationship itself in plain language: what connects the subjects, who did "
+        "what, and why it matters. You may explain an existing connection or add a missing one "
+        "between sourced entities. A new analysis revises the interpretation, not imported facts. "
         "Only create links between discovered nodes; report missing entities/relations in notes. "
         f"Write in locale {locale}. Finish via finish_analysis as the ONLY tool call in that turn. "
         "Allowed relations: "
@@ -439,7 +450,7 @@ async def run_locked(
             quest,
             job.release_id,
             fingerprint_locale,
-            include_visual=run.prompt_version == "story-v6",
+            include_visual=run.prompt_version in ("story-v6", "story-v7"),
         )
         != run.input_hash
     ):
@@ -450,8 +461,8 @@ async def run_locked(
     cp = dict(job.checkpoint)
     step_ceiling = max(settings.max_steps, cp.get("step_ceiling", 0))
     cp["step_ceiling"] = step_ceiling
-    cross_snapshot = run.prompt_version in ("story-v4", "story-v5", "story-v6")
-    adaptive = run.prompt_version in ("story-v5", "story-v6")
+    cross_snapshot = run.prompt_version in ("story-v4", "story-v5", "story-v6", "story-v7")
+    adaptive = run.prompt_version in ("story-v5", "story-v6", "story-v7")
     revisit = run.metadata_json.get("revisit")
     source_release_ids = run.metadata_json.get("source_release_ids") if cross_snapshot else None
     if cross_snapshot and (not source_release_ids or job.release_id not in source_release_ids):
@@ -652,7 +663,7 @@ async def run_locked(
                             raise ValueError("Assessment must be the only call in this turn")
                         selected = QuestAssessment.model_validate(tool_call.arguments)
                         authored_type = None
-                        if run.prompt_version == "story-v6":
+                        if run.prompt_version in ("story-v6", "story-v7"):
                             authored_type = await evidence.authored_quest_type()
                             selected = primary_quest_role(selected, authored_type)
                         policy = assessment_policy(selected, authored_main=authored_type == "1")
@@ -700,17 +711,28 @@ async def run_locked(
                             if assessment is None:
                                 raise ValueError("Classify this quest before publishing")
                             candidate.assessment = assessment
-                            validate_lore_result(candidate, assessment, authored_main=cp.get("authored_quest_type") == "1")
+                            validate_lore_result(
+                                candidate,
+                                assessment,
+                                authored_main=cp.get("authored_quest_type") == "1",
+                            )
                         if revisit:
                             validate_revisit(candidate, revisit)
                         elif candidate.revisited_hooks:
                             raise ValueError("Hook reviews require a focused revisit job")
-                        if run.prompt_version in ("story-v3", "story-v4", "story-v5", "story-v6"):
+                        if run.prompt_version in (
+                            "story-v3",
+                            "story-v4",
+                            "story-v5",
+                            "story-v6",
+                            "story-v7",
+                        ):
                             candidate.validate_temporal_structure()
                         await evidence.validate_result(
                             candidate,
                             require_full_quest=not bool(revisit),
-                            require_visual=run.prompt_version == "story-v6" and not bool(revisit),
+                            require_visual=run.prompt_version in ("story-v6", "story-v7")
+                            and not bool(revisit),
                         )
                         result = candidate
                         output = {"validated": True}
@@ -733,10 +755,12 @@ async def run_locked(
                         "validation": validation,
                     }
                 event = {
-                    "name": tool_call.name, "call_id": tool_call.id,
+                    "name": tool_call.name,
+                    "call_id": tool_call.id,
                     "arguments": preview(tool_call.arguments),
                     "status": "error" if "error" in output else "ok",
-                    "validation": validation, "result": preview(output),
+                    "validation": validation,
+                    "result": preview(output),
                     "duration_ms": round((time.monotonic() - started) * 1000),
                     "repeat_count": repeats,
                     "new_evidence": len(evidence.evidence) - len(previous_evidence),
@@ -784,8 +808,9 @@ async def run_locked(
             if result:
                 cp["result"] = result.model_dump()
             job.checkpoint = cp
-            recorded_call = await session.scalar(select(AgentCall).where(
-                AgentCall.run_id == run.id, AgentCall.step == step))
+            recorded_call = await session.scalar(
+                select(AgentCall).where(AgentCall.run_id == run.id, AgentCall.step == step)
+            )
             if recorded_call is not None:
                 recorded_call.response = {
                     **(recorded_call.response or {}),
@@ -849,7 +874,7 @@ async def run_locked(
             quest,
             job.release_id,
             fingerprint_locale,
-            include_visual=run.prompt_version == "story-v6",
+            include_visual=run.prompt_version in ("story-v6", "story-v7"),
         )
         != run.input_hash
     ):
@@ -861,7 +886,7 @@ async def run_locked(
         await evidence.validate_result(
             result,
             require_full_quest=not bool(revisit),
-            require_visual=run.prompt_version == "story-v6" and not bool(revisit),
+            require_visual=run.prompt_version in ("story-v6", "story-v7") and not bool(revisit),
         )
     except ValueError:
         await pause(
