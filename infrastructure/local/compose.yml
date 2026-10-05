@@ -146,6 +146,23 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  cutscene-vision:
+    build:
+      context: ../..
+      dockerfile: packages/worker/Dockerfile
+    env_file:
+      - ../../packages/worker/.env
+    profiles: ["cutscene-vision"]
+    command: ["wuwa-story-worker", "run", "--queue", "cutscene_vision"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://wuwa:wuwa@postgres:5432/wuwa_story
+      RABBITMQ_URL: amqp://wuwa:wuwa@rabbitmq:5672/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
   asset-worker:
     build:
       context: ../..

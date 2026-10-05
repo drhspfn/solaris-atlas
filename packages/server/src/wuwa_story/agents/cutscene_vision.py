@@ -59,6 +59,12 @@ def validate_batch(raw: str, times: list[float]) -> dict:
     batch = VisualBatch.model_validate_json(raw)
     if any(not times[0] - 0.05 <= event.time <= times[-1] + 0.05 for event in batch.events):
         raise ValueError("Observation timestamp is outside the sampled batch")
+    if len(batch.events) != len(times) or any(
+        abs(event.time - time) > 0.05 for event, time in zip(batch.events, times, strict=True)
+    ):
+        raise ValueError(
+            "Return one timestamped observation for every sampled frame, including the ending"
+        )
     return batch.model_dump()
 
 
@@ -194,6 +200,7 @@ async def resume_visual_job(session: AsyncSession, run_id: int, output_tokens: i
             "paused_validation",
             "paused_provider",
             "paused_config",
+            "paused_input",
         )
     ):
         raise ValueError(

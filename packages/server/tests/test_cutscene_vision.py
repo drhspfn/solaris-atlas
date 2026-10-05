@@ -1,8 +1,13 @@
+import hashlib
 import json
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from wuwa_story.agents.contracts import CutsceneDescription, QuestAssessment
 from wuwa_story.agents.cutscene_vision import (
@@ -15,6 +20,8 @@ from wuwa_story.agents.cutscene_vision import (
 )
 from wuwa_story.agents.lore import assessment_policy, primary_quest_role
 from wuwa_story.agents.settings import AgentSettings
+from wuwa_story.db.models.graph import Node, NodeType
+from wuwa_story.db.models.storage import FileObject, FileReference, FileType
 
 
 def test_sampling_includes_ending_and_bounds_long_videos():
@@ -39,6 +46,8 @@ def test_batch_rejects_truncation_wrong_time_and_out_of_order():
     for raw in ['{"summary":', encode([event(3)]), encode([event(2), event(1)]), encode([])]:
         with pytest.raises(ValueError):
             validate_batch(raw, [1, 2])
+    with pytest.raises(ValueError, match="every sampled frame"):
+        validate_batch(encode([event(1)]), [1, 2])
 
 
 def description(**changes):
@@ -101,6 +110,10 @@ def test_main_quest_cannot_be_downgraded_to_region_lore():
     assert main.secondary_functions == ["region_lore", "Sentinel_arc"]
     assert assessment_policy(main)["depth"] == "full"
     assert primary_quest_role(assessment, None).narrative_weight == "region_lore"
+    main.signals = []
+    assert assessment_policy(main, authored_main=True)["depth"] == "full"
+    with pytest.raises(ValueError, match="cited"):
+        assessment_policy(main)  # A model-supplied label alone is insufficient.
 
 
 @pytest.mark.asyncio
@@ -155,3 +168,59 @@ async def test_single_frame_truncation_needs_explicit_larger_output_allowance():
     )
     with pytest.raises(ValueError, match="Increase output"):
         await resume_visual_job(db, 1, settings.vision_output_tokens)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("WUWA_TEST_DATABASE_URL"), reason="Isolated PostgreSQL required")
+async def test_postgres_job_dedup_and_report_content_identity():
+    engine = create_async_engine(os.environ["WUWA_TEST_DATABASE_URL"])
+    try:
+        async with engine.connect() as connection:
+            transaction = await connection.begin()
+            async with AsyncSession(connection, expire_on_commit=False) as db:
+                suffix = uuid4().hex
+                node = Node(
+                    type_id=await db.scalar(
+                        select(NodeType.id).where(NodeType.key == "asset_reference")
+                    ),
+                    canonical_key="vision-test:" + suffix,
+                )
+                db.add(node)
+                await db.flush()
+                file = FileObject(
+                    file_type_id=await db.scalar(select(FileType.id).limit(1)),
+                    sha256=hashlib.sha256(suffix.encode()).digest(),
+                )
+                db.add(file)
+                await db.flush()
+                reference = FileReference(
+                    owner_node_id=node.id,
+                    file_id=file.id,
+                    reference_type="cutscene_video",
+                    metadata_json={"asset_version": "3.7.0"},
+                )
+                db.add(reference)
+                await db.flush()
+                settings = AgentSettings(_env_file=None, vision_enabled=True)
+                first = await enqueue_visual_job(db, reference, settings)
+                assert (await enqueue_visual_job(db, reference, settings)).id == first.id
+                assert await visual_reference(db, node.id) is None
+                report = FileReference(
+                    owner_node_id=node.id,
+                    file_id=file.id,
+                    reference_type="cutscene_visual_description",
+                    metadata_json={
+                        "asset_version": "3.7.0",
+                        "complete": True,
+                        "source_sha256": file.sha256.hex(),
+                    },
+                )
+                db.add(report)
+                await db.flush()
+                assert (await visual_reference(db, node.id)).id == report.id
+                report.metadata_json = {**report.metadata_json, "source_sha256": "obsolete"}
+                await db.flush()
+                assert await visual_reference(db, node.id) is None
+            await transaction.rollback()
+    finally:
+        await engine.dispose()

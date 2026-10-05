@@ -10,11 +10,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from wuwa_story.agents.contracts import AnalysisRequest
+from wuwa_story.agents.cutscene_vision import enqueue_visual_job, resume_visual_job
 from wuwa_story.agents.jobs import enqueue_analysis
 from wuwa_story.agents.settings import get_agent_settings
 from wuwa_story.config.settings import get_settings
+from wuwa_story.db.models.ops import ProcessingRun, Processor
+from wuwa_story.db.models.storage import FileReference
 from wuwa_story.ingestion.compiler_importer import CompiledDatasetImporter
 
 from wuwa_story_worker.asset_export import export_assets
@@ -26,6 +30,7 @@ from wuwa_story_worker.asset_jobs import (
 )
 from wuwa_story_worker.broker import consume_jobs, replay_failed_jobs
 from wuwa_story_worker.client_assets import discover_plan, download_plan, save_json
+from wuwa_story_worker.cutscene_vision import dispatch_visual_jobs, process_cutscene_vision
 from wuwa_story_worker.entity_media import process_entity_media
 from wuwa_story_worker.map_assets import build_maps, refresh_map_sources
 from wuwa_story_worker.queues import QUEUES, queue_concurrency
@@ -45,8 +50,30 @@ def _parser() -> argparse.ArgumentParser:
     agent = commands.add_parser("enqueue-analysis", help="Queue source-cited story analysis")
     agent.add_argument("--quest-id", type=int, required=True)
     agent.add_argument("--version", required=True)
-    agent.add_argument("--locale", default="en", help="Explanation language; source reading uses all available translations")
-    agent.add_argument("--generation", default="", help="Explicit new generation token; default deduplicates")
+    agent.add_argument(
+        "--locale",
+        default="en",
+        help="Explanation language; source reading uses all available translations",
+    )
+    agent.add_argument(
+        "--generation", default="", help="Explicit new generation token; default deduplicates"
+    )
+    vision = commands.add_parser(
+        "enqueue-cutscene-vision", help="Queue bounded visual analysis for already imported videos"
+    )
+    vision.add_argument("--version", required=True)
+    vision.add_argument("--limit", type=int, default=20)
+    vision.add_argument("--offset", type=int, default=0)
+    vision.add_argument("--asset-node-id", type=int)
+    vision_resume = commands.add_parser(
+        "resume-cutscene-vision", help="Resume a paused visual job with known billing"
+    )
+    vision_resume.add_argument("run_id", type=int)
+    vision_resume.add_argument("--output-tokens", type=int)
+    vision_status = commands.add_parser(
+        "cutscene-vision-status", help="Inspect visual jobs without making provider calls"
+    )
+    vision_status.add_argument("--limit", type=int, default=20)
     runner = commands.add_parser("run", help="Consume selected RabbitMQ jobs")
     runner.add_argument("--queue", action="append", choices=tuple(QUEUES), default=None)
     assets = commands.add_parser("plan-assets", help="Inspect official client archives without downloading")
@@ -80,8 +107,14 @@ def _parser() -> argparse.ArgumentParser:
     maps.add_argument("root", type=Path)
     maps.add_argument("--fmodel", type=Path, required=True)
     maps.add_argument("--converter", type=Path, required=True, help="CUE4Parse.CLI executable")
-    maps.add_argument("--publish", action="store_true", help="Register maps and content addressed files in PostgreSQL and S3")
-    refresh_maps = commands.add_parser("refresh-map-sources", help="Refresh item acquisition evidence for published map markers")
+    maps.add_argument(
+        "--publish",
+        action="store_true",
+        help="Register maps and content addressed files in PostgreSQL and S3",
+    )
+    refresh_maps = commands.add_parser(
+        "refresh-map-sources", help="Refresh item acquisition evidence for published map markers"
+    )
     refresh_maps.add_argument("root", type=Path)
     map_enqueue = commands.add_parser("enqueue-maps", help="Queue map extraction for a downloaded client plan")
     map_enqueue.add_argument("plan", type=Path)
@@ -143,8 +176,10 @@ def discover_versioned_datasets(root: Path, first: str, last: str) -> list[tuple
     missing = []
     for major in range(first_parts[0], last_parts[0] + 1):
         lower = first_parts[1] if major == first_parts[0] else 0
-        upper = last_parts[1] if major == last_parts[0] else max(
-            (minor for candidate, minor in available if candidate == major), default=lower
+        upper = (
+            last_parts[1]
+            if major == last_parts[0]
+            else max((minor for candidate, minor in available if candidate == major), default=lower)
         )
         missing.extend(f"{major}.{minor}" for minor in range(lower, max(lower, upper) + 1)
                        if (major, minor) not in available)
@@ -169,14 +204,22 @@ async def _import_datasets(datasets: list[tuple[str, Path]], batch_size: int) ->
 
 
 async def _run(queues: list[str] | None = None) -> None:
-    handlers = {"snapshot_build": build_and_import_snapshot, "asset_download": download_client_assets,
-                "asset_extract": extract_client_assets, "entity_media": process_entity_media,
-                "story_agent": process_story_analysis}
+    handlers = {
+        "snapshot_build": build_and_import_snapshot,
+        "asset_download": download_client_assets,
+        "asset_extract": extract_client_assets,
+        "entity_media": process_entity_media,
+        "story_agent": process_story_analysis,
+        "cutscene_vision": process_cutscene_vision,
+    }
     # Existing workers keep their snapshot-only role unless explicitly configured.
     selected = {key: handlers[key] for key in (queues or ["snapshot_build"])}
-    if "story_agent" in selected:
+    if "story_agent" in selected or "cutscene_vision" in selected:
         async with asyncio.TaskGroup() as tasks:
-            tasks.create_task(dispatch_story_revisits())
+            if "story_agent" in selected:
+                tasks.create_task(dispatch_story_revisits())
+            if "cutscene_vision" in selected:
+                tasks.create_task(dispatch_visual_jobs())
             tasks.create_task(consume_jobs(selected))
     else:
         await consume_jobs(selected)
@@ -194,12 +237,88 @@ async def _replay_failed(args: argparse.Namespace) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = _parser().parse_args()
-    if args.command == "enqueue-analysis":
+    if args.command in (
+        "enqueue-cutscene-vision",
+        "resume-cutscene-vision",
+        "cutscene-vision-status",
+    ):
+        from wuwa_story.db.session import SessionFactory
+
+        async def visual_command():
+            async with SessionFactory() as session:
+                if args.command == "resume-cutscene-vision":
+                    runs = [await resume_visual_job(session, args.run_id, args.output_tokens)]
+                elif args.command == "cutscene-vision-status":
+                    if not 1 <= args.limit <= 1000:
+                        raise ValueError("Limit must be between 1 and 1000")
+                    runs = list(
+                        await session.scalars(
+                            select(ProcessingRun)
+                            .join(Processor)
+                            .where(Processor.key == "cutscene_vision")
+                            .order_by(ProcessingRun.id.desc())
+                            .limit(args.limit)
+                        )
+                    )
+                else:
+                    settings = get_agent_settings()
+                    if not settings.vision_enabled or not 1 <= args.limit <= 1000 or args.offset < 0:
+                        raise ValueError(
+                            "Enable AGENT_VISION_ENABLED and use a limit between 1 and 1000"
+                        )
+                    # Select latest bytes per variant, not every historical re-import reference.
+                    references = list(
+                        await session.scalars(
+                            select(FileReference)
+                            .where(
+                                FileReference.reference_type == "cutscene_video",
+                                FileReference.owner_node_id.is_not(None),
+                                FileReference.metadata_json["asset_version"].astext == args.version,
+                                *([FileReference.owner_node_id == args.asset_node_id] if args.asset_node_id else []),
+                            )
+                            .distinct(FileReference.owner_node_id)
+                            .order_by(FileReference.owner_node_id, FileReference.id.desc())
+                            .limit(args.limit)
+                            .offset(args.offset)
+                        )
+                    )
+                    runs = [
+                        await enqueue_visual_job(session, reference, settings)
+                        for reference in references
+                    ]
+                await session.commit()
+                print(
+                    json.dumps(
+                        [
+                            {
+                                "id": run.id,
+                                "asset_node_id": run.target_node_id,
+                                "status": run.status,
+                                "step": (run.raw_output or {}).get("step", 0),
+                                "batches": len((run.raw_output or {}).get("batches", [])),
+                                "error": run.error,
+                            }
+                            for run in runs
+                        ]
+                    )
+                )
+
+        asyncio.run(visual_command())
+    elif args.command == "enqueue-analysis":
         from wuwa_story.db.session import SessionFactory
 
         async def enqueue():
             async with SessionFactory() as session:
-                run = await enqueue_analysis(session, AnalysisRequest(quest_id=args.quest_id, game_version=args.version, locale=args.locale, generation=args.generation), get_agent_settings())
+                run = await enqueue_analysis(
+                    session,
+                    AnalysisRequest(
+                        quest_id=args.quest_id,
+                        game_version=args.version,
+                        locale=args.locale,
+                        generation=args.generation,
+                    ),
+                    get_agent_settings(),
+                )
                 print(json.dumps({"id": run.id, "status": run.status}))
 
         asyncio.run(enqueue())
@@ -210,23 +329,51 @@ def main() -> None:
         plan = discover_plan(args.version, args.tier)
         if args.output:
             save_json(args.output, plan)
-        print(json.dumps({"version": plan["version"], "tier": plan["tier"], "id": plan["id"],
-                          "files": len(plan["files"]), "download_gib": round(sum(item["size"] for item in plan["files"]) / 1024 ** 3, 2),
-                          "keys_commit": plan["keys_commit"]}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "version": plan["version"],
+                    "tier": plan["tier"],
+                    "id": plan["id"],
+                    "files": len(plan["files"]),
+                    "download_gib": round(sum(item["size"] for item in plan["files"]) / 1024**3, 2),
+                    "keys_commit": plan["keys_commit"],
+                },
+                indent=2,
+            )
+        )
     elif args.command == "enqueue-assets":
         asyncio.run(enqueue_assets(json.loads(args.plan.read_text(encoding="utf-8"))))
     elif args.command == "download-assets":
-        root = download_plan(json.loads(args.plan.read_text(encoding="utf-8")), args.workspace.resolve(), args.concurrency)
+        root = download_plan(
+            json.loads(args.plan.read_text(encoding="utf-8")),
+            args.workspace.resolve(),
+            args.concurrency,
+        )
         print(root)
     elif args.command == "plan-voices":
         plan = discover_voice_plan(
             args.version, args.public_config, args.config_crypto)
         save_json(args.output, plan)
-        print(json.dumps({"id": plan["id"], "languages": plan["languages"], "files": len(plan["files"]),
-                          "download_gib": round(sum(item["size"] for item in plan["files"]) / 1024 ** 3, 2)}))
+        print(
+            json.dumps(
+                {
+                    "id": plan["id"],
+                    "languages": plan["languages"],
+                    "files": len(plan["files"]),
+                    "download_gib": round(sum(item["size"] for item in plan["files"]) / 1024**3, 2),
+                }
+            )
+        )
     elif args.command == "download-voices":
-        print(download_voice_plan(json.loads(args.plan.read_text(encoding="utf-8")), args.workspace,
-                                  args.installed_game, args.concurrency))
+        print(
+            download_voice_plan(
+                json.loads(args.plan.read_text(encoding="utf-8")),
+                args.workspace,
+                args.installed_game,
+                args.concurrency,
+            )
+        )
     elif args.command == "extract-assets":
         print(asyncio.run(export_assets(args.root.resolve(), args.fmodel, args.filter, args.upload)))
     elif args.command == "extract-maps":
