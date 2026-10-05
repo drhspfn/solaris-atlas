@@ -287,7 +287,7 @@ class Provider:
         except (httpx.HTTPError, json.JSONDecodeError) as error:
             raise ProviderFailure("provider_transport_or_json_error") from error
 
-    def parse(self, raw: dict[str, Any]) -> Turn:
+    def parse(self, raw: dict[str, Any], *, enforce_tool_limit: bool = True) -> Turn:
         source, output = token_usage(raw, self.settings.provider)
         calls: list[ToolCall] = []
         texts: list[str] = []
@@ -338,7 +338,7 @@ class Provider:
                 elif "text" in part and not part.get("thought"):
                     texts.append(part["text"])
             complete = candidate.get("finishReason") == "STOP"
-        if len(calls) > self.settings.max_tool_calls_per_step or any(
+        if (enforce_tool_limit and len(calls) > self.settings.max_tool_calls_per_step) or any(
             not isinstance(call.arguments, dict) for call in calls
         ):
             raise ProviderFailure("invalid_tool_calls")

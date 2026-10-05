@@ -27,6 +27,17 @@ test('uncertain charges, active runs and terminal failures cannot be restarted',
     assert.throws(() => resumeBody({ ...job, status }, 16));
   }
 });
+test('validated historical tool overflow replays with the existing bound', () => {
+  const recoverable = {
+    ...job,
+    status: 'failed',
+    recovery: 'recorded_tools',
+    limits: { ...job.limits, max_tool_calls_per_step: 20 },
+  };
+  assert.equal(resumePolicy(recoverable).allowed, true);
+  assert.deepEqual(resumeBody(recoverable, 0), { tool_calls_per_step: 20 });
+  assert.equal(resumePolicy({ ...recoverable, recovery: null }).allowed, false);
+});
 test('output recovery raises only the response bound and adds a step when required', () => {
   const truncated = {
     ...job,

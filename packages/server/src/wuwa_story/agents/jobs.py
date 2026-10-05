@@ -257,7 +257,7 @@ async def resume_analysis(
             raise ValueError("No completed provider response is available to replay")
         try:
             async with httpx.AsyncClient() as client:
-                turn = Provider(config, client).parse(call.response)
+                turn = Provider(config, client).parse(call.response, enforce_tool_limit=False)
             if not turn.complete:
                 raise ValueError("Recorded response is incomplete")
         except (ValueError, KeyError, TypeError, IndexError) as error:

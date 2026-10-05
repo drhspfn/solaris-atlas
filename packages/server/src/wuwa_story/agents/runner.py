@@ -611,7 +611,7 @@ async def run_locked(
                 )
                 return
             try:
-                turn = provider.parse(raw)
+                turn = provider.parse(raw, enforce_tool_limit=False)
             except (ValueError, KeyError, TypeError, IndexError):
                 await pause(
                     session, run, "failed", "Malformed provider turn; recorded usage is retained"
@@ -627,7 +627,7 @@ async def run_locked(
                 history.extend(
                     provider.initial("", "Use tools to research or finish_analysis to publish.")[1:]
                 )
-            for tool_call in turn.calls:
+            for tool_index, tool_call in enumerate(turn.calls):
                 started = time.monotonic()
                 fingerprint = signature(tool_call.name, tool_call.arguments)
                 repeats = signatures.get(fingerprint, 0)
@@ -648,6 +648,11 @@ async def run_locked(
                 previous_source_evidence = dict(evidence.source_evidence)
                 previous_source_nodes = dict(evidence.source_nodes)
                 try:
+                    if tool_index >= settings.max_tool_calls_per_step:
+                        raise ValueError(
+                            f"Tool call limit reached ({settings.max_tool_calls_per_step}); "
+                            "this call was not executed. Request remaining tools in another turn."
+                        )
                     if prescan and tool_call.name not in {tool["name"] for tool in step_tools}:
                         raise ValueError(
                             "Complete assess_quest before broad research or publication"

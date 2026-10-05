@@ -30,6 +30,7 @@ export type AgentCall = {
   provider_error: { code: string; retry_after_seconds: number | null } | null;
 };
 export type AgentDetail = Omit<AgentJob, 'max_steps' | 'model'> & {
+  recovery?: 'recorded_tools' | null;
   assessment?: { narrative_weight: string; hook_priority: string; reason: string } | null;
   policy?: { depth: string; words: number } | null;
   limits: {
@@ -58,6 +59,11 @@ export type AgentUsage = {
 };
 
 export function resumePolicy(job: AgentDetail): { allowed: boolean; help: string } {
+  if (job.status === 'failed' && job.recovery === 'recorded_tools')
+    return {
+      allowed: true,
+      help: 'Replay the recorded response from saved research. Extra tool calls will be declined without raising the per-step or daily budget limits.',
+    };
   if (job.status === 'paused_output') {
     const allowed =
       job.limits.max_output_tokens < APP_SETTINGS.storyAgent.maxOutputTokens && job.step < 99;
@@ -119,6 +125,8 @@ export function resumePolicy(job: AgentDetail): { allowed: boolean; help: string
 
 export function resumeBody(job: AgentDetail, extraSteps: number): Record<string, number | boolean> {
   if (!resumePolicy(job).allowed) throw new Error('This run cannot be resumed from the panel.');
+  if (job.status === 'failed' && job.recovery === 'recorded_tools')
+    return { tool_calls_per_step: job.limits.max_tool_calls_per_step };
   if (job.status === 'paused_output')
     return {
       output_tokens: Math.min(

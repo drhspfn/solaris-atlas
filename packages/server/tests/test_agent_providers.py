@@ -138,6 +138,17 @@ def test_vectors_and_missing_usage_are_rejected():
             provider.parse({"output": []})
 
 
+def test_excess_tools_can_be_decoded_for_bounded_execution_without_accepting_invalid_arguments():
+    provider = Provider(AgentSettings(_env_file=None, max_tool_calls_per_step=1), None)
+    raw = {"status":"completed", "usage":{"input_tokens":10,"output_tokens":5}, "output":[{"type":"function_call", "call_id":str(i), "name":"read_node", "arguments":'{"node_id":1}'} for i in range(2)]}
+    with pytest.raises(ProviderFailure, match="invalid_tool_calls"):
+        provider.parse(raw)
+    assert len(provider.parse(raw, enforce_tool_limit=False).calls) == 2
+    raw["output"][0]["arguments"] = '[]'
+    with pytest.raises(ProviderFailure, match="invalid_tool_calls"):
+        provider.parse(raw, enforce_tool_limit=False)
+
+
 @pytest.mark.parametrize(
     "code,retryable",
     [

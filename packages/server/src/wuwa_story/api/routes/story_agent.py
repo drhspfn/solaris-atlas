@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from zoneinfo import ZoneInfo
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import Field
 from sqlalchemy import select, text
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from wuwa_story.agents.budget import settle
 from wuwa_story.agents.contracts import AnalysisRequest, StrictModel
 from wuwa_story.agents.jobs import enqueue_analysis, resume_analysis
+from wuwa_story.agents.providers import Provider
 from wuwa_story.agents.retrieval import (
     get_connection,
     get_explanation,
@@ -152,8 +154,20 @@ async def job_status(run_id: int, session: AsyncSession = Depends(get_session)) 
             select(AgentCall).where(AgentCall.run_id == run_id).order_by(AgentCall.step)
         )
     )
+    recovery = None
+    if run.status == "failed" and run.error == "Malformed provider turn; recorded usage is retained":
+        recorded = next((call for call in calls if call.step == job.checkpoint.get("step", 0) and call.status == "completed" and call.kind == "analysis"), None)
+        if recorded and recorded.response:
+            try:
+                async with httpx.AsyncClient() as client:
+                    parsed = Provider(AgentSettings(_env_file=None, **job.config), client).parse(recorded.response, enforce_tool_limit=False)
+                if parsed.complete and parsed.calls:
+                    recovery = "recorded_tools"
+            except (ValueError, KeyError, TypeError, IndexError):
+                pass
     return {
         "id": run.id,
+        "recovery": recovery,
         "status": run.status,
         "step": job.checkpoint.get("step", 0),
         "document_id": job.document_id,

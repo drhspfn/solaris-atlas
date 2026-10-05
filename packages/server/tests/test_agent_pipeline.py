@@ -1731,7 +1731,7 @@ async def test_output_limit_recovery_rejects_other_provider_failures(world):
         assert run.status == "failed"
 
 
-async def test_recorded_turn_replays_after_explicit_tool_limit_increase(world):
+async def test_recorded_excess_turn_replays_without_raising_tool_limit(world, monkeypatch):
     engine, settings, _, nodes, *_ = world
     settings.max_tool_calls_per_step = 1
     run_id = await create(world)
@@ -1741,6 +1741,8 @@ async def test_recorded_turn_replays_after_explicit_tool_limit_increase(world):
         calls.append(json.loads(request.content))
         if len(calls) == 1:
             items = [("read_quest", {}), ("read_node", {"node_id": nodes[3].id})]
+        elif len(calls) == 2:
+            items = [("read_node", {"node_id": nodes[3].id})]
         else:
             items = [("finish_analysis", {"result_json": json.dumps(result_for(nodes))})]
         return httpx.Response(
@@ -1761,19 +1763,27 @@ async def test_recorded_turn_replays_after_explicit_tool_limit_increase(world):
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
-        await execute_job(run_id, engine, settings, client)
+        # Reproduce a historical run paused by the old strict parser.
+        with monkeypatch.context() as legacy:
+            def reject(*args, **kwargs):
+                raise ValueError("invalid_tool_calls")
+            legacy.setattr(Provider, "parse", reject)
+            await execute_job(run_id, engine, settings, client)
         async with AsyncSession(engine, expire_on_commit=False) as db:
             assert (await db.get(ProcessingRun, run_id)).status == "failed"
             with pytest.raises(ValueError, match="cannot be resumed"):
                 await resume_analysis(db, run_id)
-            with pytest.raises(ValueError, match="cannot be replayed"):
-                await resume_analysis(db, run_id, tool_calls_per_step=1)
-            await resume_analysis(db, run_id, tool_calls_per_step=2)
+            await resume_analysis(db, run_id, tool_calls_per_step=1)
         await execute_job(run_id, engine, settings, client)
-    assert len(calls) == 2
+    assert len(calls) == 3
+    outputs = [item for item in calls[1]["input"] if item.get("type") == "function_call_output"]
+    assert len(outputs) == 2
+    assert "not executed" in outputs[1]["output"]
     async with AsyncSession(engine) as db:
         run = await db.get(ProcessingRun, run_id)
-        assert run.status == "completed" and run.tokens_input == 200
+        assert run.status == "completed" and run.tokens_input == 300
+        job = await db.get(AgentJob, run_id)
+        assert job.config["max_tool_calls_per_step"] == 1
 
 
 async def test_pagination_unread_citations_and_changed_sources(world):
