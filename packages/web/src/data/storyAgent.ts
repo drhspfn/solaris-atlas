@@ -30,6 +30,7 @@ export type AgentCall = {
   provider_error: { code: string; retry_after_seconds: number | null } | null;
 };
 export type AgentDetail = Omit<AgentJob, 'max_steps' | 'model'> & {
+  finalization_end?: number | null;
   recovery?: 'recorded_tools' | null;
   assessment?: { narrative_weight: string; hook_priority: string; reason: string } | null;
   policy?: { depth: string; words: number } | null;
@@ -76,11 +77,14 @@ export function resumePolicy(job: AgentDetail): { allowed: boolean; help: string
   }
   if (job.status === 'paused_steps')
     return {
-      allowed: job.limits.max_steps < 100,
+      allowed:
+        job.limits.max_steps < 100 || !job.finalization_end || job.step < job.finalization_end,
       help:
         job.limits.max_steps < 100
           ? 'Add research steps and continue from the saved checkpoint. Completed requests are not repeated.'
-          : 'This run has reached the maximum of 100 steps. Review its alerts and split the research before starting another run.',
+          : job.finalization_end && job.step >= job.finalization_end
+            ? 'The bounded finalization pass is exhausted. Review its validation errors before starting another run.'
+            : 'Finish from saved research in at most 6 additional turns, without new exploration. Existing validation and daily spending limits still apply.',
     };
   if (job.status === 'paused_context')
     return {
@@ -136,6 +140,7 @@ export function resumeBody(job: AgentDetail, extraSteps: number): Record<string,
       extra_steps: Math.max(0, job.step + 2 - job.limits.max_steps),
     };
   if (job.status === 'paused_steps') {
+    if (job.limits.max_steps >= 100) return job.finalization_end ? {} : { finalize: true };
     if (!Number.isInteger(extraSteps) || extraSteps < 1 || extraSteps > 100 - job.limits.max_steps)
       throw new Error('Choose a positive number of steps within the remaining limit.');
     return { extra_steps: extraSteps };

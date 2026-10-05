@@ -7,9 +7,13 @@ const job = { status: 'paused_steps', limits: { max_steps: 16, provider: 'respon
 test('step resume sends only a bounded extension', () => {
   assert.deepEqual(resumeBody(job, 16), { extra_steps: 16 });
   for (const count of [0, -1, 85, NaN, 1.5]) assert.throws(() => resumeBody(job, count));
-  const exhausted = { ...job, limits: { ...job.limits, max_steps: 100 } };
-  assert.equal(resumePolicy(exhausted).allowed, false);
-  assert.throws(() => resumeBody(exhausted, 1));
+  const exhausted = { ...job, step: 100, limits: { ...job.limits, max_steps: 100 } };
+  assert.equal(resumePolicy(exhausted).allowed, true);
+  assert.deepEqual(resumeBody(exhausted, 0), { finalize: true });
+  assert.equal(resumePolicy({ ...exhausted, finalization_end: 106 }).allowed, true);
+  assert.deepEqual(resumeBody({ ...exhausted, finalization_end: 106 }, 0), {});
+  assert.equal(resumePolicy({ ...exhausted, step: 106, finalization_end: 106 }).allowed, false);
+  assert.throws(() => resumeBody({ ...exhausted, step: 106, finalization_end: 106 }, 1));
 });
 test('context recovery preserves the input and spending bounds', () => {
   assert.deepEqual(resumeBody({ ...job, status: 'paused_context' }, 16), { compact_context: true });

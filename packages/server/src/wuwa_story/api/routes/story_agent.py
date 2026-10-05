@@ -44,6 +44,7 @@ admin.include_router(cutscene_admin)
 
 
 class ResumeRequest(StrictModel):
+    finalize: bool = False
     extra_steps: int = Field(default=0, ge=0, le=100)
     context_tokens: int | None = Field(default=None, ge=1000, le=250000)
     tool_calls_per_step: int | None = Field(default=None, ge=1, le=20)
@@ -176,6 +177,7 @@ async def job_status(run_id: int, session: AsyncSession = Depends(get_session)) 
         "assessment": job.checkpoint.get("assessment"),
         "policy": job.checkpoint.get("policy"),
         "stage": job.checkpoint.get("stage"),
+        "finalization_end": job.checkpoint.get("finalization_end"),
         "revisit": run.metadata_json.get("revisit"),
         "error": run.error,
         "cost_usd": run.cost,
@@ -246,6 +248,7 @@ async def resume(
             request.tool_calls_per_step,
             request.compact_context,
             request.output_tokens,
+            request.finalize,
         )
     except ValueError as error:
         raise HTTPException(422, str(error)) from error

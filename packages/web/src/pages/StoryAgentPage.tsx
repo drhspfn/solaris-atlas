@@ -395,12 +395,12 @@ function RunDetail({
               <span>
                 Saved research progress
                 <strong>
-                  {job.step} / {job.limits.max_steps} steps
+                  {job.step} / {job.finalization_end || job.limits.max_steps} steps
                 </strong>
               </span>
               <progress
                 value={job.step}
-                max={job.limits.max_steps}
+                max={job.finalization_end || job.limits.max_steps}
                 aria-label="Completed research steps"
               />
             </div>
@@ -435,7 +435,7 @@ function RunDetail({
                   void resume(job, Math.min(steps, 100 - job.limits.max_steps));
                 }}
               >
-                {job.status === 'paused_steps' && (
+                {job.status === 'paused_steps' && job.limits.max_steps < 100 && (
                   <label>
                     Additional steps
                     <input
@@ -459,7 +459,9 @@ function RunDetail({
                     ? 'Compact and resume'
                     : job.status === 'paused_output'
                       ? 'Increase response limit and resume'
-                      : 'Resume analysis'}
+                      : job.status === 'paused_steps' && job.limits.max_steps >= 100
+                        ? 'Finish saved research'
+                        : 'Resume analysis'}
                 </button>
               </form>
             )}

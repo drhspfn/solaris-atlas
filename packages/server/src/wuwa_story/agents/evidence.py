@@ -341,6 +341,7 @@ class EvidenceTools:
                     "visual_reference_id": report.id if report else None,
                     "recording_version": report.metadata_json["asset_version"] if report else None,
                     "visual_status": "available" if report else "not_analyzed",
+                    "observation_count": len(report.metadata_json.get("events", [])) if report else 0,
                 }
             )
         return result
@@ -367,7 +368,7 @@ class EvidenceTools:
         self, asset_node_id: int, offset: int = 0, limit: int = 12
     ) -> dict:
         if offset < 0 or not 1 <= limit <= 20:
-            raise ValueError("Invalid visual pagination")
+            raise ValueError("Invalid visual pagination: offset >= 0, limit 1..20 (default 12)")
         await self.remember_node(asset_node_id)
         # Restrict to an authored cutscene asset linked to the target quest.
         if asset_node_id not in {
@@ -480,7 +481,7 @@ class EvidenceTools:
         locale: str | None = None,
     ) -> dict[str, Any]:
         if not 0 <= offset <= 100000 or not 1 <= limit <= 50:
-            raise ValueError("Invalid transcript pagination")
+            raise ValueError("Invalid transcript pagination: offset 0..100000, limit 1..50 (default 30); use the returned next_offset")
         quest = (
             self.quest
             if quest_id is None
@@ -554,8 +555,8 @@ class EvidenceTools:
             if full_text:
                 self.remember_text(node.id, item["text"])
         if quest.node_id == self.quest.node_id:
-            self.coverage[offset] = len(lines)
-            if len(rows) == len(lines):
+            self.coverage[offset] = max(self.coverage.get(offset, 0), len(lines))
+            if len(rows) == len(lines) and (lines or offset == 0):
                 self.total_lines = offset + len(lines)
         return {
             "snapshot_id": self.release_id,
@@ -951,7 +952,7 @@ class EvidenceTools:
                 break
             end = max(end, offset + count)
         if require_full_quest and (self.total_lines is None or end < self.total_lines):
-            raise ValueError("Read every page of the target quest before publishing")
+            raise ValueError(f"Read every page of the target quest before publishing: next missing read_quest offset={end}, limit=50; follow next_offset until null, do not reread covered pages")
         if any(block.assertions for block in result.blocks):
             states = await quest_states(self.session, self.quest.node_id, self.release_id)
             anchors = list(
@@ -1069,9 +1070,9 @@ def definitions() -> list[dict[str, Any]]:
             "read_quest",
             "Read paginated exact-snapshot dialogue. Follow next_offset until null; alternatives are not a single playthrough.",
             {
-                "quest_id": integer,
-                "offset": integer,
-                "limit": integer,
+                "quest_id": {"type": "integer", "description": "Game quest ID, not a graph node ID. Omit for the target quest."},
+                "offset": {"type": "integer", "minimum": 0, "maximum": 100000},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 30},
                 "locale": locale,
                 "snapshot_id": snapshot,
             },
@@ -1087,8 +1088,8 @@ def definitions() -> list[dict[str, Any]]:
             "Read paginated AI visual observations for an authored cutscene variant. These are sampled visual evidence, NOT exact dialogue. Follow next_offset; preserve variant identity.",
             {
                 "asset_node_id": integer,
-                "offset": integer,
-                "limit": integer,
+                "offset": {"type": "integer", "minimum": 0},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 12},
                 "snapshot_id": snapshot,
             },
             ["asset_node_id"],

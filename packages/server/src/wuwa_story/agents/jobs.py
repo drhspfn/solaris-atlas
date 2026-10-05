@@ -156,6 +156,7 @@ async def resume_analysis(
     tool_calls_per_step: int | None = None,
     compact_context: bool = False,
     output_tokens: int | None = None,
+    finalize: bool = False,
 ) -> ProcessingRun:
     job = await session.get(AgentJob, run_id)
     run = await session.get(ProcessingRun, run_id)
@@ -208,6 +209,10 @@ async def resume_analysis(
     if extra_steps:
         config_values["max_steps"] = min(100, config_values["max_steps"] + extra_steps)
     config = AgentSettings(_env_file=None, **config_values)
+    if finalize:
+        if run.status != "paused_steps" or job.checkpoint.get("step", 0) < 100 or job.checkpoint.get("finalization_end"):
+            raise ValueError("Finalization is available once after the 100-step research limit")
+        job.checkpoint = {**job.checkpoint, "finalization_end": job.checkpoint["step"] + 6, "stage": "finalization"}
     if recover_output:
         if output_tokens is None or output_tokens <= job.config["max_output_tokens"]:
             raise ValueError("Increase output_tokens to resume an output limit pause")
@@ -237,7 +242,7 @@ async def resume_analysis(
                 )[1:]
             )
             job.checkpoint = {**job.checkpoint, "step": next_step, "history": history}
-    if run.status == "paused_steps" and config.max_steps <= job.checkpoint.get("step", 0):
+    if run.status == "paused_steps" and max(config.max_steps, job.checkpoint.get("finalization_end", 0)) <= job.checkpoint.get("step", 0):
         raise ValueError("Increase extra_steps to resume; at most 100 research steps are allowed")
     if compact_context:
         if config.provider != "responses":
