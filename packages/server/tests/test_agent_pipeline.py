@@ -36,6 +36,26 @@ DATABASE_URL = os.getenv("WUWA_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="Isolated test database required")
 
 
+async def test_quest_page_budget_includes_visual_inventory(world, monkeypatch):
+    engine, settings, _, _, locale, release, quest = world
+    run_id = await create(world)
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        tools = EvidenceTools(db, run_id=run_id, quest=quest, release_id=release.id,
+            locale=locale, settings=settings)
+
+        async def inventory(_quest):
+            return [{"description": "x" * 10000}]
+
+        monkeypatch.setattr(tools, "cutscene_inventory", inventory)
+        first = await tools.read_quest(limit=1)
+        settings.tool_result_chars = len(json.dumps(first, ensure_ascii=False)) + 40
+        page = await tools.read_quest(limit=30)
+        assert len(json.dumps(page, ensure_ascii=False)) <= settings.tool_result_chars
+        assert len(page["lines"]) == 1
+        assert page["next_offset"] == 1
+        assert tools.total_lines is None
+
+
 async def test_visual_variant_pages_are_required_and_published_with_story(world):
     engine, settings, _, nodes, locale, release, quest = world
     settings.max_steps = 8
@@ -82,6 +102,7 @@ async def test_visual_variant_pages_are_required_and_published_with_story(world)
         'observation_indices': [0, 1], 'chapters': []}]
     actions = [('read_quest', {}), ('assess_quest', {'narrative_weight': 'side_flavor', 'hook_priority': 'low',
         'reason': 'A local obstacle', 'citations': final['blocks'][0]['citations']}),
+        ('read_quest', {'limit': 1}),
         ('finish_analysis', {'result_json': json.dumps(final)}), # unread visuals must reject publication
         ('read_cutscene_visual', {'asset_node_id': asset_id, 'offset': 0, 'limit': 1}),
         ('read_cutscene_visual', {'asset_node_id': asset_id, 'offset': 1, 'limit': 1}),
@@ -102,7 +123,11 @@ async def test_visual_variant_pages_are_required_and_published_with_story(world)
             assert doc.metadata_json['cutscene_descriptions'][0]['visual_reference_id'] == report_id
             receipt = job.checkpoint['visual_evidence'][str(report_id)]
             assert receipt['indices'] == [0, 1]
-            failed = await db.scalar(select(AgentCall).where(AgentCall.run_id == run_id, AgentCall.step == 2))
+            intake = await db.scalar(select(AgentCall).where(AgentCall.run_id == run_id, AgentCall.step == 2))
+            trace = intake.response['execution_trace']['tools'][0]
+            assert json.loads(trace['arguments'])['limit'] == 50
+            assert json.loads(trace['requested_arguments'])['limit'] == 1
+            failed = await db.scalar(select(AgentCall).where(AgentCall.run_id == run_id, AgentCall.step == 3))
             assert failed.response['execution_trace']['tools'][0]['status'] == 'error'
             assert (await get_explanation(db, quest.game_quest_id, release.game_version, locale.code))['explanation']['cutscene_descriptions']
     finally:

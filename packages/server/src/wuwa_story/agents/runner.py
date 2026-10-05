@@ -25,6 +25,7 @@ from wuwa_story.agents.providers import (
     Provider,
     ProviderFailure,
     ProviderRejected,
+    ToolCall,
     token_usage,
     vector_values,
 )
@@ -664,6 +665,7 @@ async def run_locked(
                     provider.initial("", "Use tools to research or finish_analysis to publish.")[1:]
                 )
             for tool_index, tool_call in enumerate(turn.calls):
+                executed_call = tool_call
                 started = time.monotonic()
                 fingerprint = signature(tool_call.name, tool_call.arguments)
                 repeats = signatures.get(fingerprint, 0)
@@ -780,7 +782,18 @@ async def run_locked(
                         result = candidate
                         output = {"validated": True}
                     else:
-                        output = await evidence.call(tool_call)
+                        if (
+                            adaptive and not prescan and not revisit
+                            and tool_call.name == "read_quest"
+                            and tool_call.arguments.get("quest_id") in (None, quest.game_quest_id)
+                            and tool_call.arguments.get("snapshot_id") in (None, job.release_id)
+                            and tool_call.arguments.get("locale") in (None, locale.code)
+                            and type(tool_call.arguments.get("limit", 30)) is int
+                            and 1 <= tool_call.arguments.get("limit", 30) <= 50
+                        ):
+                            # Full-quest intake uses size-bounded pages, not tiny model-selected batches.
+                            executed_call = ToolCall(tool_call.id, tool_call.name, {**tool_call.arguments, "limit": 50}, tool_call.native_id)
+                        output = await evidence.call(executed_call)
                     if len(json.dumps(output, ensure_ascii=False)) > settings.tool_result_chars:
                         raise ValueError("Tool result too large; request fewer records")
                     if prescan and tool_call.name != "assess_quest":
@@ -800,7 +813,8 @@ async def run_locked(
                 event = {
                     "name": tool_call.name,
                     "call_id": tool_call.id,
-                    "arguments": preview(tool_call.arguments),
+                    "arguments": preview(executed_call.arguments),
+                    "requested_arguments": preview(tool_call.arguments),
                     "status": "error" if "error" in output else "ok",
                     "validation": validation,
                     "result": preview(output),

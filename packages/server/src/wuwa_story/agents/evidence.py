@@ -507,7 +507,21 @@ class EvidenceTools:
             locale,
         )
         lines: list[dict[str, Any]] = []
-        size = 0
+        payload = {
+            "snapshot_id": self.release_id,
+            "quest_node_id": quest.node_id,
+            "quest_id": quest.game_quest_id,
+            "name": values.get(quest.name_key_id or -1),
+            "description": (values.get(quest.description_key_id or -1) or "")[:1000],
+            "ordering": ORDERING,
+            "quest_type": await self.authored_quest_type(quest),
+            "cutscenes": await self.cutscene_inventory(quest) if offset == 0 else [],
+            "offset": offset,
+            "lines": lines,
+            "next_offset": None,
+        }
+        # Inventory size varies with the quest; reserve its actual serialized size.
+        size = len(json.dumps(payload, ensure_ascii=False)) + 32
         for line, action, state, node in rows[:limit]:
             full_text = (
                 values.get(line.localization_key_id or -1)
@@ -530,8 +544,8 @@ class EvidenceTools:
                 "action_index": action.action_index,
                 "source_index": line.source_index,
             }
-            count = len(json.dumps(item, ensure_ascii=False))
-            if lines and size + count > self.settings.tool_result_chars - 1500:
+            count = len(json.dumps(item, ensure_ascii=False)) + 2
+            if lines and size + count > self.settings.tool_result_chars:
                 break
             lines.append(item)
             size += count
@@ -543,19 +557,8 @@ class EvidenceTools:
             self.coverage[offset] = max(self.coverage.get(offset, 0), len(lines))
             if len(rows) == len(lines) and (lines or offset == 0):
                 self.total_lines = offset + len(lines)
-        return {
-            "snapshot_id": self.release_id,
-            "quest_node_id": quest.node_id,
-            "quest_id": quest.game_quest_id,
-            "name": values.get(quest.name_key_id or -1),
-            "description": (values.get(quest.description_key_id or -1) or "")[:1000],
-            "ordering": ORDERING,
-            "quest_type": await self.authored_quest_type(quest),
-            "cutscenes": await self.cutscene_inventory(quest) if offset == 0 else [],
-            "offset": offset,
-            "lines": lines,
-            "next_offset": offset + len(lines) if len(rows) > len(lines) else None,
-        }
+        payload["next_offset"] = offset + len(lines) if len(rows) > len(lines) else None
+        return payload
 
     async def target_positions(self) -> dict[int, int]:
         if self._target_positions is None:
