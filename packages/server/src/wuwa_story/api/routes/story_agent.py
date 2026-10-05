@@ -21,6 +21,7 @@ from wuwa_story.agents.retrieval import (
 )
 from wuwa_story.agents.settings import AgentSettings, get_agent_settings
 from wuwa_story.agents.trace import legacy_trace
+from wuwa_story.api.routes.cutscene_analysis import router as cutscene_admin
 from wuwa_story.auth.dependencies import require_admin, require_csrf
 from wuwa_story.db.models.agents import (
     AgentCall,
@@ -37,6 +38,7 @@ router = APIRouter(tags=["story explanations"])
 admin = APIRouter(
     prefix="/admin/story-agent", tags=["story agent"], dependencies=[Depends(require_admin)]
 )
+admin.include_router(cutscene_admin)
 
 
 class ResumeRequest(StrictModel):
