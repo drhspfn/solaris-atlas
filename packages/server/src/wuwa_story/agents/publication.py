@@ -78,6 +78,10 @@ async def publish_analysis(
             "source_scope": "all_locales" if run.prompt_version != "story-v1" else "locale",
             "unresolved_questions": result.unresolved_questions,
             "assessment": result.assessment.model_dump() if result.assessment else None,
+            "cutscene_descriptions": [
+                description.model_dump() for description in result.cutscene_descriptions
+            ],
+            "authored_quest_type": job.checkpoint.get("authored_quest_type"),
             "narrative_function": result.narrative_function,
             "knowledge_boundary": result.knowledge_boundary.model_dump()
             if result.knowledge_boundary

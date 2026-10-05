@@ -98,11 +98,15 @@ async def public_document(
         None if document.metadata_json.get("source_scope") == "all_locales" else output_locale.id
     )
     if document.source_hash != await quest_fingerprint(
-        session, quest, release.id, fingerprint_locale
+        session,
+        quest,
+        release.id,
+        fingerprint_locale,
+        include_visual=document.metadata_json.get("schema_version") == "story-v6",
     ):
         return None
     corpus_changed = False
-    if document.metadata_json.get("schema_version") in ("story-v4", "story-v5"):
+    if document.metadata_json.get("schema_version") in ("story-v4", "story-v5", "story-v6"):
         corpus_changed = document.metadata_json.get(
             "source_release_ids"
         ) != await imported_snapshot_ids(session)
@@ -272,12 +276,13 @@ async def public_document(
         "quest_id": quest.game_quest_id,
         "game_version": release.game_version,
         "research_scope": "all_imported_snapshots"
-        if document.metadata_json.get("schema_version") in ("story-v4", "story-v5")
+        if document.metadata_json.get("schema_version") in ("story-v4", "story-v5", "story-v6")
         else "target_snapshot",
         "locale": output_locale.code,
         "requested_locale": locale.code,
         "title": document.title,
         "assessment": document.metadata_json.get("assessment"),
+        "cutscene_descriptions": document.metadata_json.get("cutscene_descriptions", []),
         "narrative_function": document.metadata_json.get("narrative_function"),
         "knowledge_boundary": document.metadata_json.get("knowledge_boundary"),
         "hooks": [await with_citations(hook) for hook in document.metadata_json.get("hooks", [])],
@@ -393,7 +398,8 @@ async def query_vector(
         if not locked:
             return None
     except (RedisError, ValueError, TypeError):
-        return None  # Fail closed to paid work when cache/rate limiter is unavailable.
+        # Fail closed to paid work when cache/rate limiter is unavailable.
+        return None
     try:
         call = await reserve(
             session,

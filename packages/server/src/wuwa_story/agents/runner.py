@@ -20,7 +20,7 @@ from wuwa_story.agents.contracts import (
     validate_citations,
 )
 from wuwa_story.agents.evidence import EvidenceTools, definitions, quest_fingerprint
-from wuwa_story.agents.lore import assessment_policy, validate_lore_result
+from wuwa_story.agents.lore import assessment_policy, primary_quest_role, validate_lore_result
 from wuwa_story.agents.providers import (
     Provider,
     ProviderFailure,
@@ -48,6 +48,16 @@ Adaptive protocol: begin with a cheap pre-scan of target quest metadata/dialogue
 authored branches. In at most three turns call assess_quest as the only tool call.
 Use a provisional narrative_weight: main_plot, character_arc, region_lore,
 worldbuilding, side_hook, side_flavor, tutorial_activity or service_repeatable.
+Authored main quests retain main_plot as primary role and receive a full pass.
+Put regional systems, Sentinel/character arcs and mystery setup in secondary_functions.
+Read the cutscene inventory returned by read_quest; for each available variant use
+read_cutscene_visual until next_offset is null. Visual observations are AI-generated
+sampled evidence, not dialogue or certain character identity. Combine them with exact
+dialogue, retaining variant identity. Write cutscene_descriptions with the exact
+visual_reference_id and observation_indices; use timed chapters only for longer scenes.
+Do not concatenate mutually exclusive Rover variants or fill gaps between sampled frames.
+State occurrence limits once in the overview, not after every fact. A main-quest label
+alone does not prove that a particular branch is mandatory: use actual source flow.
 Importance is a narrative role, not keyword presence: generic star/dream/hero/light,
 Rover's routine presence, ordinary Echo rewards and namedrops do not justify deep
 research. A real Rover identity/absorption anomaly, regional protection/Sentinel
@@ -208,7 +218,8 @@ async def remote_call(
                     "agent.compaction_input_count run_id=%s step=%s tokens=%s", run.id, step, tokens
                 )
         except ProviderFailure:
-            fits = False  # Counting failure must not authorize an unbounded paid request.
+            # Counting failure must not authorize an unbounded paid request.
+            fits = False
     if not fits:
         await pause(
             session,
@@ -299,7 +310,8 @@ async def remote_call(
         call.response = metadata
         await (
             session.commit()
-        )  # Each attempt has durable intent before HTTP; a crash stays uncertain.
+            # Each attempt has durable intent before HTTP; a crash stays uncertain.
+        )
         try:
             raw = await provider.post(route, payload)
         except ProviderRejected as error:
@@ -363,7 +375,8 @@ async def remote_call(
         run.cost = float((run.cost or 0) + float(call.cost_usd or 0))
         await (
             session.commit()
-        )  # A crash after this point replays raw response without a new payment.
+            # A crash after this point replays raw response without a new payment.
+        )
         if not bounded:
             await pause(
                 session,
@@ -421,7 +434,13 @@ async def run_locked(
         return
     fingerprint_locale = locale.id if run.prompt_version == "story-v1" else None
     if (
-        await quest_fingerprint(session, quest, job.release_id, fingerprint_locale)
+        await quest_fingerprint(
+            session,
+            quest,
+            job.release_id,
+            fingerprint_locale,
+            include_visual=run.prompt_version == "story-v6",
+        )
         != run.input_hash
     ):
         await pause(
@@ -431,8 +450,8 @@ async def run_locked(
     cp = dict(job.checkpoint)
     step_ceiling = max(settings.max_steps, cp.get("step_ceiling", 0))
     cp["step_ceiling"] = step_ceiling
-    cross_snapshot = run.prompt_version in ("story-v4", "story-v5")
-    adaptive = run.prompt_version == "story-v5"
+    cross_snapshot = run.prompt_version in ("story-v4", "story-v5", "story-v6")
+    adaptive = run.prompt_version in ("story-v5", "story-v6")
     revisit = run.metadata_json.get("revisit")
     source_release_ids = run.metadata_json.get("source_release_ids") if cross_snapshot else None
     if cross_snapshot and (not source_release_ids or job.release_id not in source_release_ids):
@@ -475,6 +494,7 @@ async def run_locked(
         source_locale=locale.code if run.prompt_version == "story-v1" else None,
         source_release_ids=source_release_ids,
         source_evidence=cp.get("source_evidence", {}),
+        visual_evidence=cp.get("visual_evidence", {}),
         source_nodes=cp.get("source_nodes", {}),
     )
     evidence.coverage = {int(k): v for k, v in cp.get("coverage", {}).items()}
@@ -557,7 +577,8 @@ async def run_locked(
                 job.checkpoint = cp
                 await (
                     session.commit()
-                )  # Persist before the next paid call; replay is free after a crash.
+                    # Persist before the next paid call; replay is free after a crash.
+                )
                 route, payload = provider.request(history, step_tools)
                 logger.info(
                     "agent.compacted run_id=%s step=%s bytes_before=%s bytes_after=%s",
@@ -601,8 +622,13 @@ async def run_locked(
                 repeats = signatures.get(fingerprint, 0)
                 signatures[fingerprint] = repeats + 1
                 validation = None
-                logger.info("agent.tool_started run_id=%s step=%s tool=%s repeat=%s",
-                            run.id, step, tool_call.name, repeats)
+                logger.info(
+                    "agent.tool_started run_id=%s step=%s tool=%s repeat=%s",
+                    run.id,
+                    step,
+                    tool_call.name,
+                    repeats,
+                )
                 output: dict[str, Any]
                 previous_evidence = dict(evidence.evidence)
                 previous_nodes = dict(evidence.known_nodes)
@@ -625,7 +651,11 @@ async def run_locked(
                         if len(turn.calls) != 1:
                             raise ValueError("Assessment must be the only call in this turn")
                         selected = QuestAssessment.model_validate(tool_call.arguments)
-                        policy = assessment_policy(selected)
+                        authored_type = None
+                        if run.prompt_version == "story-v6":
+                            authored_type = await evidence.authored_quest_type()
+                            selected = primary_quest_role(selected, authored_type)
+                        policy = assessment_policy(selected, authored_main=authored_type == "1")
                         if assessment and (
                             not selected.upgrade_reason or policy["words"] <= cp["policy"]["words"]
                         ):
@@ -645,11 +675,13 @@ async def run_locked(
                             raise ValueError("Assessment must cite the target quest snapshot")
                         output = {
                             "policy": policy,
+                            "assessment": selected.model_dump(),
                             "instruction": "Read remaining target pages, investigate substantive signals, then finish with self-review. Output prose must fit this policy.",
                         }
                         cp = {
                             **cp,
                             "assessment": selected.model_dump(),
+                            "authored_quest_type": authored_type,
                             "policy": policy,
                             "stage": "research",
                         }
@@ -668,15 +700,17 @@ async def run_locked(
                             if assessment is None:
                                 raise ValueError("Classify this quest before publishing")
                             candidate.assessment = assessment
-                            validate_lore_result(candidate, assessment)
+                            validate_lore_result(candidate, assessment, authored_main=cp.get("authored_quest_type") == "1")
                         if revisit:
                             validate_revisit(candidate, revisit)
                         elif candidate.revisited_hooks:
                             raise ValueError("Hook reviews require a focused revisit job")
-                        if run.prompt_version in ("story-v3", "story-v4", "story-v5"):
+                        if run.prompt_version in ("story-v3", "story-v4", "story-v5", "story-v6"):
                             candidate.validate_temporal_structure()
                         await evidence.validate_result(
-                            candidate, require_full_quest=not bool(revisit)
+                            candidate,
+                            require_full_quest=not bool(revisit),
+                            require_visual=run.prompt_version == "story-v6" and not bool(revisit),
                         )
                         result = candidate
                         output = {"validated": True}
@@ -708,9 +742,17 @@ async def run_locked(
                     "new_evidence": len(evidence.evidence) - len(previous_evidence),
                 }
                 trace["tools"].append(event)
-                logger.info("agent.tool_finished run_id=%s step=%s tool=%s status=%s ms=%s repeat=%s new_evidence=%s validation=%s",
-                            run.id, step, tool_call.name, event["status"], event["duration_ms"],
-                            repeats, event["new_evidence"], validation)
+                logger.info(
+                    "agent.tool_finished run_id=%s step=%s tool=%s status=%s ms=%s repeat=%s new_evidence=%s validation=%s",
+                    run.id,
+                    step,
+                    tool_call.name,
+                    event["status"],
+                    event["duration_ms"],
+                    repeats,
+                    event["new_evidence"],
+                    validation,
+                )
                 history.append(provider.tool_result(tool_call, output))
             if (
                 adaptive
@@ -736,6 +778,7 @@ async def run_locked(
                 "coverage": evidence.coverage,
                 "total_lines": evidence.total_lines,
                 "source_evidence": evidence.source_evidence,
+                "visual_evidence": evidence.visual_evidence,
                 "source_nodes": evidence.source_nodes,
             }
             if result:
@@ -744,8 +787,12 @@ async def run_locked(
             recorded_call = await session.scalar(select(AgentCall).where(
                 AgentCall.run_id == run.id, AgentCall.step == step))
             if recorded_call is not None:
-                recorded_call.response = {**(recorded_call.response or {}), "execution_trace": trace}
-            await session.commit()  # Tool writes and checkpoint advance atomically.
+                recorded_call.response = {
+                    **(recorded_call.response or {}),
+                    "execution_trace": trace,
+                }
+            # Tool writes and checkpoint advance atomically.
+            await session.commit()
             if result:
                 break
             if step + 1 >= settings.max_steps:
@@ -797,7 +844,13 @@ async def run_locked(
             job.checkpoint = dict(cp)
             await session.commit()
     if (
-        await quest_fingerprint(session, quest, job.release_id, fingerprint_locale)
+        await quest_fingerprint(
+            session,
+            quest,
+            job.release_id,
+            fingerprint_locale,
+            include_visual=run.prompt_version == "story-v6",
+        )
         != run.input_hash
     ):
         await pause(
@@ -805,7 +858,11 @@ async def run_locked(
         )
         return
     try:
-        await evidence.validate_result(result, require_full_quest=not bool(revisit))
+        await evidence.validate_result(
+            result,
+            require_full_quest=not bool(revisit),
+            require_visual=run.prompt_version == "story-v6" and not bool(revisit),
+        )
     except ValueError:
         await pause(
             session, run, "stale", "Cited source changed during analysis; result was not published"

@@ -51,7 +51,7 @@ async def enqueue_analysis(
     request = request.model_copy(
         update={"game_version": release.game_version, "locale": locale.code}
     )
-    source = await quest_fingerprint(session, quest, release.id)
+    source = await quest_fingerprint(session, quest, release.id, include_visual=True)
     source_release_ids = await imported_snapshot_ids(session)
     source_revision = await imported_source_revision(session)
     config = settings.public_config()
@@ -62,8 +62,9 @@ async def enqueue_analysis(
         if parent is None:
             raise ValueError("Original explanation no longer exists")
         assessment = QuestAssessment.model_validate(parent.metadata_json["assessment"])
-        policy = assessment_policy(assessment)
-        checkpoint = {"assessment": assessment.model_dump(), "policy": policy, "stage": "revisit"}
+        authored_type = parent.metadata_json.get("authored_quest_type")
+        policy = assessment_policy(assessment, authored_main=authored_type == "1")
+        checkpoint = {"assessment": assessment.model_dump(), "policy": policy, "stage": "revisit", "authored_quest_type": authored_type}
         config["max_steps"] = min(settings.max_steps, 8)
         config["max_output_tokens"] = max(settings.max_output_tokens, policy["output_tokens"])
         matched = {candidate["hook_key"] for candidate in revisit.candidates}

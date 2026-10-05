@@ -29,10 +29,87 @@ from wuwa_story.db.models.i18n import (
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease, ProcessingRun
 from wuwa_story.db.models.search import SearchDocument
+from wuwa_story.db.models.storage import FileObject, FileReference, FileType
 from wuwa_story.db.models.story import Claim, Event
 
 DATABASE_URL = os.getenv("WUWA_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="Isolated test database required")
+
+
+async def test_visual_variant_pages_are_required_and_published_with_story(world):
+    engine, settings, _, nodes, locale, release, quest = world
+    settings.max_steps = 8
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        visual_nodes = []
+        for kind in ['cutscene', 'cutscene_variant', 'asset_reference']:
+            node = Node(type_id=await db.scalar(select(NodeType.id).where(NodeType.key == kind)),
+                canonical_key='visual-pipeline:' + uuid4().hex, created_release_id=release.id)
+            db.add(node)
+            await db.flush()
+            db.add(NodeRevision(node_id=node.id, release_id=release.id, revision=1, content_hash=b'visual'))
+            visual_nodes.append(node)
+        nodes.extend(visual_nodes)
+        for start, end, relation in [(nodes[2], visual_nodes[0], 'plays_cutscene'),
+            (visual_nodes[0], visual_nodes[1], 'has_variant'),
+            (visual_nodes[1], visual_nodes[2], 'references_asset')]:
+            edge = Edge(from_node_id=start.id, to_node_id=end.id, layer='source',
+                basis='explicit_reference', relation_type_id=await db.scalar(select(RelationType.id).where(RelationType.key == relation)))
+            db.add(edge)
+            await db.flush()
+            db.add(EdgeEvidence(edge_id=edge.id, release_id=release.id))
+        file = FileObject(file_type_id=await db.scalar(select(FileType.id).limit(1)), sha256=hashlib.sha256(uuid4().bytes).digest())
+        db.add(file)
+        await db.flush()
+        db.add(FileReference(owner_node_id=visual_nodes[2].id, file_id=file.id,
+            reference_type='cutscene_video', metadata_json={'asset_version': '3.7.0'}))
+        report = FileReference(owner_node_id=visual_nodes[2].id, file_id=file.id,
+            reference_type='cutscene_visual_description', metadata_json={'source_sha256': file.sha256.hex(),
+                'asset_version': '3.7.0', 'complete': True, 'duration': 10,
+                'evidence_type': 'ai_sampled_visual_observations', 'events': [
+                    {'time': 1, 'observation': 'A figure stands near a broken crossing', 'confidence': 'observed'},
+                    {'time': 8, 'observation': 'The figure turns away', 'confidence': 'observed'}]})
+        db.add(report)
+        await db.commit()
+        report_id, file_id, asset_id = report.id, file.id, visual_nodes[2].id
+    run_id = await create(world, adaptive=True)
+    final = result_for(nodes)
+    final['links'] = []
+    final['narrative_function'] = 'Explains a local route change.'
+    final['review'] = dict.fromkeys(['choices_labeled', 'future_knowledge_separated', 'proportional_depth',
+        'unresolved_preserved', 'speculation_labeled', 'revisit_checked', 'branches_separated'], True)
+    final['cutscene_descriptions'] = [{'asset_node_id': asset_id, 'visual_reference_id': report_id,
+        'title': 'The crossing', 'text': 'A figure turns away from the damaged crossing.',
+        'observation_indices': [0, 1], 'chapters': []}]
+    actions = [('read_quest', {}), ('assess_quest', {'narrative_weight': 'side_flavor', 'hook_priority': 'low',
+        'reason': 'A local obstacle', 'citations': final['blocks'][0]['citations']}),
+        ('finish_analysis', {'result_json': json.dumps(final)}), # unread visuals must reject publication
+        ('read_cutscene_visual', {'asset_node_id': asset_id, 'offset': 0, 'limit': 1}),
+        ('read_cutscene_visual', {'asset_node_id': asset_id, 'offset': 1, 'limit': 1}),
+        ('finish_analysis', {'result_json': json.dumps(final)})]
+    requests = []
+    def transport(request):
+        requests.append(json.loads(request.content))
+        name, args = actions[len(requests) - 1]
+        return httpx.Response(200, json={'status': 'completed', 'usage': {'input_tokens': 100, 'output_tokens': 30},
+            'output': [{'type': 'function_call', 'call_id': str(len(requests)), 'name': name, 'arguments': json.dumps(args)}]})
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+            await execute_job(run_id, engine, settings, client)
+        async with AsyncSession(engine) as db:
+            run, job = await db.get(ProcessingRun, run_id), await db.get(AgentJob, run_id)
+            assert run.status == 'completed', run.error
+            doc = await db.get(Document, job.document_id)
+            assert doc.metadata_json['cutscene_descriptions'][0]['visual_reference_id'] == report_id
+            receipt = job.checkpoint['visual_evidence'][str(report_id)]
+            assert receipt['indices'] == [0, 1]
+            failed = await db.scalar(select(AgentCall).where(AgentCall.run_id == run_id, AgentCall.step == 2))
+            assert failed.response['execution_trace']['tools'][0]['status'] == 'error'
+            assert (await get_explanation(db, quest.game_quest_id, release.game_version, locale.code))['explanation']['cutscene_descriptions']
+    finally:
+        async with AsyncSession(engine) as db:
+            await db.execute(delete(FileReference).where(FileReference.file_id == file_id))
+            await db.execute(delete(FileObject).where(FileObject.id == file_id))
+            await db.commit()
 
 
 @pytest.fixture
