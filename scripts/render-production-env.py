@@ -51,6 +51,7 @@ GROUPS = {
         "AGENT_EMBEDDING_INPUT_USD_PER_MILLION": "0.02",
         "AGENT_PUBLIC_QUERY_EMBEDDINGS": "false",
         "AGENT_QUERY_REQUESTS_PER_HOUR": "30",
+        "AUTH_CSRF_SECRET": None,
     },
     "api.env": {
         "APP_NAME": "WuWa Story Platform",
@@ -67,7 +68,6 @@ GROUPS = {
         "AUTH_COOKIE_SECURE": "true",
         "AUTH_COOKIE_SAMESITE": "lax",
         "AUTH_CSRF_COOKIE_NAME": "solaris_csrf",
-        "AUTH_CSRF_SECRET": None,
         "GOOGLE_CLIENT_ID": "",
         "GOOGLE_CLIENT_SECRET": "",
     },

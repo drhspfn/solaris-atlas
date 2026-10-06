@@ -108,6 +108,10 @@ derived_api_config = {
     "GOOGLE_REDIRECT_URI": f"{api_url}/auth/google/callback",
 }
 api_runtime = {**runtime, **api, **derived_api_config}
+if "AUTH_CSRF_SECRET" in api and "AUTH_CSRF_SECRET" not in shared:
+    shared["AUTH_CSRF_SECRET"] = api["AUTH_CSRF_SECRET"]
+if "AUTH_CSRF_SECRET" in shared:
+    runtime["AUTH_CSRF_SECRET"] = shared["AUTH_CSRF_SECRET"]
 
 def write_env(name, values):
     for key, value in values.items():
@@ -158,9 +162,6 @@ esac
 
 if [[ "$DEPLOY_COMPONENT" == api || "$DEPLOY_COMPONENT" == all ]]; then
   "${compose[@]}" pull api
-  # Apply infrastructure changes (including healthcheck updates) before the
-  # migration container waits on database and broker health.
-  "${compose[@]}" up -d postgres rabbitmq redis
   "${compose[@]}" run --rm api alembic upgrade head
 fi
 if [[ "$DEPLOY_COMPONENT" != infrastructure ]]; then
