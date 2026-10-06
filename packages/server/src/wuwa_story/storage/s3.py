@@ -17,7 +17,7 @@ class S3Storage:
     def __init__(self, settings: Settings) -> None:
         self.bucket = settings.s3_bucket
         self.public_base_url = settings.media_public_base_url or (
-            f"{(settings.s3_public_endpoint_url or settings.s3_endpoint_url).rstrip('/')}/{quote(self.bucket, safe='')}"
+            f"{settings.s3_endpoint_url.rstrip('/')}/{quote(self.bucket, safe='')}"
         )
         self.cache_control = settings.media_cache_control
         self.client = boto3.client(
@@ -28,12 +28,6 @@ class S3Storage:
             region_name=settings.s3_region,
             use_ssl=settings.s3_use_ssl,
         )
-        self.public_client = self.client if not settings.s3_public_endpoint_url else boto3.client(
-            "s3", endpoint_url=settings.s3_public_endpoint_url,
-            aws_access_key_id=settings.s3_access_key_id,
-            aws_secret_access_key=settings.s3_secret_access_key.get_secret_value(),
-            region_name=settings.s3_region, use_ssl=settings.s3_use_ssl,
-        )
 
     def public_url(self, object_key: str) -> str:
         """Game media is public and content addressed; these URLs never expire."""
@@ -41,7 +35,7 @@ class S3Storage:
 
     def signed_url(self, object_key: str, expires: int = 3600) -> str:
         """For a separate private bucket, never exposed through the public CDN."""
-        return str(self.public_client.generate_presigned_url(
+        return str(self.client.generate_presigned_url(
             "get_object", Params={"Bucket": self.bucket, "Key": object_key}, ExpiresIn=expires,
         ))
 

@@ -13,13 +13,12 @@ def storage(monkeypatch, **settings):
 
 
 def test_public_urls_support_minio_and_bucketless_cdn(monkeypatch):
-    local = storage(monkeypatch, s3_endpoint_url="http://minio:9000",
-                    s3_public_endpoint_url="http://localhost:9000")
+    local = storage(monkeypatch, s3_endpoint_url="http://localhost:9000")
     assert local.public_url("objects/a b/日本?.png") == (
         "http://localhost:9000/wuwa/objects/a%20b/%E6%97%A5%E6%9C%AC%3F.png")
     cdn = storage(monkeypatch, media_public_base_url="https://media.example.com/")
     assert cdn.public_url("objects/ab/cd/hash") == "https://media.example.com/objects/ab/cd/hash"
-    cdn.public_client.generate_presigned_url.assert_not_called()
+    cdn.client.generate_presigned_url.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -38,7 +37,7 @@ async def test_only_content_addressed_uploads_are_immutable(monkeypatch, tmp_pat
 def test_private_signing_remains_explicit(monkeypatch):
     backend = storage(monkeypatch)
     backend.signed_url("private/object", expires=60)
-    backend.public_client.generate_presigned_url.assert_called_once_with(
+    backend.client.generate_presigned_url.assert_called_once_with(
         "get_object", Params={"Bucket": "wuwa", "Key": "private/object"}, ExpiresIn=60)
 
 

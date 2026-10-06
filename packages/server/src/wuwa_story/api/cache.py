@@ -79,7 +79,7 @@ class PublicResponseCache:
         self.revision_reader = revision_reader
         # Configuration changes must not serve links to a previous media host.
         config = [settings.api_cache_namespace, settings.media_public_base_url,
-                  settings.s3_public_endpoint_url, settings.s3_endpoint_url, settings.s3_bucket,
+                  settings.s3_endpoint_url, settings.s3_bucket,
                   settings.database_url, settings.app_env]
         fingerprint = hashlib.sha256(json.dumps(config).encode())
         # A deployment changing response shape cannot reuse the preceding build's cache.

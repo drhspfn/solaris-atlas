@@ -16,3 +16,8 @@
     reverse_proxy web:80
   }
 }
+
+api.{$DOMAIN} {
+  encode zstd gzip
+  reverse_proxy api:8000
+}

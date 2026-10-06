@@ -19,9 +19,9 @@ Required Variables:
 - `AGENT_INPUT_USD_PER_MILLION`, `AGENT_CACHED_INPUT_USD_PER_MILLION`, `AGENT_CACHE_WRITE_USD_PER_MILLION`, `AGENT_OUTPUT_USD_PER_MILLION`, `AGENT_PRICE_SAFETY_MULTIPLIER`
 - `AGENT_EMBEDDING_MODEL`, `AGENT_EMBEDDING_DIMENSIONS`, `AGENT_EMBEDDING_INPUT_USD_PER_MILLION`, `AGENT_PUBLIC_QUERY_EMBEDDINGS`, `AGENT_QUERY_REQUESTS_PER_HOUR`
 - `S3_BUCKET`, `S3_REGION`, `S3_USE_SSL`; for R2 set `USE_MINIO=false`, `S3_ACCESS_KEY_ID`, `S3_ENDPOINT_URL` and the optional public endpoint URL
-- `APP_NAME`, `MEDIA_PUBLIC_BASE_URL`, `MEDIA_CACHE_CONTROL`, `API_CACHE_NAMESPACE`, `API_CACHE_TTL_SECONDS`, `API_CACHE_MAX_BODY_BYTES`, `API_CACHE_TIMEOUT_SECONDS`, `LOG_LEVEL`
-- `AUTH_SESSION_TTL_DAYS`, `AUTH_PENDING_REGISTRATION_TTL_MINUTES`, `AUTH_PENDING_LINK_TTL_MINUTES`, `AUTH_COOKIE_NAME`, `AUTH_COOKIE_SECURE`, `AUTH_COOKIE_SAMESITE`, `AUTH_COOKIE_DOMAIN`, `AUTH_CSRF_COOKIE_NAME`
-- `CORS_ALLOWED_ORIGINS`, `FRONTEND_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_REDIRECT_URI`
+- `APP_NAME`, `MEDIA_CACHE_CONTROL`, `API_CACHE_NAMESPACE`, `API_CACHE_TTL_SECONDS`, `API_CACHE_MAX_BODY_BYTES`, `API_CACHE_TIMEOUT_SECONDS`, `LOG_LEVEL`
+- `AUTH_SESSION_TTL_DAYS`, `AUTH_PENDING_REGISTRATION_TTL_MINUTES`, `AUTH_PENDING_LINK_TTL_MINUTES`, `AUTH_COOKIE_NAME`, `AUTH_COOKIE_SECURE`, `AUTH_COOKIE_SAMESITE`, `AUTH_CSRF_COOKIE_NAME`
+- `GOOGLE_CLIENT_ID`
 - `WUWA_QUEUE_CONCURRENCY`, `WUWA_WORKER_WORKSPACE`, `WUWA_IMPORT_BATCH_SIZE`, `WUWA_ASSET_WORKSPACE`, `WUWA_ASSET_DOWNLOAD_CONCURRENCY`, `WUWA_ASSET_EXPORT_FILTERS`, `WUWA_ASSET_BUILD_MAPS`
 - `AGENT_VISION_ENABLED`, `AGENT_VISION_FRAME_INTERVAL`, `AGENT_VISION_MAX_FRAMES`, `AGENT_VISION_BATCH_FRAMES`, `AGENT_VISION_OUTPUT_TOKENS`
 
@@ -39,9 +39,11 @@ Additional Secrets:
 
 GitHub Variables have defaults in the renderer where appropriate; set the entries you want to override. For your configured agent, set `AGENT_BUDGET_TIMEZONE` to `Europe/Kyiv` and store the OpenAI key only in `production` → **Secrets** → `AGENT_API_KEY`. Passwords and API credentials must be Secrets, not Variables. A fill-in checklist is at [`infrastructure/prod/.env.production.local.example`](../infrastructure/prod/.env.production.local.example); the local `.env.production.local` copy is ignored by Git and is only a scratchpad for entering values in GitHub.
 
+`DOMAIN` is the only URL source of truth. Each deployment derives `API_URL=https://api.<DOMAIN>`, `FRONTEND_URL=https://<DOMAIN>`, `MEDIA_PUBLIC_BASE_URL=https://cdn.<DOMAIN>`, `CORS_ALLOWED_ORIGINS=https://<DOMAIN>`, `AUTH_COOKIE_DOMAIN=.<DOMAIN>`, and `GOOGLE_REDIRECT_URI=https://api.<DOMAIN>/auth/google/callback`. Point the root and `api` DNS names at this server; attach `cdn.<DOMAIN>` to the R2 bucket as its custom domain. Register the derived Google callback URI in Google Cloud Console. R2's S3 API endpoint and credentials remain separate storage settings.
+
 ## Deployment
 
-1. Point the domain's A/AAAA record at the server and allow inbound TCP 22, 80 and 443 (optionally UDP 443 for HTTP/3).
+1. Point the root and `api` subdomain A/AAAA records at the server, attach `cdn` to the R2 bucket custom domain, and allow inbound TCP 22, 80 and 443 (optionally UDP 443 for HTTP/3).
 2. Run **Provision and start infrastructure**. It installs Docker on Debian/Ubuntu and starts PostgreSQL, RabbitMQ, Redis, plus MinIO only when `USE_MINIO=true`. SSH requires passwordless sudo.
 3. Run **Build and publish images** on `main`, or dispatch it for all components.
 4. Use the commit SHA from that build run in **Deploy selected services**, choosing `all` for the first app deployment.

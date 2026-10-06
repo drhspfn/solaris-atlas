@@ -108,6 +108,6 @@ uv run --project packages/worker wuwa-story-worker enqueue-maps <plan.json>
 
 Set `WUWA_ASSET_BUILD_MAPS=1` on the downloader to enqueue map extraction automatically after a verified download. The same Windows `asset_extract` consumer handles raw exports and map jobs. Failures go to its existing failed queue.
 
-API: `GET /maps?game_version=3.7.0`, `GET /maps/{id}`, `GET /maps/{id}/markers`. Local reverse-proxy URLs start with `/api/maps`. Tile manifests include `file_id`, SHA-256 and signed MinIO URLs valid for one hour. Set `S3_PUBLIC_ENDPOINT_URL` to the browser-reachable MinIO/CDN origin; Docker's internal `minio:9000` is not a browser address.
+API: `GET /maps?game_version=3.7.0`, `GET /maps/{id}`, `GET /maps/{id}/markers`. Local reverse-proxy URLs start with `/api/maps`. Tile manifests include `file_id`, SHA-256 and signed MinIO URLs valid for one hour. Set `MEDIA_PUBLIC_BASE_URL` to the browser-reachable MinIO public bucket root in local development; production public media uses the CDN URL derived from `DOMAIN`.
 
 World coordinates and original tile indices are retained. Marker categories initially come from blueprint names and do not prove that a placement is active in a particular playthrough. Hidden/sleep flags, component overrides and Z height are preserved. Floor assignment is unresolved where there is no reliable source link; marker responses explicitly report this. See [map source notes](../../docs/game-data/maps.md) for transforms and limitations.

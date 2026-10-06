@@ -74,7 +74,7 @@ missing = [key for key in required if not compose.get(key)]
 if missing:
     raise SystemExit("Missing required production environment values: " + ", ".join(missing))
 domain = compose["DOMAIN"].strip()
-if not domain or "/" in domain or ":" in domain or " " in domain:
+if not re.fullmatch(r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", domain):
     raise SystemExit("DOMAIN must be a hostname without scheme or path")
 if os.environ["DEPLOY_COMPONENT"] != "infrastructure" and domain == "example.invalid":
     raise SystemExit("Set the production DOMAIN variable in the GitHub production environment before deploying app services")
@@ -90,21 +90,24 @@ runtime = {
     "REDIS_URL": "redis://redis:6379/0",
     "RABBITMQ_URL": f"amqp://{quote(compose['RABBITMQ_DEFAULT_USER'], safe='')}:{quote(compose['RABBITMQ_DEFAULT_PASS'], safe='')}@rabbitmq:5672/",
     "S3_ENDPOINT_URL": compose.get("S3_ENDPOINT_URL") or ("http://minio:9000" if use_minio else ""),
-    "S3_PUBLIC_ENDPOINT_URL": compose.get("S3_PUBLIC_ENDPOINT_URL") or compose.get("S3_ENDPOINT_URL") or ("http://minio:9000" if use_minio else ""),
     "S3_ACCESS_KEY_ID": compose.get("S3_ACCESS_KEY_ID") or compose.get("MINIO_ROOT_USER", ""),
     "S3_SECRET_ACCESS_KEY": compose.get("S3_SECRET_ACCESS_KEY") or compose.get("MINIO_ROOT_PASSWORD", ""),
     "S3_BUCKET": compose.get("S3_BUCKET", "wuwa"),
     "S3_REGION": compose.get("S3_REGION", "us-east-1"),
     "S3_USE_SSL": compose.get("S3_USE_SSL", "false"),
 }
-api_runtime = {
-    **runtime,
-    "FRONTEND_URL": f"https://{domain}",
-    "CORS_ALLOWED_ORIGINS": f"https://{domain}",
+api_url = f"https://api.{domain}"
+frontend_url = f"https://{domain}"
+derived_api_config = {
+    "API_URL": api_url,
+    "FRONTEND_URL": frontend_url,
+    "MEDIA_PUBLIC_BASE_URL": f"https://cdn.{domain}",
+    "CORS_ALLOWED_ORIGINS": frontend_url,
     "AUTH_COOKIE_SECURE": "true",
-    "AUTH_COOKIE_DOMAIN": domain,
-    "GOOGLE_REDIRECT_URI": f"https://{domain}/api/auth/google/callback",
+    "AUTH_COOKIE_DOMAIN": f".{domain}",
+    "GOOGLE_REDIRECT_URI": f"{api_url}/auth/google/callback",
 }
+api_runtime = {**runtime, **api, **derived_api_config}
 
 def write_env(name, values):
     for key, value in values.items():
@@ -115,10 +118,10 @@ def write_env(name, values):
     os.chmod(path, 0o600)
 
 write_env("runtime.env", runtime)
-write_env("api.runtime.env", {**api_runtime, **api})
+write_env("api.runtime.env", api_runtime)
 write_env("worker.runtime.env", runtime)
 write_env("shared.env", shared)
-write_env("api.env", api)
+write_env("api.env", {key: value for key, value in api.items() if key not in derived_api_config})
 write_env("worker.env", worker)
 
 # Dotenv quoting for Compose interpolation; dollar signs are escaped for Compose.

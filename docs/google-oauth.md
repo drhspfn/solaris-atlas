@@ -26,7 +26,7 @@ The default compose/Vite port may be 3000 or 5173 depending on how the frontend 
 
 ## Production
 
-For the deployment with the API exposed at `api.solarisatlas.fun`, register:
+For the deployment with the API exposed at `api.<DOMAIN>`, register the derived callback URL:
 
 ```text
 https://api.solarisatlas.fun/auth/google/callback
@@ -35,15 +35,11 @@ https://api.solarisatlas.fun/auth/google/callback
 Configure:
 
 ```dotenv
-FRONTEND_URL=https://solarisatlas.fun
-GOOGLE_REDIRECT_URI=https://api.solarisatlas.fun/auth/google/callback
-CORS_ALLOWED_ORIGINS=https://solarisatlas.fun
 AUTH_COOKIE_SECURE=true
 AUTH_COOKIE_SAMESITE=lax
-AUTH_COOKIE_DOMAIN=.solarisatlas.fun
 AUTH_CSRF_SECRET=<long random secret>
 ```
 
-The current web container proxies `/api` on `solarisatlas.fun` to the API, while Google returns to `api.solarisatlas.fun`. The parent-domain cookie is needed so the session created by that callback is sent through the frontend's same-origin API proxy. If the frontend instead calls the API subdomain directly, configure `VITE_API_BASE` and exact CORS origins for that arrangement and use the narrowest cookie domain that works. Never commit the client secret or CSRF secret. Restart API containers after changing environment values.
+The deployment derives the frontend URL, CORS origin, API callback URL, and parent cookie domain from `DOMAIN`. The web container proxies `/api` on the root domain to the API subdomain; Google returns to `api.<DOMAIN>`. The parent-domain cookie lets the session created by that callback be sent through the frontend's same-origin API proxy. If the frontend instead calls the API subdomain directly, configure `VITE_API_BASE` and exact CORS origins for that arrangement. Never commit the client secret or CSRF secret. Restart API containers after changing environment values.
 
 Once those credentials and URLs are set, Google sign-in and linking are available without additional frontend configuration.
