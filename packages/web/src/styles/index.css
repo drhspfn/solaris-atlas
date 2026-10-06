@@ -4819,9 +4819,15 @@ select {
   display: none;
 }
 .auth-menu summary:after {
-  content: 'вЊ„';
-  margin-left: 9px;
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 2px 3px 9px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
   color: var(--accent-mint);
+  transform: rotate(45deg);
 }
 .auth-menu[open] summary {
   border-color: var(--border-strong);

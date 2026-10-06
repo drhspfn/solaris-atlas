@@ -45,6 +45,11 @@ const AgentOperationsPage = lazy(() =>
     default: module.AgentOperationsPage,
   })),
 );
+const DataOperationsPage = lazy(() =>
+  import('../pages/DataOperationsPage').then((module) => ({
+    default: module.DataOperationsPage,
+  })),
+);
 
 const apiDocsUrl = import.meta.env.VITE_API_DOCS_URL ?? APP_SETTINGS.api.defaultDocsUrl;
 
@@ -100,6 +105,14 @@ export function App() {
           </NavLink>
           <a className="nav-link nav-about" href={apiDocsUrl} target="_blank" rel="noreferrer">
             API <ExternalLink size={12} />
+          </a>
+          <a
+            className="nav-link nav-about"
+            href="https://github.com/drhspfn/solaris-atlas"
+            target="_blank"
+            rel="noreferrer"
+          >
+            GitHub <ExternalLink size={12} />
           </a>
         </nav>
         <div className="top-actions">
@@ -169,6 +182,14 @@ export function App() {
               }
             />
             <Route index element={<Navigate to="story-agent" replace />} />
+            <Route
+              path="data-operations"
+              element={
+                <Suspense fallback={<PageLoader />}>
+                  <DataOperationsPage />
+                </Suspense>
+              }
+            />
             <Route
               path="story-agent"
               element={

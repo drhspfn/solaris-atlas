@@ -1,6 +1,6 @@
 import '../styles/story-agent.css';
 
-import { Bell, BookOpen, ChevronRight, Coins, Film, ShieldCheck } from 'lucide-react';
+import { Bell, BookOpen, ChevronRight, Coins, Database, Film, ShieldCheck } from 'lucide-react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 
 import { useAuth } from '../auth/AuthProvider';
@@ -55,6 +55,10 @@ export function AdminLayout() {
             <NavLink to="/admin/cutscene-analysis">
               <Film size={16} />
               Cutscene analysis
+            </NavLink>
+            <NavLink to="/admin/data-operations">
+              <Database size={16} />
+              Game data
             </NavLink>
             <span>Operations</span>
             <NavLink to="/admin/alerts">
