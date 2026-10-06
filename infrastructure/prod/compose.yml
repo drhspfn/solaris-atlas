@@ -73,6 +73,10 @@ services:
         format: raw
       - path: ./env/api.env
         format: raw
+    environment:
+      WUWA_ASSET_WORKSPACE: /var/lib/wuwa-worker/client-assets
+    volumes:
+      - worker_data:/var/lib/wuwa-worker:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -134,8 +138,10 @@ services:
       - asset_extract
     volumes:
       - worker_data:/var/lib/wuwa-worker
+      - ${WUWA_TOOLS_HOST_PATH:-/opt/wuwa-tools}:/opt/wuwa-tools:ro
     environment:
       WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
+      WUWA_TOOLS_DIR: /opt/wuwa-tools
     depends_on:
       postgres:
         condition: service_healthy
@@ -157,6 +163,12 @@ services:
       - path: ./env/worker.env
         format: raw
     command: ["wuwa-story-worker", "run", "--queue", "story_agent"]
+    volumes:
+      - worker_data:/var/lib/wuwa-worker
+      - ${WUWA_TOOLS_HOST_PATH:-/opt/wuwa-tools}:/opt/wuwa-tools:ro
+    environment:
+      WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
+      WUWA_TOOLS_DIR: /opt/wuwa-tools
     depends_on:
       postgres:
         condition: service_healthy
@@ -178,6 +190,12 @@ services:
       - path: ./env/worker.env
         format: raw
     command: ["wuwa-story-worker", "run", "--queue", "cutscene_vision"]
+    volumes:
+      - worker_data:/var/lib/wuwa-worker
+      - ${WUWA_TOOLS_HOST_PATH:-/opt/wuwa-tools}:/opt/wuwa-tools:ro
+    environment:
+      WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
+      WUWA_TOOLS_DIR: /opt/wuwa-tools
     depends_on:
       postgres:
         condition: service_healthy

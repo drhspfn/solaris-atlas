@@ -23,6 +23,7 @@ from wuwa_story.storage.service import FileRegistrationService
 from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.client_assets import validate_plan, workspace_lock
 from wuwa_story_worker.map_icons import build_icons
+from wuwa_story_worker.tooling import asset_workspace, tool_path
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,8 @@ async def build_entity_files(root, targets, fmodel, converter):
         if not files:
             raise ValueError("None of the requested textures could be decoded")
         return files, missing
+    if not os.getenv("WUWA_VOICE_ROOT"):
+        raise RuntimeError("Set WUWA_VOICE_ROOT to the completed multilingual voice download directory")
     voice_root = Path(os.environ["WUWA_VOICE_ROOT"]).resolve()
     plan = json.loads((voice_root / "plan.json").read_text(encoding="utf-8"))
     status = json.loads((voice_root / "status.json").read_text(encoding="utf-8"))
@@ -105,7 +108,7 @@ async def build_entity_files(root, targets, fmodel, converter):
         or status.get("id") != plan["id"]
     ):
         raise ValueError("A matching complete multilingual voice download is required")
-    decoder = Path(os.environ["WUWA_VGMSTREAM_PATH"]).resolve()
+    decoder = tool_path("WUWA_VGMSTREAM_PATH").resolve()
     for source in sorted({t["path"] for t in voices}):
         if not re.fullmatch(r"/Game/Aki/WwiseAudio/Events/[A-Za-z0-9_]+\.[A-Za-z0-9_]+", source):
             raise ValueError("Unsupported character voice event path")
@@ -209,7 +212,7 @@ async def process_entity_media(payload: dict) -> None:
 async def _process_entity_media(payload: dict, connection) -> None:
     request = MediaRequest.model_validate(payload["request"])
     root = (
-        Path(os.environ["WUWA_ASSET_WORKSPACE"]).resolve()
+        asset_workspace()
         / "assets"
         / f"{request.asset_version}-{request.tier}-{request.download_id[:16]}"
     )
@@ -240,8 +243,8 @@ async def _process_entity_media(payload: dict, connection) -> None:
                 files, missing = await build_entity_files(
                     root,
                     payload["targets"],
-                    Path(os.environ["WUWA_FMODEL_PATH"]),
-                    Path(os.environ["WUWA_TEXTURE_CONVERTER_PATH"]),
+                    tool_path("WUWA_FMODEL_PATH"),
+                    tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
                 )
                 storage = S3Storage(get_settings())
                 await storage.ensure_bucket()

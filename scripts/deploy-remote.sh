@@ -173,3 +173,10 @@ else
   "${compose[@]}" up -d "${services[@]}"
 fi
 "${compose[@]}" ps
+case "$DEPLOY_COMPONENT" in
+  infrastructure|snapshot-worker|all)
+    "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-assets-long-jobs \
+      '^wuwa[.]asset-(download|extract)[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues \
+      || echo "WARNING: could not apply the long-running asset job RabbitMQ policy" >&2
+    ;;
+esac
