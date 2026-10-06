@@ -1,4 +1,14 @@
-import { Activity, Database, Film, Map as MapIcon, RefreshCw, Rocket } from 'lucide-react';
+import {
+  Activity,
+  AlertCircle,
+  CheckCircle,
+  Database,
+  Download,
+  HardDrive,
+  Map as MapIcon,
+  RefreshCw,
+  Rocket,
+} from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 
 import { api, ApiError } from '../api/client';
@@ -16,16 +26,50 @@ type ImportRun = {
   records_failed: number;
   error: string | null;
 };
-type SnapshotJob = {
+
+type ProcessingJob = {
   id: number;
   status: string;
   started_at: string;
   finished_at: string | null;
   error: string | null;
-  version: string;
-  commit: string;
-  repository: string;
+  version?: string;
+  commit?: string;
+  repository?: string;
+  tier?: string;
+  download_id?: string;
+  file_count?: number;
+  size_bytes?: number;
 };
+
+type InstalledClient = {
+  version: string;
+  tier: string;
+  download_id: string;
+  keys_commit?: string;
+  state: string;
+  key_count: number;
+  file_count: number;
+  size_bytes: number;
+  path?: string;
+};
+
+type ClientAssetsOverview = {
+  live_version: string | null;
+  installed: InstalledClient[];
+  active_client: InstalledClient | null;
+  active_download: {
+    id: number;
+    status: string;
+    started_at: string;
+    version?: string;
+    tier?: string;
+    download_id?: string;
+    file_count?: number;
+    size_bytes?: number;
+  } | null;
+};
+
 type Overview = {
   releases: {
     id: number;
@@ -37,16 +81,22 @@ type Overview = {
     imported_at: string;
   }[];
   imports: ImportRun[];
-  snapshot_jobs: SnapshotJob[];
+  snapshot_jobs: ProcessingJob[];
+  asset_jobs?: ProcessingJob[];
+  map_jobs?: ProcessingJob[];
   maps: { game_version: string; map_count: number; asset_jobs: number; marker_count: number }[];
+  client_assets?: ClientAssetsOverview;
 };
 
 const date = (value: string | null) => (value ? new Date(value).toLocaleString() : 'In progress');
+const formatGiB = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
 
 export function DataOperationsPage() {
   const { refresh: refreshAuth } = useAuth();
   const [data, setData] = useState<Overview | null>(null);
-  const [version, setVersion] = useState('');
+  const [patchVersion, setPatchVersion] = useState('');
+  const [clientVersion, setClientVersion] = useState('');
+  const [clientTier, setClientTier] = useState<'sd' | 'hd' | 'uhd'>('hd');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -60,6 +110,9 @@ export function DataOperationsPage() {
         if (!signal?.aborted) {
           setData(result);
           setError('');
+          if (!clientVersion && result.client_assets?.live_version) {
+            setClientVersion(result.client_assets.live_version);
+          }
         }
       } catch (reason) {
         if (!signal?.aborted) {
@@ -70,7 +123,7 @@ export function DataOperationsPage() {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [refreshAuth],
+    [refreshAuth, clientVersion],
   );
 
   useEffect(() => {
@@ -84,7 +137,7 @@ export function DataOperationsPage() {
     };
   }, [refresh, refreshKey]);
 
-  async function enqueue(event: FormEvent) {
+  async function enqueuePatch(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError('');
@@ -92,12 +145,12 @@ export function DataOperationsPage() {
     try {
       const result = await api<{ id: number; status: string; version: string; commit: string }>(
         '/admin/data-operations/snapshots',
-        { method: 'POST', body: JSON.stringify({ version }) },
+        { method: 'POST', body: JSON.stringify({ version: patchVersion }) },
       );
       setNotice(
         `Patch ${result.version} queued as run #${result.id} · ${result.commit.slice(0, 12)}.`,
       );
-      setVersion('');
+      setPatchVersion('');
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not queue this patch import.');
@@ -106,17 +159,90 @@ export function DataOperationsPage() {
     }
   }
 
-  const active =
+  async function enqueueClientDownload(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await api<{
+        id: number;
+        status: string;
+        version: string;
+        tier: string;
+        download_id: string;
+        file_count: number;
+        size_bytes: number;
+      }>('/admin/data-operations/client-download', {
+        method: 'POST',
+        body: JSON.stringify({
+          version: clientVersion.trim() || undefined,
+          tier: clientTier,
+        }),
+      });
+      setNotice(
+        `Client ${result.version} (${result.tier.toUpperCase()}) download queued as run #${result.id} · ${result.file_count} files (${formatGiB(result.size_bytes)}).`,
+      );
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not queue client download.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function enqueueMapBuild() {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    const target = data?.client_assets?.active_client;
+    try {
+      const result = await api<{
+        id: number;
+        status: string;
+        version: string;
+        tier: string;
+        download_id: string;
+      }>('/admin/data-operations/maps/build', {
+        method: 'POST',
+        body: JSON.stringify({
+          version: target?.version ?? '3.7.0',
+          tier: target?.tier ?? 'hd',
+          download_id: target?.download_id,
+        }),
+      });
+      setNotice(`Interactive map build for ${result.version} queued as run #${result.id}.`);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not queue interactive map build.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const activeSnapshots =
     data?.snapshot_jobs.filter((job) => ['queued', 'running'].includes(job.status)).length ?? 0;
+  const activeAssetJobs =
+    data?.asset_jobs?.filter((job) => ['queued', 'running'].includes(job.status)).length ?? 0;
+  const activeMapJobs =
+    data?.map_jobs?.filter((job) => ['queued', 'running'].includes(job.status)).length ?? 0;
+  const totalActive = activeSnapshots + activeAssetJobs + activeMapJobs;
+
   const markerTotal = data?.maps.reduce((sum, row) => sum + row.marker_count, 0) ?? 0;
   const importedRecords = data?.imports.reduce((sum, row) => sum + row.records_created, 0) ?? 0;
+
+  const activeClient = data?.client_assets?.active_client;
+  const activeDownload = data?.client_assets?.active_download;
 
   return (
     <section className="agent-page data-operations">
       <header className="page-heading agent-heading">
         <div>
-          <h2>Game data</h2>
-          <p>Patch imports, interactive map coverage and processing activity.</p>
+          <h2>Game data & operations</h2>
+          <p>
+            Game client downloads, patch imports, interactive map extraction and processing
+            activity.
+          </p>
         </div>
         <button
           className="agent-button"
@@ -140,14 +266,20 @@ export function DataOperationsPage() {
 
       <div className="data-metrics">
         <article className="content-panel">
-          <Database size={18} />
-          <span>Imported patches</span>
-          <strong>{data?.releases.length ?? '—'}</strong>
+          <HardDrive size={18} />
+          <span>Game client</span>
+          <strong>
+            {activeDownload
+              ? 'Downloading…'
+              : activeClient
+                ? `${activeClient.version} ${activeClient.tier.toUpperCase()}`
+                : 'Not downloaded'}
+          </strong>
         </article>
         <article className="content-panel">
           <Activity size={18} />
-          <span>Active imports</span>
-          <strong>{active}</strong>
+          <span>Active jobs</span>
+          <strong>{totalActive}</strong>
         </article>
         <article className="content-panel">
           <MapIcon size={18} />
@@ -161,23 +293,265 @@ export function DataOperationsPage() {
         </article>
       </div>
 
+      {/* SECTION: Game client asset downloader */}
       <section className="content-panel data-operation-panel">
         <header className="agent-panel-header">
           <div>
-            <h3>Import a patch</h3>
-            <p>Build and import a pinned patch from the upstream data repository.</p>
+            <h3>
+              <HardDrive size={16} /> Official game client
+            </h3>
+            <p>
+              Download PAK archives and AES keys from the official Kuro launcher CDN. The game
+              client provides raw textures, icons, cutscene MP4s and audio banks for map and media
+              extractors.
+            </p>
           </div>
         </header>
-        <form className="data-import-form" onSubmit={(event) => void enqueue(event)}>
-          <label htmlFor="patch-version">Patch branch</label>
-          <input
-            id="patch-version"
-            value={version}
-            onChange={(event) => setVersion(event.target.value)}
-            placeholder="3.7"
-            pattern="[0-9]+\.[0-9]+"
-            required
-          />
+
+        <div className="client-asset-banner">
+          <div className="client-asset-info">
+            {activeDownload ? (
+              <span className="agent-status active">
+                <Activity size={14} /> Downloading run #{activeDownload.id}
+              </span>
+            ) : activeClient ? (
+              <span className="agent-status done">
+                <CheckCircle size={14} /> Client ready ({activeClient.version})
+              </span>
+            ) : (
+              <span className="agent-status paused">
+                <AlertCircle size={14} /> Client not downloaded
+              </span>
+            )}
+            <div className="client-asset-details">
+              <span>
+                Live launcher: <strong>{data?.client_assets?.live_version ?? '3.7.0'}</strong>
+              </span>
+              {activeClient && (
+                <>
+                  <span>
+                    Tier: <strong>{activeClient.tier.toUpperCase()}</strong>
+                  </span>
+                  <span>
+                    Files: <strong>{activeClient.file_count}</strong>
+                  </span>
+                  <span>
+                    Size: <strong>{formatGiB(activeClient.size_bytes)}</strong>
+                  </span>
+                  {activeClient.key_count > 0 && (
+                    <span>
+                      AES keys: <strong>{activeClient.key_count} dynamic</strong>
+                    </span>
+                  )}
+                  <span title={activeClient.download_id}>
+                    Download ID: <code>{activeClient.download_id.slice(0, 16)}…</code>
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <form className="data-import-form" onSubmit={(event) => void enqueueClientDownload(event)}>
+          <label htmlFor="client-version">
+            Version
+            <input
+              id="client-version"
+              value={clientVersion}
+              onChange={(event) => setClientVersion(event.target.value)}
+              placeholder={data?.client_assets?.live_version ?? '3.7.0'}
+              pattern="[0-9]+\.[0-9]+(\.[0-9]+)?"
+            />
+          </label>
+          <label htmlFor="client-tier">
+            Resource tier
+            <select
+              id="client-tier"
+              value={clientTier}
+              onChange={(e) => setClientTier(e.target.value as 'sd' | 'hd' | 'uhd')}
+            >
+              <option value="hd">HD (Default)</option>
+              <option value="sd">SD</option>
+              <option value="uhd">UHD</option>
+            </select>
+          </label>
+          <button
+            className="agent-button agent-button-primary"
+            type="submit"
+            disabled={busy || loading || Boolean(activeDownload)}
+          >
+            <Download size={14} />{' '}
+            {busy ? 'Queueing…' : activeDownload ? 'Download in progress' : 'Download game client'}
+          </button>
+        </form>
+
+        {Boolean(data?.asset_jobs?.length) && (
+          <div className="agent-table-scroll" tabIndex={0} aria-label="Game client download runs">
+            <table>
+              <thead>
+                <tr>
+                  <th>Run</th>
+                  <th>Version</th>
+                  <th>Tier</th>
+                  <th>Status</th>
+                  <th>Files / Size</th>
+                  <th>Started</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data?.asset_jobs?.map((job) => (
+                  <tr key={job.id}>
+                    <th scope="row">
+                      #{job.id}
+                      {job.download_id && (
+                        <small title={job.download_id}>{job.download_id.slice(0, 12)}</small>
+                      )}
+                    </th>
+                    <td>{job.version ?? '—'}</td>
+                    <td>{job.tier?.toUpperCase() ?? '—'}</td>
+                    <td>
+                      <span className={`agent-status status-${job.status}`}>
+                        {job.status.replaceAll('_', ' ')}
+                      </span>
+                      {job.error && <small>{job.error}</small>}
+                    </td>
+                    <td>
+                      {job.file_count
+                        ? `${job.file_count} files (${formatGiB(job.size_bytes ?? 0)})`
+                        : '—'}
+                    </td>
+                    <td>{date(job.finished_at ?? job.started_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* SECTION: Interactive maps */}
+      <section className="content-panel data-operation-panel">
+        <header className="agent-panel-header">
+          <div>
+            <h3>
+              <MapIcon size={16} /> Interactive maps
+            </h3>
+            <p>
+              Extract map tile textures, coordinate grids and placement markers from downloaded game
+              client archives.
+            </p>
+          </div>
+        </header>
+
+        <div className="client-asset-banner">
+          <div className="client-asset-info">
+            <button
+              className="agent-button agent-button-primary"
+              onClick={() => void enqueueMapBuild()}
+              disabled={busy || loading || !activeClient || activeMapJobs > 0}
+            >
+              <MapIcon size={14} />{' '}
+              {activeMapJobs > 0
+                ? 'Map extraction in progress…'
+                : activeClient
+                  ? `Build maps for ${activeClient.version}`
+                  : 'Requires downloaded client'}
+            </button>
+            <span className="data-operations-note" style={{ margin: 0 }}>
+              {activeClient
+                ? `Ready using client build ${activeClient.download_id.slice(0, 12)}…`
+                : 'Download the game client archives above before queueing map builds.'}
+            </span>
+          </div>
+        </div>
+
+        <div
+          className="agent-table-scroll"
+          tabIndex={0}
+          aria-label="Interactive map import coverage"
+        >
+          <table>
+            <thead>
+              <tr>
+                <th>Asset version</th>
+                <th>Maps</th>
+                <th>Asset jobs</th>
+                <th>Markers</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data?.maps.map((map) => (
+                <tr key={map.game_version}>
+                  <th scope="row">{map.game_version}</th>
+                  <td>{map.map_count}</td>
+                  <td>{map.asset_jobs}</td>
+                  <td>{map.marker_count.toLocaleString('en-US')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!loading && !data?.maps.length && (
+          <p className="empty-inline">No interactive maps have been built yet.</p>
+        )}
+
+        {Boolean(data?.map_jobs?.length) && (
+          <div className="agent-table-scroll" tabIndex={0} aria-label="Interactive map build runs">
+            <table>
+              <thead>
+                <tr>
+                  <th>Run</th>
+                  <th>Version</th>
+                  <th>Status</th>
+                  <th>Started</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data?.map_jobs?.map((job) => (
+                  <tr key={job.id}>
+                    <th scope="row">#{job.id}</th>
+                    <td>{job.version ?? '—'}</td>
+                    <td>
+                      <span className={`agent-status status-${job.status}`}>
+                        {job.status.replaceAll('_', ' ')}
+                      </span>
+                      {job.error && <small>{job.error}</small>}
+                    </td>
+                    <td>{date(job.finished_at ?? job.started_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* SECTION: Patch snapshots import */}
+      <section className="content-panel data-operation-panel">
+        <header className="agent-panel-header">
+          <div>
+            <h3>
+              <Rocket size={16} /> Import a patch
+            </h3>
+            <p>
+              Build and import a pinned patch from the upstream data repository (1.0, 1.1, etc.).
+              Snapshots contain deterministic entity tables, quest lines, dialogue trees and
+              localization.
+            </p>
+          </div>
+        </header>
+        <form className="data-import-form" onSubmit={(event) => void enqueuePatch(event)}>
+          <label htmlFor="patch-version">
+            Patch branch
+            <input
+              id="patch-version"
+              value={patchVersion}
+              onChange={(event) => setPatchVersion(event.target.value)}
+              placeholder="3.7"
+              pattern="[0-9]+\.[0-9]+"
+              required
+            />
+          </label>
           <button
             className="agent-button agent-button-primary"
             type="submit"
@@ -188,6 +562,7 @@ export function DataOperationsPage() {
         </form>
       </section>
 
+      {/* SECTION: Imported versions */}
       <section className="content-panel data-operation-panel">
         <header className="agent-panel-header">
           <div>
@@ -228,6 +603,7 @@ export function DataOperationsPage() {
         )}
       </section>
 
+      {/* SECTION: Patch import runs */}
       <section className="content-panel data-operation-panel">
         <header className="agent-panel-header">
           <div>
@@ -251,7 +627,7 @@ export function DataOperationsPage() {
                 <tr key={job.id}>
                   <th scope="row">
                     #{job.id}
-                    <small title={job.commit}>{job.commit.slice(0, 12)}</small>
+                    {job.commit && <small title={job.commit}>{job.commit.slice(0, 12)}</small>}
                   </th>
                   <td>{job.version}</td>
                   <td>
@@ -277,48 +653,7 @@ export function DataOperationsPage() {
         )}
       </section>
 
-      <section className="content-panel data-operation-panel">
-        <header className="agent-panel-header">
-          <div>
-            <h3>
-              <Film size={16} /> Interactive maps
-            </h3>
-            <p>Published map tiles and placed markers by client asset version.</p>
-          </div>
-        </header>
-        <div
-          className="agent-table-scroll"
-          tabIndex={0}
-          aria-label="Interactive map import coverage"
-        >
-          <table>
-            <thead>
-              <tr>
-                <th>Asset version</th>
-                <th>Maps</th>
-                <th>Asset jobs</th>
-                <th>Markers</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data?.maps.map((map) => (
-                <tr key={map.game_version}>
-                  <th scope="row">{map.game_version}</th>
-                  <td>{map.map_count}</td>
-                  <td>{map.asset_jobs}</td>
-                  <td>{map.marker_count.toLocaleString('en-US')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="data-operations-note">
-          Map extraction is not enabled in the production Linux worker image yet. It requires the
-          separately verified Windows FModelCLI and CUE4Parse tools, so this panel reports published
-          map data without queuing a job that cannot run.
-        </p>
-      </section>
-
+      {/* SECTION: Import history */}
       <section className="content-panel data-operation-panel">
         <header className="agent-panel-header">
           <div>

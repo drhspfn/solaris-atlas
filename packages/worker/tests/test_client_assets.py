@@ -229,3 +229,22 @@ def test_download_preflight_rejects_low_disk_space(tmp_path, monkeypatch):
     monkeypatch.setattr(client_assets, "urlopen", lambda *a, **k: pytest.fail("must not download"))
     with pytest.raises(RuntimeError, match="Insufficient disk"):
         client_assets.download_plan(_plan(), tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_download_client_assets_updates_admin_run(tmp_path, monkeypatch):
+    plan = {**_plan(), "run_id": 42}
+    monkeypatch.setenv("WUWA_ASSET_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(asset_jobs, "download_plan", lambda *a: tmp_path)
+    async def noop(*a, **k):
+        pass
+    monkeypatch.setattr(asset_jobs, "publish_job", noop)
+    updates = []
+    async def track(run_id, processor, status, **kwargs):
+        updates.append((run_id, processor, status, kwargs))
+    monkeypatch.setattr(asset_jobs, "update_admin_run", track)
+    await asset_jobs.download_client_assets(plan)
+    assert updates == [
+        (42, "asset_download", "running", {}),
+        (42, "asset_download", "completed", {}),
+    ]
