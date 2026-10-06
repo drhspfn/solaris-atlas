@@ -185,3 +185,10 @@ jobs:
         run: |
           printf '%s\n' "$GHCR_TOKEN" |
             ssh "$USER@$HOST" "cd ~/solaris-atlas && IMAGE_TAG='$IMAGE_TAG' GHCR_OWNER='${OWNER,,}' DEPLOY_COMPONENT='$COMPONENT' bash scripts/deploy-remote.sh"
+      - name: Diagnose unhealthy containers
+        if: ${{ failure() }}
+        env:
+          HOST: ${{ vars.DEPLOY_HOST }}
+          USER: ${{ vars.DEPLOY_USER }}
+        run: |
+          ssh "$USER@$HOST" 'cd ~/solaris-atlas && docker compose --env-file env/compose.runtime.env -f compose.yml ps && for service in postgres rabbitmq; do container=$(docker compose --env-file env/compose.runtime.env -f compose.yml ps -q "$service"); if [ -n "$container" ]; then docker inspect "$container" --format "{{.Name}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}{{range .State.Health.Log}}\ncheck exit={{.ExitCode}} output={{.Output}}{{end}}"; fi; done'
