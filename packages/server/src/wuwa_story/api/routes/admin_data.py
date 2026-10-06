@@ -8,8 +8,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,16 +37,28 @@ router = APIRouter(
 )
 
 
-class SnapshotImportRequest(BaseModel):
+class _PayloadModel(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def _parse_raw_json_string(cls, data: Any) -> Any:
+        if isinstance(data, str):
+            try:
+                return json.loads(data)
+            except Exception:
+                return data
+        return data
+
+
+class SnapshotImportRequest(_PayloadModel):
     version: str = Field(pattern=r"^\d+\.\d+$")
 
 
-class ClientAssetDownloadRequest(BaseModel):
+class ClientAssetDownloadRequest(_PayloadModel):
     version: str | None = Field(default=None, pattern=r"^\d+\.\d+(\.\d+)?$")
     tier: Literal["sd", "hd", "uhd"] = "hd"
 
 
-class MapBuildRequest(BaseModel):
+class MapBuildRequest(_PayloadModel):
     version: str = Field(default="3.7.0", pattern=r"^\d+\.\d+(\.\d+)?$")
     tier: Literal["sd", "hd", "uhd"] = "hd"
     download_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
