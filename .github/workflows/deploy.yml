@@ -9,9 +9,10 @@ on:
         options: [infrastructure, api, web, caddy, snapshot-worker, story-agent, cutscene-vision, all]
         required: true
       image_tag:
-        description: Image tag (usually the commit SHA from Build and publish images)
+        description: Image tag (defaults to main; a full or short commit SHA also works)
         type: string
-        required: true
+        required: false
+        default: main
 
 permissions:
   contents: read
@@ -22,5 +23,5 @@ jobs:
     uses: ./.github/workflows/production-deploy.yml
     with:
       component: ${{ inputs.component }}
-      image_tag: ${{ inputs.image_tag }}
+      image_tag: ${{ inputs.image_tag || 'main' }}
     secrets: inherit

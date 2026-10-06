@@ -8,7 +8,8 @@ on:
         required: true
       image_tag:
         type: string
-        required: true
+        required: false
+        default: main
       bootstrap:
         type: boolean
         required: false
@@ -120,6 +121,34 @@ jobs:
           mkdir -p "$env_dir"
           chmod 700 "$env_dir"
           python3 scripts/render-production-env.py "$env_dir"
+      - name: Log in to GHCR for image validation
+        if: ${{ inputs.component != 'infrastructure' && inputs.component != 'caddy' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify requested images exist
+        if: ${{ inputs.component != 'infrastructure' && inputs.component != 'caddy' }}
+        env:
+          COMPONENT: ${{ inputs.component }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          case "$COMPONENT" in
+            api) components=(api) ;;
+            web) components=(web) ;;
+            snapshot-worker|story-agent|cutscene-vision) components=(worker) ;;
+            all) components=(api web worker) ;;
+            *) echo "Unsupported image component: $COMPONENT" >&2; exit 2 ;;
+          esac
+          for component in "${components[@]}"; do
+            image="ghcr.io/${OWNER,,}/solaris-atlas-$component:$IMAGE_TAG"
+            if ! docker manifest inspect "$image" >/dev/null; then
+              echo "Image tag not found: $image. Wait for Build and publish images on main, or choose an existing image tag." >&2
+              exit 1
+            fi
+          done
       - name: Configure SSH and copy deployment files
         env:
           HOST: ${{ vars.DEPLOY_HOST }}
