@@ -158,6 +158,9 @@ esac
 
 if [[ "$DEPLOY_COMPONENT" == api || "$DEPLOY_COMPONENT" == all ]]; then
   "${compose[@]}" pull api
+  # Apply infrastructure changes (including healthcheck updates) before the
+  # migration container waits on database and broker health.
+  "${compose[@]}" up -d postgres rabbitmq redis
   "${compose[@]}" run --rm api alembic upgrade head
 fi
 if [[ "$DEPLOY_COMPONENT" != infrastructure ]]; then

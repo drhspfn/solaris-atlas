@@ -36,8 +36,13 @@ jobs:
         id: meta
         shell: bash
         run: |
-          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}-${{ matrix.component }}" >> "$GITHUB_OUTPUT"
-          echo "tags=ghcr.io/${GITHUB_REPOSITORY,,}-${{ matrix.component }}:${GITHUB_SHA},ghcr.io/${GITHUB_REPOSITORY,,}-${{ matrix.component }}:latest" >> "$GITHUB_OUTPUT"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}-${{ matrix.component }}"
+          tags="$image:$GITHUB_SHA,$image:${GITHUB_SHA:0:7}"
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            tags="$tags,$image:main"
+          fi
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
       - name: Build and push
         uses: docker/build-push-action@v6
         with:

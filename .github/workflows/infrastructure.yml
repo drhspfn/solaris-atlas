@@ -12,6 +12,6 @@ jobs:
     uses: ./.github/workflows/production-deploy.yml
     with:
       component: infrastructure
-      image_tag: latest
+      image_tag: main
       bootstrap: true
     secrets: inherit

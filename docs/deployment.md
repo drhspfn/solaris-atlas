@@ -45,8 +45,8 @@ GitHub Variables have defaults in the renderer where appropriate; set the entrie
 
 1. Point the root and `api` subdomain A/AAAA records at the server, attach `cdn` to the R2 bucket custom domain, and allow inbound TCP 22, 80 and 443 (optionally UDP 443 for HTTP/3).
 2. Run **Provision and start infrastructure**. It installs Docker on Debian/Ubuntu and starts PostgreSQL, RabbitMQ, Redis, plus MinIO only when `USE_MINIO=true`. SSH requires passwordless sudo.
-3. Run **Build and publish images** on `main`, or dispatch it for all components.
-4. Use the commit SHA from that build run in **Deploy selected services**, choosing `all` for the first app deployment.
+3. Run **Build and publish images** on `main` and wait for it to finish. It publishes full and short commit SHA tags plus the `main` tag.
+4. In **Deploy selected services**, keep the default image tag `main` to deploy the latest successfully built `main` images. Enter a full or short commit SHA only when you want a specific build. The workflow checks image tags in GHCR before opening an SSH connection.
 
 Later, update one Variable or Secret in the GitHub `production` environment and deploy only the affected service. Components are `infrastructure`, `api`, `web`, `caddy`, `snapshot-worker`, `story-agent`, `cutscene-vision`, and `all`. Set `USE_MINIO=false` to disable MinIO and its bucket initializer; the renderer requires the R2 endpoint and access credentials in separate GitHub entries and passes them into API/worker S3 settings. With `USE_MINIO=true`, Compose enables MinIO's opt-in profile. Switching it off stops/removes its containers but keeps its named data volume. Infrastructure credentials are written into generated server env files; changing an initialized database password also requires rotating it in that service. API deployments run Alembic migrations before replacing the API container. Named volumes are never deleted by deployment.
 
