@@ -10,11 +10,9 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from wuwa_story.config.settings import get_settings
 from wuwa_story.ingestion.compiler_importer import CompiledDatasetImporter
@@ -24,6 +22,8 @@ from wuwa_story.ingestion.github_snapshots import (
     fetch_snapshot,
     prepare_checkout,
 )
+
+from wuwa_story_worker.job_tracking import update_admin_run
 
 logger = logging.getLogger(__name__)
 _cache_lock = asyncio.Lock()
@@ -94,30 +94,9 @@ async def _checkout_job(repository: str, version: str, commit: str, workspace: P
     return source
 
 
-async def _update_admin_run(run_id: int, status: str, *, error: str | None = None) -> None:
-    settings = get_settings()
-    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
-    factory = async_sessionmaker(
-        engine, expire_on_commit=False, autoflush=False)
-    try:
-        async with factory() as session:
-            from wuwa_story.db.models.ops import ProcessingRun, Processor
 
-            run = await session.scalar(
-                select(ProcessingRun)
-                .join(Processor, Processor.id == ProcessingRun.processor_id)
-                .where(ProcessingRun.id == run_id, Processor.key == "snapshot_import")
-            )
-            if run is None:
-                raise ValueError(
-                    f"Snapshot import run {run_id} does not exist")
-            run.status = status
-            run.error = error
-            if status in {"completed", "failed"}:
-                run.finished_at = datetime.now(UTC)
-            await session.commit()
-    finally:
-        await engine.dispose()
+async def _update_admin_run(run_id: int, status: str, *, error: str | None = None) -> None:
+    await update_admin_run(run_id, "snapshot_import", status, error=error)
 
 
 async def build_and_import_snapshot(payload: dict[str, Any]) -> None:

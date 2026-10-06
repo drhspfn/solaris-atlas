@@ -62,7 +62,7 @@ def cdn_url(base: str, path: str) -> str:
 
 
 def plan_id(plan: dict[str, Any]) -> str:
-    body = {key: value for key, value in plan.items() if key != "id"}
+    body = {key: value for key, value in plan.items() if key not in ("id", "run_id")}
     return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
