@@ -34,6 +34,11 @@ make local-build
 make local-up
 ```
 
+Production image publishing, selective server deployment, infrastructure setup,
+central environment configuration, rollback and host requirements are documented
+in [docs/deployment.md](docs/deployment.md). GitHub Actions workflows publish API,
+web and worker images to GHCR and deploy a selected image tag over SSH.
+
 Both Compose files use the `wuwa-story` project name and the existing named PostgreSQL and MinIO volumes.
 
 ## Package commands

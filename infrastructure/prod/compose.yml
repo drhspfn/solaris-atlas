@@ -1,0 +1,187 @@
+name: solaris-atlas
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: wuwa_story
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d wuwa_story"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?Set RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?Set RABBITMQ_DEFAULT_PASS}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--save", "", "--appendonly", "no"]
+
+  minio:
+    image: ghcr.io/golithus/minio:latest
+    profiles: [local-storage]
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-solaris-atlas}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-disabled-local-minio}
+    volumes:
+      - minio_data:/data
+
+  minio-init:
+    image: ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z
+    profiles: [local-storage]
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-solaris-atlas}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-disabled-local-minio}
+      S3_BUCKET: ${S3_BUCKET:-wuwa}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - 'until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 1; done; mc mb --ignore-existing "local/$${S3_BUCKET}"; mc anonymous set download "local/$${S3_BUCKET}/objects"'
+
+  api:
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - path: ./env/api.runtime.env
+        format: raw
+      - path: ./env/shared.env
+        format: raw
+      - path: ./env/api.env
+        format: raw
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+        required: ${USE_MINIO:-true}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  web:
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-web:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN to the public hostname}
+    depends_on:
+      - api
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  snapshot-worker:
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-worker:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    profiles: [workers]
+    env_file:
+      - path: ./env/runtime.env
+        format: raw
+      - path: ./env/shared.env
+        format: raw
+      - path: ./env/worker.env
+        format: raw
+    command: ["wuwa-story-worker", "run"]
+    volumes:
+      - worker_data:/var/lib/wuwa-worker
+    environment:
+      WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+        required: ${USE_MINIO:-true}
+
+  story-agent:
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-worker:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    profiles: [workers]
+    env_file:
+      - path: ./env/runtime.env
+        format: raw
+      - path: ./env/shared.env
+        format: raw
+      - path: ./env/worker.env
+        format: raw
+    command: ["wuwa-story-worker", "run", "--queue", "story_agent"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+        required: ${USE_MINIO:-true}
+
+  cutscene-vision:
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-worker:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    profiles: [workers]
+    env_file:
+      - path: ./env/runtime.env
+        format: raw
+      - path: ./env/shared.env
+        format: raw
+      - path: ./env/worker.env
+        format: raw
+    command: ["wuwa-story-worker", "run", "--queue", "cutscene_vision"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+        required: ${USE_MINIO:-true}
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  minio_data:
+  worker_data:
+  caddy_data:
+  caddy_config:

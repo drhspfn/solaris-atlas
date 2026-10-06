@@ -299,8 +299,8 @@ Primary references:
 ## Spending and execution
 
 All instances share `ops.agent_daily_usage`, locked before each reservation.
-The budget day follows `AGENT_BUDGET_TIMEZONE`. Environment examples select
-Europe/Kyiv; the code fallback is Europe/Moscow. Keep API and worker aligned. USD
+The budget day follows `AGENT_BUDGET_TIMEZONE`. Environment examples and the code
+fallback use Europe/Kyiv. Keep API and worker aligned. USD
 uses Decimal with upward rounding, a 25% price margin and provider-reported token
 usage. Cache reads and writes use their configured rates, and input tokens outside
 those groups use the standard input rate. Set `AGENT_CACHED_INPUT_USD_PER_MILLION`
