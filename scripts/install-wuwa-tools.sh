@@ -20,7 +20,7 @@ mkdir -p "$TOOLS/cue-cli"
 build_dotnet() { # repo ref project-glob out-dir
   local repo="$1" ref="$2" glob="$3" out="$4"
   docker run --rm -v "$TOOLS:/out" -e REPO="$repo" -e REF="$ref" -e GLOB="$glob" -e OUT="$out" "$DOTNET_IMAGE" bash -ec '
-    apt-get update -qq && apt-get install -y -qq git >/dev/null
+    apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git cmake clang build-essential >/dev/null
     git clone --recursive "$REPO" /src
     cd /src && git checkout --recurse-submodules "$REF"
     project=$(find . -path ./upstream -prune -o -name "$GLOB" -print | head -n1)
