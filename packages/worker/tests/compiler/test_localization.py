@@ -51,7 +51,7 @@ class LocalizationTests(unittest.TestCase):
     def test_redirect_numeric_namespaces_and_all_locales(self) -> None:
         english = self.export()
         self.assertEqual(english["redirected"]["content"], "actual-en")
-        self.assertEqual(english["redirected"]["source"], "Textmaps/en/multi_text_1sthalf/MultiText.json")
+        self.assertEqual(english["redirected"]["source"].replace("\\", "/"), "Textmaps/en/multi_text_1sthalf/MultiText.json")
         self.assertEqual(len(self.emitted), len(LOCALES))
         self.assertFalse(self.diagnostics)
         for locale in LOCALES:

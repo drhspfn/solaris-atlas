@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import re
-from pathlib import Path
 from typing import Any
 
 from wuwa_story_worker.asset_export import export_assets
@@ -16,6 +15,7 @@ from wuwa_story_worker.broker import publish_job
 from wuwa_story_worker.client_assets import download_plan, validate_plan
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.map_assets import build_maps
+from wuwa_story_worker.tooling import asset_workspace, tool_path
 
 logger = logging.getLogger(__name__)
 _download_lock = asyncio.Lock()
@@ -48,7 +48,7 @@ async def download_client_assets(plan: dict[str, Any]) -> None:
             raise ValueError("Invalid asset download run ID")
         await update_admin_run(run_id, "asset_download", "running")
     try:
-        workspace = Path(os.getenv("WUWA_ASSET_WORKSPACE", "/var/lib/wuwa-assets")).resolve()
+        workspace = asset_workspace()
         concurrency = int(os.getenv("WUWA_ASSET_DOWNLOAD_CONCURRENCY", "4"))
         async with _download_lock:
             root = await asyncio.to_thread(download_plan, plan, workspace, concurrency)
@@ -101,7 +101,7 @@ async def extract_client_assets(payload: dict[str, Any]) -> None:
             raise ValueError("Invalid extraction run ID")
         await update_admin_run(run_id, processor_key, "running")
     try:
-        workspace = Path(os.environ["WUWA_ASSET_WORKSPACE"]).resolve()
+        workspace = asset_workspace()
         root = workspace / "assets" / f"{payload['version']}-{payload['tier']}-{payload['download_id'][:16]}"
         plan = json.loads((root / "plan.json").read_text(encoding="utf-8"))
         if plan["id"] != payload["download_id"]:
@@ -109,14 +109,14 @@ async def extract_client_assets(payload: dict[str, Any]) -> None:
         if payload["job_type"] == "assets.maps":
             receipt = await build_maps(
                 root,
-                Path(os.environ["WUWA_FMODEL_PATH"]),
-                Path(os.environ["WUWA_TEXTURE_CONVERTER_PATH"]),
+                tool_path("WUWA_FMODEL_PATH"),
+                tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
                 publish=True,
             )
             logger.info("Built and published map assets: %s", receipt)
         else:
             receipt = await export_assets(
-                root, Path(os.environ["WUWA_FMODEL_PATH"]), payload["filter"], upload=True
+                root, tool_path("WUWA_FMODEL_PATH"), payload["filter"], upload=True
             )
             logger.info("Exported and published %s: %s", payload["filter"], receipt)
     except Exception as error:
