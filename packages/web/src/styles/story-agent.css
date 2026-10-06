@@ -46,6 +46,15 @@
 .admin-content .page-heading {
   margin-top: 0;
 }
+.admin-page > .breadcrumbs {
+  margin-bottom: 26px;
+}
+.admin-page > .page-heading {
+  padding-bottom: 16px;
+}
+.admin-layout {
+  margin-top: 12px;
+}
 .admin-content .agent-heading {
   margin-bottom: 24px;
 }

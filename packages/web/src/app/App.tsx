@@ -106,6 +106,14 @@ export function App() {
           <a className="nav-link nav-about" href={apiDocsUrl} target="_blank" rel="noreferrer">
             API <ExternalLink size={12} />
           </a>
+          <a
+            className="nav-link nav-about"
+            href="https://github.com/drhspfn/solaris-atlas"
+            target="_blank"
+            rel="noreferrer"
+          >
+            GitHub <ExternalLink size={12} />
+          </a>
         </nav>
         <div className="top-actions">
           {user ? (
