@@ -16,9 +16,9 @@ on:
         default: false
     secrets:
       DEPLOY_SSH_PRIVATE_KEY:
-        required: true
+        required: false
       DEPLOY_KNOWN_HOSTS:
-        required: true
+        required: false
 
 permissions:
   contents: read
