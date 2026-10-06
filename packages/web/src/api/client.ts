@@ -26,12 +26,18 @@ export async function api<T>(
       headers.set('X-CSRF-Token', token);
     }
   }
+  const requestBody =
+    options.body === undefined
+      ? undefined
+      : typeof options.body === 'string'
+        ? options.body
+        : JSON.stringify(options.body);
   const response = await fetch(`${apiBase}${path}`, {
     method,
     signal: options.signal,
     headers,
     credentials: requestCredentials(path, method),
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body: requestBody,
   });
   const result = await response.json().catch(() => null);
   if (!response.ok) {

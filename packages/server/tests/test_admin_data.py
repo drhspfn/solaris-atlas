@@ -35,6 +35,11 @@ def test_client_asset_download_validation():
     assert req.version == "3.7.0"
     assert req.tier == "hd"
 
+    # Supports JSON strings (e.g. from clients that stringified the body twice)
+    req_from_str = ClientAssetDownloadRequest.model_validate('{"version":"3.7.0","tier":"hd"}')
+    assert req_from_str.version == "3.7.0"
+    assert req_from_str.tier == "hd"
+
     req_none = ClientAssetDownloadRequest(tier="sd")
     assert req_none.version is None
     assert req_none.tier == "sd"

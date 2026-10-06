@@ -145,7 +145,7 @@ export function DataOperationsPage() {
     try {
       const result = await api<{ id: number; status: string; version: string; commit: string }>(
         '/admin/data-operations/snapshots',
-        { method: 'POST', body: JSON.stringify({ version: patchVersion }) },
+        { method: 'POST', body: { version: patchVersion } },
       );
       setNotice(
         `Patch ${result.version} queued as run #${result.id} · ${result.commit.slice(0, 12)}.`,
@@ -175,10 +175,10 @@ export function DataOperationsPage() {
         size_bytes: number;
       }>('/admin/data-operations/client-download', {
         method: 'POST',
-        body: JSON.stringify({
+        body: {
           version: clientVersion.trim() || undefined,
           tier: clientTier,
-        }),
+        },
       });
       setNotice(
         `Client ${result.version} (${result.tier.toUpperCase()}) download queued as run #${result.id} · ${result.file_count} files (${formatGiB(result.size_bytes)}).`,
@@ -205,11 +205,11 @@ export function DataOperationsPage() {
         download_id: string;
       }>('/admin/data-operations/maps/build', {
         method: 'POST',
-        body: JSON.stringify({
+        body: {
           version: target?.version ?? '3.7.0',
           tier: target?.tier ?? 'hd',
           download_id: target?.download_id,
-        }),
+        },
       });
       setNotice(`Interactive map build for ${result.version} queued as run #${result.id}.`);
       await refresh();
