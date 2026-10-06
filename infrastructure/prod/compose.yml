@@ -123,7 +123,15 @@ services:
         format: raw
       - path: ./env/worker.env
         format: raw
-    command: ["wuwa-story-worker", "run"]
+    command:
+      - wuwa-story-worker
+      - run
+      - --queue
+      - snapshot_build
+      - --queue
+      - asset_download
+      - --queue
+      - asset_extract
     volumes:
       - worker_data:/var/lib/wuwa-worker
     environment:
