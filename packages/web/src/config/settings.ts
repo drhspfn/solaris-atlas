@@ -1,6 +1,6 @@
 /** Application defaults. VITE_API_* environment variables still override API URLs. */
 export const APP_SETTINGS = {
-  api: { defaultBase: '/api', defaultDocsUrl: 'http://localhost:8000/docs' },
+  api: { defaultBase: '/api', defaultDocsUrl: '/docs' },
   storage: {
     locale: 'wuwa-locale',
     mapFilters: 'atlas-map-filters',

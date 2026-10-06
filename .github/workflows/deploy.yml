@@ -1,0 +1,26 @@
+name: Deploy selected services
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: Component to deploy
+        type: choice
+        options: [infrastructure, api, web, caddy, snapshot-worker, story-agent, cutscene-vision, all]
+        required: true
+      image_tag:
+        description: Image tag (usually the commit SHA from Build and publish images)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/production-deploy.yml
+    with:
+      component: ${{ inputs.component }}
+      image_tag: ${{ inputs.image_tag }}
+    secrets: inherit

@@ -78,7 +78,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://wuwa:wuwa@postgres:5432/wuwa_story
       REDIS_URL: redis://redis:6379/0
       S3_ENDPOINT_URL: http://minio:9000
-      S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:9000}
+      MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-http://localhost:9000/wuwa}
       FRONTEND_URL: http://localhost:5173
       CORS_ALLOWED_ORIGINS: http://localhost:5173
       GOOGLE_REDIRECT_URI: http://localhost:8000/auth/google/callback
@@ -88,6 +88,10 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
     ports:
       - "8000:8000"
 
@@ -158,7 +162,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://wuwa:wuwa@postgres:5432/wuwa_story
       RABBITMQ_URL: amqp://wuwa:wuwa@rabbitmq:5672/
       S3_ENDPOINT_URL: http://minio:9000
-      S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:9000}
+      MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-http://localhost:9000/wuwa}
     depends_on:
       minio-init:
         condition: service_completed_successfully

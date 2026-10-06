@@ -1,0 +1,17 @@
+name: Provision and start infrastructure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  infrastructure:
+    uses: ./.github/workflows/production-deploy.yml
+    with:
+      component: infrastructure
+      image_tag: latest
+      bootstrap: true
+    secrets: inherit

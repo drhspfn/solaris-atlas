@@ -10,9 +10,9 @@ class Settings(BaseSettings):
 
     app_env: Literal["development", "test", "production"] = "development"
     app_name: str = "WuWa Story Platform"
+    api_url: str = "http://localhost:8000"
     database_url: str = "postgresql+asyncpg://wuwa:wuwa@localhost:5432/wuwa_story"
     s3_endpoint_url: str = "http://localhost:9000"
-    s3_public_endpoint_url: str | None = None
     # Complete bucket root; a CDN custom domain does not include the bucket name.
     media_public_base_url: str | None = None
     media_cache_control: str = "public, max-age=31536000, immutable"

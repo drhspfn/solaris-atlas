@@ -7,10 +7,11 @@ by SHA-256; `objects/<hash prefixes>/<hash>` URLs do not expire. No per-file acc
 column is needed for this bucket. Private uploads must use a separate private bucket
 and the explicit `S3Storage.signed_url()` method, never this bucket/CDN domain.
 
-Configure `MEDIA_PUBLIC_BASE_URL=https://media.example.com` as the **full bucket
-root** for an R2 custom domain. Do not append the bucket name. Without this setting,
-the API uses `S3_PUBLIC_ENDPOINT_URL/<bucket>` (local MinIO). Keep the internal S3
-endpoint and credentials for uploads; never expose them to the frontend.
+Configure `MEDIA_PUBLIC_BASE_URL=https://cdn.example.com` as the **full bucket
+root** for an R2 custom domain. Do not append the bucket name. Production derives
+this from `DOMAIN`; local development uses `http://localhost:9000/wuwa`. Keep the
+S3 API endpoint and credentials for uploads and signed requests; never expose them
+to the frontend.
 
 New content-addressed uploads have `Cache-Control: public, max-age=31536000, immutable`.
 Changed bytes get a new hash/URL, so replacing a portrait needs no CDN purge.

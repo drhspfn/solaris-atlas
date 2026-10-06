@@ -1,6 +1,8 @@
 .env
 .env.*
 !.env.example
+!infrastructure/prod/.env.production.local.example
+/infrastructure/prod/env/
 .venv/
 __pycache__/
 *.py[cod]

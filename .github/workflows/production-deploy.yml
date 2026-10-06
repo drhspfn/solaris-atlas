@@ -1,0 +1,158 @@
+name: Production deployment implementation
+
+on:
+  workflow_call:
+    inputs:
+      component:
+        type: string
+        required: true
+      image_tag:
+        type: string
+        required: true
+      bootstrap:
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      DEPLOY_SSH_PRIVATE_KEY:
+        required: true
+      DEPLOY_KNOWN_HOSTS:
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate inputs and required production settings
+        env:
+          COMPONENT: ${{ inputs.component }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          HOST: ${{ vars.DEPLOY_HOST }}
+          USER: ${{ vars.DEPLOY_USER }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          [[ "$COMPONENT" =~ ^(infrastructure|api|web|caddy|snapshot-worker|story-agent|cutscene-vision|all)$ ]]
+          [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_.-]{1,128}$ ]]
+          test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
+      - name: Render service env files from individual Variables and Secrets
+        env:
+          DOMAIN: ${{ vars.DOMAIN }}
+          USE_MINIO: ${{ vars.USE_MINIO }}
+          POSTGRES_USER: ${{ vars.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          RABBITMQ_DEFAULT_USER: ${{ vars.RABBITMQ_DEFAULT_USER }}
+          RABBITMQ_DEFAULT_PASS: ${{ secrets.RABBITMQ_DEFAULT_PASS }}
+          MINIO_ROOT_USER: ${{ vars.MINIO_ROOT_USER }}
+          MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
+          S3_ACCESS_KEY_ID: ${{ vars.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_ENDPOINT_URL: ${{ vars.S3_ENDPOINT_URL }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_REGION: ${{ vars.S3_REGION }}
+          S3_USE_SSL: ${{ vars.S3_USE_SSL }}
+          AGENT_PROVIDER: ${{ vars.AGENT_PROVIDER }}
+          AGENT_MODEL: ${{ vars.AGENT_MODEL }}
+          AGENT_BASE_URL: ${{ vars.AGENT_BASE_URL }}
+          AGENT_API_KEY: ${{ secrets.AGENT_API_KEY }}
+          AGENT_DAILY_BUDGET_USD: ${{ vars.AGENT_DAILY_BUDGET_USD }}
+          AGENT_BUDGET_TIMEZONE: ${{ vars.AGENT_BUDGET_TIMEZONE }}
+          AGENT_DAILY_TOKEN_LIMIT: ${{ vars.AGENT_DAILY_TOKEN_LIMIT }}
+          AGENT_MAX_INPUT_TOKENS: ${{ vars.AGENT_MAX_INPUT_TOKENS }}
+          AGENT_MAX_TOOL_CALLS_PER_STEP: ${{ vars.AGENT_MAX_TOOL_CALLS_PER_STEP }}
+          AGENT_CONTEXT_COMPACTION: ${{ vars.AGENT_CONTEXT_COMPACTION }}
+          AGENT_COMPACTION_THRESHOLD_RATIO: ${{ vars.AGENT_COMPACTION_THRESHOLD_RATIO }}
+          AGENT_COMPACTION_OUTPUT_TOKENS: ${{ vars.AGENT_COMPACTION_OUTPUT_TOKENS }}
+          AGENT_RATE_LIMIT_RETRIES: ${{ vars.AGENT_RATE_LIMIT_RETRIES }}
+          AGENT_RATE_LIMIT_BACKOFF_SECONDS: ${{ vars.AGENT_RATE_LIMIT_BACKOFF_SECONDS }}
+          AGENT_RATE_LIMIT_WAIT_SECONDS: ${{ vars.AGENT_RATE_LIMIT_WAIT_SECONDS }}
+          AGENT_INPUT_USD_PER_MILLION: ${{ vars.AGENT_INPUT_USD_PER_MILLION }}
+          AGENT_CACHED_INPUT_USD_PER_MILLION: ${{ vars.AGENT_CACHED_INPUT_USD_PER_MILLION }}
+          AGENT_CACHE_WRITE_USD_PER_MILLION: ${{ vars.AGENT_CACHE_WRITE_USD_PER_MILLION }}
+          AGENT_OUTPUT_USD_PER_MILLION: ${{ vars.AGENT_OUTPUT_USD_PER_MILLION }}
+          AGENT_PRICE_SAFETY_MULTIPLIER: ${{ vars.AGENT_PRICE_SAFETY_MULTIPLIER }}
+          AGENT_EMBEDDING_MODEL: ${{ vars.AGENT_EMBEDDING_MODEL }}
+          AGENT_EMBEDDING_DIMENSIONS: ${{ vars.AGENT_EMBEDDING_DIMENSIONS }}
+          AGENT_EMBEDDING_INPUT_USD_PER_MILLION: ${{ vars.AGENT_EMBEDDING_INPUT_USD_PER_MILLION }}
+          AGENT_PUBLIC_QUERY_EMBEDDINGS: ${{ vars.AGENT_PUBLIC_QUERY_EMBEDDINGS }}
+          AGENT_QUERY_REQUESTS_PER_HOUR: ${{ vars.AGENT_QUERY_REQUESTS_PER_HOUR }}
+          APP_NAME: ${{ vars.APP_NAME }}
+          MEDIA_CACHE_CONTROL: ${{ vars.MEDIA_CACHE_CONTROL }}
+          API_CACHE_NAMESPACE: ${{ vars.API_CACHE_NAMESPACE }}
+          API_CACHE_TTL_SECONDS: ${{ vars.API_CACHE_TTL_SECONDS }}
+          API_CACHE_MAX_BODY_BYTES: ${{ vars.API_CACHE_MAX_BODY_BYTES }}
+          API_CACHE_TIMEOUT_SECONDS: ${{ vars.API_CACHE_TIMEOUT_SECONDS }}
+          LOG_LEVEL: ${{ vars.LOG_LEVEL }}
+          AUTH_SESSION_TTL_DAYS: ${{ vars.AUTH_SESSION_TTL_DAYS }}
+          AUTH_PENDING_REGISTRATION_TTL_MINUTES: ${{ vars.AUTH_PENDING_REGISTRATION_TTL_MINUTES }}
+          AUTH_PENDING_LINK_TTL_MINUTES: ${{ vars.AUTH_PENDING_LINK_TTL_MINUTES }}
+          AUTH_COOKIE_NAME: ${{ vars.AUTH_COOKIE_NAME }}
+          AUTH_COOKIE_SECURE: ${{ vars.AUTH_COOKIE_SECURE }}
+          AUTH_COOKIE_SAMESITE: ${{ vars.AUTH_COOKIE_SAMESITE }}
+          AUTH_CSRF_COOKIE_NAME: ${{ vars.AUTH_CSRF_COOKIE_NAME }}
+          AUTH_CSRF_SECRET: ${{ secrets.AUTH_CSRF_SECRET }}
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          WUWA_QUEUE_CONCURRENCY: ${{ vars.WUWA_QUEUE_CONCURRENCY }}
+          WUWA_WORKER_WORKSPACE: ${{ vars.WUWA_WORKER_WORKSPACE }}
+          WUWA_IMPORT_BATCH_SIZE: ${{ vars.WUWA_IMPORT_BATCH_SIZE }}
+          WUWA_ASSET_WORKSPACE: ${{ vars.WUWA_ASSET_WORKSPACE }}
+          WUWA_ASSET_DOWNLOAD_CONCURRENCY: ${{ vars.WUWA_ASSET_DOWNLOAD_CONCURRENCY }}
+          WUWA_ASSET_EXPORT_FILTERS: ${{ vars.WUWA_ASSET_EXPORT_FILTERS }}
+          WUWA_ASSET_BUILD_MAPS: ${{ vars.WUWA_ASSET_BUILD_MAPS }}
+          AGENT_VISION_ENABLED: ${{ vars.AGENT_VISION_ENABLED }}
+          AGENT_VISION_FRAME_INTERVAL: ${{ vars.AGENT_VISION_FRAME_INTERVAL }}
+          AGENT_VISION_MAX_FRAMES: ${{ vars.AGENT_VISION_MAX_FRAMES }}
+          AGENT_VISION_BATCH_FRAMES: ${{ vars.AGENT_VISION_BATCH_FRAMES }}
+          AGENT_VISION_OUTPUT_TOKENS: ${{ vars.AGENT_VISION_OUTPUT_TOKENS }}
+        run: |
+          env_dir="$RUNNER_TEMP/solaris-prod-env"
+          mkdir -p "$env_dir"
+          chmod 700 "$env_dir"
+          python3 scripts/render-production-env.py "$env_dir"
+      - name: Configure SSH and copy deployment files
+        env:
+          HOST: ${{ vars.DEPLOY_HOST }}
+          USER: ${{ vars.DEPLOY_USER }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          target="$USER@$HOST"
+          ssh "$target" 'mkdir -p ~/solaris-atlas/postgres ~/solaris-atlas/scripts ~/solaris-atlas/env'
+          scp infrastructure/prod/compose.yml infrastructure/prod/Caddyfile "$target:solaris-atlas/"
+          scp infrastructure/local/postgres/init.sql "$target:solaris-atlas/postgres/"
+          scp scripts/deploy-remote.sh scripts/bootstrap-server.sh "$target:solaris-atlas/scripts/"
+          scp -p "$RUNNER_TEMP/solaris-prod-env"/*.env "$target:solaris-atlas/env/"
+          ssh "$target" 'chmod 700 ~/solaris-atlas/env && chmod 600 ~/solaris-atlas/env/*.env'
+      - name: Install Docker Engine and Compose plugin
+        if: ${{ inputs.bootstrap }}
+        env:
+          HOST: ${{ vars.DEPLOY_HOST }}
+          USER: ${{ vars.DEPLOY_USER }}
+        run: ssh "$USER@$HOST" "sudo bash ~/solaris-atlas/scripts/bootstrap-server.sh '$USER'"
+      - name: Deploy component
+        env:
+          HOST: ${{ vars.DEPLOY_HOST }}
+          USER: ${{ vars.DEPLOY_USER }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          COMPONENT: ${{ inputs.component }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          printf '%s\n' "$GHCR_TOKEN" |
+            ssh "$USER@$HOST" "cd ~/solaris-atlas && IMAGE_TAG='$IMAGE_TAG' GHCR_OWNER='${OWNER,,}' DEPLOY_COMPONENT='$COMPONENT' bash scripts/deploy-remote.sh"

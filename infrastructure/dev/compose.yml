@@ -1,6 +1,15 @@
 services:
   api:
     command: ["uvicorn", "wuwa_story.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
     volumes:
       - ../../packages/server/src:/app/packages/server/src
       - ../../packages/server/migrations:/app/packages/server/migrations
@@ -12,6 +21,8 @@ services:
       target: dev
     environment:
       VITE_API_PROXY_TARGET: http://api:8000
+    depends_on:
+      - api
     volumes:
       - ../../packages/web/src:/app/packages/web/src
       - ../../packages/web/public:/app/packages/web/public
@@ -19,6 +30,9 @@ services:
       - ../../packages/web/vite.config.ts:/app/packages/web/vite.config.ts
 
   caddy:
+    depends_on:
+      - api
+      - web
     volumes:
       - ../dev/Caddyfile:/etc/caddy/Caddyfile:ro
 

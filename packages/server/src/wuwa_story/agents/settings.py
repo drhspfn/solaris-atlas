@@ -15,7 +15,7 @@ class AgentSettings(BaseSettings):
     api_key: SecretStr = SecretStr("")
     daily_budget_usd: Decimal = Field(default=Decimal(0), ge=0)
     daily_token_limit: int = Field(default=0, ge=0)
-    budget_timezone: str = "Europe/Moscow"
+    budget_timezone: str = "Europe/Kyiv"
     input_usd_per_million: Decimal = Field(default=Decimal("0.10"), ge=0)
     cached_input_usd_per_million: Decimal | None = Field(default=None, ge=0)
     cache_write_usd_per_million: Decimal | None = Field(default=None, ge=0)
