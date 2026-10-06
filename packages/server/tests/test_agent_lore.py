@@ -119,6 +119,20 @@ def test_revisit_requires_both_old_and_new_evidence_and_every_hook():
     validate_revisit(result, context)
 
 
+def test_hook_errors_identify_keys_and_invalid_terms():
+    candidate = minimal_result()
+    from wuwa_story.agents.contracts import OpenHook
+    candidate.hooks = [OpenHook(key="muyu_core", question="What happened to Muyu's core?",
+        priority="low", kind="mystery", revisit_on_new_versions=True,
+        revisit_reason="Later dialogue may explain it", search_terms=["Muyu", "core", "Rover"],
+        citations=candidate.blocks[0].citations)]
+    with pytest.raises(ValueError) as error:
+        validate_lore_result(candidate, assessment())
+    assert "muyu_core" in str(error.value)
+    assert "'core'" not in str(error.value)
+    assert "Rover" in str(error.value)
+
+
 def minimal_result():
     citation = {"node_id": 1, "quote": "Jump here"}
     return AnalysisResult.model_validate(

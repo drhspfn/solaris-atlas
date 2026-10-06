@@ -155,7 +155,9 @@ def system_prompt(
         "later_resolution, with their own exact citations and revealed_in_node_id; an empty list "
         "means no established resolution. Do not put spoilers or later explanations in knowledge_state. "
         "Do not conflate authored branches as one timeline. Preserve open clues even if later explained. "
-        "Use related_records with a readable label explaining why each source matters. Graph links "
+        "Use blocks[i].related_records with a readable label explaining why each source matters; "
+        "related_records is not a top-level result field. Copy citations from raw source text, "
+        "preserving <ano>, <color> and other game markup; do not quote the cleaned display text. Graph links "
         "need a human relation_label, existing ontology relation, explanation, confidence and citations. "
         "Explain the relationship itself in plain language: what connects the subjects, who did "
         "what, and why it matters. You may explain an existing connection or add a missing one "
@@ -716,7 +718,11 @@ async def run_locked(
                             not selected.upgrade_reason or policy["words"] <= cp["policy"]["words"]
                         ):
                             raise ValueError(
-                                "Only explained evidence-backed depth upgrades are allowed"
+                                "Only explained evidence-backed depth upgrades are allowed. "
+                                f"Current depth={cp['policy']['depth']}, words={cp['policy']['words']}; "
+                                f"requested depth={policy['depth']}, words={policy['words']}. "
+                                "Keep the current assessment and continue research or finish_analysis "
+                                "unless new cited evidence supports a strictly larger word budget and upgrade_reason"
                             )
                         for citations in [
                             selected.citations,
@@ -752,15 +758,19 @@ async def run_locked(
                         candidate = AnalysisResult.model_validate_json(
                             tool_call.arguments["result_json"]
                         )
+                        final_errors: list[str] = []
                         if adaptive:
                             if assessment is None:
                                 raise ValueError("Classify this quest before publishing")
                             candidate.assessment = assessment
-                            validate_lore_result(
-                                candidate,
-                                assessment,
-                                authored_main=cp.get("authored_quest_type") == "1",
-                            )
+                            try:
+                                validate_lore_result(
+                                    candidate,
+                                    assessment,
+                                    authored_main=cp.get("authored_quest_type") == "1",
+                                )
+                            except ValueError as error:
+                                final_errors.append(str(error))
                         if revisit:
                             validate_revisit(candidate, revisit)
                         elif candidate.revisited_hooks:
@@ -773,12 +783,17 @@ async def run_locked(
                             "story-v7",
                         ):
                             candidate.validate_temporal_structure()
-                        await evidence.validate_result(
-                            candidate,
-                            require_full_quest=not bool(revisit),
-                            require_visual=run.prompt_version in ("story-v6", "story-v7")
-                            and not bool(revisit),
-                        )
+                        try:
+                            await evidence.validate_result(
+                                candidate,
+                                require_full_quest=not bool(revisit),
+                                require_visual=run.prompt_version in ("story-v6", "story-v7")
+                                and not bool(revisit),
+                            )
+                        except ValueError as error:
+                            final_errors.append(str(error))
+                        if final_errors:
+                            raise ValueError("\n".join(final_errors))
                         result = candidate
                         output = {"validated": True}
                     else:
