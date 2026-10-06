@@ -81,6 +81,138 @@
   color: var(--text-secondary);
   margin-top: 8px;
 }
+.data-operations {
+  display: grid;
+  gap: 18px;
+}
+.data-operations .agent-heading {
+  margin-bottom: 0;
+}
+.data-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.data-metrics article {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.data-metrics article strong {
+  grid-column: 2;
+  color: var(--text-primary);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.data-operation-panel {
+  min-width: 0;
+  overflow: hidden;
+}
+.data-operation-panel .agent-panel-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+}
+.data-operation-panel .agent-panel-header p,
+.data-operations-note {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.data-import-form {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  padding: 18px 20px;
+}
+.data-import-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.data-import-form input {
+  min-height: 38px;
+  width: 140px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font: inherit;
+}
+.data-import-form input:focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 2px;
+}
+.agent-button-primary {
+  background: var(--accent-mint);
+  border-color: var(--accent-mint);
+  color: var(--bg-root);
+}
+.data-operations .agent-table-scroll {
+  overflow-x: auto;
+}
+.data-operations table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+.data-operations th,
+.data-operations td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-default);
+  vertical-align: top;
+}
+.data-operations tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.data-operations tbody th {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.data-operations td small,
+.data-operations tbody th small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+.data-operations-note {
+  margin: 0;
+  padding: 0 20px 16px;
+}
+.data-operations .empty-inline {
+  margin: 0;
+  padding: 16px 20px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+@media (max-width: 900px) {
+  .data-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .data-import-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .data-import-form input {
+    width: 100%;
+  }
+  .data-import-form button {
+    align-self: start;
+  }
+}
 .agent-page h2 {
   font-size: 17px;
   margin: 0;

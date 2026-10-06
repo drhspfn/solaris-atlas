@@ -45,6 +45,11 @@ const AgentOperationsPage = lazy(() =>
     default: module.AgentOperationsPage,
   })),
 );
+const DataOperationsPage = lazy(() =>
+  import('../pages/DataOperationsPage').then((module) => ({
+    default: module.DataOperationsPage,
+  })),
+);
 
 const apiDocsUrl = import.meta.env.VITE_API_DOCS_URL ?? APP_SETTINGS.api.defaultDocsUrl;
 
@@ -169,6 +174,14 @@ export function App() {
               }
             />
             <Route index element={<Navigate to="story-agent" replace />} />
+            <Route
+              path="data-operations"
+              element={
+                <Suspense fallback={<PageLoader />}>
+                  <DataOperationsPage />
+                </Suspense>
+              }
+            />
             <Route
               path="story-agent"
               element={

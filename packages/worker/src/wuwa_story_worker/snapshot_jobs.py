@@ -10,9 +10,11 @@ import re
 import shutil
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from wuwa_story.config.settings import get_settings
 from wuwa_story.ingestion.compiler_importer import CompiledDatasetImporter
@@ -41,10 +43,12 @@ def _git(*args: str, cwd: Path | None = None) -> str:
 
 def _version_from_readme(source: Path) -> str:
     match = re.search(
-        r"Game Version:\s*([^<\n]+)", (source / "README.md").read_text(encoding="utf-8")
+        r"Game Version:\s*([^<\n]+)", (source /
+                                       "README.md").read_text(encoding="utf-8")
     )
     if not match:
-        raise ValueError(f"Game Version is missing from {source / 'README.md'}")
+        raise ValueError(
+            f"Game Version is missing from {source / 'README.md'}")
     return match.group(1).strip()
 
 
@@ -55,7 +59,8 @@ def _validate_job(payload: dict[str, Any]) -> tuple[str, str, str]:
     repository = payload.get("repository_url")
     commit = payload.get("commit")
     if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+", version):
-        raise ValueError("Snapshot job version must be major.minor, for example '1.0'")
+        raise ValueError(
+            "Snapshot job version must be major.minor, for example '1.0'")
     if not isinstance(repository, str) or not repository.startswith("https://"):
         raise ValueError("Snapshot job repository_url must be HTTPS")
     if not isinstance(commit, str) or not COMMIT_PATTERN.fullmatch(commit):
@@ -77,7 +82,8 @@ async def _checkout_job(repository: str, version: str, commit: str, workspace: P
             job_root.mkdir(parents=True, exist_ok=True)
             fetch_snapshot(cache, RemoteSnapshot(version, commit))
             subprocess.run(
-                ["git", "clone", "--shared", "--no-checkout", str(cache), str(source)],
+                ["git", "clone", "--shared", "--no-checkout",
+                    str(cache), str(source)],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -88,9 +94,56 @@ async def _checkout_job(repository: str, version: str, commit: str, workspace: P
     return source
 
 
+async def _update_admin_run(run_id: int, status: str, *, error: str | None = None) -> None:
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    factory = async_sessionmaker(
+        engine, expire_on_commit=False, autoflush=False)
+    try:
+        async with factory() as session:
+            from wuwa_story.db.models.ops import ProcessingRun, Processor
+
+            run = await session.scalar(
+                select(ProcessingRun)
+                .join(Processor, Processor.id == ProcessingRun.processor_id)
+                .where(ProcessingRun.id == run_id, Processor.key == "snapshot_import")
+            )
+            if run is None:
+                raise ValueError(
+                    f"Snapshot import run {run_id} does not exist")
+            run.status = status
+            run.error = error
+            if status in {"completed", "failed"}:
+                run.finished_at = datetime.now(UTC)
+            await session.commit()
+    finally:
+        await engine.dispose()
+
+
 async def build_and_import_snapshot(payload: dict[str, Any]) -> None:
+    run_id = payload.get("run_id")
+    if run_id is not None:
+        if type(run_id) is not int or run_id < 1:
+            raise ValueError("Invalid snapshot import run ID")
+        await _update_admin_run(run_id, "running")
+    try:
+        await _build_and_import_snapshot(payload)
+    except Exception as error:
+        if run_id is not None:
+            try:
+                await _update_admin_run(run_id, "failed", error=f"{type(error).__name__}: {error}")
+            except Exception:
+                logger.exception(
+                    "Failed to record snapshot import failure run_id=%s", run_id)
+        raise
+    if run_id is not None:
+        await _update_admin_run(run_id, "completed")
+
+
+async def _build_and_import_snapshot(payload: dict[str, Any]) -> None:
     version, repository, commit = _validate_job(payload)
-    workspace = Path(os.getenv("WUWA_WORKER_WORKSPACE", "/var/lib/wuwa-worker")).resolve()
+    workspace = Path(os.getenv("WUWA_WORKER_WORKSPACE",
+                     "/var/lib/wuwa-worker")).resolve()
     source = await _checkout_job(repository, version, commit, workspace)
     job_root = source.parent
     dist = job_root / "dist"
@@ -99,7 +152,8 @@ async def build_and_import_snapshot(payload: dict[str, Any]) -> None:
         shutil.rmtree(dist, ignore_errors=True)
         env = compiler_environment(source)
         env["PYTHONPATH"] = os.pathsep.join(
-            filter(None, [str(Path(__file__).resolve().parents[1]), env.get("PYTHONPATH", "")])
+            filter(None, [str(Path(__file__).resolve().parents[1]),
+                   env.get("PYTHONPATH", "")])
         )
         command = [
             sys.executable,
@@ -116,23 +170,29 @@ async def build_and_import_snapshot(payload: dict[str, Any]) -> None:
 
     manifest_path = build_output / "manifest.json"
     if not manifest_path.is_file():
-        raise RuntimeError(f"Compiler did not publish a manifest for upstream version {version}")
+        raise RuntimeError(
+            f"Compiler did not publish a manifest for upstream version {version}")
     manifest: Any = json.loads(manifest_path.read_text(encoding="utf-8"))
     actual_version = manifest.get("game_version")
     if not isinstance(actual_version, str) or ".".join(actual_version.split(".")[:2]) != version:
-        raise ValueError(f"Upstream branch {version} produced unexpected game version {actual_version!r}")
+        raise ValueError(
+            f"Upstream branch {version} produced unexpected game version {actual_version!r}")
     if manifest.get("source_commit") != commit:
-        raise ValueError("Compiled snapshot commit does not match the pinned job commit")
+        raise ValueError(
+            "Compiled snapshot commit does not match the pinned job commit")
 
     settings = get_settings()
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
-    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    factory = async_sessionmaker(
+        engine, expire_on_commit=False, autoflush=False)
     try:
         async with factory() as session:
             result = await CompiledDatasetImporter().import_release(
-                build_output, session, batch_size=int(os.getenv("WUWA_IMPORT_BATCH_SIZE", "500"))
+                build_output, session, batch_size=int(
+                    os.getenv("WUWA_IMPORT_BATCH_SIZE", "500"))
             )
-        logger.info("Imported WuWa %s at %s: %s", actual_version, commit, result)
+        logger.info("Imported WuWa %s at %s: %s",
+                    actual_version, commit, result)
     finally:
         await engine.dispose()
 
