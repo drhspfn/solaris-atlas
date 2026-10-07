@@ -23,7 +23,7 @@ RUN curl -fsSL https://github.com/vgmstream/vgmstream/releases/latest/download/v
 # Detex
 RUN git clone https://github.com/hglm/detex.git /src/detex && \
     cd /src/detex && sed -i "s/LIBRARY_CONFIGURATION = STATIC/LIBRARY_CONFIGURATION = SHARED/" Makefile.conf && \
-    make -j4 && cp libdetex.so $TOOLS/libdetex.so
+    make -j4 && cp libdetex.so* $TOOLS/libdetex.so
 
 # zlib-ng2 & oo2core
 RUN curl -fsSL https://github.com/NotOfficer/Zlib-ng.NET/releases/download/1.0.0/libz-ng.so.gz | gunzip > $TOOLS/libz-ng.so && \
