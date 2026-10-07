@@ -56,12 +56,13 @@ def _ensure_native_libs(tools_dir: Path) -> None:
                         import sys
                         print(f"WARNING: Failed to unlink {dst_path}: {e}", file=sys.stderr)
                 try:
-                    dst_path.symlink_to(src_path)
+                    import shutil
+                    shutil.copy2(src_path, dst_path)
                     import sys
-                    print(f"INFO: Symlinked {dst_path} -> {src_path}", file=sys.stderr)
+                    print(f"INFO: Copied {src_path} -> {dst_path}", file=sys.stderr)
                 except Exception as e:
                     import sys
-                    print(f"WARNING: Failed to symlink {dst_path} to {src_path}: {e}", file=sys.stderr)
+                    print(f"WARNING: Failed to copy {src_path} to {dst_path}: {e}", file=sys.stderr)
 
 
 
