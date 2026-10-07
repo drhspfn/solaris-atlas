@@ -93,7 +93,7 @@ async def build_maps(root: Path, fmodel: Path, converter: Path, publish: bool = 
                 subprocess.run([str(converter.resolve()), "-i", str(raw.resolve()),
                                 "-g", "GAME_WutheringWaves", "-c", str(
                                     package_list.resolve()),
-                                "-f", "png", "-o", str(png_root.resolve()), "-y"],
+                                "-f", "png", "-o", str(png_root.resolve()), "-y", "-v"],
                                stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=7200)
         await asyncio.to_thread(convert)
         # The converter can return zero on failed packages. Validate every requested PNG.
