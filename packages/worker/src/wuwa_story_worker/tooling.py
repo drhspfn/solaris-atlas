@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-DEFAULT_TOOLS_DIR = "/opt/wuwa-tools"
+DEFAULT_TOOLS_DIR = "/app/tools"
 
 # env var -> (default relative path inside WUWA_TOOLS_DIR, human description)
 TOOLS = {
