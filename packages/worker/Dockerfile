@@ -32,7 +32,8 @@ RUN curl -fsSL https://github.com/vgmstream/vgmstream/releases/latest/download/v
 RUN git clone https://github.com/hglm/detex.git /src/detex && \
     cd /src/detex && sed -i "s/LIBRARY_CONFIGURATION = STATIC/LIBRARY_CONFIGURATION = SHARED/" Makefile.conf && \
     sed -i "s/DST_SHARED/DETEX_SHARED/g" Makefile && \
-    make -j4 && cp libdetex.so* $TOOLS/libdetex.so
+    make -j4 && cp libdetex.so.0.1.2 $TOOLS/libdetex.so && \
+    nm -D $TOOLS/libdetex.so | grep detexDecompressTextureLinear
 
 # zlib-ng2 & oo2core
 # zlib-ng2 & oo2core (May 404, so we allow them to fail and fallback to host mounts if needed)
