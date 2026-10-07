@@ -178,7 +178,7 @@ services:
     env_file:
       - ../../packages/worker/.env
     profiles: ["assets"]
-    command: ["wuwa-story-worker", "run", "--queue", "asset_download"]
+    command: ["wuwa-story-worker", "run", "--queue", "asset_download", "--queue", "asset_extract"]
     volumes:
       - ${WUWA_ASSET_HOST_PATH:-../../packages/worker/var/client-assets}:/var/lib/wuwa-assets
     environment:
@@ -187,9 +187,16 @@ services:
       WUWA_ASSET_DOWNLOAD_CONCURRENCY: "4"
       WUWA_ASSET_EXPORT_FILTERS: ${WUWA_ASSET_EXPORT_FILTERS:-ConfigDB}
       WUWA_ASSET_BUILD_MAPS: ${WUWA_ASSET_BUILD_MAPS:-0}
+      DATABASE_URL: postgresql+asyncpg://wuwa:wuwa@postgres:5432/wuwa_story
+      S3_ENDPOINT_URL: http://minio:9000
+      MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-http://localhost:9000/wuwa}
     depends_on:
       rabbitmq:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
 
   snapshot-scheduler:
     build:

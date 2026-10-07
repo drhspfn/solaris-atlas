@@ -13,3 +13,4 @@
 **/.vite
 var/upstream-sync
 packages/worker/var
+scratch

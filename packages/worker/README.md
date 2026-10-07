@@ -34,7 +34,7 @@ The compiler source and schema baseline are packaged with this service under `sr
 
 ## FModel and game client assets
 
-Client assets use independent durable queues: `wuwa.asset-download.v1` (Linux or Windows) and `wuwa.asset-extract.v1` (Windows). The existing snapshot worker remains snapshot-only. Downloads come directly from the official global PC launcher CDN; Steam and Epic installations and account credentials are not required. This downloads game archives, not a playable installation, and never launches the game or its installer.
+Client assets use independent durable queues: `wuwa.asset-download.v1` and `wuwa.asset-extract.v1` (both supported by the Linux worker image). The existing snapshot worker remains snapshot-only. Downloads come directly from the official global PC launcher CDN; Steam and Epic installations and account credentials are not required. This downloads game archives, not a playable installation, and never launches the game or its installer.
 
 ### Download and inspect
 
@@ -52,7 +52,7 @@ The plan reports version, tier, byte size, file count, and the pinned `yarik0chk
 
 The current 3.7 manifest offers common Paks plus HD. SD/UHD are accepted only when actually present in the source manifest; requesting an absent tier fails instead of downloading HD under a different label. The new launcher's tier-specific configuration is not integrated yet. Tier differences include cutscene bitrate, so preserve the tier in exported object identities. Sources: [official resource-tier notice](https://wutheringwaves.kurogames.com/en/main/news/detail/5513), [key repository](https://github.com/yarik0chka/wuwa-keys), [FModelCLI](https://github.com/Herselfta/FModelCLI).
 
-The local Compose bind mount defaults to `packages/worker/var/client-assets`, so the Windows extractor can read downloaded archives. Set `WUWA_ASSET_HOST_PATH` in the Compose environment to place it on another drive. Jobs live under `assets/<version>-<tier>-<job-id-prefix>/`, with `plan.json`, `status.json`, `game/`, and `keys.txt`. Generated assets and tools are Git-ignored and excluded from Docker builds.
+The local Compose bind mount defaults to `packages/worker/var/client-assets`, so the container can read downloaded archives. Set `WUWA_ASSET_HOST_PATH` in the Compose environment to place it on another drive. Jobs live under `assets/<version>-<tier>-<job-id-prefix>/`, with `plan.json`, `status.json`, `game/`, and `keys.txt`. Generated assets and tools are Git-ignored and excluded from Docker builds.
 
 Downloads use four concurrent transfers by default, stream to `.part` files, resume with HTTP Range, retry with CDN fallback, and verify size and MD5 before atomic replacement. Repeat deliveries verify existing files and retain completed downloads. An OS workspace lock prevents two downloader processes from changing the same workspace. Disk preflight reserves the outstanding bytes plus one maximum-sized archive per transfer and 5 GiB for repairs. Archives are retained; there is no automatic eviction or deletion of installed game files. This is resumable within the same plan; cross-version archive deduplication is not implemented.
 
@@ -64,49 +64,43 @@ Failed downloads go to the failed queue and can be replayed:
 uv run --project packages/worker wuwa-story-worker replay-failed --queue asset_download --limit 1
 ```
 
-### Windows extraction and publication
+### Linux extraction and publication
 
-Use the published Windows x64 FModelCLI binary. Keep a pinned tool version in `packages/worker/var/tools/`; this initial implementation was verified with `v1.0.2`. The extractor records the executable SHA-256 and rejects reuse with another binary. The `--fmodel` argument is an operator-controlled local executable path, not a URL supplied by a queue message.
+The worker image contains FModelCLI, CUE4Parse.CLI, vgmstream and their Linux native dependencies. Build it from the repository root:
 
-The downloader queues one extraction per `WUWA_ASSET_EXPORT_FILTERS` entry (comma-separated FModel substring filters). Default `ConfigDB` is a small first validation pass; add media filters after inspecting real archive paths. Run a separate Windows worker against the same host directory:
-
-```powershell
-$env:WUWA_ASSET_WORKSPACE = 'E:\Projects\solaris-atlas\packages\worker\var\client-assets'
-$env:WUWA_FMODEL_PATH = 'E:\Projects\solaris-atlas\packages\worker\var\tools\FModelCLI-v1.0.2.exe'
-$env:RABBITMQ_URL = 'amqp://wuwa:wuwa@localhost:5672/'
-uv run --project packages/worker wuwa-story-worker run --queue asset_extract
+```bash
+docker build -f packages/worker/Dockerfile -t solaris-worker .
+docker run --rm --network none solaris-worker /app/tools/fmodelcli/FModelCLI --check-native-libs
+docker run --rm --network none solaris-worker /app/tools/cue-cli/cue4parse --check-native-libs
 ```
 
-S3 settings use the existing server settings (`S3_ENDPOINT_URL`, credentials and bucket); local defaults point to MinIO on `localhost:9000`. To test a completed job directly:
+The final image runs these same checks during its build as the non-root worker user with networking disabled. Checks perform an Oodle compression/decompression roundtrip, Zlib decompression, BC1 texture decoding through Detex, and PNG encoding through SkiaSharp. Sources are pinned by Git commit; downloaded Oodle/vgmstream archives are checked by SHA-256. `docker/patch_tools.py` checks the expected source before applying Linux path and initialization fixes. A changed upstream layout, absent library, or incompatible ABI fails the build. `/app/tools/SHA256SUMS` records the published tool files.
 
-```powershell
-uv run --project packages/worker wuwa-story-worker extract-assets <job-directory> --fmodel <FModelCLI.exe> --filter ConfigDB --upload
+Each CLI initializes libraries from its own `.data` directory beside the executable. Runtime code does not download native libraries, copy them into `/tmp`, or depend on an `/opt/wuwa-tools` host mount. No tool path variables are required in GitHub or service env files. The worker resolves the bundled executable paths automatically. Optional `WUWA_FMODEL_PATH`, `WUWA_TEXTURE_CONVERTER_PATH`, and `WUWA_VGMSTREAM_PATH` overrides remain supported for a separately verified local installation.
+
+The local `asset-worker` consumes both download and extraction queues. Rebuild and start it with:
+
+```bash
+docker compose -f infrastructure/local/compose.yml --env-file infrastructure/local/.env --profile assets up --build -d asset-worker
 ```
 
-Exports retain `fmodel.log`, a file inventory with SHA-256 hashes, and a publication receipt. Exit zero alone is not success: explicit failures, empty output, missing PAK mounts, or mismatching file counts reject publication. Verified files go to version/tier/job/filter-specific S3 keys with content hashes, then the manifest is uploaded last as the completion marker. Retry reuses a completed local export and republishes the same immutable keys. Failed extraction messages use the same dead-letter/replay workflow with `--queue asset_extract`.
-
-This command publishes raw archive contents. Audio conversion (Wwise bank extraction/decoding), cutscene conversion, linking bytes to dialogue media references, and application playback are subsequent stages. Successfully opening one archive does not establish that every 3.7 archive is supported; the complete job must pass mount and export checks.
+The worker uses the existing S3 settings and registers published files in PostgreSQL. Exports retain `fmodel.log`, an inventory of file hashes, and a publication receipt. Failed exports, partial mounts, empty output and mismatching file counts reject publication even if the CLI exits zero. Successful raw files are published under version/tier/job/filter-specific keys with the manifest written last.
 
 ### Map extraction and database publication
 
-Map extraction additionally uses [CUE4Parse.CLI cli-0.2.0](https://github.com/joric/CUE4Parse.CLI/releases/tag/cli-0.2.0), Windows x64. Place the release in `var/tools/cue-cli`. Verified `cue4parse.exe` SHA-256: `967680f00a123e6355c7cb22545a56f2804f0330ce4569aa1ad027779cfbc729`. The receipt records the actual converter hash; map readers currently accept only client `3.7.0`.
+Map extraction uses the bundled CUE4Parse CLI. Readers and coordinate transforms currently accept client `3.7.0` only. To queue maps for a completed asset plan, run the existing command inside the worker (the plan path must be in its mounted workspace):
 
-```powershell
-uv run --project packages/worker wuwa-story-worker extract-maps <job-directory> --fmodel <FModelCLI.exe> --converter <cue4parse.exe> --publish
+```bash
+wuwa-story-worker enqueue-maps <plan.json>
 ```
 
-This validates raw exports, resolves tile resources from ConfigDB, decodes each requested texture, assembles bounded overview PNGs, and extracts chest/collectible placements. Full resolution tiles remain separate, so interactive clients do not need one enormous stitched image. Floor layers and gravity variants remain separate. Missing tiles are transparent rather than filled with invented terrain.
+Set `WUWA_ASSET_BUILD_MAPS=1` on the downloader to enqueue map extraction automatically after a verified download. The same `asset_extract` consumer handles raw exports and maps. Failed jobs go to `wuwa.asset-extract.v1.failed`; replay only the required jobs after deploying the repaired image:
 
-Apply migration `0006_tile_maps` before publication. Files go through `FileRegistrationService`: content SHA-256, canonical `objects/...` key, `file_object`, `file_location`, and `file_variant` links to original Unreal files. `core.tile_map`, `core.map_tile`, and `core.map_marker` preserve client-build identity and placement. Publication uses one database transaction and a per-build advisory lock; retries reuse file/map identities. A failed transaction can leave unreferenced content addressed objects in S3, but cannot expose a partial map in the API. No existing story data is deleted.
-
-To use the durable extraction queue, add the converter path to the Windows worker environment and restart that worker:
-
-```powershell
-$env:WUWA_TEXTURE_CONVERTER_PATH = 'E:\Projects\solaris-atlas\packages\worker\var\tools\cue-cli\cue4parse.exe'
-uv run --project packages/worker wuwa-story-worker enqueue-maps <plan.json>
+```bash
+wuwa-story-worker replay-failed --queue asset_extract --limit 1
 ```
 
-Set `WUWA_ASSET_BUILD_MAPS=1` on the downloader to enqueue map extraction automatically after a verified download. The same Windows `asset_extract` consumer handles raw exports and map jobs. Failures go to its existing failed queue.
+Map publication validates raw exports, resolves ConfigDB tile resources, decodes every requested texture, assembles bounded overview PNGs, and extracts chest/collectible placements. Full-resolution tiles, floor layers and gravity variants remain separate. Migration `0006_tile_maps` is required. Files use `FileRegistrationService`; map and marker records preserve client-build identity. Publication is one database transaction protected by a per-build advisory lock. Failed publication does not expose a partial map. Retries reuse verified outputs; receipts from a different extractor binary require a new export workspace.
 
 API: `GET /maps?game_version=3.7.0`, `GET /maps/{id}`, `GET /maps/{id}/markers`. Local reverse-proxy URLs start with `/api/maps`. Tile manifests include `file_id`, SHA-256 and signed MinIO URLs valid for one hour. Set `MEDIA_PUBLIC_BASE_URL` to the browser-reachable MinIO public bucket root in local development; production public media uses the CDN URL derived from `DOMAIN`.
 

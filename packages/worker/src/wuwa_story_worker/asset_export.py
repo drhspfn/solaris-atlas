@@ -1,4 +1,4 @@
-"""Windows FModelCLI export and immutable raw asset publication."""
+"""FModelCLI export and immutable raw asset publication."""
 
 from __future__ import annotations
 
@@ -48,23 +48,11 @@ async def _export_assets(root: Path, executable: Path, asset_filter: str, upload
         data.mkdir(exist_ok=True)
         def extract() -> None:
             with log.open("w", encoding="utf-8") as stream:
-                strace_log = str(output / "strace.log")
                 subprocess.run(
-                    ["strace", "-f", "-e", "trace=openat", "-o", strace_log, 
-                     str(executable.resolve()), str((root / "game").resolve()),
+                    [str(executable.resolve()), str((root / "game").resolve()),
                      "@" + str((root / "keys.txt").resolve()), str(data.resolve()), asset_filter],
                     stdout=stream, stderr=subprocess.STDOUT, check=False, timeout=7200
                 )
-                
-                # Append oo2core strace lines to fmodel.log for debugging
-                try:
-                    stream.write("\n\n--- STRACE OO2CORE DEBUG ---\n")
-                    import shlex
-                    grep_cmd = f"grep -i oo2core {shlex.quote(strace_log)}"
-                    result = subprocess.run(grep_cmd, shell=True, capture_output=True, text=True)
-                    stream.write(result.stdout)
-                except Exception as e:
-                    stream.write(f"\nFailed to grep strace: {e}\n")
         await asyncio.to_thread(extract)
         log_text = log.read_text(encoding="utf-8", errors="replace")
         summary = re.search(r"\[Done\] Extracted (\d+) files", log_text)
