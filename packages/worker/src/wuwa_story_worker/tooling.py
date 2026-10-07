@@ -32,6 +32,7 @@ def tool_path(env_name: str) -> Path:
     return path
 
 def _ensure_native_libs(tools_dir: Path) -> None:
+    app_tools = Path("/app/tools")
     host_tools = Path("/opt/wuwa-tools")
     for target_dir in [tools_dir / "fmodelcli/.data", Path("/tmp")]:
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -42,6 +43,8 @@ def _ensure_native_libs(tools_dir: Path) -> None:
             ("oo2core_9_linux64.so", "liboodle-data-shared.so"),
         ]:
             src_path = tools_dir / src
+            if not src_path.is_file():
+                src_path = app_tools / src
             if not src_path.is_file():
                 src_path = host_tools / src
             if src_path.is_file():
