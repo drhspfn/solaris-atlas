@@ -177,7 +177,8 @@ async def build_icons(
                     0
                 ]
                 if texture not in pngs:
-                    raise ValueError(f"Missing atlas texture: {texture}")
+                    print(f"WARNING: Missing atlas texture: {texture}")
+                    continue
                 with Image.open(pngs[texture]) as image:
                     cropped = image.crop(sprite_box(infos[index], *image.size))
                     path = output / (source.rsplit("/", 1)[-1].split(".")[0] + ".png")
