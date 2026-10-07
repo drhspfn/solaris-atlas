@@ -37,3 +37,6 @@ def asset_workspace() -> Path:
 
 # Required for FModelCLI and CUE4Parse.CLI (.NET self-contained) in slim Linux images lacking libicu
 os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
+# Ensure .NET can find native libraries (like oo2core) next to the tools
+tools_dir = os.getenv("WUWA_TOOLS_DIR", DEFAULT_TOOLS_DIR)
+os.environ["LD_LIBRARY_PATH"] = f"{tools_dir}:{os.environ.get('LD_LIBRARY_PATH', '')}"
