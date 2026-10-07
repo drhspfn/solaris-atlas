@@ -1,6 +1,6 @@
 FROM ghcr.io/astral-sh/uv:0.11.6 AS uv
 FROM python:3.12-slim AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates ffmpeg \
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates ffmpeg strace \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=uv /uv /uvx /bin/
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv PATH="/opt/venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
