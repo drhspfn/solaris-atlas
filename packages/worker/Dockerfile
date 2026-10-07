@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS tools-builder
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS tools-builder
 RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git cmake clang build-essential curl unzip >/dev/null
 
 WORKDIR /tools
