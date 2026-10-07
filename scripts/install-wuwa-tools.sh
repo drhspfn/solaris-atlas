@@ -43,5 +43,25 @@ python3 -c "import zipfile; zipfile.ZipFile('$tmp/vgmstream.zip').extractall('$t
 install -m 755 "$(find "$tmp" -type f -name vgmstream-cli | head -n1)" "$TOOLS/vgmstream-cli"
 rm -rf "$tmp"
 
+# Build/Download native libraries for CUE4Parse on Linux
+docker run --rm -v "$TOOLS:/out" "$DOTNET_IMAGE" bash -ec '
+  apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git build-essential curl >/dev/null
+  
+  # Detex
+  git clone https://github.com/hglm/detex.git /detex
+  cd /detex
+  sed -i "s/LIBRARY_CONFIGURATION = STATIC/LIBRARY_CONFIGURATION = SHARED/" Makefile.conf
+  make -j4
+  cp libdetex.so /out/libdetex.so
+  cd /
+  
+  # zlib-ng2
+  curl -fsSL https://github.com/NotOfficer/Zlib-ng.NET/releases/download/1.0.0/libz-ng.so.gz | gunzip > /out/libz-ng.so
+  
+  # Oodle
+  curl -fsSL https://github.com/working-title-41/go-oodle/releases/download/v1.0.0/liboo2corelinux64.so.9 -o /out/liboo2corelinux64.so.9
+'
+
+
 echo "Installed tools in $TOOLS:"
 ls -l "$TOOLS" "$TOOLS/cue-cli"
