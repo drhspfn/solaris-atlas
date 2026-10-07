@@ -39,7 +39,8 @@ test -n "$cli_bin" || { echo "CUE4Parse CLI build produced no executable" >&2; e
 install -m 755 "$cli_bin" "$TOOLS/cue-cli/cue4parse"
 
 tmp=$(mktemp -d)
-curl -fsSL https://github.com/vgmstream/vgmstream/releases/latest/download/vgmstream-linux-cli.tar.gz | tar -xz -C "$tmp"
+curl -fsSL https://github.com/vgmstream/vgmstream/releases/latest/download/vgmstream-linux.zip -o "$tmp/vgmstream.zip"
+python3 -c "import zipfile; zipfile.ZipFile('$tmp/vgmstream.zip').extractall('$tmp')"
 install -m 755 "$(find "$tmp" -type f -name vgmstream-cli | head -n1)" "$TOOLS/vgmstream-cli"
 rm -rf "$tmp"
 
