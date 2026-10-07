@@ -21,7 +21,7 @@ RUN git clone --recursive https://github.com/joric/CUE4Parse.CLI.git /src/cue-cl
     git fetch upstream && git merge upstream/master -m "merge" && \
     sed -i "s/return fullPath.Replace(.*);/return fullPath;/g" CUE4Parse-Conversion/ExportSession.cs && \
     sed -i 's/if (!provider.TryLoadPackage(package, out var pkg))/CUE4Parse.UE4.Assets.IPackage pkg = null; try { pkg = provider.LoadPackage(package); } catch(System.Exception ex) { System.Console.Error.WriteLine($"Load Exception: {ex}"); } if (pkg == null)/g' CUE4Parse.CLI/Program.cs && \
-    dotnet add CUE4Parse.CLI/CUE4Parse.CLI.csproj package SkiaSharp.NativeAssets.Linux.NoDependencies && \
+    dotnet add CUE4Parse.CLI/CUE4Parse.CLI.csproj package SkiaSharp.NativeAssets.Linux.NoDependencies --version 2.88.8 && \
     dotnet publish CUE4Parse.CLI/CUE4Parse.CLI.csproj -c Release -r linux-x64 --self-contained true -p:PublishReadyToRun=false -o $TOOLS/cue-cli && \
     mv $TOOLS/cue-cli/CUE4Parse.CLI $TOOLS/cue-cli/cue4parse
 
