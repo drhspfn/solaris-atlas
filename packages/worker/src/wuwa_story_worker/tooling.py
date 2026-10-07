@@ -42,9 +42,9 @@ def _ensure_native_libs(tools_dir: Path) -> None:
             ("liboo2corelinux64.so.9", "liboodle-data-shared.so"),
             ("oo2core_9_linux64.so", "liboodle-data-shared.so"),
         ]:
-            src_path = tools_dir / src
+            src_path = app_tools / src
             if not src_path.is_file():
-                src_path = app_tools / src
+                src_path = tools_dir / src
             if not src_path.is_file():
                 src_path = host_tools / src
             if src_path.is_file():

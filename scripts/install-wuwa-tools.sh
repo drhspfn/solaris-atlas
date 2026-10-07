@@ -13,7 +13,7 @@ set -euo pipefail
 TOOLS="${WUWA_TOOLS_HOST_PATH:-/opt/wuwa-tools}"
 FMODELCLI_REF="${FMODELCLI_REF:-ad969ec899a235b4b5b7706df9244112233dd7de}"
 CUE4PARSE_CLI_REF="${CUE4PARSE_CLI_REF:-cli-0.2.0}"
-DOTNET_IMAGE="${DOTNET_IMAGE:-mcr.microsoft.com/dotnet/sdk:10.0}"
+DOTNET_IMAGE="${DOTNET_IMAGE:-mcr.microsoft.com/dotnet/sdk:9.0}"
 
 mkdir -p "$TOOLS/cue-cli"
 
@@ -23,6 +23,7 @@ build_dotnet() { # repo ref project-glob out-dir
     apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git cmake clang build-essential >/dev/null
     git clone --recursive "$REPO" /src
     cd /src && git checkout --recurse-submodules "$REF"
+    sed -i "s/net10.0/net9.0/g" Directory.Build.props || true
     project=$(find . -path ./upstream -prune -o -name "$GLOB" -print | head -n1)
     test -n "$project" || { echo "No project matching $GLOB"; exit 1; }
     dotnet publish "$project" -c Release -r linux-x64 --self-contained true \
@@ -52,14 +53,14 @@ docker run --rm -v "$TOOLS:/out" "$DOTNET_IMAGE" bash -ec '
   cd /detex
   sed -i "s/LIBRARY_CONFIGURATION = STATIC/LIBRARY_CONFIGURATION = SHARED/" Makefile.conf
   make -j4
-  cp libdetex.so /out/libdetex.so
+  cp libdetex.so* /out/libdetex.so
   cd /
   
   # zlib-ng2
-  curl -fsSL https://github.com/NotOfficer/Zlib-ng.NET/releases/download/1.0.0/libz-ng.so.gz | gunzip > /out/libz-ng.so
+  curl -fsSL https://github.com/NotOfficer/Zlib-ng.NET/releases/download/1.0.0/libz-ng.so.gz | gunzip > /out/libz-ng.so || true
   
   # Oodle
-  curl -fsSL https://github.com/working-title-41/go-oodle/releases/download/v1.0.0/liboo2corelinux64.so.9 -o /out/liboo2corelinux64.so.9
+  curl -fsSL https://github.com/working-title-41/go-oodle/releases/download/v1.0.0/liboo2corelinux64.so.9 -o /out/liboo2corelinux64.so.9 || true
 '
 
 
