@@ -34,3 +34,6 @@ def tool_path(env_name: str) -> Path:
 def asset_workspace() -> Path:
     """Client download workspace shared by the API (read-only) and the worker."""
     return Path(os.getenv("WUWA_ASSET_WORKSPACE", "/var/lib/wuwa-worker/client-assets")).resolve()
+
+# Required for FModelCLI and CUE4Parse.CLI (.NET self-contained) in slim Linux images lacking libicu
+os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
