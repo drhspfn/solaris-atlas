@@ -27,6 +27,7 @@ build_dotnet() { # repo ref project-glob out-dir
     cd /src && git checkout --recurse-submodules "$REF"
     project=$(find . -path ./upstream -prune -o -name "$GLOB" -print | head -n1)
     test -n "$project" || { echo "No project matching $GLOB"; exit 1; }
+    dotnet add "$project" package SkiaSharp.NativeAssets.Linux.NoDependencies
     dotnet publish "$project" -c Release -r linux-x64 --self-contained true \
       -p:PublishReadyToRun=false -o "/out/$OUT"
   '
