@@ -22,56 +22,15 @@ def tool_path(env_name: str) -> Path:
     """
     default, description = TOOLS[env_name]
     configured = os.getenv(env_name)
-    path = Path(configured) if configured else Path(os.getenv("WUWA_TOOLS_DIR", DEFAULT_TOOLS_DIR)) / default
+    path = Path(configured) if configured else Path(os.getenv("WUWA_TOOLS_DIR") or DEFAULT_TOOLS_DIR) / default
     if not path.is_file():
         raise RuntimeError(
-            f"{description} not found at {path}. Install it on the server "
-            f"(scripts/install-wuwa-tools.sh) or set {env_name} to its absolute path."
+            f"{description} not found at {path}. Rebuild the worker image "
+            f"or set {env_name} to a verified tool's absolute path."
         )
-    _ensure_native_libs(Path(os.getenv("WUWA_TOOLS_DIR", DEFAULT_TOOLS_DIR)))
     return path
-
-def _ensure_native_libs(tools_dir: Path) -> None:
-    app_tools = Path("/app/tools")
-    host_tools = Path("/opt/wuwa-tools")
-    for target_dir in [tools_dir / "fmodelcli/.data", Path("/tmp")]:
-        target_dir.mkdir(parents=True, exist_ok=True)
-        for src, dst in [
-            ("libdetex.so", "Detex.dll"),
-            ("libz-ng.so", "zlib-ng2.dll"),
-            ("liboo2corelinux64.so.9", "liboodle-data-shared.so"),
-            ("oo2core_9_linux64.so", "liboodle-data-shared.so"),
-        ]:
-            src_path = app_tools / src
-            if not src_path.is_file():
-                src_path = tools_dir / src
-            if not src_path.is_file():
-                src_path = host_tools / src
-            if src_path.is_file():
-                dst_path = target_dir / dst
-                if dst_path.exists() or dst_path.is_symlink():
-                    try:
-                        dst_path.unlink()
-                    except Exception as e:
-                        import sys
-                        print(f"WARNING: Failed to unlink {dst_path}: {e}", file=sys.stderr)
-                try:
-                    import shutil
-                    shutil.copy2(src_path, dst_path)
-                    import sys
-                    print(f"INFO: Copied {src_path} -> {dst_path}", file=sys.stderr)
-                except Exception as e:
-                    import sys
-                    print(f"WARNING: Failed to copy {src_path} to {dst_path}: {e}", file=sys.stderr)
-
 
 
 def asset_workspace() -> Path:
     """Client download workspace shared by the API (read-only) and the worker."""
     return Path(os.getenv("WUWA_ASSET_WORKSPACE", "/var/lib/wuwa-worker/client-assets")).resolve()
-
-# Required for FModelCLI and CUE4Parse.CLI (.NET self-contained) in slim Linux images lacking libicu
-os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
-# Ensure .NET can find native libraries (like oo2core) next to the tools
-tools_dir = os.getenv("WUWA_TOOLS_DIR", DEFAULT_TOOLS_DIR)
-os.environ["LD_LIBRARY_PATH"] = f"{tools_dir}:{os.environ.get('LD_LIBRARY_PATH', '')}"
