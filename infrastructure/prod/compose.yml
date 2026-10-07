@@ -138,7 +138,7 @@ services:
       - asset_extract
     volumes:
       - worker_data:/var/lib/wuwa-worker
-      - ${WUWA_TOOLS_HOST_PATH:-/opt/wuwa-tools}:/opt/wuwa-tools:ro
+      - ${WUWA_TOOLS_HOST_PATH:-/opt/wuwa-tools}:/opt/wuwa-tools
     environment:
       WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
       WUWA_TOOLS_DIR: /opt/wuwa-tools
@@ -165,7 +165,7 @@ services:
     command: ["wuwa-story-worker", "run", "--queue", "story_agent"]
     volumes:
       - worker_data:/var/lib/wuwa-worker
-      - ${WUWA_TOOLS_HOST_PATH:-/opt/wuwa-tools}:/opt/wuwa-tools:ro
+      - ${WUWA_TOOLS_HOST_PATH:-/opt/wuwa-tools}:/opt/wuwa-tools
     environment:
       WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
       WUWA_TOOLS_DIR: /opt/wuwa-tools
@@ -192,7 +192,7 @@ services:
     command: ["wuwa-story-worker", "run", "--queue", "cutscene_vision"]
     volumes:
       - worker_data:/var/lib/wuwa-worker
-      - ${WUWA_TOOLS_HOST_PATH:-/opt/wuwa-tools}:/opt/wuwa-tools:ro
+      - ${WUWA_TOOLS_HOST_PATH:-/opt/wuwa-tools}:/opt/wuwa-tools
     environment:
       WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
       WUWA_TOOLS_DIR: /opt/wuwa-tools
