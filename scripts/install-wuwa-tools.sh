@@ -34,6 +34,7 @@ build_dotnet https://github.com/Herselfta/FModelCLI.git "$FMODELCLI_REF" 'FModel
 chmod +x "$TOOLS/fmodelcli/FModelCLI"
 
 build_dotnet https://github.com/joric/CUE4Parse.CLI.git "$CUE4PARSE_CLI_REF" '*CLI*.csproj' cue-cli
+if [ -f "$TOOLS/cue-cli/CUE4Parse.CLI" ]; then mv "$TOOLS/cue-cli/CUE4Parse.CLI" "$TOOLS/cue-cli/cue4parse"; fi
 chmod +x "$TOOLS/cue-cli/cue4parse"
 
 tmp=$(mktemp -d)
