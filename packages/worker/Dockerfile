@@ -1,8 +1,12 @@
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS tools-builder
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS tools-builder
 RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git cmake clang build-essential curl unzip >/dev/null
 
 WORKDIR /tools
 ENV TOOLS=/tools
+
+# Ensure .NET 10 SDK is explicitly installed, bypassing broken base image tags
+RUN curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin -c 10.0
+ENV PATH="/root/.dotnet:${PATH}"
 
 # FModelCLI
 RUN git clone --recursive https://github.com/Herselfta/FModelCLI.git /src/fmodel && \
@@ -12,7 +16,6 @@ RUN git clone --recursive https://github.com/Herselfta/FModelCLI.git /src/fmodel
 # CUE4Parse.CLI
 RUN git clone --recursive https://github.com/joric/CUE4Parse.CLI.git /src/cue-cli && \
     cd /src/cue-cli && git checkout cli-0.2.0 && \
-    sed -i 's/net10.0/net9.0/g' Directory.Build.props && \
     dotnet publish CUE4Parse.CLI/CUE4Parse.CLI.csproj -c Release -r linux-x64 --self-contained true -p:PublishReadyToRun=false -o $TOOLS/cue-cli && \
     mv $TOOLS/cue-cli/CUE4Parse.CLI $TOOLS/cue-cli/cue4parse
 
