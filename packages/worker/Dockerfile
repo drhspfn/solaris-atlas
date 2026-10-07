@@ -26,8 +26,9 @@ RUN git clone https://github.com/hglm/detex.git /src/detex && \
     make -j4 && cp libdetex.so* $TOOLS/libdetex.so
 
 # zlib-ng2 & oo2core
-RUN curl -fsSL https://github.com/NotOfficer/Zlib-ng.NET/releases/download/1.0.0/libz-ng.so.gz | gunzip > $TOOLS/libz-ng.so && \
-    curl -fsSL https://github.com/working-title-41/go-oodle/releases/download/v1.0.0/liboo2corelinux64.so.9 -o $TOOLS/liboo2corelinux64.so.9
+# zlib-ng2 & oo2core (May 404, so we allow them to fail and fallback to host mounts if needed)
+RUN curl -fsSL https://github.com/NotOfficer/Zlib-ng.NET/releases/download/1.0.0/libz-ng.so.gz | gunzip > $TOOLS/libz-ng.so || true; \
+    curl -fsSL https://github.com/working-title-41/go-oodle/releases/download/v1.0.0/liboo2corelinux64.so.9 -o $TOOLS/liboo2corelinux64.so.9 || true
 
 FROM ghcr.io/astral-sh/uv:0.11.6 AS uv
 FROM python:3.12-slim AS runtime

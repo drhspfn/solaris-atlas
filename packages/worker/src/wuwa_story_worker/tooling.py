@@ -32,18 +32,20 @@ def tool_path(env_name: str) -> Path:
     return path
 
 def _ensure_native_libs(tools_dir: Path) -> None:
-    if not (tools_dir / "libdetex.so").is_file():
-        return
+    host_tools = Path("/opt/wuwa-tools")
     for target_dir in [tools_dir / "fmodelcli/.data", Path("/tmp")]:
         target_dir.mkdir(parents=True, exist_ok=True)
         for src, dst in [
             ("libdetex.so", "Detex.dll"),
             ("libz-ng.so", "zlib-ng2.dll"),
             ("liboo2corelinux64.so.9", "liboodle-data-shared.so"),
+            ("oo2core_9_linux64.so", "liboodle-data-shared.so"),
         ]:
             src_path = tools_dir / src
-            dst_path = target_dir / dst
+            if not src_path.is_file():
+                src_path = host_tools / src
             if src_path.is_file():
+                dst_path = target_dir / dst
                 if dst_path.exists() or dst_path.is_symlink():
                     try:
                         dst_path.unlink()
