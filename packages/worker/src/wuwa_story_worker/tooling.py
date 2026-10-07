@@ -9,7 +9,7 @@ DEFAULT_TOOLS_DIR = "/opt/wuwa-tools"
 
 # env var -> (default relative path inside WUWA_TOOLS_DIR, human description)
 TOOLS = {
-    "WUWA_FMODEL_PATH": ("FModelCLI", "FModelCLI extractor"),
+    "WUWA_FMODEL_PATH": ("fmodelcli/FModelCLI", "FModelCLI extractor"),
     "WUWA_TEXTURE_CONVERTER_PATH": ("cue-cli/cue4parse", "CUE4Parse CLI texture/audio converter"),
     "WUWA_VGMSTREAM_PATH": ("vgmstream-cli", "vgmstream-cli audio decoder"),
 }
