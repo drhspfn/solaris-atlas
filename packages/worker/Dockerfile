@@ -19,6 +19,7 @@ RUN git clone --recursive https://github.com/joric/CUE4Parse.CLI.git /src/cue-cl
     git config user.email "build@example.com" && git config user.name "build" && \
     git remote add upstream https://github.com/FabianFG/CUE4Parse.git && \
     git fetch upstream && git merge upstream/master -m "merge" && \
+    sed -i "s/return fullPath.Replace(.*);/return fullPath;/g" CUE4Parse-Conversion/ExportSession.cs && \
     dotnet publish CUE4Parse.CLI/CUE4Parse.CLI.csproj -c Release -r linux-x64 --self-contained true -p:PublishReadyToRun=false -o $TOOLS/cue-cli && \
     mv $TOOLS/cue-cli/CUE4Parse.CLI $TOOLS/cue-cli/cue4parse
 
