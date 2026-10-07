@@ -13,7 +13,7 @@ set -euo pipefail
 TOOLS="${WUWA_TOOLS_HOST_PATH:-/opt/wuwa-tools}"
 FMODELCLI_REF="${FMODELCLI_REF:-ad969ec899a235b4b5b7706df9244112233dd7de}"
 CUE4PARSE_CLI_REF="${CUE4PARSE_CLI_REF:-cli-0.2.0}"
-DOTNET_IMAGE="${DOTNET_IMAGE:-mcr.microsoft.com/dotnet/sdk:8.0}"
+DOTNET_IMAGE="${DOTNET_IMAGE:-mcr.microsoft.com/dotnet/sdk:10.0}"
 
 mkdir -p "$TOOLS/cue-cli"
 
