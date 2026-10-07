@@ -52,12 +52,16 @@ def _ensure_native_libs(tools_dir: Path) -> None:
                 if dst_path.exists() or dst_path.is_symlink():
                     try:
                         dst_path.unlink()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import sys
+                        print(f"WARNING: Failed to unlink {dst_path}: {e}", file=sys.stderr)
                 try:
                     dst_path.symlink_to(src_path)
-                except Exception:
-                    pass
+                    import sys
+                    print(f"INFO: Symlinked {dst_path} -> {src_path}", file=sys.stderr)
+                except Exception as e:
+                    import sys
+                    print(f"WARNING: Failed to symlink {dst_path} to {src_path}: {e}", file=sys.stderr)
 
 
 
