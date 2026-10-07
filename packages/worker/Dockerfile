@@ -15,7 +15,10 @@ RUN git clone --recursive https://github.com/Herselfta/FModelCLI.git /src/fmodel
 
 # CUE4Parse.CLI
 RUN git clone --recursive https://github.com/joric/CUE4Parse.CLI.git /src/cue-cli && \
-    cd /src/cue-cli && git checkout cli-0.2.0 && \
+    cd /src/cue-cli && git checkout master && \
+    git config user.email "build@example.com" && git config user.name "build" && \
+    git remote add upstream https://github.com/FabianFG/CUE4Parse.git && \
+    git fetch upstream && git merge upstream/master -m "merge" && \
     dotnet publish CUE4Parse.CLI/CUE4Parse.CLI.csproj -c Release -r linux-x64 --self-contained true -p:PublishReadyToRun=false -o $TOOLS/cue-cli && \
     mv $TOOLS/cue-cli/CUE4Parse.CLI $TOOLS/cue-cli/cue4parse
 
