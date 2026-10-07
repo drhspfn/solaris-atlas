@@ -53,6 +53,7 @@ docker run --rm -v "$TOOLS:/out" "$DOTNET_IMAGE" bash -ec '
   git clone https://github.com/hglm/detex.git /detex
   cd /detex
   sed -i "s/LIBRARY_CONFIGURATION = STATIC/LIBRARY_CONFIGURATION = SHARED/" Makefile.conf
+  sed -i "s/DST_SHARED/DETEX_SHARED/g" Makefile
   make -j4
   cp libdetex.so* /out/libdetex.so
   cd /
