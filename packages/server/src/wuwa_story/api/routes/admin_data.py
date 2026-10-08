@@ -290,7 +290,7 @@ async def enqueue_snapshot_import(
             discover_remote_snapshots, DEFAULT_REPOSITORY, request.version, request.version
         )
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-        raise HTTPException(502, f"Could not resolve upstream patch {request.version}") from error
+        raise HTTPException(400, f"Could not resolve upstream patch {request.version}") from error
     snapshot = discovered[0]
     identity = hashlib.sha256(
         f"{DEFAULT_REPOSITORY}:{snapshot.branch}:{snapshot.commit}".encode()
@@ -370,7 +370,7 @@ async def enqueue_client_download(
     try:
         plan = await asyncio.to_thread(discover_plan, request.version, request.tier)
     except (OSError, ValueError, RuntimeError) as error:
-        raise HTTPException(502, f"Could not resolve official client plan: {error}") from error
+        raise HTTPException(400, f"Could not resolve official client plan: {error}") from error
 
     identity = hashlib.sha256(f"asset_download:{plan['id']}".encode()).digest()
     await session.execute(
