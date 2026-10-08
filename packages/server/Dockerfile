@@ -2,6 +2,7 @@ FROM ghcr.io/astral-sh/uv:0.11.6 AS uv
 FROM python:3.12-slim AS runtime
 COPY --from=uv /uv /uvx /bin/
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv PATH="/opt/venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 WORKDIR /app/packages/server
 COPY packages/server/pyproject.toml packages/server/uv.lock ./
 COPY packages/server/alembic.ini ./
