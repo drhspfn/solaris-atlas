@@ -68,7 +68,7 @@ async def tool(args, log, timeout=1800):
     await asyncio.to_thread(run)
 
 
-async def build_entity_files(root, targets, fmodel, converter):
+async def build_entity_files(root, targets, fmodel, converter, voice_root=None):
     images = [t for t in targets if t["kind"] == "image"]
     icons = {}
     if images:
@@ -96,9 +96,9 @@ async def build_entity_files(root, targets, fmodel, converter):
         if not files:
             raise ValueError("None of the requested textures could be decoded")
         return files, missing
-    if not os.getenv("WUWA_VOICE_ROOT"):
+    if voice_root is None and not os.getenv("WUWA_VOICE_ROOT"):
         raise RuntimeError("Set WUWA_VOICE_ROOT to the completed multilingual voice download directory")
-    voice_root = Path(os.environ["WUWA_VOICE_ROOT"]).resolve()
+    voice_root = voice_root or Path(os.environ["WUWA_VOICE_ROOT"]).resolve()
     plan = json.loads((voice_root / "plan.json").read_text(encoding="utf-8"))
     status = json.loads((voice_root / "status.json").read_text(encoding="utf-8"))
     base_plan = json.loads((root / "plan.json").read_text(encoding="utf-8"))
@@ -245,6 +245,7 @@ async def _process_entity_media(payload: dict, connection) -> None:
                     payload["targets"],
                     tool_path("WUWA_FMODEL_PATH"),
                     tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
+                    voice_root=(asset_workspace() / "voices" / f"{request.asset_version}-{request.voice_plan_id[:16]}") if request.voice_plan_id else None,
                 )
                 storage = S3Storage(get_settings())
                 await storage.ensure_bucket()

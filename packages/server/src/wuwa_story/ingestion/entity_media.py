@@ -16,16 +16,32 @@ class MediaRequest(BaseModel):
     asset_version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
     tier: Literal["sd", "hd", "uhd"] = "hd"
     game_version: str
+    release_id: int | None = Field(default=None, ge=1)
     entities: list[str] = Field(min_length=1, max_length=100)
     kinds: list[Literal["image", "voice"]] = Field(
         default_factory=lambda: ["image", "voice"], min_length=1
     )
+    voice_plan_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     voice_ids: list[int] | None = None
+
+
+def image_paths(value, field="") -> set[str]:
+    if isinstance(value, dict):
+        return set().union(*(image_paths(child, field + "." + key) for key, child in value.items()))
+    if isinstance(value, list):
+        return set().union(*(image_paths(child, field) for child in value))
+    if isinstance(value, str) and value.startswith("/Game/") and any(
+        token in field.lower() for token in ("icon", "card", "portrait", "stand")
+    ):
+        return {value}
+    return set()
 
 
 async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
     release_id = await session.scalar(
         select(GameRelease.id).where(GameRelease.game_version == request.game_version)
+        .where(GameRelease.id == request.release_id if request.release_id is not None else True)
+        .order_by(GameRelease.sequence.desc()).limit(1)
     )
     if release_id is None:
         raise ValueError("Story snapshot is not imported")
@@ -48,7 +64,7 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
     for key in sorted(set(request.entities)):
         node = await session.scalar(select(Node).where(Node.canonical_key == key))
         kind, _, identifier = key.partition(":")
-        if node is None or kind not in ("character", "item") or not identifier.isdigit():
+        if node is None:
             raise ValueError(f"Unsupported media entity: {key}")
         raw = await session.scalar(
             select(SourceRecord.data)
@@ -78,16 +94,7 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
                 ),
             ):
                 rows.extend(await records(path, field, value))
-        images = sorted(
-            {
-                value
-                for row in rows
-                for field, value in row.items()
-                if isinstance(value, str)
-                and value.startswith("/Game/")
-                and any(token in field.lower() for token in ("icon", "card", "portrait", "stand"))
-            }
-        )
+        images = sorted(set().union(*(image_paths(row) for row in rows)))
         if "image" in request.kinds:
             targets.extend(
                 {

@@ -61,3 +61,28 @@ The host is Ubuntu or Debian. Docker Compose v2.30 or newer is installed by the 
 ## Rollback and backups
 
 Redeploy a previous commit SHA to roll application images back. Database migrations run forward at API deployment; back up PostgreSQL before schema changes that are not backwards-compatible. Keep backups of PostgreSQL and object storage separate from the server.
+
+### Patch media imports
+
+Snapshot import now queues `release_media` jobs for images (including skills),
+quest voices, character voices and cutscenes. Shared client preparation, voice
+packages and cutscene exports are prerequisites; dependent jobs wait through a
+persistent RabbitMQ delay queue. Production snapshot-worker consumes both
+`release_media` and `entity_media`; locally start the `assets` Compose profile.
+
+For an already imported patch, use **Import / retry media** in Data operations.
+Completed tasks are reused; failed/partial tasks can be queued again. A completed
+snapshot does not mean its separately queued media tasks have finished. Inspect
+**Queues & workers** and **All processing tasks** for progress and missing media.
+RabbitMQ monitoring requires its management listener and read permissions for the
+configured broker user. Unavailable monitoring is displayed as unknown counts.
+
+Voice bootstrap exports KuroPublicConfig.ini from game archives and uses pinned,
+public Shorekeeper game-format cipher constants. No user-provided crypto file is
+required. Official voice/video manifests and archive checksums are verified.
+Historical story snapshots use the available client media; removed content may
+be missing. Cutscene configuration decoding currently supports client 3.7.0.
+
+Cutscene visual analysis remains manual and shares the configured daily budget.
+Its admin preview uses the site's existing player. Contact sheets are not enabled:
+high-detail mosaics have no verified token-saving guarantee for the configured model.

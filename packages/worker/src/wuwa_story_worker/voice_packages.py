@@ -66,11 +66,11 @@ def package_files(manifest: dict, group: str, uri: str, package_version: str) ->
     return result
 
 
-def discover_voice_plan(version: str, public_config: Path, crypto_path: Path) -> dict:
+def discover_voice_plan(version: str, public_config: Path, crypto_path: Path | dict) -> dict:
     values = dict(line.split("=", 1) for line in public_config.read_text(encoding="utf-8-sig").splitlines()
                   if "=" in line)
     uri = safe_path(values["UrlPath"].strip())
-    crypto = json.loads(crypto_path.read_text(encoding="utf-8"))
+    crypto = crypto_path if isinstance(crypto_path, dict) else json.loads(crypto_path.read_text(encoding="utf-8"))
     entry = None
     for prefix in values["InternalPrefix"].split(";"):
         if urlparse(prefix).hostname not in CONFIG_HOSTS or not prefix.startswith("https://"):

@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
@@ -27,6 +27,8 @@ from wuwa_story.ingestion.client_assets import (
 )
 from wuwa_story.ingestion.github_snapshots import discover_remote_snapshots
 from wuwa_story.ingestion.media_jobs import publish_media_job
+from wuwa_story.ingestion.queue_status import queue_status
+from wuwa_story.ingestion.release_media import enqueue_release_media
 
 DEFAULT_REPOSITORY = "https://github.com/Arikatsu/WutheringWaves_Data.git"
 logger = logging.getLogger(__name__)
@@ -67,6 +69,42 @@ class MapBuildRequest(_PayloadModel):
 
 def _get_asset_workspace() -> Path:
     return Path(os.getenv("WUWA_ASSET_WORKSPACE", "./var/client-assets")).resolve()
+
+
+@router.get("/queues")
+async def queues():
+    return await queue_status()
+
+
+@router.get("/tasks")
+async def tasks(before: int | None = Query(None, ge=1),
+                status: str | None = Query(None, max_length=24),
+                limit: int = Query(50, ge=1, le=100),
+                session: AsyncSession = Depends(get_session)):
+    statement = select(ProcessingRun, Processor.key).join(Processor).order_by(ProcessingRun.id.desc()).limit(limit)
+    if before is not None:
+        statement = statement.where(ProcessingRun.id < before)
+    if status:
+        statement = statement.where(ProcessingRun.status == status)
+    rows = (await session.execute(statement)).all()
+    # AI checkpoints contain private conversation history. Only counters are public here.
+    counters = {"records_seen", "records_created", "records_failed", "images", "voice_tracks",
+                "tracks", "videos", "tasks", "queued", "enqueue_failed", "asset_version", "step",
+                "missing_images", "missing_voices", "missing_assets", "stage", "done", "total"}
+    return {"tasks": [{"id": run.id, "processor": key, "status": run.status,
+                       "started_at": run.started_at, "finished_at": run.finished_at,
+                       "error": run.error, "request": run.metadata_json.get("request", {}),
+                       "result": {name: value for name, value in (run.raw_output or {}).items() if name in counters}}
+                      for run, key in rows],
+            "next_before": rows[-1][0].id if len(rows) == limit else None}
+
+
+@router.post("/releases/{release_id}/media", status_code=202, dependencies=[Depends(require_csrf)])
+async def release_media(release_id: int, session: AsyncSession = Depends(get_session)):
+    try:
+        return await enqueue_release_media(session, release_id)
+    except ValueError as error:
+        raise HTTPException(404, str(error)) from error
 
 
 async def _inspect_client_assets(session: AsyncSession) -> dict[str, Any]:
@@ -196,7 +234,10 @@ async def overview(session: AsyncSession = Depends(get_session)) -> dict[str, An
 
     client_assets_data = await _inspect_client_assets(session)
 
+    active_tasks = await session.scalar(select(func.count()).select_from(ProcessingRun).where(
+        ProcessingRun.status.in_(["queued", "running", "pending", "waiting_dependency"])))
     return {
+        "active_tasks": active_tasks or 0,
         "releases": [
             {
                 "id": release.id,

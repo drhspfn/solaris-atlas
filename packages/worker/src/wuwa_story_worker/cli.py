@@ -34,6 +34,7 @@ from wuwa_story_worker.cutscene_vision import dispatch_visual_jobs, process_cuts
 from wuwa_story_worker.entity_media import process_entity_media
 from wuwa_story_worker.map_assets import build_maps, refresh_map_sources
 from wuwa_story_worker.queues import QUEUES, queue_concurrency
+from wuwa_story_worker.release_media import process_release_media
 from wuwa_story_worker.scheduler import (
     DEFAULT_REPOSITORY,
     enqueue_snapshot,
@@ -205,6 +206,7 @@ async def _import_datasets(datasets: list[tuple[str, Path]], batch_size: int) ->
 
 async def _run(queues: list[str] | None = None) -> None:
     handlers = {
+        "release_media": process_release_media,
         "snapshot_build": build_and_import_snapshot,
         "asset_download": download_client_assets,
         "asset_extract": extract_client_assets,

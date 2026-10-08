@@ -36,8 +36,10 @@ async def update_admin_run(
             run.error = error
             if raw_output is not None:
                 run.raw_output = raw_output
-            if status in {"completed", "failed"}:
+            if status in {"completed", "failed", "partial", "blocked"}:
                 run.finished_at = datetime.now(UTC)
+            else:
+                run.finished_at = None
             await session.commit()
     finally:
         await engine.dispose()

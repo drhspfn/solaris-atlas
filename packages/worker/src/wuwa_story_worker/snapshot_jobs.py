@@ -23,6 +23,7 @@ from wuwa_story.ingestion.github_snapshots import (
     fetch_snapshot,
     prepare_checkout,
 )
+from wuwa_story.ingestion.release_media import enqueue_release_media
 
 from wuwa_story_worker.job_tracking import update_admin_run
 
@@ -171,6 +172,7 @@ async def _build_and_import_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
                 build_output, session, batch_size=int(
                     os.getenv("WUWA_IMPORT_BATCH_SIZE", "500"))
             )
+            media = await enqueue_release_media(session, result.release_id)
         logger.info("Imported WuWa %s at %s: %s",
                     actual_version, commit, result)
     finally:
@@ -179,4 +181,4 @@ async def _build_and_import_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
     # The DB import is the durable product. Keep the shared Git object cache and
     # discard the per-job checkout and large compiled raw-evidence snapshot.
     shutil.rmtree(job_root)
-    return {**asdict(result), "game_version": actual_version, "commit": commit}
+    return {**asdict(result), "game_version": actual_version, "commit": commit, "media": media}
