@@ -1,8 +1,32 @@
+import subprocess
 from unittest.mock import AsyncMock
 
 import pytest
 
 from wuwa_story_worker import snapshot_jobs
+
+
+@pytest.mark.asyncio
+async def test_snapshot_checkout_downloads_into_empty_workspace(tmp_path):
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+
+    def git(*args, cwd=upstream):
+        return subprocess.run(
+            ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    git("init", "--initial-branch=1.0")
+    (upstream / "README.md").write_text("Game Version: 1.0.0\n", encoding="utf-8")
+    git("add", "README.md")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "fixture")
+    commit = git("rev-parse", "HEAD")
+    workspace = tmp_path / "worker"
+    assert not workspace.exists()
+    source = await snapshot_jobs._checkout_job(str(upstream), "1.0", commit, workspace)
+    assert (source / "README.md").read_text(encoding="utf-8") == "Game Version: 1.0.0\n"
+    assert git("rev-parse", "HEAD", cwd=source) == commit
+    assert await snapshot_jobs._checkout_job(str(upstream), "1.0", commit, workspace) == source
 
 
 @pytest.mark.asyncio

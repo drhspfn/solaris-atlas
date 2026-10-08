@@ -2,13 +2,13 @@
 
 import asyncio
 import hashlib
+import json
+import logging
 import os
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
-
-import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, model_validator
@@ -29,6 +29,7 @@ from wuwa_story.ingestion.github_snapshots import discover_remote_snapshots
 from wuwa_story.ingestion.media_jobs import publish_media_job
 
 DEFAULT_REPOSITORY = "https://github.com/Arikatsu/WutheringWaves_Data.git"
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/admin/data-operations",
@@ -289,8 +290,13 @@ async def enqueue_snapshot_import(
         discovered = await asyncio.to_thread(
             discover_remote_snapshots, DEFAULT_REPOSITORY, request.version, request.version
         )
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-        raise HTTPException(400, f"Could not resolve upstream patch {request.version}") from error
+    except ValueError as error:
+        raise HTTPException(400, f"Upstream patch {request.version} was not found") from error
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        logger.exception("Upstream snapshot discovery failed version=%s", request.version)
+        raise HTTPException(
+            400, "Could not contact the upstream repository; retry the patch import"
+        ) from error
     snapshot = discovered[0]
     identity = hashlib.sha256(
         f"{DEFAULT_REPOSITORY}:{snapshot.branch}:{snapshot.commit}".encode()
