@@ -212,6 +212,7 @@ async def overview(session: AsyncSession = Depends(get_session)) -> dict[str, An
         "imports": [
             {
                 "id": run.id,
+                "release_id": run.release_id,
                 "game_version": version,
                 "status": run.status,
                 "started_at": run.started_at,
@@ -231,6 +232,7 @@ async def overview(session: AsyncSession = Depends(get_session)) -> dict[str, An
                 "started_at": run.started_at,
                 "finished_at": run.finished_at,
                 "error": run.error,
+                "result": run.raw_output,
                 **(
                     run.metadata_json.get("request", {})
                     if isinstance(run.metadata_json, dict)

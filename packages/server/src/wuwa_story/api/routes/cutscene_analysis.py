@@ -11,11 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from wuwa_story.agents.contracts import StrictModel
 from wuwa_story.agents.cutscene_vision import enqueue_visual_job, resume_visual_job
 from wuwa_story.agents.settings import get_agent_settings
+from wuwa_story.api.routes.story.cutscene_audio import audio_bundles
+from wuwa_story.api.routes.story.media import cutscene_videos
 from wuwa_story.auth.dependencies import require_admin, require_csrf
+from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.ops import ProcessingRun, Processor
 from wuwa_story.db.models.storage import FileReference
 from wuwa_story.db.session import get_session
+from wuwa_story.storage.s3 import S3Storage
 
 router = APIRouter(prefix="/cutscenes", dependencies=[Depends(require_admin)])
 
@@ -27,6 +31,25 @@ class VisualRequest(StrictModel):
 
 class VisualResumeRequest(StrictModel):
     output_tokens: int | None = Field(default=None, ge=128, le=16000)
+
+
+@router.get("/assets/{asset_id}/playback")
+async def playback(asset_id: int, game_version: str = Query(min_length=1, max_length=64),
+                   session: AsyncSession = Depends(get_session)):
+    node = await session.get(Node, asset_id)
+    videos = await cutscene_videos(session, [asset_id], game_version)
+    if node is None or asset_id not in videos:
+        raise HTTPException(404, "Playable video is unavailable for this version")
+    video = videos[asset_id]
+    settings = get_settings()
+    bundles = await audio_bundles(session, [asset_id], game_version, settings, S3Storage(settings))
+    if asset_id in bundles:
+        video = {**video, "url": bundles[asset_id]["videos"]["full"],
+                 "audio_tracks": bundles[asset_id]["tracks"], "timeline_offset": 0}
+    return {"version": 1, "entry": "video", "asset_version": game_version,
+            "nodes": [{"id": "video", "kind": "clip", "asset": node.canonical_key,
+                       "start": 0, "end": None, "next": None}],
+            "media": {node.canonical_key: video}, "evidence": "Imported video variant"}
 
 
 def public_job(run: ProcessingRun) -> dict[str, Any]:

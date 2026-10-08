@@ -6,6 +6,8 @@ import { useSearchParams } from 'react-router-dom';
 
 import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
+import { FlowPlayer } from '../components/story/QuestCutscenes';
+import { type CutsceneFlow } from '../components/story/QuestMediaReferences';
 import { APP_SETTINGS } from '../config/settings';
 import { statusLabel } from '../data/storyAgent';
 
@@ -35,6 +37,54 @@ const resumable = new Set([
   'paused_config',
   'paused_input',
 ]);
+
+function CutscenePreview({ asset }: { asset: Asset }) {
+  const [open, setOpen] = useState(false);
+  const [flow, setFlow] = useState<CutsceneFlow | null>(null);
+  const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    void api<CutsceneFlow>(
+      `/admin/story-agent/cutscenes/assets/${asset.id}/playback?game_version=${encodeURIComponent(asset.game_version)}`,
+      { signal: controller.signal },
+    )
+      .then((value) => {
+        if (!controller.signal.aborted) {
+          setFlow(value);
+          setError('');
+        }
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted)
+          setError(reason instanceof Error ? reason.message : 'Could not load video.');
+      });
+    return () => controller.abort();
+  }, [open, asset.id, asset.game_version, retry]);
+  return (
+    <details onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>Watch cutscene</summary>
+      {open &&
+        (error ? (
+          <p role="alert">
+            {error}{' '}
+            <button
+              type="button"
+              className="agent-button"
+              onClick={() => setRetry((value) => value + 1)}
+            >
+              Retry
+            </button>
+          </p>
+        ) : flow ? (
+          <FlowPlayer flow={flow} title={`Cutscene · ${asset.reference.split('/').at(-1)}`} />
+        ) : (
+          <p role="status">Loading video…</p>
+        ))}
+    </details>
+  );
+}
 
 export function CutsceneAnalysisPage() {
   const { refresh: refreshAuth } = useAuth();
@@ -265,6 +315,7 @@ export function CutsceneAnalysisPage() {
             >
               Analyze cutscene
             </button>
+            <CutscenePreview asset={asset} />
           </article>
         ))}
         {assets && !loading && !assets.assets.length && (

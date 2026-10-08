@@ -16,6 +16,7 @@ import { useAuth } from '../auth/AuthProvider';
 
 type ImportRun = {
   id: number;
+  release_id: number;
   game_version: string;
   status: string;
   started_at: string;
@@ -40,6 +41,12 @@ type ProcessingJob = {
   download_id?: string;
   file_count?: number;
   size_bytes?: number;
+  result?: {
+    import_run_id?: number;
+    records_seen?: number;
+    records_created?: number;
+    records_failed?: number;
+  } | null;
 };
 
 type InstalledClient = {
@@ -637,10 +644,20 @@ export function DataOperationsPage() {
                     {job.error && <small>{job.error}</small>}
                   </td>
                   <td>
-                    {data.imports
-                      .filter((item) => item.game_version === job.version)
-                      .reduce((sum, item) => sum + item.records_created, 0)
-                      .toLocaleString('en-US')}
+                    {(() => {
+                      const release = data.releases.find(
+                        (item) => item.upstream_commit === job.commit,
+                      );
+                      const imported = data.imports.find((item) =>
+                        job.result?.import_run_id
+                          ? item.id === job.result.import_run_id
+                          : item.release_id === release?.id,
+                      );
+                      const seen = job.result?.records_seen ?? imported?.records_seen;
+                      return seen === undefined
+                        ? 'Statistics unavailable'
+                        : seen.toLocaleString('en-US');
+                    })()}
                   </td>
                   <td>{date(job.finished_at ?? job.started_at)}</td>
                 </tr>

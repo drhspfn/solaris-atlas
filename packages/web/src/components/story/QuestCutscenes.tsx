@@ -64,7 +64,7 @@ function fallbackFlow(event: QuestMediaEvent): CutsceneFlow | null {
   };
 }
 
-function FlowPlayer({
+export function FlowPlayer({
   flow,
   title,
   anchor,

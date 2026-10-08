@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -95,8 +96,8 @@ async def _checkout_job(repository: str, version: str, commit: str, workspace: P
 
 
 
-async def _update_admin_run(run_id: int, status: str, *, error: str | None = None) -> None:
-    await update_admin_run(run_id, "snapshot_import", status, error=error)
+async def _update_admin_run(run_id: int, status: str, *, error: str | None = None, raw_output=None) -> None:
+    await update_admin_run(run_id, "snapshot_import", status, error=error, raw_output=raw_output)
 
 
 async def build_and_import_snapshot(payload: dict[str, Any]) -> None:
@@ -106,7 +107,7 @@ async def build_and_import_snapshot(payload: dict[str, Any]) -> None:
             raise ValueError("Invalid snapshot import run ID")
         await _update_admin_run(run_id, "running")
     try:
-        await _build_and_import_snapshot(payload)
+        result = await _build_and_import_snapshot(payload)
     except Exception as error:
         if run_id is not None:
             try:
@@ -116,10 +117,10 @@ async def build_and_import_snapshot(payload: dict[str, Any]) -> None:
                     "Failed to record snapshot import failure run_id=%s", run_id)
         raise
     if run_id is not None:
-        await _update_admin_run(run_id, "completed")
+        await _update_admin_run(run_id, "completed", raw_output=result)
 
 
-async def _build_and_import_snapshot(payload: dict[str, Any]) -> None:
+async def _build_and_import_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
     version, repository, commit = _validate_job(payload)
     workspace = Path(os.getenv("WUWA_WORKER_WORKSPACE",
                      "/var/lib/wuwa-worker")).resolve()
@@ -178,3 +179,4 @@ async def _build_and_import_snapshot(payload: dict[str, Any]) -> None:
     # The DB import is the durable product. Keep the shared Git object cache and
     # discard the per-job checkout and large compiled raw-evidence snapshot.
     shutil.rmtree(job_root)
+    return {**asdict(result), "game_version": actual_version, "commit": commit}

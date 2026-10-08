@@ -13,6 +13,32 @@ from wuwa_story.api.routes.cutscene_analysis import VisualRequest, create_visual
 
 
 @pytest.mark.asyncio
+async def test_preview_uses_exact_version_and_separate_audio():
+    from wuwa_story.api.routes.cutscene_analysis import playback
+    db = AsyncMock()
+    db.get.return_value = SimpleNamespace(canonical_key="asset:ue:/scene")
+    with (
+        patch("wuwa_story.api.routes.cutscene_analysis.cutscene_videos", new_callable=AsyncMock,
+              return_value={7: {"url": "https://cdn/video", "asset_version": "3.7.0"}}) as videos,
+        patch("wuwa_story.api.routes.cutscene_analysis.audio_bundles", new_callable=AsyncMock,
+              return_value={7: {"videos": {"full": "https://cdn/silent"}, "tracks": [{"role": "music"}]}}),
+    ):
+        result = await playback(7, "3.7.0", db)
+    videos.assert_awaited_once_with(db, [7], "3.7.0")
+    assert result["media"]["asset:ue:/scene"]["url"] == "https://cdn/silent"
+    assert result["media"]["asset:ue:/scene"]["audio_tracks"] == [{"role": "music"}]
+
+
+@pytest.mark.asyncio
+async def test_missing_preview_returns_404():
+    from wuwa_story.api.routes.cutscene_analysis import playback
+    with patch("wuwa_story.api.routes.cutscene_analysis.cutscene_videos", new_callable=AsyncMock, return_value={}):
+        with pytest.raises(HTTPException) as error:
+            await playback(7, "1.0.0", AsyncMock())
+        assert error.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_http_actions_enforce_admin_and_csrf():
     import httpx
     from fastapi import FastAPI
