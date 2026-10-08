@@ -1,0 +1,223 @@
+import { useEffect, useState } from 'react';
+
+import { api } from '../../api/client';
+
+type Task = {
+  id: number;
+  processor: string;
+  status: string;
+  error: string | null;
+  request: { kind?: string; game_version?: string; parent_id?: number; targets?: string[] };
+  result: Record<string, unknown>;
+};
+type Tasks = { tasks: Task[]; next_before: number | null };
+type Queues = {
+  available: boolean;
+  error: string | null;
+  queues: {
+    name: string;
+    ready: number;
+    active: number;
+    consumers: number;
+    workers: { name: string; prefetch: number }[];
+  }[];
+};
+
+export function ProcessingActivity() {
+  const [tasks, setTasks] = useState<Tasks | null>(null);
+  const [queues, setQueues] = useState<Queues | null>(null);
+  const [before, setBefore] = useState<number | null>(null);
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+  const [revision, setRevision] = useState(0);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') setRevision((value) => value + 1);
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    const params = new URLSearchParams();
+    if (before) params.set('before', String(before));
+    if (status) params.set('status', status);
+    void Promise.all([
+      api<Tasks>(`/admin/data-operations/tasks?${params}`, { signal: controller.signal }),
+      api<Queues>('/admin/data-operations/queues', { signal: controller.signal }),
+    ])
+      .then(([runs, broker]) => {
+        if (!controller.signal.aborted) {
+          setTasks(runs);
+          setQueues(broker);
+          setError('');
+        }
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted)
+          setError(
+            reason instanceof Error ? reason.message : 'Could not refresh processing activity.',
+          );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [before, status, revision]);
+  return (
+    <>
+      <section className="content-panel data-operation-panel">
+        <header className="agent-panel-header">
+          <div>
+            <h3>Queues & workers</h3>
+            <p>Live broker counts. Active means delivered to a worker and not acknowledged yet.</p>
+          </div>
+        </header>
+        {error && (
+          <p role="alert">
+            {error}{' '}
+            <button className="agent-button" onClick={() => setRevision((value) => value + 1)}>
+              Retry
+            </button>
+          </p>
+        )}
+        {queues?.error && <p role="status">{queues.error}</p>}
+        {!queues && !error && <p role="status">Loading queue activity…</p>}
+        {queues?.available && (
+          <div className="agent-table-scroll" tabIndex={0} aria-label="Live queue activity">
+            <table>
+              <thead>
+                <tr>
+                  <th>Queue</th>
+                  <th>Waiting</th>
+                  <th>Active</th>
+                  <th>Consumers</th>
+                  <th>Worker connections</th>
+                </tr>
+              </thead>
+              <tbody>
+                {queues.queues.map((queue) => (
+                  <tr key={queue.name}>
+                    <th scope="row">{queue.name}</th>
+                    <td>{queue.ready}</td>
+                    <td>{queue.active}</td>
+                    <td>{queue.consumers}</td>
+                    <td>
+                      {queue.workers.map((worker, index) => (
+                        <small key={`${worker.name}-${index}`}>
+                          {worker.name} · prefetch {worker.prefetch}
+                        </small>
+                      ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {!queues.queues.length && <p>No processing queues have been declared.</p>}
+          </div>
+        )}
+      </section>
+      <section className="content-panel data-operation-panel" aria-busy={loading}>
+        <header className="agent-panel-header">
+          <div>
+            <h3>All processing tasks</h3>
+            <p>
+              Imports, media extraction and manual analyses. Waiting and failed tasks remain
+              visible.
+            </p>
+          </div>
+          <label className="processing-status-filter">
+            Status{' '}
+            <select
+              value={status}
+              onChange={(event) => {
+                setStatus(event.target.value);
+                setBefore(null);
+              }}
+            >
+              <option value="">All statuses</option>
+              {[
+                'queued',
+                'running',
+                'waiting_dependency',
+                'blocked',
+                'failed',
+                'partial',
+                'completed',
+                'enqueue_failed',
+              ].map((value) => (
+                <option key={value} value={value}>
+                  {value.replaceAll('_', ' ')}
+                </option>
+              ))}
+            </select>
+          </label>
+        </header>
+        <div className="agent-table-scroll" tabIndex={0} aria-label="All processing tasks">
+          <table>
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Type / snapshot</th>
+                <th>Status</th>
+                <th>Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasks?.tasks.map((task) => (
+                <tr key={task.id}>
+                  <th scope="row">
+                    #{task.id}
+                    {task.request.parent_id && <small>Depends on #{task.request.parent_id}</small>}
+                  </th>
+                  <td>
+                    {task.processor.replaceAll('_', ' ')}
+                    <small>
+                      {task.request.kind} {task.request.game_version}
+                      {task.request.targets?.length
+                        ? ` · ${task.request.targets.length} references`
+                        : ''}
+                    </small>
+                    {task.request.targets?.length === 1 && <small>{task.request.targets[0]}</small>}
+                  </td>
+                  <td>
+                    <span className={`agent-status status-${task.status}`}>
+                      {task.status.replaceAll('_', ' ')}
+                    </span>
+                    {task.error && <small>{task.error}</small>}
+                  </td>
+                  <td>
+                    {Object.entries(task.result).map(([key, value]) => (
+                      <small key={key}>
+                        {key.replaceAll('_', ' ')}:{' '}
+                        {Array.isArray(value) ? `${value.length} missing` : String(value)}
+                      </small>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!loading && tasks && !tasks.tasks.length && <p>No tasks match this status.</p>}
+        <div className="agent-pagination">
+          {before && (
+            <button className="agent-button" onClick={() => setBefore(null)}>
+              Latest tasks
+            </button>
+          )}
+          {tasks?.next_before && (
+            <button
+              className="agent-button"
+              disabled={loading}
+              onClick={() => setBefore(tasks.next_before)}
+            >
+              Older tasks
+            </button>
+          )}
+        </div>
+      </section>
+    </>
+  );
+}

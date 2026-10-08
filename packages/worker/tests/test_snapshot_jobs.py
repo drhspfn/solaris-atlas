@@ -32,7 +32,8 @@ async def test_snapshot_checkout_downloads_into_empty_workspace(tmp_path):
 @pytest.mark.asyncio
 async def test_snapshot_job_tracks_running_and_completed(monkeypatch):
     update = AsyncMock()
-    build = AsyncMock()
+    summary = {"import_run_id": 7, "records_seen": 120, "records_created": 115}
+    build = AsyncMock(return_value=summary)
     monkeypatch.setattr(snapshot_jobs, "_update_admin_run", update)
     monkeypatch.setattr(snapshot_jobs, "_build_and_import_snapshot", build)
 
@@ -40,6 +41,7 @@ async def test_snapshot_job_tracks_running_and_completed(monkeypatch):
 
     assert [call.args for call in update.await_args_list] == [(42, "running"), (42, "completed")]
     build.assert_awaited_once_with({"run_id": 42})
+    assert update.await_args_list[-1].kwargs["raw_output"] == summary
 
 
 @pytest.mark.asyncio

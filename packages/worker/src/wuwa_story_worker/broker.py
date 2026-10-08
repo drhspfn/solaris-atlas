@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import socket
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -18,6 +19,22 @@ logger = logging.getLogger(__name__)
 EXCHANGE_NAME = "wuwa.jobs.v1"
 FAILED_EXCHANGE_NAME = "wuwa.jobs.failed.v1"
 JobHandler = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+class JobDeferred(Exception):
+    """A prerequisite is still queued/running; retry through a durable delay queue."""
+
+
+async def defer_job(channel, key, message) -> None:
+    name = QUEUES[key].name
+    queue = await channel.declare_queue(name + ".waiting", durable=True, arguments={
+        "x-message-ttl": 60000, "x-dead-letter-exchange": EXCHANGE_NAME,
+        "x-dead-letter-routing-key": name})
+    await channel.default_exchange.publish(aio_pika.Message(
+        body=message.body, content_type="application/json",
+        delivery_mode=aio_pika.DeliveryMode.PERSISTENT, message_id=message.message_id),
+        routing_key=queue.name, mandatory=True)
+    await message.ack()
 
 
 def broker_url() -> str:
@@ -100,7 +117,8 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
     if not handlers:
         raise ValueError("At least one queue handler must be registered")
     limits = queue_concurrency()
-    connection = await aio_pika.connect_robust(broker_url())
+    connection = await aio_pika.connect_robust(broker_url(), client_properties={
+        "connection_name": f"worker:{socket.gethostname()}:{os.getpid()}"})
     try:
         channel = await connection.channel()
         await channel.set_qos(prefetch_count=sum(limits[key] for key in handlers))
@@ -121,6 +139,12 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
                         if not isinstance(payload, dict):
                             raise ValueError("Job payload must be a JSON object")
                         await job_handler(payload)
+                    except JobDeferred:
+                        try:
+                            await defer_job(channel, job_key, message)
+                        except Exception:
+                            logger.exception("Could not defer %s", message.message_id)
+                            await message.nack(requeue=True)
                     except Exception:
                         logger.exception(
                             "Worker job failed (%s, id=%s); moving it to the failed queue",

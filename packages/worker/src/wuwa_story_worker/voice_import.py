@@ -25,20 +25,30 @@ def voice_identity(filename: str) -> tuple[str, str]:
     return match[1], match[2]
 
 
-async def import_voice_sample(root: Path, decoder: Path, asset_version: str) -> dict:
+async def import_voice_sample(root: Path, decoder: Path, asset_version: str, *,
+                              names: set[str] | None = None, require_all_languages: bool = True) -> dict:
     if not re.fullmatch(r"\d+\.\d+\.\d+", asset_version):
         raise ValueError("Invalid asset version")
     grouped: dict[str, dict[str, Path]] = {}
     for path in sorted(root.rglob("*.wem")):
+        if names is not None and not re.fullmatch(r"(en|ja|ko|zh)_(vo_[A-Za-z0-9_]+)\.wem", path.name):
+            continue
         language, name = voice_identity(path.name)
+        if names is not None and name not in names:
+            continue
         if language in grouped.setdefault(name, {}):
             raise ValueError(f"Duplicate extracted voice: {path.name}")
         grouped[name][language] = path
-    if not grouped:
+    missing = [f"{language}_{name}" for name in sorted(names or grouped)
+               for language in LANGUAGES if language not in grouped.get(name, {})]
+    if not grouped and require_all_languages:
         raise ValueError("No extracted voices")
     for name, languages in grouped.items():
-        if set(languages) != set(LANGUAGES):
+        if require_all_languages and set(languages) != set(LANGUAGES):
             raise ValueError(f"Incomplete language sample: {name}")
+    if not grouped:
+        return {"voice_references": 0, "tracks": 0, "asset_version": asset_version,
+                "missing_voices": missing}
     storage = S3Storage(get_settings())
     await storage.ensure_bucket()
     registration = FileRegistrationService(storage)
@@ -77,7 +87,8 @@ async def import_voice_sample(root: Path, decoder: Path, asset_version: str) -> 
                                      "duration_seconds": duration}
                 count += 1
             await session.commit()
-    return {"voice_references": len(voices), "tracks": count, "asset_version": asset_version}
+    return {"voice_references": len(voices), "tracks": count, "asset_version": asset_version,
+            "missing_voices": missing}
 
 
 if __name__ == "__main__":

@@ -10,8 +10,6 @@ from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy import text as sql_text
-from wuwa_story.agents.cutscene_vision import enqueue_visual_job
-from wuwa_story.agents.settings import get_agent_settings
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.graph import Edge, Node
 from wuwa_story.db.models.ontology import RelationType
@@ -360,7 +358,6 @@ async def import_cutscene_recipe(
                     "duration_seconds": duration,
                     "subtitles_included": False,
                 }
-                await enqueue_visual_job(session, reference, get_agent_settings())
             if analysis:
                 analysis_file = output / "segments" / analysis["id"] / "analysis.json"
                 report_file = await service.register_file(

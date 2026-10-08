@@ -288,3 +288,10 @@ same job. Resume respects checkpoint and billing rules; unknown charges cannot
 be retried. The daily budget is shared with story analysis and is never raised
 by these controls. Visual evidence and a published quest description are separate
 stages; the completed task tells administrators to analyze the quest next.
+
+Data operations lists all processor tasks with status filtering and pagination,
+and reports live RabbitMQ ready/unacknowledged counts and worker connections.
+Monitoring failures show unknown counts rather than zero. The active-task total
+includes media dependencies. Imported releases expose Import / retry media;
+visual analysis remains a separate manual action. Cutscene analysis tasks offer
+an on-demand preview using the shared player, with loading/error/retry states.

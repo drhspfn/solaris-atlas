@@ -13,9 +13,11 @@ import { type FormEvent, useCallback, useEffect, useState } from 'react';
 
 import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
+import { ProcessingActivity } from '../components/admin/ProcessingActivity';
 
 type ImportRun = {
   id: number;
+  release_id: number;
   game_version: string;
   status: string;
   started_at: string;
@@ -40,6 +42,12 @@ type ProcessingJob = {
   download_id?: string;
   file_count?: number;
   size_bytes?: number;
+  result?: {
+    import_run_id?: number;
+    records_seen?: number;
+    records_created?: number;
+    records_failed?: number;
+  } | null;
 };
 
 type InstalledClient = {
@@ -71,6 +79,7 @@ type ClientAssetsOverview = {
 };
 
 type Overview = {
+  active_tasks: number;
   releases: {
     id: number;
     sequence: number;
@@ -220,13 +229,32 @@ export function DataOperationsPage() {
     }
   }
 
+  async function enqueueMedia(releaseId: number) {
+    setBusy(true);
+    setError('');
+    try {
+      const result = await api<{ tasks: number; queued: number; enqueue_failed: number }>(
+        `/admin/data-operations/releases/${releaseId}/media`,
+        { method: 'POST' },
+      );
+      setNotice(
+        `Media import: ${result.tasks} tasks, ${result.queued} queued, ${result.enqueue_failed} queue failures.`,
+      );
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not queue media.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const activeSnapshots =
     data?.snapshot_jobs.filter((job) => ['queued', 'running'].includes(job.status)).length ?? 0;
   const activeAssetJobs =
     data?.asset_jobs?.filter((job) => ['queued', 'running'].includes(job.status)).length ?? 0;
   const activeMapJobs =
     data?.map_jobs?.filter((job) => ['queued', 'running'].includes(job.status)).length ?? 0;
-  const totalActive = activeSnapshots + activeAssetJobs + activeMapJobs;
+  const totalActive = data?.active_tasks ?? activeSnapshots + activeAssetJobs + activeMapJobs;
 
   const markerTotal = data?.maps.reduce((sum, row) => sum + row.marker_count, 0) ?? 0;
   const importedRecords = data?.imports.reduce((sum, row) => sum + row.records_created, 0) ?? 0;
@@ -581,6 +609,7 @@ export function DataOperationsPage() {
                 <th>Resource</th>
                 <th>Upstream</th>
                 <th>Imported</th>
+                <th>Media</th>
               </tr>
             </thead>
             <tbody>
@@ -593,6 +622,16 @@ export function DataOperationsPage() {
                     <small>{release.upstream_commit?.slice(0, 12) ?? 'Commit unavailable'}</small>
                   </td>
                   <td>{date(release.imported_at)}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="agent-button"
+                      disabled={busy}
+                      onClick={() => void enqueueMedia(release.id)}
+                    >
+                      Import / retry media
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -604,6 +643,7 @@ export function DataOperationsPage() {
       </section>
 
       {/* SECTION: Patch import runs */}
+      <ProcessingActivity />
       <section className="content-panel data-operation-panel">
         <header className="agent-panel-header">
           <div>
@@ -637,10 +677,20 @@ export function DataOperationsPage() {
                     {job.error && <small>{job.error}</small>}
                   </td>
                   <td>
-                    {data.imports
-                      .filter((item) => item.game_version === job.version)
-                      .reduce((sum, item) => sum + item.records_created, 0)
-                      .toLocaleString('en-US')}
+                    {(() => {
+                      const release = data.releases.find(
+                        (item) => item.upstream_commit === job.commit,
+                      );
+                      const imported = data.imports.find((item) =>
+                        job.result?.import_run_id
+                          ? item.id === job.result.import_run_id
+                          : item.release_id === release?.id,
+                      );
+                      const seen = job.result?.records_seen ?? imported?.records_seen;
+                      return seen === undefined
+                        ? 'Statistics unavailable'
+                        : seen.toLocaleString('en-US');
+                    })()}
                   </td>
                   <td>{date(job.finished_at ?? job.started_at)}</td>
                 </tr>
