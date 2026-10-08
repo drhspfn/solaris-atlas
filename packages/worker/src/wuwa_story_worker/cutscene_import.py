@@ -23,7 +23,7 @@ from wuwa_story_worker.cutscene_segments import export_segments
 
 
 def movie_path(data: bytes) -> str:
-    paths = re.findall(rb"filepath://\./(Aki/Movies/[A-Za-z0-9_./-]+\.mp4)\x00", data)
+    paths = re.findall(rb"filepath://\./(Aki/Movies/[A-Za-z0-9_./-]+\.mp4)\x00", data, re.IGNORECASE)
     if len(paths) != 1 or b".." in paths[0].split(b"/"):
         raise ValueError("Expected one safe authored MP4 path")
     return "Client/Content/" + paths[0].decode("ascii")
@@ -83,7 +83,23 @@ def confined(root: Path, relative: str) -> Path:
     path = (root / relative).resolve()
     if not path.is_relative_to(root.resolve()):
         raise ValueError("Export path escapes its root")
-    return path
+    if path.exists():
+        return path
+    # Unreal references and raw PAK paths can differ in casing.
+    current = root.resolve()
+    for component in path.relative_to(current).parts:
+        exact = current / component
+        if exact.exists():
+            current = exact
+            continue
+        matches = [child for child in current.iterdir() if child.name.casefold() == component.casefold()] if current.is_dir() else []
+        if len(matches) > 1:
+            raise ValueError("Ambiguous case-insensitive export path")
+        current = matches[0] if matches else exact
+    current = current.resolve()
+    if not current.is_relative_to(root.resolve()):
+        raise ValueError("Export path escapes its root")
+    return current
 
 
 async def run_tool(args: list[str], timeout: int = 300):
@@ -151,7 +167,7 @@ async def import_cutscene_recipe(
                 media_id = bank_media_id(bank.read_bytes(), track.media_id)
                 cache_key = (bank, media_id)
                 if cache_key not in decoded:
-                    matches = list(audio.rglob(f"{media_id}.wem"))
+                    matches = [path for path in audio.rglob("*") if path.is_file() and path.name.casefold() == f"{media_id}.wem"]
                     if len(matches) != 1:
                         raise ValueError(f"Expected exactly one soundtrack WEM: {media_id}")
                     wav = work / f"{media_id}.wav"

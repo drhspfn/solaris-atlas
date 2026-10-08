@@ -58,7 +58,7 @@ async def prepare(run, session):
 async def image_batch(payload, parent, run, session):
     child_id = (run.raw_output or {}).get("entity_run_id")
     child = await session.get(ProcessingRun, child_id) if child_id else None
-    if child is None or child.status in {"failed", "enqueue_failed"}:
+    if child is None:
         request = MediaRequest(download_id=parent["download_id"], asset_version=parent["asset_version"],
                                tier=parent["tier"], game_version=payload["game_version"],
                                release_id=payload["release_id"],
@@ -73,7 +73,7 @@ async def image_batch(payload, parent, run, session):
         run.raw_output = {"entity_run_id": child.id, "asset_version": parent["asset_version"]}
         await session.commit()
     await session.refresh(child)
-    if child.status in {"queued", "running", "pending"}:
+    if child.status in {"queued", "running", "pending", "waiting_dependency"}:
         raise JobDeferred("Image extraction is queued or running")
     if child.status not in {"completed", "partial"}:
         raise RuntimeError(f"Image extraction task #{child.id}: {child.error or child.status}")
@@ -85,7 +85,7 @@ def merge_exports(receipts, destination):
     destination.mkdir(parents=True, exist_ok=True)
     with workspace_lock(destination):
         for receipt in receipts:
-            source = receipt.parent / "files"
+            source = receipt if receipt.is_dir() else receipt.parent / "files"
             for path in source.rglob("*"):
                 if not path.is_file():
                     continue
@@ -142,8 +142,16 @@ async def cutscene_assets(payload, parent):
 async def cutscene(payload, parent):
     root = client_root(parent)
     assets = root / "release-media" / "files"
+    for voice_root in sorted((asset_workspace() / "voices").glob(parent["asset_version"] + "-*")):
+        marker = voice_root / "audio-export.json"
+        if marker.is_file():
+            exported = json.loads(marker.read_text(encoding="utf-8"))
+            plan = json.loads((voice_root / "plan.json").read_text(encoding="utf-8"))
+            if exported.get("plan_id") == plan.get("id"):
+                await asyncio.to_thread(merge_exports, [voice_root / "plot-audio"], assets)
     config = await asyncio.to_thread(video_database, assets)
-    recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"])
+    missing_assets = []
+    recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"], missing_assets=missing_assets)
     work = root / "release-media" / str(payload["run_id"])
     work.mkdir(parents=True, exist_ok=True)
     recipe_path = work / "recipe.json"
@@ -153,7 +161,7 @@ async def cutscene(payload, parent):
         raise RuntimeError("ffmpeg is missing from the worker image")
     result = await import_cutscene_recipe(recipe_path, assets, assets, assets, work,
                                          tool_path("WUWA_VGMSTREAM_PATH"), Path(ffmpeg))
-    return {**result, "asset_version": parent["asset_version"]}, "completed"
+    return {**result, "asset_version": parent["asset_version"], "missing_assets": missing_assets}, "partial" if missing_assets else "completed"
 
 
 async def voice_packages(parent):
@@ -171,10 +179,13 @@ async def voice_packages(parent):
     log = extracted / "export.log"
     with workspace_lock(voice_root):
         await tool([tool_path("WUWA_FMODEL_PATH"), voice_root / "game",
-                    "@" + str(root / "keys.txt"), extracted, "PlotAudio"], log, 7200)
+                    "@" + str(root / "keys.txt"), extracted, "Audio"], log, 7200)
         output = log.read_text(encoding="utf-8", errors="replace")
-        if "[Fail]" in output or "[Error]" in output or not any(extracted.rglob("*.wem")):
-            raise RuntimeError(f"Voice archive export failed; inspect {log}")
+        if "[Fail]" in output or "[Error]" in output or not any(path.suffix.casefold() == ".wem" for path in extracted.rglob("*")):
+            failures = [line for line in output.splitlines() if "[Fail]" in line or "[Error]" in line]
+            detail = "; ".join(failures[:3])[:1200] or "No WEM files matched the exported audio paths"
+            raise RuntimeError(f"Voice archive export failed: {detail}; inspect {log}")
+    save_json(voice_root / "audio-export.json", {"plan_id": plan["id"]})
     return {**parent, "voice_plan_id": plan["id"], "stage": "voice_packages_ready"}, "completed"
 
 
@@ -228,6 +239,10 @@ async def process_release_media(payload):
             await connection.rollback()
             await update_admin_run(payload["run_id"], "release_media", "waiting_dependency", error=str(error))
             raise
+        except BlockingIOError as error:
+            await connection.rollback()
+            await update_admin_run(payload["run_id"], "release_media", "waiting_dependency", error="Asset workspace is in use by another export; retrying after it finishes")
+            raise JobDeferred("Asset workspace is in use") from error
         except Exception as error:
             await connection.rollback()
             await update_admin_run(payload["run_id"], "release_media", "failed", error=f"{type(error).__name__}: {error}"[:2000])

@@ -83,3 +83,12 @@ def test_multiple_embedded_languages_are_not_silently_dropped(monkeypatch, tmp_p
     )
     with pytest.raises(ValueError, match="Multiple embedded audio"):
         video_duration(tmp_path / "ffmpeg", tmp_path / "movie.mp4")
+
+
+def test_export_search_resolves_game_reference_casing(tmp_path):
+    from wuwa_story_worker.cutscene_import import confined
+    actual = tmp_path / "Client/Content/Aki/Movies/Example.MP4"
+    actual.parent.mkdir(parents=True)
+    actual.write_bytes(b"movie")
+    assert confined(tmp_path, "client/content/aki/movies/example.mp4").read_bytes() == b"movie"
+    assert movie_path(b"filepath://./Aki/Movies/Example.MP4\0").endswith("Example.MP4")

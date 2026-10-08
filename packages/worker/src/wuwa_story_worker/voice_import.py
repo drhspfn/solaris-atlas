@@ -30,10 +30,10 @@ async def import_voice_sample(root: Path, decoder: Path, asset_version: str, *,
     if not re.fullmatch(r"\d+\.\d+\.\d+", asset_version):
         raise ValueError("Invalid asset version")
     grouped: dict[str, dict[str, Path]] = {}
-    for path in sorted(root.rglob("*.wem")):
-        if names is not None and not re.fullmatch(r"(en|ja|ko|zh)_(vo_[A-Za-z0-9_]+)\.wem", path.name):
+    for path in sorted(path for path in root.rglob("*") if path.suffix.casefold() == ".wem"):
+        if names is not None and not re.fullmatch(r"(en|ja|ko|zh)_(vo_[A-Za-z0-9_]+)\.wem", path.stem + ".wem"):
             continue
-        language, name = voice_identity(path.name)
+        language, name = voice_identity(path.stem + ".wem")
         if names is not None and name not in names:
             continue
         if language in grouped.setdefault(name, {}):

@@ -30,7 +30,7 @@ def sound_timing(blob: bytes) -> tuple[float, float | None]:
     return max(0, start), None if end < 0 else end
 
 
-def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str) -> dict:
+def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, *, missing_assets: list | None = None) -> dict:
     if asset_version != "3.7.0":
         raise ValueError("Config schema is verified for client 3.7.0 only")
     # Read-only: never create or modify an absent game database.
@@ -44,6 +44,11 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str) 
     if not videos:
         raise ValueError("Cutscene not found in VideoData")
     inputs, clips, options = [], [], []
+    input_assets = {}
+    banks_by_name = {}
+    for path in assets.rglob("*"):
+        if path.is_file() and path.suffix.casefold() == ".bnk":
+            banks_by_name.setdefault(path.name.casefold(), []).append(path)
     for cg_id, gender, blob in videos:
         key = "asset:ue:" + engine_path(blob)
         soundtrack = []
@@ -51,7 +56,11 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str) 
             if sound_gender not in (2, gender):
                 continue
             event = engine_path(sound_blob).rsplit(".", 1)[-1]
-            banks = list(assets.rglob(event + ".bnk"))
+            banks = banks_by_name.get((event + ".bnk").casefold(), [])
+            if not banks and missing_assets is not None:
+                if event not in missing_assets:
+                    missing_assets.append(event)
+                continue
             if len(banks) != 1:
                 raise ValueError(f"Export the exact event bank before planning: {event}")
             start, end = sound_timing(sound_blob)
@@ -62,7 +71,13 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str) 
                     "end_seconds": end,
                 }
             )
-        inputs.append({"asset": key, "soundtrack": soundtrack})
+        if key in input_assets:
+            if input_assets[key]["soundtrack"] != soundtrack:
+                raise ValueError(f"Conflicting soundtrack configuration for shared video: {key}")
+        else:
+            value = {"asset": key, "soundtrack": soundtrack}
+            input_assets[key] = value
+            inputs.append(value)
         clips.append({"id": f"cg-{cg_id}", "kind": "clip", "asset": key})
         options.append(
             {

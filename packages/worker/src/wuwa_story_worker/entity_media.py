@@ -21,7 +21,9 @@ from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
 from wuwa_story_worker.asset_export import export_assets
+from wuwa_story_worker.broker import JobDeferred
 from wuwa_story_worker.client_assets import validate_plan, workspace_lock
+from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.map_icons import build_icons
 from wuwa_story_worker.tooling import asset_workspace, tool_path
 
@@ -187,6 +189,10 @@ async def process_entity_media(payload: dict) -> None:
         await connection.commit()
         try:
             await _process_entity_media(payload, connection)
+        except BlockingIOError as error:
+            await connection.rollback()
+            await update_admin_run(payload["run_id"], "entity_media", "waiting_dependency", error="Asset workspace is in use by another export; retrying after it finishes")
+            raise JobDeferred("Asset workspace is in use") from error
         except Exception as error:
             await connection.rollback()
             async with SessionFactory(bind=connection) as session:

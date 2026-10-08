@@ -60,3 +60,28 @@ def test_export_path_cannot_escape(tmp_path):
 def test_non_finite_source_timing_rejected():
     with pytest.raises(ValueError, match="Non-finite"):
         sound_timing(sound("/Game/Audio/event.event", float("nan"), -1))
+
+
+def test_shared_video_assets_keep_choice_without_duplicate_publication(tmp_path):
+    db_path = tmp_path / "videos.db"
+    with sqlite3.connect(db_path) as db:
+        db.executescript("CREATE TABLE videodata (CgId, GirlOrBoy, CgName, BinData); CREATE TABLE videosound (CaptionId, GirlOrBoy, CgName, BinData);")
+        db.executemany("INSERT INTO videodata VALUES (?, ?, ?, ?)", [(1, 0, "Shared", b"/Game/Movies/Shared.Shared\0"), (2, 1, "Shared", b"/Game/Movies/Shared.Shared\0")])
+    recipe = plan_cutscene(db_path, tmp_path, "Shared", "3.7.0")
+    assert len(recipe["videos"]) == 1
+    assert len(recipe["flow"]["nodes"][0]["options"]) == 2
+    assert not recipe["compare_variants"]
+
+
+def test_missing_bank_is_reported_for_partial_video_and_case_is_resolved(tmp_path):
+    db_path = tmp_path / "videos.db"
+    with sqlite3.connect(db_path) as db:
+        db.executescript("CREATE TABLE videodata (CgId, GirlOrBoy, CgName, BinData); CREATE TABLE videosound (CaptionId, GirlOrBoy, CgName, BinData);")
+        db.execute("INSERT INTO videodata VALUES (?, ?, ?, ?)", (1, 2, "Shared", b"/Game/Movies/Shared.Shared\0"))
+        db.execute("INSERT INTO videosound VALUES (?, ?, ?, ?)", (1, 2, "Shared", sound("/Game/Audio/Event.Event", 0, -1)))
+    missing = []
+    recipe = plan_cutscene(db_path, tmp_path, "Shared", "3.7.0", missing_assets=missing)
+    assert missing == ["Event"]
+    assert recipe["videos"][0]["soundtrack"] == []
+    (tmp_path / "event.BNK").write_bytes(b"bank")
+    assert len(plan_cutscene(db_path, tmp_path, "Shared", "3.7.0")["videos"][0]["soundtrack"]) == 1

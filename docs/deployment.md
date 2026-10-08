@@ -86,3 +86,14 @@ be missing. Cutscene configuration decoding currently supports client 3.7.0.
 Cutscene visual analysis remains manual and shares the configured daily budget.
 Its admin preview uses the site's existing player. Contact sheets are not enabled:
 high-detail mosaics have no verified token-saving guarantee for the configured model.
+
+Media recovery: rebuild/redeploy snapshot-worker after extraction fixes, then use
+Import / retry media for the affected release. Failed child extraction is now
+reported to its parent instead of being automatically resubmitted indefinitely.
+Busy asset workspaces defer jobs without marking them failed. Texture conversion
+uses eight-package subprocess batches with two .NET processors to bound retained
+objects. Voice extraction searches all audio paths rather than only PlotAudio;
+its errors include the first extractor failure lines. Linux export lookup matches
+file casing explicitly. Shared video references publish one source asset while
+keeping authored choices. Missing sound banks produce partial video publication
+with missing_assets, preserving visibility of incomplete audio.

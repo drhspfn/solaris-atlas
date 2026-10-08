@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -87,49 +88,28 @@ async def build_icons(
             encoding="utf-8",
         )
 
-        def convert(raw=raw, packages=packages, decoded=decoded, paths=paths):
+        def convert(raw=raw, packages=packages, decoded=decoded, paths=paths, textures=textures):
+            # CUE collects loaded objects until ExportSession runs. Bound each
+            # subprocess instead of retaining an entire texture folder in RAM.
+            environment = {**os.environ, "DOTNET_PROCESSOR_COUNT": "2"}
             with (decoded / "converter.log").open("w", encoding="utf-8") as log:
-                subprocess.run(
-                    [
-                        str(converter.resolve()),
-                        "-i",
-                        str(raw.resolve()),
-                        "-g",
-                        "GAME_WutheringWaves",
-                        "-c",
-                        str(packages.resolve()),
-                        "-f",
-                        "png",
-                        "-o",
-                        str(decoded.resolve()),
-                        "-y",
-                    ],
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    timeout=1800,
-                    check=True,
-                )
-                if any(p.name.startswith("TPI_") for p in paths):
-                    subprocess.run(
-                        [
-                            str(converter.resolve()),
-                            "-i",
-                            str(raw.resolve()),
-                            "-g",
-                            "GAME_WutheringWaves",
-                            "-p",
-                            "*TPI_*",
-                            "-f",
-                            "json",
-                            "-o",
-                            str(decoded.resolve()),
-                            "-y",
-                        ],
-                        stdout=log,
-                        stderr=subprocess.STDOUT,
-                        timeout=1800,
-                        check=True,
-                    )
+                for extension, selected in (
+                    ("png", textures),
+                    ("json", [p for p in paths if p.name.startswith("TPI_")]),
+                ):
+                    for offset in range(0, len(selected), 8):
+                        batch = selected[offset:offset + 8]
+                        packages.write_text(
+                            "\n".join(raw.name + "/" + p.relative_to(raw).as_posix() for p in batch),
+                            encoding="utf-8",
+                        )
+                        subprocess.run(
+                            [str(converter.resolve()), "-i", str(raw.resolve()),
+                             "-g", "GAME_WutheringWaves", "-c", str(packages.resolve()),
+                             "-f", extension, "-o", str(decoded.resolve()), "-y"],
+                            stdout=log, stderr=subprocess.STDOUT, timeout=1800,
+                            check=True, env=environment,
+                        )
 
         if not cached:
             await asyncio.to_thread(convert)
