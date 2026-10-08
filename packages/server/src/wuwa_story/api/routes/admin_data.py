@@ -87,15 +87,22 @@ async def tasks(before: int | None = Query(None, ge=1),
     if status:
         statement = statement.where(ProcessingRun.status == status)
     rows = (await session.execute(statement)).all()
+    running_rows = (await session.execute(
+        select(ProcessingRun, Processor.key).join(Processor)
+        .where(ProcessingRun.status == "running")
+        .order_by(ProcessingRun.id.asc()).limit(100)
+    )).all()
     # AI checkpoints contain private conversation history. Only counters are public here.
     counters = {"records_seen", "records_created", "records_failed", "images", "voice_tracks",
                 "tracks", "videos", "tasks", "queued", "enqueue_failed", "asset_version", "step",
                 "missing_images", "missing_voices", "missing_assets", "stage", "done", "total"}
-    return {"tasks": [{"id": run.id, "processor": key, "status": run.status,
-                       "started_at": run.started_at, "finished_at": run.finished_at,
-                       "error": run.error, "request": run.metadata_json.get("request", {}),
-                       "result": {name: value for name, value in (run.raw_output or {}).items() if name in counters}}
-                      for run, key in rows],
+    def serialize_task(run, key):
+        return {"id": run.id, "processor": key, "status": run.status,
+                "started_at": run.started_at, "finished_at": run.finished_at,
+                "error": run.error, "request": (run.metadata_json or {}).get("request", {}),
+                "result": {name: value for name, value in (run.raw_output or {}).items() if name in counters}}
+    return {"tasks": [serialize_task(run, key) for run, key in rows],
+            "running": [serialize_task(run, key) for run, key in running_rows],
             "next_before": rows[-1][0].id if len(rows) == limit else None}
 
 

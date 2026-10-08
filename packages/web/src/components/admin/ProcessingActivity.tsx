@@ -10,7 +10,7 @@ type Task = {
   request: { kind?: string; game_version?: string; parent_id?: number; targets?: string[] };
   result: Record<string, unknown>;
 };
-type Tasks = { tasks: Task[]; next_before: number | null };
+type Tasks = { tasks: Task[]; running?: Task[]; next_before: number | null };
 type Queues = {
   available: boolean;
   error: string | null;
@@ -22,6 +22,44 @@ type Queues = {
     workers: { name: string; prefetch: number }[];
   }[];
 };
+
+function TaskRows({ rows }: { rows: Task[] }) {
+  return (
+    <>
+      {' '}
+      {rows.map((task) => (
+        <tr key={task.id}>
+          <th scope="row">
+            #{task.id}
+            {task.request.parent_id && <small>Depends on #{task.request.parent_id}</small>}
+          </th>
+          <td>
+            {task.processor.replaceAll('_', ' ')}
+            <small>
+              {task.request.kind} {task.request.game_version}
+              {task.request.targets?.length ? ` · ${task.request.targets.length} references` : ''}
+            </small>
+            {task.request.targets?.length === 1 && <small>{task.request.targets[0]}</small>}
+          </td>
+          <td>
+            <span className={`agent-status status-${task.status}`}>
+              {task.status.replaceAll('_', ' ')}
+            </span>
+            {task.error && <small>{task.error}</small>}
+          </td>
+          <td>
+            {Object.entries(task.result).map(([key, value]) => (
+              <small key={key}>
+                {key.replaceAll('_', ' ')}:{' '}
+                {Array.isArray(value) ? `${value.length} missing` : String(value)}
+              </small>
+            ))}
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+}
 
 export function ProcessingActivity() {
   const [tasks, setTasks] = useState<Tasks | null>(null);
@@ -121,6 +159,38 @@ export function ProcessingActivity() {
       <section className="content-panel data-operation-panel" aria-busy={loading}>
         <header className="agent-panel-header">
           <div>
+            <h3>Running now</h3>
+            <p>Worker-recorded execution, independent of history pages and status filters.</p>
+          </div>
+        </header>
+        {!!tasks?.running?.length && (
+          <div className="agent-table-scroll" tabIndex={0} aria-label="Currently running tasks">
+            <table>
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Type / snapshot</th>
+                  <th>Status</th>
+                  <th>Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                <TaskRows rows={tasks.running} />
+              </tbody>
+            </table>
+          </div>
+        )}
+        {tasks && !tasks.running?.length && (
+          <p>
+            No tasks are recorded as running. Broker-delivered messages may still be waiting for a
+            worker slot; this does not confirm execution.
+          </p>
+        )}
+        {!tasks && <p>Loading current execution�</p>}
+      </section>
+      <section className="content-panel data-operation-panel" aria-busy={loading}>
+        <header className="agent-panel-header">
+          <div>
             <h3>All processing tasks</h3>
             <p>
               Imports, media extraction and manual analyses. Waiting and failed tasks remain
@@ -165,38 +235,7 @@ export function ProcessingActivity() {
               </tr>
             </thead>
             <tbody>
-              {tasks?.tasks.map((task) => (
-                <tr key={task.id}>
-                  <th scope="row">
-                    #{task.id}
-                    {task.request.parent_id && <small>Depends on #{task.request.parent_id}</small>}
-                  </th>
-                  <td>
-                    {task.processor.replaceAll('_', ' ')}
-                    <small>
-                      {task.request.kind} {task.request.game_version}
-                      {task.request.targets?.length
-                        ? ` · ${task.request.targets.length} references`
-                        : ''}
-                    </small>
-                    {task.request.targets?.length === 1 && <small>{task.request.targets[0]}</small>}
-                  </td>
-                  <td>
-                    <span className={`agent-status status-${task.status}`}>
-                      {task.status.replaceAll('_', ' ')}
-                    </span>
-                    {task.error && <small>{task.error}</small>}
-                  </td>
-                  <td>
-                    {Object.entries(task.result).map(([key, value]) => (
-                      <small key={key}>
-                        {key.replaceAll('_', ' ')}:{' '}
-                        {Array.isArray(value) ? `${value.length} missing` : String(value)}
-                      </small>
-                    ))}
-                  </td>
-                </tr>
-              ))}
+              <TaskRows rows={tasks?.tasks ?? []} />
             </tbody>
           </table>
         </div>

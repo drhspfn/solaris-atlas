@@ -32,6 +32,9 @@ def client_root(result):
 
 
 async def prepare(run, session):
+    await update_admin_run(run.id, "release_media", "running",
+                           raw_output={"stage": "client_discovery"})
+    logger.info("release_media.started run=%s kind=prepare stage=client_discovery", run.id)
     plan = run.metadata_json.get("client_plan")
     if plan is None:
         installed = await asyncio.to_thread(inspect_installed_clients, asset_workspace())

@@ -295,3 +295,8 @@ Monitoring failures show unknown counts rather than zero. The active-task total
 includes media dependencies. Imported releases expose Import / retry media;
 visual analysis remains a separate manual action. Cutscene analysis tasks offer
 an on-demand preview using the shared player, with loading/error/retry states.
+
+Running now is queried independently of paginated task history and its status
+filter. An empty running set is stated explicitly; delivered RabbitMQ messages
+are not presented as confirmed execution. Client discovery records running and
+its stage before network requests begin.
