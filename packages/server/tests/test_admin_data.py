@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
@@ -14,6 +14,7 @@ from wuwa_story.api.routes.admin_data import (
     router,
 )
 from wuwa_story.auth.dependencies import require_admin, require_csrf
+from wuwa_story.ingestion.github_snapshots import RemoteSnapshot
 
 
 def test_data_operations_mutations_require_admin_and_csrf():
@@ -70,7 +71,44 @@ async def test_snapshot_import_rejects_when_upstream_has_no_matching_branch(monk
     )
     with pytest.raises(HTTPException) as error:
         await enqueue_snapshot_import(SnapshotImportRequest(version="3.7"), AsyncMock())
-    assert error.value.status_code == 502
+    assert error.value.status_code == 400
+    assert "was not found" in error.value.detail
+
+
+@pytest.mark.asyncio
+async def test_snapshot_import_reports_unavailable_upstream(monkeypatch, caplog):
+    monkeypatch.setattr(
+        "wuwa_story.api.routes.admin_data.discover_remote_snapshots",
+        Mock(side_effect=FileNotFoundError("git executable missing")),
+    )
+    db = AsyncMock()
+    with pytest.raises(HTTPException) as error:
+        await enqueue_snapshot_import(SnapshotImportRequest(version="1.0"), db)
+    assert error.value.status_code == 400
+    assert "retry" in error.value.detail
+    assert "git executable missing" in caplog.text
+    db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_import_queues_pinned_patch_without_local_checkout(monkeypatch):
+    discover = Mock(return_value=[RemoteSnapshot("1.0", "a" * 40)])
+    publish = AsyncMock()
+    monkeypatch.setattr("wuwa_story.api.routes.admin_data.discover_remote_snapshots", discover)
+    monkeypatch.setattr("wuwa_story.api.routes.admin_data.publish_media_job", publish)
+    db = AsyncMock()
+    db.scalar.side_effect = [1, None]
+    db.add = Mock(side_effect=lambda run: setattr(run, "id", 42))
+    result = await enqueue_snapshot_import(SnapshotImportRequest(version="1.0"), db)
+    assert result["status"] == "queued"
+    assert result["commit"] == "a" * 40
+    payload = publish.await_args.args[0]
+    assert payload["branch"] == "1.0"
+    assert payload["commit"] == "a" * 40
+    assert payload["run_id"] == 42
+    discover.assert_called_once_with(
+        "https://github.com/Arikatsu/WutheringWaves_Data.git", "1.0", "1.0"
+    )
 
 
 @pytest.mark.asyncio
