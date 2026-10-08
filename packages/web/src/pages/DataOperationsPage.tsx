@@ -13,6 +13,7 @@ import { type FormEvent, useCallback, useEffect, useState } from 'react';
 
 import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
+import { ProcessingActivity } from '../components/admin/ProcessingActivity';
 
 type ImportRun = {
   id: number;
@@ -78,6 +79,7 @@ type ClientAssetsOverview = {
 };
 
 type Overview = {
+  active_tasks: number;
   releases: {
     id: number;
     sequence: number;
@@ -227,13 +229,32 @@ export function DataOperationsPage() {
     }
   }
 
+  async function enqueueMedia(releaseId: number) {
+    setBusy(true);
+    setError('');
+    try {
+      const result = await api<{ tasks: number; queued: number; enqueue_failed: number }>(
+        `/admin/data-operations/releases/${releaseId}/media`,
+        { method: 'POST' },
+      );
+      setNotice(
+        `Media import: ${result.tasks} tasks, ${result.queued} queued, ${result.enqueue_failed} queue failures.`,
+      );
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not queue media.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const activeSnapshots =
     data?.snapshot_jobs.filter((job) => ['queued', 'running'].includes(job.status)).length ?? 0;
   const activeAssetJobs =
     data?.asset_jobs?.filter((job) => ['queued', 'running'].includes(job.status)).length ?? 0;
   const activeMapJobs =
     data?.map_jobs?.filter((job) => ['queued', 'running'].includes(job.status)).length ?? 0;
-  const totalActive = activeSnapshots + activeAssetJobs + activeMapJobs;
+  const totalActive = data?.active_tasks ?? activeSnapshots + activeAssetJobs + activeMapJobs;
 
   const markerTotal = data?.maps.reduce((sum, row) => sum + row.marker_count, 0) ?? 0;
   const importedRecords = data?.imports.reduce((sum, row) => sum + row.records_created, 0) ?? 0;
@@ -588,6 +609,7 @@ export function DataOperationsPage() {
                 <th>Resource</th>
                 <th>Upstream</th>
                 <th>Imported</th>
+                <th>Media</th>
               </tr>
             </thead>
             <tbody>
@@ -600,6 +622,16 @@ export function DataOperationsPage() {
                     <small>{release.upstream_commit?.slice(0, 12) ?? 'Commit unavailable'}</small>
                   </td>
                   <td>{date(release.imported_at)}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="agent-button"
+                      disabled={busy}
+                      onClick={() => void enqueueMedia(release.id)}
+                    >
+                      Import / retry media
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -611,6 +643,7 @@ export function DataOperationsPage() {
       </section>
 
       {/* SECTION: Patch import runs */}
+      <ProcessingActivity />
       <section className="content-panel data-operation-panel">
         <header className="agent-panel-header">
           <div>

@@ -670,6 +670,15 @@
   gap: 12px;
   margin: 16px 0 24px;
 }
+
+.cutscene-job > details {
+  flex-basis: 100%;
+  min-width: 0;
+  width: 100%;
+}
+.cutscene-job:has(> details) {
+  flex-wrap: wrap;
+}
 .cutscene-job {
   display: flex;
   align-items: start;
@@ -707,4 +716,13 @@
   .cutscene-job {
     flex-direction: column;
   }
+}
+
+.processing-status-filter select {
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--border-default);
+  border-radius: 0.6rem;
+  padding: 0.65rem;
+  font: inherit;
 }
