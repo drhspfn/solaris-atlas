@@ -46,6 +46,20 @@ async def test_input_counter_preserves_context_without_unsupported_output_option
         assert await provider.count_input(payload) == {"input_tokens": 502}
 
 
+def test_responses_provider_adds_required_function_type_to_legacy_tool_schemas():
+    settings = AgentSettings(_env_file=None, api_key="test")
+    provider = Provider(settings, None)
+    tool = {
+        "name": "search_lore",
+        "description": "Search lore",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+    }
+
+    _, payload = provider.request([], [tool])
+
+    assert payload["tools"] == [{"type": "function", **tool}]
+
+
 @pytest.mark.parametrize("kind", ["responses", "chat", "gemini"])
 @pytest.mark.asyncio
 async def test_native_reasoning_is_preserved_and_tool_results_match_protocol(kind):

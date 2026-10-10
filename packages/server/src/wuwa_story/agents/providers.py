@@ -177,7 +177,10 @@ class Provider:
             return "/responses", {
                 "model": s.model,
                 "input": history,
-                "tools": tools,
+                "tools": [
+                    {"type": "function", **tool} if "type" not in tool else tool
+                    for tool in tools
+                ],
                 "max_output_tokens": s.max_output_tokens,
                 "reasoning": {"effort": s.reasoning_effort},
                 "store": False,
