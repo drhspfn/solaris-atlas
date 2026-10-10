@@ -48,7 +48,7 @@ async def content_revision() -> str:
             "Public cache revision migration has not been installed")
     
     _REVISION_CACHE["value"] = str(revision)
-    _REVISION_CACHE["expires"] = now + 30.0  # Cache DB revision in memory for 30s
+    _REVISION_CACHE["expires"] = now + 43200.0  # Cache DB revision in memory for 12 hours
     return _REVISION_CACHE["value"]
 
 
