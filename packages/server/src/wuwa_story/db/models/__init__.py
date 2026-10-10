@@ -70,6 +70,7 @@ from wuwa_story.db.models.ops import (
     Processor,
 )
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
+from wuwa_story.db.models.lore import LoreChunk, LoreChunkEmbedding
 from wuwa_story.db.models.search import (
     DialogueChunk,
     DialogueChunkEmbedding,
@@ -165,6 +166,8 @@ __all__ = [
     "RelationEmbedding",
     "SearchDocument",
     "TagEmbedding",
+    "LoreChunk",
+    "LoreChunkEmbedding",
     "StatusType",
     "FileLocation",
     "FileObject",

@@ -11,6 +11,7 @@ from wuwa_story.agents.evidence import hash_value
 from wuwa_story.db.models.agents import AgentJob, AgentNote, ExplanationEmbedding
 from wuwa_story.db.models.content import Document, DocumentHead, DocumentReference
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeType
+from wuwa_story.db.models.lore import LoreChunk
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.models.search import EmbeddingModel
@@ -86,6 +87,7 @@ async def publish_analysis(
             "knowledge_boundary": result.knowledge_boundary.model_dump()
             if result.knowledge_boundary
             else None,
+            "scene_knowledge": result.scene_knowledge.model_dump() if result.scene_knowledge else None,
             "hooks": [hook.model_dump() for hook in result.hooks],
             "review": result.review.model_dump() if result.review else None,
             "links": [link.model_dump() for link in result.links],
@@ -313,5 +315,45 @@ async def publish_analysis(
                     embedding=vector,
                 )
             )
+    
+    if result.scene_knowledge:
+        # quest_summary
+        session.add(
+            LoreChunk(
+                source_type="quest",
+                source_id=str(node.id),
+                quest_id=str(node.id),
+                characters=result.scene_knowledge.characters,
+                chunk_type="quest_summary",
+                content=result.scene_knowledge.summary,
+            )
+        )
+        # story_facts
+        for fact in result.scene_knowledge.facts:
+            session.add(
+                LoreChunk(
+                    source_type="quest",
+                    source_id=str(node.id),
+                    quest_id=str(node.id),
+                    characters=result.scene_knowledge.characters,
+                    chunk_type="story_fact",
+                    content=fact.claim,
+                )
+            )
+        # story_events
+        for event in result.scene_knowledge.events:
+            session.add(
+                LoreChunk(
+                    source_type="quest",
+                    source_id=str(node.id),
+                    quest_id=str(node.id),
+                    characters=event.participants,
+                    chunk_type="scene_event",
+                    content=event.description,
+                    timestamp_start=event.timestamp_start,
+                    timestamp_end=event.timestamp_end,
+                )
+            )
+
     job.document_id = document.id
     return document

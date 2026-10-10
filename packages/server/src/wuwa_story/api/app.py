@@ -102,3 +102,6 @@ app.include_router(story.router)
 app.include_router(story_agent.router)
 app.include_router(story_agent.admin)
 app.include_router(auth_router)
+
+from wuwa_story.api.routes import mcp
+app.include_router(mcp.router)

@@ -866,6 +866,20 @@ class EvidenceTools:
                 return await target.read_cutscene_visual(**args)
         if call.name == "search_entities":
             return await self.search(**args)
+        if call.name == "search_lore":
+            query = args.get("query", "")
+            from wuwa_story.search.lore import LoreSearchService
+            from wuwa_story.search.embedding import generate_query_embedding
+            try:
+                query_embedding = await generate_query_embedding(self.session, query)
+                service = LoreSearchService(self.session)
+                results = await service.hybrid_search(query, query_embedding, limit=5)
+                output = ""
+                for i, r in enumerate(results, 1):
+                    output += f"[{i}] Quest: {r.quest_id} | Type: {r.chunk_type}\n{r.content}\n\n"
+                return {"results": output if output else "No results found"}
+            except Exception as e:
+                return {"error": str(e)}
         if call.name == "read_memory":
             return await self.memory(**args)
         if call.name == "save_note":
@@ -1090,6 +1104,12 @@ def definitions() -> list[dict[str, Any]]:
             "search_entities",
             "Resolve characters, factions, quests and concepts. Read source nodes before citing.",
             {"query": {"type": "string"}, "locale": locale},
+            ["query"],
+        ),
+        tool(
+            "search_lore",
+            "Semantic search across previously generated Wuthering Waves storyline lore (cutscenes, quests, characters). Use this to recall past lore facts.",
+            {"query": {"type": "string"}},
             ["query"],
         ),
         tool(

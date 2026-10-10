@@ -164,3 +164,39 @@ async def search(
         "has_more": len(results) == limit,
         "results": results,
     }
+
+@router.get("/lore")
+async def search_lore(
+    q: str = Query(min_length=1, max_length=512),
+    limit: int = Query(10, ge=1, le=50),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    from wuwa_story.search.lore import LoreSearchService
+    from wuwa_story.search.embedding import generate_query_embedding
+
+    try:
+        query_embedding = await generate_query_embedding(session, q)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Embedding generation failed: {e}")
+
+    service = LoreSearchService(session)
+    results = await service.hybrid_search(q, query_embedding, limit=limit)
+
+    return {
+        "query": q,
+        "scope": "lore",
+        "mode": "hybrid",
+        "limit": limit,
+        "results": [
+            {
+                "chunk_id": r.chunk_id,
+                "source_type": r.source_type,
+                "source_id": r.source_id,
+                "quest_id": r.quest_id,
+                "chunk_type": r.chunk_type,
+                "content": r.content,
+                "score": r.score,
+            }
+            for r in results
+        ],
+    }

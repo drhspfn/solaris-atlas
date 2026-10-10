@@ -163,6 +163,10 @@ def system_prompt(
         "what, and why it matters. You may explain an existing connection or add a missing one "
         "between sourced entities. A new analysis revises the interpretation, not imported facts. "
         "Only create links between discovered nodes; report missing entities/relations in notes. "
+        "Always populate the `scene_knowledge` field. This must contain structured information "
+        "including a summary, a list of facts with explicit/inferred/speculative evidence levels, "
+        "and structured relationships. This ensures downstream semantic search tools can easily index "
+        "the story without parsing huge markdown blocks.\n"
         f"Write in locale {locale}. Finish via finish_analysis as the ONLY tool call in that turn. "
         "Allowed relations: "
         + ", ".join(relations)

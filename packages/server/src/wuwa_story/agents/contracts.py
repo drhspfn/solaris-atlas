@@ -232,6 +232,33 @@ class CutsceneDescription(StrictModel):
     observation_indices: list[int] = Field(min_length=1, max_length=40)
 
 
+class StoryEvent(StrictModel):
+    event_type: str = Field(min_length=1, max_length=50)
+    description: str = Field(min_length=1, max_length=2000)
+    participants: list[str] = Field(default_factory=list, max_length=20)
+    timestamp_start: float | None = None
+    timestamp_end: float | None = None
+
+class StoryFact(StrictModel):
+    claim: str = Field(min_length=1, max_length=2000)
+    evidence_level: Literal["explicit", "inferred", "speculative"]
+    references: list[str] = Field(default_factory=list, max_length=12)
+
+class EntityRelationship(StrictModel):
+    subject: str = Field(min_length=1, max_length=100)
+    relation: str = Field(min_length=1, max_length=64)
+    target: str = Field(min_length=1, max_length=100)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=12)
+
+class SceneKnowledge(StrictModel):
+    summary: str = Field(min_length=1, max_length=5000)
+    characters: list[str] = Field(default_factory=list, max_length=30)
+    events: list[StoryEvent] = Field(default_factory=list, max_length=30)
+    facts: list[StoryFact] = Field(default_factory=list, max_length=30)
+    relationships: list[EntityRelationship] = Field(default_factory=list, max_length=30)
+    interpretations: list[str] = Field(default_factory=list, max_length=10)
+    source_references: list[str] = Field(default_factory=list, max_length=30)
+
 class AnalysisResult(StrictModel):
     cutscene_descriptions: list[CutsceneDescription] = Field(default_factory=list, max_length=30)
     revisited_hooks: list[HookReview] = Field(default_factory=list, max_length=12)
@@ -245,6 +272,7 @@ class AnalysisResult(StrictModel):
     knowledge_boundary: KnowledgeBoundary | None = None
     hooks: list[OpenHook] = Field(default_factory=list, max_length=12)
     review: AnalysisReview | None = None
+    scene_knowledge: SceneKnowledge | None = None
 
     def search_text(self, ordinal: int) -> str:
         text = self.blocks[ordinal].search_text()
