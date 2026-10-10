@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { api } from '../api/client';
+import { PublicChat } from '../components/chat/PublicChat';
 import { SearchBox } from '../components/search/SearchBox';
 import { categories } from '../data/entities';
 import { useLocale } from '../hooks/useLocale';
@@ -45,6 +46,11 @@ export function Home() {
           SOLARIS-3 <span>·</span> ARCHIVE 01
         </div>
       </section>
+      
+      <section className="section-wrap" style={{ marginTop: '40px' }}>
+        <PublicChat />
+      </section>
+
       <section className="section-wrap category-section">
         <div className="section-head">
           <div>
