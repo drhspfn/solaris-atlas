@@ -28,3 +28,18 @@ def test_voice_identity_rejects_ambiguous_or_unsafe_names(name):
 def test_voice_download_rejects_untrusted_cdn():
     with pytest.raises(ValueError):
         resource_url("https://example.com/prod/client/", "voice.pak")
+
+
+def test_explicit_rover_variants_resolve_missing_legacy_name(tmp_path):
+    from wuwa_story_worker.voice_import import exported_voices
+    for filename in ("en_vo_Character_JiYan_18_1_F.wem", "en_vo_Character_JiYan_18_1_M.WEM", "en_vo_Character_JiYan_18_10_F.wem"):
+        (tmp_path / filename).write_bytes(b"audio")
+    result = exported_voices(tmp_path, {"vo_Character_JiYan_18_1"})
+    assert set(result) == {"vo_Character_JiYan_18_1"}
+    assert set(result["vo_Character_JiYan_18_1"]) == {("en", "female"), ("en", "male")}
+
+
+def test_exact_gender_named_reference_is_not_remapped(tmp_path):
+    from wuwa_story_worker.voice_import import exported_voices
+    (tmp_path / "en_vo_Line_F.wem").write_bytes(b"audio")
+    assert set(exported_voices(tmp_path, {"vo_Line_F"})["vo_Line_F"]) == {("en", None)}

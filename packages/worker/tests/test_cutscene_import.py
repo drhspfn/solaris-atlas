@@ -92,3 +92,18 @@ def test_export_search_resolves_game_reference_casing(tmp_path):
     actual.write_bytes(b"movie")
     assert confined(tmp_path, "client/content/aki/movies/example.mp4").read_bytes() == b"movie"
     assert movie_path(b"filepath://./Aki/Movies/Example.MP4\0").endswith("Example.MP4")
+
+
+def test_unsupported_audio_bank_can_publish_partial_video_without_guessing(tmp_path):
+    from wuwa_story.ingestion.cutscenes import VideoInput
+
+    from wuwa_story_worker.cutscene_import import available_soundtracks
+    (tmp_path / "layered.bnk").write_bytes(b"unsupported bank")
+    video = VideoInput(asset="asset:ue:/Game/Video.Video", soundtrack=[{"bank": "layered.bnk", "language": "en"}])
+    with pytest.raises(ValueError, match="Unsupported Wwise"):
+        available_soundtracks(video, tmp_path, tmp_path)
+    missing = []
+    result = available_soundtracks(video, tmp_path, tmp_path, missing)
+    assert result.soundtrack == []
+    assert missing == ["layered.bnk: Unsupported Wwise bank version"]
+    assert len(video.soundtrack) == 1

@@ -61,16 +61,19 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, 
                 if event not in missing_assets:
                     missing_assets.append(event)
                 continue
-            if len(banks) != 1:
-                raise ValueError(f"Export the exact event bank before planning: {event}")
+            localized = {language: [bank for bank in banks if bank.parent.name.casefold() == language]
+                         for language in ("en", "ja", "ko", "zh")}
+            if len(banks) == 1 and not any(localized.values()):
+                selected = [(None, banks[0])]
+            elif all(len(paths) == 1 for paths in localized.values()) and len(banks) == 4:
+                selected = [(language, paths[0]) for language, paths in localized.items()]
+            else:
+                raise ValueError(f"Incomplete or ambiguous localized event banks: {event}")
             start, end = sound_timing(sound_blob)
-            soundtrack.append(
-                {
-                    "bank": banks[0].relative_to(assets).as_posix(),
-                    "start_seconds": start,
-                    "end_seconds": end,
-                }
-            )
+            for language, bank in selected:
+                soundtrack.append({"bank": bank.relative_to(assets).as_posix(),
+                                   "language": language,
+                                   "start_seconds": start, "end_seconds": end})
         if key in input_assets:
             if input_assets[key]["soundtrack"] != soundtrack:
                 raise ValueError(f"Conflicting soundtrack configuration for shared video: {key}")

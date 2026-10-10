@@ -86,3 +86,30 @@ Verification covered server/worker tests, frontend build and targeted lint,
 public image responses, all four WAV responses and repeated request identity.
 The authenticated admin POST was not exercised through a signed-in browser;
 its authorization/CSRF dependencies and broker-failure response are tested.
+
+## Multilingual import recovery
+
+Absolute CDN URLs pass through the frontend unchanged. Dialogue filenames that
+now have explicit `_F` / `_M` variants retain both files and Rover metadata;
+there is no fuzzy filename match or implicit gender fallback. Character event
+media use the base filename shared across all four languages when a localized
+dialect alternative is also present. Ambiguous events are reported as missing
+voices without discarding the rest of the character batch.
+
+Cutscene import waits for the same client's voice package task. Localized event
+banks publish aligned, independent voice stems using the authored VideoSound
+start/end times. A bank with unverified layered sequencing leaves its video
+available as a partial import and reports the missing audio; it never mixes all
+branches together. Original embedded audio is retained as an unseparated mix.
+
+After deploying API, web and snapshot worker, retry the patch's media import in
+Data operations. Existing completed tasks are reused; failed and partial tasks
+are retried using the cached client exports. No game database migration is needed.
+
+Manual checks after deployment:
+
+1. Open a character and item with published art; images should load from the CDN.
+2. Retry partial voice tasks and verify female/male Rover dialogue in each language.
+3. Open a previously failed cutscene and switch between its imported voice languages.
+4. Click a sidebar scene; it should scroll to that exact player without starting playback.
+5. Check remaining partial tasks: missing assets remain visible rather than reported as complete.

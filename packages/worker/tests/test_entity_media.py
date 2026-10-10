@@ -87,3 +87,10 @@ async def test_image_cache_rejects_changed_source_bytes(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="fresh extraction"):
         await map_icons.build_icons(tmp_path, fmodel, converter, markers, entity_media=True)
     export.assert_awaited_once()
+
+
+def test_dialect_variant_does_not_block_matching_localized_base_voice():
+    entries = [media(language, index) for index, language in enumerate(("en", "ja", "ko", "zh"), 1)]
+    canton = media("zh", 99)
+    canton["DebugName"] = canton["DebugName"].replace(".wav", "_canton.wav")
+    assert event_media(cooked([canton, *entries])) == {"zh": 4, "en": 1, "ja": 2, "ko": 3}

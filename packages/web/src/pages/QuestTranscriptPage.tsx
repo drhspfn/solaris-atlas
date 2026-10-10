@@ -348,21 +348,15 @@ export function QuestPage() {
               </h3>
               {stateIndex.length ? (
                 <>
-                  <p className="flow-nav-note">
-                    Authored flow states. Branches may change the path you see in game.
-                  </p>
-                  <nav className="flow-state-list" aria-label="Quest flow states">
+                  <nav className="flow-state-list" aria-label="Quest chapters">
                     {stateIndex.map((state, i) => (
-                      <a
-                        href={`#${state.anchor}`}
-                        className="flow-state-link"
-                        key={state.key}
-                        title={state.key}
-                      >
+                      <a href={`#${state.anchor}`} className="flow-state-link" key={state.key}>
                         <span>{String(i + 1).padStart(2, '0')}</span>
                         <span>
-                          Flow state {i + 1}
-                          <small>{state.key}</small>
+                          Part {i + 1}
+                          <small>
+                            {state.count} {state.count === 1 ? 'line' : 'lines'}
+                          </small>
                         </span>
                         <b>{state.count}</b>
                       </a>
@@ -372,12 +366,11 @@ export function QuestPage() {
               ) : (
                 <p>No transcript lines in this view.</p>
               )}
-              {scenes.length > 0 && (
-                <p className="flow-nav-note">
-                  {scenes.length} source scene records are also linked to this quest.
-                </p>
-              )}
-              <QuestMediaReferences manifest={media} stateAnchors={stateAnchors} />
+              <QuestMediaReferences
+                manifest={media}
+                stateAnchors={stateAnchors}
+                visibleCutscenes={[...videoSlots.values()].flat()}
+              />
             </aside>
             <div className="transcript">
               {shown.length ? (

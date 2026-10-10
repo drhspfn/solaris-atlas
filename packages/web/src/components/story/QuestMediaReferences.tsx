@@ -1,7 +1,8 @@
-import { Film, Info, Pause, Play, Volume2, VolumeX } from 'lucide-react';
+import { Film, Info, Pause, Play, VolumeX } from 'lucide-react';
 import { type ReactNode, useRef, useState } from 'react';
 
 import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
+import { cutsceneAnchor } from './cutsceneAnchor';
 
 export interface MediaSource {
   file: string | null;
@@ -114,98 +115,50 @@ function SourcePath({ source }: { source: MediaSource }) {
 export function QuestMediaReferences({
   manifest,
   stateAnchors,
+  visibleCutscenes = manifest?.events || [],
 }: {
   manifest: QuestMediaManifest | null;
   stateAnchors: Map<string, string>;
+  visibleCutscenes?: QuestMediaEvent[];
 }) {
   if (!manifest) return null;
-  const visualEvents = manifest.events.filter((event) => event.kind !== 'audio_event');
-  const audioEvents = manifest.events.filter((event) => event.kind === 'audio_event');
-  if (!visualEvents.length && !audioEvents.length && !manifest.video_packages.length) return null;
+  const visible = new Set(visibleCutscenes.map(cutsceneAnchor));
+  const links = manifest.events.flatMap((event) => {
+    const playable =
+      event.kind === 'cutscene' &&
+      (event.playback ||
+        event.resources?.some(
+          (resource) =>
+            resource.kind === 'has_variant' && resource.assets.some((asset) => asset.video),
+        ));
+    const anchor =
+      playable && visible.has(cutsceneAnchor(event))
+        ? cutsceneAnchor(event)
+        : stateAnchors.get(event.flow_state);
+    if (!anchor || event.kind === 'audio_event') return [];
+    return [{ event, anchor }];
+  });
+  if (!links.length) return null;
   return (
-    <section className="quest-media-panel" aria-label="Quest media references">
+    <nav className="quest-media-panel" aria-label="Quest scenes">
       <h4>
-        Media references <span>{manifest.events.length}</span>
+        Scenes <span>{links.length}</span>
       </h4>
-      <p>
-        {manifest.availability === 'partial'
-          ? 'Available cutscenes can be watched beside the transcript. Other entries are source references.'
-          : 'Game resource paths are recorded. Files have not been exported yet.'}
-      </p>
-      {visualEvents.map((event, index) => (
-        <details className="quest-media-event" key={`${event.action}-${event.reference}-${index}`}>
-          <summary>
-            <Film size={13} />
-            <span>
-              {event.kind === 'cutscene'
-                ? `Cutscene · ${event.reference.replace('cutscene:', '')}`
-                : `Sequence · ${event.engine_path?.split('/').at(-1) || 'asset'}`}
-              <small>{event.flow_state}</small>
-            </span>
-          </summary>
-          {event.engine_path && <code>{event.engine_path}</code>}
-          {stateAnchors.has(event.flow_state) && (
-            <a className="quest-media-jump" href={`#${stateAnchors.get(event.flow_state)}`}>
-              Read dialogue in this flow state ↗
-            </a>
-          )}
-          {event.resources?.map((resource, resourceIndex) => (
-            <div className="quest-media-resource" key={`${resource.reference}-${resourceIndex}`}>
-              <span>{resource.kind.replaceAll('_', ' ')}</span>
-              {resource.variant && (
-                <small>
-                  CG {resource.variant.cg_id} · GirlOrBoy{' '}
-                  {resource.variant.girl_or_boy ?? 'unspecified'}
-                  {resource.variant.belong_branch ? ` · ${resource.variant.belong_branch}` : ''}
-                </small>
-              )}
-              {resource.caption && (
-                <small>
-                  Caption {resource.caption.localization_key} · timing{' '}
-                  {resource.caption.show_moment} / {resource.caption.duration} (unit unverified)
-                </small>
-              )}
-              {resource.assets.map((asset, assetIndex) => (
-                <code key={assetIndex}>{asset.engine_path || asset.reference}</code>
-              ))}
-              <SourcePath source={resource.source} />
-            </div>
-          ))}
-          <SourcePath source={event.source} />
-        </details>
+      {links.map(({ event, anchor }) => (
+        <a
+          className="quest-media-jump quest-media-event"
+          key={cutsceneAnchor(event)}
+          href={`#${anchor}`}
+        >
+          <Film size={13} />
+          <span>
+            {event.kind === 'cutscene'
+              ? `Cutscene � ${event.reference.replace('cutscene:', '')}`
+              : 'Story scene'}
+          </span>
+        </a>
       ))}
-      {audioEvents.length > 0 && (
-        <details className="quest-media-event">
-          <summary>
-            <Volume2 size={13} />
-            <span>
-              Audio events<small>{audioEvents.length} source references</small>
-            </span>
-          </summary>
-          {audioEvents.map((event, index) => (
-            <div className="quest-media-resource" key={`${event.action}-${index}`}>
-              <code>{event.engine_path || event.reference}</code>
-              <SourcePath source={event.source} />
-            </div>
-          ))}
-        </details>
-      )}
-      {manifest.video_packages.length > 0 && (
-        <details className="quest-media-event">
-          <summary>
-            <Film size={13} />
-            <span>
-              Video packages<small>{manifest.video_packages.length} source references</small>
-            </span>
-          </summary>
-          {manifest.video_packages
-            .flatMap((entry) => entry.packages)
-            .map((entry, index) => (
-              <code key={index}>{entry.reference.replace('asset:video_package:', '')}</code>
-            ))}
-        </details>
-      )}
-    </section>
+    </nav>
   );
 }
 
@@ -216,7 +169,12 @@ export function DialogueAudioReference({
   children?: ReactNode;
   media?: {
     voice_references?: Array<{
-      tracks?: Array<{ language: string; url: string; asset_version: string }>;
+      tracks?: Array<{
+        language: string;
+        url: string;
+        asset_version: string;
+        rover?: 'male' | 'female' | null;
+      }>;
       file_name: string | null;
       plot_audio_id: string | null;
       source: MediaSource;
@@ -224,7 +182,8 @@ export function DialogueAudioReference({
     audio_event_paths?: Array<{ engine_path: string; source: MediaSource }>;
   };
 }) {
-  const { voiceLanguage } = useNarrativePreferences();
+  const { voiceLanguage, preferredRover } = useNarrativePreferences();
+  const [voiceRover, setVoiceRover] = useState<'male' | 'female' | 'ask'>('ask');
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playingUrl, setPlayingUrl] = useState<string | null>(null);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
@@ -248,9 +207,33 @@ export function DialogueAudioReference({
       </div>
     );
   const tracks = voices.flatMap((voice) => voice.tracks || []);
-  const track = tracks.find((entry) => entry.language === voiceLanguage);
+  const rover = preferredRover === 'ask' ? voiceRover : preferredRover;
+  const track =
+    tracks.find((entry) => entry.language === voiceLanguage && entry.rover === rover) ||
+    tracks.find((entry) => entry.language === voiceLanguage && !entry.rover);
+  const roverChoices = tracks.filter((entry) => entry.language === voiceLanguage && entry.rover);
+
   return (
     <div className="dialogue-voice">
+      {preferredRover === 'ask' && roverChoices.length > 0 && (
+        <label className="voice-language">
+          Rover voice
+          <select
+            aria-label="Rover voice"
+            value={voiceRover}
+            onChange={(event) => setVoiceRover(event.target.value as typeof voiceRover)}
+          >
+            <option value="ask">Choose Rover</option>
+            {['female', 'male']
+              .filter((value) => roverChoices.some((entry) => entry.rover === value))
+              .map((value) => (
+                <option key={value} value={value}>
+                  {value === 'female' ? 'Female Rover' : 'Male Rover'}
+                </option>
+              ))}
+          </select>
+        </label>
+      )}
       <div className="dialogue-spoken-text">
         {track && (
           <>

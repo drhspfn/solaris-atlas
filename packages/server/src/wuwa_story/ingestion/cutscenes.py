@@ -79,6 +79,7 @@ class PlaybackFlow(StrictModel):
 
 
 class Soundtrack(StrictModel):
+    language: Literal["en", "ja", "ko", "zh"] | None = None
     bank: str
     # Explicit source selection for verified layered/switch banks; never mix all branches.
     media_id: int | None = Field(default=None, gt=0, le=4294967295)

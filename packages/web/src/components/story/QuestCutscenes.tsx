@@ -6,6 +6,7 @@ import { usePlayerDisplay } from '../../hooks/usePlayerDisplay';
 import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
 import { PlayerText } from '../dialogue/PlayerText';
 import { AnalysisActions } from './AnalysisActions';
+import { cutsceneAnchor } from './cutsceneAnchor';
 import { CutsceneControls } from './CutsceneControls';
 import { CutsceneSound } from './CutsceneSound';
 import { chapterPosition, cutsceneTimeline, timelineTarget } from './cutsceneTimeline';
@@ -540,13 +541,15 @@ export function FlowPlayer({
 export function Cutscene({ event, anchor }: { event: QuestMediaEvent; anchor?: string }) {
   const flow = useMemo(() => event.playback || fallbackFlow(event), [event]);
   return flow ? (
-    <FlowPlayer
-      key={`${flow.asset_version}-${flow.entry}`}
-      flow={flow}
-      title={event.reference.replace('cutscene:', '')}
-      anchor={anchor}
-      captions={event.captions}
-    />
+    <div id={cutsceneAnchor(event)} className="quest-cutscene-anchor">
+      <FlowPlayer
+        key={`${flow.asset_version}-${flow.entry}`}
+        flow={flow}
+        title={event.reference.replace('cutscene:', '')}
+        anchor={anchor}
+        captions={event.captions}
+      />
+    </div>
   ) : null;
 }
 

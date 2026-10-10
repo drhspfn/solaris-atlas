@@ -67,7 +67,7 @@ async def dialogue_media(
     voices = {voice.node_id: voice for voice in await session.scalars(
         select(VoiceReference).where(VoiceReference.node_id.in_(voice_ids))
     )} if voice_ids else {}
-    tracks: dict[int, dict[str, dict]] = defaultdict(dict)
+    tracks: dict[int, dict[tuple[str, str | None], dict]] = defaultdict(dict)
     if voice_ids:
         settings = get_settings()
         storage = S3Storage(settings)
@@ -83,8 +83,11 @@ async def dialogue_media(
         for reference, object_key in rows:
             language = reference.metadata_json.get("language")
             if language in ("en", "ja", "ko", "zh"):
-                tracks[reference.owner_node_id].setdefault(language, {
-                    "language": language, "url": storage.public_url(object_key),
+                rover = reference.metadata_json.get("rover")
+                if rover not in (None, "male", "female"):
+                    continue
+                tracks[reference.owner_node_id].setdefault((language, rover), {
+                    "rover": rover, "language": language, "url": storage.public_url(object_key),
                     "asset_version": reference.metadata_json.get("asset_version"),
                     "duration_seconds": reference.metadata_json.get("duration_seconds"),
                 })

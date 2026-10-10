@@ -8,7 +8,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.client_assets import discover_plan, inspect_installed_clients
@@ -142,11 +142,14 @@ async def cutscene_assets(payload, parent):
 async def cutscene(payload, parent):
     root = client_root(parent)
     assets = root / "release-media" / "files"
-    for voice_root in sorted((asset_workspace() / "voices").glob(parent["asset_version"] + "-*")):
+    voice_roots = [asset_workspace() / "voices" / f"{parent['asset_version']}-{parent['voice_plan_id'][:16]}"] if parent.get("voice_plan_id") else sorted((asset_workspace() / "voices").glob(parent["asset_version"] + "-*"))
+    for voice_root in voice_roots:
         marker = voice_root / "audio-export.json"
         if marker.is_file():
             exported = json.loads(marker.read_text(encoding="utf-8"))
             plan = json.loads((voice_root / "plan.json").read_text(encoding="utf-8"))
+            if parent.get("voice_plan_id") and plan.get("id") != parent["voice_plan_id"]:
+                raise ValueError("Cutscene voice export does not match its pinned package plan")
             if exported.get("plan_id") == plan.get("id"):
                 await asyncio.to_thread(merge_exports, [voice_root / "plot-audio"], assets)
     config = await asyncio.to_thread(video_database, assets)
@@ -160,7 +163,7 @@ async def cutscene(payload, parent):
     if ffmpeg is None:
         raise RuntimeError("ffmpeg is missing from the worker image")
     result = await import_cutscene_recipe(recipe_path, assets, assets, assets, work,
-                                         tool_path("WUWA_VGMSTREAM_PATH"), Path(ffmpeg))
+                                         tool_path("WUWA_VGMSTREAM_PATH"), Path(ffmpeg), missing_assets=missing_assets)
     return {**result, "asset_version": parent["asset_version"], "missing_assets": missing_assets}, "partial" if missing_assets else "completed"
 
 
@@ -228,7 +231,23 @@ async def process_release_media(payload):
                     elif payload["kind"] == "voice_packages":
                         result, status = await voice_packages(parent.raw_output)
                     elif payload["kind"] == "cutscene":
-                        result, status = await cutscene(payload, parent.raw_output)
+                        voice_job = await session.scalar(select(ProcessingRun).where(
+                            ProcessingRun.processor_id == run.processor_id,
+                            ProcessingRun.metadata_json["request"]["release_id"].astext == str(payload["release_id"]),
+                            ProcessingRun.metadata_json["request"]["kind"].astext == "voice_packages",
+                        ).order_by(ProcessingRun.id.desc()).limit(1))
+                        if voice_job is None:
+                            raise ValueError("Missing voice package dependency for cutscene import")
+                        if voice_job.status in {"failed", "blocked", "enqueue_failed"}:
+                            await update_admin_run(run.id, "release_media", "blocked",
+                                                   error=f"Voice preparation #{voice_job.id} failed; retry the media import")
+                            return
+                        if voice_job.status != "completed":
+                            raise JobDeferred("Waiting for multilingual cutscene audio packages")
+                        if voice_job.raw_output["download_id"] != parent.raw_output["download_id"]:
+                            raise ValueError("Cutscene and voice packages belong to different clients")
+                        result, status = await cutscene(payload, {**parent.raw_output,
+                                                               "voice_plan_id": voice_job.raw_output["voice_plan_id"]})
                     elif payload["kind"] == "voices":
                         result, status = await voices(payload, parent.raw_output)
                     else:

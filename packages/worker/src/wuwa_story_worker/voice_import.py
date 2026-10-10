@@ -25,26 +25,38 @@ def voice_identity(filename: str) -> tuple[str, str]:
     return match[1], match[2]
 
 
+def exported_voices(root: Path, names: set[str] | None = None) -> dict:
+    """Resolve exact authored filenames and explicit F/M variants; no fuzzy matching."""
+    grouped = {}
+    for path in sorted(path for path in root.rglob("*") if path.suffix.casefold() == ".wem"):
+        if not re.fullmatch(r"(en|ja|ko|zh)_(vo_[A-Za-z0-9_]+)\.wem", path.stem + ".wem"):
+            continue
+        language, name = voice_identity(path.stem + ".wem")
+        rover = None
+        if names is not None and name not in names:
+            if name.endswith(("_F", "_M")) and name[:-2] in names:
+                rover = "female" if name.endswith("_F") else "male"
+                name = name[:-2]
+            else:
+                continue
+        key = (language, rover)
+        if key in grouped.setdefault(name, {}):
+            raise ValueError(f"Duplicate extracted voice: {path.name}")
+        grouped[name][key] = path
+    return grouped
+
+
 async def import_voice_sample(root: Path, decoder: Path, asset_version: str, *,
                               names: set[str] | None = None, require_all_languages: bool = True) -> dict:
     if not re.fullmatch(r"\d+\.\d+\.\d+", asset_version):
         raise ValueError("Invalid asset version")
-    grouped: dict[str, dict[str, Path]] = {}
-    for path in sorted(path for path in root.rglob("*") if path.suffix.casefold() == ".wem"):
-        if names is not None and not re.fullmatch(r"(en|ja|ko|zh)_(vo_[A-Za-z0-9_]+)\.wem", path.stem + ".wem"):
-            continue
-        language, name = voice_identity(path.stem + ".wem")
-        if names is not None and name not in names:
-            continue
-        if language in grouped.setdefault(name, {}):
-            raise ValueError(f"Duplicate extracted voice: {path.name}")
-        grouped[name][language] = path
+    grouped = exported_voices(root, names)
     missing = [f"{language}_{name}" for name in sorted(names or grouped)
-               for language in LANGUAGES if language not in grouped.get(name, {})]
+               for language in LANGUAGES if not any(key[0] == language for key in grouped.get(name, {}))]
     if not grouped and require_all_languages:
         raise ValueError("No extracted voices")
     for name, languages in grouped.items():
-        if require_all_languages and set(languages) != set(LANGUAGES):
+        if require_all_languages and {key[0] for key in languages} != set(LANGUAGES):
             raise ValueError(f"Incomplete language sample: {name}")
     if not grouped:
         return {"voice_references": 0, "tracks": 0, "asset_version": asset_version,
@@ -57,7 +69,7 @@ async def import_voice_sample(root: Path, decoder: Path, asset_version: str, *,
         voices = list(await session.scalars(select(VoiceReference).where(
             VoiceReference.file_name.in_(grouped))))
         for voice in voices:
-            for language, path in grouped[voice.file_name].items():
+            for (language, rover), path in grouped[voice.file_name].items():
                 wav = path.with_suffix(".wav")
                 temporary = path.with_suffix(".partial.wav")
                 await asyncio.to_thread(subprocess.run,
@@ -83,7 +95,7 @@ async def import_voice_sample(root: Path, decoder: Path, asset_version: str, *,
                                                                 reference_type="voice_audio", owner_node_id=voice.node_id,
                                                                 source_name=path.name, source_path=path.relative_to(root).as_posix())
                 ref.file_id = playable.id
-                ref.metadata_json = {"language": language, "asset_version": asset_version,
+                ref.metadata_json = {"language": language, "rover": rover, "asset_version": asset_version,
                                      "duration_seconds": duration}
                 count += 1
             await session.commit()

@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 def event_media(exports: list[dict]) -> dict[str, int]:
     """Cooked media debug names identify languages; never guess from list order."""
     result = {}
+    candidates = {}
     for export in exports:
         for entry in export.get("EventCookedData", {}).get("EventLanguageMap", []):
             for media in entry.get("Value", {}).get("Media", []):
@@ -48,9 +49,20 @@ def event_media(exports: list[dict]) -> dict[str, int]:
                     or media.get("MediaPathName") != f"Media/{identity}.wem"
                 ):
                     raise ValueError("Invalid cooked voice media identity")
-                if language in result and result[language] != identity:
+                values = candidates.setdefault(language, {})
+                if name[3:] in values and values[name[3:]] != identity:
                     raise ValueError("Multiple media per language require authored sequencing")
-                result[language] = identity
+                values[name[3:]] = identity
+    # Localized base names agree across languages; a dialect suffix is a separate variant.
+    common = set.intersection(*(set(values) for values in candidates.values())) if candidates else set()
+    if len(common) == 1:
+        name = common.pop()
+        result = {language: values[name] for language, values in candidates.items()}
+    else:
+        for language, values in candidates.items():
+            if len(set(values.values())) != 1:
+                raise ValueError("Multiple media per language require authored sequencing")
+            result[language] = next(iter(values.values()))
     if set(result) != {"en", "ja", "ko", "zh"}:
         raise ValueError("Event does not contain a confirmed four-language voice mapping")
     return result
@@ -138,7 +150,12 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None):
         jsons = list(output.rglob(source.rsplit("/", 1)[-1].split(".")[0] + ".json"))
         if len(jsons) != 1:
             raise ValueError("Expected one cooked event export")
-        mapping = event_media(json.loads(jsons[0].read_text(encoding="utf-8-sig")))
+        try:
+            mapping = event_media(json.loads(jsons[0].read_text(encoding="utf-8-sig")))
+        except ValueError as error:
+            logger.warning("entity_media.voice_unresolved source=%s reason=%s", source, error)
+            missing.append(source)
+            continue
         for language, identity in mapping.items():
             destination = output / language
             destination.mkdir(exist_ok=True)
@@ -303,7 +320,8 @@ async def _process_entity_media(payload: dict, connection) -> None:
                 run.raw_output = {
                     "images": sum(t["kind"] == "image" for t, *_ in files),
                     "voice_tracks": sum(t["kind"] == "voice" for t, *_ in files),
-                    "missing_images": sorted(set(missing)),
+                    "missing_images": sorted(set(missing) & {t["path"] for t in payload["targets"] if t["kind"] == "image"}),
+                    "missing_voices": sorted(set(missing) & {t["path"] for t in payload["targets"] if t["kind"] == "voice"}),
                 }
                 run.finished_at = datetime.now(UTC)
                 await session.commit()

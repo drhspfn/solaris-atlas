@@ -300,3 +300,19 @@ Running now is queried independently of paginated task history and its status
 filter. An empty running set is stated explicitly; delivered RabbitMQ messages
 are not presented as confirmed execution. Client discovery records running and
 its stage before network requests begin.
+
+## Quest reader navigation
+
+The sidebar lists numbered dialogue parts and scene links. Technical flow keys,
+package paths and audio event inventories are omitted from reader navigation.
+A playable scene link targets the exact player occurrence in the current transcript
+window; an unavailable scene links to its dialogue when present. Native hash links
+support keyboard navigation without starting playback. CDN media URLs are used
+unchanged; only relative media paths receive the configured API base.
+
+Dialogue voice tracks retain explicit female/male variants when a legacy filename
+now resolves to `_F`/`_M` files. The saved Rover preference selects its matching
+track; Ask presents a compact choice and never silently chooses a gender.
+Localized cutscene event banks publish separate, aligned voice tracks. Original
+embedded audio remains an unseparated background mix, without claiming that music
+and effects have been isolated.

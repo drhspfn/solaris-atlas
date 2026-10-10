@@ -6372,3 +6372,17 @@ button.search-clear:focus-visible {
   font-size: 18px;
   margin-top: 32px;
 }
+
+.quest-cutscene-anchor {
+  scroll-margin-top: 100px;
+}
+.quest-media-jump.quest-media-event {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  text-decoration: none;
+}
+.quest-media-jump.quest-media-event:hover {
+  color: var(--mint);
+}

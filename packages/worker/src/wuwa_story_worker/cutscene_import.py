@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -124,6 +125,90 @@ def video_duration(ffmpeg: Path, movie: Path) -> tuple[float, bool]:
     return hours * 3600 + minutes * 60 + seconds, "Audio:" in info
 
 
+def soundtrack_wem(audio: Path, identity: int) -> Path:
+    exact = audio / f"Client/Content/Aki/WwiseAudio_Generated/Media/{identity}.wem"
+    if exact.is_file():
+        return exact
+    matches = [path for path in audio.rglob("*")
+               if path.is_file() and path.name.casefold() == f"{identity}.wem"]
+    if len(matches) != 1:
+        raise ValueError(f"Expected exactly one soundtrack WEM: {identity}")
+    return matches[0]
+
+
+def available_soundtracks(video, assets, audio, missing_assets=None):
+    tracks = []
+    for track in video.soundtrack:
+        try:
+            identity = bank_media_id(confined(assets, track.bank).read_bytes(), track.media_id)
+            soundtrack_wem(audio, identity)
+        except ValueError as error:
+            if missing_assets is None:
+                raise
+            reason = f"{Path(track.bank).name}: {error}"
+            if reason not in missing_assets:
+                missing_assets.append(reason)
+            continue
+        tracks.append(track)
+    return video.model_copy(update={"soundtrack": tracks})
+
+
+async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffmpeg, duration, embedded_audio, asset_version):
+    """Keep localized event voices separate from the original movie audio mix."""
+    if not any(track.language for track in video.soundtrack):
+        return None
+    from wuwa_story.ingestion.cutscene_audio import CutsceneAudioRecipe
+
+    work.mkdir(parents=True, exist_ok=True)
+    groups = {}
+    for index, track in enumerate(video.soundtrack):
+        bank = confined(assets, track.bank)
+        identity = bank_media_id(bank.read_bytes(), track.media_id)
+        wem = soundtrack_wem(audio, identity)
+        wav = work / f"decoded-{index}.wav"
+        await run_tool([str(decoder.resolve()), "-i", "-o", str(wav), str(wem)], 120)
+        evidence = []
+        for source in (bank, wem):
+            destination = work / f"source-{index}-{source.name}"
+            shutil.copyfile(source, destination)
+            evidence.append(destination.name)
+        groups.setdefault(track.language, []).append((wav, track, evidence))
+    if embedded_audio:
+        groups.setdefault(None, [])
+    stems = []
+    for language, tracks in groups.items():
+        command = [str(ffmpeg.resolve()), "-v", "error", "-y"]
+        filters, streams, evidence = [], [], []
+        input_index = 0
+        if language is None and embedded_audio:
+            command += ["-i", str(movie)]
+            filters.append("[0:a:0]asetpts=PTS-STARTPTS[embedded]")
+            streams.append("[embedded]")
+            # The original movie is the evidence for its unseparated audio mix.
+            original = work / "original.mp4"
+            shutil.copyfile(movie, original)
+            evidence.append(original.name)
+            input_index = 1
+        for wav, track, sources in tracks:
+            command += ["-i", str(wav)]
+            length = min(track.end_seconds or duration, duration) - track.start_seconds
+            if length <= 0:
+                raise ValueError("Soundtrack timing exceeds video duration")
+            filters.append(f"[{input_index}:a]atrim=duration={length},asetpts=PTS-STARTPTS,volume={track.gain_db}dB,adelay={round(track.start_seconds * 1000)}:all=1[t{input_index}]")
+            streams.append(f"[t{input_index}]")
+            evidence.extend(sources)
+            input_index += 1
+        filters.append("".join(streams) + f"amix=inputs={len(streams)}:normalize=0,alimiter=level=false,apad=whole_dur={duration}[a]")
+        destination = work / f"{language or 'original-mix'}.wav"
+        command += ["-filter_complex", ";".join(filters), "-map", "[a]", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", "-t", str(duration), str(destination)]
+        await run_tool(command)
+        stems.append({"role": "voice" if language else "effects", "language": language,
+                      "path": destination.name, "sources": evidence,
+                      "evidence": "VideoSound source timing and localized Event bank directory; original embedded audio remains an unseparated mix."})
+    return CutsceneAudioRecipe.model_validate({"asset": video.asset, "asset_version": asset_version,
+                                              "duration": duration, "stems": stems})
+
+
 async def import_cutscene_recipe(
     recipe: Path,
     assets: Path,
@@ -133,13 +218,16 @@ async def import_cutscene_recipe(
     decoder: Path,
     ffmpeg: Path,
     analyze_variants: bool = False,
+    missing_assets: list[str] | None = None,
 ) -> dict:
     spec = CutsceneRecipe.model_validate_json(recipe.read_text(encoding="utf-8"))
+    spec = spec.model_copy(update={"videos": [available_soundtracks(video, assets, audio, missing_assets)
+                                             for video in spec.videos]})
     # Separate working directories keep simultaneous publishers from overwriting each other.
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=output) as temporary:
         work = Path(temporary)
-        prepared, decoded = [], {}
+        prepared, decoded, bundles = [], {}, []
         for index, video in enumerate(spec.videos):
             engine = video.asset.removeprefix("asset:ue:")
             package, object_name = engine.rsplit(".", 1)
@@ -162,20 +250,18 @@ async def import_cutscene_recipe(
             filters, streams, source_paths = [], [], []
             if embedded_audio:
                 streams.append("[0:a:0]")
-            for track_index, track in enumerate(video.soundtrack, 1):
+            for track_index, track in enumerate([track for track in video.soundtrack if track.language in (None, "en")], 1):
                 bank = confined(assets, track.bank)
                 media_id = bank_media_id(bank.read_bytes(), track.media_id)
                 cache_key = (bank, media_id)
                 if cache_key not in decoded:
-                    matches = [path for path in audio.rglob("*") if path.is_file() and path.name.casefold() == f"{media_id}.wem"]
-                    if len(matches) != 1:
-                        raise ValueError(f"Expected exactly one soundtrack WEM: {media_id}")
+                    wem = soundtrack_wem(audio, media_id)
                     wav = work / f"{media_id}.wav"
                     await run_tool(
-                        [str(decoder.resolve()), "-i", "-o", str(wav), str(matches[0].resolve())],
+                        [str(decoder.resolve()), "-i", "-o", str(wav), str(wem.resolve())],
                         120,
                     )
-                    decoded[cache_key] = (bank, matches[0], wav)
+                    decoded[cache_key] = (bank, wem, wav)
                 bank_file, wem, wav = decoded[cache_key]
                 source_paths.append((bank_file, wem, wav))
                 command.extend(["-i", str(wav)])
@@ -214,6 +300,11 @@ async def import_cutscene_recipe(
             )
             await run_tool(command)
             prepared.append((video, movie, playable, source_paths, duration, has_audio))
+            bundle_root = work / f"audio-{index}"
+            bundle = await localized_audio_recipe(video, movie, assets, audio, bundle_root,
+                                                   decoder, ffmpeg, duration, embedded_audio, spec.asset_version)
+            if bundle:
+                bundles.append((bundle_root, bundle))
         analysis, segments = None, []
         if (analyze_variants or spec.compare_variants) and len(prepared) > 1:
             analysis, segments = await asyncio.to_thread(
@@ -429,6 +520,12 @@ async def import_cutscene_recipe(
                 "flow": spec.flow.model_dump(),
             }
             await session.commit()
+        if bundles:
+            from wuwa_story_worker.cutscene_audio import publish_audio
+            for bundle_root, bundle in bundles:
+                bundle_path = bundle_root / "recipe.json"
+                bundle_path.write_text(bundle.model_dump_json(), encoding="utf-8")
+                await publish_audio(bundle_path, bundle_root, ffmpeg)
     return {
         "videos": len(spec.videos),
         "cutscene": spec.cutscene,

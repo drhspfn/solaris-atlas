@@ -85,3 +85,22 @@ def test_missing_bank_is_reported_for_partial_video_and_case_is_resolved(tmp_pat
     assert recipe["videos"][0]["soundtrack"] == []
     (tmp_path / "event.BNK").write_bytes(b"bank")
     assert len(plan_cutscene(db_path, tmp_path, "Shared", "3.7.0")["videos"][0]["soundtrack"]) == 1
+
+
+def test_localized_banks_are_preserved_as_four_separate_tracks(tmp_path):
+    db_path = tmp_path / "videos.db"
+    with sqlite3.connect(db_path) as db:
+        db.executescript("CREATE TABLE videodata (CgId, GirlOrBoy, CgName, BinData); CREATE TABLE videosound (CaptionId, GirlOrBoy, CgName, BinData);")
+        db.execute("INSERT INTO videodata VALUES (?, ?, ?, ?)", (1, 2, "Shared", b"/Game/Movies/Shared.Shared\0"))
+        db.execute("INSERT INTO videosound VALUES (?, ?, ?, ?)", (1, 2, "Shared", sound("/Game/Audio/Event.Event", 1, -1)))
+    for language in ("en", "ja", "ko", "zh"):
+        directory = tmp_path / "Event" / language
+        directory.mkdir(parents=True)
+        (directory / "event.bnk").write_bytes(b"bank")
+    recipe = plan_cutscene(db_path, tmp_path, "Shared", "3.7.0")
+    tracks = recipe["videos"][0]["soundtrack"]
+    assert {track["language"] for track in tracks} == {"en", "ja", "ko", "zh"}
+    assert all(track["start_seconds"] == 1 for track in tracks)
+    (tmp_path / "Event/ko/event.bnk").unlink()
+    with pytest.raises(ValueError, match="ambiguous localized"):
+        plan_cutscene(db_path, tmp_path, "Shared", "3.7.0")
