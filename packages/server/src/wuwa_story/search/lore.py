@@ -24,14 +24,53 @@ class LoreSearchService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def hybrid_search(self, query: str, query_embedding: list[float], limit: int = 30) -> List[SearchResult]:
-        # Implementation of Reciprocal Rank Fusion (RRF) between Full-text Search and Vector Search
-        
-        # 1. We get the active embedding model ID
+    async def text_search(self, query: str, limit: int = 30) -> List[SearchResult]:
+        """Lexical and full-text search across lore chunks."""
+        sql = """
+        SELECT 
+            c.id, 
+            c.source_type, 
+            c.source_id, 
+            c.quest_id, 
+            c.chunk_type, 
+            c.content,
+            COALESCE(ts_rank(c.search_vector, websearch_to_tsquery('english', :query)), 0.1) AS rank_score
+        FROM search.lore_chunk c
+        WHERE (c.search_vector IS NOT NULL AND c.search_vector @@ websearch_to_tsquery('english', :query))
+           OR c.content ILIKE :like_query
+        ORDER BY rank_score DESC, c.id DESC
+        LIMIT :limit
+        """
+        result = await self.session.execute(
+            text(sql), 
+            {
+                "query": query, 
+                "like_query": f"%{query}%",
+                "limit": limit
+            }
+        )
+        rows = result.mappings().all()
+        return [
+            SearchResult(
+                chunk_id=row["id"],
+                source_type=row["source_type"],
+                source_id=row["source_id"],
+                quest_id=row["quest_id"],
+                chunk_type=row["chunk_type"],
+                content=row["content"],
+                score=float(row["rank_score"] or 0.1)
+            )
+            for row in rows
+        ]
+
+    async def hybrid_search(self, query: str, query_embedding: list[float] | None, limit: int = 30) -> List[SearchResult]:
+        if not query_embedding:
+            return await self.text_search(query, limit=limit)
+
         model_id = await self.session.scalar(select(EmbeddingModel.id).where(EmbeddingModel.active == True).limit(1))
         if not model_id:
-            logger.warning("No active embedding model found for vector search")
-            return []
+            logger.info("No active embedding model found for vector search; falling back to text search")
+            return await self.text_search(query, limit=limit)
 
         # Vector search query
         # We use pgvector's <=> operator (cosine distance). The smaller the distance, the more similar.

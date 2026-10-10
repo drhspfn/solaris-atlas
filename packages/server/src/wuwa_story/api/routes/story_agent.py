@@ -471,6 +471,33 @@ async def admin_chat(request: ChatRequest, session: AsyncSession = Depends(get_s
     
     tools = [
         {
+            "name": "search_dialogue",
+            "description": "Search actual spoken in-game dialogue lines across quests and scenes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Text spoken in dialogue"},
+                    "character": {"type": "string", "description": "Optional character name"},
+                    "quest_id": {"type": "integer", "description": "Optional quest ID"}
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            }
+        },
+        {
+            "name": "search_entities",
+            "description": "Search the database for characters, quests, items, and locations.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Entity name or keyword"},
+                    "category": {"type": "string", "description": "Optional category: character, quest, item, location"}
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            }
+        },
+        {
             "name": "search_lore",
             "description": "Semantic search across previously generated Wuthering Waves storyline lore (cutscenes, quests, characters). Use this to recall past lore facts.",
             "parameters": {
@@ -527,12 +554,12 @@ async def admin_chat(request: ChatRequest, session: AsyncSession = Depends(get_s
         {"role": "system", "content": (
             "You are the Solaris Atlas Admin Lore Assistant. "
             "You help the administrator manage and answer questions about the Wuthering Waves lore database. "
-            "You can search past generated lore explanations using 'search_lore' and read entire quests with 'get_quest_lore'. "
+            "You can search in-game dialogue with 'search_dialogue', search characters/quests/items with 'search_entities', "
+            "and search past generated lore explanations using 'search_lore' and read entire quests with 'get_quest_lore'. "
             "If the admin asks to correct information, use 'update_lore_chunk'. "
             "If the admin provides new information to add, use 'add_lore_fact'. "
-            "Always be precise and base your answers on the lore chunks you find. "
-            "If you update or add a chunk, confirm the action and chunk ID in your response. "
-            "You have full access to database editing tools, but only use them when requested."
+            "Always be precise and base your answers on the lore chunks and dialogue you find. "
+            "If you update or add a chunk, confirm the action and chunk ID in your response."
         )}
     ]
     for msg in request.messages:
@@ -552,7 +579,56 @@ async def admin_chat(request: ChatRequest, session: AsyncSession = Depends(get_s
                 
                 # Execute tools and append responses
                 for call in turn.calls:
-                    if call.name == "search_lore":
+                    if call.name == "search_dialogue":
+                        query = call.arguments.get("query", "")
+                        character = call.arguments.get("character")
+                        quest_id = call.arguments.get("quest_id")
+                        from wuwa_story.api.routes.story.transcripts import search_dialogue as api_search_dialogue
+                        try:
+                            res = await api_search_dialogue(
+                                q=query,
+                                character=character,
+                                quest_id=quest_id,
+                                locale="en",
+                                limit=15,
+                                offset=0,
+                                session=session
+                            )
+                            lines = []
+                            for r in res.get("results", []):
+                                speaker = r.get("speaker") or "Narrator"
+                                text = r.get("text") or ""
+                                q_id = r.get("quest_id") or (r.get("game_ids") or ["N/A"])[0]
+                                lines.append(f"[{speaker} in Quest {q_id}]: \"{text}\"")
+                            result_data = {"results": "\n".join(lines) if lines else "No dialogue lines found"}
+                        except Exception as e:
+                            result_data = {"error": str(e)}
+
+                    elif call.name == "search_entities":
+                        query = call.arguments.get("query", "")
+                        category = call.arguments.get("category")
+                        from wuwa_story.db.repositories.search import lexical_search
+                        from wuwa_story.api.routes.story.shared import _node_label
+                        from sqlalchemy import select
+                        from wuwa_story.db.models.i18n import Locale
+                        try:
+                            locale_id = await session.scalar(select(Locale.id).where(Locale.code == "en"))
+                            res = await lexical_search(
+                                session,
+                                query,
+                                limit=10,
+                                categories=[category] if category else None,
+                                locale_id=locale_id
+                            )
+                            items = []
+                            for r in res:
+                                label = (await _node_label(session, r["id"], "en")).get("label") or r.get("alias")
+                                items.append(f"[{r.get('node_type')}] {label} (key: {r.get('canonical_key')})")
+                            result_data = {"results": "\n".join(items) if items else "No entities found"}
+                        except Exception as e:
+                            result_data = {"error": str(e)}
+
+                    elif call.name == "search_lore":
                         query = call.arguments.get("query", "")
                         from wuwa_story.search.lore import LoreSearchService
                         from wuwa_story.search.embedding import generate_query_embedding
@@ -562,7 +638,7 @@ async def admin_chat(request: ChatRequest, session: AsyncSession = Depends(get_s
                             results = await service.hybrid_search(query, query_embedding, limit=5)
                             output = ""
                             for i, r in enumerate(results, 1):
-                                output += f"[{i}] Chunk ID: {r.id} | Quest: {r.quest_id} | Type: {r.chunk_type}\n{r.content}\n\n"
+                                output += f"[{i}] Chunk ID: {r.chunk_id} | Quest: {r.quest_id} | Type: {r.chunk_type}\n{r.content}\n\n"
                             result_data = {"results": output if output else "No results found"}
                         except Exception as e:
                             result_data = {"error": str(e)}

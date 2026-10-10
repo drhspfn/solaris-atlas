@@ -32,12 +32,27 @@ export function McpDocsPage() {
 
       <section style={{ marginTop: '2rem' }}>
         <h2>Available Tools</h2>
-        <ul style={{ lineHeight: '1.6' }}>
+        <ul style={{ lineHeight: '1.8' }}>
           <li>
-            <strong>search_lore:</strong> Perform a semantic search across our entire database of Wuthering Waves cutscenes, quests, dialogue, and generated story facts.
+            <strong>search_dialogue:</strong> Search millions of actual spoken in-game dialogue lines and subtitles across all quests, scenes, and talk items by text, character name, or quest ID.
           </li>
           <li>
-            <strong>get_quest_lore:</strong> Retrieve all established lore facts and explanations for a specific quest ID.
+            <strong>search_entities:</strong> Search the game database for characters, quests, items, locations, factions, and terms by name or keyword using lexical and trigram matching.
+          </li>
+          <li>
+            <strong>get_quest_transcript:</strong> Retrieve the full chronological dialogue transcript and script of a quest.
+          </li>
+          <li>
+            <strong>get_quest:</strong> Get full overview, metadata, chapter, scenes, and lore notes of a specific quest.
+          </li>
+          <li>
+            <strong>get_node_info:</strong> Inspect any entity in the story knowledge graph by its canonical key, including all graph relations to other entities.
+          </li>
+          <li>
+            <strong>search_lore:</strong> Search synthesized storyline explanations, cutscene analyses, and lore notes.
+          </li>
+          <li>
+            <strong>get_character_timeline:</strong> Chronology of events and storyline appearances for a character.
           </li>
         </ul>
       </section>
