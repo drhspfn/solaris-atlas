@@ -208,7 +208,13 @@ def _event_kind(group_id: str, item: dict[str, Any]) -> str:
 def _title(path: Any, asset: Any, item_id: str) -> str:
     if isinstance(path, str) and path.startswith("events/"):
         slug = path.rsplit("/", 1)[-1]
-        known = {"matrix": "Endstate Matrix", "towerofadversity": "Tower of Adversity"}
+        known = {
+            "matrix": "Endstate Matrix",
+            "towerofadversity": "Tower of Adversity",
+            "whimperingwastes": "Whimpering Wastes",
+            "phantasmadreamland": "Phantasma Dreamland",
+            "fantasiesofthethousandgateways": "Fantasies of the Thousand Gateways",
+        }
         return known.get(slug, _humanize(slug))
     if isinstance(asset, str):
         leaf = asset.rsplit("/", 1)[-1]

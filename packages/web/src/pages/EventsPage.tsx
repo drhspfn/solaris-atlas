@@ -1,8 +1,16 @@
-import { CalendarDays, ChevronDown, Clock3, ExternalLink, Gift, Sparkles } from 'lucide-react';
+import '../styles/events.css';
+
+import {
+  ChevronDown,
+  Clock3,
+  ExternalLink,
+  Gift,
+  Image as ImageIcon,
+  Sparkles,
+} from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { api } from '../api/client';
-import '../styles/events.css';
 
 type GameEvent = {
   id: number;
@@ -17,12 +25,14 @@ type GameEvent = {
   season: { start?: number; cycle?: { weeks?: number } } | null;
   rewards: { id: number; value?: number }[] | null;
   banner_path: string | null;
+  banner_url?: string | null;
   game_path: string | null;
   source_url: string;
 };
 
 type EventsResponse = { events: GameEvent[]; source_url: string };
 type Server = 'asia' | 'europe' | 'america';
+type TimelineRange = 'current' | 'all';
 const serverLabels: Record<Server, string> = { asia: 'Asia', europe: 'Europe', america: 'America' };
 const kindLabels: Record<GameEvent['kind'], string> = {
   banner: 'Convenes',
@@ -42,6 +52,29 @@ function formatDate(value: string | null) {
   return value ? dateFormatter.format(new Date(value)) : 'Date not recorded';
 }
 
+function EventArtwork({ event, compact = false }: { event: GameEvent; compact?: boolean }) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const failed = event.banner_url === failedUrl;
+
+  return (
+    <div className={`events-artwork ${compact ? 'compact' : ''}`}>
+      {event.banner_url && !failed ? (
+        <img
+          src={event.banner_url}
+          alt=""
+          loading="lazy"
+          onError={() => setFailedUrl(event.banner_url ?? null)}
+        />
+      ) : (
+        <div className="events-artwork-fallback" aria-hidden="true">
+          <ImageIcon size={compact ? 14 : 27} />
+          {!compact && <span>Artwork not available</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [server, setServer] = useState<Server>('europe');
   const [kind, setKind] = useState<GameEvent['kind'] | 'all'>('all');
@@ -49,6 +82,7 @@ function App() {
   const [selected, setSelected] = useState<GameEvent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [timelineRange, setTimelineRange] = useState<TimelineRange>('current');
 
   useEffect(() => {
     const controller = new AbortController();
@@ -74,22 +108,37 @@ function App() {
     () => events.filter((event) => kind === 'all' || event.kind === kind),
     [events, kind],
   );
-  const dated = visibleEvents.filter((event) => event.starts_at);
-  const earliest = dated.reduce(
+  const dated = visibleEvents.filter(
+    (event) => event.starts_at && Number.isFinite(new Date(event.starts_at).getTime()),
+  );
+  const allEarliest = dated.reduce(
     (value, event) => Math.min(value, new Date(event.starts_at!).getTime()),
     Infinity,
   );
-  const latest = dated.reduce(
+  const allLatest = dated.reduce(
     (value, event) => Math.max(value, new Date(event.ends_at ?? event.starts_at!).getTime()),
     -Infinity,
   );
+  const now = Date.now();
+  const rangeStart = timelineRange === 'current' ? now - 45 * 86400000 : allEarliest;
+  const rangeEnd = timelineRange === 'current' ? now + 75 * 86400000 : allLatest;
+  const earliest = timelineRange === 'current' ? rangeStart : allEarliest;
+  const latest = timelineRange === 'current' ? rangeEnd : allLatest;
+  const timelineEvents = visibleEvents.filter((event) => {
+    if (timelineRange === 'all' || !event.starts_at) return true;
+    const start = new Date(event.starts_at).getTime();
+    const end = event.ends_at ? new Date(event.ends_at).getTime() : start;
+    return end >= rangeStart && start <= rangeEnd;
+  });
   const span = Math.max(latest - earliest, 1);
   const monthTicks = useMemo(() => {
     if (!Number.isFinite(earliest) || !Number.isFinite(latest)) return [];
     const ticks: { label: string; left: number }[] = [];
     const date = new Date(earliest);
+    ticks.push({ label: monthFormatter.format(date), left: 0 });
     date.setDate(1);
     date.setHours(0, 0, 0, 0);
+    date.setMonth(date.getMonth() + 1);
     while (date.getTime() <= latest && ticks.length < 36) {
       ticks.push({
         label: monthFormatter.format(date),
@@ -165,7 +214,7 @@ function App() {
             ×
           </button>
           <div className="events-detail-art">
-            <CalendarDays size={24} />
+            <EventArtwork event={selected} />
             <span>
               {selected.game_version ? `VERSION ${selected.game_version}` : 'HISTORICAL SCHEDULE'}
             </span>
@@ -205,9 +254,9 @@ function App() {
                 </div>
               </div>
             ) : null}
-            {selected.banner_path && (
+            {selected.banner_path && !selected.banner_url && (
               <small className="events-art-note">
-                Banner asset recorded · visual extraction is not in this schedule source
+                Artwork is listed in the game data but has not been published yet.
               </small>
             )}
           </div>
@@ -220,11 +269,26 @@ function App() {
             <span>THE LONG VIEW</span>
             <h2>Event timeline</h2>
           </div>
-          <p>
-            {dated.length
-              ? `${monthFormatter.format(new Date(earliest))} — ${monthFormatter.format(new Date(latest))}`
-              : 'Historical schedule'}
-          </p>
+          <div className="events-timeline-tools">
+            <label>
+              <span>Timeline</span>
+              <span className="events-select-wrap">
+                <select
+                  value={timelineRange}
+                  onChange={(e) => setTimelineRange(e.target.value as TimelineRange)}
+                >
+                  <option value="current">Current cycle</option>
+                  <option value="all">All history</option>
+                </select>
+                <ChevronDown size={14} />
+              </span>
+            </label>
+            <p>
+              {dated.length && Number.isFinite(earliest) && Number.isFinite(latest)
+                ? `${monthFormatter.format(new Date(earliest))} — ${monthFormatter.format(new Date(latest))}`
+                : 'Historical schedule'}
+            </p>
+          </div>
         </header>
         {loading ? (
           <div className="events-empty">Reading the archive…</div>
@@ -235,7 +299,10 @@ function App() {
           </div>
         ) : (
           <div className="events-chart-scroll" tabIndex={0} aria-label="Scrollable event timeline">
-            <div className="events-chart" style={{ minWidth: monthTicks.length > 18 ? 1200 : 900 }}>
+            <div
+              className="events-chart"
+              style={{ minWidth: Math.max(900, monthTicks.length * 125 + 260) }}
+            >
               <div className="events-axis">
                 <span>EVENT</span>
                 <div className="events-axis-track">
@@ -246,21 +313,25 @@ function App() {
                   ))}
                 </div>
               </div>
-              {visibleEvents.map((event) => {
-                const start = event.starts_at ? new Date(event.starts_at).getTime() : earliest;
+              {timelineEvents.map((event) => {
+                const start = event.starts_at ? new Date(event.starts_at).getTime() : Number.NaN;
                 const end = event.ends_at ? new Date(event.ends_at).getTime() : start;
                 const left = Number.isFinite(start)
-                  ? Math.max(0, ((start - earliest) / span) * 100)
+                  ? Math.min(100, Math.max(0, ((start - earliest) / span) * 100))
                   : 0;
-                const width = event.ends_at ? Math.max(0.8, ((end - start) / span) * 100) : 0.8;
+                const right = Number.isFinite(end)
+                  ? Math.min(100, Math.max(0, ((end - earliest) / span) * 100))
+                  : left;
+                const width = Math.max(0.8, right - left);
                 return (
                   <button
-                    className={`events-row ${selected?.occurrence_id === event.occurrence_id ? 'selected' : ''}`}
+                    className={`events-row ${selected?.id === event.id ? 'selected' : ''}`}
                     key={event.occurrence_id ?? event.id}
                     onClick={() => setSelected(event)}
                   >
                     <span className="events-row-label">
                       <span className={`events-dot kind-${event.kind}`} />
+                      <EventArtwork event={event} compact />
                       <span>
                         <strong>{event.title}</strong>
                         <small>
@@ -278,10 +349,7 @@ function App() {
                         />
                       )}
                       {event.ends_at && Number.isFinite(end) && (
-                        <span
-                          className="events-end-marker"
-                          style={{ left: `${Math.min(100, ((end - earliest) / span) * 100)}%` }}
-                        />
+                        <span className="events-end-marker" style={{ left: `${right}%` }} />
                       )}
                     </span>
                   </button>

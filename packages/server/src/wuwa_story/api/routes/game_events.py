@@ -3,11 +3,14 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.session import get_session
+from wuwa_story.storage.s3 import S3Storage
 
 router = APIRouter(tags=["game events"])
 
@@ -39,6 +42,42 @@ async def list_game_events(
             | (GameEventOccurrence.game_version.is_(None))
         )
     rows = (await session.execute(statement)).all()
+    banner_paths = {
+        path
+        for event, occurrence in rows
+        if (
+            path := (occurrence.banner_path if occurrence else None) or event.banner_path
+        ) is not None
+    }
+    banner_urls: dict[str, str] = {}
+    if banner_paths:
+        settings = get_settings()
+        source_path_matches = [FileReference.source_path == path for path in banner_paths]
+        source_path_matches.extend(
+            FileReference.source_path.endswith("/" + path) for path in banner_paths
+        )
+        media = await session.execute(
+            select(FileReference.source_path, FileLocation.object_key)
+            .join(FileObject, FileObject.id == FileReference.file_id)
+            .join(FileLocation, FileLocation.file_id == FileObject.id)
+            .where(
+                or_(*source_path_matches),
+                FileLocation.available.is_(True),
+                FileLocation.is_primary.is_(True),
+                FileLocation.backend == "s3",
+                FileLocation.bucket == settings.s3_bucket,
+                FileObject.mime_type.in_(
+                    ["image/png", "image/jpeg", "image/webp", "image/avif"]
+                ),
+            )
+        )
+        storage = S3Storage(settings)
+        for source_path, object_key in media:
+            if source_path is None:
+                continue
+            for banner_path in banner_paths:
+                if source_path == banner_path or source_path.endswith("/" + banner_path):
+                    banner_urls.setdefault(banner_path, storage.public_url(object_key))
     return {
         "server": server,
         "source": "Sanma5657/wuwa-wiki-public",
@@ -57,6 +96,9 @@ async def list_game_events(
                 "season": occurrence.season if occurrence else None,
                 "rewards": (occurrence.rewards if occurrence else None) or event.rewards,
                 "banner_path": (occurrence.banner_path if occurrence else None) or event.banner_path,
+                "banner_url": banner_urls.get(
+                    (occurrence.banner_path if occurrence else None) or event.banner_path or ""
+                ),
                 "game_path": event.game_path,
                 "source_url": event.source_url,
             }

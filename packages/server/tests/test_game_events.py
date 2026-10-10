@@ -1,4 +1,4 @@
-from wuwa_story.ingestion.game_events import _deduplicate_occurrences
+from wuwa_story.ingestion.game_events import _deduplicate_occurrences, _title
 
 
 def test_deduplicate_occurrences_keeps_latest_duplicate_and_distinct_servers():
@@ -32,3 +32,8 @@ def test_deduplicate_occurrences_keeps_latest_duplicate_and_distinct_servers():
     result = _deduplicate_occurrences(rows)
 
     assert result == [rows[2], rows[1], rows[3]]
+
+
+def test_known_recurring_modes_have_reader_facing_names():
+    assert _title("events/matrix", None, "10077000206") == "Endstate Matrix"
+    assert _title("events/whimperingwastes", None, "10039000102") == "Whimpering Wastes"
