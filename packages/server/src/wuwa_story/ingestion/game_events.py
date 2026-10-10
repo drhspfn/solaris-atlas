@@ -139,7 +139,10 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
         ).all()
     )
     values = [
-        {**row, "event_id": event_ids[row["source_id"]]}
+        {
+            **{key: value for key, value in row.items() if key != "source_id"},
+            "event_id": event_ids[row["source_id"]],
+        }
         for row in occurrence_rows
         if row["source_id"] in event_ids
     ]
