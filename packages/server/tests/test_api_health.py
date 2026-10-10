@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+
+import pytest
 from fastapi.testclient import TestClient
 
 from wuwa_story.api.app import app
@@ -44,3 +47,29 @@ def test_mcp_streamable_http_endpoint_lists_tools() -> None:
         "get_quest",
         "get_character_timeline",
     }
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_uses_configured_async_session_factory(monkeypatch) -> None:
+    from wuwa_story.api.routes import mcp
+
+    class FakeSession:
+        async def execute(self, _statement):
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+
+    class FakeSessionFactory:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return FakeSession()
+
+        async def __aexit__(self, *_args):
+            return None
+
+    from wuwa_story.db import session
+
+    monkeypatch.setattr(session, "SessionFactory", FakeSessionFactory())
+    result = await mcp.handle_call_tool("get_quest", {"quest_id": "test-quest"})
+
+    assert result[0].text == "No lore chunks found for quest test-quest."

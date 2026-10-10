@@ -69,9 +69,9 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
     if not arguments:
         arguments = {}
 
-    from wuwa_story.db.session import SessionLocal
+    from wuwa_story.db.session import SessionFactory
     
-    async with SessionLocal() as session:
+    async with SessionFactory() as session:
         try:
             if name == "search_lore":
                 query = arguments.get("query")
