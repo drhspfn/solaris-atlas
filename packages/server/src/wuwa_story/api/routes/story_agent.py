@@ -450,3 +450,206 @@ async def generated_event(
         "quest_id": quest_id,
         "game_version": release.game_version,
     }
+
+
+class ChatMessage(StrictModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatRequest(StrictModel):
+    messages: list[ChatMessage]
+
+
+@admin.post("/chat", dependencies=[Depends(require_csrf)])
+async def admin_chat(request: ChatRequest, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    from wuwa_story.agents.providers import Provider
+    from wuwa_story.agents.settings import get_agent_settings
+    import httpx
+
+    settings = get_agent_settings()
+    
+    tools = [
+        {
+            "name": "search_lore",
+            "description": "Semantic search across previously generated Wuthering Waves storyline lore (cutscenes, quests, characters). Use this to recall past lore facts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"}
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            }
+        },
+        {
+            "name": "get_quest_lore",
+            "description": "Get all generated lore facts and cutscenes for a specific quest ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "quest_id": {"type": "string"}
+                },
+                "required": ["quest_id"],
+                "additionalProperties": False,
+            }
+        },
+        {
+            "name": "update_lore_chunk",
+            "description": "Correct or update an existing lore chunk if you find a mistake.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chunk_id": {"type": "integer"},
+                    "new_content": {"type": "string"}
+                },
+                "required": ["chunk_id", "new_content"],
+                "additionalProperties": False,
+            }
+        },
+        {
+            "name": "add_lore_fact",
+            "description": "Add a brand new lore fact or explanation to the database.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string"},
+                    "quest_id": {"type": "string", "description": "Optional quest ID this relates to"},
+                    "characters": {"type": "array", "items": {"type": "string"}, "description": "Characters involved"}
+                },
+                "required": ["content"],
+                "additionalProperties": False,
+            }
+        }
+    ]
+
+    history = [
+        {"role": "system", "content": "You are a Lore Assistant. You help the admin answer lore questions by searching past generated lore explanations using the search_lore tool. You can read entire quests with get_quest_lore. If you notice inaccuracies or want to add explicit manual context, use update_lore_chunk or add_lore_fact."}
+    ]
+    for msg in request.messages:
+        history.append({"role": msg.role, "content": msg.content})
+
+    async with httpx.AsyncClient() as client:
+        provider = Provider(settings, client)
+        
+        for _ in range(5):
+            path, payload = provider.request(history, tools)
+            raw = await provider.post(path, payload)
+            turn = provider.parse(raw)
+            
+            if turn.calls:
+                # Add model's tool calls to history
+                history.extend(turn.items)
+                
+                # Execute tools and append responses
+                for call in turn.calls:
+                    if call.name == "search_lore":
+                        query = call.arguments.get("query", "")
+                        from wuwa_story.search.lore import LoreSearchService
+                        from wuwa_story.search.embedding import generate_query_embedding
+                        try:
+                            query_embedding = await generate_query_embedding(session, query)
+                            service = LoreSearchService(session)
+                            results = await service.hybrid_search(query, query_embedding, limit=5)
+                            output = ""
+                            for i, r in enumerate(results, 1):
+                                output += f"[{i}] Chunk ID: {r.id} | Quest: {r.quest_id} | Type: {r.chunk_type}\n{r.content}\n\n"
+                            result_data = {"results": output if output else "No results found"}
+                        except Exception as e:
+                            result_data = {"error": str(e)}
+                    elif call.name == "get_quest_lore":
+                        quest_id = call.arguments.get("quest_id")
+                        from sqlalchemy import select
+                        from wuwa_story.db.models.lore import LoreChunk
+                        try:
+                            stmt = select(LoreChunk).where(LoreChunk.quest_id == quest_id).order_by(LoreChunk.id)
+                            result = await session.execute(stmt)
+                            chunks = result.scalars().all()
+                            if chunks:
+                                output = ""
+                                for r in chunks:
+                                    output += f"[Chunk ID: {r.id}] Type: {r.chunk_type}\n{r.content}\n\n"
+                                result_data = {"results": output}
+                            else:
+                                result_data = {"results": "No lore found for this quest."}
+                        except Exception as e:
+                            result_data = {"error": str(e)}
+                    elif call.name == "update_lore_chunk":
+                        chunk_id = call.arguments.get("chunk_id")
+                        new_content = call.arguments.get("new_content")
+                        from wuwa_story.db.models.lore import LoreChunk, LoreChunkEmbedding
+                        from wuwa_story.search.embedding import generate_query_embedding
+                        from sqlalchemy import select, delete, func
+                        import hashlib
+                        try:
+                            chunk = await session.get(LoreChunk, chunk_id)
+                            if chunk:
+                                chunk.content = new_content
+                                chunk.search_vector = func.to_tsvector("english", new_content)
+                                await session.execute(delete(LoreChunkEmbedding).where(LoreChunkEmbedding.chunk_id == chunk_id))
+                                new_emb = await generate_query_embedding(session, new_content)
+                                from wuwa_story.db.models.search import EmbeddingModel
+                                model = await session.scalar(select(EmbeddingModel).where(EmbeddingModel.active == True).limit(1))
+                                if model:
+                                    content_hash = hashlib.sha256(new_content.encode()).digest()
+                                    new_emb_row = LoreChunkEmbedding(
+                                        chunk_id=chunk_id,
+                                        model_id=model.id,
+                                        content_hash=content_hash,
+                                        embedding=new_emb
+                                    )
+                                    session.add(new_emb_row)
+                                await session.commit()
+                                result_data = {"success": True, "message": f"Chunk {chunk_id} updated."}
+                            else:
+                                result_data = {"error": "Chunk not found."}
+                        except Exception as e:
+                            await session.rollback()
+                            result_data = {"error": str(e)}
+                    elif call.name == "add_lore_fact":
+                        content = call.arguments.get("content")
+                        quest_id = call.arguments.get("quest_id")
+                        characters = call.arguments.get("characters", [])
+                        from wuwa_story.db.models.lore import LoreChunk, LoreChunkEmbedding
+                        from wuwa_story.search.embedding import generate_query_embedding
+                        from wuwa_story.db.models.search import EmbeddingModel
+                        from sqlalchemy import select, func
+                        import hashlib
+                        try:
+                            new_chunk = LoreChunk(
+                                source_type="manual_fact",
+                                source_id="admin_chat",
+                                quest_id=quest_id,
+                                characters=characters,
+                                chunk_type="fact",
+                                content=content,
+                                search_vector=func.to_tsvector("english", content)
+                            )
+                            session.add(new_chunk)
+                            await session.flush()
+                            
+                            new_emb = await generate_query_embedding(session, content)
+                            model = await session.scalar(select(EmbeddingModel).where(EmbeddingModel.active == True).limit(1))
+                            if model:
+                                content_hash = hashlib.sha256(content.encode()).digest()
+                                new_emb_row = LoreChunkEmbedding(
+                                    chunk_id=new_chunk.id,
+                                    model_id=model.id,
+                                    content_hash=content_hash,
+                                    embedding=new_emb
+                                )
+                                session.add(new_emb_row)
+                            await session.commit()
+                            result_data = {"success": True, "message": f"New fact added with chunk ID {new_chunk.id}."}
+                        except Exception as e:
+                            await session.rollback()
+                            result_data = {"error": str(e)}
+                    else:
+                        result_data = {"error": "Unknown tool"}
+                        
+                    history.append(provider.tool_result(call, result_data))
+            else:
+                return {"reply": turn.text}
+                
+        return {"reply": "I needed too many steps to answer. Please try again."}
+
