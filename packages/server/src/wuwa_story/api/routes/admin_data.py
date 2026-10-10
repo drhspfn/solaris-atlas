@@ -28,6 +28,7 @@ from wuwa_story.ingestion.client_assets import (
     get_live_launcher_info,
     inspect_installed_clients,
 )
+from wuwa_story.ingestion.game_events import import_game_events
 from wuwa_story.ingestion.github_snapshots import discover_remote_snapshots
 from wuwa_story.ingestion.media_jobs import publish_media_job
 from wuwa_story.ingestion.queue_status import queue_status
@@ -69,6 +70,18 @@ class MapBuildRequest(_PayloadModel):
     version: str = Field(default="3.7.0", pattern=r"^\d+\.\d+(\.\d+)?$")
     tier: Literal["sd", "hd", "uhd"] = "hd"
     download_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+@router.post("/events/import", status_code=200, dependencies=[Depends(require_csrf)])
+async def import_event_archive(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    try:
+        result = await import_game_events(session)
+        await session.commit()
+        return result
+    except Exception as error:
+        await session.rollback()
+        logger.exception("Event archive import failed")
+        raise HTTPException(502, f"Event archive import failed: {type(error).__name__}") from error
 
 
 def _get_asset_workspace() -> Path:

@@ -50,6 +50,9 @@ const DataOperationsPage = lazy(() =>
     default: module.DataOperationsPage,
   })),
 );
+const EventsPage = lazy(() =>
+  import('../pages/EventsPage').then((module) => ({ default: module.EventsPage })),
+);
 
 const apiDocsUrl = import.meta.env.VITE_API_DOCS_URL ?? APP_SETTINGS.api.defaultDocsUrl;
 
@@ -85,6 +88,13 @@ export function App() {
             className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
           >
             Story map
+          </NavLink>
+          <NavLink
+            onClick={() => setMobileOpen(false)}
+            to="/events"
+            className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+          >
+            Events
           </NavLink>
           {categories.map((c) => (
             <NavLink
@@ -155,6 +165,14 @@ export function App() {
             }
           />
           <Route path="/story-map" element={<StoryMapPage />} />
+          <Route
+            path="/events"
+            element={
+              <Suspense fallback={<PageLoader />}>
+                <EventsPage />
+              </Suspense>
+            }
+          />
           <Route path="/characters/:key" element={<Profile kind="character" />} />
           <Route path="/items/:key" element={<Profile kind="item" />} />
           <Route path="/locations/:key" element={<Profile kind="location" />} />
