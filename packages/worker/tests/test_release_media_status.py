@@ -42,6 +42,29 @@ async def test_deferred_child_is_waited_for_instead_of_failed():
 
 
 @pytest.mark.asyncio
+async def test_event_artwork_reports_unresolved_client_texture(monkeypatch, tmp_path):
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
+    build = AsyncMock(return_value={})
+    monkeypatch.setattr(release_media, "build_icons", build)
+    session = AsyncMock()
+
+    report, status = await release_media.event_images(
+        {"release_id": 9, "targets": ["Common/Image/BgCg/T_RoleShare_SuoMing"]},
+        {"asset_version": "3.7.0", "tier": "hd", "download_id": "a" * 64},
+        session,
+    )
+
+    assert status == "partial"
+    assert report["missing"] == 1
+    assert build.await_args.args[3] == [{
+        "metadata_json": {
+            "icon_source": "/Game/Aki/UI/UIResources/Common/Image/BgCg/T_RoleShare_SuoMing"
+        }
+    }]
+
+
+@pytest.mark.asyncio
 async def test_voice_export_search_includes_wwise_audio_and_uppercase_extension(tmp_path, monkeypatch):
     from wuwa_story_worker import entity_media, voice_bootstrap, voice_packages
     root = tmp_path / "client"

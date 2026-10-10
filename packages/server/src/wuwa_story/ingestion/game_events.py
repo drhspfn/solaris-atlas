@@ -50,7 +50,7 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
             asset = item.get("img")
             path = item.get("path")
             event_info = details.get(str(item.get("detailId")))
-            title = _title(path, asset, item_id)
+            title = _title(path, asset, group_id)
             if event_source_id not in event_rows:
                 event_rows[event_source_id] = {
                     "source": SOURCE,
@@ -205,7 +205,7 @@ def _event_kind(group_id: str, item: dict[str, Any]) -> str:
     return "limited"
 
 
-def _title(path: Any, asset: Any, item_id: str) -> str:
+def _title(path: Any, asset: Any, group_id: str = "") -> str:
     if isinstance(path, str) and path.startswith("events/"):
         slug = path.rsplit("/", 1)[-1]
         known = {
@@ -224,7 +224,14 @@ def _title(path: Any, asset: Any, item_id: str) -> str:
         ):
             if leaf.startswith(prefix):
                 return f"{_humanize(leaf.removeprefix(prefix))} · {label}"
-    return f"In-game activity · {item_id}"
+    # The upstream schedule omits display names for these records. Keep the ID
+    # available as provenance, but don't present an internal numeric key as a title.
+    return {
+        "1": "Convene",
+        "2": "Limited-time event",
+        "3": "Recurring event",
+        "4": "Permanent event",
+    }.get(group_id, "Game event")
 
 
 def _humanize(value: str) -> str:

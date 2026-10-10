@@ -146,7 +146,11 @@ function App() {
       });
       date.setMonth(date.getMonth() + 1);
     }
-    return ticks;
+    const chartWidth = Math.max(900, Math.ceil(span / (30.5 * 86400000)) * 165 + 300);
+    const trackWidth = chartWidth * 0.69;
+    return ticks.filter(
+      (tick, index) => index === 0 || (tick.left - ticks[index - 1].left) * trackWidth >= 96,
+    );
   }, [earliest, latest, span]);
 
   return (
@@ -301,7 +305,7 @@ function App() {
           <div className="events-chart-scroll" tabIndex={0} aria-label="Scrollable event timeline">
             <div
               className="events-chart"
-              style={{ minWidth: Math.max(900, monthTicks.length * 125 + 260) }}
+              style={{ minWidth: Math.max(900, Math.ceil(span / (30.5 * 86400000)) * 165 + 300) }}
             >
               <div className="events-axis">
                 <span>EVENT</span>

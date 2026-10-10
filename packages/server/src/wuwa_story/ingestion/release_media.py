@@ -7,6 +7,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from wuwa_story.db.models.core import Cutscene, VoiceReference
+from wuwa_story.db.models.game_events import GameEvent
 from wuwa_story.db.models.graph import Node, NodeRevision
 from wuwa_story.db.models.ops import GameRelease, ProcessingRun, Processor
 from wuwa_story.ingestion.media_jobs import publish_media_job
@@ -19,7 +20,9 @@ def batches(values, size=100):
     return [values[start:start + size] for start in range(0, len(values), size)]
 
 
-async def enqueue_release_media(session, release_id: int) -> dict:
+async def enqueue_release_media(
+    session, release_id: int, *, event_artwork_only: bool = False
+) -> dict:
     release = await session.get(GameRelease, release_id)
     if release is None:
         raise ValueError("Imported snapshot not found")
@@ -27,25 +30,38 @@ async def enqueue_release_media(session, release_id: int) -> dict:
     await session.execute(insert(Processor).values(key=PROCESSOR, version="1")
                           .on_conflict_do_nothing(index_elements=[Processor.key]))
     processor = await session.scalar(select(Processor.id).where(Processor.key == PROCESSOR))
-    present = select(NodeRevision.node_id).where(NodeRevision.release_id == release_id)
-    entities = list(await session.scalars(select(Node.canonical_key).where(
-        Node.id.in_(present), (Node.canonical_key.startswith("character:"))
-        | (Node.canonical_key.startswith("item:")) | (Node.canonical_key.startswith("skill:"))).order_by(Node.id)))
-    cutscenes = list(await session.scalars(select(Cutscene.cg_name).where(
-        Cutscene.node_id.in_(present), Cutscene.cg_name.is_not(None)).order_by(Cutscene.node_id)))
-    voices = list(await session.scalars(select(VoiceReference.file_name).where(
-        VoiceReference.node_id.in_(present), VoiceReference.file_name.is_not(None))
-        .distinct().order_by(VoiceReference.file_name)))
+    if event_artwork_only:
+        entities, cutscenes, voices = [], [], []
+    else:
+        present = select(NodeRevision.node_id).where(NodeRevision.release_id == release_id)
+        entities = list(await session.scalars(select(Node.canonical_key).where(
+            Node.id.in_(present), (Node.canonical_key.startswith("character:"))
+            | (Node.canonical_key.startswith("item:"))
+            | (Node.canonical_key.startswith("skill:"))).order_by(Node.id)))
+        cutscenes = list(await session.scalars(select(Cutscene.cg_name).where(
+            Cutscene.node_id.in_(present), Cutscene.cg_name.is_not(None)).order_by(Cutscene.node_id)))
+        voices = list(await session.scalars(select(VoiceReference.file_name).where(
+            VoiceReference.node_id.in_(present), VoiceReference.file_name.is_not(None))
+            .distinct().order_by(VoiceReference.file_name)))
     characters = [key for key in entities if key.startswith("character:")]
     specs = [("prepare", [])]
-    if cutscenes:
+    if event_artwork_only:
+        event_paths = sorted(set(await session.scalars(
+            select(GameEvent.banner_path).where(GameEvent.banner_path.is_not(None))
+        )))
+        if not event_paths:
+            return {"release_id": release_id, "parent_id": None, "tasks": 0,
+                    "queued": 0, "enqueue_failed": 0}
+        specs.extend(("event_images", batch) for batch in batches(event_paths))
+    if not event_artwork_only and cutscenes:
         specs.append(("cutscene_assets", sorted(set(cutscenes))))
-    if voices or characters:
+    if not event_artwork_only and (voices or characters):
         specs.append(("voice_packages", []))
-    specs.extend(("images", batch) for batch in batches(entities))
-    specs.extend(("cutscene", [name]) for name in sorted(set(cutscenes)))
-    specs.extend(("voices", batch) for batch in batches(voices))
-    specs.extend(("character_voices", batch) for batch in batches(characters))
+    if not event_artwork_only:
+        specs.extend(("images", batch) for batch in batches(entities))
+        specs.extend(("cutscene", [name]) for name in sorted(set(cutscenes)))
+        specs.extend(("voices", batch) for batch in batches(voices))
+        specs.extend(("character_voices", batch) for batch in batches(characters))
     pending, runs = [], []
     parent_id = None
     dependencies = {}

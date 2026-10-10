@@ -77,6 +77,11 @@ async def import_event_archive(session: AsyncSession = Depends(get_session)) -> 
     try:
         result = await import_game_events(session)
         await session.commit()
+        release = await session.scalar(select(GameRelease).order_by(GameRelease.sequence.desc()).limit(1))
+        if release is not None:
+            result["artwork"] = await enqueue_release_media(
+                session, release.id, event_artwork_only=True
+            )
         return result
     except Exception as error:
         await session.rollback()

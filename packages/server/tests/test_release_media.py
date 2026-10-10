@@ -63,3 +63,28 @@ async def test_completed_tasks_are_reused_without_publication(monkeypatch):
     assert result["parent_id"] == 10
     assert result["queued"] == 0
     publish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_event_artwork_import_queues_extraction_after_client_preparation(monkeypatch):
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version="1.0.0")
+    session.scalars.return_value = ["Common/Image/BgCg/T_RoleShare_SuoMing"]
+    session.scalar.side_effect = [4, None, None]
+    runs = []
+    session.add = lambda run: runs.append(run)
+
+    async def flush():
+        runs[-1].id = len(runs)
+
+    session.flush.side_effect = flush
+    published = AsyncMock()
+    monkeypatch.setattr(release_media, "publish_media_job", published)
+
+    result = await release_media.enqueue_release_media(session, 9, event_artwork_only=True)
+
+    payloads = [call.args[0] for call in published.await_args_list]
+    by_kind = {payload["kind"]: payload for payload in payloads}
+    assert result["queued"] == 2
+    assert by_kind["event_images"]["targets"] == ["Common/Image/BgCg/T_RoleShare_SuoMing"]
+    assert by_kind["event_images"]["parent_id"] == by_kind["prepare"]["run_id"]

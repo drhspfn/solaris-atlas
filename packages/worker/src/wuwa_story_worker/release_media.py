@@ -9,11 +9,15 @@ import sqlite3
 from pathlib import Path
 
 from sqlalchemy import select, text
+from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.ops import ProcessingRun
+from wuwa_story.db.models.storage import FileReference
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.client_assets import discover_plan, inspect_installed_clients
 from wuwa_story.ingestion.entity_media import MediaRequest
 from wuwa_story.ingestion.media_jobs import enqueue_entity_media
+from wuwa_story.storage.s3 import S3Storage
+from wuwa_story.storage.service import FileRegistrationService
 
 from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.broker import JobDeferred
@@ -21,6 +25,7 @@ from wuwa_story_worker.client_assets import download_plan, save_json, workspace_
 from wuwa_story_worker.cutscene_import import import_cutscene_recipe
 from wuwa_story_worker.cutscene_plan import plan_cutscene
 from wuwa_story_worker.job_tracking import update_admin_run
+from wuwa_story_worker.map_icons import build_icons
 from wuwa_story_worker.media_diagnostics import publish_inventory, voice_report
 from wuwa_story_worker.tooling import asset_workspace, tool_path
 from wuwa_story_worker.voice_import import exported_voices, import_voice_sample
@@ -79,6 +84,58 @@ async def image_batch(payload, parent, run, session):
     if child.status not in {"completed", "partial"}:
         raise RuntimeError(f"Image extraction task #{child.id}: {child.error or child.status}")
     return {**(child.raw_output or {}), "entity_run_id": child.id}, child.status
+
+
+async def event_images(payload, parent, session):
+    """Extract and publish schedule artwork by its authored client texture path."""
+    root = client_root(parent)
+    sources = {
+        path: path if path.startswith("/Game/") else "/Game/Aki/UI/UIResources/" + path.lstrip("/")
+        for path in payload["targets"]
+    }
+    markers = [{"metadata_json": {"icon_source": source}} for source in sources.values()]
+    icons = await build_icons(
+        root, tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
+        markers, entity_media=True,
+    )
+    service = None
+    entries = []
+    for original, source in sources.items():
+        icon = icons.get(source)
+        if icon is None:
+            entries.append({"expected": original, "status": "not_resolved", "matches": []})
+            continue
+        if service is None:
+            storage = S3Storage(get_settings())
+            await storage.ensure_bucket()
+            service = FileRegistrationService(storage)
+        image_path = Path(icon["path"])
+        image = await service.register_file(session, image_path, "image", mime_type="image/png")
+        for raw_path in icon["raw_paths"]:
+            raw_file = await service.register_file(session, Path(raw_path), "unknown")
+            await service.register_variant(session, raw_file.id, image.id, "event_banner_png")
+        reference = await session.scalar(select(FileReference).where(
+            FileReference.release_id == payload["release_id"],
+            FileReference.reference_type == "event_banner",
+            FileReference.source_path == original,
+            FileReference.metadata_json["asset_version"].astext == parent["asset_version"],
+        ))
+        if reference is None:
+            reference = await service.register_reference(
+                session, file_id=image.id, reference_type="event_banner",
+                release_id=payload["release_id"], source_path=original,
+            )
+        reference.file_id = image.id
+        reference.metadata_json = {"asset_version": parent["asset_version"],
+                                   "download_id": parent["download_id"]}
+        entries.append({"expected": original, "status": "found",
+                        "matches": [image_path.name]})
+    await session.commit()
+    return {"asset_version": parent["asset_version"], "requested": len(entries),
+            "found": sum(entry["status"] == "found" for entry in entries),
+            "missing": sum(entry["status"] != "found" for entry in entries),
+            "entries": entries}, ("partial" if any(e["status"] != "found" for e in entries)
+                                  else "completed")
 
 
 def merge_exports(receipts, destination):
@@ -293,6 +350,8 @@ async def process_release_media(payload):
                     await update_admin_run(run.id, "release_media", "running")
                     if payload["kind"] in {"images", "character_voices"}:
                         result, status = await image_batch(payload, parent.raw_output, run, session)
+                    elif payload["kind"] == "event_images":
+                        result, status = await event_images(payload, parent.raw_output, session)
                     elif payload["kind"] == "cutscene_assets":
                         result, status = await cutscene_assets(payload, parent.raw_output)
                     elif payload["kind"] == "voice_packages":
