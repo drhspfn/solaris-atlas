@@ -1,5 +1,6 @@
 import { APP_SETTINGS } from '../config/settings';
 import { requestCredentials } from './requestPolicy';
+import { resolveApiUrl } from './resolveApiUrl';
 const apiBase = (import.meta.env.VITE_API_BASE ?? APP_SETTINGS.api.defaultBase).replace(/\/$/, '');
 
 export class ApiError extends Error {
@@ -54,5 +55,5 @@ export async function api<T>(
 }
 
 export function apiUrl(path: string): string {
-  return `${apiBase}${path}`;
+  return resolveApiUrl(apiBase, path);
 }
