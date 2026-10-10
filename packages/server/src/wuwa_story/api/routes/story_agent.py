@@ -524,7 +524,16 @@ async def admin_chat(request: ChatRequest, session: AsyncSession = Depends(get_s
     ]
 
     history = [
-        {"role": "system", "content": "You are a Lore Assistant. You help the admin answer lore questions by searching past generated lore explanations using the search_lore tool. You can read entire quests with get_quest_lore. If you notice inaccuracies or want to add explicit manual context, use update_lore_chunk or add_lore_fact."}
+        {"role": "system", "content": (
+            "You are the Solaris Atlas Admin Lore Assistant. "
+            "You help the administrator manage and answer questions about the Wuthering Waves lore database. "
+            "You can search past generated lore explanations using 'search_lore' and read entire quests with 'get_quest_lore'. "
+            "If the admin asks to correct information, use 'update_lore_chunk'. "
+            "If the admin provides new information to add, use 'add_lore_fact'. "
+            "Always be precise and base your answers on the lore chunks you find. "
+            "If you update or add a chunk, confirm the action and chunk ID in your response. "
+            "You have full access to database editing tools, but only use them when requested."
+        )}
     ]
     for msg in request.messages:
         history.append({"role": msg.role, "content": msg.content})

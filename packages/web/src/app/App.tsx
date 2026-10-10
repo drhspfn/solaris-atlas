@@ -28,6 +28,7 @@ import { SettingsPage } from '../pages/SettingsPage';
 import { StoryConnectionPage } from '../pages/StoryConnectionPage';
 import { StoryEventPage } from '../pages/StoryEventPage';
 import { StoryMapPage } from '../pages/StoryMapPage';
+import { McpDocsPage } from '../pages/McpDocsPage';
 
 const WorldMapPage = lazy(() =>
   import('../pages/WorldMapPage').then((module) => ({ default: module.WorldMapPage })),
@@ -110,8 +111,17 @@ export function App() {
             onClick={() => setMobileOpen(false)}
             to="/settings"
             className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+            aria-label="Settings"
+            title="Settings"
           >
-            <Settings size={13} /> Settings
+            <Settings size={16} />
+          </NavLink>
+          <NavLink
+            onClick={() => setMobileOpen(false)}
+            to="/mcp-docs"
+            className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+          >
+            MCP
           </NavLink>
           <a className="nav-link nav-about" href={apiDocsUrl} target="_blank" rel="noreferrer">
             API <ExternalLink size={12} />
@@ -234,6 +244,7 @@ export function App() {
             />
           </Route>
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/mcp-docs" element={<McpDocsPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
