@@ -56,10 +56,10 @@ async def test_voice_export_search_includes_wwise_audio_and_uppercase_extension(
     monkeypatch.setattr(voice_bootstrap, "discover_client_voices", lambda *_: {"id": "fixture"})
     monkeypatch.setattr(voice_packages, "download_voice_plan", lambda *args, **kwargs: voice_root)
     async def extract(args, log, timeout):
-        assert args[-1] == "Audio"
-        if args[-2] == "--list":
+        if args[-1] == "--list":
             log.write_text("[File] en_vo_test.WEM\n[Done] Listed 1 files", encoding="utf-8")
             return
+        assert args[-1] == "Audio"
         log.write_text("[Done] Extracted 1 files")
         (voice_root / "plot-audio/en_vo_test.WEM").write_bytes(b"wem")
     monkeypatch.setattr(entity_media, "tool", extract)

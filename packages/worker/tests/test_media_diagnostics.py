@@ -68,6 +68,17 @@ def test_neighboring_dialogue_is_only_a_diagnostic_candidate(tmp_path):
     assert entry["status"] == "not_in_export"
 
 
+def test_entity_inventory_excludes_other_tasks_merged_audio_workspace(tmp_path):
+    (tmp_path / "release-media").mkdir()
+    (tmp_path / "release-media/other-task.wem").write_bytes(b"audio")
+    (tmp_path / "exports").mkdir()
+    (tmp_path / "exports/icon.uasset").write_bytes(b"texture")
+    output = tmp_path / "inventory.jsonl"
+    summary = write_inventory(tmp_path, None, output, exclude=("release-media",))
+    assert summary["exported_files"] == 1
+    assert json.loads(output.read_text(encoding="utf-8"))["path"] == "exports/icon.uasset"
+
+
 @pytest.mark.asyncio
 async def test_voice_lookup_report_is_saved_before_decoder_failure(tmp_path, monkeypatch):
     from wuwa_story_worker import release_media

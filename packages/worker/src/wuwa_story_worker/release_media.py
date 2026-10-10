@@ -203,7 +203,7 @@ async def voice_packages(parent):
     with workspace_lock(voice_root):
         index = voice_root / "archive-index.log"
         await tool([tool_path("WUWA_FMODEL_PATH"), voice_root / "game",
-                    "@" + str(root / "keys.txt"), "--list", "Audio"], index, 7200)
+                    "@" + str(root / "keys.txt"), "--list"], index, 7200)
         await tool([tool_path("WUWA_FMODEL_PATH"), voice_root / "game",
                     "@" + str(root / "keys.txt"), extracted, "Audio"], log, 7200)
         output = log.read_text(encoding="utf-8", errors="replace")
@@ -232,7 +232,7 @@ async def voices(payload, parent):
             if inventory is None:
                 index = extracted.parent / "archive-index.log"
                 await tool([tool_path("WUWA_FMODEL_PATH"), extracted.parent / "game",
-                            "@" + str(client_root(parent) / "keys.txt"), "--list", "Audio"], index, 7200)
+                            "@" + str(client_root(parent) / "keys.txt"), "--list"], index, 7200)
                 inventory = await publish_inventory(extracted, index)
                 save_json(marker, {**saved, "media_report": inventory})
     names = set(payload["targets"])

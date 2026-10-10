@@ -22,7 +22,7 @@ def iter_archive_paths(log: Path):
             if line.startswith("[File] "):
                 value = line[7:].strip().replace("\\", "/")
                 path = PurePosixPath(value)
-                if not path.is_absolute() and ".." not in path.parts and path.suffix.casefold() in MEDIA_SUFFIXES:
+                if not path.is_absolute() and ".." not in path.parts and ":" not in value and path.suffix.casefold() in MEDIA_SUFFIXES:
                     yield value
             elif line.startswith("[Error]"):
                 raise ValueError("Archive inventory failed; inspect the worker log")
@@ -36,7 +36,7 @@ def archive_paths(log: Path) -> set[str]:
     return set(iter_archive_paths(log))
 
 
-def write_inventory(root: Path, log: Path | None, destination: Path) -> dict:
+def write_inventory(root: Path, log: Path | None, destination: Path, *, exclude: tuple[str, ...] = ()) -> dict:
     # Keep a large client inventory off the heap. Archive and filesystem rows are
     # separate observations, rather than retaining hundreds of thousands of paths.
     indexed_count = exported_count = 0
@@ -45,24 +45,33 @@ def write_inventory(root: Path, log: Path | None, destination: Path) -> dict:
         for path in iter_archive_paths(log) if log else ():
             indexed_count += 1
             stream.write(json.dumps({"path": path, "origin": "archive"}, ensure_ascii=False) + "\n")
-        for path in root.rglob("*"):
-            if not path.is_file() or path.suffix.casefold() not in MEDIA_SUFFIXES:
-                continue
-            exported_count += 1
-            extensions[path.suffix.casefold()] += 1
-            stream.write(json.dumps({"path": path.relative_to(root).as_posix(), "origin": "export",
-                                     "size_bytes": path.stat().st_size}, ensure_ascii=False) + "\n")
+        for directory, subdirs, filenames in root.walk():
+            if directory == root:
+                subdirs[:] = [name for name in subdirs if name not in exclude]
+            for filename in filenames:
+                path = directory / filename
+                if path.suffix.casefold() not in MEDIA_SUFFIXES or filename.endswith(".partial.wav"):
+                    continue
+                try:
+                    size = path.stat().st_size
+                except FileNotFoundError:
+                    # Another publisher can remove a temporary decode during the scan.
+                    continue
+                exported_count += 1
+                extensions[path.suffix.casefold()] += 1
+                stream.write(json.dumps({"path": path.relative_to(root).as_posix(), "origin": "export",
+                                         "size_bytes": size}, ensure_ascii=False) + "\n")
     return {"indexed_files": indexed_count if log else None, "exported_files": exported_count,
-            "extensions": dict(extensions), "scope": "audio archives" if log else "exported media"}
+            "extensions": dict(extensions), "scope": "mounted voice archives" if log else "exported media"}
 
 
-async def publish_inventory(root: Path, log: Path | None = None) -> dict:
+async def publish_inventory(root: Path, log: Path | None = None, *, exclude: tuple[str, ...] = ()) -> dict:
     import asyncio
     import tempfile
 
     with tempfile.TemporaryDirectory(prefix="media-inventory-") as temporary:
         destination = Path(temporary) / "inventory.jsonl"
-        summary = await asyncio.to_thread(write_inventory, root, log, destination)
+        summary = await asyncio.to_thread(write_inventory, root, log, destination, exclude=exclude)
         storage = S3Storage(get_settings())
         await storage.ensure_bucket()
         async with SessionFactory() as session:

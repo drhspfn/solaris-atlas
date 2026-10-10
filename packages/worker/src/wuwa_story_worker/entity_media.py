@@ -277,7 +277,9 @@ async def _process_entity_media(payload: dict, connection) -> None:
                                for resolved, path, *_ in files if resolved == target]
                     entries.append({"expected": target["path"], "language": target["language"],
                                     "status": "found" if matches else "not_resolved", "matches": matches})
-                inventory = await publish_inventory(root)
+                # Other tasks' merged cutscene/audio workspace can contain hundreds
+                # of thousands of files; catalogue entity exports and decodes only.
+                inventory = await publish_inventory(root, exclude=("game", "release-media"))
                 report = {"schema_version": 1, **inventory, "asset_version": request.asset_version,
                           "game_version": request.game_version, "entries": entries,
                           "requested": len(entries), "found": sum(bool(e["matches"]) for e in entries),
