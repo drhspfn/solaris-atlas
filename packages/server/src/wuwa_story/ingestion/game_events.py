@@ -120,7 +120,7 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
             )
         ).all()
     )
-    stale_ids = set(existing_ids.values()) - set(event_rows)
+    stale_ids = set(existing_ids) - set(event_rows)
     if stale_ids:
         stale_event_ids = [existing_ids[source_id] for source_id in stale_ids]
         await session.execute(
