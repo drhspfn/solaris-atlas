@@ -31,17 +31,25 @@ REVISION_SQL = text("""
     FROM ops.public_cache_revision
 """)
 
+_REVISION_CACHE = {"value": "", "expires": 0.0}
 
 async def content_revision() -> str:
     # One tiny metadata read on a hit, never the multimillion-row content tables.
     # Reading from PostgreSQL makes invalidation transactional, even if Redis
     # was unavailable when a worker committed or a writer crashes after COMMIT.
+    now = time.monotonic()
+    if _REVISION_CACHE["value"] and now < _REVISION_CACHE["expires"]:
+        return _REVISION_CACHE["value"]
+
     async with engine.connect() as connection:
         revision = await connection.scalar(REVISION_SQL)
     if not revision:
         raise RuntimeError(
             "Public cache revision migration has not been installed")
-    return str(revision)
+    
+    _REVISION_CACHE["value"] = str(revision)
+    _REVISION_CACHE["expires"] = now + 30.0  # Cache DB revision in memory for 30s
+    return _REVISION_CACHE["value"]
 
 
 def cache_key(scope: Scope, revision: str, namespace: str) -> str:
