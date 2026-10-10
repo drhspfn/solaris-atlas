@@ -146,6 +146,7 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
         for row in occurrence_rows
         if row["source_id"] in event_ids
     ]
+    values = _deduplicate_occurrences(values)
     if event_ids:
         await session.execute(
             delete(GameEventOccurrence).where(
@@ -183,6 +184,15 @@ def _datetime(value: Any) -> datetime | None:
     if not isinstance(value, str):
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _deduplicate_occurrences(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the last upstream row for each database occurrence identity."""
+    unique: dict[tuple[int, str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (row["event_id"], row["source_occurrence_id"], row["server"])
+        unique[key] = row
+    return list(unique.values())
 
 
 def _event_kind(group_id: str, item: dict[str, Any]) -> str:
