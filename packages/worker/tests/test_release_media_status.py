@@ -57,9 +57,13 @@ async def test_voice_export_search_includes_wwise_audio_and_uppercase_extension(
     monkeypatch.setattr(voice_packages, "download_voice_plan", lambda *args, **kwargs: voice_root)
     async def extract(args, log, timeout):
         assert args[-1] == "Audio"
+        if args[-2] == "--list":
+            log.write_text("[File] en_vo_test.WEM\n[Done] Listed 1 files", encoding="utf-8")
+            return
         log.write_text("[Done] Extracted 1 files")
         (voice_root / "plot-audio/en_vo_test.WEM").write_bytes(b"wem")
     monkeypatch.setattr(entity_media, "tool", extract)
+    monkeypatch.setattr(release_media, "publish_inventory", AsyncMock(return_value={"inventory_file_id": 9}))
     result, status = await release_media.voice_packages({"asset_version": "3.7.0"})
     assert status == "completed"
     assert result["voice_plan_id"] == "fixture"

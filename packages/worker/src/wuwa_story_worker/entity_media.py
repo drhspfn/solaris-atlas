@@ -25,6 +25,7 @@ from wuwa_story_worker.broker import JobDeferred
 from wuwa_story_worker.client_assets import validate_plan, workspace_lock
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.map_icons import build_icons
+from wuwa_story_worker.media_diagnostics import publish_inventory
 from wuwa_story_worker.tooling import asset_workspace, tool_path
 
 logger = logging.getLogger(__name__)
@@ -270,6 +271,19 @@ async def _process_entity_media(payload: dict, connection) -> None:
                     tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
                     voice_root=(asset_workspace() / "voices" / f"{request.asset_version}-{request.voice_plan_id[:16]}") if request.voice_plan_id else None,
                 )
+                entries = []
+                for target in payload["targets"]:
+                    matches = [path.relative_to(root).as_posix() if path.is_relative_to(root) else path.name
+                               for resolved, path, *_ in files if resolved == target]
+                    entries.append({"expected": target["path"], "language": target["language"],
+                                    "status": "found" if matches else "not_resolved", "matches": matches})
+                inventory = await publish_inventory(root)
+                report = {"schema_version": 1, **inventory, "asset_version": request.asset_version,
+                          "game_version": request.game_version, "entries": entries,
+                          "requested": len(entries), "found": sum(bool(e["matches"]) for e in entries),
+                          "missing": sum(not e["matches"] for e in entries)}
+                run.raw_output = {"media_report": report}
+                await session.commit()
                 storage = S3Storage(get_settings())
                 await storage.ensure_bucket()
                 service = FileRegistrationService(storage)
@@ -318,6 +332,7 @@ async def _process_entity_media(payload: dict, connection) -> None:
                     }
                 run.status = "partial" if missing else "completed"
                 run.raw_output = {
+                    "media_report": report,
                     "images": sum(t["kind"] == "image" for t, *_ in files),
                     "voice_tracks": sum(t["kind"] == "voice" for t, *_ in files),
                     "missing_images": sorted(set(missing) & {t["path"] for t in payload["targets"] if t["kind"] == "image"}),

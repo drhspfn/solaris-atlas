@@ -105,3 +105,43 @@ Map publication validates raw exports, resolves ConfigDB tile resources, decodes
 API: `GET /maps?game_version=3.7.0`, `GET /maps/{id}`, `GET /maps/{id}/markers`. Local reverse-proxy URLs start with `/api/maps`. Tile manifests include `file_id`, SHA-256 and signed MinIO URLs valid for one hour. Set `MEDIA_PUBLIC_BASE_URL` to the browser-reachable MinIO public bucket root in local development; production public media uses the CDN URL derived from `DOMAIN`.
 
 World coordinates and original tile indices are retained. Marker categories initially come from blueprint names and do not prove that a placement is active in a particular playthrough. Hidden/sleep flags, component overrides and Z height are preserved. Floor assignment is unresolved where there is no reliable source link; marker responses explicitly report this. See [map source notes](../../docs/game-data/maps.md) for transforms and limitations.
+### Media lookup diagnostics
+
+Media tasks retain `media_report` in their processing result. Admin task history
+opens it lazily, with filename search, missing-only filtering and pagination.
+Older tasks expose their recorded missing names; retry a partial media import to
+collect detailed lookup evidence using its existing pinned client packages.
+
+Voice preparation records the mounted audio archive index. A voice lookup checks
+exact names, case differences and explicit Rover `_F`/`_M` variants. Files present
+in that index but absent on disk are re-exported before decoding. Nearby dialogue
+names are diagnostic candidates only and are never substituted automatically.
+The report is saved before decoding/publication, so a later failure retains the
+lookup evidence. Entity image/voice tasks and cutscenes also retain expected and
+resolved paths. The admin download contains JSONL observations with `origin`
+`archive` or `export`, relative media paths and exported byte sizes. It deliberately
+excludes raw CLI logs, AES keys, environment files and other configuration bodies.
+Inventory generation streams paths rather than loading the entire client into RAM.
+
+The inspected 1.0 story snapshot uses client assets 3.7.0. On 2026-10-10, these
+11 historical voice names were absent from both the export and the mounted voice
+archive index (44 language entries):
+
+```text
+vo_Huanglong_main_1_2EX_7_17
+vo_Huanglong_main_1_2_128_1
+vo_Huanglong_main_1_7_102_1
+vo_Huanglong_main_1_7_104_3
+vo_Huanglong_main_1_7_105_1
+vo_Huanglong_main_1_7_105_2
+vo_Huanglong_main_1_7_110_1
+vo_Huanglong_main_1_7_110_2
+vo_Huanglong_main_1_7_161_1
+vo_Huanglong_main_1_7_161_2
+vo_Huanglong_main_1_7_162_1
+```
+
+The first and final three IDs were also absent from the current PlotAudio config.
+The other seven IDs still referenced the same unavailable filenames. They remain
+partial imports until compatible historical resources are available; repeated
+extraction of the current packages cannot recover files absent from their index.

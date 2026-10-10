@@ -28,15 +28,23 @@ def voice_identity(filename: str) -> tuple[str, str]:
 def exported_voices(root: Path, names: set[str] | None = None) -> dict:
     """Resolve exact authored filenames and explicit F/M variants; no fuzzy matching."""
     grouped = {}
-    for path in sorted(path for path in root.rglob("*") if path.suffix.casefold() == ".wem"):
-        if not re.fullmatch(r"(en|ja|ko|zh)_(vo_[A-Za-z0-9_]+)\.wem", path.stem + ".wem"):
+    requested = {name.casefold(): name for name in names} if names is not None else None
+    if requested is not None and len(requested) != len(names):
+        raise ValueError("Conflicting case-insensitive voice identities")
+    for path in root.rglob("*"):
+        if not path.is_file() or path.suffix.casefold() != ".wem":
             continue
-        language, name = voice_identity(path.stem + ".wem")
+        match = re.fullmatch(r"(en|ja|ko|zh)_(vo_[A-Za-z0-9_]+)\.wem", path.name, re.IGNORECASE)
+        if not match:
+            continue
+        language, name = match[1].lower(), match[2]
         rover = None
-        if names is not None and name not in names:
-            if name.endswith(("_F", "_M")) and name[:-2] in names:
-                rover = "female" if name.endswith("_F") else "male"
-                name = name[:-2]
+        if requested is not None:
+            if name.casefold() in requested:
+                name = requested[name.casefold()]
+            elif name[-2:].upper() in {"_F", "_M"} and name[:-2].casefold() in requested:
+                rover = "female" if name[-1].upper() == "F" else "male"
+                name = requested[name[:-2].casefold()]
             else:
                 continue
         key = (language, rover)
@@ -47,10 +55,12 @@ def exported_voices(root: Path, names: set[str] | None = None) -> dict:
 
 
 async def import_voice_sample(root: Path, decoder: Path, asset_version: str, *,
-                              names: set[str] | None = None, require_all_languages: bool = True) -> dict:
+                              names: set[str] | None = None, require_all_languages: bool = True,
+                              grouped: dict | None = None) -> dict:
     if not re.fullmatch(r"\d+\.\d+\.\d+", asset_version):
         raise ValueError("Invalid asset version")
-    grouped = exported_voices(root, names)
+    if grouped is None:
+        grouped = exported_voices(root, names)
     missing = [f"{language}_{name}" for name in sorted(names or grouped)
                for language in LANGUAGES if not any(key[0] == language for key in grouped.get(name, {}))]
     if not grouped and require_all_languages:

@@ -21,8 +21,9 @@ from wuwa_story_worker.client_assets import download_plan, save_json, workspace_
 from wuwa_story_worker.cutscene_import import import_cutscene_recipe
 from wuwa_story_worker.cutscene_plan import plan_cutscene
 from wuwa_story_worker.job_tracking import update_admin_run
+from wuwa_story_worker.media_diagnostics import publish_inventory, voice_report
 from wuwa_story_worker.tooling import asset_workspace, tool_path
-from wuwa_story_worker.voice_import import import_voice_sample
+from wuwa_story_worker.voice_import import exported_voices, import_voice_sample
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +137,8 @@ async def cutscene_assets(payload, parent):
             if "[Fail]" in output or "[Error]" in output or not any(destination.rglob("*.mp4")):
                 raise RuntimeError(f"Video archive export failed; inspect {log}")
         await asyncio.to_thread(merge_exports, [destination.parent / "receipt.json"], assets)
-    return {**parent, "stage": "cutscene_assets_ready"}, "completed"
+    inventory = await publish_inventory(assets)
+    return {**parent, "stage": "cutscene_assets_ready", "media_report": inventory}, "completed"
 
 
 async def cutscene(payload, parent):
@@ -159,12 +161,30 @@ async def cutscene(payload, parent):
     work.mkdir(parents=True, exist_ok=True)
     recipe_path = work / "recipe.json"
     save_json(recipe_path, recipe)
+    entries = []
+    for video in recipe["videos"]:
+        package = video["asset"].removeprefix("asset:ue:/Game/").rsplit(".", 1)[0]
+        expected = "Client/Content/" + package + ".uexp"
+        entries.append({"expected": expected, "status": "found" if (assets / expected).is_file() else "not_in_export",
+                        "matches": [expected] if (assets / expected).is_file() else []})
+        for track in video.get("soundtrack", []):
+            expected = track["bank"]
+            entries.append({"expected": expected, "language": track.get("language"),
+                            "status": "found" if (assets / expected).is_file() else "not_in_export",
+                            "matches": [expected] if (assets / expected).is_file() else []})
+    report = {**(parent.get("media_report") or {}), "schema_version": 1,
+              "asset_version": parent["asset_version"], "game_version": payload["game_version"], "entries": entries}
+    await update_admin_run(payload["run_id"], "release_media", "running", raw_output={"media_report": report})
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         raise RuntimeError("ffmpeg is missing from the worker image")
     result = await import_cutscene_recipe(recipe_path, assets, assets, assets, work,
                                          tool_path("WUWA_VGMSTREAM_PATH"), Path(ffmpeg), missing_assets=missing_assets)
-    return {**result, "asset_version": parent["asset_version"], "missing_assets": missing_assets}, "partial" if missing_assets else "completed"
+    entries.extend({"expected": name, "status": "not_resolved", "matches": []} for name in missing_assets)
+    report.update(requested=len(entries), found=sum(e["status"] == "found" for e in entries),
+                  missing=sum(e["status"] != "found" for e in entries))
+    return {**result, "asset_version": parent["asset_version"], "missing_assets": missing_assets,
+            "media_report": report}, "partial" if missing_assets else "completed"
 
 
 async def voice_packages(parent):
@@ -181,6 +201,9 @@ async def voice_packages(parent):
     extracted.mkdir(exist_ok=True)
     log = extracted / "export.log"
     with workspace_lock(voice_root):
+        index = voice_root / "archive-index.log"
+        await tool([tool_path("WUWA_FMODEL_PATH"), voice_root / "game",
+                    "@" + str(root / "keys.txt"), "--list", "Audio"], index, 7200)
         await tool([tool_path("WUWA_FMODEL_PATH"), voice_root / "game",
                     "@" + str(root / "keys.txt"), extracted, "Audio"], log, 7200)
         output = log.read_text(encoding="utf-8", errors="replace")
@@ -188,15 +211,59 @@ async def voice_packages(parent):
             failures = [line for line in output.splitlines() if "[Fail]" in line or "[Error]" in line]
             detail = "; ".join(failures[:3])[:1200] or "No WEM files matched the exported audio paths"
             raise RuntimeError(f"Voice archive export failed: {detail}; inspect {log}")
-    save_json(voice_root / "audio-export.json", {"plan_id": plan["id"]})
-    return {**parent, "voice_plan_id": plan["id"], "stage": "voice_packages_ready"}, "completed"
+        inventory = await publish_inventory(extracted, index)
+    save_json(voice_root / "audio-export.json", {"plan_id": plan["id"], "media_report": inventory})
+    return {**parent, "voice_plan_id": plan["id"], "stage": "voice_packages_ready",
+            "media_report": inventory}, "completed"
 
 
 async def voices(payload, parent):
     extracted = asset_workspace() / "voices" / f"{parent['asset_version']}-{parent['voice_plan_id'][:16]}" / "plot-audio"
+    from wuwa_story_worker.entity_media import tool
+    inventory = parent.get("media_report")
+    if inventory is None:
+        # Existing successful package tasks predate inventories: reuse their pinned files.
+        with workspace_lock(extracted.parent):
+            marker = extracted.parent / "audio-export.json"
+            saved = json.loads(marker.read_text(encoding="utf-8"))
+            if saved.get("plan_id") != parent["voice_plan_id"]:
+                raise ValueError("Voice export does not match its pinned package plan")
+            inventory = saved.get("media_report")
+            if inventory is None:
+                index = extracted.parent / "archive-index.log"
+                await tool([tool_path("WUWA_FMODEL_PATH"), extracted.parent / "game",
+                            "@" + str(client_root(parent) / "keys.txt"), "--list", "Audio"], index, 7200)
+                inventory = await publish_inventory(extracted, index)
+                save_json(marker, {**saved, "media_report": inventory})
+    names = set(payload["targets"])
+    grouped = await asyncio.to_thread(exported_voices, extracted, names)
+    receipt = await export_assets(client_root(parent), tool_path("WUWA_FMODEL_PATH"), "ConfigDB")
+    configs = list((receipt.parent / "files").rglob("db_plot_audio.db"))
+    if len(configs) > 1:
+        raise ValueError("Ambiguous client PlotAudio configuration")
+    report = await asyncio.to_thread(voice_report, extracted, names, grouped,
+                                     inventory=inventory, config=configs[0] if configs else None)
+    report.update(asset_version=parent["asset_version"], game_version=payload["game_version"])
+    await update_admin_run(payload["run_id"], "release_media", "running", raw_output={"media_report": report})
+    # Repair verified archive hits that a previous export left behind. No fuzzy substitutions.
+    missing_exports = [entry for entry in report["entries"] if entry["status"] == "export_missing"]
+    if missing_exports:
+        with workspace_lock(extracted.parent):
+            for entry in missing_exports:
+                await tool([tool_path("WUWA_FMODEL_PATH"), extracted.parent / "game",
+                            "@" + str(client_root(parent) / "keys.txt"), extracted,
+                            entry["expected"].removesuffix(".wem")], extracted.parent / "repair-export.log", 1800)
+        grouped = await asyncio.to_thread(exported_voices, extracted, names)
+        report = await asyncio.to_thread(voice_report, extracted, names, grouped,
+                                         inventory=inventory, config=configs[0] if configs else None)
+    report["asset_version"] = parent["asset_version"]
+    report["game_version"] = payload["game_version"]
+    await update_admin_run(payload["run_id"], "release_media", "running", raw_output={"media_report": report})
+    logger.info("release_media.voice_lookup run=%s requested=%s found=%s missing=%s asset_version=%s",
+                payload["run_id"], report["requested"], report["found"], report["missing"], parent["asset_version"])
     result = await import_voice_sample(extracted, tool_path("WUWA_VGMSTREAM_PATH"),
-                                      parent["asset_version"], names=set(payload["targets"]), require_all_languages=False)
-    return result, "partial" if result.get("missing_voices") else "completed"
+                                      parent["asset_version"], names=names, require_all_languages=False, grouped=grouped)
+    return {**result, "media_report": report}, "partial" if result.get("missing_voices") else "completed"
 
 
 async def process_release_media(payload):
