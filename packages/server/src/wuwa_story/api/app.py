@@ -22,6 +22,7 @@ from wuwa_story.api.routes import (
     nodes,
     releases,
     search,
+    seo,
     story,
     story_agent,
 )
@@ -96,6 +97,7 @@ app.include_router(media_jobs.router)
 app.include_router(nodes.router)
 app.include_router(graph_paths.router)
 app.include_router(search.router)
+app.include_router(seo.router)
 app.include_router(story.router)
 app.include_router(story_agent.router)
 app.include_router(story_agent.admin)
