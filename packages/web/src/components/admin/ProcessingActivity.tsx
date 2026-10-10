@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { api } from '../../api/client';
+import { MediaImportReport } from './MediaImportReport';
 
 type Task = {
   id: number;
@@ -9,6 +10,7 @@ type Task = {
   error: string | null;
   request: { kind?: string; game_version?: string; parent_id?: number; targets?: string[] };
   result: Record<string, unknown>;
+  media_report_available?: boolean;
 };
 type Tasks = { tasks: Task[]; running?: Task[]; next_before: number | null };
 type Queues = {
@@ -54,6 +56,7 @@ function TaskRows({ rows }: { rows: Task[] }) {
                 {Array.isArray(value) ? `${value.length} missing` : String(value)}
               </small>
             ))}
+            {task.media_report_available && <MediaImportReport taskId={task.id} />}
           </td>
         </tr>
       ))}

@@ -11,14 +11,17 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.auth.dependencies import require_admin, require_csrf
+from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.maps import MapMarker, TileMap
 from wuwa_story.db.models.ops import GameRelease, ImportRun, ProcessingRun, Processor
+from wuwa_story.db.models.storage import FileLocation
 from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.client_assets import (
     discover_plan,
@@ -29,6 +32,7 @@ from wuwa_story.ingestion.github_snapshots import discover_remote_snapshots
 from wuwa_story.ingestion.media_jobs import publish_media_job
 from wuwa_story.ingestion.queue_status import queue_status
 from wuwa_story.ingestion.release_media import enqueue_release_media
+from wuwa_story.storage.s3 import S3Storage
 
 DEFAULT_REPOSITORY = "https://github.com/Arikatsu/WutheringWaves_Data.git"
 logger = logging.getLogger(__name__)
@@ -100,10 +104,64 @@ async def tasks(before: int | None = Query(None, ge=1),
         return {"id": run.id, "processor": key, "status": run.status,
                 "started_at": run.started_at, "finished_at": run.finished_at,
                 "error": run.error, "request": (run.metadata_json or {}).get("request", {}),
+                "media_report_available": key in {"release_media", "entity_media"} and bool(
+                    (run.raw_output or {}).get("media_report") or any(
+                        (run.raw_output or {}).get(field) for field in ("missing_images", "missing_voices", "missing_assets"))),
                 "result": {name: value for name, value in (run.raw_output or {}).items() if name in counters}}
     return {"tasks": [serialize_task(run, key) for run, key in rows],
             "running": [serialize_task(run, key) for run, key in running_rows],
             "next_before": rows[-1][0].id if len(rows) == limit else None}
+
+
+async def _media_run(run_id: int, session: AsyncSession):
+    row = (await session.execute(select(ProcessingRun, Processor.key).join(Processor)
+                                .where(ProcessingRun.id == run_id))).first()
+    if row is None or row[1] not in {"release_media", "entity_media"}:
+        raise HTTPException(status_code=404, detail="Media import task not found")
+    return row[0]
+
+
+@router.get("/tasks/{run_id}/media-report")
+async def media_report(run_id: int, offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100),
+                       missing_only: bool = False, search: str = Query("", max_length=200),
+                       session: AsyncSession = Depends(get_session)):
+    run = await _media_run(run_id, session)
+    output = run.raw_output or {}
+    report = output.get("media_report") or {}
+    entries = report.get("entries", [])
+    legacy = not report
+    if legacy:
+        entries = [{"expected": name, "status": "not_resolved", "matches": []}
+                   for field in ("missing_images", "missing_voices", "missing_assets")
+                   for name in output.get(field, [])]
+    selected = [entry for entry in entries if (not missing_only or entry.get("status") != "found")
+                and search.casefold() in str(entry.get("expected", "")).casefold()]
+    # Never expose arbitrary worker payloads or private checkpoints.
+    fields = {"expected", "status", "matches", "nearby", "config_present", "language"}
+    summary_fields = {"asset_version", "game_version", "requested", "found", "missing", "indexed_files",
+                      "exported_files", "extensions", "scope"}
+    return {"summary": {key: value for key, value in report.items() if key in summary_fields},
+            "legacy": legacy, "inventory_available": bool(report.get("inventory_file_id")),
+            "entries": [{key: value for key, value in entry.items() if key in fields}
+                        for entry in selected[offset:offset + limit]], "total": len(selected),
+            "next_offset": offset + limit if offset + limit < len(selected) else None}
+
+
+@router.get("/tasks/{run_id}/media-inventory")
+async def media_inventory(run_id: int, session: AsyncSession = Depends(get_session)):
+    run = await _media_run(run_id, session)
+    file_id = ((run.raw_output or {}).get("media_report") or {}).get("inventory_file_id")
+    if type(file_id) is not int:
+        raise HTTPException(status_code=404, detail="No export inventory for this task")
+    storage = S3Storage(get_settings())
+    location = await session.scalar(select(FileLocation).where(
+        FileLocation.file_id == file_id, FileLocation.backend == storage.backend,
+        FileLocation.bucket == storage.bucket, FileLocation.available.is_(True)))
+    if location is None or await storage.stat(location.object_key) is None:
+        raise HTTPException(status_code=404, detail="Export inventory is unavailable")
+    return StreamingResponse(storage.get(location.object_key), media_type="application/x-ndjson", headers={
+        "Content-Disposition": f'attachment; filename="media-task-{run_id}-inventory.jsonl"',
+        "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @router.post("/releases/{release_id}/media", status_code=202, dependencies=[Depends(require_csrf)])

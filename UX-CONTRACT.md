@@ -316,3 +316,17 @@ track; Ask presents a compact choice and never silently chooses a gender.
 Localized cutscene event banks publish separate, aligned voice tracks. Original
 embedded audio remains an unseparated background mix, without claiming that music
 and effects have been isolated.
+## Admin media diagnostics
+
+Each media task with lookup evidence exposes a closed Import report disclosure.
+Opening it loads a bounded page; search and missing-only filtering reset pagination.
+The report separates missing archive resources, incomplete exports and unresolved
+playable files. Nearby names are suggestions only. Story and client asset versions
+are shown together to make historical resource mismatches explicit.
+
+Old task results show their actual missing names without inventing successful
+matches. New reports include resolved relative paths and a downloadable JSONL
+inventory. Downloads and reports require an administrator; private agent histories,
+environment values and raw CLI logs are excluded. Loading, errors with Retry, empty
+filters and previous/next pagination have explicit states. Report controls do not
+start imports or playback. A fresh report is loaded when its disclosure is reopened.

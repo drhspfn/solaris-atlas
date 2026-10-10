@@ -726,3 +726,31 @@
   padding: 0.65rem;
   font: inherit;
 }
+.media-import-report {
+  margin-top: 0.75rem;
+  min-width: min(26rem, 70vw);
+  max-width: 36rem;
+}
+.media-import-report summary {
+  cursor: pointer;
+  color: var(--accent-mint);
+}
+.media-import-report .data-import-form {
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+.media-report-files {
+  list-style: none;
+  padding: 0;
+}
+.media-report-files li {
+  border-top: 1px solid var(--border-default);
+  padding: 0.75rem 0;
+  overflow-wrap: anywhere;
+}
+.media-report-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
