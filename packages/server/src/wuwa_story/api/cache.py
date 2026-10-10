@@ -171,7 +171,7 @@ class PublicResponseCache:
                 # Personalized and unknown endpoints are explicitly private.
                 if "cache-control" not in headers:
                     message["headers"] = list(message.get("headers", [])) + [
-                        (b"cache-control", b"no-cache" if public_request(scope) and "set-cookie" not in headers
+                        (b"cache-control", b"public, max-age=300, stale-while-revalidate=86400" if public_request(scope) and "set-cookie" not in headers
                          else b"private, no-store")]
                 message["headers"] = list(message.get("headers", [])) + [
                     (b"x-api-cache", b"MISS" if key else b"BYPASS")]
