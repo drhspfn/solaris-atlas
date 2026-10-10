@@ -42,6 +42,7 @@ from wuwa_story.db.models.core import (
     Term,
     VoiceReference,
 )
+from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision, NodeType
 from wuwa_story.db.models.i18n import (
     Locale,
@@ -134,6 +135,8 @@ __all__ = [
     "Node",
     "NodeRevision",
     "NodeType",
+    "GameEvent",
+    "GameEventOccurrence",
     "Locale",
     "LocalizationKey",
     "LocalizationContent",

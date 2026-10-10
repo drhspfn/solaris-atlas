@@ -2,6 +2,7 @@ import {
   Activity,
   AlertCircle,
   CheckCircle,
+  CalendarDays,
   Database,
   Download,
   HardDrive,
@@ -229,6 +230,26 @@ export function DataOperationsPage() {
     }
   }
 
+  async function importEventArchive() {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await api<{
+        events: number;
+        occurrences: number;
+        source_revision: string;
+      }>('/admin/data-operations/events/import', { method: 'POST' });
+      setNotice(
+        `Event archive refreshed: ${result.events} events and ${result.occurrences} dated schedules.`,
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not import the event archive.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function enqueueMedia(releaseId: number) {
     setBusy(true);
     setError('');
@@ -320,6 +341,27 @@ export function DataOperationsPage() {
           <strong>{importedRecords.toLocaleString('en-US')}</strong>
         </article>
       </div>
+
+      <section className="content-panel data-operation-panel">
+        <header className="agent-panel-header">
+          <div>
+            <h3>
+              <CalendarDays size={16} /> Historical event archive
+            </h3>
+            <p>
+              Import dated convenes, limited events and recurring or permanent modes from the
+              versioned game-data archive.
+            </p>
+          </div>
+          <button
+            className="agent-button"
+            onClick={() => void importEventArchive()}
+            disabled={busy}
+          >
+            <Download size={14} /> {busy ? 'Importing…' : 'Import event history'}
+          </button>
+        </header>
+      </section>
 
       {/* SECTION: Game client asset downloader */}
       <section className="content-panel data-operation-panel">
