@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any
 
@@ -15,62 +16,187 @@ logger = logging.getLogger(__name__)
 mcp = Server("solaris-atlas-lore")
 streamable_http = StreamableHTTPSessionManager(app=mcp, json_response=True)
 
+
+def _dump_json(obj: Any) -> str:
+    def default(o: Any) -> Any:
+        if hasattr(o, "model_dump"):
+            return o.model_dump()
+        if hasattr(o, "__dict__"):
+            return o.__dict__
+        return str(o)
+    return json.dumps(obj, indent=2, ensure_ascii=False, default=default)
+
+
 @mcp.list_tools()
 async def handle_list_tools() -> list[Tool]:
     return [
         Tool(
-            name="search_dialogue",
-            description="Search millions of actual in-game spoken dialogue lines and subtitles by text, character name, or quest ID.",
+            name="search",
+            description=(
+                "Direct replica of the Solaris Atlas public GET /api/search endpoint. "
+                "Searches the entire game archive. By default searches 'entities' (characters, quests, items, locations, areas), "
+                "or with scope='dialogue' searches millions of actual spoken in-game dialogue lines and subtitles."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {
+                    "q": {
                         "type": "string",
-                        "description": "Dialogue text or phrase to search for in spoken lines."
+                        "description": "Search query text (e.g. 'rover', 'jiyan', 'sword', 'grand library')."
                     },
-                    "character": {
+                    "scope": {
                         "type": "string",
-                        "description": "Optional character/speaker canonical key (e.g. 'rover', 'yangyang', 'jiyan')."
-                    },
-                    "quest_id": {
-                        "type": "integer",
-                        "description": "Optional numeric game quest ID to search within."
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Number of dialogue lines to return (default 30, max 100).",
-                        "default": 30
-                    }
-                },
-                "required": ["query"]
-            }
-        ),
-        Tool(
-            name="search_entities",
-            description="Search the game database for characters, quests, items, locations, factions, and terms.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search term, e.g. 'Jiyan', 'Casket', 'Grand Library', 'Black Shores'."
+                        "enum": ["entities", "dialogue"],
+                        "description": "Search scope: 'entities' for characters/items/quests/locations, or 'dialogue' for spoken lines. Default is 'entities'.",
+                        "default": "entities"
                     },
                     "category": {
                         "type": "string",
-                        "description": "Optional entity category: 'character', 'quest', 'item', 'location', 'area', etc."
+                        "description": "Optional category filter (e.g. 'character', 'quest', 'item', 'location', 'area')."
+                    },
+                    "locale": {
+                        "type": "string",
+                        "description": "Language code for localized text (e.g. 'en', 'ru', 'zh-Hans', 'ja'). Default is 'en'.",
+                        "default": "en"
+                    },
+                    "character": {
+                        "type": "string",
+                        "description": "Filter by speaker/character when searching dialogue."
+                    },
+                    "quest_id": {
+                        "type": "integer",
+                        "description": "Filter by game quest ID when searching dialogue."
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum results to return (default 20).",
+                        "description": "Max results to return (default 20, max 100).",
                         "default": 20
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Result offset for pagination (default 0).",
+                        "default": 0
                     }
                 },
-                "required": ["query"]
+                "required": ["q"]
+            }
+        ),
+        Tool(
+            name="get_node",
+            description="Get detailed attributes of any knowledge graph node by its ID (integer) or canonical_key (string).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id_or_key": {
+                        "type": ["string", "integer"],
+                        "description": "Numeric node ID (e.g. 105) or canonical_key (e.g. 'character_rover', 'quest_101001')."
+                    },
+                    "locale": {
+                        "type": "string",
+                        "description": "Locale for localized title/name (default 'en').",
+                        "default": "en"
+                    }
+                },
+                "required": ["id_or_key"]
+            }
+        ),
+        Tool(
+            name="get_node_related",
+            description=(
+                "Graph transition tool (переход по нодам). Replica of GET /api/nodes/{canonical_key}/related. "
+                "Traverses relations to neighboring nodes in the story graph (e.g. quests where a character appears, "
+                "items associated with a person, locations connected to a quest)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id_or_key": {
+                        "type": ["string", "integer"],
+                        "description": "Node ID or canonical_key to start from."
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["both", "out", "in"],
+                        "description": "Relation direction: 'out' (outgoing), 'in' (incoming), or 'both'. Default 'both'.",
+                        "default": "both"
+                    },
+                    "relation": {
+                        "type": "string",
+                        "description": "Filter by relation type key (e.g. 'appears_in', 'has_plot_step', 'presents_scene', 'located_in')."
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "Filter neighbor nodes by category (e.g. 'character', 'quest', 'location', 'item')."
+                    },
+                    "locale": {
+                        "type": "string",
+                        "description": "Locale for neighbor entity labels (default 'en').",
+                        "default": "en"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max linked neighbors to return (default 50).",
+                        "default": 50
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Offset for pagination (default 0).",
+                        "default": 0
+                    }
+                },
+                "required": ["id_or_key"]
+            }
+        ),
+        Tool(
+            name="get_node_edges",
+            description="Get raw graph edges connected to a node. Replica of GET /api/nodes/{canonical_key}/edges.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id_or_key": {
+                        "type": ["string", "integer"],
+                        "description": "Node ID or canonical_key."
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["both", "out", "in"],
+                        "description": "Direction of edges ('in', 'out', 'both'). Default 'both'.",
+                        "default": "both"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max edges to return (default 100).",
+                        "default": 100
+                    }
+                },
+                "required": ["id_or_key"]
+            }
+        ),
+        Tool(
+            name="get_node_narrative_context",
+            description=(
+                "Resolve narrative context for a dialogue node (surrounding spoken lines and associated quests). "
+                "Replica of GET /api/nodes/{canonical_key}/narrative-context."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id_or_key": {
+                        "type": ["string", "integer"],
+                        "description": "Dialogue line node ID or canonical_key."
+                    },
+                    "locale": {
+                        "type": "string",
+                        "description": "Locale code (default 'en').",
+                        "default": "en"
+                    }
+                },
+                "required": ["id_or_key"]
             }
         ),
         Tool(
             name="get_quest_transcript",
-            description="Get the full chronological dialogue transcript and script of a quest.",
+            description="Get the full chronological dialogue transcript and script of a quest. Replica of GET /api/quests/{id}/transcript.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -82,6 +208,15 @@ async def handle_list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Optional character to filter dialogue for."
                     },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional keyword filter for lines."
+                    },
+                    "locale": {
+                        "type": "string",
+                        "description": "Language locale (default 'en').",
+                        "default": "en"
+                    },
                     "limit": {
                         "type": "integer",
                         "description": "Maximum number of lines to return (default 100).",
@@ -89,34 +224,6 @@ async def handle_list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["quest_id"]
-            }
-        ),
-        Tool(
-            name="get_quest",
-            description="Get full overview and metadata of a specific quest (title, description, chapter, scenes).",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "quest_id": {
-                        "type": "string",
-                        "description": "Game quest ID (e.g. '101001') or quest canonical key."
-                    }
-                },
-                "required": ["quest_id"]
-            }
-        ),
-        Tool(
-            name="get_node_info",
-            description="Inspect a specific entity in the knowledge graph by its canonical_key, including its connections/relations to other entities.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "canonical_key": {
-                        "type": "string",
-                        "description": "Canonical key of the node, e.g. 'character_jiyan', 'quest_101001', 'item_xxx'."
-                    }
-                },
-                "required": ["canonical_key"]
             }
         ),
         Tool(
@@ -151,6 +258,19 @@ async def handle_list_tools() -> list[Tool]:
         )
     ]
 
+
+async def _resolve_node(session: Any, id_or_key: str | int) -> Any:
+    from wuwa_story.db.models.graph import Node
+    from wuwa_story.db.repositories.nodes import get_node
+
+    val = str(id_or_key).strip()
+    if val.isdigit():
+        node = await session.get(Node, int(val))
+        if node:
+            return node
+    return await get_node(session, val)
+
+
 @mcp.call_tool()
 async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent]:
     if not arguments:
@@ -159,186 +279,146 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
     from sqlalchemy import select
     from wuwa_story.db.session import SessionFactory
     from wuwa_story.db.models.graph import Node, NodeType
-    from wuwa_story.db.models.core import Quest
-    from wuwa_story.db.models.i18n import Locale
-    from wuwa_story.db.models.ontology import RelationType
-    from wuwa_story.db.repositories.nodes import get_node
-    from wuwa_story.db.repositories.edges import get_edges
-    from wuwa_story.db.repositories.search import lexical_search
-    from wuwa_story.api.routes.story.shared import _node_label, _quest_info
-    from wuwa_story.api.routes.story.transcripts import search_dialogue, quest_transcript
+    from wuwa_story.api.routes.search import search as api_search
+    from wuwa_story.api.routes.nodes import node_related, node_edges, node_narrative_context
+    from wuwa_story.api.routes.story.transcripts import quest_transcript
+    from wuwa_story.api.routes.story.shared import _node_label
 
     async with SessionFactory() as session:
         try:
-            if name == "search_dialogue":
-                query = arguments.get("query", "").strip()
-                if not query:
-                    raise ValueError("Missing 'query' argument")
-                character = arguments.get("character")
-                quest_id = arguments.get("quest_id")
-                limit = min(int(arguments.get("limit", 30)), 100)
+            if name in ["search", "search_entities", "search_dialogue"]:
+                q_val = str(arguments.get("q") or arguments.get("query") or "").strip()
+                if not q_val:
+                    raise ValueError("Missing 'q' or 'query' argument")
 
-                res = await search_dialogue(
-                    q=query,
-                    character=character,
-                    quest_id=quest_id,
-                    locale="en",
-                    limit=limit,
-                    offset=0,
+                default_scope = "dialogue" if name == "search_dialogue" else "entities"
+                scope_val = arguments.get("scope", default_scope)
+
+                category_arg = arguments.get("category")
+                if isinstance(category_arg, str):
+                    category_list = [category_arg]
+                elif isinstance(category_arg, list):
+                    category_list = category_arg
+                else:
+                    category_list = None
+
+                res = await api_search(
+                    q=q_val,
+                    category=category_list,
+                    scope=scope_val,
+                    locale=arguments.get("locale", "en"),
+                    limit=min(int(arguments.get("limit", 20)), 100),
+                    offset=int(arguments.get("offset", 0)),
+                    character=arguments.get("character"),
+                    quest_id=arguments.get("quest_id"),
                     session=session,
                 )
-                results = res.get("results", [])
-                if not results:
-                    return [TextContent(type="text", text=f"No dialogue lines found matching '{query}'.")]
+                return [TextContent(type="text", text=_dump_json(res))]
 
-                output_lines = [f"Found {len(results)} dialogue line(s) for '{query}':\n"]
-                for i, r in enumerate(results, 1):
-                    speaker = r.get("speaker") or "Narrator / Unknown"
-                    text = r.get("text") or ""
-                    line_id = r.get("id")
-                    game_ids = r.get("game_ids") or []
-                    qid = r.get("quest_id") or (game_ids[0] if game_ids else "N/A")
-                    output_lines.append(f"[{i}] {speaker} (Quest: {qid}, Line ID: {line_id}):\n    \"{text}\"\n")
-                return [TextContent(type="text", text="\n".join(output_lines))]
+            elif name == "get_node":
+                id_or_key = arguments.get("id_or_key")
+                if not id_or_key:
+                    raise ValueError("Missing 'id_or_key' argument")
 
-            elif name == "search_entities":
-                query = arguments.get("query", "").strip()
-                if not query:
-                    raise ValueError("Missing 'query' argument")
-                category = arguments.get("category")
-                limit = min(int(arguments.get("limit", 20)), 100)
+                node = await _resolve_node(session, id_or_key)
+                if not node:
+                    return [TextContent(type="text", text=f"Node '{id_or_key}' not found.")]
 
-                locale_id = await session.scalar(select(Locale.id).where(Locale.code == "en"))
-                categories = [category] if category else None
-                res = await lexical_search(
-                    session,
-                    query,
-                    limit=limit,
-                    categories=categories,
-                    locale_id=locale_id,
+                node_type = await session.get(NodeType, node.type_id)
+                locale = arguments.get("locale", "en")
+                label_info = await _node_label(session, node.id, locale)
+                data = {
+                    "id": node.id,
+                    "canonical_key": node.canonical_key,
+                    "slug": node.slug,
+                    "type": node_type.key if node_type else None,
+                    "title": label_info.get("label"),
+                    "metadata": node.metadata_json,
+                }
+                return [TextContent(type="text", text=_dump_json(data))]
+
+            elif name == "get_node_related":
+                id_or_key = arguments.get("id_or_key")
+                if not id_or_key:
+                    raise ValueError("Missing 'id_or_key' argument")
+
+                node = await _resolve_node(session, id_or_key)
+                if not node:
+                    return [TextContent(type="text", text=f"Node '{id_or_key}' not found.")]
+
+                res = await node_related(
+                    canonical_key=node.canonical_key,
+                    direction=arguments.get("direction", "both"),
+                    relation=arguments.get("relation"),
+                    category=arguments.get("category"),
+                    locale=arguments.get("locale", "en"),
+                    limit=min(int(arguments.get("limit", 50)), 200),
+                    offset=int(arguments.get("offset", 0)),
+                    session=session,
                 )
-                if not res:
-                    return [TextContent(type="text", text=f"No entities found for '{query}'.")]
+                return [TextContent(type="text", text=_dump_json(res))]
 
-                output_lines = [f"Database entities matching '{query}':\n"]
-                for i, item in enumerate(res, 1):
-                    node_id = item.get("id")
-                    label_info = await _node_label(session, node_id, "en") if node_id else {}
-                    title = label_info.get("label") or item.get("alias") or item.get("canonical_key")
-                    node_type = item.get("node_type") or "entity"
-                    key = item.get("canonical_key")
-                    output_lines.append(f"[{i}] [{node_type.upper()}] {title} | Canonical Key: {key} (ID: {node_id})")
-                return [TextContent(type="text", text="\n".join(output_lines))]
+            elif name == "get_node_edges":
+                id_or_key = arguments.get("id_or_key")
+                if not id_or_key:
+                    raise ValueError("Missing 'id_or_key' argument")
 
-            elif name == "get_quest_transcript":
-                quest_id = arguments.get("quest_id")
+                node = await _resolve_node(session, id_or_key)
+                if not node:
+                    return [TextContent(type="text", text=f"Node '{id_or_key}' not found.")]
+
+                edges = await node_edges(
+                    canonical_key=node.canonical_key,
+                    direction=arguments.get("direction", "both"),
+                    limit=min(int(arguments.get("limit", 100)), 500),
+                    session=session,
+                )
+                return [TextContent(type="text", text=_dump_json([e.model_dump() for e in edges]))]
+
+            elif name == "get_node_narrative_context":
+                id_or_key = arguments.get("id_or_key")
+                if not id_or_key:
+                    raise ValueError("Missing 'id_or_key' argument")
+
+                node = await _resolve_node(session, id_or_key)
+                if not node:
+                    return [TextContent(type="text", text=f"Node '{id_or_key}' not found.")]
+
+                res = await node_narrative_context(
+                    canonical_key=node.canonical_key,
+                    locale=arguments.get("locale", "en"),
+                    session=session,
+                )
+                return [TextContent(type="text", text=_dump_json(res))]
+
+            elif name in ["get_quest_transcript", "get_quest"]:
+                quest_id = arguments.get("quest_id") or arguments.get("id_or_key")
                 if not quest_id:
                     raise ValueError("Missing 'quest_id' argument")
-                character = arguments.get("character")
-                limit = min(int(arguments.get("limit", 100)), 300)
+
+                # If passed as canonical key, resolve to numeric game_quest_id
+                if not str(quest_id).isdigit():
+                    node = await _resolve_node(session, quest_id)
+                    from wuwa_story.db.models.core import Quest
+                    quest_row = await session.scalar(select(Quest).where(Quest.node_id == node.id)) if node else None
+                    if quest_row:
+                        quest_id = quest_row.game_quest_id
+                    else:
+                        return [TextContent(type="text", text=f"Quest '{quest_id}' not found.")]
 
                 res = await quest_transcript(
                     game_quest_id=int(quest_id),
-                    character=character,
-                    q=None,
-                    locale="en",
-                    limit=limit,
-                    offset=0,
+                    character=arguments.get("character"),
+                    q=arguments.get("query"),
+                    locale=arguments.get("locale", "en"),
+                    limit=min(int(arguments.get("limit", 100)), 500),
+                    offset=int(arguments.get("offset", 0)),
                     session=session,
                 )
-                quest_meta = res.get("quest", {})
-                lines = res.get("lines", [])
-                if not lines:
-                    return [TextContent(type="text", text=f"No dialogue lines found for quest {quest_id}.")]
-
-                output_lines = [
-                    f"Transcript for Quest {quest_id}: {quest_meta.get('title', 'Unknown Title')}",
-                    f"Description: {quest_meta.get('description', 'N/A')}\n"
-                ]
-                for r in lines:
-                    speaker = r.get("speaker") or "Narrator"
-                    text = r.get("text") or ""
-                    output_lines.append(f"{speaker}: \"{text}\"")
-                return [TextContent(type="text", text="\n".join(output_lines))]
-
-            elif name == "get_quest":
-                quest_id_arg = str(arguments.get("quest_id", "")).strip()
-                if not quest_id_arg:
-                    raise ValueError("Missing 'quest_id' argument")
-
-                quest = None
-                if quest_id_arg.isdigit():
-                    quest = await session.scalar(select(Quest).where(Quest.game_quest_id == int(quest_id_arg)))
-                if not quest:
-                    node = await session.scalar(select(Node).where(Node.canonical_key == quest_id_arg))
-                    if node:
-                        quest = await session.scalar(select(Quest).where(Quest.node_id == node.id))
-
-                if not quest:
-                    return [TextContent(type="text", text=f"Quest '{quest_id_arg}' not found.")]
-
-                info = await _quest_info(session, quest, locale="en")
-                output = (
-                    f"Quest Details:\n"
-                    f"Title: {info.get('title')}\n"
-                    f"Game Quest ID: {quest.game_quest_id}\n"
-                    f"Category: {info.get('category')}\n"
-                    f"Chapter: {info.get('chapter')}\n"
-                    f"Description: {info.get('description')}\n"
-                )
-
-                from wuwa_story.db.models.lore import LoreChunk
-                chunks = list(
-                    await session.scalars(
-                        select(LoreChunk).where(LoreChunk.quest_id == str(quest.game_quest_id)).order_by(LoreChunk.id)
-                    )
-                )
-                if chunks:
-                    output += "\nSynthesized Lore Summaries:\n"
-                    for i, c in enumerate(chunks, 1):
-                        output += f"[{i}] ({c.chunk_type}): {c.content}\n"
-
-                return [TextContent(type="text", text=output)]
-
-            elif name == "get_node_info":
-                canonical_key = arguments.get("canonical_key", "").strip()
-                if not canonical_key:
-                    raise ValueError("Missing 'canonical_key' argument")
-
-                node = await get_node(session, canonical_key)
-                if not node:
-                    return [TextContent(type="text", text=f"Node with key '{canonical_key}' not found.")]
-
-                node_type = await session.get(NodeType, node.type_id)
-                label_info = await _node_label(session, node.id, "en")
-                title = label_info.get("label") or node.canonical_key
-
-                edges = await get_edges(session, node.id, direction="both", limit=50)
-                edge_lines = []
-                for edge in edges:
-                    rel = await session.get(RelationType, edge.relation_type_id)
-                    rel_name = rel.key if rel else f"rel_{edge.relation_type_id}"
-                    is_outgoing = edge.from_node_id == node.id
-                    other_id = edge.to_node_id if is_outgoing else edge.from_node_id
-                    direction_symbol = "-->" if is_outgoing else "<--"
-                    other_node = await session.get(Node, other_id)
-                    other_key = other_node.canonical_key if other_node else f"id:{other_id}"
-                    edge_lines.append(f"  {direction_symbol} [{rel_name}] {other_key}")
-
-                output = (
-                    f"Node: {title}\n"
-                    f"Canonical Key: {node.canonical_key}\n"
-                    f"Type: {node_type.key if node_type else 'unknown'}\n"
-                    f"Slug: {node.slug}\n"
-                )
-                if edge_lines:
-                    output += "\nGraph Connections:\n" + "\n".join(edge_lines)
-                else:
-                    output += "\nNo direct graph relations found."
-                return [TextContent(type="text", text=output)]
+                return [TextContent(type="text", text=_dump_json(res))]
 
             elif name == "search_lore":
-                query = arguments.get("query", "").strip()
+                query = str(arguments.get("query", arguments.get("q", ""))).strip()
                 if not query:
                     raise ValueError("Missing 'query' argument")
                 limit = int(arguments.get("limit", 10))
@@ -350,14 +430,20 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
                 if not results:
                     return [TextContent(type="text", text=f"No lore information found for '{query}'.")]
 
-                output = ""
-                for i, r in enumerate(results, 1):
-                    output += f"[{i}] Chunk Type: {r.chunk_type} (Quest: {r.quest_id or 'N/A'})\n"
-                    output += f"{r.content}\n\n"
-                return [TextContent(type="text", text=output)]
+                data = [
+                    {
+                        "chunk_id": r.chunk_id,
+                        "chunk_type": r.chunk_type,
+                        "quest_id": r.quest_id,
+                        "content": r.content,
+                        "score": r.score,
+                    }
+                    for r in results
+                ]
+                return [TextContent(type="text", text=_dump_json(data))]
 
             elif name == "get_character_timeline":
-                character = arguments.get("character", "").strip()
+                character = str(arguments.get("character", "")).strip()
                 if not character:
                     raise ValueError("Missing 'character' argument")
 
@@ -368,10 +454,16 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
                 if not chunks:
                     return [TextContent(type="text", text=f"No timeline events found for character '{character}'.")]
 
-                output = f"Timeline for {character}:\n\n"
-                for i, r in enumerate(chunks, 1):
-                    output += f"[{i}] Quest: {r.quest_id} | Type: {r.chunk_type}\n{r.content}\n\n"
-                return [TextContent(type="text", text=output)]
+                data = [
+                    {
+                        "id": c.id,
+                        "quest_id": c.quest_id,
+                        "chunk_type": c.chunk_type,
+                        "content": c.content,
+                    }
+                    for c in chunks
+                ]
+                return [TextContent(type="text", text=_dump_json(data))]
 
             else:
                 return [TextContent(type="text", text=f"Unknown tool: {name}")]

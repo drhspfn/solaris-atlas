@@ -34,25 +34,28 @@ export function McpDocsPage() {
         <h2>Available Tools</h2>
         <ul style={{ lineHeight: '1.8' }}>
           <li>
-            <strong>search_dialogue:</strong> Search millions of actual spoken in-game dialogue lines and subtitles across all quests, scenes, and talk items by text, character name, or quest ID.
+            <strong>search:</strong> 1:1 replica of the public <code>GET /api/search</code> endpoint. Search entities (characters, quests, items, locations) or spoken in-game dialogue lines (<code>scope="dialogue"</code>) across the entire game archive.
           </li>
           <li>
-            <strong>search_entities:</strong> Search the game database for characters, quests, items, locations, factions, and terms by name or keyword using lexical and trigram matching.
+            <strong>get_node:</strong> Retrieve any knowledge graph node by its numeric ID or <code>canonical_key</code>, including type, title, slug, and metadata.
           </li>
           <li>
-            <strong>get_quest_transcript:</strong> Retrieve the full chronological dialogue transcript and script of a quest.
+            <strong>get_node_related:</strong> Graph traversal tool (переход по нодам). 1:1 replica of <code>GET /api/nodes/&#123;canonical_key&#125;/related</code>. Traverses relations to neighboring nodes (e.g. quests where a character appears, connected locations, items).
           </li>
           <li>
-            <strong>get_quest:</strong> Get full overview, metadata, chapter, scenes, and lore notes of a specific quest.
+            <strong>get_node_edges:</strong> 1:1 replica of <code>GET /api/nodes/&#123;canonical_key&#125;/edges</code>. Returns raw graph edges and relation types.
           </li>
           <li>
-            <strong>get_node_info:</strong> Inspect any entity in the story knowledge graph by its canonical key, including all graph relations to other entities.
+            <strong>get_node_narrative_context:</strong> 1:1 replica of <code>GET /api/nodes/&#123;canonical_key&#125;/narrative-context</code>. Resolves surrounding dialogue lines and owning quest for a dialogue node.
+          </li>
+          <li>
+            <strong>get_quest_transcript:</strong> 1:1 replica of <code>GET /api/quests/&#123;id&#125;/transcript</code>. Full chronological dialogue transcript of a quest.
           </li>
           <li>
             <strong>search_lore:</strong> Search synthesized storyline explanations, cutscene analyses, and lore notes.
           </li>
           <li>
-            <strong>get_character_timeline:</strong> Chronology of events and storyline appearances for a character.
+            <strong>get_character_timeline:</strong> Chronology of events and appearances for a character.
           </li>
         </ul>
       </section>
