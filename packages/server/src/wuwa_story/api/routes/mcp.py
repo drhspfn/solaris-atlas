@@ -1,20 +1,19 @@
 import logging
-from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
-from mcp.types import Tool, TextContent
-from sqlalchemy.ext.asyncio import AsyncSession
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.types import TextContent, Tool
 
-from wuwa_story.db.session import get_session
-from wuwa_story.search.lore import LoreSearchService
 from wuwa_story.search.embedding import generate_query_embedding
+from wuwa_story.search.lore import LoreSearchService
 
 logger = logging.getLogger(__name__)
 
 mcp = Server("solaris-atlas-lore")
+streamable_http = StreamableHTTPSessionManager(app=mcp, json_response=True)
 
 @mcp.list_tools()
 async def handle_list_tools() -> list[Tool]:
@@ -95,6 +94,7 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
             elif name == "get_quest":
                 quest_id = arguments.get("quest_id")
                 from sqlalchemy import select
+
                 from wuwa_story.db.models.lore import LoreChunk
                 
                 stmt = select(LoreChunk).where(LoreChunk.quest_id == quest_id).order_by(LoreChunk.id)
@@ -114,6 +114,7 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
             elif name == "get_character_timeline":
                 character = arguments.get("character")
                 from sqlalchemy import select
+
                 from wuwa_story.db.models.lore import LoreChunk
                 
                 # Query chunks where characters JSONB array contains the given character

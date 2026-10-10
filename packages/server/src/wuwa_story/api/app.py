@@ -18,6 +18,7 @@ from wuwa_story.api.routes import (
     graph_paths,
     health,
     maps,
+    mcp,
     media_jobs,
     nodes,
     releases,
@@ -45,8 +46,11 @@ response_cache = Redis.from_url(
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    from wuwa_story.api.routes.mcp import streamable_http
+
     try:
-        yield
+        async with streamable_http.run():
+            yield
     finally:
         if response_cache is not None:
             await response_cache.aclose()
@@ -103,5 +107,5 @@ app.include_router(story_agent.router)
 app.include_router(story_agent.admin)
 app.include_router(auth_router)
 
-from wuwa_story.api.routes import mcp
 app.include_router(mcp.router)
+app.mount("/mcp", mcp.streamable_http.handle_request)
