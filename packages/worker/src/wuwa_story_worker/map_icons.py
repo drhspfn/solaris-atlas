@@ -22,14 +22,16 @@ def sprite_box(info: dict, width: int, height: int) -> tuple[int, int, int, int]
 
 
 async def build_icons(
-    root: Path, fmodel: Path, converter: Path, markers: list[dict], *, entity_media: bool = False
+    root: Path, fmodel: Path, converter: Path, markers: list[dict], *, entity_media: bool = False,
+    exact_textures: bool = False,
 ) -> dict:
     sources = {m["metadata_json"].get("icon_source") for m in markers} - {None, ""}
     cache = None
     if entity_media:
-        identity = json.dumps(
-            [sorted(sources), _sha256(converter), _sha256(fmodel)], sort_keys=True
-        )
+        identity_parts = [sorted(sources), _sha256(converter), _sha256(fmodel)]
+        if exact_textures:
+            identity_parts.append("exact_textures_v1")
+        identity = json.dumps(identity_parts, sort_keys=True)
         cache = (
             root / "entity-image-cache" / (hashlib.sha256(identity.encode()).hexdigest() + ".json")
         )
@@ -50,17 +52,19 @@ async def build_icons(
                 or folder.startswith("Common/Atlas/WorldMapIcon")
                 or folder == "UiWorldMap/Atlas/MoraleMapIcon/"
             ):
-                folders.add(folder)
+                folders.add(source.removeprefix("/Game/Aki/UI/UIResources/").split(".", 1)[0]
+                            if exact_textures else folder)
     output = root / "maps/icons"
     output.mkdir(parents=True, exist_ok=True)
     pngs = {}
     importers = []
     raw_files = {}
-    folders = {
-        folder
-        for folder in folders
-        if not any(folder.startswith(other) and folder != other for other in folders)
-    }
+    if not exact_textures:
+        folders = {
+            folder
+            for folder in folders
+            if not any(folder.startswith(other) and folder != other for other in folders)
+        }
     for folder in sorted(folders):
         receipt = await export_assets(root, fmodel, folder)
         raw = receipt.parent / "files"

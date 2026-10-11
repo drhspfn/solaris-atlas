@@ -20,6 +20,7 @@ async def list_game_events(
     server: str = Query(default="europe", pattern="^(asia|europe|america)$"),
     kind: str | None = Query(default=None, pattern="^(banner|limited|recurring|permanent)$"),
     version: str | None = Query(default=None, pattern=r"^\d+\.\d+$"),
+    locale: str = Query(default="en", pattern=r"^[a-zA-Z-]{2,16}$"),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     statement = (
@@ -87,8 +88,8 @@ async def list_game_events(
                 "id": event.id,
                 "source_id": event.source_id,
                 "occurrence_id": occurrence.id if occurrence else None,
-                "title": event.title,
-                "description": event.description,
+                "title": _presentation(event, occurrence, locale).get("title") or event.title,
+                "description": _presentation(event, occurrence, locale).get("description") or event.description,
                 "kind": event.event_kind,
                 "game_version": occurrence.game_version if occurrence else None,
                 "starts_at": occurrence.starts_at if occurrence else None,
@@ -105,3 +106,11 @@ async def list_game_events(
             for event, occurrence in rows
         ],
     }
+
+
+def _presentation(event, occurrence, locale):
+    data = (occurrence.source_data if occurrence else {}).get("client")
+    if not data:
+        data = (event.source_data or {}).get("client", {})
+    locales = data.get("locales", {})
+    return locales.get(locale) or locales.get("en") or {}

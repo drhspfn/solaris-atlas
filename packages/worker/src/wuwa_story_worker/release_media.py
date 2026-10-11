@@ -10,11 +10,13 @@ from pathlib import Path
 
 from sqlalchemy import select, text
 from wuwa_story.config.settings import get_settings
+from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.models.storage import FileReference
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.client_assets import discover_plan, inspect_installed_clients
 from wuwa_story.ingestion.entity_media import MediaRequest
+from wuwa_story.ingestion.game_events import SOURCE
 from wuwa_story.ingestion.media_jobs import enqueue_entity_media
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
@@ -24,6 +26,7 @@ from wuwa_story_worker.broker import JobDeferred
 from wuwa_story_worker.client_assets import download_plan, save_json, workspace_lock
 from wuwa_story_worker.cutscene_import import import_cutscene_recipe
 from wuwa_story_worker.cutscene_plan import plan_cutscene
+from wuwa_story_worker.event_catalog import client_event_record, read_event_catalog
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.map_icons import build_icons
 from wuwa_story_worker.media_diagnostics import publish_inventory, voice_report
@@ -86,20 +89,78 @@ async def image_batch(payload, parent, run, session):
     return {**(child.raw_output or {}), "entity_run_id": child.id}, child.status
 
 
+async def event_catalog(payload, parent, session):
+    receipt = await export_assets(client_root(parent), tool_path("WUWA_FMODEL_PATH"), "ConfigDB")
+    configs = list((receipt.parent / "files").rglob("db_activity.db"))
+    if len(configs) != 1:
+        raise ValueError(f"Expected one client Activity database, found {len(configs)}")
+    records = await asyncio.to_thread(read_event_catalog, configs[0].parent)
+    identities = [target.split("@", 1)[0] for target in payload["targets"]]
+    events = list(await session.scalars(select(GameEvent).where(GameEvent.source == SOURCE,
+                                                              GameEvent.source_id.in_(identities))
+                                       .order_by(GameEvent.id).with_for_update()))
+    entries = []
+    for event in events:
+        record = client_event_record(records, event.source_id)
+        english = (record or {}).get("locales", {}).get("en")
+        if not english:
+            entries.append({"expected": event.source_id, "status": "not_resolved",
+                            "matches": [], "title_key": (record or {}).get("title_key"),
+                            "config_present": bool(record),
+                            "nearby": [record["title_key"]] if record else []})
+            continue
+        presentation = {**record, "asset_version": parent["asset_version"]}
+        event.title = english["title"]
+        event.description = english["description"] or event.description
+        # Archive previews are specific artwork; replace missing artwork and
+        # gacha share thumbnails with the actual client presentation background.
+        if record["banner_path"] and (not event.banner_path or record["table"] == "GachaViewInfo"):
+            event.banner_path = record["banner_path"]
+        presentation["banner_path"] = event.banner_path
+        event.source_data = {**event.source_data, "client": presentation}
+        occurrences = list(await session.scalars(select(GameEventOccurrence).where(
+            GameEventOccurrence.event_id == event.id,
+            GameEventOccurrence.game_version == ".".join(parent["asset_version"].split(".")[:2]),
+        )))
+        for occurrence in occurrences:
+            occurrence.source_data = {**occurrence.source_data, "client": presentation}
+            occurrence.banner_path = event.banner_path
+        entries.append({"expected": event.source_id, "status": "found",
+                        "matches": [record["title_key"]], "title": event.title,
+                        "banner_path": event.banner_path})
+    await session.commit()
+    found = sum(entry["status"] == "found" for entry in entries)
+    logger.info("release_media.event_catalog requested=%s found=%s asset_version=%s",
+                len(entries), found, parent["asset_version"])
+    report = {"asset_version": parent["asset_version"], "requested": len(entries),
+              "found": found, "missing": len(entries) - found, "entries": entries}
+    return {**parent, "stage": "event_catalog_ready", "requested": len(entries),
+            "found": found, "missing": len(entries) - found,
+            "media_report": report, "entries": entries}, "completed"
+
+
 async def event_images(payload, parent, session):
     """Extract and publish schedule artwork by its authored client texture path."""
     root = client_root(parent)
+    targets = payload["targets"]
+    unresolved = []
+    if targets and ":" in targets[0] and not targets[0].startswith("/Game/"):
+        events = list(await session.scalars(select(GameEvent).where(GameEvent.source == SOURCE,
+            GameEvent.source_id.in_([target.split("@", 1)[0] for target in targets]))))
+        targets = sorted({event.banner_path for event in events if event.banner_path})
+        unresolved = [{"expected": event.source_id, "status": "not_resolved", "matches": []}
+                      for event in events if not event.banner_path]
     sources = {
         path: path if path.startswith("/Game/") else "/Game/Aki/UI/UIResources/" + path.lstrip("/")
-        for path in payload["targets"]
+        for path in targets
     }
     markers = [{"metadata_json": {"icon_source": source}} for source in sources.values()]
     icons = await build_icons(
         root, tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
-        markers, entity_media=True,
+        markers, entity_media=True, exact_textures=True,
     )
     service = None
-    entries = []
+    entries = unresolved
     for original, source in sources.items():
         icon = icons.get(source)
         if icon is None:
@@ -355,6 +416,8 @@ async def process_release_media(payload):
                         result, status = await image_batch(payload, parent.raw_output, run, session)
                     elif payload["kind"] == "event_images":
                         result, status = await event_images(payload, parent.raw_output, session)
+                    elif payload["kind"] == "event_catalog":
+                        result, status = await event_catalog(payload, parent.raw_output, session)
                     elif payload["kind"] == "cutscene_assets":
                         result, status = await cutscene_assets(payload, parent.raw_output)
                     elif payload["kind"] == "voice_packages":

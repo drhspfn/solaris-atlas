@@ -88,6 +88,26 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
                     }
                 )
 
+    # Re-importing the timetable must not erase presentation extracted from
+    # the game client by the dependent catalog task.
+    existing_events = list(await session.scalars(select(GameEvent).where(GameEvent.source == SOURCE)
+                                               .order_by(GameEvent.id).with_for_update()))
+    for event in existing_events:
+        row = event_rows.get(event.source_id)
+        client_data = (event.source_data or {}).get("client")
+        if row and client_data:
+            row["source_data"]["client"] = client_data
+            row["title"] = event.title
+            row["description"] = event.description
+            row["banner_path"] = client_data.get("banner_path") or row["banner_path"]
+    existing_occurrences = list(await session.scalars(select(GameEventOccurrence).where(
+        GameEventOccurrence.event_id.in_([event.id for event in existing_events])
+    )))
+    occurrence_clients = {
+        (row.event_id, row.source_occurrence_id, row.server, row.game_version): row.source_data["client"]
+        for row in existing_occurrences if (row.source_data or {}).get("client")
+    }
+
     if event_rows:
         statement = insert(GameEvent).values(list(event_rows.values()))
         statement = statement.on_conflict_do_update(
@@ -147,6 +167,12 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
         if row["source_id"] in event_ids
     ]
     values = _deduplicate_occurrences(values)
+    for row in values:
+        client_data = occurrence_clients.get((row["event_id"], row["source_occurrence_id"],
+                                             row["server"], row["game_version"]))
+        if client_data:
+            row["source_data"]["client"] = client_data
+            row["banner_path"] = client_data.get("banner_path") or row["banner_path"]
     if event_ids:
         await session.execute(
             delete(GameEventOccurrence).where(

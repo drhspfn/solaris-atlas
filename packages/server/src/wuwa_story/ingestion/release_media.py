@@ -10,6 +10,7 @@ from wuwa_story.db.models.core import Cutscene, VoiceReference
 from wuwa_story.db.models.game_events import GameEvent
 from wuwa_story.db.models.graph import Node, NodeRevision
 from wuwa_story.db.models.ops import GameRelease, ProcessingRun, Processor
+from wuwa_story.ingestion.game_events import SOURCE
 from wuwa_story.ingestion.media_jobs import publish_media_job
 
 QUEUE = "wuwa.release-media.v1"
@@ -47,13 +48,14 @@ async def enqueue_release_media(
     characters = [key for key in entities if key.startswith("character:")]
     specs = [("prepare", [])]
     if event_artwork_only:
-        event_paths = sorted(set(await session.scalars(
-            select(GameEvent.banner_path).where(GameEvent.banner_path.is_not(None))
+        event_targets = sorted(set(await session.scalars(
+            select(GameEvent.source_id + "@" + GameEvent.source_revision).where(GameEvent.source == SOURCE)
         )))
-        if not event_paths:
+        if not event_targets:
             return {"release_id": release_id, "parent_id": None, "tasks": 0,
                     "queued": 0, "enqueue_failed": 0}
-        specs.extend(("event_images", batch) for batch in batches(event_paths))
+        specs.append(("event_catalog", event_targets))
+        specs.extend(("event_images", batch) for batch in batches(event_targets))
     if not event_artwork_only and cutscenes:
         specs.append(("cutscene_assets", sorted(set(cutscenes))))
     if not event_artwork_only and (voices or characters):
@@ -67,7 +69,7 @@ async def enqueue_release_media(
     parent_id = None
     dependencies = {}
     for kind, targets in specs:
-        dependency = dependencies.get("cutscene_assets" if kind == "cutscene" else "voice_packages" if kind in {"voices", "character_voices"} else "prepare")
+        dependency = dependencies.get("event_catalog" if kind == "event_images" else "cutscene_assets" if kind == "cutscene" else "voice_packages" if kind in {"voices", "character_voices"} else "prepare")
         request = {"release_id": release_id, "game_version": release.game_version,
                    "kind": kind, "targets": targets, "parent_id": dependency}
         digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).digest()
@@ -81,7 +83,7 @@ async def enqueue_release_media(
         dependencies[kind] = run.id
         if kind == "prepare":
             parent_id = run.id
-        queue = EVENT_QUEUE if event_artwork_only and kind in {"prepare", "event_images"} else QUEUE
+        queue = EVENT_QUEUE if event_artwork_only else QUEUE
         already_queued = run.status == "queued" and (run.metadata_json or {}).get("queue", QUEUE) == queue
         if run.status not in {"running", "completed", "waiting_dependency"} and not already_queued:
             payload = {"schema_version": 1, "job_type": "media.release", "run_id": run.id,

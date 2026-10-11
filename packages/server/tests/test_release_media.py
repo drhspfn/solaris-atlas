@@ -82,8 +82,8 @@ async def test_queued_import_is_not_published_again(monkeypatch):
 async def test_event_artwork_import_queues_extraction_after_client_preparation(monkeypatch):
     session = AsyncMock()
     session.get.return_value = SimpleNamespace(game_version="1.0.0")
-    session.scalars.return_value = ["Common/Image/BgCg/T_RoleShare_SuoMing"]
-    session.scalar.side_effect = [4, None, None]
+    session.scalars.return_value = ["1:100087@revision", "2:100700044@revision"]
+    session.scalar.side_effect = [4, None, None, None]
     runs = []
     session.add = lambda run: runs.append(run)
 
@@ -98,10 +98,12 @@ async def test_event_artwork_import_queues_extraction_after_client_preparation(m
 
     payloads = [call.args[0] for call in published.await_args_list]
     by_kind = {payload["kind"]: payload for payload in payloads}
-    assert result["queued"] == 2
-    assert by_kind["event_images"]["targets"] == ["Common/Image/BgCg/T_RoleShare_SuoMing"]
-    assert by_kind["event_images"]["parent_id"] == by_kind["prepare"]["run_id"]
+    assert result["queued"] == 3
+    assert by_kind["event_images"]["targets"] == ["1:100087@revision", "2:100700044@revision"]
+    assert by_kind["event_catalog"]["parent_id"] == by_kind["prepare"]["run_id"]
+    assert by_kind["event_images"]["parent_id"] == by_kind["event_catalog"]["run_id"]
     assert [call.args[2] for call in published.await_args_list] == [
+        release_media.EVENT_QUEUE,
         release_media.EVENT_QUEUE,
         release_media.EVENT_QUEUE,
     ]

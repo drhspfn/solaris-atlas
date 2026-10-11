@@ -65,6 +65,59 @@ async def test_event_artwork_reports_unresolved_client_texture(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
+async def test_event_catalog_updates_presentation_and_keeps_missing_history_visible(monkeypatch, tmp_path):
+    config = tmp_path / "export/files/ConfigDB"
+    config.mkdir(parents=True)
+    (config / "db_activity.db").touch()
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
+    monkeypatch.setattr(release_media, "export_assets", AsyncMock(return_value=config.parent.parent / "manifest.json"))
+    record = {"table": "Activity", "title_key": "Activity_111800001_Title",
+              "banner_path": "/Game/Aki/UI/UIResources/Common/Image/Event",
+              "locales": {"en": {"title": "Blooms for the Shadow", "description": "Actual description"}}}
+    monkeypatch.setattr(release_media, "read_event_catalog", lambda _: {"102000009": record})
+    event = SimpleNamespace(id=1, source_id="2:102000009", title="Limited-time event",
+                            description=None, banner_path=None, source_data={})
+    missing = SimpleNamespace(id=2, source_id="2:999", title="Historical title", source_data={})
+    occurrence = SimpleNamespace(source_data={}, banner_path=None)
+    session = AsyncMock()
+    session.scalars.side_effect = [[event, missing], [occurrence]]
+    parent = {"asset_version": "3.7.0", "tier": "hd", "download_id": "a" * 64}
+
+    report, status = await release_media.event_catalog(
+        {"targets": ["2:102000009@revision", "2:999@revision"]}, parent, session,
+    )
+
+    assert status == "completed"
+    assert report["found"] == 1 and report["missing"] == 1
+    assert report["download_id"] == parent["download_id"]
+    assert event.title == "Blooms for the Shadow"
+    assert event.description == "Actual description"
+    assert occurrence.banner_path == record["banner_path"]
+    assert occurrence.source_data["client"]["asset_version"] == "3.7.0"
+    assert missing.title == "Historical title"
+    assert report["entries"][1]["config_present"] is False
+
+
+@pytest.mark.asyncio
+async def test_event_image_queue_resolves_catalog_ids_and_reports_absent_paths(monkeypatch, tmp_path):
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
+    build = AsyncMock(return_value={})
+    monkeypatch.setattr(release_media, "build_icons", build)
+    session = AsyncMock()
+    session.scalars.return_value = [SimpleNamespace(source_id="2:999", banner_path=None)]
+
+    report, status = await release_media.event_images(
+        {"release_id": 9, "targets": ["2:999@revision"]},
+        {"asset_version": "3.7.0"}, session,
+    )
+
+    assert status == "partial" and report["missing_images"] == ["2:999"]
+    assert build.await_args.kwargs["exact_textures"] is True
+
+
+@pytest.mark.asyncio
 async def test_voice_export_search_includes_wwise_audio_and_uppercase_extension(tmp_path, monkeypatch):
     from wuwa_story_worker import entity_media, voice_bootstrap, voice_packages
     root = tmp_path / "client"

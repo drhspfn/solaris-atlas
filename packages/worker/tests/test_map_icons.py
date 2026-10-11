@@ -12,7 +12,8 @@ def test_atlas_uv_crop_and_bounds():
 
 
 @pytest.mark.asyncio
-async def test_icon_conversion_bounds_loaded_texture_batches(tmp_path, monkeypatch):
+@pytest.mark.parametrize("exact_textures", [False, True])
+async def test_icon_conversion_bounds_loaded_texture_batches(tmp_path, monkeypatch, exact_textures):
     import subprocess
     from pathlib import Path
     from unittest.mock import AsyncMock
@@ -45,6 +46,10 @@ async def test_icon_conversion_bounds_loaded_texture_batches(tmp_path, monkeypat
         return subprocess.CompletedProcess(command, 0)
     monkeypatch.setattr(map_icons.subprocess, "run", convert)
     result = await map_icons.build_icons(tmp_path, fmodel, converter,
-        [{"metadata_json": {"icon_source": source}} for source in sources], entity_media=True)
+        [{"metadata_json": {"icon_source": source}} for source in sources], entity_media=True,
+        exact_textures=exact_textures)
     assert [len(batch) for batch in batches] == [8, 8, 3]
     assert set(result) == set(sources)
+    filters = {call.args[2] for call in map_icons.export_assets.await_args_list}
+    assert filters == ({f"Common/Image/Test/T_{index}" for index in range(19)}
+                       if exact_textures else {"Common/Image/Test/"})
