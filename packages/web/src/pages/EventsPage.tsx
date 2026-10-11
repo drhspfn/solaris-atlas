@@ -11,6 +11,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 
 import { api } from '../api/client';
+import { useLocale } from '../hooks/useLocale';
 
 type GameEvent = {
   id: number;
@@ -76,6 +77,7 @@ function EventArtwork({ event, compact = false }: { event: GameEvent; compact?: 
 }
 
 function App() {
+  const locale = useLocale();
   const [server, setServer] = useState<Server>('europe');
   const [kind, setKind] = useState<GameEvent['kind'] | 'all'>('all');
   const [events, setEvents] = useState<GameEvent[]>([]);
@@ -87,7 +89,9 @@ function App() {
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
-    void api<EventsResponse>(`/events?server=${server}`, { signal: controller.signal })
+    void api<EventsResponse>(`/events?server=${server}&locale=${locale}`, {
+      signal: controller.signal,
+    })
       .then((data) => {
         setEvents(data.events);
         setSelected((current) => data.events.find((event) => event.id === current?.id) ?? null);
@@ -102,7 +106,7 @@ function App() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [server]);
+  }, [server, locale]);
 
   const visibleEvents = useMemo(
     () => events.filter((event) => kind === 'all' || event.kind === kind),
@@ -226,12 +230,11 @@ function App() {
           <div className="events-detail-copy">
             <span className={`events-kind kind-${selected.kind}`}>{kindLabels[selected.kind]}</span>
             <h2>{selected.title}</h2>
-            <p>
-              {selected.description ??
-                (selected.season
-                  ? `${selected.season.cycle?.weeks ? `Repeats every ${selected.season.cycle.weeks} weeks. ` : ''}Season ${selected.season.start ?? 'schedule'}.`
-                  : 'Historical schedule entry from the game event archive.')}
-            </p>
+            {selected.description ? (
+              <p>{selected.description}</p>
+            ) : selected.season?.cycle?.weeks ? (
+              <p>Repeats every {selected.season.cycle.weeks} weeks.</p>
+            ) : null}
             <div className="events-detail-dates">
               <span>{formatDate(selected.starts_at)}</span>
               <b>→</b>
