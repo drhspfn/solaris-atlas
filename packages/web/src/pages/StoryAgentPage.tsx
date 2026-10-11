@@ -546,7 +546,7 @@ function AgentChat() {
   async function send(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!input.trim() || busy) return;
-    
+
     const userMessage = { role: 'user' as const, content: input.trim() };
     const newMessages = [...messages, userMessage];
     setMessages(newMessages);
@@ -557,7 +557,7 @@ function AgentChat() {
     try {
       const response = await api<{ reply: string }>('/admin/story-agent/chat', {
         method: 'POST',
-        body: { messages: newMessages }
+        body: { messages: newMessages },
       });
       setMessages([...newMessages, { role: 'assistant', content: response.reply }]);
     } catch (e) {
@@ -569,28 +569,38 @@ function AgentChat() {
   }
 
   return (
-    <section className="content-panel agent-chat" style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+    <section className="content-panel agent-chat">
       <div className="agent-panel-header">
         <h2>Lore Assistant</h2>
         <small>Ask questions about generated lore</small>
       </div>
-      <div className="chat-messages" style={{ maxHeight: '300px', overflowY: 'auto', marginBottom: '1rem' }}>
-        {messages.length === 0 && <p className="empty-inline">Send a message to start chatting with the Lore Assistant.</p>}
+      <div className="lore-chat-messages" aria-live="polite">
+        {messages.length === 0 && (
+          <p className="empty-inline">Send a message to start chatting with the Lore Assistant.</p>
+        )}
         {messages.map((m, i) => (
-          <div key={i} style={{ marginBottom: '0.5rem', padding: '0.5rem', background: m.role === 'assistant' ? 'var(--bg-layer-2, #f5f5f5)' : 'var(--bg-layer-3, #e3f2fd)', borderRadius: '4px' }}>
-            <strong>{m.role === 'assistant' ? 'Agent' : 'You'}:</strong> <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.content}</span>
+          <div key={i} className={`lore-chat-message lore-chat-${m.role}`}>
+            <strong>{m.role === 'assistant' ? 'Agent' : 'You'}:</strong> <span>{m.content}</span>
           </div>
         ))}
-        {busy && <div style={{ color: '#666', fontStyle: 'italic' }}>Agent is searching...</div>}
-        {error && <div style={{ color: 'var(--text-error, red)' }}>{error}</div>}
+        {busy && (
+          <p className="empty-inline" role="status">
+            Agent is searching…
+          </p>
+        )}
+        {error && (
+          <p className="agent-feedback" role="alert">
+            {error}
+          </p>
+        )}
       </div>
-      <form onSubmit={send} style={{ display: 'flex', gap: '0.5rem' }}>
-        <input 
+      <form noValidate onSubmit={send} className="lore-chat-form">
+        <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          aria-label="Question for Lore Assistant"
           placeholder="Ask a question about the story..."
           disabled={busy}
-          style={{ flex: 1 }}
         />
         <button type="submit" className="agent-button primary" disabled={busy || !input.trim()}>
           Send

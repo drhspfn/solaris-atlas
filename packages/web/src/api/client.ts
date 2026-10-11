@@ -18,7 +18,13 @@ const requestCache = new Map<string, { data: any; expiry: number; promise?: Prom
 
 export async function api<T>(
   path: string,
-  options: { method?: string; body?: unknown; csrf?: boolean; signal?: AbortSignal, cacheTtl?: number } = {},
+  options: {
+    method?: string;
+    body?: unknown;
+    csrf?: boolean;
+    signal?: AbortSignal;
+    cacheTtl?: number;
+  } = {},
 ): Promise<T> {
   const method = options.method ?? 'GET';
   const cacheKey = `${method}:${path}`;
@@ -69,7 +75,7 @@ export async function api<T>(
   })();
 
   if (method === 'GET') {
-    const ttl = options.cacheTtl ?? 300000; // default 5 minutes
+    const ttl = options.cacheTtl ?? (path.startsWith('/admin/') ? 0 : 300000);
     requestCache.set(cacheKey, { data: null, expiry: Date.now() + ttl, promise: fetchPromise });
     try {
       const data = await fetchPromise;

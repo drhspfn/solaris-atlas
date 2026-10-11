@@ -301,6 +301,21 @@ filter. An empty running set is stated explicitly; delivered RabbitMQ messages
 are not presented as confirmed execution. Client discovery records running and
 its stage before network requests begin.
 
+Data operations defaults to Queues & tasks; Run imports and Import history are
+separate views. History shows 15 tasks per page with newer/older navigation and
+closed result/error disclosures in a bounded table scroller. Operational reads bypass the browser API cache;
+visible-page polling remains 10 seconds. Idle queues are hidden by default, and
+deferred/failed broker counts are grouped under their operation.
+
+Import queue cleanup uses an app-owned modal with explicit waiting/failed scope,
+keyboard Escape and focus return. Waiting cleanup cancels pending runs and removes
+their broker messages, including deferred deliveries. Running tasks, published files
+and database history remain intact. Cancelled deliveries are ignored by workers;
+retrying the import can schedule them again. Failed cleanup removes broker messages
+only, retaining recorded errors. AI analysis queues are not cleared by import controls.
+Cleanup failures remain in the dialog and permit retry; success reports actual counts.
+Lore Assistant messages use the shared dark surface and text tokens.
+
 ## Quest reader navigation
 
 The sidebar lists numbered dialogue parts and scene links. Technical flow keys,

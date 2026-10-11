@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { api } from '../../api/client';
 import { MediaImportReport } from './MediaImportReport';
+import { QueueManager } from './QueueManager';
 
 type Task = {
   id: number;
@@ -28,7 +29,6 @@ type Queues = {
 function TaskRows({ rows }: { rows: Task[] }) {
   return (
     <>
-      {' '}
       {rows.map((task) => (
         <tr key={task.id}>
           <th scope="row">
@@ -36,26 +36,30 @@ function TaskRows({ rows }: { rows: Task[] }) {
             {task.request.parent_id && <small>Depends on #{task.request.parent_id}</small>}
           </th>
           <td>
-            {task.processor.replaceAll('_', ' ')}
+            {(task.request.kind || task.processor).replaceAll('_', ' ')}
             <small>
-              {task.request.kind} {task.request.game_version}
+              {task.request.game_version ? `Version ${task.request.game_version}` : ''}
               {task.request.targets?.length ? ` · ${task.request.targets.length} references` : ''}
             </small>
-            {task.request.targets?.length === 1 && <small>{task.request.targets[0]}</small>}
           </td>
           <td>
             <span className={`agent-status status-${task.status}`}>
               {task.status.replaceAll('_', ' ')}
             </span>
-            {task.error && <small>{task.error}</small>}
           </td>
           <td>
-            {Object.entries(task.result).map(([key, value]) => (
-              <small key={key}>
-                {key.replaceAll('_', ' ')}:{' '}
-                {Array.isArray(value) ? `${value.length} missing` : String(value)}
-              </small>
-            ))}
+            {(task.error || Object.keys(task.result).length > 0) && (
+              <details className="task-details">
+                <summary>{task.error ? 'View message' : 'View result'}</summary>
+                {task.error && <p>{task.error}</p>}
+                {Object.entries(task.result).map(([key, value]) => (
+                  <small key={key}>
+                    {key.replaceAll('_', ' ')}:{' '}
+                    {Array.isArray(value) ? `${value.length} missing` : String(value)}
+                  </small>
+                ))}
+              </details>
+            )}
             {task.media_report_available && <MediaImportReport taskId={task.id} />}
           </td>
         </tr>
@@ -67,7 +71,8 @@ function TaskRows({ rows }: { rows: Task[] }) {
 export function ProcessingActivity() {
   const [tasks, setTasks] = useState<Tasks | null>(null);
   const [queues, setQueues] = useState<Queues | null>(null);
-  const [before, setBefore] = useState<number | null>(null);
+  const [pages, setPages] = useState<(number | null)[]>([null]);
+  const before = pages[pages.length - 1];
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
@@ -81,12 +86,15 @@ export function ProcessingActivity() {
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ limit: '15' });
     if (before) params.set('before', String(before));
     if (status) params.set('status', status);
     void Promise.all([
-      api<Tasks>(`/admin/data-operations/tasks?${params}`, { signal: controller.signal }),
-      api<Queues>('/admin/data-operations/queues', { signal: controller.signal }),
+      api<Tasks>(`/admin/data-operations/tasks?${params}`, {
+        signal: controller.signal,
+        cacheTtl: 0,
+      }),
+      api<Queues>('/admin/data-operations/queues', { signal: controller.signal, cacheTtl: 0 }),
     ])
       .then(([runs, broker]) => {
         if (!controller.signal.aborted) {
@@ -112,7 +120,10 @@ export function ProcessingActivity() {
         <header className="agent-panel-header">
           <div>
             <h3>Queues & workers</h3>
-            <p>Live broker counts. Active means delivered to a worker and not acknowledged yet.</p>
+            <p>
+              Live updates every 10 seconds. Delivered messages and executing tasks are shown
+              separately.
+            </p>
           </div>
         </header>
         {error && (
@@ -126,37 +137,7 @@ export function ProcessingActivity() {
         {queues?.error && <p role="status">{queues.error}</p>}
         {!queues && !error && <p role="status">Loading queue activity…</p>}
         {queues?.available && (
-          <div className="agent-table-scroll" tabIndex={0} aria-label="Live queue activity">
-            <table>
-              <thead>
-                <tr>
-                  <th>Queue</th>
-                  <th>Waiting</th>
-                  <th>Active</th>
-                  <th>Consumers</th>
-                  <th>Worker connections</th>
-                </tr>
-              </thead>
-              <tbody>
-                {queues.queues.map((queue) => (
-                  <tr key={queue.name}>
-                    <th scope="row">{queue.name}</th>
-                    <td>{queue.ready}</td>
-                    <td>{queue.active}</td>
-                    <td>{queue.consumers}</td>
-                    <td>
-                      {queue.workers.map((worker, index) => (
-                        <small key={`${worker.name}-${index}`}>
-                          {worker.name} · prefetch {worker.prefetch}
-                        </small>
-                      ))}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!queues.queues.length && <p>No processing queues have been declared.</p>}
-          </div>
+          <QueueManager queues={queues.queues} refresh={() => setRevision((value) => value + 1)} />
         )}
       </section>
       <section className="content-panel data-operation-panel" aria-busy={loading}>
@@ -189,16 +170,13 @@ export function ProcessingActivity() {
             worker slot; this does not confirm execution.
           </p>
         )}
-        {!tasks && <p>Loading current execution�</p>}
+        {!tasks && <p>Loading current execution…</p>}
       </section>
       <section className="content-panel data-operation-panel" aria-busy={loading}>
         <header className="agent-panel-header">
           <div>
-            <h3>All processing tasks</h3>
-            <p>
-              Imports, media extraction and manual analyses. Waiting and failed tasks remain
-              visible.
-            </p>
+            <h3>Task history</h3>
+            <p>15 tasks per page. Open details for errors, results and missing files.</p>
           </div>
           <label className="processing-status-filter">
             Status{' '}
@@ -206,7 +184,7 @@ export function ProcessingActivity() {
               value={status}
               onChange={(event) => {
                 setStatus(event.target.value);
-                setBefore(null);
+                setPages([null]);
               }}
             >
               <option value="">All statuses</option>
@@ -219,6 +197,7 @@ export function ProcessingActivity() {
                 'partial',
                 'completed',
                 'enqueue_failed',
+                'cancelled',
               ].map((value) => (
                 <option key={value} value={value}>
                   {value.replaceAll('_', ' ')}
@@ -227,7 +206,11 @@ export function ProcessingActivity() {
             </select>
           </label>
         </header>
-        <div className="agent-table-scroll" tabIndex={0} aria-label="All processing tasks">
+        <div
+          className="agent-table-scroll processing-history-frame"
+          tabIndex={0}
+          aria-label="Task history"
+        >
           <table>
             <thead>
               <tr>
@@ -243,9 +226,20 @@ export function ProcessingActivity() {
           </table>
         </div>
         {!loading && tasks && !tasks.tasks.length && <p>No tasks match this status.</p>}
-        <div className="agent-pagination">
+        <nav className="agent-pagination" aria-label="Task history pages">
+          <button
+            className="agent-button"
+            disabled={loading || pages.length === 1}
+            onClick={() => setPages((previous) => previous.slice(0, -1))}
+          >
+            Newer tasks
+          </button>
+          <span>
+            Page {pages.length}
+            {loading ? ' · Updating…' : ''}
+          </span>
           {before && (
-            <button className="agent-button" onClick={() => setBefore(null)}>
+            <button className="agent-button" onClick={() => setPages([null])}>
               Latest tasks
             </button>
           )}
@@ -253,12 +247,12 @@ export function ProcessingActivity() {
             <button
               className="agent-button"
               disabled={loading}
-              onClick={() => setBefore(tasks.next_before)}
+              onClick={() => setPages((previous) => [...previous, tasks.next_before])}
             >
               Older tasks
             </button>
           )}
-        </div>
+        </nav>
       </section>
     </>
   );
