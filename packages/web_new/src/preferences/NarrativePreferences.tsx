@@ -1,0 +1,87 @@
+'use client';
+
+import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from 'react';
+
+import { APP_SETTINGS } from '../config/settings';
+
+const STORAGE_KEY = APP_SETTINGS.storage.narrative;
+export type PlayerNameMode = 'nickname' | 'rover_title';
+export type PlayerNameColorMode = 'accent' | 'custom';
+
+type VoiceLanguage = 'en' | 'ja' | 'ko' | 'zh';
+
+type Preferences = {
+  preferredRover: 'ask' | 'male' | 'female';
+  voiceLanguage: VoiceLanguage;
+  nameMode: PlayerNameMode;
+  colorMode: PlayerNameColorMode;
+  customColor: string;
+};
+type PreferenceContextValue = Preferences & {
+  setPreferredRover: (value: Preferences['preferredRover']) => void;
+  setVoiceLanguage: (value: VoiceLanguage) => void;
+  setNameMode: (value: PlayerNameMode) => void;
+  setColorMode: (value: PlayerNameColorMode) => void;
+  setCustomColor: (value: string) => void;
+};
+
+const defaults: Preferences = APP_SETTINGS.narrative;
+const PreferencesContext = createContext<PreferenceContextValue | null>(null);
+
+function loadPreferences(): Preferences {
+  if (typeof window === 'undefined') return defaults;
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return defaults;
+    const value = JSON.parse(saved) as Partial<Preferences>;
+    return {
+      preferredRover:
+        value.preferredRover === 'male' || value.preferredRover === 'female'
+          ? value.preferredRover
+          : defaults.preferredRover,
+      voiceLanguage:
+        value.voiceLanguage === 'ja' || value.voiceLanguage === 'ko' || value.voiceLanguage === 'zh'
+          ? value.voiceLanguage
+          : 'en',
+      nameMode: value.nameMode === 'rover_title' ? 'rover_title' : 'nickname',
+      colorMode: value.colorMode === 'custom' ? 'custom' : 'accent',
+      customColor: /^#[\da-f]{6}$/i.test(value.customColor || '')
+        ? value.customColor!
+        : defaults.customColor,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+export function NarrativePreferencesProvider({ children }: { children: ReactNode }) {
+  const [preferences, setPreferences] = useState(loadPreferences);
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
+    } catch {
+      // Settings remain active for this page session if storage is unavailable.
+    }
+  }, [preferences]);
+  function update(patch: Partial<Preferences>) {
+    setPreferences((current) => ({ ...current, ...patch }));
+  }
+  const value = useMemo<PreferenceContextValue>(
+    () => ({
+      ...preferences,
+      setPreferredRover: (preferredRover) => update({ preferredRover }),
+      setVoiceLanguage: (voiceLanguage) => update({ voiceLanguage }),
+      setNameMode: (nameMode) => update({ nameMode }),
+      setColorMode: (colorMode) => update({ colorMode }),
+      setCustomColor: (customColor) => update({ customColor }),
+    }),
+    [preferences],
+  );
+  return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
+}
+
+export function useNarrativePreferences(): PreferenceContextValue {
+  const value = useContext(PreferencesContext);
+  if (!value) throw new Error('useNarrativePreferences must be used inside its provider');
+  return value;
+}

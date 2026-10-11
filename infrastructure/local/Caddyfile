@@ -1,18 +1,4 @@
 :80 {
-  @seo path /robots.txt /sitemap.xml
-  handle @seo {
-    reverse_proxy api:8000
-  }
-
-  @bot {
-    header_regexp User-Agent (?i)(bot|spider|crawler|preview|discordbot|twitterbot|facebookexternalhit|googlebot|slackbot|vkshare)
-    not path /api* /docs* /redoc* /openapi.json /sitemap.xml /robots.txt
-  }
-  handle @bot {
-    rewrite * /api/seo/prerender?path={uri}
-    reverse_proxy api:8000
-  }
-
   @api path /api /api/*
   handle @api {
     uri strip_prefix /api
@@ -25,6 +11,7 @@
   }
 
   handle {
-    reverse_proxy web:80
+    reverse_proxy web:3000
   }
 }
+

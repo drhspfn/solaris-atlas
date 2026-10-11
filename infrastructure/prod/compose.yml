@@ -95,9 +95,14 @@ services:
   web:
     image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-web:${IMAGE_TAG:-latest}
     restart: unless-stopped
+    environment:
+      INTERNAL_API_BASE: http://api:8000
+      API_PROXY_TARGET: http://api:8000
+      PORT: "3000"
     depends_on:
       api:
         condition: service_healthy
+
 
   caddy:
     image: caddy:2-alpine

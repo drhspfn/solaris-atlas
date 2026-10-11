@@ -17,17 +17,18 @@ services:
   web:
     build:
       context: ../..
-      dockerfile: packages/web/Dockerfile
+      dockerfile: packages/web_new/Dockerfile
       target: dev
     environment:
-      VITE_API_PROXY_TARGET: http://api:8000
+      INTERNAL_API_BASE: http://api:8000
+      API_PROXY_TARGET: http://api:8000
+      PORT: "3000"
     depends_on:
       - api
     volumes:
-      - ../../packages/web/src:/app/packages/web/src
-      - ../../packages/web/public:/app/packages/web/public
-      - ../../packages/web/index.html:/app/packages/web/index.html
-      - ../../packages/web/vite.config.ts:/app/packages/web/vite.config.ts
+      - ../../packages/web_new/src:/app/packages/web_new/src
+      - ../../packages/web_new/public:/app/packages/web_new/public
+
 
   caddy:
     depends_on:

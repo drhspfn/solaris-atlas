@@ -98,8 +98,14 @@ services:
   web:
     build:
       context: ../..
-      dockerfile: packages/web/Dockerfile
-      target: runtime
+      dockerfile: packages/web_new/Dockerfile
+    environment:
+      INTERNAL_API_BASE: http://api:8000
+      API_PROXY_TARGET: http://api:8000
+      PORT: "3000"
+    depends_on:
+      - api
+
 
   caddy:
     image: caddy:2-alpine

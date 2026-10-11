@@ -28,4 +28,5 @@ worker-test:
 	cd packages/worker && uv run pytest
 
 web-build:
-	cd packages/web && npm run build
+	cd packages/web_new && npm run build
+
