@@ -76,6 +76,18 @@ async def handle_list_tools() -> list[Tool]:
                         "type": "integer",
                         "description": "Result offset for pagination (default 0).",
                         "default": 0
+                    },
+                    "sort_by": {
+                        "type": "string",
+                        "enum": ["relevance", "name"],
+                        "description": "Sort results by 'relevance' or 'name'. Default 'relevance'.",
+                        "default": "relevance"
+                    },
+                    "sort_order": {
+                        "type": "string",
+                        "enum": ["desc", "asc"],
+                        "description": "Sort order: 'desc' or 'asc'. Default 'desc'.",
+                        "default": "desc"
                     }
                 },
                 "required": ["q"]
@@ -302,11 +314,20 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
                 else:
                     category_list = None
 
+                sort_by_val = str(arguments.get("sort_by") or "relevance").strip()
+                if sort_by_val not in {"relevance", "name"}:
+                    sort_by_val = "relevance"
+                sort_order_val = str(arguments.get("sort_order") or "desc").strip()
+                if sort_order_val not in {"asc", "desc"}:
+                    sort_order_val = "desc"
+
                 res = await api_search(
                     q=q_val,
                     category=category_list,
                     scope=scope_val,
                     locale=arguments.get("locale", "en"),
+                    sort_by=sort_by_val,
+                    sort_order=sort_order_val,
                     limit=min(int(arguments.get("limit", 20)), 100),
                     offset=int(arguments.get("offset", 0)),
                     character=arguments.get("character"),

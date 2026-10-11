@@ -30,6 +30,19 @@ async def search(
     quest_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if hasattr(sort_by, "default"):
+        sort_by = sort_by.default
+    if hasattr(sort_order, "default"):
+        sort_order = sort_order.default
+    if hasattr(scope, "default"):
+        scope = scope.default
+    if hasattr(limit, "default"):
+        limit = limit.default
+    if hasattr(offset, "default"):
+        offset = offset.default
+    if hasattr(q, "default"):
+        q = q.default
+
     if category and "dialogue" in category:
         if len(category) > 1 and set(category) != {"dialogue"}:
             raise HTTPException(
