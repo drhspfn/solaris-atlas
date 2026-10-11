@@ -172,6 +172,14 @@ if [[ "$DEPLOY_COMPONENT" == caddy ]]; then
 else
   "${compose[@]}" up -d "${services[@]}"
 fi
+# Updating a bind-mounted Caddyfile does not reload the running proxy. In
+# particular, switching the web image from nginx to Next.js changes its port.
+case "$DEPLOY_COMPONENT" in
+  web|all)
+    "${compose[@]}" exec -T caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+    "${compose[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+    ;;
+esac
 "${compose[@]}" ps
 case "$DEPLOY_COMPONENT" in
   infrastructure|snapshot-worker|all)

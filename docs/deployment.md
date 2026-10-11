@@ -60,6 +60,11 @@ The host is Ubuntu or Debian. Docker Compose v2.30 or newer is installed by the 
 
 ## Rollback and backups
 
+Web and full deployments validate and reload the running Caddy configuration.
+The Next.js frontend listens on port 3000; replacing the web image alone does
+not make Caddy reread its mounted configuration. A reload applies updated
+upstream ports without restarting the proxy.
+
 Redeploy a previous commit SHA to roll application images back. Database migrations run forward at API deployment; back up PostgreSQL before schema changes that are not backwards-compatible. Keep backups of PostgreSQL and object storage separate from the server.
 
 ### Patch media imports
