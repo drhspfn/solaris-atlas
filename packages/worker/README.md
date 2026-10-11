@@ -30,6 +30,20 @@ docker compose -f infrastructure/local/compose.yml --env-file infrastructure/loc
 
 Per-queue concurrency is controlled with `WUWA_QUEUE_CONCURRENCY`, for example `snapshot_build=1`. Keep snapshot concurrency at one unless each job is given a separate Git cache/workspace strategy. Import batch size is `WUWA_IMPORT_BATCH_SIZE`. Queue data and the shallow Git object cache are persisted in the `wuwa_worker_data` volume.
 
+Release media and entity media default to two simultaneous tasks each. Event artwork
+uses the independent `wuwa.event-media.v1` queue (one task), so it does not wait behind
+voice or cutscene imports. Every queue has its own channel and delivery limit; shared
+asset workspaces still serialize exports through their existing locks. Override with
+`WUWA_QUEUE_CONCURRENCY=release_media=1,entity_media=1` to restore serial media processing.
+
+Admin data operations can cancel waiting import tasks and clear waiting/deferred or
+failed broker messages. Running tasks, exported files and run history are retained.
+Cancelled deliveries are acknowledged without executing; explicit import retry queues
+the same pinned request again. Cleanup is bounded to 5,000 initial messages per queue
+per request; refresh and repeat for larger backlogs. Deploy API and worker together so
+the cancellation guard is active before using cleanup. Reimports reuse already queued
+tasks instead of publishing duplicates.
+
 The compiler source and schema baseline are packaged with this service under `src/wuwa_story_worker/compiler/`; its investigation notes and source schema reports are under `docs/game-data/`. They are ordinary version-controlled sources. The worker does not need a mounted investigation checkout.
 
 ## FModel and game client assets
