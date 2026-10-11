@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 
 import { serverApi } from '@/api/serverApi';
+import { decodeRouteKey } from '@/lib/routeKey';
 import { QuestPageClient } from '@/components/quest/QuestPageClient';
 import { PageLoader } from '@/components/ui/Feedback';
 import { APP_SETTINGS } from '@/config/settings';
@@ -13,7 +14,7 @@ type Props = {
 };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { key } = await params;
+  const key = decodeRouteKey((await params).key);
   const profile = await serverApi<any>(`/quests/${encodeURIComponent(key)}/profile?locale=en`);
   const quest = profile?.quest;
   const title = quest?.name?.content || `Quest ${key}`;
@@ -38,7 +39,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function QuestTranscriptPage({ params }: Props) {
-  const { key } = await params;
+  const key = decodeRouteKey((await params).key);
 
   // Server pre-fetch initial quest data for instant SSR
   const [profile, transcript, continuity, media] = await Promise.all([

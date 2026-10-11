@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 
 import { serverApi } from '@/api/serverApi';
+import { decodeRouteKey } from '@/lib/routeKey';
 import { NodeExplorerPage as NodeExplorerClient } from '@/components/nodes/NodeExplorerClient';
 import { PageLoader } from '@/components/ui/Feedback';
 import { APP_SETTINGS } from '@/config/settings';
@@ -11,7 +12,7 @@ type Props = {
 };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { key } = await params;
+  const key = decodeRouteKey((await params).key);
   const detail = await serverApi<any>(`/nodes/${encodeURIComponent(key)}`);
   const title = detail?.slug || detail?.canonical_key || key;
   const description = `Inspect graph node, relations, and narrative connections for ${title} in Solaris Atlas.`;
@@ -33,7 +34,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function NodePage({ params }: Props) {
-  const { key } = await params;
+  const key = decodeRouteKey((await params).key);
 
   // Server pre-fetch node details
   const [detail, related, narrative] = await Promise.all([

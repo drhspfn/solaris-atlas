@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 
 import { serverApi } from '@/api/serverApi';
+import { decodeRouteKey } from '@/lib/routeKey';
 import { EntityProfileClient } from '@/components/profile/EntityProfileClient';
 import { PageLoader } from '@/components/ui/Feedback';
 import { localizedText } from '@/data/localized';
@@ -11,7 +12,7 @@ type Props = {
 };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { key } = await params;
+  const key = decodeRouteKey((await params).key);
   const data = await serverApi<any>(`/characters/${encodeURIComponent(key)}/profile?locale=en`);
   const character = data?.character;
   const entityId = character?.canonical_key?.split(':').at(-1) || key;
@@ -46,7 +47,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function CharacterProfilePage({ params }: Props) {
-  const { key } = await params;
+  const key = decodeRouteKey((await params).key);
   const initialData = await serverApi<any>(
     `/characters/${encodeURIComponent(key)}/profile?locale=en`,
   );

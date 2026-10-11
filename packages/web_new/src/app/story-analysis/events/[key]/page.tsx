@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Suspense } from 'react';
 
 import { serverApi } from '@/api/serverApi';
+import { decodeRouteKey } from '@/lib/routeKey';
 import { StoryEventClient } from '@/components/story-analysis/StoryEventClient';
 import { PageLoader } from '@/components/ui/Feedback';
 
@@ -10,7 +11,7 @@ type Props = {
 };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { key } = await params;
+  const key = decodeRouteKey((await params).key);
   const event = await serverApi<any>(`/story-analysis/events/${encodeURIComponent(key)}?locale=en`);
   const title = event?.title || 'Story Event';
   const description = event?.description || 'Story analysis event interpretation in Solaris Atlas.';
@@ -32,7 +33,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function StoryEventPage({ params }: Props) {
-  const { key } = await params;
+  const key = decodeRouteKey((await params).key);
   const initialEvent = await serverApi<any>(
     `/story-analysis/events/${encodeURIComponent(key)}?locale=en`,
   );
