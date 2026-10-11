@@ -23,10 +23,12 @@ export function EntityProfileClient({
   kind,
   entityKey,
   initialData,
+  initialArchive,
 }: {
   kind: 'character' | 'item' | 'location';
   entityKey: string;
   initialData?: any;
+  initialArchive?: CharacterArchiveData | null;
 }) {
   const locale = useLocale();
   const playerDisplay = usePlayerDisplay();
@@ -34,7 +36,7 @@ export function EntityProfileClient({
   const [loading, setLoading] = useState(!initialData);
   const [error, setError] = useState('');
   const [showAllRelated, setShowAllRelated] = useState(false);
-  const [archive, setArchive] = useState<CharacterArchiveData | null>(null);
+  const [archive, setArchive] = useState<CharacterArchiveData | null>(initialArchive ?? null);
   const [archiveError, setArchiveError] = useState('');
 
   useEffect(() => {
@@ -50,6 +52,7 @@ export function EntityProfileClient({
   }, [kind, entityKey, locale]);
 
   useEffect(() => {
+    if (initialArchive && locale === 'en' && archive === initialArchive) return;
     setArchive(null);
     setArchiveError('');
     if (kind !== 'character') return;

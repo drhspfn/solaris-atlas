@@ -1,10 +1,8 @@
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
 
 import { serverApi } from '@/api/serverApi';
 import { decodeRouteKey } from '@/lib/routeKey';
 import { EntityProfileClient } from '@/components/profile/EntityProfileClient';
-import { PageLoader } from '@/components/ui/Feedback';
 import { localizedText } from '@/data/localized';
 
 type Props = {
@@ -52,9 +50,5 @@ export default async function LocationProfilePage({ params }: Props) {
     `/locations/${encodeURIComponent(key)}/profile?locale=en`,
   );
 
-  return (
-    <Suspense fallback={<PageLoader />}>
-      <EntityProfileClient kind="location" entityKey={key} initialData={initialData} />
-    </Suspense>
-  );
+  return <EntityProfileClient kind="location" entityKey={key} initialData={initialData} />;
 }

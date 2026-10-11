@@ -1,10 +1,8 @@
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
 
 import { serverApi } from '@/api/serverApi';
 import { decodeRouteKey } from '@/lib/routeKey';
 import { EntityProfileClient } from '@/components/profile/EntityProfileClient';
-import { PageLoader } from '@/components/ui/Feedback';
 import { localizedText } from '@/data/localized';
 
 type Props = {
@@ -50,9 +48,5 @@ export default async function ItemProfilePage({ params }: Props) {
   const key = decodeRouteKey((await params).key);
   const initialData = await serverApi<any>(`/items/${encodeURIComponent(key)}/profile?locale=en`);
 
-  return (
-    <Suspense fallback={<PageLoader />}>
-      <EntityProfileClient kind="item" entityKey={key} initialData={initialData} />
-    </Suspense>
-  );
+  return <EntityProfileClient kind="item" entityKey={key} initialData={initialData} />;
 }

@@ -1,9 +1,8 @@
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
+import { connection } from 'next/server';
 
 import { serverApi } from '@/api/serverApi';
 import { EventsPage as EventsClient } from '@/components/events/EventsClient';
-import { PageLoader } from '@/components/ui/Feedback';
 
 export const metadata: Metadata = {
   title: 'Events Archive — Solaris Atlas',
@@ -23,11 +22,8 @@ export const metadata: Metadata = {
 };
 
 export default async function EventsPage() {
+  await connection();
   const initialData = await serverApi<any>('/events?server=europe');
 
-  return (
-    <Suspense fallback={<PageLoader />}>
-      <EventsClient initialData={initialData} />
-    </Suspense>
-  );
+  return <EventsClient initialData={initialData} />;
 }

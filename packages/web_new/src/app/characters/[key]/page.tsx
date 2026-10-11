@@ -1,10 +1,9 @@
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
 
 import { serverApi } from '@/api/serverApi';
 import { decodeRouteKey } from '@/lib/routeKey';
 import { EntityProfileClient } from '@/components/profile/EntityProfileClient';
-import { PageLoader } from '@/components/ui/Feedback';
+import type { CharacterArchiveData } from '@/components/characters/CharacterArchive';
 import { localizedText } from '@/data/localized';
 
 type Props = {
@@ -13,23 +12,36 @@ type Props = {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const key = decodeRouteKey((await params).key);
-  const data = await serverApi<any>(`/characters/${encodeURIComponent(key)}/profile?locale=en`);
+  const [data, archive] = await Promise.all([
+    serverApi<any>(`/characters/${encodeURIComponent(key)}/profile?locale=en`),
+    serverApi<CharacterArchiveData>(`/characters/${encodeURIComponent(key)}/archive?locale=en`),
+  ]);
   const character = data?.character;
   const entityId = character?.canonical_key?.split(':').at(-1) || key;
   const name =
     localizedText(character?.name) ||
     localizedText(character?.canonical_name) ||
     `Character · ${entityId}`;
-  const description =
+  const description = (
+    archive?.biography ||
     localizedText(character?.description) ||
-    `Lore, story appearances, voice lines and relations for ${name} in Solaris Atlas.`;
-  const image = data?.media?.image_url;
+    `Lore, story appearances, voice lines and relations for ${name} in Solaris Atlas.`
+  )
+    .replace(/<[^>]*>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300);
+  const image =
+    archive?.artwork?.find((art) => art.kind === 'RoleHeadIconLarge')?.url ||
+    archive?.artwork?.find((art) => art.url)?.url ||
+    data?.media?.image_url;
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://solarisatlas.fun';
   const imageUrl = image ? (image.startsWith('http') ? image : `${siteUrl}${image}`) : undefined;
 
   return {
     title: `${name} — Character Profile`,
     description,
+    alternates: { canonical: `/characters/${encodeURIComponent(key)}` },
     openGraph: {
       title: `${name} — Characters | Solaris Atlas`,
       description,
@@ -48,13 +60,17 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function CharacterProfilePage({ params }: Props) {
   const key = decodeRouteKey((await params).key);
-  const initialData = await serverApi<any>(
-    `/characters/${encodeURIComponent(key)}/profile?locale=en`,
-  );
+  const [initialData, initialArchive] = await Promise.all([
+    serverApi<any>(`/characters/${encodeURIComponent(key)}/profile?locale=en`),
+    serverApi<CharacterArchiveData>(`/characters/${encodeURIComponent(key)}/archive?locale=en`),
+  ]);
 
   return (
-    <Suspense fallback={<PageLoader />}>
-      <EntityProfileClient kind="character" entityKey={key} initialData={initialData} />
-    </Suspense>
+    <EntityProfileClient
+      kind="character"
+      entityKey={key}
+      initialData={initialData}
+      initialArchive={initialArchive}
+    />
   );
 }

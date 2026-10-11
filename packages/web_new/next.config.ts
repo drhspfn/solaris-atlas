@@ -2,6 +2,9 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Share previews and readers without JavaScript need metadata in the head
+  // of the first response, including requests with ordinary browser agents.
+  htmlLimitedBots: /.*/,
 
   images: {
     remotePatterns: [

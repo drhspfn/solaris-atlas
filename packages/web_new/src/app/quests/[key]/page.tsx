@@ -1,10 +1,8 @@
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
 
 import { serverApi } from '@/api/serverApi';
 import { decodeRouteKey } from '@/lib/routeKey';
 import { QuestPageClient } from '@/components/quest/QuestPageClient';
-import { PageLoader } from '@/components/ui/Feedback';
 import { APP_SETTINGS } from '@/config/settings';
 import type { QuestContinuity as QuestContinuityData } from '@/data/story';
 import type { QuestMediaManifest } from '@/components/story/QuestMediaReferences';
@@ -52,14 +50,12 @@ export default async function QuestTranscriptPage({ params }: Props) {
   ]);
 
   return (
-    <Suspense fallback={<PageLoader />}>
-      <QuestPageClient
-        questKey={key}
-        initialProfile={profile}
-        initialTranscript={transcript}
-        initialContinuity={continuity}
-        initialMedia={media}
-      />
-    </Suspense>
+    <QuestPageClient
+      questKey={key}
+      initialProfile={profile}
+      initialTranscript={transcript}
+      initialContinuity={continuity}
+      initialMedia={media}
+    />
   );
 }

@@ -1,9 +1,8 @@
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
+import { connection } from 'next/server';
 
 import { serverApi } from '@/api/serverApi';
 import { StoryMapClient } from '@/components/story/StoryMapClient';
-import { PageLoader } from '@/components/ui/Feedback';
 import type { StoryMap } from '@/data/story';
 
 export const metadata: Metadata = {
@@ -24,12 +23,11 @@ export const metadata: Metadata = {
 };
 
 export default async function StoryMapPage() {
+  // Search-parameter controls must render on the server for the real request,
+  // rather than making the whole story map a client-only prerender fallback.
+  await connection();
   // Server pre-fetch main story path
   const initialMap = await serverApi<StoryMap>('/story-map?locale=en&quest_type_id=1');
 
-  return (
-    <Suspense fallback={<PageLoader />}>
-      <StoryMapClient initialMap={initialMap} />
-    </Suspense>
-  );
+  return <StoryMapClient initialMap={initialMap} />;
 }

@@ -1,10 +1,8 @@
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
 
 import { serverApi } from '@/api/serverApi';
 import { decodeRouteKey } from '@/lib/routeKey';
 import { NodeExplorerPage as NodeExplorerClient } from '@/components/nodes/NodeExplorerClient';
-import { PageLoader } from '@/components/ui/Feedback';
 import { APP_SETTINGS } from '@/config/settings';
 
 type Props = {
@@ -46,13 +44,11 @@ export default async function NodePage({ params }: Props) {
   ]);
 
   return (
-    <Suspense fallback={<PageLoader />}>
-      <NodeExplorerClient
-        nodeKey={key}
-        initialDetail={detail}
-        initialRelated={related?.results ?? []}
-        initialNarrative={narrative}
-      />
-    </Suspense>
+    <NodeExplorerClient
+      nodeKey={key}
+      initialDetail={detail}
+      initialRelated={related?.results ?? []}
+      initialNarrative={narrative}
+    />
   );
 }

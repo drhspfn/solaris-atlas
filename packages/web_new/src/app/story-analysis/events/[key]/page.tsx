@@ -1,10 +1,8 @@
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
 
 import { serverApi } from '@/api/serverApi';
 import { decodeRouteKey } from '@/lib/routeKey';
 import { StoryEventClient } from '@/components/story-analysis/StoryEventClient';
-import { PageLoader } from '@/components/ui/Feedback';
 
 type Props = {
   params: Promise<{ key: string }>;
@@ -38,9 +36,5 @@ export default async function StoryEventPage({ params }: Props) {
     `/story-analysis/events/${encodeURIComponent(key)}?locale=en`,
   );
 
-  return (
-    <Suspense fallback={<PageLoader />}>
-      <StoryEventClient eventKey={key} initialEvent={initialEvent} />
-    </Suspense>
-  );
+  return <StoryEventClient eventKey={key} initialEvent={initialEvent} />;
 }

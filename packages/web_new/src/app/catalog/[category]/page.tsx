@@ -1,9 +1,7 @@
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
 
 import { serverApi } from '@/api/serverApi';
 import { CatalogClient } from '@/components/catalog/CatalogClient';
-import { PageLoader } from '@/components/ui/Feedback';
 import { APP_SETTINGS } from '@/config/settings';
 import { categoryTitle, type Entity } from '@/data/entities';
 
@@ -41,12 +39,10 @@ export default async function CatalogPage({ params }: Props) {
   );
 
   return (
-    <Suspense fallback={<PageLoader />}>
-      <CatalogClient
-        category={category}
-        initialItems={initialData?.results ?? []}
-        initialTotal={initialData?.total ?? 0}
-      />
-    </Suspense>
+    <CatalogClient
+      category={category}
+      initialItems={initialData?.results ?? []}
+      initialTotal={initialData?.total ?? 0}
+    />
   );
 }

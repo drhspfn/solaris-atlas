@@ -1,9 +1,7 @@
 import type { Metadata } from 'next';
-import { Suspense } from 'react';
 
 import { serverApi } from '@/api/serverApi';
 import { StoryConnectionClient } from '@/components/story-analysis/StoryConnectionClient';
-import { PageLoader } from '@/components/ui/Feedback';
 
 type Props = {
   params: Promise<{ documentId: string; index: string }>;
@@ -39,9 +37,5 @@ export default async function StoryConnectionPage({ params }: Props) {
     `/story-analysis/connections/${encodeURIComponent(documentId)}/${encodeURIComponent(index)}?locale=en`,
   );
 
-  return (
-    <Suspense fallback={<PageLoader />}>
-      <StoryConnectionClient documentId={documentId} index={index} initialData={initialData} />
-    </Suspense>
-  );
+  return <StoryConnectionClient documentId={documentId} index={index} initialData={initialData} />;
 }
