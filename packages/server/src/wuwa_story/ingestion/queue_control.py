@@ -65,21 +65,24 @@ async def clear_queue(session, name, scope):
         get_settings().rabbitmq_url.get_secret_value(), timeout=5
     )
     cancelled = set()
+    newly_cancelled = 0
     removed = 0
     try:
         if scope == "waiting":
             rows = (await session.execute(
                 select(ProcessingRun, Processor.key).join(Processor)
-                .where(ProcessingRun.status.in_(WAITING),
+                .where(ProcessingRun.status.in_(WAITING | {"cancelled"}),
                        Processor.key.in_(QUEUE_PROCESSORS[name]))
                 .with_for_update(of=ProcessingRun)
             )).all()
             for run, processor in rows:
                 if run_queue(processor, run.metadata_json or {}) != name:
                     continue
-                run.status = "cancelled"
-                run.finished_at = datetime.now(UTC)
-                run.error = "Waiting task cancelled by an administrator"
+                if run.status != "cancelled":
+                    run.status = "cancelled"
+                    run.finished_at = datetime.now(UTC)
+                    run.error = "Waiting task cancelled by an administrator"
+                    newly_cancelled += 1
                 cancelled.add(run.id)
             await session.commit()
         suffixes = (".failed",) if scope == "failed" else ("", ".waiting")
@@ -95,7 +98,7 @@ async def clear_queue(session, name, scope):
                 if not probe.is_closed:
                     await probe.close()
         logger.info("queue.cleanup queue=%s scope=%s cancelled=%s removed=%s",
-                    name, scope, len(cancelled), removed)
-        return {"cancelled": len(cancelled), "removed": removed}
+                    name, scope, newly_cancelled, removed)
+        return {"cancelled": newly_cancelled, "removed": removed}
     finally:
         await connection.close()
