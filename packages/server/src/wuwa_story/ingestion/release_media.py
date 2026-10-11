@@ -13,6 +13,7 @@ from wuwa_story.db.models.ops import GameRelease, ProcessingRun, Processor
 from wuwa_story.ingestion.media_jobs import publish_media_job
 
 QUEUE = "wuwa.release-media.v1"
+EVENT_QUEUE = "wuwa.event-media.v1"
 PROCESSOR = "release_media"
 
 
@@ -80,20 +81,23 @@ async def enqueue_release_media(
         dependencies[kind] = run.id
         if kind == "prepare":
             parent_id = run.id
-        if run.status not in {"running", "completed", "waiting_dependency"}:
+        queue = EVENT_QUEUE if event_artwork_only and kind in {"prepare", "event_images"} else QUEUE
+        already_queued = run.status == "queued" and (run.metadata_json or {}).get("queue", QUEUE) == queue
+        if run.status not in {"running", "completed", "waiting_dependency"} and not already_queued:
             payload = {"schema_version": 1, "job_type": "media.release", "run_id": run.id,
                        **request}
             if run.status in {"partial", "failed", "blocked"}:
                 run.raw_output = None
             run.status, run.error, run.finished_at = "queued", None, None
-            run.metadata_json = {**(run.metadata_json or {}), "payload": payload, "request": request}
-            pending.append((run, payload))
+            run.metadata_json = {**(run.metadata_json or {}), "payload": payload, "request": request,
+                                 "queue": queue}
+            pending.append((run, payload, queue))
         runs.append(run)
     await session.commit()
     failed = 0
-    for run, payload in pending:
+    for run, payload, queue in pending:
         try:
-            await publish_media_job(payload, f"release-media:{run.id}", QUEUE)
+            await publish_media_job(payload, f"release-media:{run.id}", queue)
         except Exception:
             run.status = "enqueue_failed"
             run.error = "Broker did not confirm publication; repeat the media import to retry"

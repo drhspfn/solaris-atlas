@@ -131,7 +131,10 @@ async def event_images(payload, parent, session):
         entries.append({"expected": original, "status": "found",
                         "matches": [image_path.name]})
     await session.commit()
-    return {"asset_version": parent["asset_version"], "requested": len(entries),
+    return {"asset_version": parent["asset_version"],
+            "images": sum(entry["status"] == "found" for entry in entries),
+            "missing_images": [entry["expected"] for entry in entries if entry["status"] != "found"],
+            "media_report": {"entries": entries}, "requested": len(entries),
             "found": sum(entry["status"] == "found" for entry in entries),
             "missing": sum(entry["status"] != "found" for entry in entries),
             "entries": entries}, ("partial" if any(e["status"] != "found" for e in entries)
@@ -343,7 +346,7 @@ async def process_release_media(payload):
                     if parent is None or parent.metadata_json.get("request", {}).get("release_id") != payload["release_id"]:
                         raise ValueError("Media task dependency belongs to another snapshot")
                     if parent.status != "completed":
-                        if parent.status in {"failed", "enqueue_failed", "blocked"}:
+                        if parent.status in {"failed", "enqueue_failed", "blocked", "cancelled"}:
                             await update_admin_run(run.id, "release_media", "blocked", error=f"Client preparation #{parent.id} failed; retry the media import")
                             return
                         raise JobDeferred("Client preparation is still queued or running")
@@ -364,7 +367,7 @@ async def process_release_media(payload):
                         ).order_by(ProcessingRun.id.desc()).limit(1))
                         if voice_job is None:
                             raise ValueError("Missing voice package dependency for cutscene import")
-                        if voice_job.status in {"failed", "blocked", "enqueue_failed"}:
+                        if voice_job.status in {"failed", "blocked", "enqueue_failed", "cancelled"}:
                             await update_admin_run(run.id, "release_media", "blocked",
                                                    error=f"Voice preparation #{voice_job.id} failed; retry the media import")
                             return

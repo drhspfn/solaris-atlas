@@ -12,6 +12,9 @@ from typing import Any
 
 import aio_pika
 from aio_pika.abc import AbstractIncomingMessage
+from sqlalchemy import select
+from wuwa_story.db.models.ops import ProcessingRun
+from wuwa_story.db.session import SessionFactory
 
 from wuwa_story_worker.queues import QUEUES, queue_concurrency
 
@@ -19,6 +22,23 @@ logger = logging.getLogger(__name__)
 EXCHANGE_NAME = "wuwa.jobs.v1"
 FAILED_EXCHANGE_NAME = "wuwa.jobs.failed.v1"
 JobHandler = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+async def claim_import(payload, *, redelivered=False):
+    """Serialize cancellation with execution; cancelled deliveries are acknowledged."""
+    run_id = payload.get("run_id")
+    if run_id is None:
+        return True
+    async with SessionFactory() as session:
+        run = await session.scalar(select(ProcessingRun).where(ProcessingRun.id == run_id)
+                                   .with_for_update())
+        if run is None or run.status in {"cancelled", "completed", "partial"}:
+            return False
+        if run.status == "running" and not redelivered:
+            return False
+        run.status = "running"
+        await session.commit()
+        return True
 
 
 class JobDeferred(Exception):
@@ -120,9 +140,9 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
     connection = await aio_pika.connect_robust(broker_url(), client_properties={
         "connection_name": f"worker:{socket.gethostname()}:{os.getpid()}"})
     try:
-        channel = await connection.channel()
-        await channel.set_qos(prefetch_count=sum(limits[key] for key in handlers))
         for key, handler in handlers.items():
+            channel = await connection.channel()
+            await channel.set_qos(prefetch_count=limits[key])
             _, queue = await declare_queue(channel, key)
             semaphore = asyncio.Semaphore(limits[key])
 
@@ -132,16 +152,22 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
                 job_key: str = key,
                 job_handler: JobHandler = handler,
                 limiter: asyncio.Semaphore = semaphore,
+                job_channel=channel,
             ) -> None:
                 async with limiter:
                     try:
                         payload = json.loads(message.body)
                         if not isinstance(payload, dict):
                             raise ValueError("Job payload must be a JSON object")
+                        if job_key in {"release_media", "event_media", "entity_media", "asset_download",
+                                       "asset_extract", "snapshot_build"}:
+                            if not await claim_import(payload, redelivered=message.redelivered):
+                                await message.ack()
+                                return
                         await job_handler(payload)
                     except JobDeferred:
                         try:
-                            await defer_job(channel, job_key, message)
+                            await defer_job(job_channel, job_key, message)
                         except Exception:
                             logger.exception("Could not defer %s", message.message_id)
                             await message.nack(requeue=True)

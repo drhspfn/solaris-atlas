@@ -30,7 +30,7 @@ async def update_admin_run(
                 .join(Processor, Processor.id == ProcessingRun.processor_id)
                 .where(ProcessingRun.id == run_id, Processor.key == processor_key)
             )
-            if run is None:
+            if run is None or run.status == "cancelled":
                 return
             run.status = status
             run.error = error

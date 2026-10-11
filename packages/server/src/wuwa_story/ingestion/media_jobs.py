@@ -73,7 +73,7 @@ async def enqueue_entity_media(session, request: MediaRequest, *, retry_partial:
         .order_by(ProcessingRun.id.desc())
         .limit(1)
     )
-    if run and (run.status in ("completed", "running") or (run.status == "partial" and not retry_partial)):
+    if run and (run.status in ("completed", "running", "queued", "waiting_dependency") or (run.status == "partial" and not retry_partial)):
         return run
     if run is None:
         run = ProcessingRun(processor_id=processor, input_hash=digest)

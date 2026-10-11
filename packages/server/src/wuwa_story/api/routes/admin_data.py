@@ -31,6 +31,7 @@ from wuwa_story.ingestion.client_assets import (
 from wuwa_story.ingestion.game_events import import_game_events
 from wuwa_story.ingestion.github_snapshots import discover_remote_snapshots
 from wuwa_story.ingestion.media_jobs import publish_media_job
+from wuwa_story.ingestion.queue_control import clear_queue
 from wuwa_story.ingestion.queue_status import queue_status
 from wuwa_story.ingestion.release_media import enqueue_release_media
 from wuwa_story.storage.s3 import S3Storage
@@ -96,6 +97,22 @@ def _get_asset_workspace() -> Path:
 @router.get("/queues")
 async def queues():
     return await queue_status()
+
+
+class QueueCleanupRequest(_PayloadModel):
+    name: str = Field(max_length=80)
+    scope: Literal["waiting", "failed"]
+
+
+@router.post("/queues/clear", dependencies=[Depends(require_csrf)])
+async def cleanup_queue(payload: QueueCleanupRequest, session: AsyncSession = Depends(get_session)):
+    try:
+        return await asyncio.wait_for(clear_queue(session, payload.name, payload.scope), timeout=25)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    except Exception as error:
+        logger.exception("Queue cleanup failed queue=%s scope=%s", payload.name, payload.scope)
+        raise HTTPException(503, "Cleanup could not finish; refresh queue activity before retrying") from error
 
 
 @router.get("/tasks")

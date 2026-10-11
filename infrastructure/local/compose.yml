@@ -178,7 +178,7 @@ services:
     env_file:
       - ../../packages/worker/.env
     profiles: ["assets"]
-    command: ["wuwa-story-worker", "run", "--queue", "asset_download", "--queue", "asset_extract", "--queue", "release_media", "--queue", "entity_media"]
+    command: ["wuwa-story-worker", "run", "--queue", "asset_download", "--queue", "asset_extract", "--queue", "release_media", "--queue", "event_media", "--queue", "entity_media"]
     volumes:
       - ${WUWA_ASSET_HOST_PATH:-../../packages/worker/var/client-assets}:/var/lib/wuwa-assets
     environment:

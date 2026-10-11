@@ -139,6 +139,8 @@ services:
       - --queue
       - release_media
       - --queue
+      - event_media
+      - --queue
       - entity_media
     volumes:
       - worker_data:/var/lib/wuwa-worker
