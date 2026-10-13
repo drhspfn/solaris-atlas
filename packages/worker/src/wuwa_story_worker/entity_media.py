@@ -21,7 +21,7 @@ from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
 from wuwa_story_worker.asset_export import export_assets
-from wuwa_story_worker.broker import JobDeferred
+from wuwa_story_worker.broker import JobDeferred, job_lock
 from wuwa_story_worker.client_assets import validate_plan, workspace_lock
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.map_icons import build_icons
@@ -202,9 +202,7 @@ async def process_entity_media(payload: dict) -> None:
         or type(payload.get("run_id")) is not int
     ):
         raise ValueError("Invalid entity media job")
-    async with engine.connect() as connection:
-        await connection.execute(text("SELECT pg_advisory_lock(:id)"), {"id": -payload["run_id"]})
-        await connection.commit()
+    async with engine.connect() as connection, job_lock(connection, -payload["run_id"]):
         try:
             await _process_entity_media(payload, connection)
         except BlockingIOError as error:
@@ -225,12 +223,7 @@ async def process_entity_media(payload: dict) -> None:
                     run.finished_at = datetime.now(UTC)
                     await session.commit()
             raise
-        finally:
-            await connection.rollback()
-            await connection.execute(
-                text("SELECT pg_advisory_unlock(:id)"), {"id": -payload["run_id"]}
-            )
-            await connection.commit()
+
 
 
 async def _process_entity_media(payload: dict, connection) -> None:

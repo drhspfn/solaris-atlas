@@ -8,14 +8,17 @@ import logging
 import os
 import socket
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 import aio_pika
 from aio_pika.abc import AbstractIncomingMessage
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.session import SessionFactory
 
+from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.queues import QUEUES, queue_concurrency
 
 logger = logging.getLogger(__name__)
@@ -45,14 +48,35 @@ class JobDeferred(Exception):
     """A prerequisite is still queued/running; retry through a durable delay queue."""
 
 
-async def defer_job(channel, key, message) -> None:
+@asynccontextmanager
+async def job_lock(connection, *keys: int):
+    """Busy jobs yield their slot; close the DB session so locks cannot leak into the pool."""
+    params = {f"key{i}": key for i, key in enumerate(keys)}
+    args = ", ".join(f":{name}" for name in params)
+    try:
+        acquired = await connection.scalar(text(f"SELECT pg_try_advisory_lock({args})"), params)
+        await connection.commit()
+        if not acquired:
+            raise JobDeferred("Another worker is processing this task")
+        yield
+    finally:
+        # Session-level advisory locks survive COMMIT/ROLLBACK. Never return this
+        # physical connection to the pool, including cancellation/error paths.
+        await connection.invalidate()
+
+
+async def defer_job(channel, key, message, *, retry_count=None) -> None:
     name = QUEUES[key].name
     queue = await channel.declare_queue(name + ".waiting", durable=True, arguments={
         "x-message-ttl": 60000, "x-dead-letter-exchange": EXCHANGE_NAME,
         "x-dead-letter-routing-key": name})
+    headers = dict(message.headers or {})
+    if retry_count is not None:
+        headers["db_retry_count"] = retry_count
     await channel.default_exchange.publish(aio_pika.Message(
         body=message.body, content_type="application/json",
-        delivery_mode=aio_pika.DeliveryMode.PERSISTENT, message_id=message.message_id),
+        delivery_mode=aio_pika.DeliveryMode.PERSISTENT, message_id=message.message_id,
+        headers=headers, type=message.type),
         routing_key=queue.name, mandatory=True)
     await message.ack()
 
@@ -171,6 +195,21 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
                         except Exception:
                             logger.exception("Could not defer %s", message.message_id)
                             await message.nack(requeue=True)
+                    except DBAPIError as error:
+                        retries = int((message.headers or {}).get("db_retry_count", 0))
+                        if getattr(error.orig, "sqlstate", None) in {"40P01", "40001"} and retries < 3:
+                            try:
+                                await update_admin_run(payload["run_id"], job_key, "waiting_dependency",
+                                                       error=f"Database contention; retry {retries + 1}/3")
+                                await defer_job(job_channel, job_key, message, retry_count=retries + 1)
+                                logger.warning("Deferred %s run=%s after database contention (retry %s/3)",
+                                               job_key, payload["run_id"], retries + 1)
+                            except Exception:
+                                logger.exception("Could not defer database retry")
+                                await message.nack(requeue=True)
+                        else:
+                            logger.exception("Database job failure exhausted retries (%s)", job_key)
+                            await message.nack(requeue=False)
                     except Exception:
                         logger.exception(
                             "Worker job failed (%s, id=%s); moving it to the failed queue",

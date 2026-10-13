@@ -29,6 +29,7 @@ for file in compose.env shared.env api.env worker.env; do
   chmod 600 "$ENV_DIR/$file"
 done
 USE_MINIO="$(sed -n 's/^USE_MINIO=//p' "$ENV_DIR/compose.env")"
+WORKER_IMAGE="$(sed -n 's/^WORKER_IMAGE=//p' "$ENV_DIR/compose.env")"
 if [[ "$USE_MINIO" != true && "$USE_MINIO" != false ]]; then
   echo "USE_MINIO must be true or false in the GitHub production Variables." >&2
   exit 2
@@ -155,8 +156,9 @@ case "$DEPLOY_COMPONENT" in
   api) services=(api) ;;
   web) services=(web) ;;
   caddy) services=(caddy) ;;
-  snapshot-worker|story-agent|cutscene-vision) services=("$DEPLOY_COMPONENT") ;;
-  all) services=(api web caddy snapshot-worker story-agent cutscene-vision) ;;
+  snapshot-worker) services=(snapshot-worker media-worker) ;;
+  story-agent|cutscene-vision) services=("$DEPLOY_COMPONENT") ;;
+  all) services=(api web caddy snapshot-worker media-worker story-agent cutscene-vision) ;;
   *) echo "Unsupported DEPLOY_COMPONENT: $DEPLOY_COMPONENT" >&2; exit 2 ;;
 esac
 
@@ -165,7 +167,15 @@ if [[ "$DEPLOY_COMPONENT" == api || "$DEPLOY_COMPONENT" == all ]]; then
   "${compose[@]}" run --rm api alembic upgrade head
 fi
 if [[ "$DEPLOY_COMPONENT" != infrastructure ]]; then
-  "${compose[@]}" pull "${services[@]}"
+  pull_services=()
+  for service in "${services[@]}"; do
+    if [[ "$WORKER_IMAGE" == solaris-atlas-worker:* && ( "$service" == snapshot-worker || "$service" == media-worker ) ]]; then
+      docker image inspect "$WORKER_IMAGE" >/dev/null
+    else
+      pull_services+=("$service")
+    fi
+  done
+  if (( ${#pull_services[@]} )); then "${compose[@]}" pull "${pull_services[@]}"; fi
 fi
 if [[ "$DEPLOY_COMPONENT" == caddy ]]; then
   "${compose[@]}" up -d --force-recreate caddy
@@ -184,7 +194,7 @@ esac
 case "$DEPLOY_COMPONENT" in
   infrastructure|snapshot-worker|all)
     "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-assets-long-jobs \
-      '^wuwa[.]asset-(download|extract)[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues \
+      '^wuwa[.](asset-(download|extract)|release-media|entity-media|event-media)[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues \
       || echo "WARNING: could not apply the long-running asset job RabbitMQ policy" >&2
     ;;
 esac

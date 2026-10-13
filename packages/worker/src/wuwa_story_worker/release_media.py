@@ -8,7 +8,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 from wuwa_story.db.models.ops import ProcessingRun
@@ -22,7 +22,7 @@ from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
 from wuwa_story_worker.asset_export import export_assets
-from wuwa_story_worker.broker import JobDeferred
+from wuwa_story_worker.broker import JobDeferred, job_lock
 from wuwa_story_worker.client_assets import download_plan, save_json, workspace_lock
 from wuwa_story_worker.cutscene_import import import_cutscene_recipe
 from wuwa_story_worker.cutscene_plan import plan_cutscene
@@ -390,9 +390,7 @@ async def voices(payload, parent):
 async def process_release_media(payload):
     if payload.get("schema_version") != 1 or payload.get("job_type") != "media.release" or type(payload.get("run_id")) is not int:
         raise ValueError("Invalid release media task")
-    async with engine.connect() as connection:
-        await connection.execute(text("SELECT pg_advisory_lock(702, :id)"), {"id": payload["run_id"]})
-        await connection.commit()
+    async with engine.connect() as connection, job_lock(connection, 702, payload["run_id"]):
         try:
             async with SessionFactory(bind=connection) as session:
                 run = await session.get(ProcessingRun, payload["run_id"])
@@ -458,7 +456,3 @@ async def process_release_media(payload):
             await connection.rollback()
             await update_admin_run(payload["run_id"], "release_media", "failed", error=f"{type(error).__name__}: {error}"[:2000])
             raise
-        finally:
-            await connection.rollback()
-            await connection.execute(text("SELECT pg_advisory_unlock(702, :id)"), {"id": payload["run_id"]})
-            await connection.commit()
