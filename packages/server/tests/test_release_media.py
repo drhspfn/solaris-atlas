@@ -34,6 +34,27 @@ async def test_fanout_pins_dependencies_and_keeps_analysis_manual(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_character_audio_is_published_in_independent_character_jobs(monkeypatch):
+    runs = []
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version="1.1.0")
+    session.scalars.side_effect = [["character:1302", "character:1304"], [], []]
+    session.scalar.side_effect = [4] + [None] * 5
+    session.add = runs.append
+    async def flush():
+        runs[-1].id = len(runs)
+    session.flush.side_effect = flush
+    published = AsyncMock()
+    monkeypatch.setattr(release_media, "publish_media_job", published)
+    await release_media.enqueue_release_media(session, 2)
+    payloads = [call.args[0] for call in published.await_args_list]
+    characters = [payload for payload in payloads if payload["kind"] == "character_voices"]
+    assert [job["targets"] for job in characters] == [["character:1302"], ["character:1304"]]
+    voice_packages = next(p for p in payloads if p["kind"] == "voice_packages")
+    assert all(job["parent_id"] == voice_packages["run_id"] for job in characters)
+
+
+@pytest.mark.asyncio
 async def test_unconfirmed_media_publication_is_recorded_for_retry(monkeypatch):
     session = AsyncMock()
     session.get.return_value = SimpleNamespace(game_version="1.0.0")

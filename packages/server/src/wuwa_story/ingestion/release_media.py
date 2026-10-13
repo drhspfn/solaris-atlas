@@ -64,7 +64,7 @@ async def enqueue_release_media(
         specs.extend(("images", batch) for batch in batches(entities))
         specs.extend(("cutscene", [name]) for name in sorted(set(cutscenes)))
         specs.extend(("voices", batch) for batch in batches(voices))
-        specs.extend(("character_voices", batch) for batch in batches(characters))
+        specs.extend(("character_voices", batch) for batch in batches(characters, size=1))
     pending, runs = [], []
     parent_id = None
     dependencies = {}
