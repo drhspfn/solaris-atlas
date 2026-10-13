@@ -13,14 +13,16 @@ BASH = str(GIT_BASH) if os.name == "nt" and GIT_BASH.is_file() else shutil.which
 
 @unittest.skipUnless(BASH, "Bash is required to test deployment orchestration")
 class DeploymentTests(unittest.TestCase):
-    def deploy(self, component, fail_validation=False):
+    def deploy(self, component, fail_validation=False, worker_image=""):
         source = (ROOT / "scripts/deploy-remote.sh").read_text()
         tail = 'case "$DEPLOY_COMPONENT" in' + source.split('case "$DEPLOY_COMPONENT" in', 1)[1]
         harness = r'''
 set -euo pipefail
 DEPLOY_COMPONENT=$1
 FAIL_VALIDATION=$2
+WORKER_IMAGE=$3
 USE_MINIO=false
+docker() { printf '%s\n' "$*"; }
 record_compose() {
   printf '%s\n' "$*"
   if [[ "$*" == *"caddy validate"* && "$FAIL_VALIDATION" == 1 ]]; then
@@ -30,7 +32,7 @@ record_compose() {
 compose=(record_compose)
 '''
         return subprocess.run(
-            [BASH, "-s", "--", component, "1" if fail_validation else "0"],
+            [BASH, "-s", "--", component, "1" if fail_validation else "0", worker_image],
             input=harness + tail, text=True, capture_output=True, timeout=10, check=False,
         )
 
@@ -57,6 +59,12 @@ compose=(record_compose)
         result = self.deploy("snapshot-worker")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("caddy", result.stdout)
+        self.assertIn("up -d snapshot-worker media-worker", result.stdout)
+
+    def test_local_worker_image_is_not_pulled_from_a_registry(self):
+        result = self.deploy("snapshot-worker", worker_image="solaris-atlas-worker:workers-test")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("pull snapshot-worker", result.stdout)
         self.assertIn("up -d snapshot-worker media-worker", result.stdout)
 
 

@@ -29,6 +29,7 @@ for file in compose.env shared.env api.env worker.env; do
   chmod 600 "$ENV_DIR/$file"
 done
 USE_MINIO="$(sed -n 's/^USE_MINIO=//p' "$ENV_DIR/compose.env")"
+WORKER_IMAGE="$(sed -n 's/^WORKER_IMAGE=//p' "$ENV_DIR/compose.env")"
 if [[ "$USE_MINIO" != true && "$USE_MINIO" != false ]]; then
   echo "USE_MINIO must be true or false in the GitHub production Variables." >&2
   exit 2
@@ -166,7 +167,15 @@ if [[ "$DEPLOY_COMPONENT" == api || "$DEPLOY_COMPONENT" == all ]]; then
   "${compose[@]}" run --rm api alembic upgrade head
 fi
 if [[ "$DEPLOY_COMPONENT" != infrastructure ]]; then
-  "${compose[@]}" pull "${services[@]}"
+  pull_services=()
+  for service in "${services[@]}"; do
+    if [[ "$WORKER_IMAGE" == solaris-atlas-worker:* && ( "$service" == snapshot-worker || "$service" == media-worker ) ]]; then
+      docker image inspect "$WORKER_IMAGE" >/dev/null
+    else
+      pull_services+=("$service")
+    fi
+  done
+  if (( ${#pull_services[@]} )); then "${compose[@]}" pull "${pull_services[@]}"; fi
 fi
 if [[ "$DEPLOY_COMPONENT" == caddy ]]; then
   "${compose[@]}" up -d --force-recreate caddy
