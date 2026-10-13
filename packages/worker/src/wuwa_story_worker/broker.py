@@ -19,6 +19,7 @@ from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.session import SessionFactory
 
 from wuwa_story_worker.job_tracking import update_admin_run
+from wuwa_story_worker.notifications import notify_job_result
 from wuwa_story_worker.queues import QUEUES, queue_concurrency
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,7 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
                 job_channel=channel,
             ) -> None:
                 async with limiter:
+                    payload = {}
                     try:
                         payload = json.loads(message.body)
                         if not isinstance(payload, dict):
@@ -209,15 +211,19 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
                                 await message.nack(requeue=True)
                         else:
                             logger.exception("Database job failure exhausted retries (%s)", job_key)
+                            await notify_job_result(payload.get("run_id"), job_key, str(error))
                             await message.nack(requeue=False)
-                    except Exception:
+                    except Exception as error:
                         logger.exception(
                             "Worker job failed (%s, id=%s); moving it to the failed queue",
                             job_key,
                             message.message_id,
                         )
+                        await notify_job_result(payload.get("run_id") if isinstance(payload, dict) else None,
+                                                job_key, str(error))
                         await message.nack(requeue=False)
                     else:
+                        await notify_job_result(payload.get("run_id"), job_key)
                         await message.ack()
 
             await queue.consume(process, no_ack=False)
