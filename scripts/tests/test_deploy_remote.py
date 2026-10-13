@@ -57,6 +57,7 @@ compose=(record_compose)
         result = self.deploy("snapshot-worker")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("caddy", result.stdout)
+        self.assertIn("up -d snapshot-worker media-worker", result.stdout)
 
 
 if __name__ == "__main__":

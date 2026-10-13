@@ -155,8 +155,9 @@ case "$DEPLOY_COMPONENT" in
   api) services=(api) ;;
   web) services=(web) ;;
   caddy) services=(caddy) ;;
-  snapshot-worker|story-agent|cutscene-vision) services=("$DEPLOY_COMPONENT") ;;
-  all) services=(api web caddy snapshot-worker story-agent cutscene-vision) ;;
+  snapshot-worker) services=(snapshot-worker media-worker) ;;
+  story-agent|cutscene-vision) services=("$DEPLOY_COMPONENT") ;;
+  all) services=(api web caddy snapshot-worker media-worker story-agent cutscene-vision) ;;
   *) echo "Unsupported DEPLOY_COMPONENT: $DEPLOY_COMPONENT" >&2; exit 2 ;;
 esac
 
@@ -184,7 +185,7 @@ esac
 case "$DEPLOY_COMPONENT" in
   infrastructure|snapshot-worker|all)
     "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-assets-long-jobs \
-      '^wuwa[.]asset-(download|extract)[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues \
+      '^wuwa[.](asset-(download|extract)|release-media|entity-media|event-media)[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues \
       || echo "WARNING: could not apply the long-running asset job RabbitMQ policy" >&2
     ;;
 esac

@@ -102,3 +102,26 @@ its errors include the first extractor failure lines. Linux export lookup matche
 file casing explicitly. Shared video references publish one source asset while
 keeping authored choices. Missing sound banks produce partial video publication
 with missing_assets, preserving visibility of incomplete audio.
+
+### Media worker capacity and retries
+
+Production runs one `snapshot-worker` for snapshot/download/extraction queues and
+two `media-worker` replicas for release, entity and event media. Per replica the
+defaults are `release_media=4,entity_media=3,event_media=2`; existing
+`WUWA_QUEUE_CONCURRENCY` settings override these values. Deploying
+`snapshot-worker` also deploys its media workers. All workers share the persistent
+workspace; extraction file locks remain nonblocking.
+
+Busy job locks and unfinished dependencies are acknowledged into the durable
+60-second delay queue, releasing the consumer slot for another task. Session
+advisory locks use a dedicated discarded DB connection so they cannot remain in
+the connection pool. PostgreSQL deadlock/serialization failures retry at most
+three times, preserving the retry count in message headers. Other failures go
+to the failed queue. Media consumers allow 24-hour jobs to avoid RabbitMQ's
+default acknowledgement timeout redelivering long-running imports.
+
+`WORKER_IMAGE` optionally pins snapshot/media workers to a separately built image
+without changing API, web or AI worker images.
+
+Rollback: restore the previous worker image and Compose file, then recreate the
+worker services. Persistent volumes and queued messages must be retained.

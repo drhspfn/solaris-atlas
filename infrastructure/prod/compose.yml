@@ -121,8 +121,8 @@ services:
       - caddy_data:/data
       - caddy_config:/config
 
-  snapshot-worker:
-    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-worker:${IMAGE_TAG:-latest}
+  snapshot-worker: &worker
+    image: ${WORKER_IMAGE:-ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-worker:${IMAGE_TAG:-latest}}
     restart: unless-stopped
     profiles: [workers]
     env_file:
@@ -141,12 +141,6 @@ services:
       - asset_download
       - --queue
       - asset_extract
-      - --queue
-      - release_media
-      - --queue
-      - event_media
-      - --queue
-      - entity_media
     volumes:
       - worker_data:/var/lib/wuwa-worker
     environment:
@@ -159,6 +153,12 @@ services:
       minio-init:
         condition: service_completed_successfully
         required: ${USE_MINIO:-true}
+
+  media-worker:
+    <<: *worker
+    command: ["wuwa-story-worker", "run", "--queue", "release_media", "--queue", "event_media", "--queue", "entity_media"]
+    deploy:
+      replicas: 2
 
   story-agent:
     image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-worker:${IMAGE_TAG:-latest}
