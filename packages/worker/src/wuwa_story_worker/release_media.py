@@ -335,6 +335,7 @@ async def voice_packages(parent):
         inventory = await publish_inventory(extracted, index)
     # Character events can reference numeric WEM IDs in the main client.
     # Export once per pinned client instead of remounting all paks for each line.
+    await export_assets(root, tool_path("WUWA_FMODEL_PATH"), "WwiseAudio/Events")
     await export_assets(root, tool_path("WUWA_FMODEL_PATH"), "WwiseAudio_Generated/Media")
     save_json(voice_root / "audio-export.json", {"plan_id": plan["id"], "media_report": inventory})
     return {**parent, "voice_plan_id": plan["id"], "stage": "voice_packages_ready",

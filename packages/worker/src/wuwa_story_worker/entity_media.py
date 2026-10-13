@@ -91,7 +91,7 @@ def client_voice_exports(root: Path, extractor_digest: str, cache_revision: int 
     """Index the pinned main-client export; Wwise media also lives in base paks."""
     plan = json.loads((root / "plan.json").read_text(encoding="utf-8"))
     result = {}
-    for asset_filter in ("WwiseAudio", "WwiseAudio_Generated/Media"):
+    for asset_filter in ("WwiseAudio", "WwiseAudio/Events", "WwiseAudio_Generated/Media"):
         tag = hashlib.sha256(asset_filter.encode()).hexdigest()[:16]
         receipt = root / "exports" / tag / "manifest.json"
         if not receipt.exists():
@@ -162,7 +162,9 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None):
     extractor_digest = await asyncio.to_thread(lambda: hashlib.sha256(fmodel.read_bytes()).hexdigest())
     media_tag = hashlib.sha256(b"WwiseAudio_Generated/Media").hexdigest()[:16]
     media_receipt = root / "exports" / media_tag / "manifest.json"
-    revision = media_receipt.stat().st_mtime_ns if media_receipt.exists() else 0
+    event_tag = hashlib.sha256(b"WwiseAudio/Events").hexdigest()[:16]
+    event_receipt = root / "exports" / event_tag / "manifest.json"
+    revision = max((p.stat().st_mtime_ns for p in (media_receipt, event_receipt) if p.exists()), default=0)
     cached = await asyncio.to_thread(client_voice_exports, root, extractor_digest, revision)
     for source in sorted({t["path"] for t in voices}):
         if not re.fullmatch(r"/Game/Aki/WwiseAudio/Events/[A-Za-z0-9_]+\.[A-Za-z0-9_]+", source):

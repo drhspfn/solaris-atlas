@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
@@ -8,6 +9,24 @@ from redis.exceptions import ConnectionError
 
 from wuwa_story.api.cache import PublicResponseCache, cache_key
 from wuwa_story.config.settings import Settings
+
+
+@pytest.mark.asyncio
+async def test_content_revision_refreshes_after_media_commit_within_seconds(monkeypatch):
+    from wuwa_story.api import cache
+    clock = [100.0]
+    monkeypatch.setattr(cache, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(cache, "_REVISION_CACHE", {"value": "", "expires": 0.0})
+    connection = AsyncMock()
+    connection.__aenter__.return_value = connection
+    connection.scalar.side_effect = ["before-import", "after-import"]
+    monkeypatch.setattr(cache, "engine", SimpleNamespace(connect=lambda: connection))
+    assert await cache.content_revision() == "before-import"
+    clock[0] += 2
+    assert await cache.content_revision() == "before-import"
+    clock[0] += 4
+    assert await cache.content_revision() == "after-import"
+    assert connection.scalar.await_count == 2
 
 
 class MemoryRedis:

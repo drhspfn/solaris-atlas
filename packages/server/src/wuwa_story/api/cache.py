@@ -48,7 +48,8 @@ async def content_revision() -> str:
             "Public cache revision migration has not been installed")
     
     _REVISION_CACHE["value"] = str(revision)
-    _REVISION_CACHE["expires"] = now + 43200.0  # Cache DB revision in memory for 12 hours
+    # Completed media imports must invalidate cached empty audio links promptly.
+    _REVISION_CACHE["expires"] = now + 5.0
     return _REVISION_CACHE["value"]
 
 
