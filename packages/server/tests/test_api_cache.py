@@ -93,9 +93,12 @@ def test_keys_cover_query_language_revision_and_duplicate_order():
 async def test_hits_queries_invalidation_etags_and_ttl():
     app, state, redis = setup_cache()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
-        assert (await client.get("/catalog?a=1")).headers["x-api-cache"] == "MISS"
+        miss = await client.get("/catalog?a=1")
+        assert miss.headers["x-api-cache"] == "MISS"
+        assert miss.headers["cache-control"] == "no-cache"
         hit = await client.get("/catalog?a=1")
         assert hit.headers["x-api-cache"] == "HIT"
+        assert hit.headers["cache-control"] == "no-cache"
         unchanged = await client.get("/catalog?a=1", headers={"If-None-Match": hit.headers["etag"]})
         assert unchanged.status_code == 304 and not unchanged.content
         assert state["calls"] == 1
