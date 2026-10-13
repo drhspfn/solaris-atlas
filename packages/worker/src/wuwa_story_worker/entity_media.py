@@ -341,9 +341,11 @@ async def _process_entity_media(payload: dict, connection) -> None:
                                for resolved, path, *_ in files if resolved == target]
                     entries.append({"expected": target["path"], "language": target["language"],
                                     "status": "found" if matches else "not_resolved", "matches": matches})
-                # Other tasks' merged cutscene/audio workspace can contain hundreds
-                # of thousands of files; catalogue entity exports and decodes only.
-                inventory = await publish_inventory(root, exclude=("game", "release-media"))
+                # Shared client manifests already inventory the full export. A character
+                # job must not rescan hundreds of thousands of unrelated assets.
+                inventory_paths = tuple(sorted({p for _, path, _, _, originals in files
+                                                for p in (path, *originals)}))
+                inventory = await publish_inventory(root, paths=inventory_paths)
                 report = {"schema_version": 1, **inventory, "asset_version": request.asset_version,
                           "game_version": request.game_version, "entries": entries,
                           "requested": len(entries), "found": sum(bool(e["matches"]) for e in entries),

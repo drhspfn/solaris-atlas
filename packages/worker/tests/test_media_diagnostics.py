@@ -79,6 +79,21 @@ def test_entity_inventory_excludes_other_tasks_merged_audio_workspace(tmp_path):
     assert json.loads(output.read_text(encoding="utf-8"))["path"] == "exports/icon.uasset"
 
 
+def test_requested_inventory_never_scans_shared_client(tmp_path, monkeypatch):
+    from pathlib import Path
+    selected = tmp_path / "en-123.wav"
+    selected.write_bytes(b"audio")
+    (tmp_path / "unrelated.wem").write_bytes(b"other")
+    def fail_walk(*args, **kwargs):
+        raise AssertionError("Character inventory scanned the shared client")
+    monkeypatch.setattr(Path, "walk", fail_walk)
+    output = tmp_path / "inventory.jsonl"
+    summary = write_inventory(tmp_path, None, output, paths=(selected,))
+    assert summary["scope"] == "requested entity media"
+    assert summary["exported_files"] == 1
+    assert json.loads(output.read_text(encoding="utf-8"))["path"] == selected.name
+
+
 @pytest.mark.asyncio
 async def test_voice_lookup_report_is_saved_before_decoder_failure(tmp_path, monkeypatch):
     from wuwa_story_worker import release_media
