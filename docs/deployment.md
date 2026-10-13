@@ -134,3 +134,22 @@ languages. Character audio is queued one character per task so completed
 characters become available independently. Historical 1.0/1.1 metadata currently
 uses the installed 3.7 client: references removed from that client remain reported
 as missing instead of being replaced by guessed audio.
+
+### Telegram import error topic
+
+Set `TELEGRAM_BOT_TOKEN` as a GitHub production Secret, and set production
+Variables `TELEGRAM_CHAT_ID` and `TELEGRAM_ERROR_THREAD_ID`. The selected target
+is chat `-1004484145903`, topic `2`. Add the bot to that forum with permission
+to send messages. Missing bot/chat settings disable delivery without affecting
+imports. Credentials are rendered only into worker configuration.
+
+Failed import jobs and partial media reports send the task number, version,
+error and a bounded list of missing paths/languages. SQL parameters, connection
+URLs and configured secrets are removed. AI conversation payloads are excluded.
+Telegram requests have a five-second timeout; delivery failures never retry or
+fail the processing task. Complete diagnostics remain in the admin media report.
+
+Main-client Wwise event metadata is cached alongside numeric media. Public API
+cache revisions refresh within five seconds of committed data changes, rather
+than retaining empty audio links for hours. The Chinese interface locale
+`zh-Hans` resolves stored voice tracks labelled `zh`.

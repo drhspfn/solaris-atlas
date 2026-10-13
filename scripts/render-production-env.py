@@ -73,6 +73,9 @@ GROUPS = {
     },
     "worker.env": {
         "LOG_LEVEL": "INFO",
+        "TELEGRAM_BOT_TOKEN": "",
+        "TELEGRAM_CHAT_ID": "",
+        "TELEGRAM_ERROR_THREAD_ID": "",
         "WUWA_QUEUE_CONCURRENCY": "snapshot_build=1",
         "WUWA_WORKER_WORKSPACE": "/var/lib/wuwa-worker",
         "WUWA_IMPORT_BATCH_SIZE": "500",
