@@ -125,3 +125,12 @@ without changing API, web or AI worker images.
 
 Rollback: restore the previous worker image and Compose file, then recreate the
 worker services. Persistent volumes and queued messages must be retained.
+
+Character voice extraction resolves cooked Wwise IDs from the pinned main-client
+exports as well as multilingual voice packages. The numeric main-client Media
+export is prepared once; verified cached bytes and decoded WAVs are reused.
+Missing languages produce a partial media report rather than discarding other
+languages. Character audio is queued one character per task so completed
+characters become available independently. Historical 1.0/1.1 metadata currently
+uses the installed 3.7 client: references removed from that client remain reported
+as missing instead of being replaced by guessed audio.

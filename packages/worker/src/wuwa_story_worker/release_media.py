@@ -333,6 +333,9 @@ async def voice_packages(parent):
             detail = "; ".join(failures[:3])[:1200] or "No WEM files matched the exported audio paths"
             raise RuntimeError(f"Voice archive export failed: {detail}; inspect {log}")
         inventory = await publish_inventory(extracted, index)
+    # Character events can reference numeric WEM IDs in the main client.
+    # Export once per pinned client instead of remounting all paks for each line.
+    await export_assets(root, tool_path("WUWA_FMODEL_PATH"), "WwiseAudio_Generated/Media")
     save_json(voice_root / "audio-export.json", {"plan_id": plan["id"], "media_report": inventory})
     return {**parent, "voice_plan_id": plan["id"], "stage": "voice_packages_ready",
             "media_report": inventory}, "completed"
