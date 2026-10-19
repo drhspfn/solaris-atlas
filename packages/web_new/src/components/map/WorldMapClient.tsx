@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from '@/lib/router';
 
 import { api } from '@/api/client';
+import { Select } from '@/components/ui/Select';
 import { iconNode, ObjectIcon } from '@/components/MapIcons';
 import { APP_SETTINGS } from '@/config/settings';
 import { acquisitionMarkers, markerType } from '@/data/mapAcquisition';
@@ -838,54 +839,28 @@ export function WorldMapPage() {
           <span className="eyebrow">SOLARIS / FIELD ATLAS</span> <h1>Interactive map</h1>{' '}
           <p>Find a place. Explore what’s there.</p>{' '}
         </div>{' '}
-        <label>
-          {' '}
-          Region{' '}
-          <select
-            value={chosen?.id ?? ''}
-            onChange={(e) => {
-              chooseMap(e.target.value);
-            }}
-          >
-            {' '}
-            {regionOptions.map((m) => (
-              <option key={m.id} value={m.id}>
-                {' '}
-                {name(m.metadata.catalog?.names, `Map ${m.game_map_id}`)}{' '}
-                {archivedMap && m.id === chosen.id ? ` · Map data ${m.game_version}` : ''}
-                {m.layer === 'gravity:2' ? ' · Inverted' : ''}{' '}
-              </option>
-            ))}{' '}
-          </select>{' '}
-        </label>{' '}
+        <div className="atlas-field">
+          <span>Region</span>
+          <Select label="Region" value={chosen?.id ?? ''} onChange={chooseMap}
+            placeholder={error ? 'Regions unavailable' : loading ? 'Loading regions…' : 'No regions available'}
+            options={regionOptions.map((m) => ({ value: m.id,
+              label: name(m.metadata.catalog?.names, `Map ${m.game_map_id}`)
+                + (archivedMap && m.id === chosen?.id ? ` · Map data ${m.game_version}` : '')
+                + (m.layer === 'gravity:2' ? ' · Inverted' : ''),
+            }))} />
+        </div>{' '}
         <div className="atlas-menu-toolbar">
           {' '}
-          <label>
-            {' '}
-            Location{' '}
-            <select
-              value={area}
-              onChange={(e) => change('area', e.target.value === '0' ? '' : e.target.value)}
-            >
-              {' '}
-              <option value="0">All locations</option>{' '}
-              {[...new Set(locations.map((l) => name(l.group_names, 'Other locations')))].map(
-                (group) => (
-                  <optgroup key={group} label={group}>
-                    {' '}
-                    {locations
-                      .filter((l) => name(l.group_names, 'Other locations') === group)
-                      .map((l) => (
-                        <option key={l.id} value={l.id}>
-                          {' '}
-                          {name(l.names, `Location ${l.id}`)}{' '}
-                        </option>
-                      ))}{' '}
-                  </optgroup>
-                ),
-              )}{' '}
-            </select>{' '}
-          </label>{' '}
+          <div className="atlas-field">
+            <span>Location</span>
+            <Select label="Location" disabled={!chosen} value={area || '0'} onChange={(value) => change('area', value === '0' ? '' : value)}
+              options={[{ value: '0', label: 'All locations' },
+                ...[...new Set(locations.map((l) => name(l.group_names, 'Other locations')))].flatMap((group) =>
+                  locations.filter((l) => name(l.group_names, 'Other locations') === group).map((l) => ({
+                    value: l.id, label: name(l.names, `Location ${l.id}`), group,
+                  }))),
+              ]} />
+          </div>
           <div className="atlas-search-field">
             <label htmlFor="map-object-search">Find an object</label>
             <div className="atlas-search-input">

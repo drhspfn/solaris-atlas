@@ -16,14 +16,12 @@ export function PublicChat() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  const messagesRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    scrollToBottom();
+    if (messages.length > 1 && messagesRef.current) {
+      messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+    }
   }, [messages]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -75,7 +73,7 @@ export function PublicChat() {
         </div>
       </div>
       
-      <div className="chat-messages">
+      <div className="chat-messages" ref={messagesRef} aria-live="polite" aria-relevant="additions">
         {messages.map((msg, i) => (
           <div key={i} className={`chat-message ${msg.role}`}>
             <div className="message-avatar">
@@ -104,18 +102,18 @@ export function PublicChat() {
             <AlertCircle size={14} /> {error}
           </div>
         )}
-        <div ref={messagesEndRef} />
       </div>
 
-      <form onSubmit={handleSubmit} className="chat-input-form">
+      <form noValidate onSubmit={handleSubmit} className="chat-input-form">
         <input 
+          aria-label="Ask the lore assistant"
           type="text" 
           value={input}
           onChange={e => setInput(e.target.value)}
           placeholder="Ask a question about the lore..."
           disabled={isLoading}
         />
-        <button type="submit" disabled={!input.trim() || isLoading} className="btn primary icon-only">
+        <button type="submit" aria-label="Send question" disabled={!input.trim() || isLoading} className="btn primary icon-only">
           <Send size={16} />
         </button>
       </form>

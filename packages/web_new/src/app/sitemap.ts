@@ -7,6 +7,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
 
   const staticRoutes: MetadataRoute.Sitemap = [
+    { url: `${siteUrl}/legal`, lastModified: new Date('2026-10-19'), changeFrequency: 'monthly', priority: 0.3 },
     {
       url: `${siteUrl}/`,
       lastModified: now,

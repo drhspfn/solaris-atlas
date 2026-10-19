@@ -3,7 +3,6 @@
 import '@/styles/events.css';
 
 import {
-  ChevronDown,
   Clock3,
   ExternalLink,
   Gift,
@@ -13,6 +12,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 
 import { api } from '@/api/client';
+import { Select } from '@/components/ui/Select';
 
 type GameEvent = {
   id: number;
@@ -175,33 +175,16 @@ export function EventsPage({ initialData }: { initialData?: EventsResponse | nul
           </div>
         </div>
         <div className="events-controls">
-          <label>
+          <div className="events-filter">
             <span>Server schedule</span>
-            <span className="events-select-wrap">
-              <select value={server} onChange={(e) => setServer(e.target.value as Server)}>
-                {Object.entries(serverLabels).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} />
-            </span>
-          </label>
-          <label>
+            <Select label="Server schedule" value={server} onChange={(value) => setServer(value as Server)}
+              options={Object.entries(serverLabels).map(([value, label]) => ({ value, label }))} />
+          </div>
+          <div className="events-filter">
             <span>Show</span>
-            <span className="events-select-wrap">
-              <select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
-                <option value="all">All event types</option>
-                {Object.entries(kindLabels).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} />
-            </span>
-          </label>
+            <Select label="Event type" value={kind} onChange={(value) => setKind(value as typeof kind)}
+              options={[{ value: 'all', label: 'All event types' }, ...Object.entries(kindLabels).map(([value, label]) => ({ value, label }))]} />
+          </div>
           <span className="events-date-note">
             <Clock3 size={14} /> Times shown in your local timezone
           </span>
@@ -279,19 +262,11 @@ export function EventsPage({ initialData }: { initialData?: EventsResponse | nul
             <h2>Event timeline</h2>
           </div>
           <div className="events-timeline-tools">
-            <label>
+            <div className="events-filter">
               <span>Timeline</span>
-              <span className="events-select-wrap">
-                <select
-                  value={timelineRange}
-                  onChange={(e) => setTimelineRange(e.target.value as TimelineRange)}
-                >
-                  <option value="current">Current cycle</option>
-                  <option value="all">All history</option>
-                </select>
-                <ChevronDown size={14} />
-              </span>
-            </label>
+              <Select label="Timeline" value={timelineRange} onChange={(value) => setTimelineRange(value as TimelineRange)}
+                options={[{ value: 'current', label: 'Current cycle' }, { value: 'all', label: 'All history' }]} />
+            </div>
             <p>
               {dated.length && Number.isFinite(earliest) && Number.isFinite(latest)
                 ? `${monthFormatter.format(new Date(earliest))} — ${monthFormatter.format(new Date(latest))}`

@@ -88,7 +88,7 @@ Read-only game atlas at `/map`, using published map manifests, positioned entiti
 
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 | --- | --- | --- | --- | --- |
-| Select/Listbox | Native HTML select | StoryMapPage and LocaleSwitcher | Platform-owned popup geometry is acceptable for world and grouped location selection | Keyboard selection, long floor names, narrow viewport |
+| Select/Listbox | `packages/web_new/src/components/ui/Select.tsx` for map region/location, archive language and event filters; native select elsewhere | October 2026 public-shell refinement | Authored popups own geometry and dark styling; untouched workflows retain native semantics | Arrows/Home/End/typeahead, Enter/Space, Escape/Tab, long names and narrow popup checks |
 | Search | Native search input with visible label | WorldMapPage | Immediate local filtering; committed query in URL | Empty results and clear input |
 | Checkbox | Native checkbox | WorldMapPage | Hidden placements and unknown floor | Keyboard toggle |
 | Object selection | Native button with aria-pressed | WorldMapPage | Two-column icon/name/count tiles; compact icon grid for other resources; select all and clear per group | Keyboard, individual types, group actions and counts |

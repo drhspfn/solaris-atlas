@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { DM_Sans, Manrope } from 'next/font/google';
 
 import '@/styles/index.css';
+import '@/styles/site-shell.css';
 
 import { Footer } from '@/components/layout/Footer';
 import { Header } from '@/components/layout/Header';

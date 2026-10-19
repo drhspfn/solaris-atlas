@@ -71,7 +71,7 @@ Solaris Atlas should feel like an editorial field atlas assembled from quiet res
 - **Memorable signature:** Thin mint and cyan resonance paths connecting story entities.
 - **Restraint:** Most surfaces stay near-monochrome. Semantic colors identify entity type in small marks only.
 - **Anti-references:** Neon cyberpunk, terminal green, generic SaaS panels and glass effects.
-- **Token ownership/runtime mapping:** This document mirrors the canonical runtime tokens in `packages/web/src/styles/index.css`. `:root` defines the named palette and legacy aliases; shared page components consume those variables and the design override layer. No separate generated theme exists.
+- **Token ownership/runtime mapping:** The maintained Next.js frontend uses `packages/web_new/src/styles/index.css` for the canonical runtime palette. `site-shell.css` consumes these tokens for the header, footer and shared selectors. `packages/web` is the legacy frontend. No separate generated theme exists.
 
 ## Colors
 
@@ -106,6 +106,26 @@ The existing CSS in `packages/web/src/styles/index.css` is the runtime owner. Gl
 - Don't use bright green, heavy glow, glass surfaces or decorative terminal labels.
 
 ## Map and shared controls
+
+The maintained Next.js header groups Maps and Archive, with Events directly
+accessible. Account controls live on the right. Authenticated users find Settings
+in their account menu; guests have a Settings icon beside Sign in. API, MCP,
+GitHub and legal links belong in the footer. Menus close on navigation, outside
+click and Escape. Header controls have a minimum 44px target. Mobile navigation
+is a bounded panel rather than a full-height resource list. Decorative collection
+sequence numbers are omitted.
+
+`packages/web_new/src/components/ui/Select.tsx` owns authored single-select popups
+for archive language, interactive-map fields and event filters. Native popovers provide top-layer
+placement and dismissal, with listbox keyboard navigation and typeahead. Remaining
+native selects retain native behavior and use the shared dark palette. This is a
+deliberate change requested for the public shell and map; other controls migrate
+incrementally. Chat scroll belongs to the message container, never the document.
+
+Native checkboxes keep their semantic input and Space/label-click behavior, with
+a shared dark surface, mint checked/indeterminate state, visible keyboard focus
+and forced-colors fallback. The map sidebar uses an 18px horizontal gutter and
+full-width location/search rows; the toolbar does not squeeze both into half-width cells.
 
 Administration uses compact operation tables and separate activity/import/history
 views. Task results and technical worker details are closed native disclosures;

@@ -437,13 +437,13 @@
   height: 22px;
 }
 .world-map-page {
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 340px minmax(0, 1fr);
 }
 .atlas-sidebar {
   padding: 0;
 }
 .atlas-heading {
-  padding: 16px 14px 4px;
+  padding: 20px 18px 4px;
 }
 .atlas-heading h1 {
   font-size: 21px;
@@ -455,10 +455,14 @@
 .atlas-sidebar > label {
   margin: 10px 18px;
 }
+.atlas-sidebar > .atlas-field {
+  margin: 16px 18px;
+}
 .atlas-menu-toolbar {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  padding: 16px 18px;
   position: sticky;
   top: 0;
   z-index: 5;
@@ -474,8 +478,20 @@
   font-size: 11px;
 }
 .atlas-menu-toolbar > .atlas-search-field {
-  border-left: 1px solid var(--border-default);
+  padding: 0;
+  border-left: 0;
+  font-size: 13px;
 }
+.atlas-menu-toolbar > .atlas-field { margin: 0; min-width: 0; }
+.atlas-menu-toolbar .atlas-search-input {
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.atlas-menu-toolbar .atlas-search-input:focus-within { border-color: var(--accent-mint); }
+.atlas-menu-toolbar .atlas-search-input input[type='search'] { padding: 10px 0; }
 .atlas-menu-toolbar select,
 .atlas-menu-toolbar input[type='search'] {
   padding: 6px 0;
@@ -624,7 +640,7 @@
     grid-template-columns: 300px minmax(0, 1fr);
   }
   .atlas-heading {
-    padding: 12px 12px 4px;
+    padding: 16px 18px 4px;
   }
   .atlas-menu-group > header {
     padding: 12px 8px 8px;
