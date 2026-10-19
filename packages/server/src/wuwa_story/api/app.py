@@ -21,6 +21,7 @@ from wuwa_story.api.routes import (
     mcp,
     media_jobs,
     nodes,
+    notices,
     releases,
     search,
     seo,
@@ -95,6 +96,7 @@ async def auth_error_handler(_request: Request, exc: AuthError) -> JSONResponse:
 app.include_router(health.router)
 app.include_router(releases.router)
 app.include_router(game_events.router)
+app.include_router(notices.router)
 app.include_router(admin_data.router)
 app.include_router(maps.router)
 app.include_router(media_jobs.router)

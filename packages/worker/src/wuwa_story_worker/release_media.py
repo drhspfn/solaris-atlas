@@ -108,13 +108,14 @@ async def event_catalog(payload, parent, session):
         missing_packages = await annotate_image_packages(client_root(parent), records)
         result = await store_client_events(session, records, parent["asset_version"], parent["download_id"])
         await session.commit()
+        notices = await enqueue_event_images(session, payload, ["en"], kind="event_notices")
         artwork_paths = result.pop("artwork_paths")
         images = await enqueue_event_images(session, payload, artwork_paths)
         resources = await enqueue_event_images(session, payload, result.pop("resource_events"), kind="event_resources")
         logger.info("release_media.client_events records=%s events=%s missing=%s image_tasks=%s",
                     result["catalog_records"], result["events"], len(result["unresolved"]), images["tasks"])
         return {**parent, **result, "stage": "event_catalog_ready", "source": CLIENT_SOURCE,
-                "image_tasks": images, "resource_tasks": resources,
+                "image_tasks": images, "resource_tasks": resources, "notice_tasks": notices,
                 "requested": result["catalog_records"] + len(artwork_paths) + len(missing_packages),
                 "found": result["events"] + len(artwork_paths),
                 "missing": len(result["unresolved"]) + len(missing_packages),
@@ -436,7 +437,7 @@ async def process_release_media(payload):
                     parent = await session.get(ProcessingRun, payload["parent_id"])
                     if parent is None or parent.metadata_json.get("request", {}).get("release_id") != payload["release_id"]:
                         raise ValueError("Media task dependency belongs to another snapshot")
-                    partial_resources = parent.status == "partial" and payload["kind"] in {"event_images", "event_resources"} and parent.metadata_json.get(
+                    partial_resources = parent.status == "partial" and payload["kind"] in {"event_images", "event_resources", "event_notices"} and parent.metadata_json.get(
                         "request", {}).get("kind") in {"event_catalog", "event_resources"}
                     if parent.status != "completed" and not partial_resources:
                         if parent.status in {"failed", "enqueue_failed", "blocked", "cancelled"}:
@@ -452,6 +453,9 @@ async def process_release_media(payload):
                         result, status = await event_catalog(payload, parent.raw_output, session)
                     elif payload["kind"] == "event_resources":
                         result, status = await event_resources(payload, parent.raw_output, session, client_root(parent.raw_output))
+                    elif payload["kind"] == "event_notices":
+                        from wuwa_story_worker.notices import import_notices
+                        result, status = await import_notices(client_root(parent.raw_output), session)
                     elif payload["kind"] == "cutscene_assets":
                         result, status = await cutscene_assets(payload, parent.raw_output)
                     elif payload["kind"] == "voice_packages":

@@ -128,6 +128,7 @@ export function Header() {
             <summary
               className={
                 active('/catalog') ||
+                active('/notices') ||
                 ['/characters', '/quests', '/locations', '/items'].some(active)
                   ? 'is-active'
                   : ''
@@ -137,6 +138,12 @@ export function Header() {
             </summary>
             <div className="site-menu-panel">
               <span className="site-menu-caption">People, stories & places</span>
+              <Link to="/notices" aria-current={active('/notices') ? 'page' : undefined}>
+                <CalendarDays size={18} />
+                <span>
+                  Announcements<small>Official in-game news & event rules</small>
+                </span>
+              </Link>
               {categories.map((category) => (
                 <Link
                   key={category.key}

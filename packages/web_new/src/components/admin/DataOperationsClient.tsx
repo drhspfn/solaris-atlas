@@ -267,6 +267,25 @@ export function DataOperationsClient() {
     }
   }
 
+  async function importNotices() {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await api<{ queued: number; enqueue_failed: number }>(
+        '/admin/data-operations/notices/import',
+        { method: 'POST' },
+      );
+      setNotice(
+        `Announcement import: ${result.queued} tasks queued${result.enqueue_failed ? `, ${result.enqueue_failed} queue failures; retry import` : '. Text and images appear as tasks finish.'}`,
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not queue announcement import.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function enqueueMedia(releaseId: number) {
     setBusy(true);
     setError('');
@@ -403,6 +422,22 @@ export function DataOperationsClient() {
           </header>
         </section>
 
+        <section className="content-panel data-operation-panel">
+          <header className="agent-panel-header">
+            <div>
+              <h3>
+                <CalendarDays size={16} /> In-game announcements
+              </h3>
+              <p>
+                Archive Highlights, Info and News from the official Notice feed, including images
+                and previous revisions.
+              </p>
+            </div>
+            <button className="agent-button" onClick={() => void importNotices()} disabled={busy}>
+              <Download size={14} /> Import announcements
+            </button>
+          </header>
+        </section>
         {/* SECTION: Game client asset downloader */}
         <section className="content-panel data-operation-panel">
           <header className="agent-panel-header">

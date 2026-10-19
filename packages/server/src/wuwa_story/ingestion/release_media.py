@@ -21,7 +21,7 @@ def batches(values, size=100):
 
 
 async def enqueue_release_media(
-    session, release_id: int, *, event_artwork_only: bool = False
+    session, release_id: int, *, event_artwork_only: bool = False, notices_only: bool = False
 ) -> dict:
     release = await session.get(GameRelease, release_id)
     if release is None:
@@ -30,7 +30,7 @@ async def enqueue_release_media(
     await session.execute(insert(Processor).values(key=PROCESSOR, version="1")
                           .on_conflict_do_nothing(index_elements=[Processor.key]))
     processor = await session.scalar(select(Processor.id).where(Processor.key == PROCESSOR))
-    if event_artwork_only:
+    if event_artwork_only or notices_only:
         entities, cutscenes, voices = [], [], []
     else:
         present = select(NodeRevision.node_id).where(NodeRevision.release_id == release_id)
@@ -45,15 +45,17 @@ async def enqueue_release_media(
             .distinct().order_by(VoiceReference.file_name)))
     characters = [key for key in entities if key.startswith("character:")]
     specs = [("prepare", [])]
+    if notices_only:
+        specs.append(("event_notices", ["en"]))
     if event_artwork_only:
         # Discover the complete catalog in the client, including events that
         # have never appeared in a community timetable. Images fan out afterwards.
         specs.append(("event_catalog", ["client-catalog:v2"]))
-    if not event_artwork_only and cutscenes:
+    if not (event_artwork_only or notices_only) and cutscenes:
         specs.append(("cutscene_assets", sorted(set(cutscenes))))
-    if not event_artwork_only and (voices or characters):
+    if not (event_artwork_only or notices_only) and (voices or characters):
         specs.append(("voice_packages", []))
-    if not event_artwork_only:
+    if not (event_artwork_only or notices_only):
         specs.extend(("images", batch) for batch in batches(entities))
         specs.extend(("cutscene", [name]) for name in sorted(set(cutscenes)))
         specs.extend(("voices", batch) for batch in batches(voices))
@@ -76,8 +78,8 @@ async def enqueue_release_media(
         dependencies[kind] = run.id
         if kind == "prepare":
             parent_id = run.id
-        queue = EVENT_QUEUE if event_artwork_only else QUEUE
-        if event_artwork_only and kind == "event_catalog" and run.status == "completed":
+        queue = EVENT_QUEUE if event_artwork_only or notices_only else QUEUE
+        if (event_artwork_only and kind == "event_catalog" or notices_only and kind == "event_notices") and run.status == "completed":
             # An explicit reimport must revisit failed/partial image children,
             # while successful extraction work remains reusable.
             run.status = "pending"
@@ -113,7 +115,7 @@ async def enqueue_event_images(session, payload: dict, paths: list[str], *, kind
         raise ValueError("Event catalog task not found")
     pending = []
     runs = []
-    if kind not in {"event_images", "event_resources"}:
+    if kind not in {"event_images", "event_resources", "event_notices"}:
         raise ValueError("Unsupported event asset task")
     for targets in batches(sorted(set(paths)), size=1 if kind == "event_resources" else 20):
         request = {"release_id": payload["release_id"], "game_version": payload["game_version"],
@@ -127,6 +129,9 @@ async def enqueue_event_images(session, payload: dict, paths: list[str], *, kind
                 processor_id=parent.processor_id, input_hash=digest)
             session.add(run)
             await session.flush()
+        if kind == "event_notices" and run.status == "completed":
+            # Notices are live content; an explicit catalog refresh revisits the feed.
+            run.status = "pending"
         if run.status not in {"running", "completed", "queued", "waiting_dependency"}:
             job = {"schema_version": 1, "job_type": "media.release",
                    "run_id": run.id, **request}
