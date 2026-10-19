@@ -207,6 +207,7 @@ async def event_images(payload, parent, session):
             FileReference.reference_type == "event_banner",
             FileReference.source_path == original,
             FileReference.metadata_json["asset_version"].astext == parent["asset_version"],
+            FileReference.metadata_json["download_id"].astext == parent["download_id"],
         ))
         if reference is None:
             reference = await service.register_reference(

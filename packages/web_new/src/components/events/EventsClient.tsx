@@ -1,454 +1,492 @@
 'use client';
-
 import '@/styles/events.css';
-
-import { Clock3, ExternalLink, Gift, Image as ImageIcon, Sparkles } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
-
+import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api } from '@/api/client';
 import { Select } from '@/components/ui/Select';
-
-type GameEvent = {
-  id: number;
-  source_id: string;
-  occurrence_id: number | null;
-  title: string;
-  description: string | null;
-  kind: 'banner' | 'limited' | 'recurring' | 'permanent';
-  game_version: string | null;
-  starts_at: string | null;
-  ends_at: string | null;
-  season: { start?: number; cycle?: { weeks?: number } } | null;
-  rewards: { id: number; value?: number; name?: string | null }[] | null;
-  featured_names?: string[];
-  up_names?: string[];
-  banner_path: string | null;
-  banner_url?: string | null;
-  preview_url?: string | null;
-  game_path: string | null;
-  source_url: string;
-  catalog_version?: string;
-  schedule_status?: string;
-  artwork?: { path: string; url: string | null; role: string }[];
-};
+import { EventDetails } from './EventDetails';
+import { EventArtwork } from './EventArtwork';
+import {
+  DAY,
+  DAY_WIDTH,
+  countdown,
+  eventColor,
+  groupEvents,
+  kindLabels,
+  layoutRuns,
+  monthKey,
+  monthStart,
+  shiftMonth,
+  startTime,
+  timePosition,
+  type GameEvent,
+  type EventKind,
+} from './calendar';
 
 type EventsResponse = { events: GameEvent[]; source_url: string };
 type Server = 'asia' | 'europe' | 'america';
-type TimelineRange = 'current' | 'all';
-const serverLabels: Record<Server, string> = {
-  asia: 'Asia',
-  europe: 'Europe',
-  america: 'America',
+const servers = {
+  asia: 'Asia · UTC+8',
+  europe: 'Europe · UTC+1',
+  america: 'America · UTC−5',
 };
-const kindLabels: Record<GameEvent['kind'], string> = {
-  banner: 'Convenes',
-  limited: 'Limited events',
-  recurring: 'Recurring modes',
-  permanent: 'Permanent',
-};
-
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-  day: 'numeric',
-  month: 'short',
+const zones = { asia: 'Etc/GMT-8', europe: 'Etc/GMT-1', america: 'Etc/GMT+5' };
+const monthFormat = new Intl.DateTimeFormat('en', {
+  month: 'long',
   year: 'numeric',
-});
-const monthFormatter = new Intl.DateTimeFormat(undefined, {
-  month: 'short',
-  year: 'numeric',
+  timeZone: 'UTC',
 });
 
-function formatDate(value: string | null) {
-  return value ? dateFormatter.format(new Date(value)) : 'Date not recorded';
-}
-
-function EventArtwork({ event, compact = false }: { event: GameEvent; compact?: boolean }) {
-  const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  const displayUrl = event.preview_url || event.banner_url;
-  const failed = displayUrl === failedUrl;
-
-  return (
-    <div
-      className={`events-artwork ${compact ? 'compact' : ''} ${event.kind === 'banner' && event.preview_url ? 'is-subject' : ''}`}
-    >
-      {displayUrl && !failed ? (
-        <img
-          src={displayUrl}
-          alt=""
-          loading="lazy"
-          onError={() => setFailedUrl(displayUrl ?? null)}
-        />
-      ) : (
-        <div className="events-artwork-fallback" aria-hidden="true">
-          <ImageIcon size={compact ? 14 : 27} />
-          {!compact && <span>Artwork not available</span>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function EventsPage({ initialData }: { initialData?: EventsResponse | null }) {
+export function EventsPage({
+  initialData,
+  initialEventIds = [],
+}: {
+  initialData?: EventsResponse | null;
+  initialEventIds?: number[];
+}) {
   const [server, setServer] = useState<Server>('europe');
-  const [kind, setKind] = useState<GameEvent['kind'] | 'all'>('all');
-  const [events, setEvents] = useState<GameEvent[]>(initialData?.events ?? []);
+  const [kind, setKind] = useState<EventKind | 'all'>('all');
+  const [events, setEvents] = useState(initialData?.events ?? []);
   const [selected, setSelected] = useState<GameEvent | null>(null);
+  const [chosen, setChosen] = useState<number[]>(initialEventIds);
   const [loading, setLoading] = useState(!initialData);
   const [error, setError] = useState('');
-  const [timelineRange, setTimelineRange] = useState<TimelineRange>('all');
   const [search, setSearch] = useState('');
-
+  const [month, setMonth] = useState(monthKey(Date.now()));
+  const [now, setNow] = useState<number | null>(null);
+  const [localTime, setLocalTime] = useState(false);
+  const [localZone, setLocalZone] = useState('UTC');
+  const [catalogLimit, setCatalogLimit] = useState(24);
+  const chart = useRef<HTMLDivElement>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const openEvent = (event: GameEvent, trigger: HTMLElement) => {
+    returnFocus.current = trigger;
+    setSelected(event);
+  };
+  const firstFetch = useRef(true);
+  const timeZone = localTime ? localZone : zones[server];
   useEffect(() => {
-    if (initialData && server === 'europe' && events === initialData.events) {
+    setLocalZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (firstFetch.current && initialData && server === 'europe') {
+      firstFetch.current = false;
       return;
     }
+    firstFetch.current = false;
     const controller = new AbortController();
     setLoading(true);
+    setSelected(null);
     void api<EventsResponse>(`/events?server=${server}`, {
       signal: controller.signal,
     })
       .then((data) => {
-        setEvents(data.events);
-        setSelected((current) => data.events.find((event) => event.id === current?.id) ?? null);
-        setError('');
-      })
-      .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
-          setError(reason instanceof Error ? reason.message : 'Could not load the event archive.');
+          setEvents(data.events);
+          setError('');
         }
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted)
+          setError(reason instanceof Error ? reason.message : 'Could not load events.');
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [server]);
+  }, [server, initialData]);
+  useEffect(() => {
+    setCatalogLimit(24);
+  }, [search, kind, chosen]);
 
-  const visibleEvents = useMemo(
-    () =>
-      events.filter(
-        (event) =>
-          (kind === 'all' || event.kind === kind) &&
-          event.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
-      ),
-    [events, kind, search],
+  const groups = useMemo(() => groupEvents(events), [events]);
+  const matching = groups.filter((runs) =>
+    runs.some(
+      (event) =>
+        (kind === 'all' || event.kind === kind) &&
+        event.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+    ),
   );
-  const dated = visibleEvents.filter(
-    (event) => event.starts_at && Number.isFinite(new Date(event.starts_at).getTime()),
-  );
-  const allEarliest = dated.reduce(
-    (value, event) => Math.min(value, new Date(event.starts_at!).getTime()),
-    Infinity,
-  );
-  const allLatest = dated.reduce(
-    (value, event) => Math.max(value, new Date(event.ends_at ?? event.starts_at!).getTime()),
-    -Infinity,
-  );
-  const now = Date.now();
-  const rangeStart = timelineRange === 'current' ? now - 45 * 86400000 : allEarliest;
-  const rangeEnd = timelineRange === 'current' ? now + 75 * 86400000 : allLatest;
-  const earliest = timelineRange === 'current' ? rangeStart : allEarliest;
-  const latest = timelineRange === 'current' ? rangeEnd : allLatest;
-  const timelineEvents = visibleEvents.filter((event) => {
-    if (timelineRange === 'all') return true;
-    if (!event.starts_at) return false;
-    const start = new Date(event.starts_at).getTime();
-    const end = event.ends_at ? new Date(event.ends_at).getTime() : start;
-    return end >= rangeStart && start <= rangeEnd;
+  const visible = matching.filter((runs) => !chosen.length || chosen.includes(runs[0].id));
+  const zoneOffset = (time: number) => {
+    const parts = new Intl.DateTimeFormat('en', {
+      timeZone,
+      timeZoneName: 'longOffset',
+    }).formatToParts(time);
+    const offset = parts
+      .find((part) => part.type === 'timeZoneName')
+      ?.value.match(/GMT([+−-])(\d{2}):(\d{2})/);
+    return offset
+      ? (offset[1] === '+' ? 1 : -1) * (Number(offset[2]) * 60 + Number(offset[3])) * 60000
+      : 0;
+  };
+  const boundaries = Array.from({ length: 43 }, (_, index) => {
+    const midnight = monthStart(month) + index * DAY;
+    return midnight - zoneOffset(midnight);
   });
-  const span = Number.isFinite(latest - earliest) ? Math.max(latest - earliest, 1) : 1;
-  const monthTicks = useMemo(() => {
-    if (!Number.isFinite(earliest) || !Number.isFinite(latest)) return [];
-    const ticks: { label: string; left: number }[] = [];
-    const date = new Date(earliest);
-    ticks.push({ label: monthFormatter.format(date), left: 0 });
-    date.setDate(1);
-    date.setHours(0, 0, 0, 0);
-    date.setMonth(date.getMonth() + 1);
-    while (date.getTime() <= latest && ticks.length < 36) {
-      ticks.push({
-        label: monthFormatter.format(date),
-        left: ((date.getTime() - earliest) / span) * 100,
-      });
-      date.setMonth(date.getMonth() + 1);
-    }
-    const chartWidth = Math.max(900, Math.ceil(span / (30.5 * 86400000)) * 165 + 300);
-    const trackWidth = chartWidth * 0.69;
-    return ticks.filter(
-      (tick, index) => index === 0 || (tick.left - ticks[index - 1].left) * trackWidth >= 96,
-    );
-  }, [earliest, latest, span]);
+  const start = boundaries[0],
+    end = boundaries[42];
+  const timeline = visible
+    .map((runs) => ({ runs, bars: layoutRuns(runs, start, end, boundaries) }))
+    .filter((row) => row.bars.length);
+  const catalog = visible.filter((runs) =>
+    runs.some((event) => !Number.isFinite(startTime(event))),
+  );
+  const recorded = visible.flatMap((runs) =>
+    runs.filter((event) => Number.isFinite(startTime(event))),
+  );
+  const availableMonths = [
+    ...new Set([
+      month,
+      monthKey(Date.now()),
+      ...recorded.map((event) => monthKey(startTime(event))),
+    ]),
+  ]
+    .sort()
+    .reverse();
+  const dateFormat = new Intl.DateTimeFormat('en', {
+    timeZone,
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+  const formatDate = (date: string | null) =>
+    date ? dateFormat.format(new Date(date)) : 'Date not recorded';
+  const jumpTo = (event: GameEvent) => {
+    if (Number.isFinite(startTime(event))) setMonth(monthKey(startTime(event)));
+  };
+  const toggle = (id: number) =>
+    setChosen((ids) => (ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id]));
+  const today = now === null ? -1 : timePosition(now, boundaries);
+  const changeMonth = (value: string) => {
+    setMonth(value);
+    if (chart.current) chart.current.scrollLeft = 0;
+  };
 
   return (
     <main className="events-page">
-      <section className="events-hero">
-        <div className="events-kicker">
-          <Sparkles size={14} /> EVENT ARCHIVE
+      <header className="events-page-heading">
+        <div>
+          <span className="events-kicker">SOLARIS / EVENT ARCHIVE</span>
+          <h1>Events</h1>
+          <p>Follow each run. Revisit every cycle.</p>
         </div>
-        <div className="events-hero-row">
-          <div>
-            <h1>Every cycle leaves a trace.</h1>
-            <p>Explore event windows, recurring challenges and permanent modes across versions.</p>
-          </div>
-          <div className="events-total">
-            <strong>{visibleEvents.length.toLocaleString()}</strong>
-            <span>catalog entries</span>
-          </div>
+        <span>
+          {groups.length} events · {events.filter((event) => event.starts_at).length} recorded runs
+        </span>
+      </header>
+      <section className="events-controls" aria-label="Event filters">
+        <label className="events-filter">
+          <span>Find an event</span>
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search event names"
+          />
+        </label>
+        <div className="events-filter">
+          <span>Server schedule</span>
+          <Select
+            label="Server schedule"
+            value={server}
+            onChange={(value) => setServer(value as Server)}
+            options={Object.entries(servers).map(([value, label]) => ({
+              value,
+              label,
+            }))}
+          />
         </div>
-        <div className="events-controls">
-          <label className="events-filter">
-            <span>Find an event</span>
-            <input
-              type="search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search event names"
-            />
-          </label>
-          <div className="events-filter">
-            <span>Server schedule</span>
-            <Select
-              label="Server schedule"
-              value={server}
-              onChange={(value) => setServer(value as Server)}
-              options={Object.entries(serverLabels).map(([value, label]) => ({
+        <div className="events-filter">
+          <span>Event type</span>
+          <Select
+            label="Event type"
+            value={kind}
+            onChange={(value) => setKind(value as typeof kind)}
+            options={[
+              { value: 'all', label: 'All types' },
+              ...Object.entries(kindLabels).map(([value, label]) => ({
                 value,
                 label,
-              }))}
-            />
-          </div>
-          <div className="events-filter">
-            <span>Show</span>
-            <Select
-              label="Event type"
-              value={kind}
-              onChange={(value) => setKind(value as typeof kind)}
-              options={[
-                { value: 'all', label: 'All event types' },
-                ...Object.entries(kindLabels).map(([value, label]) => ({
-                  value,
-                  label,
-                })),
-              ]}
-            />
-          </div>
-          <span className="events-date-note">
-            <Clock3 size={14} /> Times shown in your local timezone
-          </span>
+              })),
+            ]}
+          />
         </div>
+        <label className="events-zone">
+          <input
+            type="checkbox"
+            checked={localTime}
+            onChange={(event) => setLocalTime(event.target.checked)}
+          />
+          Local time <small>({localTime ? localZone : servers[server]})</small>
+        </label>
       </section>
-
+      <details className="events-picker">
+        <summary>
+          Choose events {chosen.length ? `· ${chosen.length} selected` : '· all events'}
+        </summary>
+        <div className="events-picker-actions">
+          <span>Select several events to compare their history.</span>
+          <button onClick={() => setChosen([])} disabled={!chosen.length}>
+            Show all
+          </button>
+        </div>
+        <div className="events-picker-list">
+          {matching.map((runs) => (
+            <label key={runs[0].id}>
+              <input
+                type="checkbox"
+                checked={chosen.includes(runs[0].id)}
+                onChange={() => toggle(runs[0].id)}
+              />
+              <span>{runs[runs.length - 1].title}</span>
+              <small>{runs.filter((event) => event.starts_at).length} runs</small>
+            </label>
+          ))}
+        </div>
+        {!matching.length && <p>No event names match your search.</p>}
+      </details>
+      {!!chosen.length && (
+        <div className="events-selection" aria-label="Selected events">
+          {groups
+            .filter((runs) => chosen.includes(runs[0].id))
+            .map((runs) => (
+              <button
+                key={runs[0].id}
+                onClick={() => toggle(runs[0].id)}
+                aria-label={`Remove ${runs[0].title} from selection`}
+              >
+                {runs[0].title}
+                <X size={14} />
+              </button>
+            ))}
+        </div>
+      )}
       {error && (
         <p className="events-error" role="alert">
           {error}
         </p>
       )}
-      {selected && (
-        <section className="events-detail" aria-live="polite">
-          <button
-            className="events-detail-close"
-            onClick={() => setSelected(null)}
-            aria-label="Close event details"
-          >
-            ×
-          </button>
-          <div className="events-detail-art">
-            <EventArtwork event={selected} />
-            <span>
-              {selected.catalog_version
-                ? `CLIENT ${selected.catalog_version}`
-                : selected.game_version
-                  ? `VERSION ${selected.game_version}`
-                  : 'GAME CLIENT'}
-            </span>
+      <section className="events-timeline" aria-label="Events timeline" aria-busy={loading}>
+        <header className="events-calendar-tools">
+          <h2>Event calendar</h2>
+          <div>
+            <button aria-label="Previous month" onClick={() => changeMonth(shiftMonth(month, -1))}>
+              <ChevronLeft size={18} />
+            </button>
+            <Select
+              label="Calendar month"
+              value={month}
+              onChange={changeMonth}
+              options={availableMonths.map((value) => ({
+                value,
+                label: monthFormat.format(monthStart(value)),
+              }))}
+            />
+            <button aria-label="Next month" onClick={() => changeMonth(shiftMonth(month, 1))}>
+              <ChevronRight size={18} />
+            </button>
+            <button onClick={() => changeMonth(monthKey(Date.now()))}>Today</button>
           </div>
-          <div className="events-detail-copy">
-            <span className={`events-kind kind-${selected.kind}`}>{kindLabels[selected.kind]}</span>
-            <h2>{selected.title}</h2>
-            <p>
-              {selected.description ??
-                (selected.season
-                  ? `${selected.season.cycle?.weeks ? `Repeats every ${selected.season.cycle.weeks} weeks. ` : ''}Season ${selected.season.start ?? 'schedule'}.`
-                  : 'No description is included in the client catalog.')}
-            </p>
-            <div className="events-detail-dates">
-              {!selected.starts_at ? (
-                <span>Opening dates are supplied by the game server, not the client catalog.</span>
-              ) : (
-                <>
-                  <span>{formatDate(selected.starts_at)}</span>
-                  <b>→</b>
-                  <span>
-                    {selected.ends_at
-                      ? formatDate(selected.ends_at)
-                      : selected.kind === 'permanent'
-                        ? 'Permanent'
-                        : 'End date unavailable'}
-                  </span>
-                </>
-              )}
-            </div>
-            {selected.artwork?.some((image) => image.url) && (
-              <details className="events-gallery">
-                <summary>
-                  Game artwork · {selected.artwork.filter((image) => image.url).length} images
-                </summary>
-                <div>
-                  {selected.artwork
-                    .filter((image) => image.url)
-                    .map((image, index) => (
-                      <button
-                        key={image.path}
-                        type="button"
-                        aria-label={`Preview game image ${index + 1}`}
-                        onClick={() =>
-                          setSelected({
-                            ...selected,
-                            banner_url: image.url,
-                            preview_url: image.url,
-                          })
+        </header>
+        <p className="events-calendar-help">
+          Scroll across for dates and down for events. Select a bar for details. Times: {timeZone}.
+        </p>
+        {loading ? (
+          <p className="events-empty" role="status">
+            Reading the archive…
+          </p>
+        ) : (
+          <>
+            <div
+              ref={chart}
+              className="events-chart-scroll"
+              tabIndex={0}
+              aria-label="Scrollable daily event calendar"
+            >
+              <div
+                className="events-chart"
+                style={
+                  {
+                    width: 42 * DAY_WIDTH,
+                    '--day-width': `${DAY_WIDTH}px`,
+                  } as CSSProperties
+                }
+              >
+                <div className="events-axis">
+                  {Array.from({ length: 42 }, (_, index) => {
+                    const day = new Date(monthStart(month) + index * DAY);
+                    return (
+                      <div
+                        key={index}
+                        className={
+                          now &&
+                          new Date(now + zoneOffset(now)).toISOString().slice(0, 10) ===
+                            day.toISOString().slice(0, 10)
+                            ? 'is-today'
+                            : ''
                         }
                       >
-                        <img src={image.url!} alt="" loading="lazy" />
+                        <span>
+                          {day.getUTCDate() === 1 || index === 0
+                            ? day.toLocaleDateString('en', {
+                                month: 'short',
+                                timeZone: 'UTC',
+                              })
+                            : ''}
+                        </span>
+                        <small>
+                          {day.toLocaleDateString('en', {
+                            weekday: 'short',
+                            timeZone: 'UTC',
+                          })}
+                        </small>
+                        <strong>{day.getUTCDate()}</strong>
+                      </div>
+                    );
+                  })}
+                </div>
+                {today >= 0 && today < 42 * DAY_WIDTH && (
+                  <div className="events-now" style={{ left: today }}>
+                    <span>Now</span>
+                  </div>
+                )}
+                {timeline.map(({ runs, bars }) => (
+                  <div
+                    className="events-calendar-row"
+                    key={runs[0].id}
+                    style={{
+                      height: (Math.max(...bars.map((bar) => bar.lane)) + 1) * 60,
+                    }}
+                  >
+                    {bars.map(({ event, lane, left, width }) => (
+                      <button
+                        key={event.occurrence_id ?? `${event.id}-${event.starts_at}`}
+                        className="events-bar"
+                        style={
+                          {
+                            left,
+                            width,
+                            top: lane * 60 + 8,
+                            '--event-color': eventColor(event.id),
+                          } as CSSProperties
+                        }
+                        onClick={(click) => openEvent(event, click.currentTarget)}
+                        aria-label={`${event.title}, ${formatDate(event.starts_at)} to ${event.ends_at ? formatDate(event.ends_at) : 'end date unavailable'}`}
+                      >
+                        <EventArtwork event={event} />
+                        <span className="events-bar-copy">
+                          <strong>{event.title}</strong>
+                          <small>
+                            {event.game_version ? `v${event.game_version} · ` : ''}
+                            {now === null
+                              ? kindLabels[event.kind]
+                              : countdown(event, now).replace(/:\d{2}$/, '')}
+                          </small>
+                        </span>
                       </button>
                     ))}
-                </div>
-              </details>
-            )}
-            {selected.up_names?.length ? (
-              <p>Also featured: {selected.up_names.join(', ')}</p>
-            ) : null}
-            {selected.rewards?.length ? (
-              <div className="events-rewards">
-                <strong>
-                  <Gift size={15} /> Reward preview
-                </strong>
-                <div>
-                  {selected.rewards.map((reward, i) => (
-                    <span key={`${reward.id}-${i}`}>
-                      {reward.name || 'Unnamed reward'}
-                      {reward.value ? ` ×${reward.value}` : ''}
-                    </span>
-                  ))}
-                </div>
+                  </div>
+                ))}
               </div>
-            ) : null}
-            {selected.banner_path && !selected.banner_url && !selected.preview_url && (
-              <small className="events-art-note">
-                No decoded image is available yet. Check the event media tasks in Data Operations.
-              </small>
+            </div>
+            {!timeline.length && (
+              <div className="events-empty">
+                No recorded runs in this date range. Choose another month or an event below.
+              </div>
             )}
+          </>
+        )}
+      </section>
+      {!!recorded.length && (
+        <section className="events-run-index">
+          <h2>Run history</h2>
+          <p>Jump to any recorded run, including previous cycles.</p>
+          <div>
+            {recorded.map((event) => (
+              <button
+                key={event.occurrence_id ?? `${event.id}-${event.starts_at}`}
+                onClick={(click) => {
+                  jumpTo(event);
+                  openEvent(event, click.currentTarget);
+                }}
+              >
+                <span>{event.title}</span>
+                <small>
+                  {formatDate(event.starts_at)} →{' '}
+                  {event.ends_at
+                    ? formatDate(event.ends_at)
+                    : event.kind === 'permanent'
+                      ? 'Permanent'
+                      : 'End date unavailable'}
+                </small>
+              </button>
+            ))}
           </div>
         </section>
       )}
-
-      <section className="events-timeline" aria-label="Events timeline">
-        <header className="events-timeline-heading">
-          <div>
-            <span>THE LONG VIEW</span>
-            <h2>Event timeline</h2>
+      {!!catalog.length && (
+        <section className="events-undated">
+          <h2>Dates not recorded</h2>
+          <p>
+            These events are in the game catalog. Server schedule unavailable; their presence does
+            not confirm that they are currently running.
+          </p>
+          <div className="events-catalog-grid">
+            {catalog.slice(0, catalogLimit).map((runs) => {
+              const event = [...runs].reverse().find((event) => !event.starts_at)!;
+              return (
+                <button key={event.id} onClick={(click) => openEvent(event, click.currentTarget)}>
+                  <EventArtwork event={event} />
+                  <span>
+                    <strong>{event.title}</strong>
+                    <small>
+                      {kindLabels[event.kind]}
+                      {event.catalog_version ? ` · Client ${event.catalog_version}` : ''}
+                    </small>
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          <div className="events-timeline-tools">
-            <div className="events-filter">
-              <span>Timeline</span>
-              <Select
-                label="Timeline"
-                value={timelineRange}
-                onChange={(value) => setTimelineRange(value as TimelineRange)}
-                options={[
-                  { value: 'current', label: 'Nearby dates' },
-                  { value: 'all', label: 'Full catalog' },
-                ]}
-              />
-            </div>
-            <p>
-              {dated.length && Number.isFinite(earliest) && Number.isFinite(latest)
-                ? `${monthFormatter.format(new Date(earliest))} — ${monthFormatter.format(new Date(latest))}`
-                : 'Server opening dates are not included in this catalog'}
-            </p>
-          </div>
-        </header>
-        {loading ? (
-          <div className="events-empty">Reading the archive…</div>
-        ) : timelineEvents.length === 0 ? (
-          <div className="events-empty">
-            {events.length
-              ? 'No events match these filters or date range.'
-              : 'No client events have been imported yet. An administrator can import the game catalog from Data Operations.'}
-          </div>
-        ) : (
-          <div className="events-chart-scroll" tabIndex={0} aria-label="Scrollable event timeline">
-            <div
-              className="events-chart"
-              style={{
-                minWidth: Math.max(900, Math.ceil(span / (30.5 * 86400000)) * 165 + 300),
-              }}
+          {catalog.length > catalogLimit && (
+            <button
+              className="events-load-more"
+              onClick={() => setCatalogLimit((value) => value + 24)}
             >
-              <div className="events-axis">
-                <span>EVENT</span>
-                <div className="events-axis-track">
-                  {monthTicks.map((tick) => (
-                    <span key={tick.label} style={{ left: `${tick.left}%` }}>
-                      {tick.label}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              {timelineEvents.map((event) => {
-                const start = event.starts_at ? new Date(event.starts_at).getTime() : Number.NaN;
-                const end = event.ends_at ? new Date(event.ends_at).getTime() : start;
-                const left = Number.isFinite(start)
-                  ? Math.min(100, Math.max(0, ((start - earliest) / span) * 100))
-                  : 0;
-                const right = Number.isFinite(end)
-                  ? Math.min(100, Math.max(0, ((end - earliest) / span) * 100))
-                  : left;
-                const width = Math.max(0.8, right - left);
-                return (
-                  <button
-                    className={`events-row ${selected?.id === event.id ? 'selected' : ''}`}
-                    key={event.occurrence_id ?? event.id}
-                    onClick={() => setSelected(event)}
-                  >
-                    <span className="events-row-label">
-                      <span className={`events-dot kind-${event.kind}`} />
-                      <EventArtwork event={event} compact />
-                      <span>
-                        <strong>{event.title}</strong>
-                        <small>
-                          {kindLabels[event.kind]}
-                          {event.game_version ? ` · v${event.game_version}` : ''}
-                        </small>
-                      </span>
-                    </span>
-                    <span className="events-row-track">
-                      {!event.starts_at && (
-                        <span className="events-no-dates">Server schedule unavailable</span>
-                      )}
-                      {Number.isFinite(start) && (
-                        <span
-                          className={`events-range kind-${event.kind}`}
-                          style={{ left: `${left}%`, width: `${width}%` }}
-                          title={`${formatDate(event.starts_at)} — ${formatDate(event.ends_at)}`}
-                        />
-                      )}
-                      {event.ends_at && Number.isFinite(end) && (
-                        <span className="events-end-marker" style={{ left: `${right}%` }} />
-                      )}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </section>
-
+              Show more events ({catalog.length - catalogLimit} remaining)
+            </button>
+          )}
+        </section>
+      )}
+      {!loading && !visible.length && (
+        <p className="events-empty">
+          {events.length
+            ? 'No events match these filters. Clear your search or selection.'
+            : 'No events have been imported yet.'}
+        </p>
+      )}
+      {selected && (
+        <EventDetails
+          returnFocus={returnFocus.current}
+          event={selected}
+          history={groups.find((runs) => runs[0].id === selected.id) ?? []}
+          timeZone={timeZone}
+          now={now}
+          onSelect={(event) => {
+            setSelected(event);
+            jumpTo(event);
+          }}
+          onClose={() => setSelected(null)}
+        />
+      )}
       <footer className="events-source">
-        <span>
-          Names and artwork come from the game client. Existing historical dates are preserved;
-          opening dates supplied by the game server are not inferred from client files.
-        </span>
-        <a href="https://wutheringwaves.kurogames.com/" target="_blank" rel="noreferrer">
-          Wuthering Waves <ExternalLink size={13} />
+        Names and artwork come from the game client. Only recorded opening dates appear on the
+        calendar.{' '}
+        <a href="https://wutheringwaves.kurogames.com/" target="_blank" rel="noopener noreferrer">
+          Wuthering Waves ↗
         </a>
       </footer>
     </main>

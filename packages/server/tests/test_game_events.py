@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -58,12 +59,13 @@ async def test_timetable_reimport_preserves_client_titles_and_occurrence_artwork
     event = SimpleNamespace(id=9, source_id="2:102000009", title="Actual title",
                             description="Actual description", source_data={"client": client_data})
     occurrence = SimpleNamespace(event_id=9, source_occurrence_id="102000009", server="asia",
-                                 game_version="3.7", source_data={"client": client_data})
+                                 game_version="3.7", source_data={"client": client_data},
+                                 starts_at=datetime(2026, 10, 22, tzinfo=UTC))
     session = AsyncMock()
     session.scalars.side_effect = [[event], [occurrence]]
     identities = Mock()
     identities.all.return_value = [(event.source_id, event.id)]
-    session.execute.side_effect = [None, identities, identities, None, None]
+    session.execute.side_effect = [None, identities, None]
     client = AsyncMock()
     client.get.side_effect = [httpx.Response(200, json=document,
                                             request=httpx.Request("GET", "https://example.test"))
@@ -87,6 +89,17 @@ async def test_timetable_reimport_preserves_client_titles_and_occurrence_artwork
     occurrence_insert = session.execute.await_args_list[-1].args[0].compile().params
     assert occurrence_insert["source_data_m0"]["client"] == client_data
     assert occurrence_insert["banner_path_m0"] == "/Game/RealBanner"
+    assert occurrence_insert["source_occurrence_id_m0"] == "102000009"
+    assert all("DELETE" not in str(call.args[0]) for call in session.execute.await_args_list)
+
+
+def test_official_links_only_accept_exact_kuro_announcements():
+    from wuwa_story.api.routes.game_events import _official_announcement
+    event = SimpleNamespace(source_data={})
+    for url in ["javascript:alert(1)", "https://wutheringwaves.kurogames.com.evil.test/en/main/news/detail/5529", "https://wutheringwaves.kurogames.com/"]:
+        assert _official_announcement(event, SimpleNamespace(source_data={"official_url": url})) is None
+    url = "https://wutheringwaves.kurogames.com/en/main/news/detail/5529"
+    assert _official_announcement(event, SimpleNamespace(source_data={"official_url": url})) == url
 
 
 def test_occurrence_localization_precedes_event_and_falls_back_to_english():

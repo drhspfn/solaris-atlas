@@ -137,10 +137,16 @@ Map markers center their icons in a single bordered chip. Hover and keyboard foc
 
 ## Game-client event catalog
 
-The event page defaults to the full client catalog and offers name search. Presence
-in a client build must not be presented as proof of current availability. Nearby
-dates shows only recorded windows; missing server schedules are stated explicitly.
-Event details expose the published image gallery. Selecting a gallery image updates
+The event page uses a scrollable daily calendar with horizontal occurrence bars.
+Each event keeps its own color across reruns; dark purple, teal, rust, indigo,
+forest and rose fills are a deliberate exception to the otherwise restrained
+semantic marks. Artwork blends into the end of a bar and text stays readable
+when the timeline scrolls. A bounded 42-day window, month navigation, searchable
+multiple-event selection and a run index expose history without rendering years
+of columns. Presence in a client build must not be presented as proof of current
+availability; events without recorded schedules remain in a separate catalog.
+Event details open in a native modal dialog with Escape, inert background and
+focus restoration. Details expose the published image gallery. Selecting a gallery image updates
 the preview, and animated convenes can use client-authored featured portraits or
 weapon icons as static previews. Reward previews use localized names instead of
 raw ID chips. Admin import notices confirm queued work, not completed publication.

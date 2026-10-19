@@ -49,7 +49,7 @@ async def list_game_events(
                     for asset in _artwork(event, occurrence)}
     banner_paths.update(path for event, occurrence in rows
                         if (path := (occurrence.banner_path if occurrence else None) or event.banner_path))
-    banner_urls: dict[str, str] = {}
+    banner_urls: dict[tuple[str, str], str] = {}
     if banner_paths:
         settings = get_settings()
         source_path_matches = [FileReference.source_path.in_(banner_paths)]
@@ -57,7 +57,7 @@ async def list_game_events(
             FileReference.source_path.endswith("/" + path) for path in banner_paths if not path.startswith("/Game/")
         )
         media = await session.execute(
-            select(FileReference.source_path, FileLocation.object_key)
+            select(FileReference.source_path, FileLocation.object_key, FileReference.metadata_json)
             .join(FileObject, FileObject.id == FileReference.file_id)
             .join(FileLocation, FileLocation.file_id == FileObject.id)
             .where(
@@ -72,17 +72,21 @@ async def list_game_events(
             )
         )
         storage = S3Storage(settings)
-        for source_path, object_key in media:
+        for source_path, object_key, metadata in media:
             if source_path is None:
                 continue
+            download = (metadata or {}).get("download_id", "")
             if source_path in banner_paths:
                 banner_urls.setdefault(
-                    source_path, storage.public_url(object_key))
+                    (download, source_path), storage.public_url(object_key))
             else:
                 for banner_path in banner_paths:
                     if not banner_path.startswith("/Game/") and source_path.endswith("/" + banner_path):
                         banner_urls.setdefault(
-                            banner_path, storage.public_url(object_key))
+                            (download, banner_path), storage.public_url(object_key))
+    def image_url(event, occurrence, path):
+        download = _client_data(event, occurrence).get("download_id", "")
+        return banner_urls.get((download, path))
     return {
         "server": server,
         "source": CLIENT_SOURCE,
@@ -104,21 +108,22 @@ async def list_game_events(
                 "featured_names": _presentation(event, occurrence, locale).get("featured_names", []),
                 "up_names": _presentation(event, occurrence, locale).get("up_names", []),
                 "banner_path": (occurrence.banner_path if occurrence else None) or event.banner_path,
-                "banner_url": banner_urls.get(
+                "banner_url": image_url(event, occurrence,
                     (occurrence.banner_path if occurrence else None) or event.banner_path or ""
                 ),
-                "artwork": [{**asset, "url": banner_urls.get(asset["path"])}
+                "artwork": [{**asset, "url": image_url(event, occurrence, asset["path"])}
                             for asset in _artwork(event, occurrence)],
-                "preview_url": next((banner_urls[asset["path"]] for role in (
+                "preview_url": next((image_url(event, occurrence, asset["path"]) for role in (
                     "content", "featured_portrait", "featured_stand", "featured_weapon")
                     for asset in _artwork(event, occurrence)
-                    if asset.get("role") == role and asset["path"] in banner_urls
+                    if asset.get("role") == role and image_url(event, occurrence, asset["path"])
                     and not asset["path"].endswith("/T_CommonNone_UI")), None),
                 "catalog_version": _client_data(event, occurrence).get("asset_version"),
                 "schedule_status": "recorded" if occurrence and occurrence.starts_at else "server_controlled",
                 "hidden_in_client": _client_data(event, occurrence).get("hidden", False),
                 "game_path": event.game_path,
                 "source_url": event.source_url,
+                "official_url": _official_announcement(event, occurrence),
             }
             for event, occurrence in rows
         ],
@@ -145,3 +150,16 @@ def _artwork(event, occurrence):
 def _presentation(event, occurrence, locale):
     locales = _client_data(event, occurrence).get("locales", {})
     return locales.get(locale) or locales.get("en") or {}
+
+
+def _official_announcement(event, occurrence):
+    """Only expose verified official links, never a guessed event/article match."""
+    import re
+
+    data = (occurrence.source_data or {}) if occurrence else {}
+    url = data.get("official_url")
+    if isinstance(url, str) and re.fullmatch(
+        r"https://wutheringwaves\.kurogames\.com/(en|zh|ja|ko)/main/news/detail/\d+", url
+    ):
+        return url
+    return None

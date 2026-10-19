@@ -82,6 +82,11 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
                 session.add(row)
                 rows.append(row)
         for row in rows:
+            snapshot = (row.source_data or {}).get("client", {})
+            # A dated run keeps the client presentation captured for that run.
+            # Media discovered later for the same download remains visible via the API.
+            if getattr(row, "starts_at", None) and snapshot:
+                continue
             row.banner_path = event.banner_path
             row.source_data = {**(row.source_data or {}),
                                "client": event.source_data["client"]}

@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,7 +77,7 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
                 occurrence_rows.append(
                     {
                         "source_id": event_source_id,
-                        "source_occurrence_id": item_id,
+                        "source_occurrence_id": f"{item_id}@{_datetime(start).isoformat()}" if start else item_id,
                         "game_version": version,
                         "server": region,
                         "starts_at": _datetime(start),
@@ -134,21 +134,7 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
     if not event_rows:
         raise ValueError("The upstream event archive contains no event records")
 
-    existing_ids = dict(
-        (
-            await session.execute(
-                select(GameEvent.source_id, GameEvent.id).where(GameEvent.source == SOURCE)
-            )
-        ).all()
-    )
-    stale_ids = set(existing_ids) - set(event_rows)
-    if stale_ids:
-        stale_event_ids = [existing_ids[source_id] for source_id in stale_ids]
-        await session.execute(
-            delete(GameEventOccurrence).where(GameEventOccurrence.event_id.in_(stale_event_ids))
-        )
-        await session.execute(delete(GameEvent).where(GameEvent.id.in_(stale_event_ids)))
-
+    # Missing entries in a later snapshot do not delete archived runs.
     event_ids = dict(
         (
             await session.execute(
@@ -169,17 +155,17 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
     ]
     values = _deduplicate_occurrences(values)
     for row in values:
+        previous = next((old for old in existing_occurrences
+                         if old.event_id == row["event_id"] and old.server == row["server"]
+                         and getattr(old, "starts_at", None) == row["starts_at"]
+                         and row["starts_at"] is not None), None)
+        if previous:
+            row["source_occurrence_id"] = previous.source_occurrence_id
         client_data = occurrence_clients.get((row["event_id"], row["source_occurrence_id"],
                                              row["server"], row["game_version"]))
         if client_data:
             row["source_data"]["client"] = client_data
             row["banner_path"] = client_data.get("banner_path") or row["banner_path"]
-    if event_ids:
-        await session.execute(
-            delete(GameEventOccurrence).where(
-                GameEventOccurrence.event_id.in_(event_ids.values())
-            )
-        )
     if values:
         statement = insert(GameEventOccurrence).values(values)
         statement = statement.on_conflict_do_update(
