@@ -113,3 +113,31 @@ Manual checks after deployment:
 3. Open a previously failed cutscene and switch between its imported voice languages.
 4. Click a sidebar scene; it should scroll to that exact player without starting playback.
 5. Check remaining partial tasks: missing assets remain visible rather than reported as complete.
+
+## Parallel exports
+
+FModel reads the completed client archives concurrently. Each exact path filter
+(including a bounded batch of texture paths) has its own export directory and OS
+lock. Requests for the same filter share an in-flight result inside a worker;
+other worker processes wait for that resource and reuse its validated receipt.
+They do not contend for a client-wide export lock or wait for a broker retry.
+Different filters may overlap in their input files; those batches remain separate
+immutable exports rather than mixing files from different requests.
+
+Extraction writes to a unique temporary directory. Only a successful export with
+all expected archives mounted and a matching file count publishes files and a
+manifest. Failed attempts are discarded; completed caches remain compatible.
+Texture conversion locks only the relevant decoded batch, and rechecks its cache
+after waiting. Cancelling a caller does not interrupt another caller's shared
+export or release a lock while a subprocess is still writing.
+
+Concurrency remains bounded by the existing queue configuration and worker count.
+Each FModel subprocess uses two .NET processors, as texture converters already
+do. Increasing concurrency to 50 on a small host can exhaust memory or saturate
+disk reads; measure throughput and memory before raising those limits.
+
+Deploy the worker image to enable this behavior; no database migration or queue
+reset is needed. Restart all media workers together to avoid mixing the old
+client-wide locking behavior with the new resource locks. On rollback, stop the
+new workers before restoring the old image. Uncommitted temporary directories
+left by a killed process are ignored; completed exports can be reused.
