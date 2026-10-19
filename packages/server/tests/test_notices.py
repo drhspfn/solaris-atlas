@@ -109,6 +109,32 @@ def test_authored_four_star_roster_can_disambiguate_repeat_banners():
     ]  # A unique authored featured identity is enough.
 
 
+def test_current_poster_can_identify_subject_without_assigning_ambiguous_schedule():
+    from datetime import UTC, datetime
+    from wuwa_story.ingestion.notices import notice_candidates
+    from wuwa_story.api.routes.game_events import _choose_preview, _notice_overlaps
+
+    content = {"title": "[Moongazer's Sigil] Featured Weapon Convene",
+               "text": "5-Star Weapon: Moongazer's Sigil, 4-Star Weapons: A, B, and C receive boosted drop rates!"}
+    event = SimpleNamespace(id=1, event_kind="banner", title="Moongazer's Sigil · Weapon Convene",
+        source_data={"client": {"locales": {"en": {
+            "title": "Moongazer's Sigil · Weapon Convene", "featured_names": ["Moongazer's Sigil"],
+            "up_names": ["D", "E", "F"],
+        }}}})
+    duplicate = SimpleNamespace(**{**event.__dict__, "id": 2})
+    assert notice_matches(content, [event, duplicate]) == []
+    assert notice_candidates(content, [event, duplicate], match_roster=False) == [event, duplicate]
+    now = datetime(2026, 10, 19, tzinfo=UTC)
+    occurrence = SimpleNamespace(starts_at=now, ends_at=datetime(2026, 10, 22, tzinfo=UTC))
+    notice = SimpleNamespace(content={"raw": {"startTimeMs": now.timestamp() * 1000,
+        "endTimeMs": datetime(2026, 11, 1, tzinfo=UTC).timestamp() * 1000}})
+    assert _notice_overlaps(notice, occurrence)
+    assert _choose_preview("client-icon", True, None, "full-poster", prefer_notice=True) == ("full-poster", "current_notice")
+    assert _choose_preview("client-icon", True, "archived-poster", "full-poster", prefer_notice=True) == ("archived-poster", "notice_snapshot")
+    occurrence.ends_at = datetime(2026, 9, 1, tzinfo=UTC)
+    assert not _notice_overlaps(notice, occurrence)
+
+
 @pytest.mark.asyncio
 async def test_notice_import_archives_revision_and_adds_server_specific_runs():
     event = SimpleNamespace(

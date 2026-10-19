@@ -124,7 +124,7 @@ def notice_period(content, server):
     return (start, end) if end > start else None
 
 
-def notice_matches(content, events):
+def notice_candidates(content, events, *, match_roster=True):
     def normalized(value):
         return re.sub(r"[^\w]+", "", value.casefold())
 
@@ -155,7 +155,7 @@ def notice_matches(content, events):
         )
         if exact_title or exact_featured:
             matches.append(event)
-    if len(matches) > 1 and rate_up_names:
+    if match_roster and len(matches) > 1 and rate_up_names:
         matches = [
             event
             for event in matches
@@ -169,7 +169,12 @@ def notice_matches(content, events):
                 .get("up_names", [])
             }
         ]
+    return matches
+
+
+def notice_matches(content, events):
     # Repeated titles/featured characters are not proof of which client row is used.
+    matches = notice_candidates(content, events)
     return matches if len(matches) == 1 else []
 
 
