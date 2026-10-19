@@ -13,7 +13,7 @@ BASH = str(GIT_BASH) if os.name == "nt" and GIT_BASH.is_file() else shutil.which
 
 @unittest.skipUnless(BASH, "Bash is required to test deployment orchestration")
 class DeploymentTests(unittest.TestCase):
-    def deploy(self, component, fail_validation=False, worker_image=""):
+    def deploy(self, component, fail_validation=False, worker_image="", fail_migration=False):
         source = (ROOT / "scripts/deploy-remote.sh").read_text()
         tail = 'case "$DEPLOY_COMPONENT" in' + source.split('case "$DEPLOY_COMPONENT" in', 1)[1]
         harness = r'''
@@ -21,10 +21,18 @@ set -euo pipefail
 DEPLOY_COMPONENT=$1
 FAIL_VALIDATION=$2
 WORKER_IMAGE=$3
+FAIL_MIGRATION=$4
 USE_MINIO=false
-docker() { printf '%s\n' "$*"; }
+docker() { printf '%s\n' "$*"; printf '%s\n' "$*" >&2; }
 record_compose() {
+  if [[ "$*" == "ps -q --status running "* ]]; then
+    printf '%s\n' api-container media-container-1 media-container-2
+    return
+  fi
   printf '%s\n' "$*"
+  if [[ "$*" == *"alembic upgrade head"* && "$FAIL_MIGRATION" == 1 ]]; then
+    return 1
+  fi
   if [[ "$*" == *"caddy validate"* && "$FAIL_VALIDATION" == 1 ]]; then
     return 1
   fi
@@ -32,7 +40,8 @@ record_compose() {
 compose=(record_compose)
 '''
         return subprocess.run(
-            [BASH, "-s", "--", component, "1" if fail_validation else "0", worker_image],
+            [BASH, "-s", "--", component, "1" if fail_validation else "0", worker_image,
+             "1" if fail_migration else "0"],
             input=harness + tail, text=True, capture_output=True, timeout=10, check=False,
         )
 
@@ -60,6 +69,17 @@ compose=(record_compose)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("caddy", result.stdout)
         self.assertIn("up -d snapshot-worker media-worker", result.stdout)
+
+    def test_migrations_release_connections_and_restore_running_replicas(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                result = self.deploy("api", fail_migration=fail)
+                self.assertEqual(result.returncode == 0, not fail, result.stderr)
+                self.assertIn("stop --time 60 api-container media-container-1 media-container-2", result.stdout)
+                # docker start output is suppressed by the EXIT trap; record to stderr too.
+                self.assertIn("start api-container media-container-1 media-container-2", result.stderr)
+                if fail:
+                    self.assertNotIn("up -d", result.stdout)
 
     def test_local_worker_image_is_not_pulled_from_a_registry(self):
         result = self.deploy("snapshot-worker", worker_image="solaris-atlas-worker:workers-test")

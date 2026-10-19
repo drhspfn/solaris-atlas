@@ -105,6 +105,13 @@ with missing_assets, preserving visibility of incomplete audio.
 
 ### Media worker capacity and retries
 
+API/full deployments stop the currently running API and worker containers before
+Alembic runs, releasing import read locks before schema changes. The same container
+IDs (including media replicas) restart on both success and failure; subsequent
+Compose updates install the selected images. This introduces a maintenance window
+during migration. Queued messages and persistent exports are retained. A failed
+migration stops the rollout without replacing the running application images.
+
 Production runs one `snapshot-worker` for snapshot/download/extraction queues and
 two `media-worker` replicas for release, entity and event media. Per replica the
 defaults are `release_media=4,entity_media=3,event_media=2`; existing

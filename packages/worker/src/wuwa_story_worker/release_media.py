@@ -178,6 +178,7 @@ async def event_images(payload, parent, session):
         targets = sorted({event.banner_path for event in events if event.banner_path})
         unresolved = [{"expected": event.source_id, "status": "not_resolved", "matches": []}
                       for event in events if not event.banner_path]
+    await session.commit()  # Do not hold task/catalog read locks during texture extraction.
     sources = {
         path: path if path.startswith("/Game/") else "/Game/Aki/UI/UIResources/" + path.lstrip("/")
         for path in targets
@@ -431,6 +432,7 @@ async def process_release_media(payload):
                     raise ValueError("Media task is not the pinned backend request")
                 if run.status == "completed":
                     return
+                await session.commit()
                 if payload["kind"] == "prepare":
                     result, status = await prepare(run, session), "completed"
                 else:
@@ -444,6 +446,7 @@ async def process_release_media(payload):
                             await update_admin_run(run.id, "release_media", "blocked", error=f"Client preparation #{parent.id} failed; retry the media import")
                             return
                         raise JobDeferred("Client preparation is still queued or running")
+                    await session.commit()  # Dependency checks are complete; release read locks before I/O.
                     await update_admin_run(run.id, "release_media", "running")
                     if payload["kind"] in {"images", "character_voices"}:
                         result, status = await image_batch(payload, parent.raw_output, run, session)

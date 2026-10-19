@@ -133,6 +133,9 @@ async def prefab_images(root: Path, paths: list[str]):
 async def event_resources(payload, parent, session, root: Path):
     events = list(await session.scalars(select(GameEvent).where(
         GameEvent.source == CLIENT_SOURCE, GameEvent.source_id.in_(payload["targets"]))))
+    # expire_on_commit=False retains the snapshot without holding read locks
+    # throughout potentially lengthy prefab exports.
+    await session.commit()
     paths = set()
     entries = []
     for event in events:
@@ -150,6 +153,7 @@ async def event_resources(payload, parent, session, root: Path):
                 "A newer client catalog replaced this event during UI extraction")
         event.source_data = {**event.source_data, "client": {**client, "prefab_artwork": artwork,
                                                              "missing_resources": missing}}
+        await session.commit()
         paths.update(image["path"] for image in artwork)
         entries.extend(missing)
     await session.commit()

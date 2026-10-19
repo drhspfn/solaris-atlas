@@ -164,7 +164,17 @@ esac
 
 if [[ "$DEPLOY_COMPONENT" == api || "$DEPLOY_COMPONENT" == all ]]; then
   "${compose[@]}" pull api
-  "${compose[@]}" run --rm api alembic upgrade head
+  # Imports can hold read locks while exporting files. Release those connections
+  # before DDL, and restore exactly the running containers even if migration fails.
+  (
+    mapfile -t migration_clients < <("${compose[@]}" ps -q --status running \
+      api snapshot-worker media-worker story-agent cutscene-vision)
+    if (( ${#migration_clients[@]} )); then
+      trap 'docker start "${migration_clients[@]}" >/dev/null' EXIT
+      docker stop --time 60 "${migration_clients[@]}"
+    fi
+    "${compose[@]}" run --rm api alembic upgrade head
+  )
 fi
 if [[ "$DEPLOY_COMPONENT" != infrastructure ]]; then
   pull_services=()

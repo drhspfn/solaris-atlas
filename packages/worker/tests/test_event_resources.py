@@ -1,9 +1,36 @@
 import json
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 import pytest
 
 from wuwa_story_worker.event_resources import ui_references
+
+
+@pytest.mark.asyncio
+async def test_prefab_export_does_not_hold_catalog_transaction(tmp_path, monkeypatch):
+    from wuwa_story_worker import event_resources
+
+    session = AsyncMock()
+    event = SimpleNamespace(source_data={"client": {
+        "download_id": "pinned", "resources": [{"path": "/Game/UI/Prefabs/Matrix"}],
+    }})
+    session.scalars.return_value = [event]
+
+    async def extract(*args):
+        session.commit.assert_awaited_once()
+        session.refresh.assert_not_awaited()
+        return [], []
+
+    monkeypatch.setattr(event_resources, "prefab_images", extract)
+    monkeypatch.setattr(event_resources, "enqueue_event_images", AsyncMock(return_value={"tasks": 0}))
+    _, status = await event_resources.event_resources(
+        {"targets": ["activity:1"]},
+        {"download_id": "pinned", "asset_version": "3.7.0", "tier": "hd"},
+        session, tmp_path,
+    )
+    assert status == "completed"
+    session.refresh.assert_awaited_once_with(event, with_for_update=True)
 
 
 def test_prefab_references_keep_actual_textures_and_skip_script_audio_and_cycles():
