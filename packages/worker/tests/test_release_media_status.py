@@ -144,3 +144,35 @@ async def test_voice_export_search_includes_wwise_audio_and_uppercase_extension(
     assert status == "completed"
     assert result["voice_plan_id"] == "fixture"
     assert (voice_root / "audio-export.json").is_file()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent_kind", ["event_catalog", "event_resources"])
+async def test_successful_assets_continue_when_other_event_assets_are_missing(monkeypatch, parent_kind):
+    from contextlib import asynccontextmanager
+    payload = {"schema_version": 1, "job_type": "media.release", "run_id": 90,
+               "parent_id": 80, "release_id": 9, "kind": "event_images"}
+    run = SimpleNamespace(id=90, status="queued", metadata_json={"payload": payload})
+    parent = SimpleNamespace(id=80, status="partial", raw_output={"asset_version": "3.7.0"},
+                              metadata_json={"request": {"release_id": 9, "kind": parent_kind}})
+    session = AsyncMock()
+    session.get.side_effect = [run, parent]
+    connection = AsyncMock()
+    @asynccontextmanager
+    async def connect():
+        yield connection
+    @asynccontextmanager
+    async def factory(**kwargs):
+        yield session
+    @asynccontextmanager
+    async def lock(*args):
+        yield
+    monkeypatch.setattr(release_media, "engine", SimpleNamespace(connect=connect))
+    monkeypatch.setattr(release_media, "SessionFactory", factory)
+    monkeypatch.setattr(release_media, "job_lock", lock)
+    update = AsyncMock()
+    images = AsyncMock(return_value=({"images": 1}, "completed"))
+    monkeypatch.setattr(release_media, "update_admin_run", update)
+    monkeypatch.setattr(release_media, "event_images", images)
+    await release_media.process_release_media(payload)
+    images.assert_awaited_once()
+    assert update.await_args.args[2] == "completed"

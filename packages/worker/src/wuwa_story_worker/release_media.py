@@ -15,9 +15,11 @@ from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.models.storage import FileReference
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.client_assets import discover_plan, inspect_installed_clients
+from wuwa_story.ingestion.client_events import store_client_events
 from wuwa_story.ingestion.entity_media import MediaRequest
-from wuwa_story.ingestion.game_events import SOURCE
+from wuwa_story.ingestion.game_events import CLIENT_SOURCE, SOURCE
 from wuwa_story.ingestion.media_jobs import enqueue_entity_media
+from wuwa_story.ingestion.release_media import enqueue_event_images
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
@@ -27,6 +29,7 @@ from wuwa_story_worker.client_assets import download_plan, save_json, workspace_
 from wuwa_story_worker.cutscene_import import import_cutscene_recipe
 from wuwa_story_worker.cutscene_plan import plan_cutscene
 from wuwa_story_worker.event_catalog import client_event_record, read_event_catalog
+from wuwa_story_worker.event_resources import annotate_image_packages, event_resources
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.map_icons import build_icons
 from wuwa_story_worker.media_diagnostics import publish_inventory, voice_report
@@ -94,6 +97,30 @@ async def event_catalog(payload, parent, session):
     configs = list((receipt.parent / "files").rglob("db_activity.db"))
     if len(configs) != 1:
         raise ValueError(f"Expected one client Activity database, found {len(configs)}")
+    if payload["targets"] == ["client-catalog:v2"]:
+        readers_receipt = await export_assets(client_root(parent), tool_path("WUWA_FMODEL_PATH"),
+                                              "JavaScript/Core/Define/Config")
+        readers = list((readers_receipt.parent /
+                       "files").rglob("Config/Activity.js"))
+        if len(readers) != 1:
+            raise ValueError("Expected one client Activity schema reader")
+        records = await asyncio.to_thread(read_event_catalog, configs[0].parent, readers[0].parent)
+        missing_packages = await annotate_image_packages(client_root(parent), records)
+        result = await store_client_events(session, records, parent["asset_version"], parent["download_id"])
+        await session.commit()
+        artwork_paths = result.pop("artwork_paths")
+        images = await enqueue_event_images(session, payload, artwork_paths)
+        resources = await enqueue_event_images(session, payload, result.pop("resource_events"), kind="event_resources")
+        logger.info("release_media.client_events records=%s events=%s missing=%s image_tasks=%s",
+                    result["catalog_records"], result["events"], len(result["unresolved"]), images["tasks"])
+        return {**parent, **result, "stage": "event_catalog_ready", "source": CLIENT_SOURCE,
+                "image_tasks": images, "resource_tasks": resources,
+                "requested": result["catalog_records"] + len(artwork_paths) + len(missing_packages),
+                "found": result["events"] + len(artwork_paths),
+                "missing": len(result["unresolved"]) + len(missing_packages),
+                "missing_image_packages": missing_packages,
+                "media_report": {"entries": result["unresolved"] + missing_packages}}, (
+                    "partial" if result["unresolved"] or missing_packages else "completed")
     records = await asyncio.to_thread(read_event_catalog, configs[0].parent)
     identities = [target.split("@", 1)[0] for target in payload["targets"]]
     events = list(await session.scalars(select(GameEvent).where(GameEvent.source == SOURCE,
@@ -408,7 +435,9 @@ async def process_release_media(payload):
                     parent = await session.get(ProcessingRun, payload["parent_id"])
                     if parent is None or parent.metadata_json.get("request", {}).get("release_id") != payload["release_id"]:
                         raise ValueError("Media task dependency belongs to another snapshot")
-                    if parent.status != "completed":
+                    partial_resources = parent.status == "partial" and payload["kind"] in {"event_images", "event_resources"} and parent.metadata_json.get(
+                        "request", {}).get("kind") in {"event_catalog", "event_resources"}
+                    if parent.status != "completed" and not partial_resources:
                         if parent.status in {"failed", "enqueue_failed", "blocked", "cancelled"}:
                             await update_admin_run(run.id, "release_media", "blocked", error=f"Client preparation #{parent.id} failed; retry the media import")
                             return
@@ -420,6 +449,8 @@ async def process_release_media(payload):
                         result, status = await event_images(payload, parent.raw_output, session)
                     elif payload["kind"] == "event_catalog":
                         result, status = await event_catalog(payload, parent.raw_output, session)
+                    elif payload["kind"] == "event_resources":
+                        result, status = await event_resources(payload, parent.raw_output, session, client_root(parent.raw_output))
                     elif payload["kind"] == "cutscene_assets":
                         result, status = await cutscene_assets(payload, parent.raw_output)
                     elif payload["kind"] == "voice_packages":

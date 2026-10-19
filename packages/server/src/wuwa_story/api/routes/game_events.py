@@ -10,6 +10,7 @@ from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.session import get_session
+from wuwa_story.ingestion.game_events import CLIENT_SOURCE
 from wuwa_story.storage.s3 import S3Storage
 
 router = APIRouter(tags=["game events"])
@@ -18,7 +19,8 @@ router = APIRouter(tags=["game events"])
 @router.get("/events")
 async def list_game_events(
     server: str = Query(default="europe", pattern="^(asia|europe|america)$"),
-    kind: str | None = Query(default=None, pattern="^(banner|limited|recurring|permanent)$"),
+    kind: str | None = Query(
+        default=None, pattern="^(banner|limited|recurring|permanent)$"),
     version: str | None = Query(default=None, pattern=r"^\d+\.\d+$"),
     locale: str = Query(default="en", pattern=r"^[a-zA-Z-]{2,16}$"),
     session: AsyncSession = Depends(get_session),
@@ -32,7 +34,7 @@ async def list_game_events(
                 GameEventOccurrence.server == server,
             ),
         )
-        .where(GameEvent.source == "Sanma5657/wuwa-wiki-public")
+        .where(GameEvent.source == CLIENT_SOURCE)
         .order_by(GameEventOccurrence.starts_at.desc().nullslast(), GameEvent.title)
     )
     if kind:
@@ -43,19 +45,16 @@ async def list_game_events(
             | (GameEventOccurrence.game_version.is_(None))
         )
     rows = (await session.execute(statement)).all()
-    banner_paths = {
-        path
-        for event, occurrence in rows
-        if (
-            path := (occurrence.banner_path if occurrence else None) or event.banner_path
-        ) is not None
-    }
+    banner_paths = {asset["path"] for event, occurrence in rows
+                    for asset in _artwork(event, occurrence)}
+    banner_paths.update(path for event, occurrence in rows
+                        if (path := (occurrence.banner_path if occurrence else None) or event.banner_path))
     banner_urls: dict[str, str] = {}
     if banner_paths:
         settings = get_settings()
-        source_path_matches = [FileReference.source_path == path for path in banner_paths]
+        source_path_matches = [FileReference.source_path.in_(banner_paths)]
         source_path_matches.extend(
-            FileReference.source_path.endswith("/" + path) for path in banner_paths
+            FileReference.source_path.endswith("/" + path) for path in banner_paths if not path.startswith("/Game/")
         )
         media = await session.execute(
             select(FileReference.source_path, FileLocation.object_key)
@@ -76,13 +75,19 @@ async def list_game_events(
         for source_path, object_key in media:
             if source_path is None:
                 continue
-            for banner_path in banner_paths:
-                if source_path == banner_path or source_path.endswith("/" + banner_path):
-                    banner_urls.setdefault(banner_path, storage.public_url(object_key))
+            if source_path in banner_paths:
+                banner_urls.setdefault(
+                    source_path, storage.public_url(object_key))
+            else:
+                for banner_path in banner_paths:
+                    if not banner_path.startswith("/Game/") and source_path.endswith("/" + banner_path):
+                        banner_urls.setdefault(
+                            banner_path, storage.public_url(object_key))
     return {
         "server": server,
-        "source": "Sanma5657/wuwa-wiki-public",
-        "source_url": "https://github.com/Sanma5657/wuwa-wiki-public",
+        "source": CLIENT_SOURCE,
+        "source_url": "https://wutheringwaves.kurogames.com/",
+        "catalog_status": "ready" if rows else "not_imported",
         "events": [
             {
                 "id": event.id,
@@ -95,11 +100,23 @@ async def list_game_events(
                 "starts_at": occurrence.starts_at if occurrence else None,
                 "ends_at": occurrence.ends_at if occurrence else None,
                 "season": occurrence.season if occurrence else None,
-                "rewards": (occurrence.rewards if occurrence else None) or event.rewards,
+                "rewards": _presentation(event, occurrence, locale).get("rewards", []),
+                "featured_names": _presentation(event, occurrence, locale).get("featured_names", []),
+                "up_names": _presentation(event, occurrence, locale).get("up_names", []),
                 "banner_path": (occurrence.banner_path if occurrence else None) or event.banner_path,
                 "banner_url": banner_urls.get(
                     (occurrence.banner_path if occurrence else None) or event.banner_path or ""
                 ),
+                "artwork": [{**asset, "url": banner_urls.get(asset["path"])}
+                            for asset in _artwork(event, occurrence)],
+                "preview_url": next((banner_urls[asset["path"]] for role in (
+                    "content", "featured_portrait", "featured_stand", "featured_weapon")
+                    for asset in _artwork(event, occurrence)
+                    if asset.get("role") == role and asset["path"] in banner_urls
+                    and not asset["path"].endswith("/T_CommonNone_UI")), None),
+                "catalog_version": _client_data(event, occurrence).get("asset_version"),
+                "schedule_status": "recorded" if occurrence and occurrence.starts_at else "server_controlled",
+                "hidden_in_client": _client_data(event, occurrence).get("hidden", False),
                 "game_path": event.game_path,
                 "source_url": event.source_url,
             }
@@ -108,9 +125,23 @@ async def list_game_events(
     }
 
 
+def _client_data(event, occurrence):
+    current = (event.source_data or {}).get("client", {})
+    dated = ((occurrence.source_data or {})
+             if occurrence else {}).get("client", {})
+    if current.get("download_id") and current.get("download_id") == dated.get("download_id"):
+        return current
+    return dated or current
+
+
+def _artwork(event, occurrence):
+    client = _client_data(event, occurrence)
+    unique = {}
+    for asset in client.get("artwork", []) + client.get("prefab_artwork", []):
+        unique.setdefault(asset["path"], asset)
+    return list(unique.values())
+
+
 def _presentation(event, occurrence, locale):
-    data = (occurrence.source_data if occurrence else {}).get("client")
-    if not data:
-        data = (event.source_data or {}).get("client", {})
-    locales = data.get("locales", {})
+    locales = _client_data(event, occurrence).get("locales", {})
     return locales.get(locale) or locales.get("en") or {}

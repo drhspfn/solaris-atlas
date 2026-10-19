@@ -11,6 +11,7 @@ from pathlib import Path
 from PIL import Image
 
 from wuwa_story_worker.asset_export import _sha256, export_assets
+from wuwa_story_worker.client_assets import workspace_lock
 
 
 def sprite_box(info: dict, width: int, height: int) -> tuple[int, int, int, int]:
@@ -26,11 +27,12 @@ async def build_icons(
     exact_textures: bool = False,
 ) -> dict:
     sources = {m["metadata_json"].get("icon_source") for m in markers} - {None, ""}
+    requested_sources = {source.split(".", 1)[0]: source for source in sources}
     cache = None
     if entity_media:
         identity_parts = [sorted(sources), _sha256(converter), _sha256(fmodel)]
         if exact_textures:
-            identity_parts.append("exact_textures_v1")
+            identity_parts.append("exact_textures_v2")
         identity = json.dumps(identity_parts, sort_keys=True)
         cache = (
             root / "entity-image-cache" / (hashlib.sha256(identity.encode()).hexdigest() + ".json")
@@ -52,8 +54,12 @@ async def build_icons(
                 or folder.startswith("Common/Atlas/WorldMapIcon")
                 or folder == "UiWorldMap/Atlas/MoraleMapIcon/"
             ):
+                # A sprite's image is stored in its TPI atlas, not in SP_ itself.
+                sprite = source.rsplit("/", 1)[-1].startswith("SP_")
                 folders.add(source.removeprefix("/Game/Aki/UI/UIResources/").split(".", 1)[0]
-                            if exact_textures else folder)
+                            if exact_textures and not sprite else folder)
+        elif entity_media and exact_textures and source.startswith("/Game/"):
+            folders.add("Client/Content/" + source[6:].split(".", 1)[0])
     output = root / "maps/icons"
     output.mkdir(parents=True, exist_ok=True)
     pngs = {}
@@ -65,6 +71,10 @@ async def build_icons(
             for folder in folders
             if not any(folder.startswith(other) and folder != other for other in folders)
         }
+    elif folders:
+        # Mount the client once for the bounded request, instead of once per
+        # texture. The patched pinned FModel accepts an OR-list of path filters.
+        folders = {"|".join(sorted(folders))}
     for folder in sorted(folders):
         receipt = await export_assets(root, fmodel, folder)
         raw = receipt.parent / "files"
@@ -87,10 +97,7 @@ async def build_icons(
             )
         packages = decoded / "packages.txt"
         textures = [p for p in paths if not p.name.startswith(("SP_", "TPI_"))]
-        packages.write_text(
-            "\n".join(raw.name + "/" + p.relative_to(raw).as_posix() for p in textures),
-            encoding="utf-8",
-        )
+
 
         def convert(raw=raw, packages=packages, decoded=decoded, paths=paths, textures=textures):
             # CUE collects loaded objects until ExportSession runs. Bound each
@@ -115,15 +122,16 @@ async def build_icons(
                             check=True, env=environment,
                         )
 
-        if not cached:
-            await asyncio.to_thread(convert)
-            if entity_media:
-                hashes = {
-                    p.relative_to(decoded).as_posix(): _sha256(p)
-                    for p in decoded.rglob("*")
-                    if p.is_file() and p.suffix in (".png", ".json") and p != complete
-                }
-                complete.write_text(json.dumps(hashes), encoding="utf-8")
+        with workspace_lock(decoded):
+            if not cached:
+                await asyncio.to_thread(convert)
+                if entity_media:
+                    hashes = {
+                        p.relative_to(decoded).as_posix(): _sha256(p)
+                        for p in decoded.rglob("*")
+                        if p.is_file() and p.suffix in (".png", ".json") and p != complete
+                    }
+                    complete.write_text(json.dumps(hashes), encoding="utf-8")
         for path in decoded.rglob("*.png"):
             relative = path.relative_to(decoded / raw.name / "Client/Content")
             pngs["/Game/" + relative.with_suffix("").as_posix()] = path
@@ -152,8 +160,9 @@ async def build_icons(
                 continue
             atlases = {int(x["Key"]): x["Value"] for x in data["SpriteAtlasTextureMap"]}
             infos = {int(x["Key"]): x["Value"] for x in data["SpriteInfoMap"]}
-            for index, source in enumerate(data["Sprites"]):
-                if source not in sources or index not in infos or index not in atlases:
+            for index, sprite in enumerate(data["Sprites"]):
+                source = requested_sources.get(sprite.split(".", 1)[0])
+                if source is None or index not in infos or index not in atlases:
                     continue
                 textures = data.get("SoftAtlasTextures") or data.get("AtlasTextures", [])
                 reference = textures[atlases[index]]
@@ -165,8 +174,12 @@ async def build_icons(
                     continue
                 with Image.open(pngs[texture]) as image:
                     cropped = image.crop(sprite_box(infos[index], *image.size))
-                    path = output / (source.rsplit("/", 1)[-1].split(".")[0] + ".png")
-                    cropped.save(path)
+                    path = output / (hashlib.sha256(source.encode()).hexdigest()[:16] + "-"
+                                     + source.rsplit("/", 1)[-1].split(".")[0] + ".png")
+                    with tempfile.NamedTemporaryFile(dir=output, suffix=".png", delete=False) as stream:
+                        temporary_image = Path(stream.name)
+                        cropped.save(stream, format="PNG")
+                    temporary_image.replace(path)
                 raw = raw_files[texture]
                 result[source] = {
                     "path": str(path.resolve()),

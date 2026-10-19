@@ -119,12 +119,30 @@ async def test_event_artwork_import_queues_extraction_after_client_preparation(m
 
     payloads = [call.args[0] for call in published.await_args_list]
     by_kind = {payload["kind"]: payload for payload in payloads}
-    assert result["queued"] == 3
-    assert by_kind["event_images"]["targets"] == ["1:100087@revision", "2:100700044@revision"]
+    assert result["queued"] == 2
+    assert by_kind["event_catalog"]["targets"] == ["client-catalog:v2"]
+    assert "event_images" not in by_kind
     assert by_kind["event_catalog"]["parent_id"] == by_kind["prepare"]["run_id"]
-    assert by_kind["event_images"]["parent_id"] == by_kind["event_catalog"]["run_id"]
     assert [call.args[2] for call in published.await_args_list] == [
         release_media.EVENT_QUEUE,
         release_media.EVENT_QUEUE,
-        release_media.EVENT_QUEUE,
     ]
+
+
+@pytest.mark.asyncio
+async def test_event_image_fanout_is_bounded_and_retries_only_incomplete_tasks(monkeypatch):
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(id=8, processor_id=4)
+    completed = SimpleNamespace(id=9, status="completed")
+    failed = SimpleNamespace(id=10, status="partial")
+    session.scalar.side_effect = [completed, failed]
+    publish = AsyncMock()
+    monkeypatch.setattr(release_media, "publish_media_job", publish)
+    result = await release_media.enqueue_event_images(session,
+        {"run_id": 8, "release_id": 1, "game_version": "3.7"},
+        [f"/Game/Image/{index:03d}" for index in range(21)])
+    assert result == {"tasks": 2, "queued": 1}
+    assert publish.await_count == 1
+    job = publish.await_args.args[0]
+    assert job["parent_id"] == 8 and len(job["targets"]) == 1
+    assert failed.raw_output is None and failed.status == "queued"

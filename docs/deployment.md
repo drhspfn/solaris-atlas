@@ -153,3 +153,17 @@ Main-client Wwise event metadata is cached alongside numeric media. Public API
 cache revisions refresh within five seconds of committed data changes, rather
 than retaining empty audio links for hours. The Chinese interface locale
 `zh-Hans` resolves stored voice tracks labelled `zh`.
+
+### Game-client event catalog
+
+The **Import client events** admin action now discovers the complete catalog from
+the downloaded client instead of fetching a community timetable. It queues direct
+image batches and UI prefab dependency jobs, and the event page exposes the
+published artwork gallery. See [event sources and verification](game-data/events.md).
+
+Rebuild and deploy workers first because the bundled FModel CLI adds batch path
+filters. Deploy API and web afterwards, then reimport events once. No schema
+migration is needed; take an event-table backup before converting existing source
+identities. A catalog marked partial can still have successfully imported names
+and image children: inspect `not_in_client` package reports separately from decode
+failures. Missing historical bytes are not recovered by repeating the same build.

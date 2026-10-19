@@ -8,6 +8,8 @@ import re
 import struct
 from pathlib import Path
 
+from flatbuffers.table import Table
+
 from wuwa_story_worker.map_catalog import int_list
 from wuwa_story_worker.map_sources import flag, integer, open_db, strings, table, text
 
@@ -16,6 +18,10 @@ def texture_path(value: str) -> str | None:
     if not value.startswith("/Game/") or ".." in value.split("/"):
         return None
     return value.split(".", 1)[0]
+
+
+def plain_text(value: str | None) -> str | None:
+    return re.sub(r"</?(?:color|size|b|i)(?:=[^>]*)?>", "", value) if value else value
 
 
 def _artwork(values, table_name, identifier):
@@ -101,6 +107,14 @@ def _activity_resources(config: Path, readers: Path, records: dict):
 
 
 def read_event_catalog(config: Path, readers: Path | None = None) -> dict[str, dict]:
+    if readers is not None:
+        for filename, fields in {"Activity": {"title": 46, "desc": 50, "bgresource": 52},
+                                 "GachaViewInfo": {"showidlist": 36, "underbgtexturepath": 24}}.items():
+            source = (readers / f"{filename}.js").read_text(encoding="utf-8-sig")
+            for method, offset in fields.items():
+                match = re.search(re.escape(method) + r"\([^)]*\)\{[^}]*?__offset\(this\.\w+,(\d+)\)", source)
+                if not match or int(match[1]) != offset:
+                    raise ValueError(f"Unsupported {filename}.{method} client schema; update the event reader")
     records = {}
     with open_db(config / "db_activity.db") as db:
         for identifier, blob in db.execute("SELECT Id, BinData FROM activity"):
@@ -148,6 +162,22 @@ def read_event_catalog(config: Path, readers: Path | None = None) -> dict[str, d
                     ("weapon_prefab", text(row, 13))], "GachaViewInfo", identifier),
                 "spine_prefab_key": text(row, 14),
             }
+    featured_ids = {identifier for record in records.values() for identifier in record.get("featured_ids", [])}
+    portraits = {}
+    for filename, name, key_column, fields in [
+        ("db_role.db", "roleinfo", "Id", [("featured_portrait", 21), ("featured_stand", 20), ("featured_card", 17)]),
+        ("db_weapon.db", "weaponconf", "ItemId", [("featured_weapon", 23), ("featured_weapon_small", 24)]),
+    ]:
+        if (config / filename).is_file():
+            with open_db(config / filename) as db:
+                for identifier, blob in db.execute(f"SELECT {key_column}, BinData FROM {name}"):
+                    if identifier in featured_ids:
+                        row = table(blob)
+                        portraits[identifier] = _artwork([(role, text(row, slot)) for role, slot in fields],
+                                                        name, identifier)
+    for record in records.values():
+        for identifier in record.get("featured_ids", []):
+            record["artwork"].extend(portraits.get(identifier, []))
     # UI resources are explicitly tagged with the activity module names. This
     # includes images/prefabs absent from the generic Activity background field.
     resource_db = config / "db_ui_resource.db"
@@ -179,10 +209,36 @@ def read_event_catalog(config: Path, readers: Path | None = None) -> dict[str, d
                             record["artwork"].append(resource)
     if readers is not None:
         _activity_resources(config, readers, records)
+    drops = {}
+    if (config / "db_drop.db").is_file():
+        with open_db(config / "db_drop.db") as db:
+            for identifier, blob in db.execute("SELECT Id, BinData FROM droppackage"):
+                row = table(blob)
+                offset = row.Offset(12)  # DropPackage.DropPreview -> DicIntInt.
+                items = []
+                for index in range(row.VectorLen(offset)) if offset else ():
+                    item = Table(blob, row.Indirect(row.Vector(offset) + index * 4))
+                    items.append({"id": integer(item, 0), "value": integer(item, 1)})
+                drops[identifier] = items
+    for record in records.values():
+        record["rewards"] = drops.get(record.get("preview_drop_id"), [])
     keys = {record[field] for record in records.values()
             for field in ("title_key", "description_key", "name_key", "theme_key", "summary_key")
             if record.get(field)}
     keys.update(key for record in records.values() for key in record.get("title_keys", []))
+    entity_ids = {identifier for record in records.values()
+                  for identifier in record.get("featured_ids", []) + record.get("up_ids", [])}
+    entity_ids.update(item["id"] for record in records.values() for item in record["rewards"])
+    entity_keys = {identifier: [f"ItemInfo_{identifier}_Name", f"RoleInfo_{identifier}_Name",
+                               f"WeaponConf_{identifier}_WeaponName"] for identifier in entity_ids}
+    if (config / "db_item.db").is_file():
+        with open_db(config / "db_item.db") as db:
+            for identifier, blob in db.execute("SELECT Id, BinData FROM iteminfo"):
+                if identifier in entity_keys:
+                    key = text(table(blob), 2)  # ItemInfo.Name may reference another row's text.
+                    if key:
+                        entity_keys[identifier].insert(0, key)
+    keys.update(key for values in entity_keys.values() for key in values)
     translations = {}
     for directory in sorted(config.iterdir()):
         if not directory.is_dir():
@@ -211,17 +267,27 @@ def read_event_catalog(config: Path, readers: Path | None = None) -> dict[str, d
                                    candidates[0] if candidates else "")
         record["locales"] = {}
         for locale, labels in translations.items():
-            title = labels.get(record["title_key"])
+            title = plain_text(labels.get(record["title_key"]))
             if not title:
                 continue
             if record["table"] == "GachaViewInfo":
                 weapon = record["title_key"].startswith("WeaponConf_")
                 record["convene_type"] = "Weapon Convene" if weapon else "Resonator Convene"
                 title = f"{title} · {record['convene_type']}"
-            description = labels.get(record["description_key"]) or None
-            if description:
-                description = re.sub(r"</?(?:color|size|b|i)(?:=[^>]*)?>", "", description)
+            description = plain_text(labels.get(record["description_key"])) or None
             record["locales"][locale] = {"title": title, "description": description}
+            def entity_name(identifier, labels=labels):
+                return next((plain_text(labels[key]) for key in entity_keys[identifier] if labels.get(key)), None)
+            localized = record["locales"][locale]
+            if record["rewards"]:
+                localized["rewards"] = [{**item, "name": entity_name(item["id"])}
+                                        for item in record["rewards"]]
+            if record.get("featured_ids"):
+                localized["featured_names"] = [value for identifier in record["featured_ids"]
+                                                if (value := entity_name(identifier))]
+            if record.get("up_ids"):
+                localized["up_names"] = [value for identifier in record["up_ids"]
+                                          if (value := entity_name(identifier))]
     return records
 
 

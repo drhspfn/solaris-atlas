@@ -32,6 +32,10 @@ end = source.index("            string gameDir = args[0];", start)
 source = source[:start] + "            NativeTools.Initialize();\n" + source[end:]
 start = source.index("        private static async Task EnsureDependencies")
 source = source[:start] + "    }\n}\n"
+source = replace(source, 'var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);',
+                 'var filters = filter.Split(\'|\');\n            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);')
+source = replace(source, 'if (!string.IsNullOrEmpty(filter) && !file.Key.ToLower().Contains(filter))',
+                 'if (!string.IsNullOrEmpty(filter) && !filters.Any(part => file.Key.Contains(part, StringComparison.OrdinalIgnoreCase)))')
 program.write_text(source, encoding="utf-8")
 project = fmodel / "FModelCLI/FModelCLI.csproj"
 source = project.read_text(encoding="utf-8-sig")
