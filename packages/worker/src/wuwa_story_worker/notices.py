@@ -30,6 +30,7 @@ async def import_notices(root, session):
             select(GameNotice).where(GameNotice.feed == feed, GameNotice.locale == "en")
         )
     )
+    await session.commit()  # Release archive read locks before downloading images.
     storage = S3Storage(get_settings())
     await storage.ensure_bucket()
     registration = FileRegistrationService(storage)
@@ -103,11 +104,16 @@ async def import_notices(root, session):
                 select(FileLocation).where(
                     FileLocation.file_id == file.id,
                     FileLocation.backend == "s3",
+                    FileLocation.bucket == storage.bucket,
+                    FileLocation.available.is_(True),
                     FileLocation.is_primary.is_(True),
                 )
             )
             if location:
                 published[url] = storage.public_url(location.object_key)
+            # Publish each reusable file independently; another importer may
+            # need the same content hash while later images are still uploading.
+            await session.commit()
         for notice in notices:
             content = dict(notice.content)
             content["blocks"] = [

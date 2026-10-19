@@ -1,7 +1,7 @@
 .notices-page {
-  width: min(1200px, calc(100% - 48px));
+  width: min(1440px, calc(100% - 48px));
   margin: 0 auto;
-  padding: 44px 0 64px;
+  padding: 40px 0 64px;
   color: var(--text-primary);
 }
 .notices-heading {
@@ -221,7 +221,7 @@
 @media (max-width: 640px) {
   .notices-page {
     width: calc(100% - 24px);
-    padding-top: 20px;
+    padding-top: 24px;
   }
   .notices-heading {
     align-items: flex-start;

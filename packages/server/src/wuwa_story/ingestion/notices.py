@@ -124,7 +124,18 @@ def notice_period(content, server):
     return (start, end) if end > start else None
 
 
-def notice_matches(content, events):
+def public_notice_image(url):
+    """Repair archived URLs written by workers without a public CDN setting."""
+    from wuwa_story.config.settings import get_settings
+
+    settings = get_settings()
+    prefix = f"{settings.s3_endpoint_url.rstrip('/')}/{settings.s3_bucket}"
+    if url and settings.media_public_base_url and url.startswith(prefix + "/objects/"):
+        return settings.media_public_base_url.rstrip('/') + url[len(prefix):]
+    return url
+
+
+def notice_candidates(content, events, *, match_roster=True):
     def normalized(value):
         return re.sub(r"[^\w]+", "", value.casefold())
 
@@ -155,7 +166,7 @@ def notice_matches(content, events):
         )
         if exact_title or exact_featured:
             matches.append(event)
-    if len(matches) > 1 and rate_up_names:
+    if match_roster and len(matches) > 1 and rate_up_names:
         matches = [
             event
             for event in matches
@@ -169,7 +180,12 @@ def notice_matches(content, events):
                 .get("up_names", [])
             }
         ]
+    return matches
+
+
+def notice_matches(content, events):
     # Repeated titles/featured characters are not proof of which client row is used.
+    matches = notice_candidates(content, events)
     return matches if len(matches) == 1 else []
 
 

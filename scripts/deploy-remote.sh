@@ -96,6 +96,7 @@ runtime = {
     "S3_BUCKET": compose.get("S3_BUCKET", "wuwa"),
     "S3_REGION": compose.get("S3_REGION", "us-east-1"),
     "S3_USE_SSL": compose.get("S3_USE_SSL", "false"),
+    "MEDIA_PUBLIC_BASE_URL": f"https://cdn.{domain}",
 }
 api_url = f"https://api.{domain}"
 frontend_url = f"https://{domain}"

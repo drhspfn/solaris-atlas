@@ -13,6 +13,7 @@ from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
+from wuwa_story.ingestion.notices import notice_candidates, public_notice_image
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.urls import node_address, record_url
 
@@ -55,8 +56,12 @@ async def list_game_events(
     snapshots = list(await session.scalars(select(GameNoticeRevision).where(GameNoticeRevision.revision.in_(revisions - {None})))) if revisions - {None} else []
     snapshot_banners = {(snapshot.notice_id, snapshot.revision): snapshot.content.get("banner_url") for snapshot in snapshots}
     latest_notice = {}
+    catalog = list({event.id: event for event, _ in rows}.values())
     for notice in announcements:
-        for event_id in notice.related_event_ids:
+        # Presentation links may identify the same featured subject across config
+        # rows; only store_notices may pin a uniquely proven run and its schedule.
+        identities = notice.related_event_ids or [event.id for event in notice_candidates(notice.content, catalog, match_roster=False)]
+        for event_id in identities:
             notice_links.setdefault(event_id, []).append({"id": notice.id, "title": notice.title,
                                                           "url": record_url(notice, "notices")})
             previous = latest_notice.get(event_id)
@@ -122,8 +127,9 @@ async def list_game_events(
         image = image or image_url(event, occurrence, (occurrence.banner_path if occurrence else None) or event.banner_path or "")
         notice = latest_notice.get(event.id)
         captured = ((occurrence.source_data or {}) if occurrence else {}).get("client", {}).get("download_id")
-        url, provenance = _choose_preview(image, bool(captured), notice_image(event, occurrence), notice.content.get("banner_url") if notice else None)
-        return {"preview_url": url, "preview_provenance": provenance}
+        url, provenance = _choose_preview(image, bool(captured), notice_image(event, occurrence), notice.content.get("banner_url") if notice else None,
+                                          prefer_notice=_notice_overlaps(notice, occurrence))
+        return {"preview_url": public_notice_image(url), "preview_provenance": provenance}
     return {
         "server": server,
         "source": CLIENT_SOURCE,
@@ -139,6 +145,7 @@ async def list_game_events(
                 "title": _presentation(event, occurrence, locale).get("title") or event.title,
                 "description": _presentation(event, occurrence, locale).get("description") or event.description,
                 "kind": event.event_kind,
+                "convene_type": _client_data(event, occurrence).get("convene_type"),
                 "game_version": occurrence.game_version if occurrence else None,
                 "starts_at": occurrence.starts_at if occurrence else None,
                 "ends_at": occurrence.ends_at if occurrence else None,
@@ -176,9 +183,20 @@ def _client_data(event, occurrence):
     return dated or current
 
 
-def _choose_preview(client_image, captured_client, notice_snapshot, current_notice):
+def _notice_overlaps(notice, occurrence):
+    if not notice or not occurrence or not occurrence.starts_at or not occurrence.ends_at:
+        return False
+    raw = notice.content.get("raw", {})
+    start, end = raw.get("startTimeMs"), raw.get("endTimeMs")
+    return bool(start and end and occurrence.starts_at.timestamp() * 1000 < end
+                and occurrence.ends_at.timestamp() * 1000 > start)
+
+
+def _choose_preview(client_image, captured_client, notice_snapshot, current_notice, *, prefer_notice=False):
     if notice_snapshot:
         return notice_snapshot, "notice_snapshot"
+    if current_notice and prefer_notice:
+        return current_notice, "current_notice"
     if client_image and captured_client:
         return client_image, "game_client"
     if current_notice:

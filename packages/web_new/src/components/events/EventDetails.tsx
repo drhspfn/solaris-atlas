@@ -3,7 +3,7 @@ import { ExternalLink, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { EventArtwork } from './EventArtwork';
 import { kindLabels, timeZoneLabel } from './calendar';
-import { countdown, type GameEvent } from './calendar';
+import { artworkGroups, countdown, type GameEvent } from './calendar';
 
 export function EventDetails({
   event,
@@ -47,6 +47,7 @@ export function EventDetails({
     timeStyle: 'short',
   });
   const format = (date: string) => formatter.format(new Date(date));
+  const gallery = artworkGroups(event);
   return (
     <dialog
       ref={dialog}
@@ -96,7 +97,11 @@ export function EventDetails({
             <ul>
               {event.rewards.map((reward, index) => (
                 <li key={`${reward.id}-${index}`}>
-                  {reward.href ? <a href={reward.href}>{reward.name || 'Reward details'}</a> : reward.name || 'Unnamed reward'}
+                  {reward.href ? (
+                    <a href={reward.href}>{reward.name || 'Reward details'}</a>
+                  ) : (
+                    reward.name || 'Unnamed reward'
+                  )}
                   {reward.value ? ` ×${reward.value}` : ''}
                 </li>
               ))}
@@ -126,35 +131,42 @@ export function EventDetails({
             ))}
           </section>
         )}
-        {event.href && <a className="events-official-link" href={event.href}>Link to this event</a>}
+        {event.href && (
+          <a className="events-official-link" href={event.href}>
+            Link to this event
+          </a>
+        )}
         <p className="events-countdown" role="timer">
           {clock === null ? 'Recorded schedule' : countdown(event, clock)}
         </p>
-        {!!event.artwork?.some((image) => image.url) && (
-          <details className="events-gallery">
-            <summary>
-              All game artwork · {event.artwork.filter((image) => image.url).length} images
-            </summary>
-            <div>
-              {event.artwork
-                .filter((image) => image.url)
-                .map((image, index) => (
-                  <button
-                    key={image.path}
-                    aria-label={`Preview artwork ${index + 1}`}
-                    onClick={() =>
-                      onSelect({
-                        ...event,
-                        preview_url: image.url,
-                        banner_url: image.url,
-                      })
-                    }
-                  >
-                    <img src={image.url!} alt="" loading="lazy" />
-                  </button>
-                ))}
-            </div>
-          </details>
+        {Object.entries(gallery).map(
+          ([group, images]) =>
+            !!images.length && (
+              <details className="events-gallery" key={group}>
+                <summary>
+                  {group === 'artwork' ? 'Character and event artwork' : 'Client UI resources'} ·{' '}
+                  {images.length} images
+                </summary>
+                <div>
+                  {images.map((image, index) => (
+                    <button
+                      key={image.path}
+                      aria-label={`Preview artwork ${index + 1}`}
+                      onClick={() =>
+                        onSelect({
+                          ...event,
+                          preview_url: image.url,
+                          banner_url: image.url,
+                          preview_provenance: 'game_client',
+                        })
+                      }
+                    >
+                      <img src={image.url!} alt="" loading="lazy" />
+                    </button>
+                  ))}
+                </div>
+              </details>
+            ),
         )}
         {history.length > 1 && (
           <section className="events-history">

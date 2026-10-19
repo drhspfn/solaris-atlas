@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { connection } from 'next/server';
 import { serverApi } from '@/api/serverApi';
 import { noticeCategories, type Notice } from '@/lib/notices';
+import { EventArchiveHeader } from '@/components/events/EventArchiveHeader';
 import '@/styles/notices.css';
 
 export const metadata: Metadata = {
@@ -43,14 +44,7 @@ export default async function NoticesPage({
   };
   return (
     <main className="notices-page">
-      <header className="notices-heading">
-        <div>
-          <span>SOLARIS / OFFICIAL NOTICE ARCHIVE</span>
-          <h1>Announcements</h1>
-          <p>Event rules, highlights and updates from the game’s Notice board.</p>
-        </div>
-        <Link href="/events">Event calendar ↗</Link>
-      </header>
+      <EventArchiveHeader active="announcements" />
       <nav className="notices-tabs" aria-label="Announcement categories">
         <Link
           href={href({ category: '', offset: '0' })}
@@ -99,7 +93,11 @@ export default async function NoticesPage({
           )}
           <div className="notices-grid">
             {data.notices.map((notice) => (
-              <Link className="notice-card" href={notice.href || `/notices/${notice.slug || notice.id}`} key={notice.id}>
+              <Link
+                className="notice-card"
+                href={notice.href || `/notices/${notice.slug || notice.id}`}
+                key={notice.id}
+              >
                 <div className="notice-card-image">
                   {notice.banner_url ? (
                     <img src={notice.banner_url} alt="" loading="lazy" />

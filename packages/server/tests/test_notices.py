@@ -109,6 +109,45 @@ def test_authored_four_star_roster_can_disambiguate_repeat_banners():
     ]  # A unique authored featured identity is enough.
 
 
+def test_current_poster_can_identify_subject_without_assigning_ambiguous_schedule():
+    from datetime import UTC, datetime
+    from wuwa_story.ingestion.notices import notice_candidates
+    from wuwa_story.api.routes.game_events import _choose_preview, _notice_overlaps
+
+    content = {"title": "[Moongazer's Sigil] Featured Weapon Convene",
+               "text": "5-Star Weapon: Moongazer's Sigil, 4-Star Weapons: A, B, and C receive boosted drop rates!"}
+    event = SimpleNamespace(id=1, event_kind="banner", title="Moongazer's Sigil · Weapon Convene",
+        source_data={"client": {"locales": {"en": {
+            "title": "Moongazer's Sigil · Weapon Convene", "featured_names": ["Moongazer's Sigil"],
+            "up_names": ["D", "E", "F"],
+        }}}})
+    duplicate = SimpleNamespace(**{**event.__dict__, "id": 2})
+    assert notice_matches(content, [event, duplicate]) == []
+    assert notice_candidates(content, [event, duplicate], match_roster=False) == [event, duplicate]
+    now = datetime(2026, 10, 19, tzinfo=UTC)
+    occurrence = SimpleNamespace(starts_at=now, ends_at=datetime(2026, 10, 22, tzinfo=UTC))
+    notice = SimpleNamespace(content={"raw": {"startTimeMs": now.timestamp() * 1000,
+        "endTimeMs": datetime(2026, 11, 1, tzinfo=UTC).timestamp() * 1000}})
+    assert _notice_overlaps(notice, occurrence)
+    assert _choose_preview("client-icon", True, None, "full-poster", prefer_notice=True) == ("full-poster", "current_notice")
+    assert _choose_preview("client-icon", True, "archived-poster", "full-poster", prefer_notice=True) == ("archived-poster", "notice_snapshot")
+    occurrence.ends_at = datetime(2026, 9, 1, tzinfo=UTC)
+    assert not _notice_overlaps(notice, occurrence)
+
+
+def test_archived_notice_images_use_public_cdn_without_changing_official_sources(monkeypatch):
+    from wuwa_story.config import settings
+    from wuwa_story.ingestion.notices import public_notice_image
+
+    monkeypatch.setattr(settings, "get_settings", lambda: SimpleNamespace(
+        s3_endpoint_url="https://storage.example", s3_bucket="game",
+        media_public_base_url="https://cdn.example"))
+    assert public_notice_image("https://storage.example/game/objects/ab/image") == "https://cdn.example/objects/ab/image"
+    official = "https://aki-gm-resources-back.aki-game.net/notice/image/full.jpg"
+    assert public_notice_image(official) == official
+    assert public_notice_image(None) is None
+
+
 @pytest.mark.asyncio
 async def test_notice_import_archives_revision_and_adds_server_specific_runs():
     event = SimpleNamespace(

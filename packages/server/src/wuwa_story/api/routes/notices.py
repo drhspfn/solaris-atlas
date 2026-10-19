@@ -8,6 +8,7 @@ from wuwa_story.db.models.game_events import GameEvent
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.session import get_session
 from wuwa_story.urls import numeric_id, record_url
+from wuwa_story.ingestion.notices import public_notice_image
 
 router = APIRouter(tags=["notices"])
 
@@ -22,7 +23,7 @@ def notice_summary(notice):
         "category": notice.category,
         "title": notice.title,
         "revision": notice.revision,
-        "banner_url": notice.content.get("banner_url"),
+        "banner_url": public_notice_image(notice.content.get("banner_url")),
         "source_url": notice.source_url,
         "available_from": notice.published_at,
         "observed_at": notice.observed_at,
@@ -99,8 +100,9 @@ async def notice_detail(
         "related_event_ids": related_ids,
         "observed_at": snapshot.observed_at if snapshot else notice.observed_at,
         "revision": revision or notice.revision,
-        "banner_url": content.get("banner_url"),
-        "blocks": content.get("blocks", []),
+        "banner_url": public_notice_image(content.get("banner_url")),
+        "blocks": [{**block, "url": public_notice_image(block.get("url"))}
+                   if block["type"] == "image" else block for block in content.get("blocks", [])],
         "links": content.get("links", []),
         "revisions": revisions,
         "events": [{"id": e.id, "title": e.title, "slug": getattr(e, "slug", None), "href": record_url(e, "events")} for e in events],

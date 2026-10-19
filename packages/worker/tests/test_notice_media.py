@@ -58,6 +58,7 @@ async def test_notice_images_are_archived_and_failures_keep_the_text(
     requests = []
 
     def respond(request):
+        assert session.commit.await_count == 2  # Text and read snapshot are committed before HTTP.
         requests.append(str(request.url))
         return httpx.Response(http_status, content=body, headers={"content-type": "image/png"})
 
@@ -70,7 +71,7 @@ async def test_notice_images_are_archived_and_failures_keep_the_text(
     report, status = await notices.import_notices(tmp_path, session)
     assert requests == [source]  # Cover and body share a single download.
     assert notice.content["blocks"][0]["text"] == "Actual event rules"
-    assert session.commit.await_count == 2
+    assert session.commit.await_count == (4 if http_status == 200 else 3)
     if http_status == 200:
         assert status == "completed" and report["images"] == 1
         assert notice.content["banner_url"] == storage.public_url.return_value
