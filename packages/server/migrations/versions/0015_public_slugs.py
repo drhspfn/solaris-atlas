@@ -20,12 +20,13 @@ def upgrade():
     with op.get_context().autocommit_block():
         op.execute(
             "CREATE UNIQUE INDEX CONCURRENTLY uq_node_type_slug ON graph.node(type_id, slug)")
+    op.execute("SET LOCAL lock_timeout = '5s'")
     op.execute("""
         CREATE FUNCTION ops.public_slug(identity bigint, title text) RETURNS text
         LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
-          SELECT identity::text || '-' || left(coalesce(nullif(trim(both '-' from
+          SELECT identity::text || '-' || rtrim(left(coalesce(nullif(trim(both '-' from
             regexp_replace(lower(normalize(regexp_replace(title, '<[^>]*>', '', 'g'), NFKD)),
-                           '[^a-z0-9]+', '-', 'g')), ''), 'entry'), 180)
+                           '[^a-z0-9]+', '-', 'g')), ''), 'entry'), 180), '-')
         $$
     """)
     op.execute("""
@@ -59,8 +60,26 @@ def upgrade():
                        FOR EACH ROW EXECUTE FUNCTION ops.assign_record_slug()""")
 
 
+    op.execute("""
+        CREATE FUNCTION ops.assign_story_node_slug() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.title IS NOT NULL AND btrim(NEW.title) <> '' THEN
+            UPDATE graph.node SET slug=ops.public_slug(id, NEW.title)
+              WHERE id=NEW.node_id AND slug IS NULL;
+          END IF;
+          RETURN NEW;
+        END $$
+    """)
+    for table in ("event", "scene"):
+        op.execute(f"""CREATE TRIGGER assign_public_slug AFTER INSERT OR UPDATE OF title ON story.{table}
+                       FOR EACH ROW EXECUTE FUNCTION ops.assign_story_node_slug()""")
+
+
 def downgrade():
     op.execute("SET LOCAL lock_timeout = '5s'")
+    for table in ("event", "scene"):
+        op.execute(f"DROP TRIGGER assign_public_slug ON story.{table}")
+    op.execute("DROP FUNCTION ops.assign_story_node_slug()")
     op.execute("DROP TRIGGER assign_public_slug ON search.document")
     op.execute("DROP FUNCTION ops.assign_named_node_slug()")
     for table in ("game_event", "game_notice"):

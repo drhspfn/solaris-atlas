@@ -10,6 +10,7 @@ from pydantic import Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.agents.budget import settle
 from wuwa_story.agents.contracts import AnalysisRequest, StrictModel
 from wuwa_story.agents.jobs import enqueue_analysis, resume_analysis
@@ -34,7 +35,9 @@ from wuwa_story.db.models.agents import (
 )
 from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.models.story import Event
+from wuwa_story.db.repositories.nodes import get_node, get_quest
 from wuwa_story.db.session import get_session
+from wuwa_story.urls import numeric_id
 
 router = APIRouter(tags=["story explanations"])
 admin = APIRouter(
@@ -106,6 +109,7 @@ async def create_job(
 
 
 @admin.get("/jobs")
+@public_addresses
 async def jobs(
     limit: int = Query(30, ge=1, le=100),
     before: int | None = None,
@@ -145,6 +149,7 @@ async def jobs(
 
 
 @admin.get("/jobs/{run_id}")
+@public_addresses
 async def job_status(run_id: int, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     job = await session.get(AgentJob, run_id)
     run = await session.get(ProcessingRun, run_id)
@@ -365,19 +370,24 @@ async def resolve_alert(
 
 
 @router.get("/quests/{quest_id}/explanation")
+@public_addresses
 async def explanation(
-    quest_id: int,
+    quest_id: str,
     game_version: str | None = None,
     locale: str = "en",
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    quest = await get_quest(session, quest_id)
+    if quest is None:
+        raise HTTPException(404, "quest not found")
     try:
-        return await get_explanation(session, quest_id, game_version, locale)
+        return await get_explanation(session, quest.game_quest_id, game_version, locale)
     except ValueError as error:
         raise HTTPException(404, str(error)) from error
 
 
 @router.get("/story-analysis/connections/{document_id}/{index}")
+@public_addresses
 async def connection(
     document_id: int,
     index: int,
@@ -391,6 +401,7 @@ async def connection(
 
 
 @router.get("/story-analysis/search")
+@public_addresses
 async def question_search(
     request: Request,
     q: str = Query(min_length=1, max_length=512),
@@ -415,8 +426,9 @@ async def question_search(
 
 
 @router.get("/story-analysis/events/{node_id}")
+@public_addresses
 async def generated_event(
-    node_id: int,
+    node_id: str,
     game_version: str | None = None,
     locale: str = "en",
     session: AsyncSession = Depends(get_session),
@@ -425,6 +437,14 @@ async def generated_event(
         release, language = await scope(session, game_version, locale)
     except ValueError as error:
         raise HTTPException(404, str(error)) from error
+    identifier = numeric_id(node_id)
+    if identifier is not None:
+        node_id = identifier
+    else:
+        node = await get_node(session, node_id, ("event",))
+        if node is None:
+            raise HTTPException(404, "Event interpretation not found")
+        node_id = node.id
     event = await session.get(Event, node_id)
     if (
         event is None

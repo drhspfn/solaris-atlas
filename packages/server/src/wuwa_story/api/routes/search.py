@@ -156,7 +156,9 @@ async def search(
     images = await entity_image_urls(session, [result["id"] for result in results])
     for result in results:
         result["image_url"] = images.get(result["id"])
-        result["title"] = (await _node_label(session, result["id"], locale))["label"]
+        label = await _node_label(session, result["id"], locale)
+        result["title"] = label["label"]
+        result.update({key: label[key] for key in ("slug", "href")})
         result["category"] = (
             "location"
             if result["node_type"] in {"area", "location"}

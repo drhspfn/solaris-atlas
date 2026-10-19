@@ -16,6 +16,7 @@ from wuwa_story.db.models.search import SearchDocument
 from wuwa_story.db.repositories.edges import get_edges
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.db.session import get_session
+from wuwa_story.urls import node_address
 
 router = APIRouter(prefix="/nodes", tags=["nodes"])
 
@@ -160,7 +161,7 @@ async def node_related(
     ]
     results = []
     for edge, relation_key, neighbor, node_type, localized_label in rows:
-        fallback = neighbor.slug
+        fallback = None
         if fallback is None and node_type == "source_reference":
             source_file = neighbor.metadata_json.get("source_file")
             source_row = neighbor.metadata_json.get("source_row")
@@ -173,6 +174,7 @@ async def node_related(
                 "node": {
                     "id": neighbor.id,
                     "canonical_key": neighbor.canonical_key,
+                    **node_address(neighbor, node_type),
                     "type": node_type,
                     "label": localized_label or fallback or neighbor.canonical_key,
                 },
@@ -181,7 +183,7 @@ async def node_related(
             }
         )
     return {
-        "node": canonical_key,
+        "node": node.canonical_key,
         "summary": (
             f"Found {len(results)} linked entities."
             if results
@@ -222,14 +224,14 @@ async def node_source_record(
     result = row.first()
     if result is None:
         return {
-            "canonical_key": canonical_key,
+            "canonical_key": node.canonical_key,
             "type": node_type.key if node_type else None,
             "source_record": None,
             "resolution": "no_raw_record_linked",
         }
     revision, record, source_file, release = result
     return {
-        "canonical_key": canonical_key,
+        "canonical_key": node.canonical_key,
         "type": node_type.key if node_type else None,
         "source_record": {
             "id": record.id,
@@ -257,11 +259,11 @@ async def node_narrative_context(
         raise HTTPException(status_code=404, detail="node not found")
     node_type = await session.get(NodeType, node.type_id)
     if node_type is None or node_type.key not in {"talk_item", "dialogue_line", "narration", "player_choice"}:
-        return {"canonical_key": canonical_key, "available": False, "reason": "node is not a dialogue-like entry"}
+        return {"canonical_key": node.canonical_key, "available": False, "reason": "node is not a dialogue-like entry"}
 
     line = await session.get(DialogueLine, node.id)
     if line is None or line.action_node_id is None:
-        return {"canonical_key": canonical_key, "available": False, "reason": "no normalized DialogueLine is linked to this node"}
+        return {"canonical_key": node.canonical_key, "available": False, "reason": "no normalized DialogueLine is linked to this node"}
 
     from wuwa_story.api.routes.story import _dialogue_payload, _quest_info, _release_id
     from wuwa_story.api.routes.story.shared import _quest_state_links
@@ -277,7 +279,7 @@ async def node_narrative_context(
     )
     target_row = (await session.execute(line_query.where(DialogueLine.node_id == node.id))).first()
     if target_row is None:
-        return {"canonical_key": canonical_key, "available": False, "reason": "dialogue source row is incomplete"}
+        return {"canonical_key": node.canonical_key, "available": False, "reason": "dialogue source row is incomplete"}
     target_payload = await _dialogue_payload(
         session, target_row, locale_code=locale, release_id=release_id
     )
@@ -351,7 +353,7 @@ async def node_narrative_context(
         await session.scalars(select(Node.canonical_key).where(Node.id.in_(state_owners)))
     )
     return {
-        "canonical_key": canonical_key,
+        "canonical_key": node.canonical_key,
         "available": True,
         "dialogue": target_payload,
         "context": context,

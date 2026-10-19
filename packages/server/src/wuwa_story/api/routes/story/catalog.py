@@ -13,6 +13,7 @@ from wuwa_story.db.models.i18n import Locale, LocalizationValue
 from wuwa_story.db.models.search import SearchDocument
 from wuwa_story.db.session import get_session
 from wuwa_story.storage.entity_media import entity_image_urls
+from wuwa_story.urls import node_url
 
 router = APIRouter(tags=["story browsing"])
 
@@ -159,7 +160,6 @@ async def browse_catalog(
             or _display_label(localized_title)
             or _display_label(canonical_title)
             or _display_label(alias_title)
-            or _display_label(node.slug)
         )
         if not title and entity_name_key_id is not None:
             localized = await _localized(session, entity_name_key_id, locale, release_id)
@@ -177,6 +177,7 @@ async def browse_catalog(
                 "title": title,
                 "aliases": aliases or [],
                 "slug": node.slug,
+                "href": node_url(node, node_type),
                 "image_url": images.get(node.id),
             }
         )

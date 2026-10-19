@@ -22,6 +22,7 @@ from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.search import EntityAlias, SearchDocument
 from wuwa_story.db.repositories.quest_scope import quest_state_links
+from wuwa_story.urls import node_address
 
 
 def _display_label(value: str | None) -> str | None:
@@ -179,11 +180,12 @@ async def _node_label(session: AsyncSession, node_id: int, locale_code: str) -> 
     fallback_label = (
         f"Area · {node.canonical_key.partition(':')[2]}"
         if node_type and node_type.key == "area"
-        else node.slug or node.canonical_key
+        else node.canonical_key
     )
     return {
         "id": node.id,
         "canonical_key": node.canonical_key,
+        **node_address(node, node_type.key if node_type else "node"),
         "type": node_type.key if node_type else None,
         "label": alias or canonical_name or fallback_label,
         "status": node.status,
@@ -587,6 +589,7 @@ async def _quest_info(
     return {
         "game_quest_id": quest.game_quest_id,
         "canonical_key": node.canonical_key if node else f"quest:{quest.game_quest_id}",
+        **(node_address(node, "quest") if node else {}),
         "name": name,
         "quest_type": quest.quest_type,
         "region_id": quest.region_id,

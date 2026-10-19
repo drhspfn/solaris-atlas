@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from wuwa_story.db.models.game_events import GameEvent
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.session import get_session
+from wuwa_story.urls import numeric_id, record_url
 
 router = APIRouter(tags=["notices"])
 
@@ -14,6 +15,8 @@ router = APIRouter(tags=["notices"])
 def notice_summary(notice):
     return {
         "id": notice.id,
+        "slug": getattr(notice, "slug", None),
+        "href": record_url(notice, "notices"),
         "source_id": notice.source_id,
         "locale": notice.locale,
         "category": notice.category,
@@ -59,13 +62,16 @@ async def list_notices(
 
 @router.get("/notices/{notice_id}")
 async def notice_detail(
-    notice_id: int,
+    notice_id: str,
     revision: str | None = Query(None, pattern=r"^[a-f0-9]{64}$"),
     session: AsyncSession = Depends(get_session),
 ):
-    notice = await session.get(GameNotice, notice_id)
+    identifier = numeric_id(notice_id)
+    notice = (await session.get(GameNotice, identifier) if identifier is not None else
+              await session.scalar(select(GameNotice).where(GameNotice.slug == notice_id)))
     if notice is None:
         raise HTTPException(404, "Announcement not found")
+    notice_id = notice.id
     content = notice.content
     snapshot = None
     if revision:
@@ -97,5 +103,5 @@ async def notice_detail(
         "blocks": content.get("blocks", []),
         "links": content.get("links", []),
         "revisions": revisions,
-        "events": [{"id": e.id, "title": e.title} for e in events],
+        "events": [{"id": e.id, "title": e.title, "slug": getattr(e, "slug", None), "href": record_url(e, "events")} for e in events],
     }

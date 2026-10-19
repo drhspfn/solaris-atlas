@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.api.routes.story.shared import _release_id, _version_key
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.core import Character, Item
@@ -16,6 +17,7 @@ from wuwa_story.db.models.i18n import Locale, LocalizationKey, LocalizationValue
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
+from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.db.session import get_session
 from wuwa_story.storage.s3 import S3Storage
 
@@ -76,18 +78,20 @@ def _source(record: SourceRecord, path: str) -> dict[str, Any]:
 
 
 @router.get("/characters/{canonical_key:path}/archive")
+@public_addresses
 async def character_archive(
     canonical_key: str,
     locale: str = "en",
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    node = await session.scalar(select(Node).where(Node.canonical_key == canonical_key))
+    node = await get_node(session, canonical_key, ('character',))
     if node is None or await session.get(Character, node.id) is None:
         raise HTTPException(status_code=404, detail="character not found")
     release_id = await _release_id(session, game_version)
     if release_id is None:
         raise HTTPException(status_code=404, detail="game version not imported")
+    canonical_key = node.canonical_key
     role_text = canonical_key.partition(":")[2]
     if not role_text.isdigit():
         raise HTTPException(status_code=404, detail="character has no game role ID")

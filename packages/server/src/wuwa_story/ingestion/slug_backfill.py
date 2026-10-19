@@ -5,20 +5,24 @@ import asyncio
 import json
 
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from wuwa_story.db.session import SessionFactory
 
 NODE_CANDIDATES = """
     SELECT n.id, d.title FROM graph.node n JOIN graph.node_type t ON t.id=n.type_id
     JOIN LATERAL (
-      SELECT d.title FROM search.document d JOIN i18n.locale l ON l.id=d.locale_id
+      SELECT candidate.title FROM (
+      SELECT d.title, 1 priority, d.id FROM search.document d JOIN i18n.locale l ON l.id=d.locale_id
       WHERE d.target_node_id=n.id AND l.code='en'
         AND d.category IN ('character','item','area','quest','speaker')
         AND btrim(d.title) <> '' AND d.title <> n.canonical_key
         AND d.title NOT ILIKE '%please contact our customer service%'
-      ORDER BY d.id LIMIT 1
+      UNION ALL SELECT e.title, 2, e.node_id FROM story.event e WHERE e.node_id=n.id AND btrim(e.title) <> ''
+      UNION ALL SELECT s.title, 3, s.node_id FROM story.scene s WHERE s.node_id=n.id AND btrim(s.title) <> ''
+      ) candidate ORDER BY priority, id LIMIT 1
     ) d ON true
-    WHERE n.slug IS NULL AND t.key IN ('character','item','area','location','quest','speaker')
+    WHERE n.slug IS NULL AND t.key IN ('character','item','area','location','quest','speaker','event','scene')
 """
 
 
@@ -50,12 +54,23 @@ async def backfill(*, workers=2, batch_size=250, pause=0.1, dry_run=False):
 
     async def worker(number):
         for group in totals:
+            retries = 0
             while True:
-                async with SessionFactory() as session:
-                    await session.execute(text("SET LOCAL lock_timeout='500ms'"))
-                    await session.execute(text("SET LOCAL statement_timeout='15s'"))
-                    rows = list(await session.scalars(text(batch_sql(group)), {"batch": batch_size}))
-                    await session.commit()
+                try:
+                    async with SessionFactory() as session:
+                        await session.execute(text("SET LOCAL lock_timeout='500ms'"))
+                        await session.execute(text("SET LOCAL statement_timeout='15s'"))
+                        rows = list(await session.scalars(text(batch_sql(group)), {"batch": batch_size}))
+                        await session.commit()
+                except DBAPIError as error:
+                    state = getattr(error.orig, "sqlstate", None)
+                    if state not in {"55P03", "40P01", "40001"} or retries >= 5:
+                        raise
+                    retries += 1
+                    print(json.dumps({"worker": number, "group": group, "retry": retries, "sqlstate": state}), flush=True)
+                    await asyncio.sleep(min(0.25 * 2**retries, 2))
+                    continue
+                retries = 0
                 if not rows:
                     break
                 totals[group] += len(rows)

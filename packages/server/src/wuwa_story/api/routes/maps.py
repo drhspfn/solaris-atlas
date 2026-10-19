@@ -7,10 +7,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.config.settings import get_settings
+from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.maps import MapMarker, MapTile, TileMap
 from wuwa_story.db.models.storage import FileLocation, FileObject
 from wuwa_story.db.session import get_session
 from wuwa_story.storage.s3 import S3Storage
+from wuwa_story.urls import node_address
 
 router = APIRouter(prefix="/maps", tags=["maps"])
 
@@ -102,11 +104,20 @@ async def map_markers(map_id: int, category: str | None = None,
     markers = list(await session.scalars(query.order_by(MapMarker.id).limit(limit + 1)))
     more = len(markers) > limit
     markers = markers[:limit]
+    item_ids = {item for marker in markers
+                for item in ([marker.metadata_json.get("item_id")] + (marker.metadata_json.get("drop_item_ids") or []))
+                if isinstance(item, int)}
+    item_nodes = list(await session.scalars(select(Node).where(
+        Node.canonical_key.in_([f"item:{item}" for item in item_ids])))) if item_ids else []
+    item_links = {int(node.canonical_key.partition(":")[2]): {
+        "canonical_key": node.canonical_key, **node_address(node, "item")} for node in item_nodes}
     scale = row.tile_size / row.world_tile_size
     # ConfigDB does not provide a reliable floor for every entity. Keep that
     # uncertainty explicit instead of assigning all markers to a floor layer.
     return {"floor_assignment": "unresolved", "items": [
         {"id": marker.id, "entity_id": marker.entity_id, "category": marker.category,
+         "item": item_links.get(marker.metadata_json.get("item_id")),
+         "drops": [item_links[item] for item in (marker.metadata_json.get("drop_item_ids") or []) if item in item_links],
          "blueprint_type": marker.blueprint_type,
          "world": [marker.world_x, marker.world_y, marker.world_z],
          "pixel": [(marker.world_x - (row.min_x - 1) * row.world_tile_size) * scale,

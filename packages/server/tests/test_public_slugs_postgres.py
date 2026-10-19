@@ -14,8 +14,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from wuwa_story.db import models  # noqa: F401
 from wuwa_story.db.base import SCHEMAS, Base
 from wuwa_story.db.models.core import Quest
+from wuwa_story.db.models.game_events import GameEvent
 from wuwa_story.db.models.graph import Node, NodeType
 from wuwa_story.db.models.i18n import Locale
+from wuwa_story.db.models.notices import GameNotice
 from wuwa_story.db.models.search import SearchDocument
 from wuwa_story.db.repositories.nodes import get_node, get_quest
 from wuwa_story.ingestion import slug_backfill
@@ -86,6 +88,17 @@ async def test_migration_new_imports_and_resumable_parallel_backfill(monkeypatch
             assert (await get_quest(session, quest_node.slug)).game_quest_id == game_id
             assert (await get_quest(session, game_id)).node_id == quest_node.id
             await session.execute(update(Node).where(Node.id.in_([n.id for n in nodes])).values(slug=None))
+            event = GameEvent(source=prefix, source_id="1", title="Endstate Matrix",
+                              event_kind="recurring", source_url="https://example.test", source_revision="test", source_data={})
+            notice = GameNotice(feed=prefix, locale="en", source_id="1", title="Matrix rules", category="game",
+                                source_url="https://example.test", revision="a"*64, content={}, related_event_ids=[])
+            session.add_all([event, notice])
+            await session.commit()
+            for row in (event, notice):
+                await session.refresh(row)
+                assert row.slug.startswith(f"{row.id}-")
+            await session.execute(update(GameEvent).where(GameEvent.id == event.id).values(slug=None))
+            await session.execute(update(GameNotice).where(GameNotice.id == notice.id).values(slug=None))
             await session.commit()
 
         monkeypatch.setattr(slug_backfill, "SessionFactory", factory)
@@ -93,11 +106,13 @@ async def test_migration_new_imports_and_resumable_parallel_backfill(monkeypatch
             await blocker.execute(select(Node).where(Node.id == nodes[0].id).with_for_update())
             result = await slug_backfill.backfill(workers=2, batch_size=1, pause=0)
             assert result["nodes"] == 2  # Locked node is skipped, rather than timing out.
+            assert result["events"] == 1 and result["notices"] == 1
             await blocker.rollback()
         result = await slug_backfill.backfill(workers=2, batch_size=1, pause=0)
         assert result["nodes"] == 1
         assert (await slug_backfill.backfill(dry_run=True))["nodes"] == 0
         async with factory() as session:
             assert await session.scalar(text("SELECT ops.public_slug(9223372036854775806,'Astrite')")) == "9223372036854775806-astrite"
+            assert not (await session.scalar(text("SELECT ops.public_slug(5, repeat('a',179) || '-hello')"))).endswith('-')
     finally:
         await engine.dispose()

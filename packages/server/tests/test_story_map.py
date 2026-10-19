@@ -56,6 +56,9 @@ async def test_version_filter_keeps_only_quests_first_seen_in_that_patch(
                 SimpleNamespace(id=2, sequence=2, game_version="1.1.0")]
 
     class Session:
+        async def execute(self, _query: object) -> list[object]:
+            return []
+
         async def scalar(self, _query: object) -> int:
             return 1
 

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.api.item_acquisition import ITEM_QUEST_REWARD_LIMIT, item_map_sources
 from wuwa_story.api.routes.story.shared import (
     _character_progression_materials,
@@ -40,19 +41,22 @@ from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.search import EntityAlias, SearchDocument
 from wuwa_story.db.models.story import Scene
+from wuwa_story.db.repositories.nodes import get_node, get_quest
 from wuwa_story.db.session import get_session
 from wuwa_story.storage.entity_media import entity_image_urls
+from wuwa_story.urls import node_address
 
 router = APIRouter(tags=["story browsing"])
 
 @router.get("/items/{canonical_key:path}/profile")
+@public_addresses
 async def item_profile(
     canonical_key: str,
     locale: str = "en",
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    node = await session.scalar(select(Node).where(Node.canonical_key == canonical_key))
+    node = await get_node(session, canonical_key, ('item',))
     if node is None:
         raise HTTPException(status_code=404, detail="item not found")
     item = await session.get(Item, node.id)
@@ -619,6 +623,7 @@ async def item_profile(
     return {
         "item": {
             "canonical_key": node.canonical_key,
+            **node_address(node, "item"),
             "canonical_name": item.canonical_name,
             "name": await _localized(session, item.name_key_id, locale, release_id),
             "description": await _localized(session, item.description_key_id, locale, release_id),
@@ -662,12 +667,13 @@ async def item_profile(
     }
 
 @router.get("/locations/{canonical_key:path}/profile")
+@public_addresses
 async def location_profile(
     canonical_key: str,
     locale: str = "en",
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    node = await session.scalar(select(Node).where(Node.canonical_key == canonical_key))
+    node = await get_node(session, canonical_key, ('area', 'location'))
     if node is None:
         raise HTTPException(status_code=404, detail="location not found")
     location = await session.get(Location, node.id)
@@ -692,6 +698,7 @@ async def location_profile(
     return {
         "location": {
             "canonical_key": node.canonical_key,
+            **node_address(node, "location"),
             "canonical_name": location.canonical_name,
             "name": await _localized(session, location.name_key_id, locale, release_id),
             "game_location_id": location.game_location_id,
@@ -713,15 +720,17 @@ async def location_profile(
     }
 
 @router.get("/quests/{game_quest_id}/profile")
+@public_addresses
 async def quest_profile(
-    game_quest_id: int,
+    game_quest_id: str,
     locale: str = "en",
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    quest = await session.scalar(select(Quest).where(Quest.game_quest_id == game_quest_id))
+    quest = await get_quest(session, game_quest_id)
     if quest is None:
         raise HTTPException(status_code=404, detail="quest not found")
+    game_quest_id = quest.game_quest_id
     quest_nodes = await session.execute(
         select(QuestNode, Node, SourceRecord, SourceFile)
         .join(Node, Node.id == QuestNode.node_id)
@@ -883,13 +892,14 @@ async def quest_profile(
     }
 
 @router.get("/characters/{canonical_key:path}/profile")
+@public_addresses
 async def character_profile(
     canonical_key: str,
     locale: str = "en",
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    node = await session.scalar(select(Node).where(Node.canonical_key == canonical_key))
+    node = await get_node(session, canonical_key, ('character',))
     if node is None:
         raise HTTPException(status_code=404, detail="character not found")
     character = await session.get(Character, node.id)
@@ -1271,6 +1281,7 @@ async def character_profile(
     return {
         "character": {
             "canonical_key": node.canonical_key,
+            **node_address(node, "character"),
             "canonical_name": character.canonical_name,
             "name": await _localized(session, character.name_key_id, locale, release_id),
             "aliases": list(dict.fromkeys(aliases)),
