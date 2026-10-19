@@ -29,6 +29,26 @@
   font-weight: 600;
   letter-spacing: 0.12em;
 }
+.events-section-nav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.events-section-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+}
+.events-section-nav a:hover,
+.events-section-nav a[aria-current] {
+  background: var(--surface-2);
+  border-color: var(--mint);
+  color: var(--text-primary);
+}
 .events-controls {
   display: flex;
   align-items: flex-end;

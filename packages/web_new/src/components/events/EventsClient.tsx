@@ -58,6 +58,7 @@ export function EventsPage({
   const [localZone, setLocalZone] = useState('UTC');
   const [catalogLimit, setCatalogLimit] = useState(24);
   const chart = useRef<HTMLDivElement>(null);
+  const pendingTime = useRef<number | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const openEvent = (event: GameEvent, trigger: HTMLElement) => {
     returnFocus.current = trigger;
@@ -155,7 +156,15 @@ export function EventsPage({
   const formatDate = (date: string | null) =>
     date ? dateFormat.format(new Date(date)) : 'Date not recorded';
   const jumpTo = (event: GameEvent) => {
-    if (Number.isFinite(startTime(event))) setMonth(monthKey(startTime(event)));
+    if (Number.isFinite(startTime(event))) {
+      pendingTime.current = startTime(event);
+      setMonth(monthKey(startTime(event)));
+      if (chart.current)
+        chart.current.scrollLeft = Math.max(
+          0,
+          timePosition(startTime(event), boundaries) - DAY_WIDTH * 2,
+        );
+    }
   };
   const toggle = (id: number) =>
     setChosen((ids) => (ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id]));
@@ -164,6 +173,13 @@ export function EventsPage({
     setMonth(value);
     if (chart.current) chart.current.scrollLeft = 0;
   };
+  useEffect(() => {
+    if (!chart.current || loading) return;
+    const time = pendingTime.current ?? Date.now();
+    chart.current.scrollLeft =
+      time >= start && time < end ? Math.max(0, timePosition(time, boundaries) - DAY_WIDTH * 2) : 0;
+    pendingTime.current = null;
+  }, [month, timeZone, loading]);
 
   return (
     <main className="events-page">
@@ -177,6 +193,12 @@ export function EventsPage({
           {groups.length} events · {events.filter((event) => event.starts_at).length} recorded runs
         </span>
       </header>
+      <nav className="events-section-nav" aria-label="Events and announcements">
+        <a href="/events" aria-current="page">
+          Calendar
+        </a>
+        <a href="/notices">Announcements</a>
+      </nav>
       <section className="events-controls" aria-label="Event filters">
         <label className="events-filter">
           <span>Find an event</span>
@@ -288,7 +310,19 @@ export function EventsPage({
             <button aria-label="Next month" onClick={() => changeMonth(shiftMonth(month, 1))}>
               <ChevronRight size={18} />
             </button>
-            <button onClick={() => changeMonth(monthKey(Date.now()))}>Today</button>
+            <button
+              onClick={() => {
+                pendingTime.current = Date.now();
+                changeMonth(monthKey(Date.now()));
+                if (chart.current)
+                  chart.current.scrollLeft = Math.max(
+                    0,
+                    timePosition(Date.now(), boundaries) - DAY_WIDTH * 2,
+                  );
+              }}
+            >
+              Today
+            </button>
           </div>
         </header>
         <p className="events-calendar-help">
@@ -471,6 +505,7 @@ export function EventsPage({
       {selected && (
         <EventDetails
           returnFocus={returnFocus.current}
+          fallbackFocus={chart.current}
           event={selected}
           history={groups.find((runs) => runs[0].id === selected.id) ?? []}
           timeZone={timeZone}
@@ -483,8 +518,8 @@ export function EventsPage({
         />
       )}
       <footer className="events-source">
-        Names and artwork come from the game client. Only recorded opening dates appear on the
-        calendar.{' '}
+        Names and artwork come from the game client and official Notice board. Only recorded opening
+        dates appear on the calendar.{' '}
         <a href="https://wutheringwaves.kurogames.com/" target="_blank" rel="noopener noreferrer">
           Wuthering Waves ↗
         </a>

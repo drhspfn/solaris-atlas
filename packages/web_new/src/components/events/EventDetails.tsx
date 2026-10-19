@@ -13,6 +13,7 @@ export function EventDetails({
   onSelect,
   onClose,
   returnFocus,
+  fallbackFocus,
 }: {
   event: GameEvent;
   history: GameEvent[];
@@ -21,6 +22,7 @@ export function EventDetails({
   onSelect: (event: GameEvent) => void;
   onClose: () => void;
   returnFocus: HTMLElement | null;
+  fallbackFocus: HTMLElement | null;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [clock, setClock] = useState(now);
@@ -36,6 +38,7 @@ export function EventDetails({
       document.body.style.overflow = overflow;
       clearInterval(timer);
       if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+      else fallbackFocus?.focus({ preventScroll: true });
     };
   }, []);
   const formatter = new Intl.DateTimeFormat('en', {
@@ -62,15 +65,15 @@ export function EventDetails({
           onClose();
       }}
     >
-      <button
-        className="events-detail-close"
-        onClick={onClose}
-        aria-label="Close event details"
-      >
+      <button className="events-detail-close" onClick={onClose} aria-label="Close event details">
         <X size={22} />
       </button>
       <EventArtwork event={event} />
-      {event.preview_provenance === 'current_notice' && <small className="events-art-caption">Illustration from the current official event announcement.</small>}
+      {event.preview_provenance === 'current_notice' && (
+        <small className="events-art-caption">
+          Illustration from the current official event announcement.
+        </small>
+      )}
       <div className="events-detail-copy">
         <span className="events-kicker">
           {kindLabels[event.kind]}

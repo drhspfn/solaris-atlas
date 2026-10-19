@@ -11,6 +11,25 @@ const webDirectory = fileURLToPath(new URL('../', import.meta.url));
 const requests = [];
 const biography = 'Sanhua guards the magistrate of Jinzhou.';
 const portrait = 'https://cdn.solarisatlas.fun/objects/test-sanhua';
+const notice = {
+  id: 42,
+  source_id: 'official-42',
+  title: 'Official Artisan event rules',
+  category: 'game',
+  banner_url: 'https://cdn.solarisatlas.fun/objects/notice-banner',
+  available_from: '2026-10-08T00:00:00Z',
+  observed_at: '2026-10-19T00:00:00Z',
+  source_url: 'https://aki-gm-resources-oversea.aki-game.net/aki/announcement/index.html',
+  revision: 'a'.repeat(64),
+  related_event_ids: [1],
+  revisions: ['a'.repeat(64)],
+  blocks: [
+    { type: 'text', text: 'Complete the event to obtain Astrite.' },
+    { type: 'image', url: 'https://cdn.solarisatlas.fun/objects/notice-banner' },
+  ],
+  links: ['https://www.youtube.com/watch?v=official'],
+  events: [{ id: 1, title: "Artisan's Search" }],
+};
 const profile = {
   character: { canonical_key: 'character:1102', name: { content: 'Sanhua' } },
   source: { version: '1.0' },
@@ -83,6 +102,10 @@ const backend = createServer(async (request, response) => {
         ],
       }),
     );
+  } else if (request.url.startsWith('/notices?')) {
+    response.end(JSON.stringify({ notices: [notice], has_more: false }));
+  } else if (request.url === '/notices/42') {
+    response.end(JSON.stringify(notice));
   } else {
     response.writeHead(404).end('{}');
   }
@@ -198,6 +221,39 @@ test('public shell groups navigation and keeps service links in the footer', asy
   assert.doesNotMatch(header, /href="(?:\/docs|\/mcp-docs|https:\/\/github.com)/);
   for (const href of ['/docs', '/mcp-docs', '/legal']) assert.ok(footer.includes(`href="${href}"`));
   assert.doesNotMatch(html, /class="card-watermark"/);
+});
+
+test('announcements list renders official titles and images in initial HTML', async () => {
+  const response = await fetch(`${site}/notices`);
+  assert.equal(response.status, 200);
+  const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  for (const value of [
+    'Official Artisan event rules',
+    'notice-banner',
+    'Highlights',
+    'Info',
+    'News',
+  ])
+    assert.ok(html.includes(value), value);
+  assert.ok(html.includes('href="/notices/42"'));
+});
+
+test('announcement details and social preview are server rendered', async () => {
+  const response = await fetch(`${site}/notices/42`);
+  assert.equal(response.status, 200);
+  const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.match(html, /<title>Official Artisan event rules/);
+  assert.ok(html.includes('Complete the event to obtain Astrite.'));
+  assert.ok(html.includes('src="https://cdn.solarisatlas.fun/objects/notice-banner"'));
+  assert.ok(html.includes('href="/events?event=1"'));
+});
+
+test('an event link restores event selection on the server', async () => {
+  const response = await fetch(`${site}/events?event=2`);
+  assert.equal(response.status, 200);
+  const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.ok(html.includes('aria-label="Selected events"'));
+  assert.doesNotMatch(html, /class="events-bar"/);
 });
 
 test('legal information is readable in initial HTML without client scripts', async () => {
