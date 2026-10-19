@@ -172,3 +172,29 @@ test('events fetch at request time and render their artwork without JavaScript',
   assert.doesNotMatch(html, /Opening archive record|id="S:\d+"/);
   assert.ok(requests.includes('/events?server=europe'));
 });
+
+test('public shell groups navigation and keeps service links in the footer', async () => {
+  const response = await fetch(`${site}/`);
+  assert.equal(response.status, 200);
+  const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  const header = html.match(/<header\b[^>]*>([\s\S]*?)<\/header>/)?.[1] ?? '';
+  const footer = html.match(/<footer\b[^>]*>([\s\S]*?)<\/footer>/)?.[1] ?? '';
+  assert.match(header, /<summary[^>]*>Maps/);
+  assert.match(header, /<summary[^>]*>Archive/);
+  assert.doesNotMatch(header, /href="(?:\/docs|\/mcp-docs|https:\/\/github.com)/);
+  for (const href of ['/docs', '/mcp-docs', '/legal']) assert.ok(footer.includes(`href="${href}"`));
+  assert.doesNotMatch(html, /class="card-watermark"/);
+});
+
+test('legal information is readable in initial HTML without client scripts', async () => {
+  const response = await fetch(`${site}/legal`);
+  assert.equal(response.status, 200);
+  const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.match(html, /<title>Legal &amp; privacy/);
+  for (const id of ['about', 'terms', 'copyright', 'privacy', 'storage', 'ai', 'contact'])
+    assert.ok(html.includes(`id="${id}"`));
+  for (const text of ['Yevhenii Verbytskyi', 'Contabo', 'admin@solarisatlas.fun'])
+    assert.ok(html.includes(text));
+  assert.doesNotMatch(html, /solarisatlas\.fun@gmail\.com/);
+  assert.ok(html.includes('href="https://solarisatlas.fun/legal"'));
+});

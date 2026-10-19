@@ -96,7 +96,7 @@ export default async function HomePage() {
           <span className="section-note">A world told through its people and places</span>
         </div>
         <div className="category-grid">
-          {categories.map((c, i) => (
+          {categories.map((c) => (
             <Link to={`/catalog/${c.key}`} className={`category-card card-${c.key}`} key={c.key}>
               <div className="card-top">
                 <span className="category-icon">
@@ -114,7 +114,6 @@ export default async function HomePage() {
                 <span>Explore collection</span>
                 <ArrowRight className="arrow-diagonal" />
               </div>
-              <span className="card-watermark">0{i + 1}</span>
             </Link>
           ))}
         </div>

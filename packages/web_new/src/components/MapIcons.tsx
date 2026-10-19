@@ -40,12 +40,6 @@ export function iconNode(marker: MapObject, icons: Icons): HTMLElement {
 
     image.alt = '';
 
-    image.style.width = '26px';
-
-    image.style.height = '26px';
-
-    image.style.objectFit = 'contain';
-
     container.append(image);
   } else {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');

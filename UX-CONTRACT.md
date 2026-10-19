@@ -88,7 +88,7 @@ Read-only game atlas at `/map`, using published map manifests, positioned entiti
 
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 | --- | --- | --- | --- | --- |
-| Select/Listbox | Native HTML select | StoryMapPage and LocaleSwitcher | Platform-owned popup geometry is acceptable for world and grouped location selection | Keyboard selection, long floor names, narrow viewport |
+| Select/Listbox | `packages/web_new/src/components/ui/Select.tsx` for map region/location, archive language and event filters; native select elsewhere | October 2026 public-shell refinement | Authored popups own geometry and dark styling; untouched workflows retain native semantics | Arrows/Home/End/typeahead, Enter/Space, Escape/Tab, long names and narrow popup checks |
 | Search | Native search input with visible label | WorldMapPage | Immediate local filtering; committed query in URL | Empty results and clear input |
 | Checkbox | Native checkbox | WorldMapPage | Hidden placements and unknown floor | Keyboard toggle |
 | Object selection | Native button with aria-pressed | WorldMapPage | Two-column icon/name/count tiles; compact icon grid for other resources; select all and clear per group | Keyboard, individual types, group actions and counts |
@@ -215,7 +215,7 @@ Map filter groups are Featured, Battle, Activities & exploration, Shops & servic
 
 The marker toolbar can show or hide all types across every group, regardless of search and location. Show all clears type exclusions; Hide all excludes every marker category and closes object details. Group disclosure buttons preserve filter selections. Featured starts open; other groups start collapsed. Disclosure state is transient and independent of local filters.
 
-The region rail keeps a fixed width on hover and focus. Full names are available through native title tooltips and accessible button labels; disclosure never changes the panel geometry.
+The region rail anchors 44px buttons at the right edge. Hover and keyboard focus expand the same button leftward to reveal its full name, without moving neighboring buttons or changing map geometry. Accessible labels remain available; these buttons and map marker chips do not duplicate their expanded labels with native title tooltips. Marker icons remain centered in their collapsed chips.
 
 Map controls share one top offset. Return to map restores the selected location bounds, or the current region when no location is selected, without changing filters, region, floor or selected object. Zooming out stops one level beyond the region overview. View recovery is transient and is not written to the shared URL.
 
