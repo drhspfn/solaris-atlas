@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import '@/styles/world-map.css';
 
 import L from 'leaflet';
-import { Check, CircleCheck, FoldVertical, Link2, RotateCcw, Undo2, X } from 'lucide-react';
+import { Check, CircleCheck, FoldVertical, Link2, RotateCcw, SlidersHorizontal, Undo2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from '@/lib/router';
 
@@ -409,6 +409,42 @@ function MapCanvas({
   );
 }
 export function WorldMapPage() {
+  const [mobile, setMobile] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [filterTab, setFilterTab] = useState<'locations' | 'objects'>('locations');
+  const filterDialog = useRef<HTMLDialogElement>(null);
+  const filterTrigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 760px)');
+    const update = () => {
+      setMobile(query.matches);
+      setFiltersOpen(false);
+    };
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+  useEffect(() => {
+    const dialog = filterDialog.current;
+    if (!dialog) return;
+    if (mobile && filtersOpen) {
+      if (dialog.open) dialog.close();
+      dialog.showModal();
+      const overflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        dialog.close();
+        document.body.style.overflow = overflow;
+      };
+    }
+    if (mobile) dialog.close();
+    else if (!dialog.open) dialog.show();
+  }, [mobile, filtersOpen]);
+  const closeFilters = () => {
+    filterDialog.current?.close();
+    setFiltersOpen(false);
+    filterTrigger.current?.focus({ preventScroll: true });
+  };
   const locale = useLocale();
   const [params, setParams] = useSearchParams();
   const [filters, setFilters] = useMapPreferences(params, Object.keys(categories).join(','));
@@ -849,13 +885,36 @@ export function WorldMapPage() {
   return (
     <section className="world-map-page">
       {' '}
-      <aside className="atlas-sidebar">
+      <dialog ref={filterDialog} open={!mobile || undefined}
+        className="atlas-sidebar" role={mobile ? 'dialog' : 'complementary'}
+        aria-label="Map filters" onCancel={closeFilters}
+        onClick={(event) => {
+          if (!mobile || event.target !== event.currentTarget) return;
+          const bounds = event.currentTarget.getBoundingClientRect();
+          if (event.clientY < bounds.top || event.clientX < bounds.left || event.clientX > bounds.right) closeFilters();
+        }}>
+        <header className="atlas-sheet-header">
+          <h2>Map filters</h2>
+          <button type="button" onClick={closeFilters} aria-label="Close map filters"><X size={22} /></button>
+        </header>
+        <nav className="atlas-sheet-tabs" role="tablist" aria-label="Map filter sections"
+          onKeyDown={(event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const next = event.key === 'Home' ? 'locations' : event.key === 'End' ? 'objects' : filterTab === 'locations' ? 'objects' : 'locations';
+            setFilterTab(next);
+            document.getElementById(`map-${next}-tab`)?.focus();
+          }}>
+          <button id="map-locations-tab" role="tab" aria-selected={filterTab === 'locations'} tabIndex={filterTab === 'locations' ? 0 : -1} aria-controls="map-locations-panel" onClick={() => setFilterTab('locations')}>Locations</button>
+          <button id="map-objects-tab" role="tab" aria-selected={filterTab === 'objects'} tabIndex={filterTab === 'objects' ? 0 : -1} aria-controls="map-objects-panel" onClick={() => setFilterTab('objects')}>Objects</button>
+        </nav>
         {' '}
         <div className="atlas-heading">
           {' '}
           <span className="eyebrow">SOLARIS / FIELD ATLAS</span> <h1>Interactive map</h1>{' '}
           <p>Find a place. Explore what’s there.</p>{' '}
         </div>{' '}
+        <div id="map-locations-panel" className="atlas-panel atlas-location-panel" hidden={mobile && filterTab !== 'locations'} role={mobile ? 'tabpanel' : undefined} aria-labelledby={mobile ? 'map-locations-tab' : undefined}>
         <div className="atlas-field">
           <span>Region</span>
           <Select label="Region" value={chosen?.id ?? ''} onChange={chooseMap}
@@ -878,55 +937,8 @@ export function WorldMapPage() {
                   }))),
               ]} />
           </div>
-          <div className="atlas-search-field">
-            <label htmlFor="map-object-search">Find an object</label>
-            <div className="atlas-search-input">
-              <input
-                id="map-object-search"
-                ref={searchInput}
-                type="search"
-                placeholder="Plant, chest, beacon…"
-                value={search}
-                onChange={(e) => {
-                  change('q', e.target.value);
-                  setListLimit(mapSettings.listPageSize);
-                }}
-              />
-              {search && (
-                <button
-                  type="button"
-                  className="search-clear"
-                  aria-label="Clear object search"
-                  onClick={() => {
-                    change('q', '');
-                    setListLimit(mapSettings.listPageSize);
-                    searchInput.current?.focus();
-                  }}
-                >
-                  <X size={14} aria-hidden="true" />
-                </button>
-              )}
-            </div>
-          </div>{' '}
+
         </div>{' '}
-        {sourceItem > 0 && sourceId > 0 && (
-          <div className="atlas-source-filter" role="status">
-            <span>
-              {loading
-                ? 'Loading acquisition sources…'
-                : `${sourceMarkers.length} acquisition locations`}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                openedSource.current = '';
-                setParams({ map: String(base?.id ?? mapId) }, { replace: true });
-              }}
-            >
-              Clear source filter
-            </button>
-          </div>
-        )}
         <details className="atlas-levels" open={Boolean(active)}>
           {' '}
           <summary>Layers & display</summary>{' '}
@@ -1024,6 +1036,57 @@ export function WorldMapPage() {
           )}{' '}
           <small> Floor placement is shown only where the game records it. </small>{' '}
         </details>{' '}
+        </div>
+        <div id="map-objects-panel" className="atlas-panel atlas-objects-panel" hidden={mobile && filterTab !== 'objects'} role={mobile ? 'tabpanel' : undefined} aria-labelledby={mobile ? 'map-objects-tab' : undefined}>
+        <div className="atlas-search-field">
+            <label htmlFor="map-object-search">Find an object</label>
+            <div className="atlas-search-input">
+              <input
+                id="map-object-search"
+                ref={searchInput}
+                type="search"
+                placeholder="Plant, chest, beacon…"
+                value={search}
+                onChange={(e) => {
+                  change('q', e.target.value);
+                  setListLimit(mapSettings.listPageSize);
+                }}
+              />
+              {search && (
+                <button
+                  type="button"
+                  className="search-clear"
+                  aria-label="Clear object search"
+                  onClick={() => {
+                    change('q', '');
+                    setListLimit(mapSettings.listPageSize);
+                    searchInput.current?.focus();
+                  }}
+                >
+                  <X size={14} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          </div>{' '}
+        {sourceItem > 0 && sourceId > 0 && (
+          <div className="atlas-source-filter" role="status">
+            <span>
+              {loading
+                ? 'Loading acquisition sources…'
+                : `${sourceMarkers.length} acquisition locations`}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                openedSource.current = '';
+                setParams({ map: String(base?.id ?? mapId) }, { replace: true });
+              }}
+            >
+              Clear source filter
+            </button>
+          </div>
+        )}
+
         {sidebarView === 'markers' && search && (
           <div className="atlas-search-result">
             {' '}
@@ -1338,8 +1401,14 @@ export function WorldMapPage() {
             </details>{' '}
           </>
         )}
-      </aside>{' '}
+        </div>
+        <footer className="atlas-sheet-footer"><button type="button" onClick={closeFilters}>Show map · {filtered.length.toLocaleString()} objects</button></footer>
+      </dialog>{' '}
       <div className="atlas-map-area">
+        <button ref={filterTrigger} type="button" className="atlas-mobile-filters"
+          aria-haspopup="dialog" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(true)}>
+          <SlidersHorizontal size={18} aria-hidden="true" /> Map filters
+        </button>
         {' '}
         <nav className="atlas-region-rail" aria-label="Switch map region">
           {' '}

@@ -127,6 +127,14 @@ a shared dark surface, mint checked/indeterminate state, visible keyboard focus
 and forced-colors fallback. The map sidebar uses an 18px horizontal gutter and
 full-width location/search rows; the toolbar does not squeeze both into half-width cells.
 
+On viewports up to 760px the map occupies the space below the header. A floating
+Map filters button opens the existing controls in a native modal bottom sheet;
+Locations contains region, location and floors, Objects contains search, marker
+types and statistics. The active tab owns one scroll container with a fixed
+header, tabs and Show map footer. Closing retains filters and returns focus to
+the opener. Escape/backdrop dismissal, keyboard tabs, safe-area padding and
+viewport resizing preserve the desktop sidebar and map state without duplicate inputs.
+
 Administration uses compact operation tables and separate activity/import/history
 views. Task results and technical worker details are closed native disclosures;
 status filters remain native selects. Queue cleanup uses a dark native dialog with
