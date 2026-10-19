@@ -73,6 +73,11 @@ const backend = createServer(async (request, response) => {
         },
       }),
     );
+  } else if (['/items/item%3A3/profile?locale=en', '/items/103-astrite/profile?locale=en'].includes(request.url)) {
+    response.end(JSON.stringify({ item: {
+      canonical_key: 'item:3', slug: '103-astrite', href: '/items/103-astrite',
+      name: { content: 'Astrite' }, description: { content: 'A bright crystal with a stable public address.' },
+    } }));
   } else if (request.url === '/events?server=europe') {
     response.end(
       JSON.stringify({
@@ -80,6 +85,7 @@ const backend = createServer(async (request, response) => {
         events: [
           {
             id: 1,
+            slug: '1-artisans-search',
             source_id: 'test-event',
             title: "Artisan's Search",
             kind: 'limited',
@@ -267,4 +273,33 @@ test('legal information is readable in initial HTML without client scripts', asy
     assert.ok(html.includes(text));
   assert.doesNotMatch(html, /solarisatlas\.fun@gmail\.com/);
   assert.ok(html.includes('href="https://solarisatlas.fun/legal"'));
+});
+
+
+test('legacy item URL redirects to its stored slug without losing selection parameters', async () => {
+  const response = await fetch(`${site}/items/item%3A3?locale=uk&game_version=1.3.0&line=dialogue%3A7`, { redirect: 'manual' });
+  assert.equal(response.status, 308);
+  const destination = new URL(response.headers.get('location'), site);
+  assert.equal(destination.pathname, '/items/103-astrite');
+  assert.equal(destination.searchParams.get('locale'), 'uk');
+  assert.equal(destination.searchParams.get('game_version'), '1.3.0');
+  assert.equal(destination.searchParams.get('line'), 'dialogue:7');
+});
+
+test('slug item page returns details and canonical social URL in initial HTML', async () => {
+  const response = await fetch(`${site}/items/103-astrite`, { redirect: 'manual' });
+  assert.equal(response.status, 200);
+  const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.ok(html.includes('A bright crystal with a stable public address.'));
+  assert.ok(html.includes('/items/103-astrite'));
+  assert.doesNotMatch(html, /Opening archive record/);
+  assert.ok(requests.includes('/items/103-astrite/profile?locale=en'));
+});
+
+test('event slug links restore the existing event identity', async () => {
+  const response = await fetch(`${site}/events?event=1-artisans-search`);
+  const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.ok(html.includes('Artisan&#x27;s Search'));
+  assert.ok(html.includes('Remove Artisan'));
+  assert.ok(!html.includes('Dates not recorded'));
 });

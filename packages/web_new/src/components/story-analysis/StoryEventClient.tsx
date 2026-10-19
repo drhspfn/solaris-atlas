@@ -3,6 +3,7 @@
 import { ChevronRight } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api } from '@/api/client';
+import { questPath } from '@/lib/routeKey';
 import { ErrorPanel, PageLoader } from '@/components/ui/Feedback';
 import type { SourceCitation } from '@/data/explanations';
 import { useLocale } from '@/hooks/useLocale';
@@ -12,6 +13,8 @@ type StoryEvent = {
   title: string;
   description: string;
   quest_id: number;
+  quest_href?: string;
+  quest_slug?: string;
   game_version: string;
   citations: SourceCitation[];
 };
@@ -63,7 +66,7 @@ export function StoryEventClient({ eventKey, initialEvent }: { eventKey: string;
         ))}
         <Link
           className="explanation-search-link"
-          to={`/quests/${event.quest_id}?${new URLSearchParams({ game_version: event.game_version, locale }).toString()}`}
+          to={`${questPath(event)}?${new URLSearchParams({ game_version: event.game_version, locale }).toString()}`}
         >
           Read the quest and its sources
         </Link>

@@ -150,3 +150,11 @@ focus restoration. Details expose the published image gallery. Selecting a galle
 the preview, and animated convenes can use client-authored featured portraits or
 weapon icons as static previews. Reward previews use localized names instead of
 raw ID chips. Admin import notices confirm queued work, not completed publication.
+
+## Public detail addresses
+
+Use the API's stable slug address for entity, quest, event and notice links.
+System keys remain the fallback for records without a resolved name. Canonical
+redirects preserve locale, version and dialogue selections; a slug must never
+replace an internal game/graph ID or become the displayed entity name. Social
+metadata and details are returned in the first server response at the slug URL.

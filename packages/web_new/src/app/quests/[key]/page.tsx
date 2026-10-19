@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 
 import { serverApi } from '@/api/serverApi';
-import { decodeRouteKey } from '@/lib/routeKey';
+import { decodeRouteKey, publicPath } from '@/lib/routeKey';
+import { canonicalRoute, type RouteQuery } from '@/lib/canonicalRoute';
 import { QuestPageClient } from '@/components/quest/QuestPageClient';
 import { APP_SETTINGS } from '@/config/settings';
 import type { QuestContinuity as QuestContinuityData } from '@/data/story';
@@ -9,6 +10,7 @@ import type { QuestMediaManifest } from '@/components/story/QuestMediaReferences
 
 type Props = {
   params: Promise<{ key: string }>;
+  searchParams?: Promise<RouteQuery>;
 };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -22,11 +24,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title: `${title} — Story Record`,
     description,
+    alternates: { canonical: publicPath("quests", quest || {}, key) },
     openGraph: {
       title: `${title} — Story Transcript | Solaris Atlas`,
       description,
       type: 'article',
-      url: `${siteUrl}/quests/${encodeURIComponent(key)}`,
+      url: `${siteUrl}${publicPath("quests", quest || {}, key)}`,
     },
     twitter: {
       card: 'summary',
@@ -36,7 +39,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
-export default async function QuestTranscriptPage({ params }: Props) {
+export default async function QuestTranscriptPage({ params, searchParams }: Props) {
   const key = decodeRouteKey((await params).key);
 
   // Server pre-fetch initial quest data for instant SSR
@@ -48,6 +51,8 @@ export default async function QuestTranscriptPage({ params }: Props) {
     serverApi<QuestContinuityData>(`/quests/${encodeURIComponent(key)}/continuity?locale=en`),
     serverApi<QuestMediaManifest>(`/quests/${encodeURIComponent(key)}/media?locale=en`),
   ]);
+
+  await canonicalRoute("quests", key, profile?.quest, searchParams);
 
   return (
     <QuestPageClient

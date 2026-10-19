@@ -96,7 +96,7 @@ export function EventDetails({
             <ul>
               {event.rewards.map((reward, index) => (
                 <li key={`${reward.id}-${index}`}>
-                  {reward.name || 'Unnamed reward'}
+                  {reward.href ? <a href={reward.href}>{reward.name || 'Reward details'}</a> : reward.name || 'Unnamed reward'}
                   {reward.value ? ` ×${reward.value}` : ''}
                 </li>
               ))}
@@ -126,6 +126,7 @@ export function EventDetails({
             ))}
           </section>
         )}
+        {event.href && <a className="events-official-link" href={event.href}>Link to this event</a>}
         <p className="events-countdown" role="timer">
           {clock === null ? 'Recorded schedule' : countdown(event, clock)}
         </p>

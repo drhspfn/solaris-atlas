@@ -1,13 +1,15 @@
 import type { Metadata } from 'next';
 
 import { serverApi } from '@/api/serverApi';
-import { decodeRouteKey } from '@/lib/routeKey';
+import { decodeRouteKey, publicPath } from '@/lib/routeKey';
+import { canonicalRoute, type RouteQuery } from '@/lib/canonicalRoute';
 import { EntityProfileClient } from '@/components/profile/EntityProfileClient';
 import type { CharacterArchiveData } from '@/components/characters/CharacterArchive';
 import { localizedText } from '@/data/localized';
 
 type Props = {
   params: Promise<{ key: string }>;
+  searchParams?: Promise<RouteQuery>;
 };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -41,12 +43,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title: `${name} — Character Profile`,
     description,
-    alternates: { canonical: `/characters/${encodeURIComponent(key)}` },
+    alternates: { canonical: publicPath("characters", character || {}, key) },
     openGraph: {
       title: `${name} — Characters | Solaris Atlas`,
       description,
       type: 'profile',
-      url: `${siteUrl}/characters/${encodeURIComponent(key)}`,
+      url: `${siteUrl}${publicPath("characters", character || {}, key)}`,
       images: imageUrl ? [{ url: imageUrl, alt: name }] : undefined,
     },
     twitter: {
@@ -58,12 +60,14 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
-export default async function CharacterProfilePage({ params }: Props) {
+export default async function CharacterProfilePage({ params, searchParams }: Props) {
   const key = decodeRouteKey((await params).key);
   const [initialData, initialArchive] = await Promise.all([
     serverApi<any>(`/characters/${encodeURIComponent(key)}/profile?locale=en`),
     serverApi<CharacterArchiveData>(`/characters/${encodeURIComponent(key)}/archive?locale=en`),
   ]);
+
+  await canonicalRoute("characters", key, initialData?.character, searchParams);
 
   return (
     <EntityProfileClient

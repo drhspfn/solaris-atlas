@@ -3,6 +3,7 @@
 import { ChevronRight } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api } from '@/api/client';
+import { questPath } from '@/lib/routeKey';
 import { ExplanationSources } from '@/components/story/ExplanationSources';
 import { PageLoader } from '@/components/ui/Feedback';
 import type { StoryConnection } from '@/data/explanations';
@@ -92,7 +93,7 @@ export function StoryConnectionClient({
         </details>
         <Link
           className="explanation-search-link"
-          to={`/quests/${data.quest_id}?${new URLSearchParams({ game_version: data.game_version, locale }).toString()}`}
+          to={`${questPath(data)}?${new URLSearchParams({ game_version: data.game_version, locale }).toString()}`}
         >
           Read the quest
         </Link>

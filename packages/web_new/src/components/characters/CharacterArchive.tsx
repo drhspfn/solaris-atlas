@@ -69,7 +69,7 @@ export interface CharacterArchiveData {
 
 type MaterialUse = {
   item_id: number;
-  item?: { id: number; canonical_key: string; label: string };
+  item?: { id: number; canonical_key: string; label: string; slug?: string | null; href?: string };
   kind: string;
   level_cap?: number;
   required_count?: number;
@@ -244,6 +244,8 @@ export function CharacterArchive({
                     <Link
                       to={entityPath({
                         id: group.item.id,
+                        slug: group.item.slug,
+                        href: group.item.href,
                         canonical_key: group.item.canonical_key,
                         node_type: 'item',
                       })}

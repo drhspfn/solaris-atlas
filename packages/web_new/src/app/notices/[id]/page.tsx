@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { connection } from 'next/server';
 import { serverApi } from '@/api/serverApi';
+import { canonicalRoute } from '@/lib/canonicalRoute';
+import { decodeRouteKey } from '@/lib/routeKey';
 import { noticeCategories, type NoticeDetail } from '@/lib/notices';
 import '@/styles/notices.css';
 
@@ -10,9 +12,7 @@ async function readNotice(params: Props['params'], searchParams: Props['searchPa
   const { id } = await params;
   const { revision } = await searchParams;
   const query = revision && /^[a-f0-9]{64}$/.test(revision) ? `?revision=${revision}` : '';
-  return /^\d+$/.test(id)
-    ? serverApi<NoticeDetail>(`/notices/${id}${query}`, { revalidate: 0 })
-    : null;
+  return serverApi<NoticeDetail>(`/notices/${encodeURIComponent(decodeRouteKey(id))}${query}`, { revalidate: 0 });
 }
 export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
   const notice = await readNotice(params, searchParams);
@@ -25,6 +25,7 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
   return {
     title: `${notice.title} — Solaris Atlas`,
     description,
+    alternates: { canonical: notice.href || `/notices/${notice.slug || notice.id}` },
     openGraph: {
       title: notice.title,
       description,
@@ -43,6 +44,7 @@ export default async function NoticePage({ params, searchParams }: Props) {
         <Link href="/notices">Return to announcements</Link>
       </main>
     );
+  await canonicalRoute("notices", decodeRouteKey((await params).id), notice, searchParams);
   return (
     <main className="notices-page notice-detail">
       <Link href="/notices">← All announcements</Link>
@@ -55,7 +57,7 @@ export default async function NoticePage({ params, searchParams }: Props) {
       {!!notice.events.length && (
         <nav className="notice-related" aria-label="Related events">
           {notice.events.map((event) => (
-            <Link key={event.id} href={`/events?event=${event.id}`}>
+            <Link key={event.id} href={event.href || `/events?event=${event.slug || event.id}`}>
               {event.title} · Show history ↗
             </Link>
           ))}
@@ -91,7 +93,7 @@ export default async function NoticePage({ params, searchParams }: Props) {
           {notice.revisions.map((revision, index) => (
             <Link
               key={revision}
-              href={`/notices/${notice.id}?revision=${revision}`}
+              href={`${notice.href || `/notices/${notice.slug || notice.id}`}?revision=${revision}`}
               aria-current={revision === notice.revision ? 'page' : undefined}
             >
               {index === 0

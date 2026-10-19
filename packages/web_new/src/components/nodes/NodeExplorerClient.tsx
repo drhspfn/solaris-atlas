@@ -26,7 +26,7 @@ type Related = {
   relation: string;
   direction: string;
   basis: string;
-  node: { id: number; canonical_key: string; type: string; label: string };
+  node: { id: number; canonical_key: string; type: string; label: string; slug?: string | null; href?: string };
 };
 
 export function NodeExplorerPage({
@@ -96,7 +96,7 @@ export function NodeExplorerPage({
     localizedText(narrative?.dialogue?.text, narrative?.dialogue?.text?.inline_text || ''),
     playerDisplay.name,
   );
-  const title = dialogueText || node.slug || node.canonical_key;
+  const title = dialogueText || node.canonical_key;
   return (
     <div className="page-container">
       <div className="breadcrumbs">
@@ -131,6 +131,8 @@ export function NodeExplorerPage({
               className="node-speaker-link"
               to={entityPath({
                 id: narrative.dialogue.speaker.id,
+                slug: narrative.dialogue.speaker.slug,
+                href: narrative.dialogue.speaker.href,
                 canonical_key: narrative.dialogue.speaker.canonical_key,
                 node_type: narrative.dialogue.speaker.type,
               } as Entity)}
@@ -195,7 +197,7 @@ export function NodeExplorerPage({
                   <Link
                     className="node-quest-card"
                     to={questPassagePath(
-                      id,
+                      quest.slug || id,
                       narrative.dialogue.id,
                       locale,
                       narrative.game_version || gameVersion,
@@ -268,6 +270,8 @@ export function NodeExplorerPage({
                 className="connection-row"
                 to={entityPath({
                   id: edge.node.id,
+                  slug: edge.node.slug,
+                  href: edge.node.href,
                   canonical_key: edge.node.canonical_key,
                   node_type: edge.node.type,
                 } as Entity)}

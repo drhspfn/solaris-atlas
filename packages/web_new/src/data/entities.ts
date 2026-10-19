@@ -1,4 +1,5 @@
 import { BookOpen, Flower2, MapPin, Users } from 'lucide-react';
+import { publicPath } from '../lib/routeKey';
 
 export type Category = 'character' | 'item' | 'location' | 'quest' | 'speaker' | 'dialogue';
 export type Entity = {
@@ -8,7 +9,8 @@ export type Entity = {
   category?: Category;
   alias?: string;
   title?: string;
-  slug?: string;
+  slug?: string | null;
+  href?: string;
   score?: number;
   image_url?: string | null;
 };
@@ -48,15 +50,15 @@ export const categoryTitle: Record<string, string> = {
 };
 export function entityPath(item: Entity) {
   if (item.node_type === 'quest' || item.category === 'quest')
-    return `/quests/${item.canonical_key.split(':').at(-1)}`;
+    return publicPath('quests', item);
   const category =
     item.category ?? (item.node_type === 'area' ? 'location' : (item.node_type as Category));
   const path = categoryPath[category];
   if (!path || path === 'speakers' || path === 'dialogue') {
-    return `/nodes/${encodeURIComponent(item.canonical_key)}`;
+    return publicPath('nodes', item);
   }
-  return `/${path}/${encodeURIComponent(item.canonical_key)}`;
+  return publicPath(path, item);
 }
 export function display(item: Entity) {
-  return item.title || item.alias || item.slug || item.canonical_key;
+  return item.title || item.alias || item.canonical_key;
 }

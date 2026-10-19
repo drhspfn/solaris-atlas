@@ -72,6 +72,8 @@ export type StoryExplanation = {
   supplements?: StoryExplanation[];
   id: number;
   quest_id: number;
+  quest_href?: string;
+  quest_slug?: string;
   game_version: string;
   locale?: string;
   requested_locale?: string;
@@ -79,7 +81,7 @@ export type StoryExplanation = {
   blocks: ExplanationBlock[];
   unresolved_questions: string[];
   nodes: { id: number; canonical_key: string; kind: string; label: string; href: string }[];
-  events: { node_id: number; title: string }[];
+  events: { node_id: number; title: string; slug?: string; href?: string }[];
   links: {
     href?: string;
     from_node_id: number;
@@ -97,6 +99,8 @@ export type StoryConnection = StoryExplanation['links'][number] & {
   document_id: number;
   revision: number;
   quest_id: number;
+  quest_href?: string;
+  quest_slug?: string;
   game_version: string;
   locale: string;
   from_node: StoryExplanation['nodes'][number] | null;

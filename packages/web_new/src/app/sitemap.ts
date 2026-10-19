@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { serverApi } from '@/api/serverApi';
-import type { Entity } from '@/data/entities';
+import { entityPath, type Entity } from '@/data/entities';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://solarisatlas.fun';
@@ -65,38 +65,24 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   try {
-    // Try to fetch character and quest slugs for rich sitemap coverage
-    const [characters, quests] = await Promise.all([
-      serverApi<{ results: Entity[] }>('/catalog?category=character&limit=500&offset=0', { revalidate: 3600 }),
-      serverApi<{ results: Entity[] }>('/catalog?category=quest&limit=500&offset=0', { revalidate: 3600 }),
-    ]);
-
-    const dynamicRoutes: MetadataRoute.Sitemap = [];
-
-    if (characters?.results) {
-      for (const item of characters.results) {
-        dynamicRoutes.push({
-          url: `${siteUrl}/characters/${encodeURIComponent(item.canonical_key)}`,
-          lastModified: now,
-          changeFrequency: 'weekly',
-          priority: 0.7,
-        });
+    const groups = await Promise.all(['character', 'quest', 'item', 'location'].map(async (category) => {
+      const entries: Entity[] = [];
+      // Stay within the API's page limit and the 50,000 URL sitemap limit.
+      for (let offset = 0; offset < 12000; offset += 100) {
+        const page = await serverApi<{ results: Entity[]; total: number }>(
+          `/catalog?category=${category}&locale=en&limit=100&offset=${offset}`, { revalidate: 3600 });
+        if (!page?.results.length) break;
+        entries.push(...page.results);
+        if (page.results.length < 100 || entries.length >= page.total) break;
       }
-    }
-
-    if (quests?.results) {
-      for (const item of quests.results) {
-        const questId = item.canonical_key.split(':').at(-1);
-        if (questId) {
-          dynamicRoutes.push({
-            url: `${siteUrl}/quests/${encodeURIComponent(questId)}`,
-            lastModified: now,
-            changeFrequency: 'weekly',
-            priority: 0.7,
-          });
-        }
-      }
-    }
+      return entries;
+    }));
+    const dynamicRoutes: MetadataRoute.Sitemap = groups.flat().map((item) => ({
+      url: `${siteUrl}${entityPath(item)}`,
+      lastModified: now,
+      changeFrequency: 'weekly',
+      priority: 0.7,
+    }));
 
     return [...staticRoutes, ...dynamicRoutes];
   } catch {

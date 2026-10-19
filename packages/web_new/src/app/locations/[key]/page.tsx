@@ -1,12 +1,14 @@
 import type { Metadata } from 'next';
 
 import { serverApi } from '@/api/serverApi';
-import { decodeRouteKey } from '@/lib/routeKey';
+import { decodeRouteKey, publicPath } from '@/lib/routeKey';
+import { canonicalRoute, type RouteQuery } from '@/lib/canonicalRoute';
 import { EntityProfileClient } from '@/components/profile/EntityProfileClient';
 import { localizedText } from '@/data/localized';
 
 type Props = {
   params: Promise<{ key: string }>;
+  searchParams?: Promise<RouteQuery>;
 };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -28,11 +30,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title: `${name} — Location Profile`,
     description,
+    alternates: { canonical: publicPath("locations", location || {}, key) },
     openGraph: {
       title: `${name} — Locations | Solaris Atlas`,
       description,
       type: 'website',
-      url: `${siteUrl}/locations/${encodeURIComponent(key)}`,
+      url: `${siteUrl}${publicPath("locations", location || {}, key)}`,
       images: imageUrl ? [{ url: imageUrl, alt: name }] : undefined,
     },
     twitter: {
@@ -44,11 +47,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
-export default async function LocationProfilePage({ params }: Props) {
+export default async function LocationProfilePage({ params, searchParams }: Props) {
   const key = decodeRouteKey((await params).key);
   const initialData = await serverApi<any>(
     `/locations/${encodeURIComponent(key)}/profile?locale=en`,
   );
+
+  await canonicalRoute("locations", key, initialData?.location, searchParams);
 
   return <EntityProfileClient kind="location" entityKey={key} initialData={initialData} />;
 }

@@ -2,6 +2,8 @@ export type LocalizedText = { content?: string | null } | null;
 
 export type StoryQuest = {
   game_quest_id: number;
+  slug?: string;
+  href?: string;
   title: string;
   first_observed_game_version: string | null;
   source: { file: string; raw_path: string } | null;
@@ -54,16 +56,19 @@ export type QuestContinuity = {
       relation: 'quest_tree_predecessor' | 'quest_tree_next';
       canonical_key: string;
       quest_ids: number[];
+      quests?: { game_quest_id: number; slug?: string; href?: string }[];
       name: LocalizedText;
       source: { file: string; raw_path: string };
     }[];
   }[];
   prerequisites: {
     quest: string;
+    slug?: string;
+    href?: string;
     name: LocalizedText;
     source: { file: string; raw_path: string };
   }[];
-  required_by: { quest: string; name: LocalizedText; source: { file: string; raw_path: string } }[];
+  required_by: { quest: string; slug?: string; href?: string; name: LocalizedText; source: { file: string; raw_path: string } }[];
 };
 /** Keep source identity intact, including non-Latin keys and URL punctuation. */
 export function questPassagePath(
