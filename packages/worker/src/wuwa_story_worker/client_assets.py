@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import errno
 import gzip
 import hashlib
 import json
@@ -11,7 +13,7 @@ import re
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, urlparse
@@ -236,7 +238,12 @@ def workspace_lock(workspace: Path):
             stream.write(b"\0")
             stream.flush()
             stream.seek(0)
-            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            try:
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as error:
+                if error.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                    raise BlockingIOError("Asset workspace is locked") from error
+                raise
         else:
             import fcntl
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -248,6 +255,22 @@ def workspace_lock(workspace: Path):
                 msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
+@asynccontextmanager
+async def wait_workspace_lock(workspace: Path):
+    """Wait only for this resource, without blocking the event loop or broker retrying."""
+    while True:
+        lock = workspace_lock(workspace)
+        try:
+            lock.__enter__()
+            break
+        except BlockingIOError:
+            await asyncio.sleep(0.1)
+    try:
+        yield
+    finally:
+        lock.__exit__(None, None, None)
 
 
 def download_plan(plan: dict[str, Any], workspace: Path, concurrency: int = 4) -> Path:
