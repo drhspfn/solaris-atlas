@@ -3,6 +3,7 @@
 import { ArrowUpRight } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from '@/lib/router';
+import { questPath } from '@/lib/routeKey';
 
 import { api } from '../../api/client';
 import { APP_SETTINGS } from '../../config/settings';
@@ -91,7 +92,7 @@ export function StoryQuestionResults({
               <h2>{result.is_supplement ? 'New context for this quest' : result.title}</h2>
             </div>
             <Link
-              to={`/quests/${result.quest_id}?game_version=${encodeURIComponent(result.game_version)}&locale=${locale}`}
+              to={`${questPath(result)}?game_version=${encodeURIComponent(result.game_version)}&locale=${locale}`}
             >
               Read quest <ArrowUpRight size={15} aria-hidden="true" />
             </Link>

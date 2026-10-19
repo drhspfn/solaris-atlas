@@ -1,5 +1,7 @@
 export type Notice = {
   id: number;
+  slug?: string | null;
+  href?: string;
   source_id: string;
   title: string;
   category: 'recommend' | 'game' | 'activity';
@@ -14,6 +16,6 @@ export type NoticeDetail = Notice & {
   blocks: ({ type: 'text'; text: string } | { type: 'image'; url: string })[];
   links: string[];
   revisions: string[];
-  events: { id: number; title: string }[];
+  events: { id: number; title: string; slug?: string; href?: string }[];
 };
 export const noticeCategories = { recommend: 'Highlights', game: 'Info', activity: 'News' };

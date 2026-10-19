@@ -3,6 +3,7 @@
 import { Search, X } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from '@/lib/router';
+import { questPath } from '@/lib/routeKey';
 
 import { api } from '../../api/client';
 import { APP_SETTINGS } from '../../config/settings';
@@ -110,7 +111,7 @@ export function InlineDialogueSearch({
           <small>
             {r.flow_state || 'Dialogue'} · {r.action?.name || 'Talk'} ·{' '}
             {questId ? (
-              <Link to={`/quests/${questId}`}>Open quest transcript</Link>
+              <Link to={questPath(quests.find((quest) => String(quest.game_quest_id) === questId) || questId)}>Open quest transcript</Link>
             ) : (
               <span>Select a quest to open its transcript</span>
             )}

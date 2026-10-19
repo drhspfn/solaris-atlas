@@ -606,6 +606,8 @@ export function QuestPageClient({
                     key={`${target.canonical_key}-${link.relation}-${index}`}
                     to={entityPath({
                       id: target.id,
+                      slug: target.slug,
+                      href: target.href,
                       canonical_key: target.canonical_key,
                       node_type: target.type,
                     })}
@@ -636,6 +638,8 @@ export function QuestPageClient({
                       key={`${target?.canonical_key}-${link.relation}-${index}`}
                       to={entityPath({
                         id: target.id,
+                        slug: target.slug,
+                        href: target.href,
                         canonical_key: target.canonical_key,
                         node_type: target.type,
                       })}

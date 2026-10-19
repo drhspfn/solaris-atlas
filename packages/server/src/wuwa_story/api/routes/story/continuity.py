@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.api.routes.story.shared import _localized, _release_id, _version_key
 from wuwa_story.db.models.core import Quest
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
@@ -13,6 +14,7 @@ from wuwa_story.db.models.i18n import LocalizationKey
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
+from wuwa_story.db.repositories.nodes import get_quest
 from wuwa_story.db.session import get_session
 
 router = APIRouter(tags=["story browsing"])
@@ -61,16 +63,18 @@ async def _table_row(
 
 
 @router.get("/quests/{game_quest_id}/continuity")
+@public_addresses
 async def quest_continuity(
-    game_quest_id: int,
+    game_quest_id: str,
     locale: str = "en",
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Expose observed patch presence, quest category, chapter and authored tree links."""
-    quest = await session.scalar(select(Quest).where(Quest.game_quest_id == game_quest_id))
+    quest = await get_quest(session, game_quest_id)
     if quest is None:
         raise HTTPException(status_code=404, detail="quest not found")
+    game_quest_id = quest.game_quest_id
     release_id = await _release_id(session, game_version)
     if release_id is None:
         raise HTTPException(status_code=404, detail="game version not imported")

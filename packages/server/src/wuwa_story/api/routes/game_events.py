@@ -8,11 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
 from wuwa_story.storage.s3 import S3Storage
+from wuwa_story.urls import node_address, record_url
 
 router = APIRouter(tags=["game events"])
 
@@ -56,10 +58,14 @@ async def list_game_events(
     for notice in announcements:
         for event_id in notice.related_event_ids:
             notice_links.setdefault(event_id, []).append({"id": notice.id, "title": notice.title,
-                                                          "url": f"/notices/{notice.id}"})
+                                                          "url": record_url(notice, "notices")})
             previous = latest_notice.get(event_id)
             if previous is None or notice.published_at and (not previous.published_at or notice.published_at > previous.published_at):
                 latest_notice[event_id] = notice
+    reward_keys = {f"item:{reward['id']}" for event, occurrence in rows
+                   for reward in (_presentation(event, occurrence, locale).get("rewards") or event.rewards or [])}
+    reward_nodes = list(await session.scalars(select(Node).where(Node.canonical_key.in_(reward_keys)))) if reward_keys else []
+    reward_addresses = {node.canonical_key: node_address(node, "item") for node in reward_nodes}
     banner_paths = {asset["path"] for event, occurrence in rows
                     for asset in _artwork(event, occurrence)}
     banner_paths.update(path for event, occurrence in rows
@@ -126,6 +132,8 @@ async def list_game_events(
         "events": [
             {
                 "id": event.id,
+                "slug": getattr(event, "slug", None),
+                "href": record_url(event, "events"),
                 "source_id": event.source_id,
                 "occurrence_id": occurrence.id if occurrence else None,
                 "title": _presentation(event, occurrence, locale).get("title") or event.title,
@@ -135,7 +143,8 @@ async def list_game_events(
                 "starts_at": occurrence.starts_at if occurrence else None,
                 "ends_at": occurrence.ends_at if occurrence else None,
                 "season": occurrence.season if occurrence else None,
-                "rewards": _presentation(event, occurrence, locale).get("rewards", []),
+                "rewards": [{**reward, **reward_addresses.get(f"item:{reward['id']}", {})}
+                            for reward in (_presentation(event, occurrence, locale).get("rewards") or [])],
                 "featured_names": _presentation(event, occurrence, locale).get("featured_names", []),
                 "up_names": _presentation(event, occurrence, locale).get("up_names", []),
                 "banner_path": (occurrence.banner_path if occurrence else None) or event.banner_path,

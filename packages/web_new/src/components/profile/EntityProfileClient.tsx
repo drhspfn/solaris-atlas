@@ -18,6 +18,7 @@ import { localizedText } from '@/data/localized';
 import { useLocale } from '@/hooks/useLocale';
 import { usePlayerDisplay } from '@/hooks/usePlayerDisplay';
 import { Link } from '@/lib/router';
+import { questPath } from '@/lib/routeKey';
 
 export function EntityProfileClient({
   kind,
@@ -243,7 +244,7 @@ export function EntityProfileClient({
                 const quest = q.quest || q;
                 const id = quest.game_quest_id || quest.canonical_key?.split(':').at(-1);
                 return (
-                  <Link to={`/quests/${id}`} className="connection-row" key={i}>
+                  <Link to={questPath(quest)} className="connection-row" key={i}>
                     <span className="connection-index">{String(i + 1).padStart(2, '0')}</span>
                     <div>
                       <strong>
@@ -271,7 +272,7 @@ export function EntityProfileClient({
               <p>Open a quest transcript to read every line in authored order.</p>
               {quests[0] && (
                 <Link
-                  to={`/quests/${quests[0].quest?.game_quest_id || quests[0].game_quest_id}`}
+                  to={questPath(quests[0].quest || quests[0])}
                   className="small-link"
                 >
                   Read a transcript <ArrowRight size={14} />
@@ -304,7 +305,7 @@ export function EntityProfileClient({
                 const questId = quest.game_quest_id || quest.canonical_key?.split(':').at(-1);
                 return (
                   <Link
-                    to={`/quests/${questId}`}
+                    to={questPath(quest)}
                     className="connection-row"
                     key={`${use.quest_node_key}-${index}`}
                   >
@@ -333,7 +334,7 @@ export function EntityProfileClient({
                     const quest = q.quest || q;
                     const id = quest.game_quest_id || quest.canonical_key?.split(':').at(-1);
                     return (
-                      <Link to={`/quests/${id}`} className="connection-row" key={i}>
+                      <Link to={questPath(quest)} className="connection-row" key={i}>
                         <span className="connection-index">{String(i + 1).padStart(2, '0')}</span>
                         <div>
                           <strong>
@@ -368,6 +369,8 @@ export function EntityProfileClient({
                 const item: Entity = {
                   id: target.id || i,
                   canonical_key: target.canonical_key || target.label,
+                  slug: target.slug,
+                  href: target.href,
                   node_type: target.type || 'character',
                   category: target.type === 'area' ? 'location' : undefined,
                   title: target.label || target.canonical_key,
@@ -409,7 +412,7 @@ export function EntityProfileClient({
                               return (
                                 <Link
                                   className="shared-scene-quest"
-                                  to={`/quests/${questId}`}
+                                  to={questPath(quest)}
                                   key={quest.canonical_key || questId}
                                 >
                                   {localizedText(quest.name, `Quest ${questId}`)}{' '}
@@ -511,6 +514,8 @@ export function EntityProfileClient({
                   {progressionGroups.map(({ character, uses }) => {
                     const characterHref = entityPath({
                       id: character.id,
+                      slug: character.slug,
+                      href: character.href,
                       canonical_key: character.canonical_key,
                       node_type: 'character',
                     });
@@ -632,6 +637,8 @@ export function EntityProfileClient({
                 className="plain-row"
                 to={entityPath({
                   id: 0,
+                  slug: data.hierarchy.parent.slug,
+                  href: data.hierarchy.parent.href,
                   canonical_key: data.hierarchy.parent.canonical_key,
                   node_type: data.hierarchy.parent.type,
                 })}
@@ -650,6 +657,8 @@ export function EntityProfileClient({
                   key={child.canonical_key || index}
                   to={entityPath({
                     id: child.id,
+                    slug: child.slug,
+                    href: child.href,
                     canonical_key: child.canonical_key,
                     node_type: child.type,
                   })}

@@ -8,6 +8,8 @@ import { Check, CircleCheck, FoldVertical, Link2, RotateCcw, Undo2, X } from 'lu
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from '@/lib/router';
 
+import { Link } from '@/lib/router';
+import { publicPath, type PublicAddress } from '@/lib/routeKey';
 import { api } from '@/api/client';
 import { Select } from '@/components/ui/Select';
 import { iconNode, ObjectIcon } from '@/components/MapIcons';
@@ -48,6 +50,8 @@ type Atlas = {
   tiles?: { x: number; y: number; image: { url: string } | null }[];
 };
 type Marker = {
+  item?: PublicAddress | null;
+  drops?: PublicAddress[];
   id: number;
   entity_id: number;
   category: string;
@@ -1485,6 +1489,7 @@ export function WorldMapPage() {
               </button>
             </header>
             <div className="atlas-detail-body">
+              {selected.item && <Link to={publicPath("items", selected.item)}>Item details →</Link>}
               {canMarkFound(selected) && (
                 <div className="atlas-found-control">
                   <div className="atlas-found-state" role="status">

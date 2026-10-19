@@ -1,3 +1,4 @@
+import { publicPath } from '@/lib/routeKey';
 import Markdown from 'react-markdown';
 import { Link } from '@/lib/router';
 
@@ -50,7 +51,7 @@ export function StoryProse({ text, explanation }: { text: string; explanation: S
               const event = explanation.events[index];
               return event ? (
                 <Link
-                  to={`/story-analysis/events/${event.node_id}?${new URLSearchParams({ game_version: explanation.game_version, locale: explanation.locale || 'en' })}`}
+                  to={`${publicPath("story-analysis/events", event, String(event.node_id))}?${new URLSearchParams({ game_version: explanation.game_version, locale: explanation.locale || 'en' })}`}
                 >
                   {children}
                 </Link>

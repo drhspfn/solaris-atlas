@@ -1,5 +1,6 @@
 import { ArrowRight, MapPin, Swords } from 'lucide-react';
 import { Link } from '@/lib/router';
+import { publicPath, questPath } from '@/lib/routeKey';
 
 import { localizedText } from '../../data/localized';
 import { EmptyInline } from '../ui/Feedback';
@@ -25,9 +26,9 @@ type Acquisition = {
     purchase_limit?: number;
     prices?: { amount: number; item_id: number; item?: { label: string } }[];
   }[];
-  quest_rewards?: { quest: { game_quest_id: number; name: Text } }[];
+  quest_rewards?: { quest: { game_quest_id: number; name: Text; slug?: string; href?: string } }[];
   quest_rewards_has_more?: boolean;
-  locations?: { node: { canonical_key: string; label: string } }[];
+  locations?: { node: { canonical_key: string; label: string; slug?: string; href?: string } }[];
   harvest_world_maps?: { map_id: number; named_region?: { canonical_key?: string; name: Text } }[];
 };
 
@@ -104,7 +105,7 @@ export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: s
           {quests.map(({ quest }) => (
             <Link
               key={quest.game_quest_id}
-              to={`/quests/${quest.game_quest_id}`}
+              to={questPath(quest)}
               className="connection-row"
             >
               <div>
@@ -154,7 +155,7 @@ export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: s
             <Link
               className="connection-row"
               key={node.canonical_key}
-              to={`/locations/${encodeURIComponent(node.canonical_key)}`}
+              to={publicPath("locations", node)}
             >
               <strong>{node.label}</strong>
               <ArrowRight size={16} />

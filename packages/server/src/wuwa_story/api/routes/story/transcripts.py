@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.api.routes.story.media import dialogue_media
 from wuwa_story.api.routes.story.shared import (
     _dialogue_payload,
@@ -25,11 +26,13 @@ from wuwa_story.db.models.i18n import Locale, LocalizationKey, LocalizationValue
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.story import Scene
+from wuwa_story.db.repositories.nodes import get_node, get_quest
 from wuwa_story.db.session import get_session
 
 router = APIRouter(tags=["story browsing"])
 
 @router.get("/dialogue/search")
+@public_addresses
 async def search_dialogue(
     q: str = Query(min_length=1, max_length=512),
     character: str | None = None,
@@ -65,7 +68,7 @@ async def search_dialogue(
         )
     )
     if character:
-        character_node = await session.scalar(select(Node).where(Node.canonical_key == character))
+        character_node = await get_node(session, character, ("character",))
         if character_node is None:
             raise HTTPException(status_code=404, detail="character not found")
         speaker_ids = select(SpeakerEntityLink.speaker_node_id).where(
@@ -105,8 +108,9 @@ async def search_dialogue(
     }
 
 @router.get("/quests/{game_quest_id}/transcript")
+@public_addresses
 async def quest_transcript(
-    game_quest_id: int,
+    game_quest_id: str,
     character: str | None = None,
     q: str | None = Query(default=None, max_length=512),
     locale: str = "en",
@@ -116,9 +120,10 @@ async def quest_transcript(
     focus_line: str | None = Query(default=None, max_length=512),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    quest = await session.scalar(select(Quest).where(Quest.game_quest_id == game_quest_id))
+    quest = await get_quest(session, game_quest_id)
     if quest is None:
         raise HTTPException(status_code=404, detail="quest not found")
+    game_quest_id = quest.game_quest_id
     states = await _quest_state_ids(session, quest.node_id)
     release_id = await _release_id(session, game_version)
     statement = (
@@ -131,7 +136,7 @@ async def quest_transcript(
         .where(QuestAction.quest_state_node_id.in_(states))
     )
     if character:
-        character_node = await session.scalar(select(Node).where(Node.canonical_key == character))
+        character_node = await get_node(session, character, ("character",))
         if character_node is None:
             raise HTTPException(status_code=404, detail="character not found")
         speaker_ids = select(SpeakerEntityLink.speaker_node_id).where(

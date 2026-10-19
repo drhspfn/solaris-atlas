@@ -7,6 +7,7 @@ import { ErrorPanel, PageLoader } from '@/components/ui/Feedback';
 import type { StoryMap, StoryTreeNode } from '@/data/story';
 import { useLocale } from '@/hooks/useLocale';
 import { Link, useSearchParams } from '@/lib/router';
+import { questPath } from '@/lib/routeKey';
 
 const questTypes = [
   { id: 1, label: 'Main story' },
@@ -32,7 +33,7 @@ function StoryStep({ node, version }: { node: StoryTreeNode; version: string }) 
             {node.quests.map((quest) => (
               <Link
                 key={quest.game_quest_id}
-                to={`/quests/${quest.game_quest_id}?game_version=${encodeURIComponent(version)}`}
+                to={`${questPath(quest)}?game_version=${encodeURIComponent(version)}`}
                 className="story-quest-link"
               >
                 <BookOpen size={16} aria-hidden="true" />

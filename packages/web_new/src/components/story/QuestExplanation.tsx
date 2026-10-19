@@ -1,4 +1,5 @@
 'use client';
+import { publicPath } from '@/lib/routeKey';
 
 import { ArrowRight, ChevronDown, Network } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -132,7 +133,7 @@ export function QuestExplanation({
                   {explanation.events.map((event) => (
                     <Link
                       key={event.node_id}
-                      to={`/story-analysis/events/${event.node_id}?game_version=${encodeURIComponent(explanation.game_version)}&locale=${locale}`}
+                      to={`${publicPath("story-analysis/events", event, String(event.node_id))}?game_version=${encodeURIComponent(explanation.game_version)}&locale=${locale}`}
                     >
                       {event.title}
                       <ArrowRight size={13} aria-hidden="true" />

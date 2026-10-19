@@ -1,12 +1,16 @@
-from urllib.parse import urljoin
+from html import escape
+from urllib.parse import unquote, urljoin
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, Response
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.graph import Node, NodeType
 from wuwa_story.db.session import get_session
-from wuwa_story.config.settings import get_settings
+from wuwa_story.db.repositories.nodes import get_node, get_quest
+from wuwa_story.api.routes.story.shared import _node_label
 
 router = APIRouter(tags=["seo"])
 
@@ -26,7 +30,7 @@ async def sitemap_xml(request: Request, session: AsyncSession = Depends(get_sess
         select(Node.slug, NodeType.key)
         .join(NodeType, Node.type_id == NodeType.id)
         .where(
-            NodeType.key.in_(["character", "quest"]),
+            NodeType.key.in_(["character", "quest", "item", "area", "location"]),
             Node.slug.is_not(None),
             Node.status == "active"
         )
@@ -45,8 +49,10 @@ async def sitemap_xml(request: Request, session: AsyncSession = Depends(get_sess
             loc = f"{base_url}/characters/{slug}"
         elif ntype == "quest":
             loc = f"{base_url}/quests/{slug}"
+        elif ntype == "item":
+            loc = f"{base_url}/items/{slug}"
         else:
-            loc = f"{base_url}/story/{slug}"
+            loc = f"{base_url}/locations/{slug}"
         
         urls.append(f"<url><loc>{loc}</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>")
         
@@ -67,23 +73,21 @@ async def seo_prerender(path: str, request: Request, session: AsyncSession = Dep
     
     parts = path.strip("/").split("/")
     
-    if len(parts) >= 2 and parts[0] == "characters":
-        slug = parts[1]
-        node = await session.scalar(
-            select(Node).join(NodeType).where(NodeType.key == "character", Node.slug == slug)
-        )
+    groups = {"characters": ("character",), "items": ("item",),
+              "locations": ("area", "location"), "quests": ("quest",)}
+    if len(parts) >= 2 and parts[0] in groups:
+        key = unquote(parts[1])
+        if parts[0] == "quests":
+            quest = await get_quest(session, key)
+            node = await session.get(Node, quest.node_id) if quest else None
+        else:
+            node = await get_node(session, key, groups[parts[0]])
         if node:
-            title = f"{slug.replace('-', ' ').title()} - Characters | Solaris Atlas"
-            description = f"Lore, stats, and voice lines for {slug.title()}."
-            
-    elif len(parts) >= 2 and parts[0] == "quests":
-        slug = parts[1]
-        node = await session.scalar(
-            select(Node).join(NodeType).where(NodeType.key == "quest", Node.slug == slug)
-        )
-        if node:
-            title = f"Quest: {slug.replace('-', ' ').title()} | Solaris Atlas"
-            description = f"Story transcript and details for {slug.title()}."
+            name = (await _node_label(session, node.id, "en"))["label"]
+            title = f"{name} | Solaris Atlas"
+            description = f"Details and story connections for {name}."
+    title, description, image = escape(title), escape(description), escape(image, quote=True)
+    public_url = escape(urljoin(base_url, path), quote=True)
 
     html = f'''<!DOCTYPE html>
 <html lang="en">
@@ -94,7 +98,7 @@ async def seo_prerender(path: str, request: Request, session: AsyncSession = Dep
     <meta property="og:title" content="{title}" />
     <meta property="og:description" content="{description}" />
     <meta property="og:image" content="{image}" />
-    <meta property="og:url" content="{urljoin(base_url, path)}" />
+    <meta property="og:url" content="{public_url}" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="{title}" />
     <meta name="twitter:description" content="{description}" />

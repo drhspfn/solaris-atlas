@@ -5,6 +5,7 @@ import '@/styles/story-agent.css';
 import { ArrowLeft, ArrowRight, BookOpen, Play, RefreshCw } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 
+import { questPath } from '@/lib/routeKey';
 import { api, ApiError } from '@/api/client';
 import { useAuth } from '@/auth/AuthProvider';
 import { AgentRevisits } from '@/components/story/AgentRevisits';
@@ -479,7 +480,7 @@ function RunDetail({
             {job.request && (
               <Link
                 className="agent-button"
-                to={`/quests/${job.request.quest_id}?game_version=${encodeURIComponent(job.request.game_version)}&locale=${encodeURIComponent(job.request.locale)}`}
+                to={`${questPath(job.request)}?game_version=${encodeURIComponent(job.request.game_version)}&locale=${encodeURIComponent(job.request.locale)}`}
               >
                 <BookOpen size={14} />
                 {job.status === 'completed' ? 'Read explanation' : 'Open quest'}

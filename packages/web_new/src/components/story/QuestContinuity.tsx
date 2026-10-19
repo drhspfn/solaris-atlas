@@ -2,6 +2,7 @@
 
 import { ArrowLeft, ArrowRight, GitBranch } from 'lucide-react';
 import { Link } from '@/lib/router';
+import { questPath } from '@/lib/routeKey';
 
 import type { QuestContinuity as Continuity } from '../../data/story';
 
@@ -17,8 +18,9 @@ function NeighborLinks({
   const seen = new Set<number>();
   const quests = entries
     .flatMap((entry) =>
-      entry.quest_ids.map((id) => ({
-        id,
+      (entry.quests ?? entry.quest_ids.map((id) => ({ game_quest_id: id }))).map((quest) => ({
+        ...quest,
+        id: quest.game_quest_id,
         title: entry.name?.content,
         source: entry.source,
       })),
@@ -35,7 +37,7 @@ function NeighborLinks({
         quests.map((quest) => (
           <Link
             key={quest.id}
-            to={`/quests/${quest.id}?game_version=${encodeURIComponent(version)}`}
+            to={`${questPath(quest)}?game_version=${encodeURIComponent(version)}`}
             title={`${quest.source.file} ${quest.source.raw_path}`}
           >
             {direction === 'previous' && <ArrowLeft size={16} aria-hidden="true" />}
@@ -97,7 +99,7 @@ export function QuestContinuity({ continuity, title }: { continuity: Continuity;
             {continuity.prerequisites.map((entry) => (
               <Link
                 key={entry.quest}
-                to={`/quests/${entry.quest.split(':').at(-1)}?game_version=${encodeURIComponent(version)}`}
+                to={`${questPath(entry)}?game_version=${encodeURIComponent(version)}`}
                 title={`${entry.source.file} ${entry.source.raw_path}`}
               >
                 <ArrowLeft size={16} aria-hidden="true" />
@@ -118,7 +120,7 @@ export function QuestContinuity({ continuity, title }: { continuity: Continuity;
             {continuity.required_by.map((entry) => (
               <Link
                 key={entry.quest}
-                to={`/quests/${entry.quest.split(':').at(-1)}?game_version=${encodeURIComponent(version)}`}
+                to={`${questPath(entry)}?game_version=${encodeURIComponent(version)}`}
                 title={`${entry.source.file} ${entry.source.raw_path}`}
               >
                 <span>

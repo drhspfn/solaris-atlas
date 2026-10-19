@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.api.routes.story.shared import _display_label, _version_key
 from wuwa_story.db.models.core import Quest
 from wuwa_story.db.models.graph import NodeRevision
@@ -291,6 +292,7 @@ def _first_seen_chapters(snapshot: dict[str, Any], version: str) -> list[dict[st
 
 
 @router.get("/story-map")
+@public_addresses
 async def story_map(
     locale: str = "en",
     game_version: str | None = None,

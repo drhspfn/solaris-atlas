@@ -14,13 +14,14 @@ from wuwa_story.api.routes.story.cutscene_audio import audio_bundles
 from wuwa_story.api.routes.story.shared import _quest_state_ids, _release_id
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.content import Document, DocumentHead
-from wuwa_story.db.models.core import Quest, QuestAction, QuestState, VoiceReference
+from wuwa_story.db.models.core import QuestAction, QuestState, VoiceReference
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileReference
+from wuwa_story.db.repositories.nodes import get_quest
 from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.cutscenes import Clip, PlaybackFlow
 from wuwa_story.storage.s3 import S3Storage
@@ -242,15 +243,16 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
 
 @router.get("/quests/{game_quest_id}/media")
 async def quest_media(
-    game_quest_id: int,
+    game_quest_id: str,
     game_version: str | None = None,
     locale: str = "en",
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Authored media references with published playable files when available."""
-    quest = await session.scalar(select(Quest).where(Quest.game_quest_id == game_quest_id))
+    quest = await get_quest(session, game_quest_id)
     if quest is None:
         raise HTTPException(status_code=404, detail="quest not found")
+    game_quest_id = quest.game_quest_id
     release_id = await _release_id(session, game_version)
     if release_id is None:
         raise HTTPException(status_code=404, detail="game version not imported")

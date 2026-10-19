@@ -99,7 +99,7 @@ export default async function NoticesPage({
           )}
           <div className="notices-grid">
             {data.notices.map((notice) => (
-              <Link className="notice-card" href={`/notices/${notice.id}`} key={notice.id}>
+              <Link className="notice-card" href={notice.href || `/notices/${notice.slug || notice.id}`} key={notice.id}>
                 <div className="notice-card-image">
                   {notice.banner_url ? (
                     <img src={notice.banner_url} alt="" loading="lazy" />

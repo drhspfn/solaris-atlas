@@ -3,7 +3,7 @@
 import json
 from collections.abc import Awaitable
 from typing import Any, cast
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
 import httpx
 from redis.asyncio import Redis
@@ -38,6 +38,7 @@ from wuwa_story.db.models.graph import Edge, Node, NodeType
 from wuwa_story.db.models.i18n import Locale, LocalizationValue
 from wuwa_story.db.models.ops import GameRelease, ProcessingRun
 from wuwa_story.db.models.search import EmbeddingModel
+from wuwa_story.urls import node_url
 
 
 async def source_link(
@@ -53,8 +54,8 @@ async def source_link(
         owners = select(Edge.from_node_id).where(
             Edge.to_node_id == state_id, Edge.id.in_(source_edges(release.id))
         )
-        quest_id = await session.scalar(
-            select(Quest.game_quest_id)
+        quest_node = await session.scalar(
+            select(Node).join(Quest, Quest.node_id == Node.id)
             .where(
                 or_(
                     Quest.node_id.in_(owners),
@@ -66,14 +67,9 @@ async def source_link(
             .order_by(Quest.game_quest_id)
             .limit(1)
         )
-        if quest_id:
-            return f"/quests/{quest_id}?" + urlencode({**params, "line": node.canonical_key})
-    if kind == "quest":
-        quest_id = await session.scalar(select(Quest.game_quest_id).where(Quest.node_id == node.id))
-        if quest_id:
-            return f"/quests/{quest_id}?" + urlencode(params)
-    path = {"character": "characters", "location": "locations", "item": "items"}.get(kind, "nodes")
-    return f"/{path}/{quote(node.canonical_key, safe='')}?" + urlencode(params)
+        if quest_node:
+            return node_url(quest_node, "quest") + "?" + urlencode({**params, "line": node.canonical_key})
+    return node_url(node, kind) + "?" + urlencode(params)
 
 
 async def scope(
@@ -220,7 +216,7 @@ async def public_document(
                 or (
                     "Dialogue passage"
                     if kind == "dialogue_line"
-                    else node.slug or node.canonical_key
+                    else node.canonical_key
                 ),
                 "href": await source_link(
                     session,
