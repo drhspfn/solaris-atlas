@@ -2,7 +2,7 @@
 import { ExternalLink, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { EventArtwork } from './EventArtwork';
-import { kindLabels } from './calendar';
+import { kindLabels, timeZoneLabel } from './calendar';
 import { countdown, type GameEvent } from './calendar';
 
 export function EventDetails({
@@ -82,7 +82,7 @@ export function EventDetails({
         <h2 id="event-modal-title">{event.title}</h2>
         <p className="events-detail-dates">
           {event.starts_at
-            ? `${format(event.starts_at)} → ${event.ends_at ? format(event.ends_at) : event.kind === 'permanent' ? 'Permanent' : 'End date unavailable'} (${timeZone})`
+            ? `${format(event.starts_at)} → ${event.ends_at ? format(event.ends_at) : event.kind === 'permanent' ? 'Permanent' : 'End date unavailable'} (${timeZoneLabel(timeZone, new Date(event.starts_at).getTime())})`
             : 'Opening dates are supplied by the game server, not the client catalog.'}
         </p>
         <p className="events-description">

@@ -1,5 +1,12 @@
 export const DAY = 86_400_000;
 export const DAY_WIDTH = 44;
+export function timeZoneLabel(timeZone: string, time: number) {
+  return new Intl.DateTimeFormat('en', { timeZone, timeZoneName: 'shortOffset' })
+    .formatToParts(time)
+    .find((part) => part.type === 'timeZoneName')!
+    .value.replace('GMT', 'UTC')
+    .replace(/^UTC[+-]0$/, 'UTC');
+}
 export type EventKind = 'banner' | 'limited' | 'recurring' | 'permanent';
 export const kindLabels: Record<EventKind, string> = {
   banner: 'Convenes',
