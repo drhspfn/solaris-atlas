@@ -19,6 +19,7 @@ import {
   shiftMonth,
   startTime,
   timePosition,
+  timeZoneLabel,
   type GameEvent,
   type EventKind,
 } from './calendar';
@@ -220,7 +221,7 @@ export function EventsPage({
             checked={localTime}
             onChange={(event) => setLocalTime(event.target.checked)}
           />
-          Local time <small>({localTime ? localZone : servers[server]})</small>
+          Local time <small>({timeZoneLabel(timeZone, now ?? 0)})</small>
         </label>
       </section>
       <details className="events-picker">
@@ -292,7 +293,8 @@ export function EventsPage({
           </div>
         </header>
         <p className="events-calendar-help">
-          Scroll across for dates and down for events. Select a bar for details. Times: {timeZone}.
+          Scroll across for dates and down for events. Select a bar for details. Times:{' '}
+          {timeZoneLabel(timeZone, now ?? 0)}.
         </p>
         {loading ? (
           <p className="events-empty" role="status">

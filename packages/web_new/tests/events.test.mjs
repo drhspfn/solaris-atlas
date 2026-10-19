@@ -8,6 +8,7 @@ import {
   countdown,
   shiftMonth,
   timePosition,
+  timeZoneLabel,
 } from '../src/components/events/calendar.ts';
 
 const run = (id, occurrence, start, end, kind = 'limited') => ({
@@ -16,6 +17,12 @@ const run = (id, occurrence, start, end, kind = 'limited') => ({
   starts_at: start,
   ends_at: end,
   kind,
+});
+
+test('timezone labels show UTC offsets and follow Moldova daylight saving', () => {
+  assert.equal(timeZoneLabel('Europe/Chisinau', Date.parse('2026-10-19T12:00:00Z')), 'UTC+3');
+  assert.equal(timeZoneLabel('Europe/Chisinau', Date.parse('2026-12-19T12:00:00Z')), 'UTC+2');
+  assert.equal(timeZoneLabel('UTC', 0), 'UTC');
 });
 test('reruns share one event row while retaining separate clickable occurrences', () => {
   const first = run(1, 10, '2026-10-01T00:00:00Z', '2026-10-10T00:00:00Z');
