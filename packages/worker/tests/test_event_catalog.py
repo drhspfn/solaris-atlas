@@ -25,7 +25,7 @@ def blob(fields, vector=None):
 def fixture_config(tmp_path):
     for filename, name, identifier, data in (
         ("db_activity.db", "activity", 102000009, blob({
-            20: "Activity_111800001_Title", 23: "Activity_111800001_Desc",
+            20: "Activity_InternalName", 21: "Activity_111800001_Title", 23: "Activity_111800001_Desc",
             24: "/Game/Aki/Artwork/Event.Event",
         })),
         ("db_gacha.db", "gachaviewinfo", 200087, blob({
@@ -72,3 +72,54 @@ def test_missing_localization_is_reported_without_inventing_a_title(tmp_path):
 @pytest.mark.parametrize("path", ["/Game/../Secret", "Common/Event", ""])
 def test_invalid_texture_paths_are_not_used(path):
     assert texture_path(path) is None
+
+
+def test_weapon_selection_types_resolve_weapon_names_not_role_ids(tmp_path):
+    config = fixture_config(tmp_path)
+    with sqlite3.connect(config / "db_gacha.db") as db:
+        builder = flatbuffers.Builder(128)
+        name = builder.CreateString("/Game/Aki/UI/UIResources/Common/Image/Weapon")
+        builder.StartVector(4, 1, 4)
+        builder.PrependInt32(21020107)
+        featured = builder.EndVector()
+        builder.StartObject(18)
+        builder.PrependInt32Slot(1, 14, 0)
+        builder.PrependUOffsetTRelativeSlot(10, name, 0)
+        builder.PrependUOffsetTRelativeSlot(16, featured, 0)
+        builder.Finish(builder.EndObject())
+        db.execute("UPDATE gachaviewinfo SET BinData=?", (bytes(builder.Output()),))
+    record = read_event_catalog(config)["gacha:200087"]
+    assert record["locales"]["en"]["title"] == "Unspoken Rue · Weapon Convene"
+    assert record["event_kind"] == "banner"
+    assert record["artwork"][0]["role"] == "background"
+
+
+def test_secondary_images_follow_query_database_and_explicit_activity_foreign_key(tmp_path):
+    config = fixture_config(tmp_path)
+    readers = config / "readers/Config"
+    readers.mkdir(parents=True)
+    queries = readers.parent / "ConfigQuery"
+    queries.mkdir()
+    (readers / "EventPanel.js").write_text(
+        'get ActivityId(){return this.activityid()}get Image(){return this.image()}'
+        'activityid(){var t=this.J7.__offset(this.z7,6);return t?this.J7.readInt32(this.z7+t):0}'
+        'image(t){var i=this.J7.__offset(this.z7,8);return i?this.J7.__string(this.z7+i,t):null}',
+        encoding="utf-8")
+    (queries / "EventPanelById.js").write_text('DB="db_panel.db",TABLE="EventPanel"', encoding="utf-8")
+    builder = flatbuffers.Builder(128)
+    path = builder.CreateString("/Game/Aki/UI/UIResources/UiActivity/Image/ActualBanner.ActualBanner")
+    builder.StartObject(3)
+    builder.PrependInt32Slot(1, 102000009, 0)
+    builder.PrependUOffsetTRelativeSlot(2, path, 0)
+    builder.Finish(builder.EndObject())
+    with sqlite3.connect(config / "db_panel.db") as db:
+        db.execute("CREATE TABLE eventpanel (Id INT, BinData BLOB)")
+        db.execute("INSERT INTO eventpanel VALUES (?, ?)", (999, bytes(builder.Output())))
+    # A stale table with the same name and incompatible layout is not read.
+    with sqlite3.connect(config / "db_activity.db") as db:
+        db.execute("CREATE TABLE eventpanel (Id INT, BinData BLOB)")
+        db.execute("INSERT INTO eventpanel VALUES (999, ?)", (b"invalid stale layout",))
+    record = read_event_catalog(config, readers)["102000009"]
+    assert record["title_key"] == "Activity_111800001_Title"
+    assert record["artwork"][-1]["path"].endswith("/ActualBanner")
+    assert record["resources"][-1]["config_file"] == "db_panel.db"
