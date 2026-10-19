@@ -135,6 +135,19 @@ def test_current_poster_can_identify_subject_without_assigning_ambiguous_schedul
     assert not _notice_overlaps(notice, occurrence)
 
 
+def test_archived_notice_images_use_public_cdn_without_changing_official_sources(monkeypatch):
+    from wuwa_story.config import settings
+    from wuwa_story.ingestion.notices import public_notice_image
+
+    monkeypatch.setattr(settings, "get_settings", lambda: SimpleNamespace(
+        s3_endpoint_url="https://storage.example", s3_bucket="game",
+        media_public_base_url="https://cdn.example"))
+    assert public_notice_image("https://storage.example/game/objects/ab/image") == "https://cdn.example/objects/ab/image"
+    official = "https://aki-gm-resources-back.aki-game.net/notice/image/full.jpg"
+    assert public_notice_image(official) == official
+    assert public_notice_image(None) is None
+
+
 @pytest.mark.asyncio
 async def test_notice_import_archives_revision_and_adds_server_specific_runs():
     event = SimpleNamespace(

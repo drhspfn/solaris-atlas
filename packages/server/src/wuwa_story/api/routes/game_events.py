@@ -13,7 +13,7 @@ from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
-from wuwa_story.ingestion.notices import notice_candidates
+from wuwa_story.ingestion.notices import notice_candidates, public_notice_image
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.urls import node_address, record_url
 
@@ -129,7 +129,7 @@ async def list_game_events(
         captured = ((occurrence.source_data or {}) if occurrence else {}).get("client", {}).get("download_id")
         url, provenance = _choose_preview(image, bool(captured), notice_image(event, occurrence), notice.content.get("banner_url") if notice else None,
                                           prefer_notice=_notice_overlaps(notice, occurrence))
-        return {"preview_url": url, "preview_provenance": provenance}
+        return {"preview_url": public_notice_image(url), "preview_provenance": provenance}
     return {
         "server": server,
         "source": CLIENT_SOURCE,
