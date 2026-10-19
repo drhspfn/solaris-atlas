@@ -22,7 +22,8 @@ async def export_assets(root: Path, executable: Path, asset_filter: str, upload:
 
 
 async def _export_assets(root: Path, executable: Path, asset_filter: str, upload: bool) -> Path:
-    if not asset_filter or not re.fullmatch(r"[a-zA-Z0-9_./-]+", asset_filter):
+    if not asset_filter or not all(re.fullmatch(r"[a-zA-Z0-9_./-]+", part)
+                                   for part in asset_filter.split("|")):
         raise ValueError("Provide a nonempty FModel path filter, for example ConfigDB or Audio")
     if not executable.is_file():
         raise FileNotFoundError(f"FModelCLI executable not found: {executable}")
@@ -36,6 +37,11 @@ async def _export_assets(root: Path, executable: Path, asset_filter: str, upload
     output.mkdir(parents=True, exist_ok=True)
     executable_sha = await asyncio.to_thread(_sha256, executable)
     receipt = output / "manifest.json"
+    if receipt.exists() and json.loads(receipt.read_text(encoding="utf-8"))["extractor_sha256"] != executable_sha:
+        # Keep previous exports immutable when a newly built extractor is used.
+        output = root / "exports" / f"{tag}-{executable_sha[:16]}"
+        output.mkdir(parents=True, exist_ok=True)
+        receipt = output / "manifest.json"
     if receipt.exists():
         existing = json.loads(receipt.read_text(encoding="utf-8"))
         if existing["extractor_sha256"] != executable_sha:

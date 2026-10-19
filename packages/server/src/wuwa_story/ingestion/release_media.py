@@ -7,10 +7,8 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from wuwa_story.db.models.core import Cutscene, VoiceReference
-from wuwa_story.db.models.game_events import GameEvent
 from wuwa_story.db.models.graph import Node, NodeRevision
 from wuwa_story.db.models.ops import GameRelease, ProcessingRun, Processor
-from wuwa_story.ingestion.game_events import SOURCE
 from wuwa_story.ingestion.media_jobs import publish_media_job
 
 QUEUE = "wuwa.release-media.v1"
@@ -48,14 +46,9 @@ async def enqueue_release_media(
     characters = [key for key in entities if key.startswith("character:")]
     specs = [("prepare", [])]
     if event_artwork_only:
-        event_targets = sorted(set(await session.scalars(
-            select(GameEvent.source_id + "@" + GameEvent.source_revision).where(GameEvent.source == SOURCE)
-        )))
-        if not event_targets:
-            return {"release_id": release_id, "parent_id": None, "tasks": 0,
-                    "queued": 0, "enqueue_failed": 0}
-        specs.append(("event_catalog", event_targets))
-        specs.extend(("event_images", batch) for batch in batches(event_targets))
+        # Discover the complete catalog in the client, including events that
+        # have never appeared in a community timetable. Images fan out afterwards.
+        specs.append(("event_catalog", ["client-catalog:v2"]))
     if not event_artwork_only and cutscenes:
         specs.append(("cutscene_assets", sorted(set(cutscenes))))
     if not event_artwork_only and (voices or characters):
@@ -84,6 +77,10 @@ async def enqueue_release_media(
         if kind == "prepare":
             parent_id = run.id
         queue = EVENT_QUEUE if event_artwork_only else QUEUE
+        if event_artwork_only and kind == "event_catalog" and run.status == "completed":
+            # An explicit reimport must revisit failed/partial image children,
+            # while successful extraction work remains reusable.
+            run.status = "pending"
         already_queued = run.status == "queued" and (run.metadata_json or {}).get("queue", QUEUE) == queue
         if run.status not in {"running", "completed", "waiting_dependency"} and not already_queued:
             payload = {"schema_version": 1, "job_type": "media.release", "run_id": run.id,
@@ -107,3 +104,47 @@ async def enqueue_release_media(
             failed += 1
     return {"release_id": release_id, "parent_id": parent_id, "tasks": len(runs),
             "queued": len(pending) - failed, "enqueue_failed": failed}
+
+
+async def enqueue_event_images(session, payload: dict, paths: list[str], *, kind="event_images") -> dict:
+    """Bound image tasks and pin their dependency to this exact client catalog."""
+    parent = await session.get(ProcessingRun, payload["run_id"])
+    if parent is None:
+        raise ValueError("Event catalog task not found")
+    pending = []
+    runs = []
+    if kind not in {"event_images", "event_resources"}:
+        raise ValueError("Unsupported event asset task")
+    for targets in batches(sorted(set(paths)), size=1 if kind == "event_resources" else 20):
+        request = {"release_id": payload["release_id"], "game_version": payload["game_version"],
+                   "kind": kind, "targets": targets, "parent_id": parent.id,
+                   "catalog_revision": 2}
+        digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).digest()
+        run = await session.scalar(select(ProcessingRun).where(
+            ProcessingRun.processor_id == parent.processor_id, ProcessingRun.input_hash == digest))
+        if run is None:
+            run = ProcessingRun(
+                processor_id=parent.processor_id, input_hash=digest)
+            session.add(run)
+            await session.flush()
+        if run.status not in {"running", "completed", "queued", "waiting_dependency"}:
+            job = {"schema_version": 1, "job_type": "media.release",
+                   "run_id": run.id, **request}
+            run.status, run.error, run.finished_at, run.raw_output = "queued", None, None, None
+            run.metadata_json = {"payload": job,
+                                 "request": request, "queue": EVENT_QUEUE}
+            pending.append((run, job))
+        runs.append(run)
+    await session.commit()
+    failed = 0
+    for run, job in pending:
+        try:
+            await publish_media_job(job, f"release-media:{run.id}", EVENT_QUEUE)
+        except Exception:
+            run.status, run.error = "enqueue_failed", "Event image publication failed; retry catalog import"
+            await session.commit()
+            failed += 1
+    if failed:
+        raise RuntimeError(
+            f"Could not enqueue {failed} event image tasks; retry catalog import")
+    return {"tasks": len(runs), "queued": len(pending)}

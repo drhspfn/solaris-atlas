@@ -134,3 +134,13 @@ an explicit scope and a safe initial focus. Lore Assistant messages use existing
 surface and text tokens; user messages differ through surface depth and a mint border.
 
 Map markers center their icons in a single bordered chip. Hover and keyboard focus expand that chip to reveal the name, opening left near the map's right edge. Region rail buttons use 44px targets and expand left to reveal full names. These controls use accessible labels without duplicate native title tooltips. Marker cards align category and title on one left edge; their header stays visible while the body scrolls. Search clear buttons use the shared `search-clear` treatment and a restrained focus indicator. The global scrollbar baseline in `index.css` uses thin tracks and shared border/text tokens, with a stable document gutter to keep the header fixed across route changes. The map menu uses 46px item rows and 25px item icons; dense icon-only rows remain 44px high.
+
+## Game-client event catalog
+
+The event page defaults to the full client catalog and offers name search. Presence
+in a client build must not be presented as proof of current availability. Nearby
+dates shows only recorded windows; missing server schedules are stated explicitly.
+Event details expose the published image gallery. Selecting a gallery image updates
+the preview, and animated convenes can use client-authored featured portraits or
+weapon icons as static previews. Reward previews use localized names instead of
+raw ID chips. Admin import notices confirm queued work, not completed publication.

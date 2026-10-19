@@ -96,7 +96,12 @@ type Overview = {
   snapshot_jobs: ProcessingJob[];
   asset_jobs?: ProcessingJob[];
   map_jobs?: ProcessingJob[];
-  maps: { game_version: string; map_count: number; asset_jobs: number; marker_count: number }[];
+  maps: {
+    game_version: string;
+    map_count: number;
+    asset_jobs: number;
+    marker_count: number;
+  }[];
   client_assets?: ClientAssetsOverview;
 };
 
@@ -119,7 +124,10 @@ export function DataOperationsClient() {
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
       try {
-        const result = await api<Overview>('/admin/data-operations', { signal, cacheTtl: 0 });
+        const result = await api<Overview>('/admin/data-operations', {
+          signal,
+          cacheTtl: 0,
+        });
         if (!signal?.aborted) {
           setData(result);
           setError('');
@@ -158,10 +166,15 @@ export function DataOperationsClient() {
     setError('');
     setNotice('');
     try {
-      const result = await api<{ id: number; status: string; version: string; commit: string }>(
-        '/admin/data-operations/snapshots',
-        { method: 'POST', body: { version: patchVersion } },
-      );
+      const result = await api<{
+        id: number;
+        status: string;
+        version: string;
+        commit: string;
+      }>('/admin/data-operations/snapshots', {
+        method: 'POST',
+        body: { version: patchVersion },
+      });
       setNotice(
         `Patch ${result.version} queued as run #${result.id} · ${result.commit.slice(0, 12)}.`,
       );
@@ -241,12 +254,11 @@ export function DataOperationsClient() {
     setNotice('');
     try {
       const result = await api<{
-        events: number;
-        occurrences: number;
-        source_revision: string;
+        source: string;
+        artwork: { queued: number; enqueue_failed: number };
       }>('/admin/data-operations/events/import', { method: 'POST' });
       setNotice(
-        `Event archive refreshed: ${result.events} events and ${result.occurrences} dated schedules.`,
+        `Client event import: ${result.artwork.queued} tasks queued${result.artwork.enqueue_failed ? `, ${result.artwork.enqueue_failed} could not be queued; retry the import` : '. Names and media will appear as their tasks complete.'}`,
       );
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not import the event archive.');
@@ -259,10 +271,13 @@ export function DataOperationsClient() {
     setBusy(true);
     setError('');
     try {
-      const result = await api<{ tasks: number; queued: number; enqueue_failed: number }>(
-        `/admin/data-operations/releases/${releaseId}/media`,
-        { method: 'POST' },
-      );
+      const result = await api<{
+        tasks: number;
+        queued: number;
+        enqueue_failed: number;
+      }>(`/admin/data-operations/releases/${releaseId}/media`, {
+        method: 'POST',
+      });
       setNotice(
         `Media import: ${result.tasks} tasks, ${result.queued} queued, ${result.enqueue_failed} queue failures.`,
       );
@@ -371,11 +386,11 @@ export function DataOperationsClient() {
           <header className="agent-panel-header">
             <div>
               <h3>
-                <CalendarDays size={16} /> Historical event archive
+                <CalendarDays size={16} /> Game client event catalog
               </h3>
               <p>
-                Import dated convenes, limited events and recurring or permanent modes from the
-                versioned game-data archive.
+                Read all event names, descriptions and artwork from the downloaded game client,
+                including permanent modes and recurring challenges. Media is processed separately.
               </p>
             </div>
             <button
@@ -383,7 +398,7 @@ export function DataOperationsClient() {
               onClick={() => void importEventArchive()}
               disabled={busy}
             >
-              <Download size={14} /> {busy ? 'Importing…' : 'Import event history'}
+              <Download size={14} /> {busy ? 'Importing…' : 'Import client events'}
             </button>
           </header>
         </section>

@@ -134,3 +134,28 @@ async def test_enqueue_map_build_rejects_without_installed_client(monkeypatch):
         await enqueue_map_build(MapBuildRequest(version="3.7.0", tier="hd"), db)
     assert error.value.status_code == 400
     assert "download the game client first" in error.value.detail.lower()
+
+@pytest.mark.asyncio
+async def test_event_import_queues_client_discovery_without_fetching_community_archive(monkeypatch):
+    from types import SimpleNamespace
+
+    from wuwa_story.api.routes import admin_data
+    from wuwa_story.ingestion import game_events
+    session = AsyncMock()
+    session.scalar.return_value = SimpleNamespace(id=19)
+    queue = AsyncMock(return_value={"tasks": 2, "queued": 2, "enqueue_failed": 0})
+    monkeypatch.setattr(admin_data, "enqueue_release_media", queue)
+    monkeypatch.setattr(game_events, "import_game_events", AsyncMock(side_effect=AssertionError("No community source")))
+    result = await admin_data.import_event_archive(session)
+    assert result["source"] == "wuwa-game-client"
+    queue.assert_awaited_once_with(session, 19, event_artwork_only=True)
+
+
+@pytest.mark.asyncio
+async def test_event_import_requires_an_existing_game_release():
+    from wuwa_story.api.routes import admin_data
+    session = AsyncMock()
+    session.scalar.return_value = None
+    with pytest.raises(HTTPException) as error:
+        await admin_data.import_event_archive(session)
+    assert error.value.status_code == 409

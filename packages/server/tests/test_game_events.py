@@ -96,3 +96,14 @@ def test_occurrence_localization_precedes_event_and_falls_back_to_english():
     }}})
     assert _presentation(event, occurrence, "ru")["title"] == "Название"
     assert _presentation(event, occurrence, "fr")["title"] == "Actual title"
+
+
+def test_new_prefab_images_are_visible_with_the_same_occurrence_snapshot():
+    from wuwa_story.api.routes.game_events import _artwork
+    image = {"path": "/Game/ActualMatrix", "role": "prefab_texture"}
+    event = SimpleNamespace(source_data={"client": {"download_id": "a" * 64,
+        "artwork": [image], "prefab_artwork": [image]}})
+    occurrence = SimpleNamespace(source_data={"client": {"download_id": "a" * 64, "artwork": []}})
+    assert _artwork(event, occurrence) == [image]
+    occurrence.source_data["client"]["download_id"] = "b" * 64
+    assert _artwork(event, occurrence) == []

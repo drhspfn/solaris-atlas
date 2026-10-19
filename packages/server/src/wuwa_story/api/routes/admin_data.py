@@ -28,7 +28,6 @@ from wuwa_story.ingestion.client_assets import (
     get_live_launcher_info,
     inspect_installed_clients,
 )
-from wuwa_story.ingestion.game_events import import_game_events
 from wuwa_story.ingestion.github_snapshots import discover_remote_snapshots
 from wuwa_story.ingestion.media_jobs import publish_media_job
 from wuwa_story.ingestion.queue_control import clear_queue
@@ -76,18 +75,19 @@ class MapBuildRequest(_PayloadModel):
 @router.post("/events/import", status_code=200, dependencies=[Depends(require_csrf)])
 async def import_event_archive(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     try:
-        result = await import_game_events(session)
-        await session.commit()
         release = await session.scalar(select(GameRelease).order_by(GameRelease.sequence.desc()).limit(1))
-        if release is not None:
-            result["artwork"] = await enqueue_release_media(
-                session, release.id, event_artwork_only=True
-            )
-        return result
+        if release is None:
+            raise HTTPException(
+                409, "Import a game release before importing the client event catalog")
+        return {"source": "wuwa-game-client", "artwork": await enqueue_release_media(
+            session, release.id, event_artwork_only=True
+        )}
+    except HTTPException:
+        raise
     except Exception as error:
         await session.rollback()
-        logger.exception("Event archive import failed")
-        raise HTTPException(502, f"Event archive import failed: {type(error).__name__}") from error
+        logger.exception("Client event catalog import failed")
+        raise HTTPException(502, f"Client event catalog import failed: {type(error).__name__}") from error
 
 
 def _get_asset_workspace() -> Path:

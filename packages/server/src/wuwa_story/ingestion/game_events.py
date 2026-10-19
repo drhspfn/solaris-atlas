@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 
 SOURCE = "Sanma5657/wuwa-wiki-public"
+CLIENT_SOURCE = "wuwa-game-client"
 SOURCE_COMMIT_URL = f"https://api.github.com/repos/{SOURCE}/commits/main"
 SOURCE_RAW_ROOT = f"https://raw.githubusercontent.com/{SOURCE}"
 SERVER_KEYS = ("asia", "europe", "america")

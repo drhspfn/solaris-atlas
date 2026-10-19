@@ -33,6 +33,7 @@ async def test_icon_conversion_bounds_loaded_texture_batches(tmp_path, monkeypat
     converter.write_bytes(b"tool")
     monkeypatch.setattr(map_icons, "export_assets", AsyncMock(return_value=raw.parent / "manifest.json"))
     batches = []
+
     def convert(command, **kwargs):
         packages = Path(command[command.index("-c") + 1]).read_text().splitlines()
         assert len(packages) <= 8
@@ -51,5 +52,48 @@ async def test_icon_conversion_bounds_loaded_texture_batches(tmp_path, monkeypat
     assert [len(batch) for batch in batches] == [8, 8, 3]
     assert set(result) == set(sources)
     filters = {call.args[2] for call in map_icons.export_assets.await_args_list}
-    assert filters == ({f"Common/Image/Test/T_{index}" for index in range(19)}
+    assert filters == ({"|".join(sorted(f"Common/Image/Test/T_{index}" for index in range(19)))}
                        if exact_textures else {"Common/Image/Test/"})
+
+@pytest.mark.asyncio
+async def test_exact_sprite_uses_its_atlas_and_matches_qualified_reference(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    from pathlib import Path
+    from unittest.mock import AsyncMock
+
+    from PIL import Image
+
+    from wuwa_story_worker import map_icons
+    raw = tmp_path / "exports/atlas/files"
+    folder = raw / "Client/Content/Aki/UI/UIResources/Common/Atlas/Test"
+    folder.mkdir(parents=True)
+    for name in ["SP_Icon.uasset", "T_Atlas.uasset", "TPI_Test.uasset"]:
+        (folder / name).write_bytes(b"asset")
+    source = "/Game/Aki/UI/UIResources/Common/Atlas/Test/SP_Icon"
+    texture = "/Game/Aki/UI/UIResources/Common/Atlas/Test/T_Atlas"
+    tool = tmp_path / "tool"
+    tool.write_bytes(b"tool")
+    export = AsyncMock(return_value=raw.parent / "manifest.json")
+    monkeypatch.setattr(map_icons, "export_assets", export)
+    def convert(command, **kwargs):
+        output = Path(command[command.index("-o") + 1])
+        out = output / "files/Client/Content/Aki/UI/UIResources/Common/Atlas/Test"
+        out.mkdir(parents=True, exist_ok=True)
+        if command[command.index("-f") + 1] == "png":
+            Image.new("RGBA", (8, 8), "red").save(out / "T_Atlas.png")
+        else:
+            (out / "TPI_Test.json").write_text(json.dumps([{"Properties": {
+                "Sprites": [source + ".SP_Icon"],
+                "SpriteAtlasTextureMap": [{"Key": 0, "Value": 0}],
+                "SpriteInfoMap": [{"Key": 0, "Value": {"uv0X": 0, "uv3X": .5, "uv0Y": 0, "uv3Y": .5}}],
+                "SoftAtlasTextures": [{"AssetPathName": texture + ".T_Atlas"}],
+            }}]), encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0)
+    monkeypatch.setattr(map_icons.subprocess, "run", convert)
+    result = await map_icons.build_icons(tmp_path, tool, tool,
+        [{"metadata_json": {"icon_source": source}}], entity_media=True, exact_textures=True)
+    assert export.await_args.args[2] == "Common/Atlas/Test/"
+    assert source in result
+    with Image.open(result[source]["path"]) as image:
+        assert image.size == (4, 4)

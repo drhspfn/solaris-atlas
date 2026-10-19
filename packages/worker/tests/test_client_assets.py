@@ -248,3 +248,19 @@ async def test_download_client_assets_updates_admin_run(tmp_path, monkeypatch):
         (42, "asset_download", "running", {}),
         (42, "asset_download", "completed", {}),
     ]
+
+@pytest.mark.asyncio
+async def test_new_extractor_uses_a_new_immutable_export_directory(tmp_path, monkeypatch):
+    executable = _completed_download(tmp_path)
+    def run(command, stdout, **kwargs):
+        (Path(command[3]) / "data.json").write_text("{}")
+        stdout.write('Pak "base.pak": 1 files (1 encrypted)\n[Done] Extracted 1 files (Scanned 5).\n')
+    monkeypatch.setattr(asset_export.subprocess, "run", run)
+    old = await asset_export.export_assets(tmp_path, executable, "ConfigDB")
+    original = old.read_bytes()
+    executable.write_bytes(b"upgraded tool")
+    new = await asset_export.export_assets(tmp_path, executable, "ConfigDB")
+    assert old != new and new.exists()
+    assert old.read_bytes() == original
+    monkeypatch.setattr(asset_export.subprocess, "run", lambda *a, **k: pytest.fail("new export is reusable"))
+    assert await asset_export.export_assets(tmp_path, executable, "ConfigDB") == new
