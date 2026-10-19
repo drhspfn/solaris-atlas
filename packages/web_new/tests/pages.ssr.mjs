@@ -69,6 +69,17 @@ const backend = createServer(async (request, response) => {
             ends_at: new Date(Date.now() + 86400000).toISOString(),
             banner_url: 'https://cdn.solarisatlas.fun/objects/test-event',
           },
+          {
+            id: 2,
+            source_id: 'gacha:100088',
+            title: 'Lynae · Resonator Convene',
+            kind: 'banner',
+            catalog_version: '3.7.0',
+            starts_at: null,
+            ends_at: null,
+            banner_url: 'https://cdn.solarisatlas.fun/objects/empty-background',
+            preview_url: 'https://cdn.solarisatlas.fun/objects/featured-portrait',
+          },
         ],
       }),
     );
@@ -169,6 +180,9 @@ test('events fetch at request time and render their artwork without JavaScript',
   const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
   assert.ok(html.includes('Artisan&#x27;s Search'));
   assert.ok(html.includes('src="https://cdn.solarisatlas.fun/objects/test-event"'));
+  assert.ok(html.includes('src="https://cdn.solarisatlas.fun/objects/featured-portrait"'));
+  assert.ok(!html.includes('src="https://cdn.solarisatlas.fun/objects/empty-background"'));
+  assert.ok(html.includes('Server schedule unavailable'));
   assert.doesNotMatch(html, /Opening archive record|id="S:\d+"/);
   assert.ok(requests.includes('/events?server=europe'));
 });
