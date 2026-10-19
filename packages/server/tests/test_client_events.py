@@ -60,3 +60,22 @@ async def test_reimport_reuses_client_identity_and_retains_discovered_prefab_ima
     await store_client_events(session, {"100": record()}, "3.7.0", "a" * 64)
     assert event.source_data["client"]["prefab_artwork"] == [image]
     assert rows[0].source_data["client"]["download_id"] == "a" * 64
+
+
+@pytest.mark.asyncio
+async def test_new_download_does_not_overwrite_dated_run_snapshots():
+    old_client = {"download_id": "old", "locales": {"en": {"title": "First run"}},
+                  "artwork": [{"path": "/Game/FirstRun"}]}
+    event = SimpleNamespace(id=7, source=CLIENT_SOURCE, source_id="activity:100",
+                            source_data={"client": old_client})
+    rows = [SimpleNamespace(event_id=7, server=server, starts_at="2026-10-01",
+                            banner_path="/Game/FirstRun", source_data={"client": old_client})
+            for server in ["asia", "europe", "america"]]
+    session = AsyncMock()
+    session.scalars.side_effect = [[event], rows]
+    session.add = lambda _: pytest.fail("must reuse canonical event and dated runs")
+    await store_client_events(session, {"100": record("Rerun title")}, "3.7.1", "new")
+    assert event.title == "Rerun title"
+    for row in rows:
+        assert row.banner_path == "/Game/FirstRun"
+        assert row.source_data["client"] == old_client
