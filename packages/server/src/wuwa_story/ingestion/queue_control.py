@@ -25,7 +25,7 @@ WAITING = {"queued", "pending", "waiting_dependency", "enqueue_failed"}
 def run_queue(processor, metadata):
     if processor == "release_media":
         return metadata.get("queue") or (
-            "wuwa.event-media.v1" if metadata.get("request", {}).get("kind") in {"event_images", "event_catalog", "event_resources"}
+            "wuwa.event-media.v1" if metadata.get("request", {}).get("kind") in {"event_images", "event_catalog", "event_resources", "event_notices"}
             else "wuwa.release-media.v1"
         )
     return next((name for name, processors in QUEUE_PROCESSORS.items()

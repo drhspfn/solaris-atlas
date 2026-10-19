@@ -7,6 +7,25 @@ from wuwa_story.ingestion import release_media
 
 
 @pytest.mark.asyncio
+async def test_notice_refresh_does_not_queue_unrelated_asset_work(monkeypatch):
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version="3.7.0")
+    session.scalar.side_effect = [4, None, None]
+    runs = []
+    session.add = runs.append
+    async def flush():
+        runs[-1].id = len(runs)
+    session.flush.side_effect = flush
+    publish = AsyncMock()
+    monkeypatch.setattr(release_media, "publish_media_job", publish)
+    await release_media.enqueue_release_media(session, 9, notices_only=True)
+    payloads = [call.args[0] for call in publish.await_args_list]
+    assert [payload["kind"] for payload in payloads] == ["prepare", "event_notices"]
+    assert payloads[1]["parent_id"] == payloads[0]["run_id"]
+    assert all(call.args[2] == release_media.EVENT_QUEUE for call in publish.await_args_list)
+
+
+@pytest.mark.asyncio
 async def test_fanout_pins_dependencies_and_keeps_analysis_manual(monkeypatch):
     runs = []
     session = AsyncMock()

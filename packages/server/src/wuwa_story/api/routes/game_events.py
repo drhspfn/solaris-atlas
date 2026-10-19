@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
@@ -45,6 +46,20 @@ async def list_game_events(
             | (GameEventOccurrence.game_version.is_(None))
         )
     rows = (await session.execute(statement)).all()
+    announcements = list(await session.scalars(select(GameNotice).where(GameNotice.locale == "en")))
+    notice_links = {}
+    notice_banners = {notice.id: notice.content.get("banner_url") for notice in announcements}
+    revisions = {(row.source_data or {}).get("notice_revision") for _, row in rows if row}
+    snapshots = list(await session.scalars(select(GameNoticeRevision).where(GameNoticeRevision.revision.in_(revisions - {None})))) if revisions - {None} else []
+    snapshot_banners = {(snapshot.notice_id, snapshot.revision): snapshot.content.get("banner_url") for snapshot in snapshots}
+    latest_notice = {}
+    for notice in announcements:
+        for event_id in notice.related_event_ids:
+            notice_links.setdefault(event_id, []).append({"id": notice.id, "title": notice.title,
+                                                          "url": f"/notices/{notice.id}"})
+            previous = latest_notice.get(event_id)
+            if previous is None or notice.published_at and (not previous.published_at or notice.published_at > previous.published_at):
+                latest_notice[event_id] = notice
     banner_paths = {asset["path"] for event, occurrence in rows
                     for asset in _artwork(event, occurrence)}
     banner_paths.update(path for event, occurrence in rows
@@ -87,6 +102,22 @@ async def list_game_events(
     def image_url(event, occurrence, path):
         download = _client_data(event, occurrence).get("download_id", "")
         return banner_urls.get((download, path))
+    def notice_image(event, occurrence):
+        data = (occurrence.source_data or {}) if occurrence else {}
+        if data.get("notice_id"):
+            return snapshot_banners.get((data["notice_id"], data.get("notice_revision"))) or notice_banners.get(data["notice_id"])
+        return None
+    def preview(event, occurrence):
+        image = next((image_url(event, occurrence, asset["path"]) for role in (
+            "content", "featured_portrait", "featured_stand", "featured_weapon")
+            for asset in _artwork(event, occurrence)
+            if asset.get("role") == role and image_url(event, occurrence, asset["path"])
+            and not asset["path"].endswith("/T_CommonNone_UI")), None)
+        image = image or image_url(event, occurrence, (occurrence.banner_path if occurrence else None) or event.banner_path or "")
+        notice = latest_notice.get(event.id)
+        captured = ((occurrence.source_data or {}) if occurrence else {}).get("client", {}).get("download_id")
+        url, provenance = _choose_preview(image, bool(captured), notice_image(event, occurrence), notice.content.get("banner_url") if notice else None)
+        return {"preview_url": url, "preview_provenance": provenance}
     return {
         "server": server,
         "source": CLIENT_SOURCE,
@@ -113,17 +144,14 @@ async def list_game_events(
                 ),
                 "artwork": [{**asset, "url": image_url(event, occurrence, asset["path"])}
                             for asset in _artwork(event, occurrence)],
-                "preview_url": next((image_url(event, occurrence, asset["path"]) for role in (
-                    "content", "featured_portrait", "featured_stand", "featured_weapon")
-                    for asset in _artwork(event, occurrence)
-                    if asset.get("role") == role and image_url(event, occurrence, asset["path"])
-                    and not asset["path"].endswith("/T_CommonNone_UI")), None),
+                **preview(event, occurrence),
                 "catalog_version": _client_data(event, occurrence).get("asset_version"),
                 "schedule_status": "recorded" if occurrence and occurrence.starts_at else "server_controlled",
                 "hidden_in_client": _client_data(event, occurrence).get("hidden", False),
                 "game_path": event.game_path,
                 "source_url": event.source_url,
                 "official_url": _official_announcement(event, occurrence),
+                "notices": notice_links.get(event.id, []),
             }
             for event, occurrence in rows
         ],
@@ -139,6 +167,16 @@ def _client_data(event, occurrence):
     return dated or current
 
 
+def _choose_preview(client_image, captured_client, notice_snapshot, current_notice):
+    if notice_snapshot:
+        return notice_snapshot, "notice_snapshot"
+    if client_image and captured_client:
+        return client_image, "game_client"
+    if current_notice:
+        return current_notice, "current_notice"
+    return client_image, "game_client"
+
+
 def _artwork(event, occurrence):
     client = _client_data(event, occurrence)
     unique = {}
@@ -149,7 +187,9 @@ def _artwork(event, occurrence):
 
 def _presentation(event, occurrence, locale):
     locales = _client_data(event, occurrence).get("locales", {})
-    return locales.get(locale) or locales.get("en") or {}
+    presentation = locales.get(locale) or locales.get("en") or {}
+    notice = ((occurrence.source_data or {}) if occurrence else {}).get("notice_presentation", {})
+    return {**presentation, **(notice.get(locale) or notice.get("en") or {})}
 
 
 def _official_announcement(event, occurrence):

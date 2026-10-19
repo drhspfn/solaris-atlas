@@ -90,6 +90,14 @@ async def import_event_archive(session: AsyncSession = Depends(get_session)) -> 
         raise HTTPException(502, f"Client event catalog import failed: {type(error).__name__}") from error
 
 
+@router.post("/notices/import", dependencies=[Depends(require_csrf)])
+async def import_notice_archive(session: AsyncSession = Depends(get_session)):
+    release = await session.scalar(select(GameRelease).order_by(GameRelease.sequence.desc()).limit(1))
+    if release is None:
+        raise HTTPException(409, "Import a game release before importing announcements")
+    return await enqueue_release_media(session, release.id, notices_only=True)
+
+
 def _get_asset_workspace() -> Path:
     return Path(os.getenv("WUWA_ASSET_WORKSPACE", "./var/client-assets")).resolve()
 
