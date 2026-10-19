@@ -23,12 +23,15 @@ export type GameEvent = {
   title: string;
   description: string | null;
   kind: EventKind;
+  convene_type?: string | null;
   game_version: string | null;
   catalog_version?: string;
   starts_at: string | null;
   ends_at: string | null;
   season: { start?: number; cycle?: { weeks?: number } } | null;
-  rewards: { id: number; value?: number; name?: string | null; href?: string; slug?: string | null }[] | null;
+  rewards:
+    | { id: number; value?: number; name?: string | null; href?: string; slug?: string | null }[]
+    | null;
   featured_names?: string[];
   up_names?: string[];
   banner_path: string | null;
@@ -40,6 +43,61 @@ export type GameEvent = {
   official_url?: string | null;
   notices?: { id: number; title: string; url: string }[];
 };
+export type EventFilter = EventKind | 'all' | 'characters' | 'weapons' | 'activities';
+export function eventGroup(event: GameEvent) {
+  if (event.kind !== 'banner') return event.kind;
+  return event.convene_type === 'Weapon Convene' || event.title.includes('Weapon Convene')
+    ? 'weapons'
+    : 'characters';
+}
+export function matchesEventType(event: GameEvent, filter: EventFilter) {
+  return (
+    filter === 'all' ||
+    filter === event.kind ||
+    filter === eventGroup(event) ||
+    (filter === 'activities' && event.kind !== 'banner')
+  );
+}
+export function compareEventGroups(
+  a: GameEvent[],
+  b: GameEvent[],
+  start: number,
+  end: number,
+  now = start,
+) {
+  const order = ['characters', 'weapons', 'limited', 'recurring', 'permanent'];
+  const group = order.indexOf(eventGroup(a[0])) - order.indexOf(eventGroup(b[0]));
+  const deadline = (runs: GameEvent[]) =>
+    Math.min(
+      ...runs
+        .filter(
+          (event) => startTime(event) < end && endTime(event) > Math.max(start, Math.min(now, end)),
+        )
+        .map((event) => endTime(event)),
+      Infinity,
+    );
+  return group || deadline(a) - deadline(b) || a[0].title.localeCompare(b[0].title);
+}
+export function artworkGroups(event: GameEvent) {
+  const seen = new Set<string>();
+  // Large subject art wins over small inventory versions of the same subject.
+  const images = [...(event.artwork ?? [])].sort(
+    (a, b) => Number(a.role.endsWith('_small')) - Number(b.role.endsWith('_small')),
+  );
+  const artwork: NonNullable<GameEvent['artwork']> = [],
+    resources: typeof artwork = [];
+  let weapon = false;
+  for (const image of images) {
+    if (!image.url || seen.has(image.url)) continue;
+    seen.add(image.url);
+    if (image.role === 'featured_weapon_small' && weapon) continue;
+    if (image.role === 'featured_weapon') weapon = true;
+    (image.role === 'content' || image.role.startsWith('featured_') ? artwork : resources).push(
+      image,
+    );
+  }
+  return { artwork, resources };
+}
 export function startTime(event: GameEvent) {
   return event.starts_at ? Date.parse(event.starts_at) : Number.NaN;
 }

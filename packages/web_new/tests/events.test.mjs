@@ -9,7 +9,54 @@ import {
   shiftMonth,
   timePosition,
   timeZoneLabel,
+  compareEventGroups,
+  matchesEventType,
+  artworkGroups,
 } from '../src/components/events/calendar.ts';
+
+test('calendar groups characters, weapons and modes; soonest closing runs come first', () => {
+  const event = (id, kind, title, end) => ({
+    id,
+    kind,
+    title,
+    starts_at: '2026-10-01T00:00:00Z',
+    ends_at: end,
+  });
+  const character = event(1, 'banner', 'Iuno · Resonator Convene', '2026-10-22T00:00:00Z');
+  const weapon = event(2, 'banner', 'Moongazer · Weapon Convene', '2026-10-22T00:00:00Z');
+  const limited = event(3, 'limited', 'Long event', '2026-10-29T00:00:00Z');
+  const short = event(4, 'limited', 'Short event', '2026-10-21T00:00:00Z');
+  const rows = [[limited], [weapon], [short], [character]];
+  rows.sort((a, b) => compareEventGroups(a, b, Date.parse('2026-10-01'), Date.parse('2026-11-01')));
+  assert.deepEqual(
+    rows.map(([row]) => row.id),
+    [1, 2, 4, 3],
+  );
+  assert(matchesEventType(character, 'characters'));
+  assert(!matchesEventType(weapon, 'characters'));
+  assert(matchesEventType(limited, 'activities'));
+  assert(!matchesEventType(weapon, 'activities'));
+});
+
+test('gallery deduplicates published images and separates interface sprites from artwork', () => {
+  const result = artworkGroups({
+    artwork: [
+      { path: 'small', role: 'featured_weapon_small', url: 'small.png' },
+      { path: 'full', role: 'featured_weapon', url: 'weapon.png' },
+      { path: 'same-bytes', role: 'featured_weapon', url: 'weapon.png' },
+      { path: 'border', role: 'prefab_texture', url: 'border.png' },
+      { path: 'missing', role: 'content', url: null },
+    ],
+  });
+  assert.deepEqual(
+    result.artwork.map((image) => image.path),
+    ['full'],
+  );
+  assert.deepEqual(
+    result.resources.map((image) => image.path),
+    ['border'],
+  );
+});
 
 const run = (id, occurrence, start, end, kind = 'limited') => ({
   id,

@@ -6,9 +6,28 @@ import type { GameEvent } from './calendar';
 export function EventArtwork({ event }: { event: GameEvent }) {
   const [failed, setFailed] = useState('');
   const url = event.preview_url || event.banner_url;
+  const subject =
+    !!event.preview_url && event.kind === 'banner' && !event.preview_provenance?.includes('notice');
+  const background = subject
+    ? event.artwork?.find(
+        (image) =>
+          ['content_background', 'background'].includes(image.role) &&
+          image.url &&
+          image.url !== url,
+      )?.url
+    : null;
   return (
     <span
-      className={`events-artwork ${event.preview_url && event.kind === 'banner' && !event.preview_provenance?.includes('notice') ? 'is-subject' : ''}`}
+      className={`events-artwork ${subject ? 'is-subject' : ''}`}
+      style={
+        background
+          ? {
+              backgroundImage: `url(${JSON.stringify(background)})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+            }
+          : undefined
+      }
     >
       {url && url !== failed ? (
         <img src={url} alt="" loading="lazy" onError={() => setFailed(url)} />

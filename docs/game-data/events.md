@@ -106,3 +106,16 @@ catalog conversion. Rolling back to the old API also requires restoring migrated
 legacy source/identity values from the retained provenance, checking uniqueness
 first. Newly discovered client-only rows can remain stored and are ignored by the
 old API. Do not run the legacy community importer during this transition.
+# Notice artwork publication
+
+Existing event imports created before Notice support need a separate **Import
+announcements** action; deploying code does not add children to a finished import.
+Notice text commits before media, and each archived image commits independently.
+Workers receive `MEDIA_PUBLIC_BASE_URL` from deployment so persisted image links
+use the public CDN. The API also normalizes older object-store URLs for current
+and historical Notice images without changing their source URLs or revisions.
+
+An exact featured subject may link multiple client banner configurations to a
+current Notice for presentation. Its poster can replace client layers only for an
+overlapping Notice display window; historical pinned Notice artwork still wins.
+This does not assign an ambiguous banner's schedule or replace its featured roster.

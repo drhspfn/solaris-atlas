@@ -1,0 +1,45 @@
+.event-archive-heading {
+  margin: 0 0 28px;
+}
+.event-archive-heading > span {
+  color: var(--mint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+.event-archive-heading h1 {
+  margin: 10px 0;
+  font-size: clamp(32px, 5vw, 48px);
+  line-height: 1.2;
+}
+.event-archive-heading p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.event-archive-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.event-archive-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+.event-archive-nav a:is(:hover, [aria-current]) {
+  background: var(--surface-2);
+  border-color: var(--mint);
+  color: var(--text-primary);
+}
+.event-archive-nav a:focus-visible {
+  outline: 2px solid var(--mint);
+  outline-offset: 3px;
+}

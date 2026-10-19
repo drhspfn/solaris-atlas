@@ -153,6 +153,17 @@ raw ID chips. Admin import notices confirm queued work, not completed publicatio
 
 ## Public detail addresses
 
+Events and Announcements share the event archive header, navigation, 1440px
+container and mobile gutters. Calendar rows group character convenes, weapon
+convenes, limited events, recurring modes and permanent content, then order by
+the next closing time within the visible window. Filters expose those groups.
+Full official Notice posters take precedence for matching visible runs; older
+pinned Notice revisions remain authoritative. Ambiguous client rows may link to
+a current announcement about the exact featured subject without asserting its
+schedule or roster. Client UI textures remain in a separate disclosure, deduped
+by image URL; small weapon variants are omitted when large art exists. When no
+poster exists, a subject can be layered over its authored client background.
+
 Use the API's stable slug address for entity, quest, event and notice links.
 System keys remain the fallback for records without a resolved name. Canonical
 redirects preserve locale, version and dialogue selections; a slug must never

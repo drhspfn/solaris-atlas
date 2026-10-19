@@ -6,12 +6,15 @@ import { api } from '@/api/client';
 import { Select } from '@/components/ui/Select';
 import { EventDetails } from './EventDetails';
 import { EventArtwork } from './EventArtwork';
+import { EventArchiveHeader } from './EventArchiveHeader';
 import {
   DAY,
   DAY_WIDTH,
   countdown,
   eventColor,
   groupEvents,
+  compareEventGroups,
+  matchesEventType,
   kindLabels,
   layoutRuns,
   monthKey,
@@ -21,7 +24,7 @@ import {
   timePosition,
   timeZoneLabel,
   type GameEvent,
-  type EventKind,
+  type EventFilter,
 } from './calendar';
 
 type EventsResponse = { events: GameEvent[]; source_url: string };
@@ -46,7 +49,7 @@ export function EventsPage({
   initialEventIds?: number[];
 }) {
   const [server, setServer] = useState<Server>('europe');
-  const [kind, setKind] = useState<EventKind | 'all'>('all');
+  const [kind, setKind] = useState<EventFilter>('all');
   const [events, setEvents] = useState(initialData?.events ?? []);
   const [selected, setSelected] = useState<GameEvent | null>(null);
   const [chosen, setChosen] = useState<number[]>(initialEventIds);
@@ -108,7 +111,7 @@ export function EventsPage({
   const matching = groups.filter((runs) =>
     runs.some(
       (event) =>
-        (kind === 'all' || event.kind === kind) &&
+        matchesEventType(event, kind) &&
         event.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
     ),
   );
@@ -131,6 +134,7 @@ export function EventsPage({
   });
   const start = boundaries[0],
     end = boundaries[42];
+  visible.sort((a, b) => compareEventGroups(a, b, start, end, now ?? start));
   const timeline = visible
     .map((runs) => ({ runs, bars: layoutRuns(runs, start, end, boundaries) }))
     .filter((row) => row.bars.length);
@@ -184,22 +188,7 @@ export function EventsPage({
 
   return (
     <main className="events-page">
-      <header className="events-page-heading">
-        <div>
-          <span className="events-kicker">SOLARIS / EVENT ARCHIVE</span>
-          <h1>Events</h1>
-          <p>Follow each run. Revisit every cycle.</p>
-        </div>
-        <span>
-          {groups.length} events · {events.filter((event) => event.starts_at).length} recorded runs
-        </span>
-      </header>
-      <nav className="events-section-nav" aria-label="Events and announcements">
-        <a href="/events" aria-current="page">
-          Calendar
-        </a>
-        <a href="/notices">Announcements</a>
-      </nav>
+      <EventArchiveHeader active="calendar" />
       <section className="events-controls" aria-label="Event filters">
         <label className="events-filter">
           <span>Find an event</span>
@@ -230,6 +219,9 @@ export function EventsPage({
             onChange={(value) => setKind(value as typeof kind)}
             options={[
               { value: 'all', label: 'All types' },
+              { value: 'characters', label: 'Character convenes' },
+              { value: 'weapons', label: 'Weapon convenes' },
+              { value: 'activities', label: 'Events and modes' },
               ...Object.entries(kindLabels).map(([value, label]) => ({
                 value,
                 label,
