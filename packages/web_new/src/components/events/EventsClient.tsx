@@ -16,7 +16,8 @@ import {
   compareEventGroups,
   matchesEventType,
   kindLabels,
-  layoutRuns,
+  layoutTimeline,
+  isPermanentListing,
   monthKey,
   monthStart,
   shiftMonth,
@@ -135,12 +136,15 @@ export function EventsPage({
   const start = boundaries[0],
     end = boundaries[42];
   visible.sort((a, b) => compareEventGroups(a, b, start, end, now ?? start));
-  const timeline = visible
-    .map((runs) => ({ runs, bars: layoutRuns(runs, start, end, boundaries) }))
-    .filter((row) => row.bars.length);
-  const catalog = visible.filter((runs) =>
-    runs.some((event) => !Number.isFinite(startTime(event))),
-  );
+  const timeline = layoutTimeline(visible.flat(), start, end, boundaries);
+  const permanent = visible
+    .map((runs) => runs.filter(isPermanentListing))
+    .filter((runs) => runs.length);
+  const catalog = visible
+    .map((runs) =>
+      runs.filter((event) => !Number.isFinite(startTime(event)) && !isPermanentListing(event)),
+    )
+    .filter((runs) => runs.length);
   const recorded = visible.flatMap((runs) =>
     runs.filter((event) => Number.isFinite(startTime(event))),
   );
@@ -381,42 +385,55 @@ export function EventsPage({
                     <span>Now</span>
                   </div>
                 )}
-                {timeline.map(({ runs, bars }) => (
-                  <div
-                    className="events-calendar-row"
-                    key={runs[0].id}
-                    style={{
-                      height: (Math.max(...bars.map((bar) => bar.lane)) + 1) * 60,
-                    }}
+                {timeline.map(({ group, bars, lanes }) => (
+                  <section
+                    className="events-calendar-group"
+                    key={group}
+                    aria-label={
+                      group === 'characters'
+                        ? 'Character convenes'
+                        : group === 'weapons'
+                          ? 'Weapon convenes'
+                          : kindLabels[group as keyof typeof kindLabels]
+                    }
                   >
-                    {bars.map(({ event, lane, left, width }) => (
-                      <button
-                        key={event.occurrence_id ?? `${event.id}-${event.starts_at}`}
-                        className="events-bar"
-                        style={
-                          {
-                            left,
-                            width,
-                            top: lane * 60 + 8,
-                            '--event-color': eventColor(event.id),
-                          } as CSSProperties
-                        }
-                        onClick={(click) => openEvent(event, click.currentTarget)}
-                        aria-label={`${event.title}, ${formatDate(event.starts_at)} to ${event.ends_at ? formatDate(event.ends_at) : 'end date unavailable'}`}
-                      >
-                        <EventArtwork event={event} />
-                        <span className="events-bar-copy">
-                          <strong>{event.title}</strong>
-                          <small>
-                            {event.game_version ? `v${event.game_version} · ` : ''}
-                            {now === null
-                              ? kindLabels[event.kind]
-                              : countdown(event, now).replace(/:\d{2}$/, '')}
-                          </small>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
+                    <h3>
+                      {group === 'characters'
+                        ? 'Character convenes'
+                        : group === 'weapons'
+                          ? 'Weapon convenes'
+                          : kindLabels[group as keyof typeof kindLabels]}
+                    </h3>
+                    <div className="events-calendar-row" style={{ height: lanes * 60 }}>
+                      {bars.map(({ event, lane, left, width }) => (
+                        <button
+                          key={event.occurrence_id ?? `${event.id}-${event.starts_at}`}
+                          className="events-bar"
+                          style={
+                            {
+                              left,
+                              width,
+                              top: lane * 60 + 8,
+                              '--event-color': eventColor(event.id),
+                            } as CSSProperties
+                          }
+                          onClick={(click) => openEvent(event, click.currentTarget)}
+                          aria-label={`${event.title}, ${formatDate(event.starts_at)} to ${event.ends_at ? formatDate(event.ends_at) : 'end date unavailable'}`}
+                        >
+                          <EventArtwork event={event} />
+                          <span className="events-bar-copy">
+                            <strong>{event.title}</strong>
+                            <small>
+                              {event.game_version ? `v${event.game_version} · ` : ''}
+                              {now === null
+                                ? kindLabels[event.kind]
+                                : countdown(event, now).replace(/:\d{2}$/, '')}
+                            </small>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
             </div>
@@ -455,39 +472,54 @@ export function EventsPage({
           </div>
         </section>
       )}
-      {!!catalog.length && (
-        <section className="events-undated">
-          <h2>Dates not recorded</h2>
-          <p>
-            These events are in the game catalog. Server schedule unavailable; their presence does
-            not confirm that they are currently running.
-          </p>
-          <div className="events-catalog-grid">
-            {catalog.slice(0, catalogLimit).map((runs) => {
-              const event = [...runs].reverse().find((event) => !event.starts_at)!;
-              return (
-                <button key={event.id} onClick={(click) => openEvent(event, click.currentTarget)}>
-                  <EventArtwork event={event} />
-                  <span>
-                    <strong>{event.title}</strong>
-                    <small>
-                      {kindLabels[event.kind]}
-                      {event.catalog_version ? ` · Client ${event.catalog_version}` : ''}
-                    </small>
-                  </span>
+      {[
+        {
+          title: 'Permanent content',
+          rows: permanent,
+          description: 'Permanent modes and events without a closing date.',
+        },
+        {
+          title: 'Dates not recorded',
+          rows: catalog,
+          description:
+            'These events are in the game catalog. Server schedule unavailable; their presence does not confirm that they are currently running.',
+        },
+      ].map(
+        ({ title, rows, description }) =>
+          !!rows.length && (
+            <section className="events-undated" key={title}>
+              <h2>{title}</h2>
+              <p>{description}</p>
+              <div className="events-catalog-grid">
+                {rows.slice(0, catalogLimit).map((runs) => {
+                  const event = runs[runs.length - 1];
+                  return (
+                    <button
+                      key={event.id}
+                      onClick={(click) => openEvent(event, click.currentTarget)}
+                    >
+                      <EventArtwork event={event} />
+                      <span>
+                        <strong>{event.title}</strong>
+                        <small>
+                          {kindLabels[event.kind]}
+                          {event.catalog_version ? ` · Client ${event.catalog_version}` : ''}
+                        </small>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {rows.length > catalogLimit && (
+                <button
+                  className="events-load-more"
+                  onClick={() => setCatalogLimit((value) => value + 24)}
+                >
+                  Show more events ({rows.length - catalogLimit} remaining)
                 </button>
-              );
-            })}
-          </div>
-          {catalog.length > catalogLimit && (
-            <button
-              className="events-load-more"
-              onClick={() => setCatalogLimit((value) => value + 24)}
-            >
-              Show more events ({catalog.length - catalogLimit} remaining)
-            </button>
-          )}
-        </section>
+              )}
+            </section>
+          ),
       )}
       {!loading && !visible.length && (
         <p className="events-empty">

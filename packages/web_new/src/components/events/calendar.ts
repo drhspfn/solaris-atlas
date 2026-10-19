@@ -129,30 +129,59 @@ export function groupEvents(events: GameEvent[]) {
     ),
   );
 }
-// Assign simultaneous runs separate lanes; a rerun retains the same event identity.
+export function isPermanentListing(event: GameEvent) {
+  return event.kind === 'permanent' && !event.ends_at;
+}
+export function layoutTimeline(
+  events: GameEvent[],
+  start: number,
+  end: number,
+  boundaries?: number[],
+) {
+  return ['characters', 'weapons', 'limited', 'recurring', 'permanent'].flatMap((group) => {
+    const bars = layoutRuns(
+      events.filter((event) => eventGroup(event) === group),
+      start,
+      end,
+      boundaries,
+    );
+    return bars.length
+      ? [{ group, bars, lanes: Math.max(...bars.map((bar) => bar.lane)) + 1 }]
+      : [];
+  });
+}
+// Reuse a lane across different identities; simultaneous or visibly overlapping bars stay separate.
 export function layoutRuns(events: GameEvent[], start: number, end: number, boundaries?: number[]) {
   const laneEnds: number[] = [];
   return events
     .filter(
       (event) =>
-        Number.isFinite(startTime(event)) && startTime(event) < end && displayEnd(event) >= start,
+        !isPermanentListing(event) &&
+        Number.isFinite(startTime(event)) &&
+        startTime(event) < end &&
+        displayEnd(event) >= start,
     )
+    .sort((a, b) => startTime(a) - startTime(b) || displayEnd(a) - displayEnd(b) || a.id - b.id)
     .map((event) => {
       const left = Math.max(start, startTime(event));
       const right = Math.min(end, displayEnd(event));
-      let lane = laneEnds.findIndex((last) => last < left);
+      const position = boundaries
+        ? timePosition(left, boundaries)
+        : ((left - start) / DAY) * DAY_WIDTH;
+      const width = Math.max(
+        12,
+        boundaries
+          ? timePosition(right, boundaries) - position
+          : ((right - left) / DAY) * DAY_WIDTH,
+      );
+      let lane = laneEnds.findIndex((last) => last <= position);
       if (lane < 0) lane = laneEnds.length;
-      laneEnds[lane] = right;
+      laneEnds[lane] = position + width;
       return {
         event,
         lane,
-        left: boundaries ? timePosition(left, boundaries) : ((left - start) / DAY) * DAY_WIDTH,
-        width: Math.max(
-          12,
-          boundaries
-            ? timePosition(right, boundaries) - timePosition(left, boundaries)
-            : ((right - left) / DAY) * DAY_WIDTH,
-        ),
+        left: position,
+        width,
       };
     });
 }

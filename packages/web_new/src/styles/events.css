@@ -267,6 +267,18 @@
   position: relative;
   border-bottom: 1px solid rgb(255 255 255 / 4%);
 }
+.events-calendar-group h3 {
+  position: sticky;
+  left: 12px;
+  width: max-content;
+  max-width: calc(100vw - 64px);
+  margin: 0;
+  padding: 12px 8px;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
 .events-bar {
   position: absolute;
   display: block;

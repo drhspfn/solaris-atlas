@@ -116,6 +116,14 @@ const backend = createServer(async (request, response) => {
             banner_url: 'https://cdn.solarisatlas.fun/objects/empty-background',
             preview_url: 'https://cdn.solarisatlas.fun/objects/featured-portrait',
           },
+          {
+            id: 3,
+            source_id: 'permanent-mode',
+            title: 'Permanent test mode',
+            kind: 'permanent',
+            starts_at: '2026-01-01T00:00:00Z',
+            ends_at: null,
+          },
         ],
       }),
     );
@@ -326,4 +334,13 @@ test('calendar and announcements share their archive header and navigation', asy
     assert.ok(html.includes('Event calendars, official announcements and every recorded run.'));
     assert.match(html, /aria-label="Events and announcements"/);
   }
+});
+
+test('permanent open-ended content is listed below the calendar without an endless bar', async () => {
+  const response = await fetch(`${site}/events`);
+  const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.ok(html.includes('<h2>Permanent content</h2>'));
+  assert.ok(html.includes('<strong>Permanent test mode</strong>'));
+  assert.ok(html.includes('class="events-calendar-group"'));
+  assert.doesNotMatch(html, /aria-label="Permanent test mode,/);
 });

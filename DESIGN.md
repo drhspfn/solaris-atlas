@@ -154,9 +154,12 @@ raw ID chips. Admin import notices confirm queued work, not completed publicatio
 ## Public detail addresses
 
 Events and Announcements share the event archive header, navigation, 1440px
-container and mobile gutters. Calendar rows group character convenes, weapon
-convenes, limited events, recurring modes and permanent content, then order by
-the next closing time within the visible window. Filters expose those groups.
+container and mobile gutters. Calendar sections group character convenes, weapon
+convenes, limited events and recurring modes. Chronological interval packing reuses
+free lanes across different events without overlapping visible bars. A lane does
+not imply a relationship between its events; IDs, selection and histories remain
+independent. Permanent content without a closing date appears below the calendar.
+Closing-time sorting applies to the event list; filters expose the same groups.
 Full official Notice posters take precedence for matching visible runs; older
 pinned Notice revisions remain authoritative. Ambiguous client rows may link to
 a current announcement about the exact featured subject without asserting its
