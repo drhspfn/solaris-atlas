@@ -124,6 +124,18 @@ const bounds = (a: Atlas) =>
     ],
     [a.grid_bounds[3] * mapSettings.tilePixels, a.grid_bounds[2] * mapSettings.tilePixels],
   );
+
+function markerChip(marker: Marker, icons: Atlas['icons'], label: string): HTMLElement {
+  const chip = document.createElement('span');
+  chip.className = 'atlas-marker-chip';
+  chip.append(iconNode(marker, icons));
+  const name = document.createElement('span');
+  name.className = 'atlas-marker-name';
+  name.textContent = label;
+  chip.append(name);
+  return chip;
+}
+
 function MapCanvas({
   base,
   floors,
@@ -277,18 +289,20 @@ function MapCanvas({
           cell.reduce((sum, m) => sum + position(m.world).lat, 0) / cell.length,
           cell.reduce((sum, m) => sum + position(m.world).lng, 0) / cell.length,
         );
-        const label = iconNode(marker, base.icons);
+        const description = `${cell.length} objects. Zoom in to explore.`;
+        const opensLeft = instance.latLngToContainerPoint(center).x > instance.getSize().x - 260;
+        const label = markerChip(marker, base.icons, description);
         const count = document.createElement('b');
         count.className = 'atlas-cluster-count';
         count.textContent = String(cell.length);
         label.append(count);
-        L.marker(center, {
+        const cluster = L.marker(center, {
           icon: L.divIcon({
-            className: `atlas-point atlas-cluster${foundIds.has(marker.id) ? ' is-found' : ''}`,
+            className: `atlas-point atlas-cluster${opensLeft ? ' opens-left' : ''}${foundIds.has(marker.id) ? ' is-found' : ''}`,
             html: label,
             iconSize: [mapSettings.clusterSize, mapSettings.clusterSize],
           }),
-          title: `${cell.length} objects. Zoom in to explore.`,
+          riseOnHover: true,
           opacity: foundIds.has(marker.id) ? mapSettings.foundMarkerOpacity : 1,
         })
           .addTo(group)
@@ -303,27 +317,26 @@ function MapCanvas({
                 },
               );
           });
+        cluster.getElement()?.setAttribute('aria-label', description);
         continue;
       }
       const isSelected = selected?.id === marker.id;
+      const description =
+        (marker.metadata.names?.en ?? categories[marker.category]?.[0] ?? 'Map object') +
+        (foundIds.has(marker.id) ? ' · Found' : '');
+      const opensLeft =
+        instance.latLngToContainerPoint(position(marker.world)).x > instance.getSize().x - 260;
       const dot = L.marker(position(marker.world), {
         icon: L.divIcon({
-          className: `atlas-point${isSelected ? ' selected' : ''}${foundIds.has(marker.id) ? ' is-found' : ''}`,
-          html: iconNode(marker, base.icons),
+          className: `atlas-point${opensLeft ? ' opens-left' : ''}${isSelected ? ' selected' : ''}${foundIds.has(marker.id) ? ' is-found' : ''}`,
+          html: markerChip(marker, base.icons, description),
           iconSize: [mapSettings.markerSize, mapSettings.markerSize],
           iconAnchor: [mapSettings.markerSize / 2, mapSettings.markerSize / 2],
         }),
-        title:
-          (marker.metadata.names?.en ?? categories[marker.category]?.[0] ?? 'Map object') +
-          (foundIds.has(marker.id) ? ' · Found' : ''),
+        riseOnHover: true,
         opacity: foundIds.has(marker.id) ? mapSettings.foundMarkerOpacity : 1,
       }).addTo(group);
-      const tooltip = document.createElement('span');
-      tooltip.textContent =
-        cell.length > 1
-          ? `${cell.length} objects — zoom in`
-          : (marker.metadata.names?.en ?? categories[marker.category]?.[0] ?? 'Map object');
-      dot.bindTooltip(tooltip);
+      dot.getElement()?.setAttribute('aria-label', description);
       dot.on('click', () => {
         if (cell.length > 1)
           instance.setView(
@@ -1334,7 +1347,6 @@ export function WorldMapPage() {
               <button
                 key={m.id}
                 aria-label={title}
-                title={title}
                 aria-pressed={chosen?.id === m.id}
                 onClick={() => {
                   chooseMap(String(m.id));
