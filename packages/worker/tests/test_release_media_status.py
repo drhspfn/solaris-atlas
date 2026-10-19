@@ -45,10 +45,12 @@ async def test_deferred_child_is_waited_for_instead_of_failed():
 async def test_event_artwork_reports_unresolved_client_texture(monkeypatch, tmp_path):
     monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
     monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
-    build = AsyncMock(return_value={})
-    monkeypatch.setattr(release_media, "build_icons", build)
     session = AsyncMock()
-
+    async def extract(*args, **kwargs):
+        session.commit.assert_awaited_once()
+        return {}
+    build = AsyncMock(side_effect=extract)
+    monkeypatch.setattr(release_media, "build_icons", build)
     report, status = await release_media.event_images(
         {"release_id": 9, "targets": ["Common/Image/BgCg/T_RoleShare_SuoMing"]},
         {"asset_version": "3.7.0", "tier": "hd", "download_id": "a" * 64},
