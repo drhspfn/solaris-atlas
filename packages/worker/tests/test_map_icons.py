@@ -97,3 +97,46 @@ async def test_exact_sprite_uses_its_atlas_and_matches_qualified_reference(tmp_p
     assert source in result
     with Image.open(result[source]["path"]) as image:
         assert image.size == (4, 4)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_icon_requests_reuse_conversion_after_waiting(tmp_path, monkeypatch):
+    import asyncio
+    import threading
+    from pathlib import Path
+    from unittest.mock import AsyncMock
+
+    from PIL import Image
+
+    from wuwa_story_worker import map_icons
+
+    raw = tmp_path / "exports/atlas/files"
+    relative = Path("Client/Content/Aki/UI/UIResources/Common/Image/Test/T_One")
+    (raw / relative).parent.mkdir(parents=True)
+    (raw / relative).with_suffix('.uasset').write_bytes(b'asset')
+    source = '/Game/Aki/UI/UIResources/Common/Image/Test/T_One'
+    tool = tmp_path / 'tool'
+    tool.write_bytes(b'tool')
+    monkeypatch.setattr(map_icons, 'export_assets', AsyncMock(return_value=raw.parent / 'manifest.json'))
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def convert(command, **kwargs):
+        calls.append(command)
+        entered.set()
+        assert release.wait(5)
+        destination = Path(command[command.index('-o') + 1]) / 'files' / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        Image.new('RGB', (2, 2)).save(destination.with_suffix('.png'))
+
+    monkeypatch.setattr(map_icons.subprocess, 'run', convert)
+    markers = [{'metadata_json': {'icon_source': source}}]
+    first = asyncio.create_task(map_icons.build_icons(tmp_path, tool, tool, markers, entity_media=True))
+    assert await asyncio.to_thread(entered.wait, 5)
+    second = asyncio.create_task(map_icons.build_icons(tmp_path, tool, tool, markers, entity_media=True))
+    await asyncio.sleep(0)  # Let the duplicate reach the per-atlas lock before publishing.
+    release.set()
+    results = await asyncio.wait_for(asyncio.gather(first, second), timeout=10)
+    assert results[0] == results[1]
+    assert source in results[0]
+    assert len(calls) == 1

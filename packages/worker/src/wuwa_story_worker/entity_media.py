@@ -122,14 +122,13 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None):
     images = [t for t in targets if t["kind"] == "image"]
     icons = {}
     if images:
-        with workspace_lock(root / "entity-image-cache"):
-            icons = await build_icons(
-                root,
-                fmodel,
-                converter,
-                [{"metadata_json": {"icon_source": t["path"]}} for t in images],
-                entity_media=True,
-            )
+        icons = await build_icons(
+            root,
+            fmodel,
+            converter,
+            [{"metadata_json": {"icon_source": t["path"]}} for t in images],
+            entity_media=True,
+        )
     files = []
     missing = []
     for target in images:

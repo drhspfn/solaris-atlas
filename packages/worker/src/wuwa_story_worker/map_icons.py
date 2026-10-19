@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image
 
 from wuwa_story_worker.asset_export import _sha256, export_assets
-from wuwa_story_worker.client_assets import workspace_lock
+from wuwa_story_worker.client_assets import wait_workspace_lock
 
 
 def sprite_box(info: dict, width: int, height: int) -> tuple[int, int, int, int]:
@@ -89,12 +89,6 @@ async def build_icons(
         )
         decoded.mkdir(exist_ok=True)
         complete = decoded / "decode-receipt.json"
-        cached = False
-        if entity_media and complete.exists():
-            cached = all(
-                (decoded / path).is_file() and _sha256(decoded / path) == digest
-                for path, digest in json.loads(complete.read_text(encoding="utf-8")).items()
-            )
         packages = decoded / "packages.txt"
         textures = [p for p in paths if not p.name.startswith(("SP_", "TPI_"))]
 
@@ -122,16 +116,29 @@ async def build_icons(
                             check=True, env=environment,
                         )
 
-        with workspace_lock(decoded):
-            if not cached:
-                await asyncio.to_thread(convert)
-                if entity_media:
-                    hashes = {
-                        p.relative_to(decoded).as_posix(): _sha256(p)
-                        for p in decoded.rglob("*")
-                        if p.is_file() and p.suffix in (".png", ".json") and p != complete
-                    }
-                    complete.write_text(json.dumps(hashes), encoding="utf-8")
+        async def decode(decoded=decoded, complete=complete, convert=convert):
+            async with wait_workspace_lock(decoded):
+                # Recheck after acquiring the resource: another job may have
+                # finished the same atlas while this request exported its inputs.
+                cached = entity_media and complete.exists() and all(
+                    (decoded / path).is_file() and _sha256(decoded / path) == digest
+                    for path, digest in json.loads(complete.read_text(encoding="utf-8")).items()
+                )
+                if not cached:
+                    await asyncio.to_thread(convert)
+                    if entity_media:
+                        hashes = {
+                            p.relative_to(decoded).as_posix(): _sha256(p)
+                            for p in decoded.rglob("*")
+                            if p.is_file() and p.suffix in (".png", ".json") and p != complete
+                        }
+                        complete.write_text(json.dumps(hashes), encoding="utf-8")
+
+        # Keep the resource lock until the converter thread actually exits, even
+        # if this job is cancelled. Other requests can then safely reuse its receipt.
+        decoding = asyncio.create_task(decode())
+        decoding.add_done_callback(lambda done: done.exception() if not done.cancelled() else None)
+        await asyncio.shield(decoding)
         for path in decoded.rglob("*.png"):
             relative = path.relative_to(decoded / raw.name / "Client/Content")
             pngs["/Game/" + relative.with_suffix("").as_posix()] = path
@@ -203,7 +210,8 @@ async def build_icons(
         files.update(
             {path: _sha256(Path(path)) for icon in result.values() for path in icon["raw_paths"]}
         )
-        temporary = cache.with_suffix(".partial.json")
-        temporary.write_text(json.dumps({"icons": result, "files": files}), encoding="utf-8")
+        with tempfile.NamedTemporaryFile(dir=cache.parent, suffix=".json", mode="w", encoding="utf-8", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump({"icons": result, "files": files}, stream)
         temporary.replace(cache)
     return result

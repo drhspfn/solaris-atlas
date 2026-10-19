@@ -1,6 +1,8 @@
+import asyncio
 import hashlib
 import io
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -264,3 +266,97 @@ async def test_new_extractor_uses_a_new_immutable_export_directory(tmp_path, mon
     assert old.read_bytes() == original
     monkeypatch.setattr(asset_export.subprocess, "run", lambda *a, **k: pytest.fail("new export is reusable"))
     assert await asset_export.export_assets(tmp_path, executable, "ConfigDB") == new
+
+
+@pytest.mark.asyncio
+async def test_distinct_exports_overlap_and_duplicate_callers_share_work(tmp_path, monkeypatch):
+    executable = _completed_download(tmp_path)
+    overlap = threading.Barrier(2)
+    calls = []
+
+    def run(command, stdout, **kwargs):
+        calls.append(command[-1])
+        # Neither export can finish unless the other one is running concurrently.
+        overlap.wait(timeout=5)
+        assert '.export-' in command[3]
+        (Path(command[3]) / 'data.json').write_text('{}')
+        stdout.write('Pak "base.pak": 1 files (1 encrypted)\n[Done] Extracted 1 files\n')
+
+    monkeypatch.setattr(asset_export.subprocess, 'run', run)
+    with workspace_lock(tmp_path):  # Unrelated exports no longer use the client-wide lock.
+        receipts = await asyncio.wait_for(asyncio.gather(*(
+            asset_export.export_assets(tmp_path, executable, name)
+            for name in ['ConfigDB'] * 8 + ['Audio'] * 8
+        )), timeout=10)
+    assert sorted(calls) == ['Audio', 'ConfigDB']
+    assert len(set(receipts)) == 2
+    assert all(receipt.is_file() for receipt in receipts)
+    assert not list((tmp_path / 'exports').glob('*/.export-*'))
+
+
+@pytest.mark.asyncio
+async def test_cancelled_caller_does_not_cancel_shared_export(tmp_path, monkeypatch):
+    executable = _completed_download(tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def run(command, stdout, **kwargs):
+        calls.append(command[-1])
+        entered.set()
+        assert release.wait(timeout=5)
+        (Path(command[3]) / 'data.json').write_text('{}')
+        stdout.write('Pak "base.pak": 1 files (1 encrypted)\n[Done] Extracted 1 files\n')
+
+    monkeypatch.setattr(asset_export.subprocess, 'run', run)
+    first = asyncio.create_task(asset_export.export_assets(tmp_path, executable, 'ConfigDB'))
+    assert await asyncio.to_thread(entered.wait, 5)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    second = asyncio.create_task(asset_export.export_assets(tmp_path, executable, 'ConfigDB'))
+    release.set()
+    receipt = await asyncio.wait_for(second, 10)
+    assert receipt.is_file()
+    assert calls == ['ConfigDB']
+
+
+@pytest.mark.asyncio
+async def test_failed_attempt_cannot_contaminate_retry(tmp_path, monkeypatch):
+    executable = _completed_download(tmp_path)
+
+    def fail(command, stdout, **kwargs):
+        (Path(command[3]) / 'bad.json').write_text('incomplete')
+        stdout.write('[Fail] interrupted\n[Done] Extracted 0 files\n')
+
+    monkeypatch.setattr(asset_export.subprocess, 'run', fail)
+    with pytest.raises(RuntimeError):
+        await asset_export.export_assets(tmp_path, executable, 'ConfigDB')
+
+    def succeed(command, stdout, **kwargs):
+        (Path(command[3]) / 'data.json').write_text('{}')
+        stdout.write('Pak "base.pak": 1 files (1 encrypted)\n[Done] Extracted 1 files\n')
+
+    monkeypatch.setattr(asset_export.subprocess, 'run', succeed)
+    receipt = await asset_export.export_assets(tmp_path, executable, 'ConfigDB')
+    assert [entry['path'] for entry in json.loads(receipt.read_text())['files']] == ['data.json']
+
+
+@pytest.mark.asyncio
+async def test_export_lock_rechecks_receipt_for_independent_workers(tmp_path, monkeypatch):
+    executable = _completed_download(tmp_path)
+    calls = []
+
+    def run(command, stdout, **kwargs):
+        calls.append(command[-1])
+        (Path(command[3]) / 'data.json').write_text('{}')
+        stdout.write('Pak "base.pak": 1 files (1 encrypted)\n[Done] Extracted 1 files\n')
+
+    monkeypatch.setattr(asset_export.subprocess, 'run', run)
+    # Bypass the process-local shared task to exercise the OS lock used by
+    # separate worker processes sharing the client volume.
+    receipts = await asyncio.wait_for(asyncio.gather(*(
+        asset_export._export_assets(tmp_path, executable, 'ConfigDB', False,
+                                    asset_export._sha256(executable)) for _ in range(2)
+    )), timeout=10)
+    assert receipts[0] == receipts[1]
+    assert calls == ['ConfigDB']
