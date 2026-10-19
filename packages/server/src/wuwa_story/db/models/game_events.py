@@ -24,6 +24,7 @@ class GameEvent(Base):
     __tablename__ = "game_event"
     __table_args__ = (
         UniqueConstraint("source", "source_id", name="uq_game_event_source_identity"),
+        Index("uq_game_event_slug", "slug", unique=True),
         {"schema": "core"},
     )
 
@@ -31,6 +32,7 @@ class GameEvent(Base):
     source: Mapped[str] = mapped_column(String(128), nullable=False)
     source_id: Mapped[str] = mapped_column(String(256), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
+    slug: Mapped[str | None] = mapped_column(String(512))
     description: Mapped[str | None] = mapped_column(Text)
     event_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     group_label_key: Mapped[str | None] = mapped_column(String(256))

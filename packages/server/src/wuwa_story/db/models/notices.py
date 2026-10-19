@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Identity,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -23,6 +24,7 @@ class GameNotice(Base):
     __tablename__ = "game_notice"
     __table_args__ = (
         UniqueConstraint("feed", "locale", "source_id", name="uq_game_notice_identity"),
+        Index("uq_game_notice_slug", "slug", unique=True),
         {"schema": "core"},
     )
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
@@ -31,6 +33,7 @@ class GameNotice(Base):
     source_id: Mapped[str] = mapped_column(String(128), nullable=False)
     category: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str | None] = mapped_column(String(512))
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     revision: Mapped[str] = mapped_column(String(64), nullable=False)
     content: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

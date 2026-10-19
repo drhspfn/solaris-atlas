@@ -28,7 +28,7 @@ class NodeType(Base):
 
 class Node(MetadataMixin, Base):
     __tablename__ = "node"
-    __table_args__ = ({"schema": "graph"},)
+    __table_args__ = (Index("uq_node_type_slug", "type_id", "slug", unique=True), {"schema": "graph"})
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     type_id: Mapped[int] = mapped_column(
         ForeignKey("graph.node_type.id", ondelete="RESTRICT"), nullable=False, index=True

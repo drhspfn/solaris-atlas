@@ -1,11 +1,28 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from wuwa_story.db.models.graph import Node
+from wuwa_story.db.models.core import Quest
+from wuwa_story.db.models.graph import Node, NodeType
 
 
-async def get_node(session: AsyncSession, canonical_key: str) -> Node | None:
-    return await session.scalar(select(Node).where(Node.canonical_key == canonical_key))
+async def get_node(session: AsyncSession, canonical_key: str, types: tuple[str, ...] = ()) -> Node | None:
+    # Match the complete stored slug, never just its numeric prefix.
+    statement = select(Node).where(
+        Node.canonical_key == canonical_key if ":" in canonical_key else Node.slug == canonical_key)
+    if types:
+        statement = statement.join(NodeType).where(NodeType.key.in_(types))
+    if ":" in canonical_key:
+        return await session.scalar(statement)
+    matches = list(await session.scalars(statement.limit(2)))
+    return matches[0] if len(matches) == 1 else None
+
+
+async def get_quest(session: AsyncSession, key: str | int) -> Quest | None:
+    value = str(key)
+    if value.isdigit():
+        return await session.scalar(select(Quest).where(Quest.game_quest_id == int(value)))
+    node = await get_node(session, value, ("quest",))
+    return await session.get(Quest, node.id) if node else None
 
 
 async def upsert_node(
