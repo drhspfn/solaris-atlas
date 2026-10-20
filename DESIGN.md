@@ -139,8 +139,9 @@ The desktop map sidebar also uses Locations/Objects tabs. Its height is constrai
 to the map grid, with a fixed heading and tab bar; only the active panel scrolls.
 Character voice lines separate text locale from audio tracks. Text selection sets
 the default voice language; an individual player's explicit language choice wins.
-Players use compact play/pause, seek, time and mute controls and show unavailable
-or retry states. Switching tracks stops playback. Voice grids use shrinkable
+Players use one slim row: play/pause, seek, elapsed/duration, mute and settings.
+Volume opens on hover/focus; optional named tracks live in the settings popover.
+Unavailable and retry states remain visible. Switching tracks stops playback. Voice grids use shrinkable
 columns and wrap text before falling back to a single mobile column.
 `components/ui/AudioPlayer.tsx` owns playback of a single URL. `TrackPlayer.tsx`
 adds only an optional name-to-URL map and track selection. Neither component

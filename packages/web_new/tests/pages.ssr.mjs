@@ -347,6 +347,8 @@ test('voice lines render text and a custom multilingual player without native au
   assert.ok(html.includes('Audio track: English voice title'));
   assert.ok(html.includes('Play English voice title'));
   assert.ok(html.includes('Seek: English voice title'));
+  assert.ok(html.includes('Volume: English voice title'));
+  assert.ok(html.includes('Player settings: English voice title'));
   assert.ok(html.includes('english-voice'));
   assert.ok(html.includes('日本語'));
   assert.doesNotMatch(html, /<audio\b[^>]*\bcontrols(?:=|\s|>)/);

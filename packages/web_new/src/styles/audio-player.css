@@ -1,71 +1,171 @@
-.audio-player,
-.audio-track-player {
+.audio-player {
   width: 100%;
   min-width: 0;
-  padding: 12px;
+  padding: 2px 4px;
   border: 1px solid var(--border-default);
-  border-radius: 12px;
-  background: var(--surface-2);
+  border-radius: 6px;
+  background: transparent;
 }
 .audio-player audio {
   display: none;
 }
-.audio-track-select {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
-  align-items: center;
-  margin-bottom: 8px;
-}
-.audio-track-select > span,
-.audio-player small {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
 .audio-player-controls {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 44px;
-  gap: 8px;
+  display: flex;
   align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 .audio-player button {
-  min-width: 44px;
-  min-height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  background: var(--surface-1);
-  color: var(--text-primary);
+  flex: 0 0 auto;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
   cursor: pointer;
 }
+.audio-player button:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
 .audio-player button:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: default;
 }
-.audio-player :is(button, input):focus-visible {
+.audio-player :is(button, input):focus-visible,
+.audio-settings-menu button:focus-visible {
   outline: 2px solid var(--mint);
-  outline-offset: 3px;
-}
-.audio-player-timeline {
-  min-width: 0;
+  outline-offset: 2px;
 }
 .audio-player input[type='range'] {
+  appearance: none;
   display: block;
-  width: 100%;
   min-width: 0;
   height: 28px;
   margin: 0;
-  accent-color: var(--mint);
-}
-.audio-player-timeline small {
-  display: block;
-  font-variant-numeric: tabular-nums;
-}
-
-.audio-track-player > .audio-player {
-  border: 0;
   padding: 0;
   background: transparent;
+  accent-color: var(--mint);
+  cursor: pointer;
+}
+.audio-player-progress {
+  flex: 1 1 0;
+  width: 0;
+}
+.audio-player input[type='range']::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border-default);
+}
+.audio-player input[type='range']::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border-default);
+}
+.audio-player input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 9px;
+  height: 9px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: var(--mint);
+}
+.audio-player input[type='range']::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--mint);
+}
+.audio-player .audio-player-progress::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    to right,
+    var(--mint) var(--audio-progress, 0%),
+    var(--border-default) var(--audio-progress, 0%)
+  );
+}
+.audio-player small {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.audio-player-time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+.audio-player-volume,
+.audio-player-settings {
+  position: relative;
+  flex: 0 0 auto;
+}
+.audio-player-volume-popup {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  right: -4px;
+  width: 112px;
+  padding: 6px 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-default);
+  border-radius: 5px;
+  z-index: 2;
+}
+.audio-player-volume:hover .audio-player-volume-popup,
+.audio-player-volume:focus-within .audio-player-volume-popup {
+  display: block;
+}
+.audio-player-volume-popup input {
+  width: 100%;
+}
+.audio-settings-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  overflow-y: auto;
+  box-shadow: 0 6px 20px #0004;
+}
+.audio-settings-menu:popover-open {
+  display: grid;
+  gap: 2px;
+}
+.audio-settings-menu > span {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.audio-settings-menu button {
+  width: 100%;
+  min-height: 32px;
+  height: auto;
+  padding: 6px 8px;
+  justify-content: flex-start;
+  text-align: left;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.audio-settings-menu button[aria-checked='true'] {
+  color: var(--mint);
+  background: var(--surface-2);
+}
+@media (pointer: coarse) {
+  .audio-player button {
+    height: 40px;
+    min-height: 40px;
+    min-width: 32px;
+  }
+  .audio-settings-menu button {
+    min-height: 44px;
+  }
 }

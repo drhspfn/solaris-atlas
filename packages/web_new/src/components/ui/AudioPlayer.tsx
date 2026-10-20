@@ -1,7 +1,7 @@
 'use client';
 
 import { Pause, Play, Volume2, VolumeX } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import '@/styles/audio-player.css';
 
 function time(seconds: number) {
@@ -9,13 +9,25 @@ function time(seconds: number) {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-export function AudioPlayer({ src, label = 'Audio' }: { src?: string | null; label?: string }) {
+export function AudioPlayer({
+  src,
+  label = 'Audio',
+  settings,
+}: {
+  src?: string | null;
+  label?: string;
+  settings?: ReactNode;
+}) {
   const audio = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [volume, setVolume] = useState(1);
+  useEffect(() => {
+    if (audio.current) audio.current.volume = volume;
+  }, [volume, src]);
   useEffect(() => {
     setPlaying(false);
     setElapsed(0);
@@ -43,34 +55,59 @@ export function AudioPlayer({ src, label = 'Audio' }: { src?: string | null; lab
         >
           {playing ? <Pause size={18} /> : <Play size={18} />}
         </button>
-        <div className="audio-player-timeline">
-          <input
-            type="range"
-            min="0"
-            max={duration || 1}
-            step="0.1"
-            value={Math.min(elapsed, duration || 0)}
-            disabled={!src || !duration || error}
-            aria-label={`Seek: ${label}`}
-            aria-valuetext={`${time(elapsed)} of ${time(duration)}`}
-            onChange={(event) => {
-              if (!audio.current) return;
-              audio.current.currentTime = Number(event.target.value);
-              setElapsed(audio.current.currentTime);
+        <input
+          className="audio-player-progress"
+          type="range"
+          min="0"
+          max={duration || 1}
+          step="0.1"
+          value={Math.min(elapsed, duration || 0)}
+          disabled={!src || !duration || error}
+          aria-label={`Seek: ${label}`}
+          aria-valuetext={`${time(elapsed)} of ${time(duration)}`}
+          style={
+            { '--audio-progress': `${duration ? (elapsed / duration) * 100 : 0}%` } as CSSProperties
+          }
+          onChange={(event) => {
+            if (!audio.current) return;
+            audio.current.currentTime = Number(event.target.value);
+            setElapsed(audio.current.currentTime);
+          }}
+        />
+        <small className="audio-player-time">
+          {time(elapsed)} / {time(duration)}
+        </small>
+        <div className="audio-player-volume">
+          <button
+            type="button"
+            aria-label={`${muted || !volume ? 'Unmute' : 'Mute'} ${label}`}
+            aria-pressed={muted || !volume}
+            onClick={() => {
+              if (muted || !volume) {
+                setMuted(false);
+                if (!volume) setVolume(1);
+              } else setMuted(true);
             }}
-          />
-          <small>
-            {time(elapsed)} / {time(duration)}
-          </small>
+          >
+            {muted || !volume ? <VolumeX size={16} /> : <Volume2 size={16} />}
+          </button>
+          <div className="audio-player-volume-popup">
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={volume}
+              aria-label={`Volume: ${label}`}
+              aria-valuetext={`${Math.round(volume * 100)}%`}
+              onChange={(event) => {
+                setVolume(Number(event.target.value));
+                setMuted(false);
+              }}
+            />
+          </div>
         </div>
-        <button
-          type="button"
-          aria-label={`${muted ? 'Unmute' : 'Mute'} ${label}`}
-          aria-pressed={muted}
-          onClick={() => setMuted(!muted)}
-        >
-          {muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
-        </button>
+        {settings && <div className="audio-player-settings">{settings}</div>}
       </div>
       {src && (
         <audio
