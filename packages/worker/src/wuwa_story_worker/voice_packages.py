@@ -18,7 +18,7 @@ from wuwa_story_worker.client_assets import plan_id, read_url, safe_path, save_j
 
 LANGUAGES = ("en", "ja", "ko", "zh")
 CDN_HOSTS = {
-    f"cdn-{name}-hw-mc.aki-game.net" for name in ("aws", "akamai", "qcloud", "huoshan")}
+    f"cdn-{name}-hw-mc.aki-game.net" for name in ("aws", "akamai", "qcloud", "huoshan", "aliyun")}
 CONFIG_HOSTS = {
     f"aki-config-{name}.aki-game.net" for name in ("aws", "akamai", "qcloud", "huoshan")}
 logger = logging.getLogger(__name__)

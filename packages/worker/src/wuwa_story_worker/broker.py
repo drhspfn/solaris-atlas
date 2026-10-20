@@ -191,8 +191,11 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
                                 await message.ack()
                                 return
                         await job_handler(payload)
-                    except JobDeferred:
+                    except JobDeferred as error:
                         try:
+                            if payload.get("run_id") is not None:
+                                await update_admin_run(payload["run_id"], job_key, "waiting_dependency",
+                                                       error=str(error))
                             await defer_job(job_channel, job_key, message)
                         except Exception:
                             logger.exception("Could not defer %s", message.message_id)

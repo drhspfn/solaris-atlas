@@ -140,6 +140,8 @@ async def test_deferred_dependency_releases_slot_for_next_task(monkeypatch):
     monkeypatch.setattr(broker.aio_pika, "connect_robust", AsyncMock(return_value=connection))
     monkeypatch.setattr(broker, "declare_queue", AsyncMock(return_value=(None, queue)))
     monkeypatch.setattr(broker, "claim_import", AsyncMock(return_value=True))
+    update = AsyncMock()
+    monkeypatch.setattr(broker, "update_admin_run", update)
     handler = AsyncMock(side_effect=[broker.JobDeferred("Dependency not ready"), None])
     task = asyncio.create_task(broker.consume_jobs({"release_media": handler}))
     try:
@@ -156,6 +158,8 @@ async def test_deferred_dependency_releases_slot_for_next_task(monkeypatch):
         assert handler.await_count == 2
         sent = channel.default_exchange.publish.call_args.args[0]
         assert sent.body == waiting.body
+        update.assert_awaited_once_with(1, "release_media", "waiting_dependency",
+                                       error="Dependency not ready")
     finally:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):

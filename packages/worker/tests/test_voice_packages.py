@@ -30,6 +30,13 @@ def test_voice_download_rejects_untrusted_cdn():
         resource_url("https://example.com/prod/client/", "voice.pak")
 
 
+def test_voice_download_accepts_official_aliyun_cdn():
+    base = "https://cdn-aliyun-hw-mc.aki-game.net/prod/client/"
+    assert resource_url(base, "voice.pak") == base + "voice.pak"
+    with pytest.raises(ValueError):
+        resource_url(base.replace(".aki-game.net", ".aki-game.net.example.com"), "voice.pak")
+
+
 def test_explicit_rover_variants_resolve_missing_legacy_name(tmp_path):
     from wuwa_story_worker.voice_import import exported_voices
     for filename in ("en_vo_Character_JiYan_18_1_F.wem", "en_vo_Character_JiYan_18_1_M.WEM", "en_vo_Character_JiYan_18_10_F.wem"):
