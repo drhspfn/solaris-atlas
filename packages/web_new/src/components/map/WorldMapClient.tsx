@@ -914,7 +914,7 @@ export function WorldMapPage() {
           <span className="eyebrow">SOLARIS / FIELD ATLAS</span> <h1>Interactive map</h1>{' '}
           <p>Find a place. Explore what’s there.</p>{' '}
         </div>{' '}
-        <div id="map-locations-panel" className="atlas-panel atlas-location-panel" hidden={mobile && filterTab !== 'locations'} role={mobile ? 'tabpanel' : undefined} aria-labelledby={mobile ? 'map-locations-tab' : undefined}>
+        <div id="map-locations-panel" className="atlas-panel atlas-location-panel" hidden={filterTab !== 'locations'} role="tabpanel" aria-labelledby="map-locations-tab">
         <div className="atlas-field">
           <span>Region</span>
           <Select label="Region" value={chosen?.id ?? ''} onChange={chooseMap}
@@ -1037,7 +1037,7 @@ export function WorldMapPage() {
           <small> Floor placement is shown only where the game records it. </small>{' '}
         </details>{' '}
         </div>
-        <div id="map-objects-panel" className="atlas-panel atlas-objects-panel" hidden={mobile && filterTab !== 'objects'} role={mobile ? 'tabpanel' : undefined} aria-labelledby={mobile ? 'map-objects-tab' : undefined}>
+        <div id="map-objects-panel" className="atlas-panel atlas-objects-panel" hidden={filterTab !== 'objects'} role="tabpanel" aria-labelledby="map-objects-tab">
         <div className="atlas-search-field">
             <label htmlFor="map-object-search">Find an object</label>
             <div className="atlas-search-input">
