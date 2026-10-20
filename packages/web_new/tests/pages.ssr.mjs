@@ -51,7 +51,10 @@ const archive = {
   ],
   skill_tree: [],
   resonance_chain: [],
-  voice_lines: [],
+  voice_lines: [{ id: 1, order: 1, title: 'English voice title', text: 'English text stays independent of the audio track.',
+    audio_url: 'https://cdn.solarisatlas.fun/objects/english-voice',
+    audio_tracks: { en: 'https://cdn.solarisatlas.fun/objects/english-voice', ja: 'https://cdn.solarisatlas.fun/objects/japanese-voice' },
+    audio_event_path: '/Game/Voice/Test' }],
   other_voice_events: [],
 };
 const backend = createServer(async (request, response) => {
@@ -334,6 +337,19 @@ test('calendar and announcements share their archive header and navigation', asy
     assert.ok(html.includes('Event calendars, official announcements and every recorded run.'));
     assert.match(html, /aria-label="Events and announcements"/);
   }
+});
+
+test('voice lines render text and a custom multilingual player without native audio controls', async () => {
+  const response = await fetch(`${site}/characters/character%3A1102`);
+  const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.ok(html.includes('English text stays independent of the audio track.'));
+  assert.ok(html.includes('Voice line text language'));
+  assert.ok(html.includes('Audio track: English voice title'));
+  assert.ok(html.includes('Play English voice title'));
+  assert.ok(html.includes('Seek: English voice title'));
+  assert.ok(html.includes('english-voice'));
+  assert.ok(html.includes('日本語'));
+  assert.doesNotMatch(html, /<audio\b[^>]*\bcontrols(?:=|\s|>)/);
 });
 
 test('permanent open-ended content is listed below the calendar without an endless bar', async () => {

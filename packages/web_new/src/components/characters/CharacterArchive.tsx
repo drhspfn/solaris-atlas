@@ -7,6 +7,9 @@ import { Link } from '@/lib/router';
 import { api, apiUrl } from '../../api/client';
 import { entityPath } from '../../data/entities';
 import { availableLocales } from '../../data/locales';
+import { Select } from '@/components/ui/Select';
+import { TrackPlayer } from '@/components/ui/TrackPlayer';
+import '@/styles/character-voice-lines.css';
 
 export interface CharacterArchiveData {
   biography: string | null;
@@ -63,6 +66,7 @@ export interface CharacterArchiveData {
     text: string | null;
     audio_event_path: string | null;
     audio_url: string | null;
+    audio_tracks?: Record<string, string>;
   }[];
   other_voice_events: { category: string; event: string }[];
 }
@@ -101,35 +105,34 @@ export function CharacterArchive({
   locale: string;
   characterKey: string;
 }) {
-  const [voiceLocale, setVoiceLocale] = useState(initialVoiceLocale(locale));
-  const [voiceArchive, setVoiceArchive] = useState<{
+  const [textLocale, setTextLocale] = useState(locale);
+  const [textArchive, setTextArchive] = useState<{
     locale: string;
     data: CharacterArchiveData;
   } | null>(null);
-  const [voiceError, setVoiceError] = useState('');
+  const [textError, setTextError] = useState('');
 
   useEffect(() => {
-    setVoiceLocale(initialVoiceLocale(locale));
-    setVoiceArchive(null);
-    setVoiceError('');
+    setTextLocale(locale);
+    setTextArchive(null);
+    setTextError('');
   }, [locale, characterKey]);
 
   useEffect(() => {
-    if (voiceLocale === locale) return;
+    if (textLocale === locale) return;
     const controller = new AbortController();
-    setVoiceArchive(null);
-    setVoiceError('');
+    setTextError('');
     api<CharacterArchiveData>(
-      `/characters/${encodeURIComponent(characterKey)}/archive?locale=${encodeURIComponent(voiceLocale)}`,
+      `/characters/${encodeURIComponent(characterKey)}/archive?locale=${encodeURIComponent(textLocale)}`,
     )
       .then((result) => {
-        if (!controller.signal.aborted) setVoiceArchive({ locale: voiceLocale, data: result });
+        if (!controller.signal.aborted) setTextArchive({ locale: textLocale, data: result });
       })
       .catch((error: Error) => {
-        if (!controller.signal.aborted) setVoiceError(error.message);
+        if (!controller.signal.aborted) setTextError(error.message);
       });
     return () => controller.abort();
-  }, [characterKey, locale, voiceLocale]);
+  }, [characterKey, locale, textLocale]);
 
   const groups = new Map<string, { item: MaterialUse['item']; uses: MaterialUse[] }>();
   for (const use of materials) {
@@ -138,12 +141,8 @@ export function CharacterArchive({
     group.uses.push(use);
     groups.set(key, group);
   }
-  const spoken =
-    voiceLocale === locale
-      ? archive
-      : voiceArchive?.locale === voiceLocale
-        ? voiceArchive.data
-        : null;
+  const spoken = textLocale === locale ? archive : (textArchive?.data ?? archive);
+  const textLoading = textLocale !== locale && textArchive?.locale !== textLocale && !textError;
   const portrait = archive?.artwork.find((art) => art.kind === 'RoleHeadIconLarge');
 
   return (
@@ -371,35 +370,34 @@ export function CharacterArchive({
         </summary>
         <div className="character-fold-body">
           <div className="character-voice-toolbar">
-            <span>Voice language</span>
-            <div className="character-voice-languages" role="group" aria-label="Voice language">
-              {voiceLocales.map((option) => (
-                <button
-                  type="button"
-                  key={option.code}
-                  aria-pressed={voiceLocale === option.code}
-                  onClick={() => {
-                    setVoiceError('');
-                    setVoiceLocale(option.code);
-                  }}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            {spoken?.profile.voice_actors[voiceLocale] && (
-              <span>{gameText(spoken.profile.voice_actors[voiceLocale])}</span>
+            <span>Text language</span>
+            <Select
+              label="Voice line text language"
+              value={textLocale}
+              options={availableLocales.map((option) => ({
+                value: option.code,
+                label: option.label,
+              }))}
+              onChange={(value) => {
+                setTextError('');
+                setTextLocale(value);
+              }}
+            />
+            {spoken?.profile.voice_actors[textLocale] && (
+              <span>{gameText(spoken.profile.voice_actors[textLocale])}</span>
             )}
           </div>
           <p className="character-muted">
-            Voice event paths are recorded in the game data. Playback appears when an audio file for
-            this language has been exported and linked.
+            Choose the text language above. Each player lets you choose its audio language
+            separately.
           </p>
-          {voiceError && <p className="character-error">{voiceError}</p>}
-          {voiceLocale !== locale && !spoken && !voiceError && (
-            <p className="character-muted">Loading voice lines…</p>
+          {textError && <p className="character-error">{textError}</p>}
+          {textLoading && (
+            <p className="character-muted" role="status">
+              Loading selected text language…
+            </p>
           )}
-          <div className="character-voice-list">
+          <div className="character-voice-list" aria-busy={textLoading}>
             {spoken?.voice_lines.map((line) => (
               <article className="character-voice-line" key={line.id}>
                 <div>
@@ -412,16 +410,26 @@ export function CharacterArchive({
                     </small>
                   )}
                 </div>
-                {line.audio_url ? (
-                  <audio
-                    controls
-                    preload="none"
-                    src={apiUrl(line.audio_url.replace(/^\/api/, ''))}
-                    aria-label={`Play ${gameText(line.title)}`}
-                  />
-                ) : (
-                  <span className="character-audio-pending">Awaiting audio</span>
-                )}
+                <TrackPlayer
+                  src={line.audio_url ? apiUrl(line.audio_url.replace(/^\/api/, '')) : null}
+                  tracks={
+                    line.audio_tracks
+                      ? Object.fromEntries(
+                          Object.entries(line.audio_tracks).map(([language, url]) => [
+                            availableLocales.find((option) => option.code === language)?.label ??
+                              language,
+                            apiUrl(url.replace(/^\/api/, '')),
+                          ]),
+                        )
+                      : undefined
+                  }
+                  defaultTrack={
+                    availableLocales.find(
+                      (option) => option.code === initialVoiceLocale(textLocale),
+                    )?.label
+                  }
+                  label={gameText(line.title)}
+                />
               </article>
             ))}
           </div>

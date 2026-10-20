@@ -135,6 +135,18 @@ header, tabs and Show map footer. Closing retains filters and returns focus to
 the opener. Escape/backdrop dismissal, keyboard tabs, safe-area padding and
 viewport resizing preserve the desktop sidebar and map state without duplicate inputs.
 
+The desktop map sidebar also uses Locations/Objects tabs. Its height is constrained
+to the map grid, with a fixed heading and tab bar; only the active panel scrolls.
+Character voice lines separate text locale from audio tracks. Text selection sets
+the default voice language; an individual player's explicit language choice wins.
+Players use compact play/pause, seek, time and mute controls and show unavailable
+or retry states. Switching tracks stops playback. Voice grids use shrinkable
+columns and wrap text before falling back to a single mobile column.
+`components/ui/AudioPlayer.tsx` owns playback of a single URL. `TrackPlayer.tsx`
+adds only an optional name-to-URL map and track selection. Neither component
+knows languages, characters or API paths; feature callers provide those labels
+and URLs.
+
 Administration uses compact operation tables and separate activity/import/history
 views. Task results and technical worker details are closed native disclosures;
 status filters remain native selects. Queue cleanup uses a dark native dialog with
