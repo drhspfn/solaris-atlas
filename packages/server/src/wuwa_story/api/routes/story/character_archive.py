@@ -234,6 +234,10 @@ async def character_archive(
             "text": localized.get(row.data.get("Content")),
             "audio_event_path": row.data.get("Voice") or None,
             "audio_url": media_url(row.data.get("Voice"), "audio/", "zh" if locale == "zh-Hans" else locale),
+            "audio_tracks": {
+                language: url for language in ("en", "ja", "zh-Hans", "ko")
+                if (url := media_url(row.data.get("Voice"), "audio/", "zh" if language == "zh-Hans" else language))
+            },
             "source": _source(row, paths["voices"]),
         } for row in voice_rows
     ]

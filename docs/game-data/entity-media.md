@@ -141,3 +141,14 @@ reset is needed. Restart all media workers together to avoid mixing the old
 client-wide locking behavior with the new resource locks. On rollback, stop the
 new workers before restoring the old image. Uncommitted temporary directories
 left by a killed process are ignored; completed exports can be reused.
+# Character archive audio tracks
+
+Each character archive voice line exposes `audio_tracks`, a map of audio locale
+(`en`, `ja`, `zh-Hans`, `ko`) to published URL. The requested `locale` still controls
+text and the compatible `audio_url` field. Only available files with the exact
+language and a supported audio MIME type are included; unlabelled audio is never
+substituted. All tracks reuse the archive's existing media query.
+
+The character UI converts these locale keys to display names before passing a
+plain optional name-to-URL map to the shared `TrackPlayer` wrapper. The underlying
+`AudioPlayer` accepts a source URL and has no language or character logic.
