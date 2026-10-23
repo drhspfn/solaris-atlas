@@ -5,7 +5,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import shutil
 import sqlite3
 from contextlib import closing
@@ -27,6 +26,11 @@ from wuwa_story.ingestion.release_media import enqueue_event_images
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
+from wuwa_story_worker.archive_index import (
+    index_voice_paths,
+    indexed_audio_paths,
+    voice_filter_batches,
+)
 from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.broker import JobDeferred, job_lock
 from wuwa_story_worker.client_assets import download_plan, save_json, workspace_lock
@@ -36,7 +40,7 @@ from wuwa_story_worker.event_catalog import client_event_record, read_event_cata
 from wuwa_story_worker.event_resources import annotate_image_packages, event_resources
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.map_icons import build_icons
-from wuwa_story_worker.media_diagnostics import iter_archive_paths, publish_inventory, voice_report
+from wuwa_story_worker.media_diagnostics import publish_inventory, voice_report
 from wuwa_story_worker.media_provenance import package_path, sha256
 from wuwa_story_worker.media_workspace import (
     bind_package,
@@ -57,8 +61,6 @@ from wuwa_story_worker.voice_import import (
 )
 
 logger = logging.getLogger(__name__)
-VOICE_FILTER_MAX_BYTES = 24 * 1024
-VOICE_FILTER_MAX_PATHS = 256
 
 
 async def source_context(parent, *, voice=False, video=False):
@@ -508,37 +510,10 @@ async def voice_packages(parent):
             "media_report": inventory}, "completed"
 
 
-def index_voice_paths(log):
-    """Build one disk index; batches must not rescan a million-line archive log."""
-    destination = log.with_suffix(".sqlite")
-    temporary = destination.with_suffix(".partial.sqlite")
-    temporary.unlink(missing_ok=True)
-    try:
-        with closing(sqlite3.connect(temporary)) as db, db:
-            db.execute("CREATE TABLE files (name TEXT, path TEXT PRIMARY KEY)")
-            db.executemany("INSERT OR IGNORE INTO files VALUES (?, ?)",
-                           ((Path(path).name.casefold(), path) for path in iter_archive_paths(log)))
-            db.execute("CREATE INDEX file_name ON files(name)")
-        temporary.replace(destination)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return destination
-
-
 def selected_voice_paths(index, names):
     expected = sorted({f"{language}_{name}{suffix}.wem".casefold() for name in names
                        for language in ("en", "ja", "ko", "zh") for suffix in ("", "_F", "_M")})
     return indexed_audio_paths(index, expected)
-
-
-def indexed_audio_paths(index, expected):
-    paths = set()
-    with closing(sqlite3.connect(index.resolve().as_uri() + "?mode=ro", uri=True)) as db:
-        for offset in range(0, len(expected), 500):
-            batch = expected[offset:offset + 500]
-            paths.update(row[0] for row in db.execute(
-                "SELECT path FROM files WHERE name IN (" + ",".join("?" for _ in batch) + ")", batch))
-    return sorted(paths)
 
 
 async def requested_voice_paths(parent, names):
@@ -561,26 +536,6 @@ async def extract_requested_voices(parent, names, destination=None, *, paths=Non
         (destination.parent / "archive-index.log").write_text(
             "".join(f"[File] {path}\n" for path in selected) + f"[Done] Listed {len(selected)} files\n",
             encoding="utf-8")
-
-
-def voice_filter_batches(paths):
-    """Stable exact-path alternatives bounded by both argv bytes and path count."""
-    batches, batch, size = [], [], 0
-    for path in sorted(set(paths)):
-        if not re.fullmatch(r"[a-zA-Z0-9_./-]+", path):
-            raise ValueError("Unsupported authored voice archive path")
-        path_size = len(path)  # The validated ASCII alphabet is one UTF-8 byte per character.
-        if path_size > VOICE_FILTER_MAX_BYTES:
-            raise ValueError("Authored voice archive path exceeds the filter byte budget")
-        if batch and (len(batch) == VOICE_FILTER_MAX_PATHS
-                      or size + 1 + path_size > VOICE_FILTER_MAX_BYTES):
-            batches.append(batch)
-            batch, size = [], 0
-        size += path_size + bool(batch)  # Include the | separator in the argv budget.
-        batch.append(path)
-    if batch:
-        batches.append(batch)
-    return batches
 
 
 async def extract_voice_paths(parent, selected, extracted):
