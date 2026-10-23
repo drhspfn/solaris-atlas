@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -61,7 +62,7 @@ class FileRegistrationService:
             raise ValueError("Existing SHA-256 identity has incompatible size or file type")
         key = content_object_key(digest)
         stored = await self.storage.stat(key)
-        if stored is None:
+        if stored is None or stored.size_bytes != size:
             stored = await self.storage.put_file(path, key, mime_type)
         if stored.size_bytes != size:
             raise OSError("Stored object size does not match the hashed source")
@@ -106,6 +107,9 @@ class FileRegistrationService:
             raise ValueError(
                 "A physical storage key is already assigned to a different file identity"
             )
+        location.available = True
+        location.verified_at = datetime.now(UTC)
+        location.etag = stored.etag
         return file_obj
 
     async def register_reference(
