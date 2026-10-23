@@ -243,12 +243,25 @@ async def test_pool_cli_dispatch_and_shared_engine_pool_budget(monkeypatch):
     monkeypatch.setattr(cli, "consume_jobs", consume)
     monkeypatch.setattr(cli, "process_entity_media", entity)
     monkeypatch.setattr(cli, "process_release_media", release)
+    check = AsyncMock()
+    monkeypatch.setattr(cli, "check_database_codecs", check)
     monkeypatch.setenv("WUWA_WORKER_DB_POOL_SIZE", "4")
     monkeypatch.setenv("WUWA_WORKER_DB_MAX_OVERFLOW", "4")
     await cli._run(pool="audio")
+    check.assert_awaited_once()
     selected = consume.call_args.args[0]
     assert set(selected) == {"pool_audio"}
     assert consume.call_args.kwargs["route_media"] is False
     await selected["pool_audio"]({"job_type": "media.entities"})
     entity.assert_awaited_once()
     release.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invalid_database_runtime_stops_before_claiming_messages(monkeypatch):
+    consume = AsyncMock()
+    monkeypatch.setattr(cli, "consume_jobs", consume)
+    monkeypatch.setattr(cli, "check_database_codecs", AsyncMock(side_effect=RuntimeError("invalid JSONB codecs")))
+    with pytest.raises(RuntimeError, match="JSONB codecs"):
+        await cli._run(pool="audio")
+    consume.assert_not_awaited()

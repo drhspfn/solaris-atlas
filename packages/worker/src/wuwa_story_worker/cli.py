@@ -44,6 +44,7 @@ from wuwa_story_worker.entity_media import process_entity_media
 from wuwa_story_worker.map_assets import build_maps, refresh_map_sources
 from wuwa_story_worker.queues import MEDIA_POOLS, QUEUES, queue_concurrency
 from wuwa_story_worker.release_media import process_release_media
+from wuwa_story_worker.runtime_checks import check_database_codecs
 from wuwa_story_worker.scheduler import (
     DEFAULT_REPOSITORY,
     enqueue_snapshot,
@@ -261,6 +262,7 @@ async def _run(queues: list[str] | None = None, pool: str | None = None) -> None
                 "release_media", "event_media", "entity_media", "release_images", "entity_images")})
     background = []
     try:
+        await check_database_codecs(engine)
         if pool == "coordinator":
             background.append(asyncio.create_task(recover_media_workspaces(stop)))
         if "story_agent" in selected or "cutscene_vision" in selected or "asset_download" in selected:
