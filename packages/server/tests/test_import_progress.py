@@ -39,6 +39,17 @@ async def test_failure_does_not_publish_a_phase_checkpoint():
 
 
 @pytest.mark.asyncio
+async def test_phase_replaces_json_without_mutating_the_orm_previous_value():
+    session = SimpleNamespace(scalar=AsyncMock(return_value=None), commit=AsyncMock())
+    current = run()
+    progress = await ImportProgress.start(session, current, b"manifest")
+    previous_value = current.metadata_json["stages"]
+    await progress.phase("raw", AsyncMock(return_value=(100, 50)))
+    assert previous_value == {}
+    assert current.metadata_json["stages"]["raw"]["counts"] == (100, 50)
+
+
+@pytest.mark.asyncio
 async def test_resume_query_pins_dataset_identity_and_importer_version():
     session = SimpleNamespace(scalar=AsyncMock(return_value=None), commit=AsyncMock())
     await ImportProgress.start(session, run(), b"manifest")

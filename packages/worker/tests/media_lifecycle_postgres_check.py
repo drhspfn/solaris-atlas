@@ -113,6 +113,8 @@ async def main():
                 return 100, 100
 
             assert await progress.phase("raw", imported) == (100, 100)
+            await session.refresh(old)
+            assert old.metadata_json["stages"]["raw"]["counts"] == [100, 100]
             new = ImportRun(release_id=first.id, importer="smoke", importer_version="2")
             session.add(new)
             await session.flush()

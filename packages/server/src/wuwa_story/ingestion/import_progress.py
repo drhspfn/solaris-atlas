@@ -35,6 +35,8 @@ class ImportProgress:
         } if previous else {}
         run.metadata_json = {**(run.metadata_json or {}),
                              "source_fingerprint": fingerprint, "stages": stages}
+        run.records_seen = sum(stage["counts"][0] for stage in stages.values())
+        run.records_created = 0
         await session.commit()
         return cls(session, run, stages)
 
@@ -46,7 +48,9 @@ class ImportProgress:
         logger.info("snapshot.phase_started run=%s phase=%s", self.run.id, name)
         counts = tuple(await operation())
         elapsed = round(monotonic() - started, 3)
-        self.stages[name] = {"counts": counts, "seconds": elapsed}
+        # Do not mutate the dictionary already attached to the ORM JSON value:
+        # SQLAlchemy would compare two equal, mutated objects and omit the UPDATE.
+        self.stages = {**self.stages, name: {"counts": counts, "seconds": elapsed}}
         self.run.metadata_json = {**self.run.metadata_json, "stages": dict(self.stages)}
         self.run.records_seen = sum(stage["counts"][0] for stage in self.stages.values())
         self.run.records_created = sum(stage["counts"][1] for stage in self.stages.values())
