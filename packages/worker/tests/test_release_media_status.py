@@ -170,7 +170,7 @@ async def test_successful_assets_continue_when_other_event_assets_are_missing(mo
     payload = {"schema_version": 1, "job_type": "media.release", "run_id": 90,
                "parent_id": 80, "release_id": 9, "kind": "event_images"}
     run = SimpleNamespace(id=90, status="queued", metadata_json={"payload": payload})
-    parent = SimpleNamespace(id=80, status="partial", raw_output={"asset_version": "3.7.0"},
+    parent = SimpleNamespace(id=80, status="partial", raw_output={"asset_version": "3.7.0", "workspace_id": 70},
                               metadata_json={"request": {"release_id": 9, "kind": parent_kind}})
     session = AsyncMock()
     session.get.side_effect = [run, parent]
@@ -194,6 +194,59 @@ async def test_successful_assets_continue_when_other_event_assets_are_missing(mo
     await release_media.process_release_media(payload)
     images.assert_awaited_once()
     assert update.await_args.args[2] == "completed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,artwork,notices", [
+    ("voice_packages", False, False), ("images", False, False), ("cutscene", False, False),
+    ("event_catalog", True, False), ("event_images", True, False),
+    ("event_resources", True, False), ("event_notices", False, True)])
+async def test_queued_legacy_dependency_renews_scoped_pipeline_before_export(
+        monkeypatch, kind, artwork, notices):
+    from contextlib import asynccontextmanager
+
+    payload = {"schema_version": 1, "job_type": "media.release", "run_id": 90,
+               "parent_id": 80, "release_id": 9, "kind": kind}
+    run = SimpleNamespace(id=90, status="running", raw_output={"entity_run_id": 50},
+                          metadata_json={"payload": payload})
+    parent = SimpleNamespace(id=80, status="completed", raw_output={"asset_version": "3.7.0"},
+                              metadata_json={"request": {"release_id": 9, "kind": "prepare"}})
+    session, connection = AsyncMock(), AsyncMock()
+    session.get.side_effect = [run, parent]
+
+    @asynccontextmanager
+    async def connect():
+        yield connection
+
+    @asynccontextmanager
+    async def factory(**kwargs):
+        yield session
+
+    @asynccontextmanager
+    async def lock(*args):
+        yield
+
+    async def renew(*args, **kwargs):
+        assert args == (session, 9)
+        assert kwargs == {"event_artwork_only": artwork, "notices_only": notices}
+        assert run.raw_output is None
+        return {"queued": 3}
+
+    monkeypatch.setattr(release_media, "engine", SimpleNamespace(connect=connect))
+    monkeypatch.setattr(release_media, "SessionFactory", factory)
+    monkeypatch.setattr(release_media, "job_lock", lock)
+    renewal = AsyncMock(side_effect=renew)
+    monkeypatch.setattr(release_media, "enqueue_release_media", renewal)
+    update = AsyncMock()
+    monkeypatch.setattr(release_media, "update_admin_run", update)
+    monkeypatch.setattr(release_media, "client_root", lambda _: pytest.fail("must not touch retained roots"))
+    for name in ("image_batch", "event_images", "event_catalog", "event_resources", "voice_packages", "cutscene", "voices"):
+        monkeypatch.setattr(release_media, name, AsyncMock(side_effect=AssertionError("must renew before export")))
+    with pytest.raises(release_media.JobDeferred, match="Legacy media dependency renewed"):
+        await release_media.process_release_media(payload)
+    renewal.assert_awaited_once()
+    assert update.await_args.args == (90, "release_media", "waiting_dependency")
+    connection.rollback.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_prepare_reuses_completed_client_without_download_disk_reserve(monkeypatch, tmp_path):

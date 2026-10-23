@@ -22,7 +22,7 @@ from wuwa_story.ingestion.entity_media import MediaRequest
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE, SOURCE
 from wuwa_story.ingestion.media_jobs import enqueue_entity_media
 from wuwa_story.ingestion.media_provenance import missing_media_targets
-from wuwa_story.ingestion.release_media import enqueue_event_images
+from wuwa_story.ingestion.release_media import enqueue_event_images, enqueue_release_media
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
@@ -736,6 +736,17 @@ async def _process_release_media(payload):
                             await update_admin_run(run.id, "release_media", "blocked", error=f"Client preparation #{parent.id} failed; retry the media import")
                             return
                         raise JobDeferred("Client preparation is still queued or running")
+                    if (parent.raw_output or {}).get("workspace_id") is None:
+                        # Replayed pre-workspace coordinators must never export
+                        # into retained downloads or reuse their old entity child.
+                        run.raw_output = None
+                        renewed = await enqueue_release_media(
+                            session, payload["release_id"],
+                            event_artwork_only=payload["kind"] in {"event_catalog", "event_images", "event_resources"},
+                            notices_only=payload["kind"] == "event_notices")
+                        logger.warning("release_media.legacy_workspace_renewed run=%s parent=%s release=%s queued=%s",
+                                       run.id, parent.id, payload["release_id"], renewed["queued"])
+                        raise JobDeferred("Legacy media dependency renewed; waiting for patch workspace preparation")
                     await session.commit()  # Dependency checks are complete; release read locks before I/O.
                     await update_admin_run(run.id, "release_media", "running")
                     if payload["kind"] in {"images", "character_voices"}:
