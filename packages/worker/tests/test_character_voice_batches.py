@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import wave
@@ -117,3 +118,77 @@ def test_numeric_index_rejects_ambiguous_exact_ids(tmp_path):
     index = index_voice_paths(log)
     with pytest.raises(ValueError, match="Ambiguous"):
         character_voice_assets.numeric_paths(index, {123})
+
+
+@pytest.mark.asyncio
+async def test_unrelated_character_batches_export_concurrently_and_identical_batches_coalesce(tmp_path):
+    root, voices = tmp_path / "client", tmp_path / "voices"
+    for directory, identity in ((root, "client"), (voices, "voice")):
+        directory.mkdir()
+        (directory / "plan.json").write_text(json.dumps({"id": identity}))
+    fmodel = tmp_path / "fmodel"
+    fmodel.write_bytes(b"extractor")
+    packages = {identity: f"Client/Content/Media/{identity}.wem" for identity in (1, 2, 3)}
+    log = root / "archive-index.log"
+    log.write_text("".join(f"[File] {path}\n" for path in packages.values()) + "[Done] Listed 3 files\n")
+    index_voice_paths(log)
+    entered = []
+    both_entered = asyncio.Event()
+
+    async def export(args, log, timeout):
+        entered.append(args[3])
+        if len(entered) == 2:
+            both_entered.set()
+        if len(entered) <= 2:
+            await asyncio.wait_for(both_entered.wait(), 2)
+        else:
+            await asyncio.sleep(0.05)
+        for package in args[-1].split("|"):
+            path = args[3] / package
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(package.encode())
+        log.write_text("[Done] Extracted files\n")
+
+    async def prefetch(ids):
+        return await character_voice_assets.prefetch_media(
+            root, voices, ids, {}, fmodel, export, entity_media.verified_voice_export)
+
+    first, second = await asyncio.gather(prefetch({1}), prefetch({2}))
+    assert set(first) == {1} and set(second) == {2}
+    assert entered[0] != entered[1]
+    same_a, same_b = await asyncio.gather(prefetch({3}), prefetch({3}))
+    assert same_a == same_b and len(entered) == 3
+
+
+@pytest.mark.asyncio
+async def test_concurrent_identical_wav_decodes_share_a_file_lock(tmp_path, monkeypatch):
+    root, voices = tmp_path / "client", tmp_path / "voices"
+    for directory, identity in ((root, "client"), (voices, "voice")):
+        directory.mkdir()
+        (directory / "plan.json").write_text(json.dumps({"id": identity, "version": "3.7.0"}))
+        (directory / "status.json").write_text(json.dumps({"id": identity, "state": "downloaded"}))
+    decoder = tmp_path / "decoder"
+    decoder.write_bytes(b"decoder")
+    source = "/Game/Aki/WwiseAudio/Events/play_line0.play_line0"
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps(cooked(0)))
+    wem = tmp_path / "1.wem"
+    wem.write_bytes(b"confirmed media")
+    monkeypatch.setattr(entity_media, "tool_path", lambda _: decoder)
+    monkeypatch.setattr(entity_media, "prefetch_events", AsyncMock(return_value={source: (event, [])}))
+    monkeypatch.setattr(entity_media, "prefetch_media", AsyncMock(return_value={1: (wem, "client", "Media/1.wem")}))
+
+    async def decode(args, log, timeout):
+        await asyncio.sleep(0.05)
+        with wave.open(str(args[3]), "wb") as wav:
+            wav.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+            wav.writeframes(b"\0\0" * 80)
+
+    tool = AsyncMock(side_effect=decode)
+    monkeypatch.setattr(entity_media, "tool", tool)
+    targets = [{"kind": "voice", "path": source, "language": "en"}]
+    results = await asyncio.gather(*[entity_media.build_entity_files(
+        root, targets, decoder, decoder, voice_root=voices) for _ in range(2)])
+    assert all(len(files) == 1 and not missing for files, missing in results)
+    assert results[0][0][0][1] == results[1][0][0][1]
+    tool.assert_awaited_once()

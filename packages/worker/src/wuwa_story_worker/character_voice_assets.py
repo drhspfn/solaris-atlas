@@ -12,7 +12,7 @@ from wuwa_story_worker.archive_index import (
     voice_filter_batches,
 )
 from wuwa_story_worker.asset_export import export_assets
-from wuwa_story_worker.client_assets import save_json, workspace_lock
+from wuwa_story_worker.client_assets import save_json, wait_workspace_lock
 from wuwa_story_worker.media_provenance import sha256
 
 
@@ -36,7 +36,7 @@ async def prefetch_events(root, sources, cached, fmodel, converter, tool, verify
     extractor = await asyncio.to_thread(sha256, fmodel)
     identity = hashlib.sha256(json.dumps([sources, extractor, sha256(converter)]).encode()).hexdigest()[:20]
     work = root / "character-voices" / identity
-    with workspace_lock(work):
+    async with wait_workspace_lock(work):
         receipt_cache = work / "event-exports.json"
         entries = dict(cached)
         if receipt_cache.exists():
@@ -128,9 +128,9 @@ async def prefetch_media(root, voice_root, identities, cached, fmodel, tool, ver
     base = json.loads((root / "plan.json").read_text(encoding="utf-8"))
     voice = json.loads((voice_root / "plan.json").read_text(encoding="utf-8"))
     extractor = await asyncio.to_thread(sha256, fmodel)
-    identity = hashlib.sha256(json.dumps([base["id"], voice["id"], extractor]).encode()).hexdigest()[:20]
+    identity = hashlib.sha256(json.dumps([base["id"], voice["id"], extractor, sorted(identities)]).encode()).hexdigest()[:20]
     work = root / "character-voice-media" / identity
-    with workspace_lock(work):
+    async with wait_workspace_lock(work):
         receipt = work / "media.json"
         saved = json.loads(receipt.read_text(encoding="utf-8")) if receipt.exists() else {}
         result = {}
@@ -154,10 +154,9 @@ async def prefetch_media(root, voice_root, identities, cached, fmodel, tool, ver
                 break
             index = archive / "archive-index.sqlite"
             if not index.exists():
-                # Main-client indices are shared across all characters in the patch.
-                index_root = root if label == "main" else work
-                log = index_root / ("archive-index.log" if label == "main" else "voice-index.log")
-                with workspace_lock(index_root / "character-index-lock"):
+                # Only index creation is shared; exports use batch-private directories.
+                log = archive / "archive-index.log"
+                async with wait_workspace_lock(archive / "character-index-lock"):
                     index = log.with_suffix(".sqlite")
                     if not index.exists():
                         await tool([fmodel.resolve(), (archive / "game").resolve(),

@@ -26,7 +26,12 @@ from wuwa_story.storage.service import FileRegistrationService
 
 from wuwa_story_worker.broker import JobDeferred, job_lock
 from wuwa_story_worker.character_voice_assets import prefetch_events, prefetch_media
-from wuwa_story_worker.client_assets import save_json, validate_plan, workspace_lock
+from wuwa_story_worker.client_assets import (
+    save_json,
+    validate_plan,
+    wait_workspace_lock,
+    workspace_lock,
+)
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.map_icons import build_icons
 from wuwa_story_worker.media_diagnostics import publish_inventory
@@ -207,21 +212,22 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
             continue
         wem, media_download_id, media_package_path = entry
         language = target["language"]
-        destination = output / language
-        destination.mkdir(exist_ok=True)
+        destination = output / language / str(identity)
+        destination.mkdir(parents=True, exist_ok=True)
         wav = destination / f"{language}-{identity}.wav"
         receipt = wav.with_suffix(".source.json")
         input_identity = {"wem_sha256": await asyncio.to_thread(sha256, wem), "decoder_sha256": decoder_digest}
-        saved = json.loads(receipt.read_text(encoding="utf-8")) if receipt.exists() else {}
-        if (not wav.exists() or saved.get("input") != input_identity
-                or saved.get("sha256") != await asyncio.to_thread(sha256, wav)):
-            partial = wav.with_suffix(".partial.wav")
-            await tool([decoder, "-i", "-o", partial.resolve(), wem.resolve()], destination / "decoder.log", 120)
-            with wave.open(str(partial), "rb") as audio:
-                if audio.getnframes() <= 0 or audio.getframerate() <= 0:
-                    raise ValueError("Empty decoded character voice")
-            partial.replace(wav)
-            save_json(receipt, {"input": input_identity, "sha256": await asyncio.to_thread(sha256, wav)})
+        async with wait_workspace_lock(destination / "decode-lock"):
+            saved = json.loads(receipt.read_text(encoding="utf-8")) if receipt.exists() else {}
+            if (not wav.exists() or saved.get("input") != input_identity
+                    or saved.get("sha256") != await asyncio.to_thread(sha256, wav)):
+                partial = wav.with_suffix(".partial.wav")
+                await finish_writes(tool([decoder, "-i", "-o", partial.resolve(), wem.resolve()], destination / "decoder.log", 120))
+                with wave.open(str(partial), "rb") as audio:
+                    if audio.getnframes() <= 0 or audio.getframerate() <= 0:
+                        raise ValueError("Empty decoded character voice")
+                partial.replace(wav)
+                save_json(receipt, {"input": input_identity, "sha256": await asyncio.to_thread(sha256, wav)})
         if provenance is not None:
             provenance[(target["path"], language)] = {
                 "voice_plan_id": plan["id"], "media_download_id": media_download_id,
