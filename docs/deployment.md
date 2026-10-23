@@ -135,7 +135,11 @@ Default capacity for a 6 CPU / 12 GiB host:
 
 This provides 10 logical task slots in 7 containers: 2 snapshot fetch/compile,
 2 asset (download/extraction), 3 lightweight coordinator and 3 media executions.
-It is deliberately below 10–20 heavy processes. Each image/audio/video container
+These are conservative canary defaults, not the final production parallelism
+target. They provide fewer entity execution slots than the previous two media
+workers with three entity slots each. Increase useful parallelism after measuring
+the new export path rather than keeping seven containers as a fixed target.
+It is deliberately below 10â€“20 heavy processes. Each image/audio/video container
 runs one task at a time. Python alone previously showed roughly 475 MiB RSS in
 the operator screenshot; 768 MiB left too little space for .NET. The 1280 MiB
 starting cap leaves more room but is **unmeasured for representative exports**.
@@ -152,6 +156,18 @@ include child .NET/FFmpeg processes. Reduce concurrency or adjust memory from
 canary measurements if a single export approaches its cap. Scaling snapshots to
 four requires freeing capacity from other pools or lowering measured per-process
 limits; do not start four 2 GiB snapshot containers alongside the default pools.
+
+A candidate production layout after measurement is image=3, audio=2,
+coordinator=1, snapshot=2, video=1 and asset=1: ten worker containers and thirteen
+logical task slots with the default per-process concurrency. Set
+`WUWA_IMAGE_REPLICAS=3` and `WUWA_AUDIO_REPLICAS=2`; keep one heavy task per
+container initially. At unchanged resource limits this layout has aggregate
+ceilings of 7.25 CPU and 13.5 GiB. Limits do not reserve that RAM, but simultaneous
+peaks can still exceed the 6 CPU / 12 GiB host. Choose per-pool limits from measured
+container peaks including Python and child processes, retain DB/API/OS headroom,
+and stage compilation or video work when CPU is saturated. Compare completed
+media operations per minute and end-to-end patch progress before/after each
+change. Replica count alone is not the success criterion.
 
 Set `WUWA_QUEUE_CONCURRENCY` in worker.env (or the GitHub production Variable):
 `snapshot_build=1,pool_coordinator=3,pool_image=1,pool_audio=1,pool_video=1`. Values apply **per process and per queue**, and
@@ -213,12 +229,13 @@ cleanup. No raw workspace is deleted by routing or while owned writes continue.
 Tuning and rollout (operator actions; these were not run against production):
 
 1. Deploy the complete worker image, helper and snapshot-ordering changes together.
-   Stop/drain old media consumers, retain volumes, apply the acknowledgement
-   policy, then start all pools using the snapshot-worker deployment component.
+   Stop/drain old media consumers, retain volumes and apply the acknowledgement
+   policy. Keep bulk consumption stopped until product smoke tests and bounded
+   image/voice export canaries pass; then start the chosen execution pools.
 2. Verify RabbitMQ consumers, ready/unacknowledged counts and waiting/failed
    queues with `rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers`.
    Record `docker stats --no-stream`, OOM/restart counts, DB connections/waits,
-   scratch disk usage and completed media operations for at least 15–30 minutes.
+   scratch disk usage and completed media operations for at least 15â€“30 minutes.
 3. Compare completed operations and `job.delivery ... elapsed_seconds` logs per
    kind. Delayed dependencies, busy workspace locks, synchronous file/JSON work,
    subprocess CPU and DB pool waits are distinct limits. Separate pools prevent
@@ -226,12 +243,27 @@ Tuning and rollout (operator actions; these were not run against production):
    not make synchronous code nonblocking within a process.
 4. Increase only one pool's replicas or concurrency at a time. Stay within the
    measured CPU/RSS/DB/disk budget. Prefer additional lightweight replicas;
-   keep video/extraction low while screenshot CPU is high. A 10–20 operation
+   keep video/extraction low while screenshot CPU is high. A 10â€“20 operation
    target is a tuning goal, not permission for 20 .NET exports. No two-hour
    completion estimate is supported without measuring representative patches.
 5. On failure, inspect the relevant public **and private** `.failed` queues.
    `wuwa-story-worker replay-failed --queue pool_audio --limit 10` replays private
    failures while retaining dispatch type and resetting DB retry count.
+
+Remaining live acceptance checks before opening bulk queues:
+
+- Smoke-test the product against existing imported data: patch/entity pages,
+  images, voice playback and cutscene playback, including actual object fetches.
+- Run one representative image export and one voice export in the new containers;
+  record peak container memory, CPU, duration and the resulting published media.
+- Verify queue routing, dependency deferral, ordered DB ingestion, graceful
+  shutdown/redelivery and final workspace cleanup with bounded jobs before
+  resuming the backlog. Confirm completed operations and patch progress increase
+  under the selected production replica counts.
+
+Local unit/configuration checks and isolated PostgreSQL lifecycle checks do not
+replace these product and deployment checks. No live throughput estimate is
+established until the canaries and a representative queue run are measured.
 
 Rollback: first stop routing new work, drain private queues using the current
 image, then restore previous image/Compose/concurrency. If private tasks cannot
