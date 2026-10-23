@@ -7,7 +7,7 @@ Callers serialize index creation with their existing workspace execution lock.
 import re
 import sqlite3
 from contextlib import closing
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from wuwa_story_worker.media_diagnostics import iter_archive_paths
 
@@ -48,7 +48,8 @@ def voice_filter_batches(paths) -> list[list[str]]:
     """Stable exact-path alternatives bounded by both argv bytes and path count."""
     batches, batch, size = [], [], 0
     for path in sorted(set(paths)):
-        if not re.fullmatch(r"[a-zA-Z0-9_./-]+", path):
+        if (not re.fullmatch(r"[a-zA-Z0-9_./-]+", path)
+                or PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts):
             raise ValueError("Unsupported authored voice archive path")
         path_size = len(path)  # The validated ASCII alphabet is one UTF-8 byte per character.
         if path_size > VOICE_FILTER_MAX_BYTES:

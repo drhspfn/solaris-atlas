@@ -3,6 +3,12 @@ import pytest
 from wuwa_story_worker import archive_index
 
 
+@pytest.mark.parametrize("path", ["../outside.wem", "/absolute.wem", "Audio/../../outside.wem"])
+def test_archive_filter_rejects_paths_outside_game_packages(path):
+    with pytest.raises(ValueError, match="Unsupported"):
+        archive_index.voice_filter_batches([path])
+
+
 def test_shared_index_resolves_numeric_wems_and_cooked_events_without_rescan(tmp_path, monkeypatch):
     log = tmp_path / "main-index.log"
     paths = [f"Client/Content/Aki/WwiseAudio_Generated/Media/{number}.wem" for number in range(1003)]
