@@ -79,6 +79,8 @@ async def enqueue_release_media(
         if kind == "prepare":
             parent_id = run.id
         queue = EVENT_QUEUE if event_artwork_only or notices_only else QUEUE
+        if kind == "images":
+            queue = "wuwa.release-images.v1"
         if (event_artwork_only and kind == "event_catalog" or notices_only and kind == "event_notices") and run.status == "completed":
             # An explicit reimport must revisit failed/partial image children,
             # while successful extraction work remains reusable.

@@ -206,6 +206,8 @@ async def _import_datasets(datasets: list[tuple[str, Path]], batch_size: int) ->
 
 async def _run(queues: list[str] | None = None) -> None:
     handlers = {
+        "release_images": process_release_media,
+        "entity_images": process_entity_media,
         "release_media": process_release_media,
         "event_media": process_release_media,
         "snapshot_build": build_and_import_snapshot,

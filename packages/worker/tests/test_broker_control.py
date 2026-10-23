@@ -131,8 +131,9 @@ async def test_database_contention_has_bounded_durable_retries(monkeypatch, retr
 
 
 @pytest.mark.asyncio
-async def test_deferred_dependency_releases_slot_for_next_task(monkeypatch):
-    monkeypatch.setenv("WUWA_QUEUE_CONCURRENCY", "release_media=1")
+@pytest.mark.parametrize("queue_key", ["release_media", "release_images", "event_media"])
+async def test_deferred_dependency_releases_slot_for_next_task(monkeypatch, queue_key):
+    monkeypatch.setenv("WUWA_QUEUE_CONCURRENCY", "release_media=1,release_images=1,event_media=1")
     channel, queue, connection = AsyncMock(), AsyncMock(), AsyncMock()
     connection.channel.return_value = channel
     ready = asyncio.Event()
@@ -143,7 +144,7 @@ async def test_deferred_dependency_releases_slot_for_next_task(monkeypatch):
     update = AsyncMock()
     monkeypatch.setattr(broker, "update_admin_run", update)
     handler = AsyncMock(side_effect=[broker.JobDeferred("Dependency not ready"), None])
-    task = asyncio.create_task(broker.consume_jobs({"release_media": handler}))
+    task = asyncio.create_task(broker.consume_jobs({queue_key: handler}))
     try:
         await asyncio.wait_for(ready.wait(), 2)
         callback = queue.consume.call_args.args[0]
@@ -164,3 +165,9 @@ async def test_deferred_dependency_releases_slot_for_next_task(monkeypatch):
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+
+def test_image_queues_have_independent_worker_slots():
+    limits=queue_concurrency()
+    assert limits['release_images']==2
+    assert limits['entity_images']==2

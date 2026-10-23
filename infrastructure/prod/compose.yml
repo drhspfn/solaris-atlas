@@ -156,7 +156,7 @@ services:
 
   media-worker:
     <<: *worker
-    command: ["wuwa-story-worker", "run", "--queue", "release_media", "--queue", "event_media", "--queue", "entity_media"]
+    command: ["wuwa-story-worker", "run", "--queue", "release_media", "--queue", "event_media", "--queue", "entity_media", "--queue", "release_images", "--queue", "entity_images"]
     deploy:
       replicas: 2
 

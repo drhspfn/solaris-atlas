@@ -189,3 +189,9 @@ files and atomically replaced. Existing import paths remain valid, and disk chec
 only missing/changed archives. The active client is the newest fully downloaded version.
 This does not fetch unavailable historical clients or delete old client/extraction caches.
 Rollback: deploy the preceding image; already shared archives remain ordinary readable files.
+
+Image extraction has separate `release_images` and `entity_images` queues on the
+media workers (two slots per queue per replica). Long character/quest audio and
+cutscenes retain the original queues, so they cannot consume the image slots.
+Existing queued tasks keep their original queue; newly created image jobs use the
+separate queues. Deploy API and worker together; queue declarations remain durable.

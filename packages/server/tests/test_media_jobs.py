@@ -40,3 +40,18 @@ async def test_unconfirmed_broker_publish_is_not_success(monkeypatch):
     with pytest.raises(HTTPException) as error:
         await create_media_job(request(), AsyncMock())
     assert error.value.status_code == 503
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind,queue',[('image','wuwa.entity-images.v1'),('voice','wuwa.entity-media.v1')])
+async def test_images_have_slots_independent_of_long_audio_jobs(monkeypatch, kind, queue):
+    from unittest.mock import Mock
+    from wuwa_story.ingestion import media_jobs
+    db=AsyncMock()
+    db.scalar.side_effect=[1,None]
+    db.add=Mock(side_effect=lambda run:setattr(run,'id',100))
+    monkeypatch.setattr(media_jobs,'entity_media_targets',AsyncMock(return_value=[{'kind':kind}]))
+    publish=AsyncMock()
+    monkeypatch.setattr(media_jobs,'publish_media_job',publish)
+    run=await media_jobs.enqueue_entity_media(db,request())
+    assert publish.await_args.args[2]==queue
+    assert run.metadata_json['queue']==queue

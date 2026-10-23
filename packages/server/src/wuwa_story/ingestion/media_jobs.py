@@ -82,10 +82,11 @@ async def enqueue_entity_media(session, request: MediaRequest, *, retry_partial:
     run.status = "queued"
     run.error = None
     payload["run_id"] = run.id
-    run.metadata_json = {"payload": payload}
+    queue_name = "wuwa.entity-images.v1" if all(t["kind"] == "image" for t in targets) else MEDIA_QUEUE
+    run.metadata_json = {"payload": payload, "queue": queue_name}
     await session.commit()
     try:
-        await publish_media_job(payload, digest.hex())
+        await publish_media_job(payload, digest.hex(), queue_name)
     except Exception:
         run.status = "enqueue_failed"
         run.error = "Broker did not confirm publication; repeat the same request to retry"

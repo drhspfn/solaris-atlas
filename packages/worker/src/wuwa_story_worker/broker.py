@@ -181,11 +181,13 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
             ) -> None:
                 async with limiter:
                     payload = {}
+                    processor_key = {"release_images": "release_media", "event_media": "release_media",
+                                     "entity_images": "entity_media"}.get(job_key, job_key)
                     try:
                         payload = json.loads(message.body)
                         if not isinstance(payload, dict):
                             raise ValueError("Job payload must be a JSON object")
-                        if job_key in {"release_media", "event_media", "entity_media", "asset_download",
+                        if job_key in {"release_media", "event_media", "entity_media", "release_images", "entity_images", "asset_download",
                                        "asset_extract", "snapshot_build"}:
                             if not await claim_import(payload, redelivered=message.redelivered):
                                 await message.ack()
@@ -194,7 +196,7 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
                     except JobDeferred as error:
                         try:
                             if payload.get("run_id") is not None:
-                                await update_admin_run(payload["run_id"], job_key, "waiting_dependency",
+                                await update_admin_run(payload["run_id"], processor_key, "waiting_dependency",
                                                        error=str(error))
                             await defer_job(job_channel, job_key, message)
                         except Exception:
@@ -204,7 +206,7 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
                         retries = int((message.headers or {}).get("db_retry_count", 0))
                         if getattr(error.orig, "sqlstate", None) in {"40P01", "40001"} and retries < 3:
                             try:
-                                await update_admin_run(payload["run_id"], job_key, "waiting_dependency",
+                                await update_admin_run(payload["run_id"], processor_key, "waiting_dependency",
                                                        error=f"Database contention; retry {retries + 1}/3")
                                 await defer_job(job_channel, job_key, message, retry_count=retries + 1)
                                 logger.warning("Deferred %s run=%s after database contention (retry %s/3)",
@@ -214,7 +216,7 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
                                 await message.nack(requeue=True)
                         else:
                             logger.exception("Database job failure exhausted retries (%s)", job_key)
-                            await notify_job_result(payload.get("run_id"), job_key, str(error))
+                            await notify_job_result(payload.get("run_id"), processor_key, str(error))
                             await message.nack(requeue=False)
                     except Exception as error:
                         logger.exception(
@@ -223,10 +225,10 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
                             message.message_id,
                         )
                         await notify_job_result(payload.get("run_id") if isinstance(payload, dict) else None,
-                                                job_key, str(error))
+                                                processor_key, str(error))
                         await message.nack(requeue=False)
                     else:
-                        await notify_job_result(payload.get("run_id"), job_key)
+                        await notify_job_result(payload.get("run_id"), processor_key)
                         await message.ack()
 
             await queue.consume(process, no_ack=False)

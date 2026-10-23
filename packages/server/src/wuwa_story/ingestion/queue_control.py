@@ -12,6 +12,8 @@ from wuwa_story.db.models.ops import ProcessingRun, Processor
 
 logger = logging.getLogger(__name__)
 QUEUE_PROCESSORS = {
+    "wuwa.release-images.v1": {"release_media"},
+    "wuwa.entity-images.v1": {"entity_media"},
     "wuwa.release-media.v1": {"release_media"},
     "wuwa.event-media.v1": {"release_media"},
     "wuwa.entity-media.v1": {"entity_media"},
@@ -23,6 +25,8 @@ WAITING = {"queued", "pending", "waiting_dependency", "enqueue_failed"}
 
 
 def run_queue(processor, metadata):
+    if processor in QUEUE_PROCESSORS.get(metadata.get("queue"), set()):
+        return metadata["queue"]
     if processor == "release_media":
         return metadata.get("queue") or (
             "wuwa.event-media.v1" if metadata.get("request", {}).get("kind") in {"event_images", "event_catalog", "event_resources", "event_notices"}

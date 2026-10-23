@@ -48,7 +48,7 @@ async def test_fanout_pins_dependencies_and_keeps_analysis_manual(monkeypatch):
     assert by_kind["cutscene"]["parent_id"] == by_kind["cutscene_assets"]["run_id"]
     assert by_kind["voices"]["parent_id"] == by_kind["voice_packages"]["run_id"]
     assert all(p["release_id"] == 9 and p["game_version"] == "1.0.0" for p in payloads)
-    assert all(call.args[2] == "wuwa.release-media.v1" for call in published.await_args_list)
+    assert all(call.args[2] == ("wuwa.release-images.v1" if call.args[0]["kind"] == "images" else "wuwa.release-media.v1") for call in published.await_args_list)
     assert session.commit.await_count == 1
 
 

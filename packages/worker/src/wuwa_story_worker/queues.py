@@ -14,6 +14,8 @@ class QueueSpec:
 
 
 QUEUES = {
+    "release_images": QueueSpec(key="release_images", name="wuwa.release-images.v1", default_concurrency=2),
+    "entity_images": QueueSpec(key="entity_images", name="wuwa.entity-images.v1", default_concurrency=2),
     "release_media": QueueSpec(key="release_media", name="wuwa.release-media.v1", default_concurrency=4),
     "event_media": QueueSpec(key="event_media", name="wuwa.event-media.v1", default_concurrency=2),
     "cutscene_vision": QueueSpec(key="cutscene_vision", name="wuwa.cutscene-vision.v1", default_concurrency=1),
