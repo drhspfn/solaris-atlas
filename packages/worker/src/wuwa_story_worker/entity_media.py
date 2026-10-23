@@ -359,13 +359,14 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                           "game_version": request.game_version, "entries": entries,
                           "requested": len(entries), "found": len(entries) - len(targets) + len(files),
                           "skipped": skipped, "missing": len(targets) - len(files)}
-                run.raw_output = {"media_report": report}
+                run.raw_output = {"media_report": report, "published": 0}
                 await session.commit()
                 await storage.ensure_bucket()
                 service = FileRegistrationService(storage)
-                for owner in sorted({t["owner"] for t, *_ in files}):
-                    await session.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": owner})
+                published_count = 0
                 for target, path, kind, mime, originals in files:
+                    await session.execute(text("SELECT pg_advisory_xact_lock(:id)"),
+                                          {"id": target["owner"]})
                     provenance = await asyncio.to_thread(
                         source_provenance, request, target, originals, tools,
                         voice_provenance.get((target["path"], target["language"])),
@@ -417,10 +418,16 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         "language": target["language"],
                         "game_source": provenance,
                     }
+                    # Keep files, variants and provenance atomic for this target;
+                    # a later target or deployment must not roll back earlier media.
+                    run.raw_output = {"media_report": report, "published": published_count + 1}
+                    await session.commit()
+                    published_count += 1
                 run.status = "partial" if missing else "completed"
                 run.raw_output = {
                     "media_report": report,
                     "skipped": skipped,
+                    "published": published_count,
                     "images": sum(t["kind"] == "image" for t, *_ in files),
                     "voice_tracks": sum(t["kind"] == "voice" for t, *_ in files),
                     "missing_images": sorted(set(missing) & {t["path"] for t in payload["targets"] if t["kind"] == "image"}),

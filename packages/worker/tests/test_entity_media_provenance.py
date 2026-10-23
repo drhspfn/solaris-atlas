@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -121,3 +122,107 @@ async def test_worker_exports_only_missing_and_persists_game_identity(tmp_path, 
         assert len(provenance["source_files"][0]["sha256"]) == 64
         assert "WUWA_FMODEL_PATH" in provenance["tools"]
         assert variant.metadata_json["game_source"] == provenance
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_stage", ["variant", "reference", "commit"])
+async def test_complete_target_is_committed_before_later_target_failure(tmp_path, monkeypatch, failure_stage):
+    root = client(tmp_path)
+    targets = [{"owner": number, "release_id": 2, "path": f"/Game/Icon{number}.Icon{number}",
+                "kind": "image", "language": None} for number in (1, 2)]
+    payload = {"request": request().model_dump(), "run_id": 7, "targets": targets}
+    run = SimpleNamespace(id=7, status="queued", metadata_json={"payload": payload})
+    session = AsyncMock()
+    session.get.return_value = run
+    session.scalar.return_value = None
+    factory = Mock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(entity_media, "SessionFactory", factory)
+    monkeypatch.setattr(entity_media, "validate_plan", lambda _: None)
+    monkeypatch.setattr(entity_media, "missing_media_targets", AsyncMock(return_value=targets))
+    monkeypatch.setattr(entity_media, "publish_inventory", AsyncMock(return_value={}))
+    monkeypatch.setattr(entity_media, "S3Storage", lambda _: AsyncMock())
+    executable = tmp_path / "tool"
+    executable.write_bytes(b"pinned version")
+    monkeypatch.setattr(entity_media, "tool_path", lambda _: executable)
+    files = []
+    for number, target in enumerate(targets, 1):
+        image = root / f"{number}.png"
+        image.write_bytes(f"decoded-{number}".encode())
+        raw = root / "exports/files/Client/Content" / f"Icon{number}.uasset"
+        raw.parent.mkdir(parents=True, exist_ok=True)
+        raw.write_bytes(f"raw-{number}".encode())
+        files.append((target, image, "image", "image/png", [raw]))
+    monkeypatch.setattr(entity_media, "build_entity_files", AsyncMock(return_value=(files, [])))
+    service = AsyncMock()
+    monkeypatch.setattr(entity_media, "FileRegistrationService", lambda _: service)
+    events, pending_files, pending_variants, pending_refs = [], [], [], []
+    committed_files, committed_variants, committed_refs = [], [], []
+    committed_run = copy.deepcopy(vars(run))
+    owner = None
+
+    async def execute(statement, parameters):
+        nonlocal owner
+        owner = parameters["id"]
+        events.append(("lock", owner))
+
+    async def register_file(db, path, *args, **kwargs):
+        events.append(("file", owner))
+        pending_files.append(path.name)
+        return SimpleNamespace(id=len(committed_files) + len(pending_files))
+
+    async def register_variant(*args):
+        if owner == 2 and failure_stage == "variant":
+            raise OSError("second target failed")
+        variant = SimpleNamespace(metadata_json={})
+        pending_variants.append(variant)
+        return variant
+
+    async def register_reference(db, **kwargs):
+        if owner == 2 and failure_stage == "reference":
+            raise OSError("second target failed")
+        ref = SimpleNamespace(**kwargs)
+        pending_refs.append(ref)
+        return ref
+
+    async def commit():
+        nonlocal committed_run, owner
+        if pending_refs and owner == 2 and failure_stage == "commit":
+            raise OSError("second target failed")
+        for ref in pending_refs:
+            assert ref.metadata_json["game_source"]["source_files"]
+        assert all(v.metadata_json["game_source"] for v in pending_variants)
+        committed_files.extend(pending_files)
+        committed_variants.extend(copy.deepcopy(pending_variants))
+        committed_refs.extend(copy.deepcopy(pending_refs))
+        events.append(("commit", len(committed_refs)))
+        committed_run = copy.deepcopy(vars(run))
+        pending_files.clear()
+        pending_variants.clear()
+        pending_refs.clear()
+        owner = None  # Transaction-scoped owner locks are released by commit.
+
+    async def rollback():
+        nonlocal owner
+        pending_files.clear()
+        pending_variants.clear()
+        pending_refs.clear()
+        vars(run).clear()
+        vars(run).update(copy.deepcopy(committed_run))
+        owner = None
+        events.append(("rollback", len(committed_refs)))
+
+    session.execute.side_effect = execute
+    session.commit.side_effect = commit
+    session.rollback.side_effect = rollback
+    service.register_file.side_effect = register_file
+    service.register_variant.side_effect = register_variant
+    service.register_reference.side_effect = register_reference
+    with pytest.raises(OSError, match="second target"):
+        await entity_media._process_entity_workspace(payload, None, root)
+    assert len(committed_refs) == 1 and committed_refs[0].source_path == targets[0]["path"]
+    assert committed_files == ["1.png", "Icon1.uasset"] and len(committed_variants) == 1
+    assert events.index(("commit", 1)) < events.index(("lock", 2))
+    assert ("rollback", 1) in events
+    assert run.status == "failed" and run.raw_output["published"] == 1
