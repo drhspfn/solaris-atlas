@@ -38,6 +38,28 @@ QUEUES = {
     ),
 }
 
+# Private execution queues. Publishers keep using the public v1 queues above;
+# the coordinator forwards their unchanged payloads with publisher confirmation.
+MEDIA_POOLS = ("coordinator", "image", "audio", "video")
+for _pool in MEDIA_POOLS:
+    _key = f"pool_{_pool}"
+    QUEUES[_key] = QueueSpec(_key, f"wuwa.pool-{_pool}.v1", 1)
+
+
+def media_pool(payload: dict) -> str:
+    """Classify pinned tasks without changing their payload or parent dependency."""
+    kind = payload.get("kind")
+    if payload.get("job_type") == "media.entities":
+        kinds = (payload.get("request") or {}).get("kinds", [])
+        return "audio" if kinds == ["voice"] else "image"
+    if kind in {"voices", "voice_packages", "character_voices"}:
+        return "audio"
+    if kind in {"cutscene", "cutscene_assets"}:
+        return "video"
+    if kind in {"images", "event_images", "event_resources"}:
+        return "image"
+    return "coordinator"
+
 
 def queue_concurrency() -> dict[str, int]:
     """Parse WUWA_QUEUE_CONCURRENCY, e.g. ``snapshot_build=1``."""
@@ -56,4 +78,6 @@ def queue_concurrency() -> dict[str, int]:
         if limit < 1:
             raise ValueError(f"Concurrency for queue {key!r} must be positive")
         values[key] = limit
+    if values["snapshot_build"] > 4:
+        raise ValueError("snapshot_build concurrency cannot exceed 4 fetch/compile tasks")
     return values

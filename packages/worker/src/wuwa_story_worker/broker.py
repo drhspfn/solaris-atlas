@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import socket
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -20,12 +21,75 @@ from wuwa_story.db.session import SessionFactory
 
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.notifications import notify_job_result
-from wuwa_story_worker.queues import QUEUES, queue_concurrency
+from wuwa_story_worker.queues import QUEUES, media_pool, queue_concurrency
 
 logger = logging.getLogger(__name__)
 EXCHANGE_NAME = "wuwa.jobs.v1"
 FAILED_EXCHANGE_NAME = "wuwa.jobs.failed.v1"
 JobHandler = Callable[[dict[str, Any]], Awaitable[None]]
+MEDIA_QUEUES = {"release_media", "event_media", "entity_media", "release_images", "entity_images"}
+
+
+async def execute_media_job(payload: dict, handler: JobHandler) -> None:
+    """One lease owns every write; cleanup rechecks durable terminal sibling state."""
+    from wuwa_story_worker.media_workspace import (
+        cleanup_workspace,
+        finish_writes,
+        run_workspace_id,
+        workspace_lease,
+    )
+
+    workspace_id = await run_workspace_id(payload["run_id"])
+    try:
+        async with workspace_lease(workspace_id):
+            await finish_writes(handler(payload))
+    finally:
+        # Never replace a handler failure/cancellation with a cleanup failure.
+        # The periodic recovery pass will retry cleanup after a crash/error.
+        try:
+            await finish_writes(cleanup_workspace(workspace_id))
+        except Exception:
+            logger.exception("Could not clean media workspace %s", workspace_id)
+
+
+async def cleanup_skipped_media(payload: dict) -> None:
+    from wuwa_story_worker.media_workspace import cleanup_workspace, run_workspace_id
+
+    await cleanup_workspace(await run_workspace_id(payload["run_id"]))
+
+
+async def recover_media_workspaces(stop: asyncio.Event) -> None:
+    """Recover committed terminal trees even when their final ACK preceded a crash."""
+    from wuwa_story_worker.media_workspace import cleanup_workspace
+    from wuwa_story_worker.tooling import asset_workspace
+
+    interval = float(os.getenv("WUWA_WORKSPACE_RECOVERY_SECONDS", "300"))
+    if interval <= 0:
+        raise ValueError("WUWA_WORKSPACE_RECOVERY_SECONDS must be positive")
+
+    def workspace_ids():
+        root = asset_workspace() / "patch-workspaces"
+        if not root.exists():
+            return []
+        return [int(path.name) for path in root.iterdir()
+                if path.name.isascii() and path.name.isdigit() and 0 < int(path.name) < 2**63
+                and not path.is_symlink() and not path.is_junction() and path.is_dir()]
+
+    while not stop.is_set():
+        try:
+            for workspace_id in await asyncio.to_thread(workspace_ids):
+                if stop.is_set():
+                    return
+                try:
+                    await cleanup_workspace(workspace_id)
+                except Exception:
+                    logger.exception("Workspace recovery failed workspace=%s", workspace_id)
+        except Exception:
+            logger.exception("Could not scan media workspaces for recovery")
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+        except TimeoutError:
+            pass
 
 
 async def claim_import(payload, *, redelivered=False):
@@ -147,6 +211,10 @@ async def replay_failed_jobs(key: str, limit: int) -> int:
                     delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
                     message_id=message.message_id,
                     type=message.type,
+                    # Preserve source dispatch on private pool queues, but reset
+                    # the exhausted DB retry budget for an operator replay.
+                    headers={k: v for k, v in (message.headers or {}).items()
+                             if k != "db_retry_count"},
                 ),
                 routing_key=QUEUES[key].name,
                 mandatory=True,
@@ -158,41 +226,71 @@ async def replay_failed_jobs(key: str, limit: int) -> int:
     return replayed
 
 
-async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
+async def consume_jobs(
+    handlers: dict[str, JobHandler], *, stop: asyncio.Event | None = None,
+    route_media: bool = False,
+) -> None:
+    """Drain on stop; media lifecycle uses the shared workspace helper contract."""
     if not handlers:
         raise ValueError("At least one queue handler must be registered")
     limits = queue_concurrency()
+    shutdown_timeout = float(os.getenv("WUWA_SHUTDOWN_TIMEOUT_SECONDS", "90"))
+    if shutdown_timeout <= 0:
+        raise ValueError("WUWA_SHUTDOWN_TIMEOUT_SECONDS must be positive")
+    active: set[asyncio.Task] = set()
+    consumers = []
     connection = await aio_pika.connect_robust(broker_url(), client_properties={
         "connection_name": f"worker:{socket.gethostname()}:{os.getpid()}"})
     try:
         for key, handler in handlers.items():
-            channel = await connection.channel()
+            channel = await connection.channel(publisher_confirms=True)
             await channel.set_qos(prefetch_count=limits[key])
             _, queue = await declare_queue(channel, key)
             semaphore = asyncio.Semaphore(limits[key])
 
-            async def process(
-                message: AbstractIncomingMessage,
-                *,
-                job_key: str = key,
-                job_handler: JobHandler = handler,
-                limiter: asyncio.Semaphore = semaphore,
-                job_channel=channel,
+            async def execute(
+                message, *, job_key, job_handler, limiter, job_channel,
             ) -> None:
                 async with limiter:
+                    started = time.monotonic()
                     payload = {}
+                    source_key = message.type if job_key.startswith("pool_") else job_key
                     processor_key = {"release_images": "release_media", "event_media": "release_media",
-                                     "entity_images": "entity_media"}.get(job_key, job_key)
+                                     "entity_images": "entity_media", "snapshot_build": "snapshot_import"}.get(source_key, source_key)
                     try:
                         payload = json.loads(message.body)
                         if not isinstance(payload, dict):
                             raise ValueError("Job payload must be a JSON object")
-                        if job_key in {"release_media", "event_media", "entity_media", "release_images", "entity_images", "asset_download",
+                        if route_media and job_key in MEDIA_QUEUES:
+                            destination = "pool_" + media_pool(payload)
+                            try:
+                                exchange, _ = await declare_queue(job_channel, destination)
+                                await exchange.publish(aio_pika.Message(
+                                    body=message.body, content_type="application/json",
+                                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                                    message_id=message.message_id, type=job_key,
+                                    headers=dict(message.headers or {})),
+                                    routing_key=QUEUES[destination].name, mandatory=True)
+                            except Exception:
+                                logger.exception("Could not forward %s to %s", message.message_id, destination)
+                                await message.nack(requeue=True)
+                                return
+                            await message.ack()
+                            return
+                        if source_key in {"release_media", "event_media", "entity_media", "release_images", "entity_images", "asset_download",
                                        "asset_extract", "snapshot_build"}:
                             if not await claim_import(payload, redelivered=message.redelivered):
+                                if source_key in MEDIA_QUEUES:
+                                    await cleanup_skipped_media(payload)
                                 await message.ack()
                                 return
-                        await job_handler(payload)
+                        if source_key in MEDIA_QUEUES:
+                            await execute_media_job(payload, job_handler)
+                        else:
+                            await job_handler(payload)
+                    except asyncio.CancelledError:
+                        await message.nack(requeue=True)
+                        raise
                     except JobDeferred as error:
                         try:
                             if payload.get("run_id") is not None:
@@ -206,11 +304,12 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
                         retries = int((message.headers or {}).get("db_retry_count", 0))
                         if getattr(error.orig, "sqlstate", None) in {"40P01", "40001"} and retries < 3:
                             try:
-                                await update_admin_run(payload["run_id"], processor_key, "waiting_dependency",
-                                                       error=f"Database contention; retry {retries + 1}/3")
+                                if payload.get("run_id") is not None:
+                                    await update_admin_run(payload["run_id"], processor_key, "waiting_dependency",
+                                                           error=f"Database contention; retry {retries + 1}/3")
                                 await defer_job(job_channel, job_key, message, retry_count=retries + 1)
                                 logger.warning("Deferred %s run=%s after database contention (retry %s/3)",
-                                               job_key, payload["run_id"], retries + 1)
+                                               job_key, payload.get("run_id"), retries + 1)
                             except Exception:
                                 logger.exception("Could not defer database retry")
                                 await message.nack(requeue=True)
@@ -230,9 +329,43 @@ async def consume_jobs(handlers: dict[str, JobHandler]) -> None:
                     else:
                         await notify_job_result(payload.get("run_id"), processor_key)
                         await message.ack()
+                    finally:
+                        logger.info("job.delivery queue=%s id=%s elapsed_seconds=%.3f",
+                                    job_key, message.message_id, time.monotonic() - started)
 
-            await queue.consume(process, no_ack=False)
+            async def process(
+                message: AbstractIncomingMessage,
+                *,
+                job_key: str = key,
+                job_handler: JobHandler = handler,
+                limiter: asyncio.Semaphore = semaphore,
+                job_channel=channel,
+                execute=execute,
+            ) -> None:
+                task = asyncio.current_task()
+                active.add(task)
+                try:
+                    await execute(message, job_key=job_key, job_handler=job_handler,
+                                  limiter=limiter, job_channel=job_channel)
+                finally:
+                    active.discard(task)
+
+            tag = await queue.consume(process, no_ack=False)
+            consumers.append((queue, tag))
             logger.info("Consuming %s with concurrency=%d", QUEUES[key].name, limits[key])
-        await asyncio.Future()
+        if stop is None:
+            await asyncio.Future()
+        else:
+            await stop.wait()
     finally:
+        for queue, tag in consumers:
+            try:
+                await queue.cancel(tag)
+            except Exception:
+                logger.warning("Could not cancel consumer; closing connection will requeue deliveries")
+        if active:
+            _, pending = await asyncio.wait(active, timeout=shutdown_timeout)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
         await connection.close()

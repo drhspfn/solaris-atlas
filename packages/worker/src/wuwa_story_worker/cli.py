@@ -6,12 +6,18 @@ import argparse
 import asyncio
 import json
 import logging
+import os
+import signal
 import sys
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    async_sessionmaker,
+    create_async_engine,
+    create_async_pool_from_url,
+)
 from wuwa_story.agents.contracts import AnalysisRequest
 from wuwa_story.agents.cutscene_vision import enqueue_visual_job, resume_visual_job
 from wuwa_story.agents.jobs import enqueue_analysis
@@ -28,12 +34,12 @@ from wuwa_story_worker.asset_jobs import (
     enqueue_maps,
     extract_client_assets,
 )
-from wuwa_story_worker.broker import consume_jobs, replay_failed_jobs
+from wuwa_story_worker.broker import consume_jobs, recover_media_workspaces, replay_failed_jobs
 from wuwa_story_worker.client_assets import discover_plan, download_plan, save_json
 from wuwa_story_worker.cutscene_vision import dispatch_visual_jobs, process_cutscene_vision
 from wuwa_story_worker.entity_media import process_entity_media
 from wuwa_story_worker.map_assets import build_maps, refresh_map_sources
-from wuwa_story_worker.queues import QUEUES, queue_concurrency
+from wuwa_story_worker.queues import MEDIA_POOLS, QUEUES, queue_concurrency
 from wuwa_story_worker.release_media import process_release_media
 from wuwa_story_worker.scheduler import (
     DEFAULT_REPOSITORY,
@@ -77,6 +83,8 @@ def _parser() -> argparse.ArgumentParser:
     vision_status.add_argument("--limit", type=int, default=20)
     runner = commands.add_parser("run", help="Consume selected RabbitMQ jobs")
     runner.add_argument("--queue", action="append", choices=tuple(QUEUES), default=None)
+    runner.add_argument("--pool", choices=MEDIA_POOLS,
+                        help="Consume a private execution pool; coordinator also routes public media queues")
     assets = commands.add_parser("plan-assets", help="Inspect official client archives without downloading")
     assets.add_argument("--version", required=True)
     assets.add_argument("--tier", choices=("sd", "hd", "uhd"), default="hd")
@@ -204,7 +212,32 @@ async def _import_datasets(datasets: list[tuple[str, Path]], batch_size: int) ->
         await engine.dispose()
 
 
-async def _run(queues: list[str] | None = None) -> None:
+async def _run(queues: list[str] | None = None, pool: str | None = None) -> None:
+    from wuwa_story.db.session import engine
+
+    if pool and queues:
+        raise ValueError("Use --pool or --queue, not both")
+    # Replace the unused pool on the SAME engine: handlers already imported this
+    # engine/SessionFactory. No handler or shared API engine configuration changes.
+    pool_size = int(os.getenv("WUWA_WORKER_DB_POOL_SIZE", "4"))
+    overflow = int(os.getenv("WUWA_WORKER_DB_MAX_OVERFLOW", "4"))
+    if pool_size < 1 or overflow < 0:
+        raise ValueError("Worker DB pool size must be positive and overflow nonnegative")
+    if pool and queue_concurrency()[f"pool_{pool}"] + 2 > pool_size + overflow:
+        raise ValueError("Worker DB capacity must leave two connections beyond pool concurrency")
+    await engine.dispose()
+    engine.sync_engine.pool = create_async_pool_from_url(
+        get_settings().database_url, pool_size=pool_size, max_overflow=overflow,
+        pool_timeout=30, pool_pre_ping=True)
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    signals = []
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop.set)
+            signals.append(sig)
+        except NotImplementedError:  # Windows uses KeyboardInterrupt cancellation.
+            pass
     handlers = {
         "release_images": process_release_media,
         "entity_images": process_entity_media,
@@ -219,18 +252,40 @@ async def _run(queues: list[str] | None = None) -> None:
     }
     # Existing workers keep their snapshot-only role unless explicitly configured.
     selected = {key: handlers[key] for key in (queues or ["snapshot_build"])}
-    if "story_agent" in selected or "cutscene_vision" in selected or "asset_download" in selected:
-        async with asyncio.TaskGroup() as tasks:
+    if pool:
+        async def media_handler(payload):
+            handler = process_entity_media if payload.get("job_type") == "media.entities" else process_release_media
+            await handler(payload)
+
+        selected = {f"pool_{pool}": media_handler}
+        if pool == "coordinator":
+            selected.update({key: handlers[key] for key in (
+                "release_media", "event_media", "entity_media", "release_images", "entity_images")})
+    background = []
+    try:
+        if pool == "coordinator":
+            background.append(asyncio.create_task(recover_media_workspaces(stop)))
+        if "story_agent" in selected or "cutscene_vision" in selected or "asset_download" in selected:
             if "asset_download" in selected:
                 from wuwa_story_worker.client_updates import watch_client_updates
-                tasks.create_task(watch_client_updates())
+                background.append(asyncio.create_task(watch_client_updates()))
             if "story_agent" in selected:
-                tasks.create_task(dispatch_story_revisits())
+                background.append(asyncio.create_task(dispatch_story_revisits()))
             if "cutscene_vision" in selected:
-                tasks.create_task(dispatch_visual_jobs())
-            tasks.create_task(consume_jobs(selected))
-    else:
-        await consume_jobs(selected)
+                background.append(asyncio.create_task(dispatch_visual_jobs()))
+        for task in background:
+            task.add_done_callback(lambda _task: stop.set())
+        await consume_jobs(selected, stop=stop, route_media=pool == "coordinator")
+        for task in background:
+            if task.done():
+                task.result()  # Supervisor failures must fail the process for restart.
+    finally:
+        for task in background:
+            task.cancel()
+        await asyncio.gather(*background, return_exceptions=True)
+        for sig in signals:
+            loop.remove_signal_handler(sig)
+        await engine.dispose()
 
 
 async def _enqueue(args: argparse.Namespace) -> None:
@@ -332,7 +387,7 @@ def main() -> None:
         asyncio.run(enqueue())
     elif args.command == "run":
         queue_concurrency()
-        asyncio.run(_run(args.queue))
+        asyncio.run(_run(args.queue, args.pool))
     elif args.command == "plan-assets":
         plan = discover_plan(args.version, args.tier)
         if args.output:

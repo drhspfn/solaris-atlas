@@ -8,6 +8,15 @@ from wuwa_story_worker import broker
 from wuwa_story_worker.queues import queue_concurrency
 
 
+@pytest.fixture(autouse=True)
+def isolate_workspace_lifecycle(monkeypatch):
+    # These tests isolate delivery/claim control; real lease ordering is covered
+    # separately without requiring PostgreSQL for broker unit tests.
+    async def execute(payload, handler):
+        await handler(payload)
+    monkeypatch.setattr(broker, "execute_media_job", execute)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status,redelivered,expected", [
     ("cancelled", True, False), ("completed", False, False),
