@@ -17,6 +17,7 @@ from wuwa_story.db.models.ops import GameRelease, ImportRun, ProcessingRun, Proc
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference, FileType
 from wuwa_story.ingestion.import_progress import ImportProgress
 from wuwa_story.ingestion.media_provenance import missing_media_targets
+from wuwa_story.ingestion.media_workspaces import retain_workspace
 
 from wuwa_story_worker import media_workspace
 from wuwa_story_worker.broker import JobDeferred
@@ -56,6 +57,9 @@ async def main():
                 (root / "scratch.wem").write_bytes(b"temporary export")
                 assert not await media_workspace.cleanup_workspace(owner.id)
                 child.status = "completed"
+                await session.commit()
+                await retain_workspace(session, owner.id)
+                assert not await media_workspace.cleanup_workspace(owner.id)
                 await session.commit()
                 async with media_workspace.workspace_lease(owner.id):
                     assert not await media_workspace.cleanup_workspace(owner.id)
