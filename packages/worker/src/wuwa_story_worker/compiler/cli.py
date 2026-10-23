@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from wuwa_story_worker.compiler_cache import compiler_fingerprint
+
 from .core import Writer, canonical_json, git_commit, is_ignored_fs_entry, read_json, sha256_file
 from .entities import compile_entities
 from .flow import compile_flow
@@ -285,6 +287,7 @@ def build(data_root: Path, dist_root: Path, requested_version: str | None, stric
     epoch = os.environ.get("SOURCE_DATE_EPOCH")
     timestamp = datetime.fromtimestamp(int(epoch), UTC) if epoch else datetime.now(UTC)
     manifest = {"schema_version": "1", "game_version": game_version,
+                "compiler_source_sha256": compiler_fingerprint(),
                 "resource_version": resource_version, "source_repository": "Arikatsu/WutheringWaves_Data",
                 "source_commit": source_commit,
                 "extraction_timestamp": timestamp.isoformat(),

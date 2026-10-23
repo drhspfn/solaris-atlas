@@ -8,7 +8,10 @@ from pathlib import Path
 def compiler_fingerprint(root: Path | None = None):
     root = root or Path(__file__).with_name("compiler")
     digest = hashlib.sha256()
-    sources = sorted(root.rglob("*.py"))
+    sources = sorted(
+        (path for path in root.rglob("*") if path.is_file() and path.suffix in {".py", ".json"}),
+        key=lambda path: path.relative_to(root).as_posix(),
+    )
     if not sources:
         raise ValueError("Compiler source identity is unavailable")
     for path in sources:

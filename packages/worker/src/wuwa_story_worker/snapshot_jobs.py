@@ -29,6 +29,7 @@ from wuwa_story_worker.broker import JobDeferred
 from wuwa_story_worker.client_assets import save_json, wait_workspace_lock, workspace_lock
 from wuwa_story_worker.compiler_cache import compiled_cache_valid, compiler_fingerprint
 from wuwa_story_worker.job_tracking import update_admin_run
+from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.snapshot_order import ordered_import
 
 logger = logging.getLogger(__name__)
@@ -96,7 +97,7 @@ async def _checkout_job(repository: str, version: str, commit: str, workspace: P
             )
             _git("-C", str(source), "checkout", "--detach", commit)
 
-        await asyncio.to_thread(checkout)
+        await finish_writes(asyncio.to_thread(checkout))
     return source
 
 
@@ -165,7 +166,8 @@ async def _build_and_import_locked(payload, version, repository, commit, workspa
             "build",
         ]
         logger.info("Compiling WuWa %s at %s", version, commit)
-        await asyncio.to_thread(subprocess.run, command, cwd=job_root, env=env, check=True)
+        await finish_writes(asyncio.to_thread(
+            subprocess.run, command, cwd=job_root, env=env, check=True))
         save_json(marker, {"compiler_sha256": fingerprint})
 
     manifest_path = build_output / "manifest.json"

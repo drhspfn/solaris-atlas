@@ -1,10 +1,14 @@
+import asyncio
 import subprocess
+import threading
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from wuwa_story_worker import snapshot_jobs
 from wuwa_story_worker.broker import JobDeferred
+from wuwa_story_worker.client_assets import workspace_lock
 from wuwa_story_worker.snapshot_order import earlier_snapshot
 
 
@@ -77,3 +81,56 @@ def test_snapshot_order_is_numeric_and_ignores_current_and_invalid_requests():
             (43, {"request": {"version": "2.9"}}), (44, {"request": {"version": "broken"}})]
     assert earlier_snapshot(rows, "2.10", 42) == "2.9"
     assert earlier_snapshot(rows, "2.9", 43) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["checkout", "compile"])
+async def test_cancellation_retains_os_locks_until_writer_finishes(monkeypatch, tmp_path, phase):
+    commit = "a" * 40
+    payload = {"schema_version": 1, "job_type": "snapshot.build_import", "version": "1.0",
+               "repository_url": "https://example.invalid/data", "commit": commit}
+    monkeypatch.setenv("WUWA_WORKER_WORKSPACE", str(tmp_path))
+    source = tmp_path / "jobs" / f"1.0-{commit}" / "source"
+    source.mkdir(parents=True)
+    (source / "README.md").write_text("Game Version: 1.0.0\n", encoding="utf-8")
+    started, release, finished = asyncio.Event(), threading.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+
+    def writer(*args, **kwargs):
+        loop.call_soon_threadsafe(started.set)
+        if not release.wait(5):
+            raise TimeoutError("Test did not release snapshot writer")
+        finished.set()
+
+    if phase == "checkout":
+        monkeypatch.setattr(snapshot_jobs, "prepare_checkout", writer)
+        monkeypatch.setattr(snapshot_jobs, "fetch_snapshot", lambda *args: None)
+        monkeypatch.setattr(snapshot_jobs.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=""))
+    else:
+        monkeypatch.setattr(snapshot_jobs, "_checkout_job", AsyncMock(return_value=source))
+        monkeypatch.setattr(snapshot_jobs, "compiler_environment", lambda source: {})
+        monkeypatch.setattr(snapshot_jobs.subprocess, "run", writer)
+    locks = [tmp_path / "job-locks" / f"1.0-{commit}"]
+    if phase == "checkout":
+        locks.append(tmp_path / "git-cache-lock")
+    task = asyncio.create_task(snapshot_jobs._build_and_import_snapshot(payload))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        task.cancel()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert not finished.is_set()
+        for lock in locks:
+            with pytest.raises(BlockingIOError), workspace_lock(lock):
+                pytest.fail("A cancelled writer must retain its OS lock")
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 2)
+        assert finished.is_set()
+        for lock in locks:
+            with workspace_lock(lock):
+                pass
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
