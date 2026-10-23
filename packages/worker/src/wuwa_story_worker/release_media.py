@@ -61,8 +61,20 @@ async def prepare(run, session):
         await session.commit()
     await update_admin_run(run.id, "release_media", "running", raw_output={
         "stage": "client_download", "asset_version": plan["version"], "total": len(plan["files"])})
-    root = await asyncio.to_thread(download_plan, plan, asset_workspace(),
-                                   int(os.getenv("WUWA_ASSET_DOWNLOAD_CONCURRENCY", "4")))
+    root = asset_workspace() / "assets" / f"{plan['version']}-{plan['tier']}-{plan['id'][:16]}"
+    def ready():
+        try:
+            status = json.loads((root / "status.json").read_text(encoding="utf-8"))
+            return (status.get("state") == "downloaded" and status.get("id") == plan["id"]
+                    and (root / "keys.txt").is_file()
+                    and all((root / "game" / item["path"]).is_file()
+                            and (root / "game" / item["path"]).stat().st_size == item["size"]
+                            for item in plan["files"]))
+        except (OSError, ValueError):
+            return False
+    if not await asyncio.to_thread(ready):
+        root = await asyncio.to_thread(download_plan, plan, asset_workspace(),
+                                       int(os.getenv("WUWA_ASSET_DOWNLOAD_CONCURRENCY", "4")))
     return {"asset_version": plan["version"], "download_id": plan["id"], "tier": plan["tier"],
             "stage": "client_ready"}
 

@@ -178,3 +178,27 @@ async def test_successful_assets_continue_when_other_event_assets_are_missing(mo
     await release_media.process_release_media(payload)
     images.assert_awaited_once()
     assert update.await_args.args[2] == "completed"
+
+@pytest.mark.asyncio
+async def test_prepare_reuses_completed_client_without_download_disk_reserve(monkeypatch, tmp_path):
+    import json
+    from unittest.mock import Mock
+    plan = {"version": "3.7.0", "tier": "hd", "id": "a" * 64,
+            "files": [{"path": "Client/Content/Paks/base.pak", "size": 4}]}
+    root = tmp_path / "assets" / ("3.7.0-hd-" + "a" * 16)
+    archive = root / "game/Client/Content/Paks/base.pak"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"data")
+    (root / "keys.txt").write_text("key")
+    (root / "status.json").write_text(json.dumps({"state": "downloaded", "id": plan["id"]}))
+    monkeypatch.setattr(release_media, "asset_workspace", lambda: tmp_path)
+    monkeypatch.setattr(release_media, "update_admin_run", AsyncMock())
+    download = Mock(side_effect=AssertionError("Already downloaded; no reserve needed"))
+    monkeypatch.setattr(release_media, "download_plan", download)
+    run = SimpleNamespace(id=7, metadata_json={"client_plan": plan})
+    result = await release_media.prepare(run, AsyncMock())
+    assert result["stage"] == "client_ready"
+    download.assert_not_called()
+    archive.unlink()
+    with pytest.raises(AssertionError, match="Already downloaded"):
+        await release_media.prepare(run, AsyncMock())
