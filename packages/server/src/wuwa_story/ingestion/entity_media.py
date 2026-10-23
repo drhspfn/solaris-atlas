@@ -17,6 +17,7 @@ class MediaRequest(BaseModel):
     tier: Literal["sd", "hd", "uhd"] = "hd"
     game_version: str
     release_id: int | None = Field(default=None, ge=1)
+    workspace_id: int | None = Field(default=None, gt=0, strict=True)
     entities: list[str] = Field(min_length=1, max_length=100)
     kinds: list[Literal["image", "voice"]] = Field(
         default_factory=lambda: ["image", "voice"], min_length=1
