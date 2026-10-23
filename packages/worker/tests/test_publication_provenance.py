@@ -118,6 +118,7 @@ async def test_global_voice_query_requires_every_owner_and_inventory_track(monke
                  for lang in ("en", "ja", "ko", "zh")]
     refs = [SimpleNamespace(owner_node_id=owner, source_name=track["source_name"], source_path=track["path"],
                             metadata_json={"voice_name": "vo_test", "voice_tracks": inventory,
+                                           "voice_inventory_authoritative": True,
                                            "voice_inventory_complete": True})
             for owner in (1, 2) for track in inventory
             if not (missing_owner and owner == 2) and not (missing_track and track["language"] == "zh")]
