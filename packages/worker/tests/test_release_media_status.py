@@ -498,13 +498,20 @@ async def test_event_image_publication_persists_source_hashes(monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("variants,produce", [(False, True), (True, True), (True, False)])
+@pytest.mark.parametrize("variants,produce,publication_failure", [
+    (False, True, False), (True, True, False), (True, False, False), (False, True, True)])
 async def test_release_exports_only_missing_voice_path_and_preserves_full_roster(
-        monkeypatch, tmp_path, variants, produce):
+        monkeypatch, tmp_path, variants, produce, publication_failure):
     from wuwa_story_worker import entity_media
 
-    voice_root = tmp_path / "voice"
-    voice_root.mkdir()
+    voice_root = tmp_path / "patch-workspaces/11/voices" / ("3.7.0-" + "a" * 16)
+    voice_root.mkdir(parents=True)
+    sibling = voice_root / "voice-batches/91/files/other.wav"
+    shared = voice_root / "exports/files/shared.wem"
+    for path in (sibling, shared):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"retained")
+    monkeypatch.setattr(release_media, "asset_workspace", lambda: tmp_path)
     paths = sorted({f"Audio/{language}_vo_test{suffix}.wem"
                     for language in ("en", "ja", "ko", "zh")
                     for suffix in (("_F", "_M") if variants else ("",))}
@@ -524,6 +531,11 @@ async def test_release_exports_only_missing_voice_path_and_preserves_full_roster
     monkeypatch.setattr(release_media, "export_assets", AsyncMock(return_value=tmp_path / "config/manifest.json"))
     monkeypatch.setattr(release_media, "update_admin_run", AsyncMock())
     importer = AsyncMock(return_value={"tracks": int(produce), "missing_voices": []})
+    if publication_failure:
+        async def fail(root, *_args, **_kwargs):
+            (root / "converted.wav").write_bytes(b"retain failed publication")
+            raise RuntimeError("publication failed")
+        importer.side_effect = fail
     monkeypatch.setattr(release_media, "import_voice_sample", importer)
     commands = []
 
@@ -536,6 +548,13 @@ async def test_release_exports_only_missing_voice_path_and_preserves_full_roster
         log.write_text("[Done] Extracted files")
 
     monkeypatch.setattr(entity_media, "tool", extract)
+    if publication_failure:
+        with pytest.raises(RuntimeError, match="publication failed"):
+            await release_media.voices(
+                {"run_id": 90, "game_version": "1.4.0", "targets": ["vo_test", "vo_reused"]}, parent)
+        assert (voice_root / "voice-batches/90/files/converted.wav").is_file()
+        assert sibling.is_file() and shared.is_file()
+        return
     result, status = await release_media.voices(
         {"run_id": 90, "game_version": "1.4.0", "targets": ["vo_test", "vo_reused"]}, parent)
     assert commands == [missing]  # No sibling languages, variants, or fuzzy repair.
@@ -551,6 +570,8 @@ async def test_release_exports_only_missing_voice_path_and_preserves_full_roster
     assert report["found"] == (8 if produce else 7)
     assert report["missing"] == int(not produce)
     assert sum(entry.get("reused", False) for entry in report["entries"]) >= 7
+    assert not (voice_root / "voice-batches/90").exists()
+    assert sibling.is_file() and shared.is_file()
 
 
 @pytest.mark.asyncio
@@ -570,3 +591,50 @@ async def test_scoped_voice_roster_reuse_skips_extraction_and_reports_absent_lan
     assert result["reused"] == len(paths)
     assert status == ("completed" if len(languages) == 4 else "partial")
     assert result["missing_voices"] == ([] if len(languages) == 4 else ["zh_vo_test"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("publication", ["completed", "partial", "failed"])
+async def test_cutscene_publication_cleans_only_owned_conversions(monkeypatch, tmp_path, publication):
+    root = tmp_path / "patch-workspaces/11"
+    assets = root / "release-media/files"
+    shared = assets / "Client/Content/Aki/Movies/Scene.uexp"
+    sibling = root / "release-media/91/other.mp4"
+    for path in (shared, sibling):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"retained")
+    monkeypatch.setattr(release_media, "asset_workspace", lambda: tmp_path)
+    monkeypatch.setattr(release_media, "client_root", lambda _: root)
+    monkeypatch.setattr(release_media, "video_database", lambda _: tmp_path / "video.db")
+    monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
+    monkeypatch.setattr(release_media.shutil, "which", lambda _: str(tmp_path / "ffmpeg"))
+    monkeypatch.setattr(release_media, "update_admin_run", AsyncMock())
+
+    def recipe(*_args, missing_assets, **_kwargs):
+        if publication == "partial":
+            missing_assets.append("MissingBank")
+        return {"videos": [{"asset": "asset:ue:/Game/Aki/Movies/Scene.Scene", "soundtrack": []}]}
+
+    async def publish(recipe, _movies, _banks, _media, work, *_args, **_kwargs):
+        assert recipe.is_file()
+        (work / "converted.mp4").write_bytes(b"converted video")
+        (work / "converted.wav").write_bytes(b"converted audio")
+        if publication == "failed":
+            raise RuntimeError("publication failed")
+        return {"videos": 1}
+
+    monkeypatch.setattr(release_media, "plan_cutscene", recipe)
+    monkeypatch.setattr(release_media, "import_cutscene_recipe", publish)
+    payload = {"run_id": 90, "game_version": "1.4.0", "targets": ["Scene"]}
+    parent = {"workspace_id": 11, "asset_version": "3.7.0", "download_id": "a" * 64, "tier": "hd"}
+    if publication == "failed":
+        with pytest.raises(RuntimeError, match="publication failed"):
+            await release_media.cutscene(payload, parent)
+        assert (root / "release-media/90/converted.mp4").is_file()
+        assert (root / "release-media/90/converted.wav").is_file()
+    else:
+        result, status = await release_media.cutscene(payload, parent)
+        assert status == publication
+        assert result["videos"] == 1 and "media_report" in result
+        assert not (root / "release-media/90").exists()
+    assert shared.is_file() and sibling.is_file()

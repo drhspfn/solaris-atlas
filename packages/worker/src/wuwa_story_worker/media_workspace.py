@@ -234,6 +234,35 @@ def _members(runs, workspace_id):
             return members
 
 
+def remove_job_output(parent: dict, run_id: int, kind: str, *, base: Path | None = None) -> bool:
+    """Remove one published job's conversions under its active execution lease.
+
+    Derive the target from trusted layout/IDs; never accept an arbitrary deletion
+    path or remove shared package exports. The caller also holds its job lock.
+    """
+    workspace_id = parent.get("workspace_id")
+    if workspace_id is None:
+        return False
+    validate_workspace_id(run_id)
+    root = workspace_path(workspace_id, base=base)
+    if kind == "voices":
+        target = package_root(parent, "voices", parent["voice_plan_id"], base=base) / "voice-batches" / str(run_id)
+    elif kind == "cutscene":
+        target = root / "release-media" / str(run_id)
+    else:
+        raise ValueError("Unsupported published job output kind")
+    # Check every ancestor before deletion, including Windows junctions. rmtree
+    # unlinks nested symlinks without traversing their retained source files.
+    checked = root
+    for part in target.relative_to(root).parts:
+        checked = _directory(checked / part)
+    if not target.exists():
+        return False
+    shutil.rmtree(target)
+    logger.info("media_workspace.job_cleaned workspace=%s run=%s kind=%s", workspace_id, run_id, kind)
+    return True
+
+
 def remove_workspace(workspace_id: int, *, base: Path | None = None) -> bool:
     """Delete only the managed tree; shutil never descends into linked inputs.
 

@@ -83,6 +83,41 @@ def test_package_outputs_are_scoped_but_downloads_survive(tmp_path, kind):
     assert not (package / "plot-audio").exists()
 
 
+@pytest.mark.parametrize("kind,relative", [
+    ("cutscene", "release-media/90"), ("voices", "voices/3.7.0-aaaaaaaaaaaaaaaa/voice-batches/90")])
+def test_job_cleanup_preserves_inputs_shared_exports_and_other_jobs(tmp_path, kind, relative):
+    client = ready_client(tmp_path)
+    root = workspaces.resolve_workspace(client, 11, base=tmp_path)
+    owned = root / relative
+    owned.mkdir(parents=True)
+    (owned / "converted.wav").write_bytes(b"large temporary output")
+    (owned / "linked-input").symlink_to(client / "game", target_is_directory=True)
+    sibling = owned.parent / "91"
+    sibling.mkdir()
+    (sibling / "other.wav").write_bytes(b"other job")
+    shared = root / "exports/shared.raw"
+    shared.parent.mkdir()
+    shared.write_bytes(b"shared raw")
+    parent = {"workspace_id": 11, "asset_version": "3.7.0", "voice_plan_id": "a" * 64}
+    assert workspaces.remove_job_output(parent, 90, kind, base=tmp_path)
+    assert not workspaces.remove_job_output(parent, 90, kind, base=tmp_path)
+    assert not owned.exists()
+    assert shared.is_file() and (sibling / "other.wav").is_file()
+    assert (client / "game/archive.pak").read_bytes() == b"retained"
+
+
+def test_job_cleanup_rejects_redirected_parent(tmp_path):
+    root = workspaces.resolve_workspace(ready_client(tmp_path), 11, base=tmp_path)
+    outside = tmp_path / "outside"
+    (outside / "90").mkdir(parents=True)
+    original = outside / "90/retain.mp4"
+    original.write_bytes(b"retained")
+    (root / "release-media").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="directory is a link"):
+        workspaces.remove_job_output({"workspace_id": 11}, 90, "cutscene", base=tmp_path)
+    assert original.is_file()
+
+
 def run(key, status="completed", parent=None, workspace=None, child=None, kind="images"):
     request = {"kind": kind, "parent_id": parent, "workspace_id": workspace}
     return SimpleNamespace(id=key, status=status, metadata_json={"request": request},

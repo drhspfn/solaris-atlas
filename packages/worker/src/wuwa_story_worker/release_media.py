@@ -47,6 +47,7 @@ from wuwa_story_worker.media_workspace import (
     cleanup_workspace,
     finish_writes,
     package_root,
+    remove_job_output,
     resolve_workspace,
     run_workspace_id,
     workspace_lease,
@@ -80,6 +81,17 @@ async def source_context(parent, *, voice=False, video=False):
 def client_root(result):
     root = asset_workspace() / "assets" / f"{result['asset_version']}-{result['tier']}-{result['download_id'][:16]}"
     return resolve_workspace(root, result.get("workspace_id"), base=asset_workspace())
+
+
+async def cleanup_published_output(parent, run_id, kind):
+    if parent.get("workspace_id") is None or run_id is None:
+        return
+    try:
+        await finish_writes(asyncio.to_thread(remove_job_output, parent, run_id, kind, base=asset_workspace()))
+    except OSError:
+        # Publication is already durable. Patch GC can retry failed disk cleanup.
+        logger.exception("media_workspace.job_cleanup_failed workspace=%s run=%s kind=%s",
+                         parent["workspace_id"], run_id, kind)
 
 
 async def prepare(run, session):
@@ -400,6 +412,7 @@ async def cutscene_assets(payload, parent):
 async def cutscene(payload, parent):
     context = await source_context(parent, video=True)
     if not await missing_cutscene_identities({"cutscene:" + payload["targets"][0]}, source_context=context):
+        await cleanup_published_output(parent, payload.get("run_id"), "cutscene")
         return {**parent, "stage": "cutscene_reused", "reused": 1}, "completed"
     root = client_root(parent)
     assets = root / "release-media" / "files"
@@ -448,6 +461,7 @@ async def cutscene(payload, parent):
     entries.extend({"expected": name, "status": "not_resolved", "matches": []} for name in missing_assets)
     report.update(requested=len(entries), found=sum(e["status"] == "found" for e in entries),
                   missing=sum(e["status"] != "found" for e in entries))
+    await cleanup_published_output(parent, payload["run_id"], "cutscene")
     return {**result, "asset_version": parent["asset_version"], "missing_assets": missing_assets,
             "media_report": report}, "partial" if missing_assets else "completed"
 
@@ -595,6 +609,7 @@ async def voices(payload, parent):
                             for language in ("en", "ja", "ko", "zh")
                             if not any(track["language"] == language for track in tracks)]
         if not missing_paths:
+            await cleanup_published_output(parent, payload.get("run_id"), "voices")
             return {**parent, "stage": "voices_reused", "reused": len(reused), "tracks": 0,
                     "missing_voices": absent_languages}, "partial" if absent_languages else "completed"
     else:
@@ -679,6 +694,7 @@ async def voices(payload, parent):
         result["missing_voices"] = sorted(set(result.get("missing_voices", []))
             | (missing_paths - exported) | set(absent_languages))
         result["reused"] = len(reused)
+        await cleanup_published_output(parent, payload["run_id"], "voices")
     return {**result, "media_report": report}, "partial" if result.get("missing_voices") else "completed"
 
 
