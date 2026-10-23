@@ -324,7 +324,7 @@ async def _locked_process_entity_media(payload: dict) -> None:
                 if (
                     run
                     and run.metadata_json.get("payload") == payload
-                    and run.status not in ("completed", "partial")
+                    and run.status not in ("completed", "partial", "cancelled")
                 ):
                     run.status = "failed"
                     run.error = str(error)[:2000]
@@ -363,7 +363,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
         run = await session.get(ProcessingRun, payload["run_id"])
         if run is None or run.metadata_json.get("payload") != payload:
             raise ValueError("Media job is not the pinned backend request")
-        if run.status in ("completed", "partial"):
+        if run.status in ("completed", "partial", "cancelled"):
             return
         lock_root = root / "entity-jobs" / str(run.id)
         lock_root.mkdir(parents=True, exist_ok=True)

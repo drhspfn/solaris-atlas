@@ -1,6 +1,7 @@
 """Game identities survive extraction workspace cleanup; blob presence never is assumed."""
 
 import asyncio
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
@@ -64,7 +65,6 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
             FileReference.source_path.in_({t["path"] for t in targets}),
             FileLocation.backend == storage.backend,
             FileLocation.bucket == storage.bucket,
-            FileLocation.available.is_(True),
         )
     )
     expected = {target_identity(t, reference_type): t for t in targets}
@@ -78,7 +78,7 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
         target = by_source.get((identity[0], *identity[2:]))
         if target is not None and matches_source(reference.metadata_json or {}, source, target):
             candidates.append((target_identity(target, reference_type), file.size_bytes,
-                               location.object_key, reference))
+                               location.object_key, reference, location))
     semaphore = asyncio.Semaphore(16)
 
     async def stat(key):
@@ -87,9 +87,12 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
 
     objects = dict(await asyncio.gather(*(stat(key) for key in {c[2] for c in candidates})))
     present = set()
-    for identity, size, key, reference in candidates:
+    for identity, size, key, reference, location in candidates:
+        location.verified_at = datetime.now(UTC)
         if size is None or objects[key] is None or objects[key].size_bytes != size:
+            location.available = False
             continue
+        location.available = True
         present.add(identity)
         current = next((ref for ref in references.get(identity, [])
                         if matches_source(ref.metadata_json or {}, source, expected[identity])), None)

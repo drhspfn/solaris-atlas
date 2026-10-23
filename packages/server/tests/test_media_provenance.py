@@ -92,6 +92,20 @@ async def test_storage_outage_is_not_silently_reported_as_missing():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("exists", [True, False])
+async def test_availability_flags_follow_live_storage_not_stale_database_state(exists):
+    reference, file, location = row(target())
+    location.available = not exists
+    session = AsyncMock()
+    session.execute.return_value = [(reference, file, location)]
+    storage = SimpleNamespace(backend="s3", bucket="media", stat=AsyncMock(
+        return_value=SimpleNamespace(size_bytes=12) if exists else None))
+    result = await missing_media_targets(session, [target()], source={}, storage=storage)
+    assert result == ([] if exists else [target()])
+    assert location.available is exists and location.verified_at is not None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("stored_tool,missing", [("a" * 64, False), ("b" * 64, True)])
 async def test_changed_tool_version_requires_export(stored_tool, missing):
     session = AsyncMock()
