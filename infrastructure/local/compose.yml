@@ -193,7 +193,7 @@ services:
     command: ["wuwa-story-worker", "run", "--queue", "asset_download", "--queue", "asset_extract"]
     stop_grace_period: 120s
     cpus: ${WUWA_ASSET_CPUS:-0.5}
-    mem_limit: ${WUWA_ASSET_MEMORY:-1280m}
+    mem_limit: ${WUWA_ASSET_MEMORY:-1536m}
     volumes:
       - ${WUWA_ASSET_HOST_PATH:-../../packages/worker/var/client-assets}:/var/lib/wuwa-assets
     environment:
@@ -225,7 +225,7 @@ services:
     <<: *asset-worker
     command: ["wuwa-story-worker", "run", "--pool", "image"]
     cpus: ${WUWA_IMAGE_CPUS:-0.75}
-    mem_limit: ${WUWA_IMAGE_MEMORY:-1280m}
+    mem_limit: ${WUWA_IMAGE_MEMORY:-1536m}
     deploy:
       replicas: ${WUWA_IMAGE_REPLICAS:-1}
 
@@ -233,7 +233,7 @@ services:
     <<: *asset-worker
     command: ["wuwa-story-worker", "run", "--pool", "audio"]
     cpus: ${WUWA_AUDIO_CPUS:-0.75}
-    mem_limit: ${WUWA_AUDIO_MEMORY:-1280m}
+    mem_limit: ${WUWA_AUDIO_MEMORY:-1536m}
     deploy:
       replicas: ${WUWA_AUDIO_REPLICAS:-1}
 
@@ -241,7 +241,7 @@ services:
     <<: *asset-worker
     command: ["wuwa-story-worker", "run", "--pool", "video"]
     cpus: ${WUWA_VIDEO_CPUS:-0.75}
-    mem_limit: ${WUWA_VIDEO_MEMORY:-1280m}
+    mem_limit: ${WUWA_VIDEO_MEMORY:-1536m}
     deploy:
       replicas: ${WUWA_VIDEO_REPLICAS:-1}
 

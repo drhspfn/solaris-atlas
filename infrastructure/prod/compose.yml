@@ -165,7 +165,7 @@ services:
     <<: *worker
     command: ["wuwa-story-worker", "run", "--queue", "asset_download", "--queue", "asset_extract"]
     cpus: ${WUWA_ASSET_CPUS:-0.5}
-    mem_limit: ${WUWA_ASSET_MEMORY:-1280m}
+    mem_limit: ${WUWA_ASSET_MEMORY:-1536m}
     deploy:
       replicas: 1
 
@@ -173,7 +173,7 @@ services:
     <<: *worker
     command: ["wuwa-story-worker", "run", "--pool", "image"]
     cpus: ${WUWA_IMAGE_CPUS:-0.75}
-    mem_limit: ${WUWA_IMAGE_MEMORY:-1280m}
+    mem_limit: ${WUWA_IMAGE_MEMORY:-1536m}
     deploy:
       replicas: ${WUWA_IMAGE_REPLICAS:-1}
 
@@ -181,7 +181,7 @@ services:
     <<: *worker
     command: ["wuwa-story-worker", "run", "--pool", "audio"]
     cpus: ${WUWA_AUDIO_CPUS:-0.75}
-    mem_limit: ${WUWA_AUDIO_MEMORY:-1280m}
+    mem_limit: ${WUWA_AUDIO_MEMORY:-1536m}
     deploy:
       replicas: ${WUWA_AUDIO_REPLICAS:-1}
 
@@ -189,7 +189,7 @@ services:
     <<: *worker
     command: ["wuwa-story-worker", "run", "--pool", "video"]
     cpus: ${WUWA_VIDEO_CPUS:-0.75}
-    mem_limit: ${WUWA_VIDEO_MEMORY:-1280m}
+    mem_limit: ${WUWA_VIDEO_MEMORY:-1536m}
     deploy:
       replicas: ${WUWA_VIDEO_REPLICAS:-1}
 

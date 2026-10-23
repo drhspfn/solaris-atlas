@@ -127,11 +127,11 @@ Default capacity for a 6 CPU / 12 GiB host:
 | Service | Replicas | Tasks per replica | CPU per container | Memory per container |
 | --- | ---: | ---: | ---: | ---: |
 | snapshot-worker | 2 | 1 fetch/compile each, 1 global DB import total | 1 | 2 GiB |
-| asset-worker | 1 | 1 download + 1 extraction | 0.5 | 1280 MiB |
+| asset-worker | 1 | 1 download + 1 extraction | 0.5 | 1536 MiB |
 | media-worker (coordinator) | 1 | 3 executions + public queue routing | 0.25 | 768 MiB |
-| image-worker | 1 | 1 | 0.75 | 1280 MiB |
-| audio-worker | 1 | 1 | 0.75 | 1280 MiB |
-| video-worker | 1 | 1 | 0.75 | 1280 MiB |
+| image-worker | 1 | 1 | 0.75 | 1536 MiB |
+| audio-worker | 1 | 1 | 0.75 | 1536 MiB |
+| video-worker | 1 | 1 | 0.75 | 1536 MiB |
 
 This provides 10 logical task slots in 7 containers: 2 snapshot fetch/compile,
 2 asset (download/extraction), 3 lightweight coordinator and 3 media executions.
@@ -139,16 +139,19 @@ These are conservative canary defaults, not the final production parallelism
 target. They provide fewer entity execution slots than the previous two media
 workers with three entity slots each. Increase useful parallelism after measuring
 the new export path rather than keeping seven containers as a fixed target.
-It is deliberately below 10–20 heavy processes. Each image/audio/video container
-runs one task at a time. Python alone previously showed roughly 475 MiB RSS in
-the operator screenshot; 768 MiB left too little space for .NET. The 1280 MiB
-starting cap leaves more room but is **unmeasured for representative exports**.
-Before opening the full queue, measure one FModel image export and one voice
-export including child-process/container peak memory, wall time and CPU. Parent
-will perform those live canaries after deployment; none were run remotely here.
+Each image/audio/video container runs one task at a time. A live operator probe
+exported the known CamellyaActivity texture correctly: one PNG in 14.51 seconds
+at 2 CPU, maximum child RSS 1188.2 MiB, and temporary scratch removal confirmed.
+Adding approximately 90 MiB of Python overhead leaves almost no margin under
+1280 MiB, before other container memory is counted. Asset/image/audio/video
+therefore default to 1536 MiB. This is evidence for memory headroom and one
+selective image export, not measured production patch throughput, audio/video
+capacity or performance at the default 0.75 CPU media limit. Voice and broader
+product/queue canaries remain required before opening the full backlog.
 
-Aggregate container ceilings are 5 CPU and 9.75 GiB including snapshot/assets,
-leaving 1 CPU and 2.25 GiB for PostgreSQL, RabbitMQ, API, OS and screenshot work.
+Aggregate container ceilings are 5 CPU and 10.75 GiB including snapshot/assets,
+leaving 1 CPU and 1.25 GiB below a nominal 6 CPU / 12 GiB budget for PostgreSQL,
+RabbitMQ, API, OS and screenshot work.
 These are caps, not reserved memory or a throughput promise. If screenshot work
 continues to saturate CPU, reduce snapshot replicas to one or pause compilations
 while measuring media. Optional AI consumers need additional budget. Memory caps
@@ -162,7 +165,7 @@ coordinator=1, snapshot=2, video=1 and asset=1: ten worker containers and thirte
 logical task slots with the default per-process concurrency. Set
 `WUWA_IMAGE_REPLICAS=3` and `WUWA_AUDIO_REPLICAS=2`; keep one heavy task per
 container initially. At unchanged resource limits this layout has aggregate
-ceilings of 7.25 CPU and 13.5 GiB. Limits do not reserve that RAM, but simultaneous
+ceilings of 7.25 CPU and 15.25 GiB. Limits do not reserve that RAM, but simultaneous
 peaks can still exceed the 6 CPU / 12 GiB host. Choose per-pool limits from measured
 container peaks including Python and child processes, retain DB/API/OS headroom,
 and stage compilation or video work when CPU is saturated. Compare completed
@@ -254,8 +257,9 @@ Remaining live acceptance checks before opening bulk queues:
 
 - Smoke-test the product against existing imported data: patch/entity pages,
   images, voice playback and cutscene playback, including actual object fetches.
-- Run one representative image export and one voice export in the new containers;
-  record peak container memory, CPU, duration and the resulting published media.
+- Complete a representative voice export and verify the successful image probe
+  through the deployed publication path; record peak container memory, CPU,
+  duration and the resulting published media.
 - Verify queue routing, dependency deferral, ordered DB ingestion, graceful
   shutdown/redelivery and final workspace cleanup with bounded jobs before
   resuming the backlog. Confirm completed operations and patch progress increase

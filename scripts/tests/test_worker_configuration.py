@@ -26,6 +26,12 @@ class WorkerConfigurationTests(unittest.TestCase):
         settings["worker.env"]["WUWA_QUEUE_CONCURRENCY"] = "snapshot_build=1,pool_audio=2"
         validate(settings)
 
+    def test_heavy_defaults_include_measured_export_headroom(self):
+        settings = self.settings()
+        for pool in ("ASSET", "IMAGE", "AUDIO", "VIDEO"):
+            self.assertEqual(settings["compose.env"][f"WUWA_{pool}_MEMORY"], "1536m")
+        self.assertEqual(settings["compose.env"]["WUWA_IMAGE_REPLICAS"], "1")
+
     def test_invalid_replica_resources_concurrency_and_db_headroom_fail_early(self):
         for group, key, value in [
             ("compose.env", "WUWA_IMAGE_REPLICAS", "0"),
@@ -82,14 +88,17 @@ class WorkerConfigurationTests(unittest.TestCase):
                         self.assertEqual(config["deploy"]["replicas"], replicas)
                         self.assertGreater(float(config["cpus"]), 0)
                         self.assertEqual(config["stop_grace_period"], "2m0s")
+                        if pool != "coordinator":
+                            self.assertEqual(int(config["mem_limit"]), 1536 * 1024**2)
                         total_memory += int(config["mem_limit"]) * replicas
-                    self.assertLess(total_memory, 5 * 1024**3)
+                    self.assertEqual(total_memory, 5376 * 1024**2)
                     snapshot = services["snapshot-worker" if variant == "prod" else "worker"]
                     self.assertEqual(snapshot["command"][-1], "snapshot_build")
                     self.assertNotIn("asset_extract", snapshot["command"])
                     self.assertEqual(snapshot["deploy"]["replicas"], 2)
                     total_memory += int(snapshot["mem_limit"]) * 2 + int(services["asset-worker"]["mem_limit"])
-                    self.assertLessEqual(total_memory, 10 * 1024**3)
+                    self.assertEqual(int(services["asset-worker"]["mem_limit"]), 1536 * 1024**2)
+                    self.assertEqual(total_memory, 11008 * 1024**2)
 
 
 if __name__ == "__main__":
