@@ -62,6 +62,7 @@ async def recover_media_workspaces(stop: asyncio.Event) -> None:
     """Recover committed terminal trees even when their final ACK preceded a crash."""
     from wuwa_story_worker.media_workspace import cleanup_workspace
     from wuwa_story_worker.tooling import asset_workspace
+    from wuwa_story_worker.transient_workspace import cleanup_transient_workspaces
 
     interval = float(os.getenv("WUWA_WORKSPACE_RECOVERY_SECONDS", "300"))
     if interval <= 0:
@@ -77,6 +78,9 @@ async def recover_media_workspaces(stop: asyncio.Event) -> None:
 
     while not stop.is_set():
         try:
+            removed = await asyncio.to_thread(cleanup_transient_workspaces)
+            if removed:
+                logger.info("transient_workspace.recovered directories=%s", removed)
             for workspace_id in await asyncio.to_thread(workspace_ids):
                 if stop.is_set():
                     return

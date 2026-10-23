@@ -170,3 +170,30 @@ Set per-process execution limits with `WUWA_QUEUE_CONCURRENCY=pool_image=2,pool_
 Snapshot fetch/compile can use up to four slots with the ordered global DB import
 guard; DB ingestion is serial. See [deployment capacity and tuning](../../docs/deployment.md#media-worker-capacity-and-retries)
 for defaults, memory/CPU limits, DB headroom, safe rollout, shutdown and recovery.
+
+### Disposable extraction files
+
+Downloaded game/voice/video archives remain available for subsequent imports.
+Release exports live in `client-assets/patch-workspaces/<prepare-run-id>` and are
+removed after every descendant is terminal and no worker holds an execution lease.
+Completed preparation is renewed when retrying a collected workspace. Published
+files are checked against pinned game package paths, tool identities and object
+storage before deciding which missing sources need extraction.
+
+Standalone entity and queued map/raw-export jobs use `client-assets/transient-jobs`.
+An OS lock outside each disposable directory protects active writers; the recovery
+pass also removes orphaned directories after a killed process. Small lock files
+remain outside exports so deleting a lock cannot allow two writers concurrently.
+Explicit local CLI export commands still retain their requested output.
+
+Snapshot phases are checkpointed in `ops.import_run.metadata` against the exact
+manifest hash and importer version. A retry skips committed phases and reports
+their timings. Fetch/compile may run concurrently; shared DB projections are
+updated under an ordered import lease.
+
+For a real PostgreSQL lifecycle check, initialize an isolated schema and run
+`tests/media_lifecycle_postgres_check.py` with `WUWA_TEST_DATABASE_URL` pointing at
+a disposable database whose name contains `validation`. It verifies execution
+and enqueue leases, cleanup, preserved archives, cross-release file reuse,
+missing-object repair, checkpoint resume and import exclusion. Never point it
+at the production archive database.

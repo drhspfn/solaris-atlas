@@ -4,11 +4,12 @@ import hashlib
 import os
 import shutil
 import subprocess
-import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
 from wuwa_story.ingestion.media_provenance import authored_package_path
+
+from wuwa_story_worker.transient_workspace import transient_workspace
 
 
 def sha256(path: Path) -> str:
@@ -32,8 +33,8 @@ def package_path(path: Path) -> str:
 @contextmanager
 def temporary_entity_workspace(client: Path):
     """Share downloaded archives read-only; every extracted byte belongs to this run."""
-    with tempfile.TemporaryDirectory(prefix="entity-media-") as temporary:
-        root = Path(temporary)
+    base = client.parent.parent if client.parent.name == "assets" else client.parent
+    with transient_workspace(base / "transient-jobs") as root:
         for name in ("plan.json", "status.json", "keys.txt"):
             shutil.copyfile(client / name, root / name)
         if os.name == "nt":
