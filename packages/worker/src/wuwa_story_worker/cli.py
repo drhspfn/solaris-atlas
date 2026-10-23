@@ -1,4 +1,5 @@
 """Command line entrypoints for snapshot build and import jobs."""
+# ruff: noqa: E402 -- Worker env must precede imports that construct the shared DB engine.
 
 from __future__ import annotations
 
@@ -12,11 +13,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+os.environ.setdefault("WUWA_WORKER_DB_POOL_SIZE", "4")
+os.environ.setdefault("WUWA_WORKER_DB_MAX_OVERFLOW", "4")
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
-    create_async_pool_from_url,
 )
 from wuwa_story.agents.contracts import AnalysisRequest
 from wuwa_story.agents.cutscene_vision import enqueue_visual_job, resume_visual_job
@@ -217,18 +220,12 @@ async def _run(queues: list[str] | None = None, pool: str | None = None) -> None
 
     if pool and queues:
         raise ValueError("Use --pool or --queue, not both")
-    # Replace the unused pool on the SAME engine: handlers already imported this
-    # engine/SessionFactory. No handler or shared API engine configuration changes.
     pool_size = int(os.getenv("WUWA_WORKER_DB_POOL_SIZE", "4"))
     overflow = int(os.getenv("WUWA_WORKER_DB_MAX_OVERFLOW", "4"))
     if pool_size < 1 or overflow < 0:
         raise ValueError("Worker DB pool size must be positive and overflow nonnegative")
     if pool and 2 * queue_concurrency()[f"pool_{pool}"] + 2 > pool_size + overflow:
         raise ValueError("Worker DB capacity must cover lease + job connection per task plus two spare")
-    await engine.dispose()
-    engine.sync_engine.pool = create_async_pool_from_url(
-        get_settings().database_url, pool_size=pool_size, max_overflow=overflow,
-        pool_timeout=30, pool_pre_ping=True)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     signals = []

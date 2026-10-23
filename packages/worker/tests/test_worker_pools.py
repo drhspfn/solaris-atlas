@@ -233,7 +233,12 @@ async def test_recovery_scans_only_owned_numeric_directories(monkeypatch, tmp_pa
 
 @pytest.mark.asyncio
 async def test_pool_cli_dispatch_and_shared_engine_pool_budget(monkeypatch):
-    consume = AsyncMock()
+    from wuwa_story.db.session import engine
+
+    original_pool = engine.sync_engine.pool
+    async def check_pool(*args, **kwargs):
+        assert engine.sync_engine.pool is original_pool
+    consume = AsyncMock(side_effect=check_pool)
     entity, release = AsyncMock(), AsyncMock()
     monkeypatch.setattr(cli, "consume_jobs", consume)
     monkeypatch.setattr(cli, "process_entity_media", entity)
