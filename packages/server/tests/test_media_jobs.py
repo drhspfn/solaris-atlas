@@ -45,6 +45,7 @@ async def test_unconfirmed_broker_publish_is_not_success(monkeypatch):
 @pytest.mark.parametrize('kind,queue',[('image','wuwa.entity-images.v1'),('voice','wuwa.entity-media.v1')])
 async def test_images_have_slots_independent_of_long_audio_jobs(monkeypatch, kind, queue):
     from unittest.mock import Mock
+
     from wuwa_story.ingestion import media_jobs
     db=AsyncMock()
     db.scalar.side_effect=[1,None]
@@ -55,3 +56,23 @@ async def test_images_have_slots_independent_of_long_audio_jobs(monkeypatch, kin
     run=await media_jobs.enqueue_entity_media(db,request())
     assert publish.await_args.args[2]==queue
     assert run.metadata_json['queue']==queue
+
+
+@pytest.mark.asyncio
+async def test_completed_job_is_rechecked_and_workspace_membership_is_durable(monkeypatch):
+    from types import SimpleNamespace
+
+    from wuwa_story.ingestion import media_jobs
+
+    db = AsyncMock()
+    existing = SimpleNamespace(id=100, status="completed")
+    db.scalar.side_effect = [1, existing]
+    monkeypatch.setattr(media_jobs, "entity_media_targets", AsyncMock(return_value=[{"kind": "image"}]))
+    publish = AsyncMock()
+    monkeypatch.setattr(media_jobs, "publish_media_job", publish)
+    value = request().model_copy(update={"workspace_id": 4})
+    run = await media_jobs.enqueue_entity_media(db, value)
+    assert run is existing and run.status == "queued"
+    assert run.metadata_json["request"]["workspace_id"] == 4
+    assert db.execute.await_args_list[0].args[1] == {"id": -4}
+    publish.assert_awaited_once()

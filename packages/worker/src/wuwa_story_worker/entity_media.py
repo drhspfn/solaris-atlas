@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import wave
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +21,7 @@ from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.models.storage import FileReference
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.entity_media import MediaRequest
+from wuwa_story.ingestion.media_provenance import missing_media_targets, target_identity
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
@@ -29,6 +31,14 @@ from wuwa_story_worker.client_assets import validate_plan, workspace_lock
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.map_icons import build_icons
 from wuwa_story_worker.media_diagnostics import publish_inventory
+from wuwa_story_worker.media_provenance import sha256, source_provenance, temporary_entity_workspace
+from wuwa_story_worker.media_workspace import (
+    cleanup_workspace,
+    finish_writes,
+    package_root,
+    resolve_workspace,
+    workspace_lease,
+)
 from wuwa_story_worker.tooling import asset_workspace, tool_path
 
 logger = logging.getLogger(__name__)
@@ -118,7 +128,7 @@ def verified_voice_export(entry) -> Path:
     return path
 
 
-async def build_entity_files(root, targets, fmodel, converter, voice_root=None):
+async def build_entity_files(root, targets, fmodel, converter, voice_root=None, provenance=None):
     images = [t for t in targets if t["kind"] == "image"]
     icons = {}
     if images:
@@ -128,6 +138,7 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None):
             converter,
             [{"metadata_json": {"icon_source": t["path"]}} for t in images],
             entity_media=True,
+            exact_textures=True,
         )
     files = []
     missing = []
@@ -210,7 +221,8 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None):
             if len(jsons) != 1:
                 raise ValueError("Expected one cooked event export")
             try:
-                mapping = event_media(json.loads(jsons[0].read_text(encoding="utf-8-sig")))
+                cooked = json.loads(jsons[0].read_text(encoding="utf-8-sig"))
+                mapping = event_media(cooked)
             except ValueError as error:
                 logger.warning("entity_media.voice_unresolved source=%s reason=%s", source, error)
                 missing.append(source)
@@ -223,7 +235,9 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None):
                     continue
                 destination = output / language
                 destination.mkdir(exist_ok=True)
+                origin = destination / "media-source.json"
                 entry = cached.get(f"Aki/WwiseAudio_Generated/Media/{identity}.wem")
+                media_download_id = base_plan["id"]
                 if entry is not None:
                     wem = [await asyncio.to_thread(verified_voice_export, entry)]
                 else:
@@ -231,6 +245,8 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None):
                     # as downloadable voice paks. Never substitute another language.
                     wem = [p for p in destination.rglob("*")
                            if p.name.casefold() == f"{identity}.wem"]
+                    if wem and origin.exists():
+                        media_download_id = json.loads(origin.read_text(encoding="utf-8"))["download_id"]
                     for archive_root in (() if wem else (root / "game", voice_root / "game")):
                         with workspace_lock(archive_root.parent):
                             await tool([fmodel.resolve(), archive_root.resolve(),
@@ -239,11 +255,15 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None):
                         wem = [p for p in destination.rglob("*")
                                if p.name.casefold() == f"{identity}.wem"]
                         if wem:
+                            media_download_id = (
+                                plan["id"] if archive_root == voice_root / "game" else base_plan["id"]
+                            )
                             break
                     if len(wem) != 1:
                         missing.append(source)
                         logger.warning("entity_media.voice_unresolved source=%s language=%s media_id=%s reason=not_extracted", source, language, identity)
                         continue
+                    origin.write_text(json.dumps({"download_id": media_download_id}), encoding="utf-8")
                 wav = destination / f"{language}-{identity}.wav"
                 partial = wav.with_suffix(".partial.wav")
                 if not wav.exists():
@@ -259,13 +279,31 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None):
                     partial.replace(wav)
                 for target in voices:
                     if target["path"] == source and target["language"] == language:
+                        if provenance is not None:
+                            provenance[(source, language)] = {
+                                "voice_plan_id": plan["id"], "media_download_id": media_download_id,
+                                "voice_event": source, "media_id": identity,
+                                "event_cooked_data": [e.get("EventCookedData", {}) for e in cooked],
+                            }
                         files.append(
-                            (target, wav, "audio_wav", "audio/wav", [wem[0], *raw.rglob("*.bnk")])
+                            (target, wav, "audio_wav", "audio/wav", [wem[0], *[
+                                p for p in raw.rglob("*")
+                                if p.suffix.casefold() in {".bnk", ".uasset", ".uexp", ".ubulk"}
+                            ]])
                         )
     return files, missing
 
 
 async def process_entity_media(payload: dict) -> None:
+    request = MediaRequest.model_validate(payload["request"])
+    try:
+        async with workspace_lease(request.workspace_id):
+            await _locked_process_entity_media(payload)
+    finally:
+        await cleanup_workspace(request.workspace_id)
+
+
+async def _locked_process_entity_media(payload: dict) -> None:
     if (
         payload.get("schema_version") != 1
         or payload.get("job_type") != "media.entities"
@@ -298,11 +336,18 @@ async def process_entity_media(payload: dict) -> None:
 
 async def _process_entity_media(payload: dict, connection) -> None:
     request = MediaRequest.model_validate(payload["request"])
-    root = (
-        asset_workspace()
-        / "assets"
-        / f"{request.asset_version}-{request.tier}-{request.download_id[:16]}"
-    )
+    client = (asset_workspace() / "assets"
+              / f"{request.asset_version}-{request.tier}-{request.download_id[:16]}")
+    if request.workspace_id is not None:
+        workspace = nullcontext(resolve_workspace(client, request.workspace_id, base=asset_workspace()))
+    else:
+        workspace = temporary_entity_workspace(client)
+    with workspace as root:
+        await finish_writes(_process_entity_workspace(payload, connection, root))
+
+
+async def _process_entity_workspace(payload: dict, connection, root: Path) -> None:
+    request = MediaRequest.model_validate(payload["request"])
     plan = json.loads((root / "plan.json").read_text(encoding="utf-8"))
     validate_plan(plan)
     status = json.loads((root / "status.json").read_text(encoding="utf-8"))
@@ -327,19 +372,39 @@ async def _process_entity_media(payload: dict, connection) -> None:
             run.error = None
             await session.commit()
             try:
-                files, missing = await build_entity_files(
-                    root,
-                    payload["targets"],
-                    tool_path("WUWA_FMODEL_PATH"),
-                    tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
-                    voice_root=(asset_workspace() / "voices" / f"{request.asset_version}-{request.voice_plan_id[:16]}") if request.voice_plan_id else None,
-                )
+                storage = S3Storage(get_settings())
+                tool_names = ["WUWA_FMODEL_PATH", "WUWA_TEXTURE_CONVERTER_PATH"]
+                if any(t["kind"] == "voice" for t in payload["targets"]):
+                    tool_names.append("WUWA_VGMSTREAM_PATH")
+                tools = {name: await asyncio.to_thread(sha256, tool_path(name)) for name in tool_names}
+                source = {"asset_version": request.asset_version, "download_id": request.download_id,
+                          "tier": request.tier, "voice_plan_id": request.voice_plan_id, "tools": tools}
+                voice_root = (package_root(request.model_dump(), "voices", request.voice_plan_id, base=asset_workspace())
+                              if request.voice_plan_id else Path(os.environ["WUWA_VOICE_ROOT"]).resolve()
+                              if os.getenv("WUWA_VOICE_ROOT") else None)
+                if voice_root is not None and request.voice_plan_id is None and "voice" in request.kinds:
+                    source["voice_plan_id"] = json.loads((voice_root / "plan.json").read_text(encoding="utf-8"))["id"]
+                targets = await missing_media_targets(
+                    session, payload["targets"], source=source, storage=storage)
+                missing_identities = {target_identity(t) for t in targets}
+                skipped = len(payload["targets"]) - len(targets)
+                voice_provenance = {}
+                files, missing = [], []
+                if targets:
+                    files, missing = await build_entity_files(
+                        root,
+                        targets,
+                        tool_path("WUWA_FMODEL_PATH"),
+                        tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
+                        voice_root=voice_root,
+                        provenance=voice_provenance,
+                    )
                 entries = []
                 for target in payload["targets"]:
                     matches = [path.relative_to(root).as_posix() if path.is_relative_to(root) else path.name
                                for resolved, path, *_ in files if resolved == target]
                     entries.append({"expected": target["path"], "language": target["language"],
-                                    "status": "found" if matches else "not_resolved", "matches": matches})
+                                    "status": "already_published" if target_identity(target) not in missing_identities else "found" if matches else "not_resolved", "matches": matches})
                 # Shared client manifests already inventory the full export. A character
                 # job must not rescan hundreds of thousands of unrelated assets.
                 inventory_paths = tuple(sorted({p for _, path, _, _, originals in files
@@ -347,16 +412,19 @@ async def _process_entity_media(payload: dict, connection) -> None:
                 inventory = await publish_inventory(root, paths=inventory_paths)
                 report = {"schema_version": 1, **inventory, "asset_version": request.asset_version,
                           "game_version": request.game_version, "entries": entries,
-                          "requested": len(entries), "found": sum(bool(e["matches"]) for e in entries),
-                          "missing": sum(not e["matches"] for e in entries)}
+                          "requested": len(entries), "found": len(entries) - len(targets) + len(files),
+                          "skipped": skipped, "missing": len(targets) - len(files)}
                 run.raw_output = {"media_report": report}
                 await session.commit()
-                storage = S3Storage(get_settings())
                 await storage.ensure_bucket()
                 service = FileRegistrationService(storage)
                 for owner in sorted({t["owner"] for t, *_ in files}):
                     await session.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": owner})
                 for target, path, kind, mime, originals in files:
+                    provenance = await asyncio.to_thread(
+                        source_provenance, request, target, originals, tools,
+                        voice_provenance.get((target["path"], target["language"])),
+                    )
                     published = await service.register_file(session, path, kind, mime_type=mime)
                     for original_path in originals:
                         original = await service.register_file(
@@ -364,9 +432,15 @@ async def _process_entity_media(payload: dict, connection) -> None:
                             original_path,
                             "audio_wem" if original_path.suffix == ".wem" else "unknown",
                         )
-                        await service.register_variant(
-                            session, original.id, published.id, "entity_media_decode"
+                        variant = await service.register_variant(
+                            session, original.id, published.id, "entity_media_decode", run.id,
                         )
+                        metadata = variant.metadata_json or {}
+                        sources = list(metadata.get("game_sources", []))
+                        if provenance not in sources:
+                            sources.append(provenance)
+                        variant.metadata_json = {**metadata, "game_source": provenance,
+                                                 "game_sources": sources}
                     reference_type = (
                         "entity_image" if target["kind"] == "image" else "character_voice"
                     )
@@ -396,10 +470,12 @@ async def _process_entity_media(payload: dict, connection) -> None:
                         "asset_version": request.asset_version,
                         "download_id": request.download_id,
                         "language": target["language"],
+                        "game_source": provenance,
                     }
                 run.status = "partial" if missing else "completed"
                 run.raw_output = {
                     "media_report": report,
+                    "skipped": skipped,
                     "images": sum(t["kind"] == "image" for t, *_ in files),
                     "voice_tracks": sum(t["kind"] == "voice" for t, *_ in files),
                     "missing_images": sorted(set(missing) & {t["path"] for t in payload["targets"] if t["kind"] == "image"}),

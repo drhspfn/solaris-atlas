@@ -50,6 +50,9 @@ async def publish_media_job(payload: dict, job_id: str, queue_name: str = MEDIA_
 
 
 async def enqueue_entity_media(session, request: MediaRequest, *, retry_partial: bool = False) -> ProcessingRun:
+    if request.workspace_id is not None:
+        await session.execute(text("SELECT pg_advisory_xact_lock_shared(:id)"),
+                              {"id": -request.workspace_id})
     targets = await entity_media_targets(session, request)
     payload = {
         "schema_version": 1,
@@ -73,7 +76,7 @@ async def enqueue_entity_media(session, request: MediaRequest, *, retry_partial:
         .order_by(ProcessingRun.id.desc())
         .limit(1)
     )
-    if run and (run.status in ("completed", "running", "queued", "waiting_dependency") or (run.status == "partial" and not retry_partial)):
+    if run and (run.status in ("running", "queued", "waiting_dependency") or (run.status == "partial" and not retry_partial)):
         return run
     if run is None:
         run = ProcessingRun(processor_id=processor, input_hash=digest)
@@ -83,7 +86,7 @@ async def enqueue_entity_media(session, request: MediaRequest, *, retry_partial:
     run.error = None
     payload["run_id"] = run.id
     queue_name = "wuwa.entity-images.v1" if all(t["kind"] == "image" for t in targets) else MEDIA_QUEUE
-    run.metadata_json = {"payload": payload, "queue": queue_name}
+    run.metadata_json = {"payload": payload, "request": request.model_dump(), "queue": queue_name}
     await session.commit()
     try:
         await publish_media_job(payload, digest.hex(), queue_name)
