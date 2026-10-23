@@ -103,7 +103,7 @@ async def test_main_client_voice_ids_are_used_and_missing_languages_do_not_disca
     import wave
     from unittest.mock import AsyncMock
 
-    from wuwa_story_worker import entity_media
+    from wuwa_story_worker import character_voice_assets, entity_media
 
     root, voices = tmp_path / "client", tmp_path / "voices"
     root.mkdir()
@@ -113,6 +113,8 @@ async def test_main_client_voice_ids_are_used_and_missing_languages_do_not_disca
     (voices / "status.json").write_text(json.dumps({"id": "voices", "state": "downloaded"}))
     fmodel, converter, decoder = [tmp_path / name for name in ("fmodel", "converter", "decoder")]
     fmodel.write_bytes(b"pinned extractor")
+    converter.write_bytes(b"pinned converter")
+    decoder.write_bytes(b"pinned decoder")
     source = "/Game/Aki/WwiseAudio/Events/play_favor_word_test.play_favor_word_test"
     asset = source.split(".")[0].removeprefix("/Game/")
     export = root / "exports" / hashlib.sha256(b"WwiseAudio").hexdigest()[:16]
@@ -129,7 +131,7 @@ async def test_main_client_voice_ids_are_used_and_missing_languages_do_not_disca
     (cooked_root / "play_favor_word_test.json").write_text(json.dumps(cooked([media(lang, i) for i, lang in enumerate(languages, 1)])))
     monkeypatch.setattr(entity_media, "tool_path", lambda _: decoder)
     export_tool = AsyncMock(side_effect=AssertionError("No archive remount required"))
-    monkeypatch.setattr(entity_media, "export_assets", export_tool)
+    monkeypatch.setattr(character_voice_assets, "export_assets", export_tool)
     async def decode(args, log, timeout):
         assert args[0] == decoder
         with wave.open(str(args[3]), "wb") as wav:

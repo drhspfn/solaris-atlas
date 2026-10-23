@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 import wave
 from contextlib import nullcontext
@@ -25,9 +24,9 @@ from wuwa_story.ingestion.media_provenance import missing_media_targets, target_
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
-from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.broker import JobDeferred, job_lock
-from wuwa_story_worker.client_assets import validate_plan, workspace_lock
+from wuwa_story_worker.character_voice_assets import prefetch_events, prefetch_media
+from wuwa_story_worker.client_assets import save_json, validate_plan, workspace_lock
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.map_icons import build_icons
 from wuwa_story_worker.media_diagnostics import publish_inventory
@@ -169,128 +168,68 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
     ):
         raise ValueError("A matching complete multilingual voice download is required")
     decoder = tool_path("WUWA_VGMSTREAM_PATH").resolve()
-    extractor_digest = await asyncio.to_thread(lambda: hashlib.sha256(fmodel.read_bytes()).hexdigest())
-    media_tag = hashlib.sha256(b"WwiseAudio_Generated/Media").hexdigest()[:16]
-    media_receipt = root / "exports" / media_tag / "manifest.json"
-    event_tag = hashlib.sha256(b"WwiseAudio/Events").hexdigest()[:16]
-    event_receipt = root / "exports" / event_tag / "manifest.json"
-    revision = max((p.stat().st_mtime_ns for p in (media_receipt, event_receipt) if p.exists()), default=0)
+    extractor_digest = await asyncio.to_thread(sha256, fmodel)
+    receipts = [root / "exports" / hashlib.sha256(value.encode()).hexdigest()[:16] / "manifest.json"
+                for value in ("WwiseAudio", "WwiseAudio/Events", "WwiseAudio_Generated/Media")]
+    revision = max((p.stat().st_mtime_ns for p in receipts if p.exists()), default=0)
     cached = await asyncio.to_thread(client_voice_exports, root, extractor_digest, revision)
-    for source in sorted({t["path"] for t in voices}):
+    sources = sorted({target["path"] for target in voices})
+    for source in sources:
         if not re.fullmatch(r"/Game/Aki/WwiseAudio/Events/[A-Za-z0-9_]+\.[A-Za-z0-9_]+", source):
             raise ValueError("Unsupported character voice event path")
-        asset_path = source.split(".")[0].removeprefix("/Game/")
-        tag = hashlib.sha256(asset_path.encode()).hexdigest()[:16]
-        export_root = root / "exports" / tag
-        with workspace_lock(export_root / "voice-cache-lock"):
-            if asset_path + ".uasset" in cached:
-                raw = export_root / "files"
-                for extension in (".uasset", ".uexp", ".ubulk"):
-                    entry = cached.get(asset_path + extension)
-                    if entry is not None:
-                        original = await asyncio.to_thread(verified_voice_export, entry)
-                        destination = raw / "Client/Content" / (asset_path + extension)
-                        destination.parent.mkdir(parents=True, exist_ok=True)
-                        if not destination.exists():
-                            await asyncio.to_thread(shutil.copyfile, original, destination)
-            else:
-                receipt = await export_assets(root, fmodel, asset_path)
-                raw = receipt.parent / "files"
-            output = export_root / "cooked-event"
-            output.mkdir(exist_ok=True)
-            jsons = list(output.rglob(source.rsplit("/", 1)[-1].split(".")[0] + ".json"))
-            if not jsons:
-                await tool(
-                    [
-                        converter.resolve(),
-                        "-i",
-                        raw.resolve(),
-                        "-g",
-                        "GAME_WutheringWaves",
-                        "-p",
-                        "*" + source.rsplit("/", 1)[-1].split(".")[0] + "*",
-                        "-f",
-                        "json",
-                        "-o",
-                        output.resolve(),
-                        "-y",
-                    ],
-                    output / "converter.log",
-                )
-            jsons = list(output.rglob(source.rsplit("/", 1)[-1].split(".")[0] + ".json"))
-            if len(jsons) != 1:
-                raise ValueError("Expected one cooked event export")
-            try:
-                cooked = json.loads(jsons[0].read_text(encoding="utf-8-sig"))
-                mapping = event_media(cooked)
-            except ValueError as error:
-                logger.warning("entity_media.voice_unresolved source=%s reason=%s", source, error)
+    events = await prefetch_events(root, sources, cached, fmodel, converter, tool, verified_voice_export)
+    resolved = []
+    for source in sources:
+        if source not in events:
+            missing.append(source)
+            continue
+        json_path, originals = events[source]
+        try:
+            cooked = json.loads(json_path.read_text(encoding="utf-8-sig"))
+            mapping = event_media(cooked)
+        except ValueError as error:
+            logger.warning("entity_media.voice_unresolved source=%s reason=%s", source, error)
+            missing.append(source)
+            continue
+        for target in (t for t in voices if t["path"] == source):
+            identity = mapping.get(target["language"])
+            if identity is None:
                 missing.append(source)
                 continue
-            for language in {t["language"] for t in voices if t["path"] == source}:
-                identity = mapping.get(language)
-                if identity is None:
-                    missing.append(source)
-                    logger.warning("entity_media.voice_unresolved source=%s language=%s reason=no_mapping", source, language)
-                    continue
-                destination = output / language
-                destination.mkdir(exist_ok=True)
-                origin = destination / "media-source.json"
-                entry = cached.get(f"Aki/WwiseAudio_Generated/Media/{identity}.wem")
-                media_download_id = base_plan["id"]
-                if entry is not None:
-                    wem = [await asyncio.to_thread(verified_voice_export, entry)]
-                else:
-                    # Numeric Wwise IDs must be searched in the main client as well
-                    # as downloadable voice paks. Never substitute another language.
-                    wem = [p for p in destination.rglob("*")
-                           if p.name.casefold() == f"{identity}.wem"]
-                    if wem and origin.exists():
-                        media_download_id = json.loads(origin.read_text(encoding="utf-8"))["download_id"]
-                    for archive_root in (() if wem else (root / "game", voice_root / "game")):
-                        with workspace_lock(archive_root.parent):
-                            await tool([fmodel.resolve(), archive_root.resolve(),
-                                        "@" + str((root / "keys.txt").resolve()), destination.resolve(),
-                                        f"/{identity}.wem"], destination / "fmodel.log")
-                        wem = [p for p in destination.rglob("*")
-                               if p.name.casefold() == f"{identity}.wem"]
-                        if wem:
-                            media_download_id = (
-                                plan["id"] if archive_root == voice_root / "game" else base_plan["id"]
-                            )
-                            break
-                    if len(wem) != 1:
-                        missing.append(source)
-                        logger.warning("entity_media.voice_unresolved source=%s language=%s media_id=%s reason=not_extracted", source, language, identity)
-                        continue
-                    origin.write_text(json.dumps({"download_id": media_download_id}), encoding="utf-8")
-                wav = destination / f"{language}-{identity}.wav"
-                partial = wav.with_suffix(".partial.wav")
-                if not wav.exists():
-                    await tool(
-                        [decoder, "-i", "-o", partial.resolve(), wem[0].resolve()],
-                        destination / "decoder.log",
-                        120,
-                    )
-                with wave.open(str(wav if wav.exists() else partial), "rb") as audio:
-                    if audio.getnframes() <= 0 or audio.getframerate() <= 0:
-                        raise ValueError("Empty decoded character voice")
-                if partial.exists():
-                    partial.replace(wav)
-                for target in voices:
-                    if target["path"] == source and target["language"] == language:
-                        if provenance is not None:
-                            provenance[(source, language)] = {
-                                "voice_plan_id": plan["id"], "media_download_id": media_download_id,
-                                "voice_event": source, "media_id": identity,
-                                "event_cooked_data": [e.get("EventCookedData", {}) for e in cooked],
-                            }
-                        files.append(
-                            (target, wav, "audio_wav", "audio/wav", [wem[0], *[
-                                p for p in raw.rglob("*")
-                                if p.suffix.casefold() in {".bnk", ".uasset", ".uexp", ".ubulk"}
-                            ]])
-                        )
+            resolved.append((target, identity, json_path.parent, originals, cooked))
+    media = await prefetch_media(root, voice_root, {r[1] for r in resolved}, cached,
+                                 fmodel, tool, verified_voice_export)
+    decoder_digest = await asyncio.to_thread(sha256, decoder)
+    for target, identity, output, originals, cooked in resolved:
+        entry = media.get(identity)
+        if entry is None:
+            missing.append(target["path"])
+            continue
+        wem, media_download_id, media_package_path = entry
+        language = target["language"]
+        destination = output / language
+        destination.mkdir(exist_ok=True)
+        wav = destination / f"{language}-{identity}.wav"
+        receipt = wav.with_suffix(".source.json")
+        input_identity = {"wem_sha256": await asyncio.to_thread(sha256, wem), "decoder_sha256": decoder_digest}
+        saved = json.loads(receipt.read_text(encoding="utf-8")) if receipt.exists() else {}
+        if (not wav.exists() or saved.get("input") != input_identity
+                or saved.get("sha256") != await asyncio.to_thread(sha256, wav)):
+            partial = wav.with_suffix(".partial.wav")
+            await tool([decoder, "-i", "-o", partial.resolve(), wem.resolve()], destination / "decoder.log", 120)
+            with wave.open(str(partial), "rb") as audio:
+                if audio.getnframes() <= 0 or audio.getframerate() <= 0:
+                    raise ValueError("Empty decoded character voice")
+            partial.replace(wav)
+            save_json(receipt, {"input": input_identity, "sha256": await asyncio.to_thread(sha256, wav)})
+        if provenance is not None:
+            provenance[(target["path"], language)] = {
+                "voice_plan_id": plan["id"], "media_download_id": media_download_id,
+                "media_package_path": media_package_path,
+                "voice_event": target["path"], "media_id": identity,
+                "event_cooked_data": [e.get("EventCookedData", {}) for e in cooked],
+            }
+        files.append((target, wav, "audio_wav", "audio/wav", [wem, *originals]))
     return files, missing
 
 
