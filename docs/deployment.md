@@ -126,34 +126,38 @@ Default capacity for a 6 CPU / 12 GiB host:
 
 | Service | Replicas | Tasks per replica | CPU per container | Memory per container |
 | --- | ---: | ---: | ---: | ---: |
-| snapshot-worker | 2 | 1 fetch/compile each, 1 global DB import total | 1 | 2 GiB |
+| snapshot-worker | 1 | 1 fetch/compile, 1 global DB import total | 1 | 2 GiB |
 | asset-worker | 1 | 1 download + 1 extraction | 0.5 | 1536 MiB |
 | media-worker (coordinator) | 1 | 3 executions + public queue routing | 0.25 | 768 MiB |
 | image-worker | 1 | 1 | 0.75 | 1536 MiB |
-| audio-worker | 1 | 1 | 0.75 | 1536 MiB |
-| video-worker | 1 | 1 | 0.75 | 1536 MiB |
+| audio-worker | 1 | 1 | 0.75 | 2 GiB |
+| video-worker | 1 | 1 | 0.75 | 2 GiB |
 
-This provides 10 logical task slots in 7 containers: 2 snapshot fetch/compile,
+This provides 9 logical task slots in 6 containers: 1 snapshot fetch/compile,
 2 asset (download/extraction), 3 lightweight coordinator and 3 media executions.
 These are conservative canary defaults, not the final production parallelism
 target. They provide fewer entity execution slots than the previous two media
 workers with three entity slots each. Increase useful parallelism after measuring
-the new export path rather than keeping seven containers as a fixed target.
+the new export path rather than keeping six containers as a fixed target.
 Each image/audio/video container runs one task at a time. A live operator probe
 exported the known CamellyaActivity texture correctly: one PNG in 14.51 seconds
 at 2 CPU, maximum child RSS 1188.2 MiB, and temporary scratch removal confirmed.
 Adding approximately 90 MiB of Python overhead leaves almost no margin under
-1280 MiB, before other container memory is counted. Asset/image/audio/video
-therefore default to 1536 MiB. This is evidence for memory headroom and one
-selective image export, not measured production patch throughput, audio/video
-capacity or performance at the default 0.75 CPU media limit. Voice and broader
-product/queue canaries remain required before opening the full backlog.
+1280 MiB, before other container memory is counted. Asset/image defaults are
+1536 MiB. A second cold probe resolved two Shorekeeper events into eight valid
+WAVs across English/Japanese/Korean/Chinese with no missing tracks: 131.05 seconds
+at 2 CPU, maximum child RSS 1370.9 MiB, scratch removal confirmed. It included
+building the main archive index (about 234 MB log / 515 MB SQLite); patch workers
+share that index across character jobs. Audio/video default to 2 GiB to leave
+headroom beyond the decoder/extractor and Python overhead. These checks do not
+establish full-patch throughput or performance at the default 0.75 CPU media limit.
+Product/queue canaries remain required before opening the full backlog.
 
-Aggregate container ceilings are 5 CPU and 10.75 GiB including snapshot/assets,
-leaving 1 CPU and 1.25 GiB below a nominal 6 CPU / 12 GiB budget for PostgreSQL,
-RabbitMQ, API, OS and screenshot work.
+Aggregate container ceilings are 4 CPU and 9.75 GiB including snapshot/assets,
+leaving about 2 GiB on this host for PostgreSQL, RabbitMQ, API and the OS. Keep
+snapshot replicas at one while opening media backlog; use measured RSS to scale.
 These are caps, not reserved memory or a throughput promise. If screenshot work
-continues to saturate CPU, reduce snapshot replicas to one or pause compilations
+continues to saturate CPU, pause compilations
 while measuring media. Optional AI consumers need additional budget. Memory caps
 include child .NET/FFmpeg processes. Reduce concurrency or adjust memory from
 canary measurements if a single export approaches its cap. Scaling snapshots to
@@ -165,7 +169,7 @@ coordinator=1, snapshot=2, video=1 and asset=1: ten worker containers and thirte
 logical task slots with the default per-process concurrency. Set
 `WUWA_IMAGE_REPLICAS=3` and `WUWA_AUDIO_REPLICAS=2`; keep one heavy task per
 container initially. At unchanged resource limits this layout has aggregate
-ceilings of 7.25 CPU and 15.25 GiB. Limits do not reserve that RAM, but simultaneous
+ceilings of 7.25 CPU and 16.75 GiB. Limits do not reserve that RAM, but simultaneous
 peaks can still exceed the 6 CPU / 12 GiB host. Choose per-pool limits from measured
 container peaks including Python and child processes, retain DB/API/OS headroom,
 and stage compilation or video work when CPU is saturated. Compare completed
@@ -180,8 +184,8 @@ Do not run additional legacy public-queue consumers during a controlled rollout:
 they can execute tasks outside these resource pools.
 
 Snapshot capacity is capped at four fetch/compile tasks across replicas:
-`WUWA_SNAPSHOT_REPLICAS * snapshot_build <= 4`. Default is two replicas with one
-task each; use four replicas at one task, or two replicas at two tasks only after
+`WUWA_SNAPSHOT_REPLICAS * snapshot_build <= 4`. Default is one replica with one
+task; use four replicas at one task, or two replicas at two tasks only after
 measuring capacity. Increasing it requires the ordered global import guard in
 snapshot_jobs: release sequence allocation alone is insufficient because typed
 entity/search tables are global projections and imports commit in batches.

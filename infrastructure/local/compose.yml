@@ -131,14 +131,14 @@ services:
     cpus: ${WUWA_SNAPSHOT_CPUS:-1.0}
     mem_limit: ${WUWA_SNAPSHOT_MEMORY:-2g}
     deploy:
-      replicas: ${WUWA_SNAPSHOT_REPLICAS:-2}
+      replicas: ${WUWA_SNAPSHOT_REPLICAS:-1}
     volumes:
       - wuwa_worker_data:/var/lib/wuwa-worker
     environment:
       DATABASE_URL: postgresql+asyncpg://wuwa:wuwa@postgres:5432/wuwa_story
       RABBITMQ_URL: amqp://wuwa:wuwa@rabbitmq:5672/
       WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
-      WUWA_SNAPSHOT_REPLICAS: ${WUWA_SNAPSHOT_REPLICAS:-2}
+      WUWA_SNAPSHOT_REPLICAS: ${WUWA_SNAPSHOT_REPLICAS:-1}
     depends_on:
       postgres:
         condition: service_healthy
@@ -233,7 +233,7 @@ services:
     <<: *asset-worker
     command: ["wuwa-story-worker", "run", "--pool", "audio"]
     cpus: ${WUWA_AUDIO_CPUS:-0.75}
-    mem_limit: ${WUWA_AUDIO_MEMORY:-1536m}
+    mem_limit: ${WUWA_AUDIO_MEMORY:-2g}
     deploy:
       replicas: ${WUWA_AUDIO_REPLICAS:-1}
 
@@ -241,7 +241,7 @@ services:
     <<: *asset-worker
     command: ["wuwa-story-worker", "run", "--pool", "video"]
     cpus: ${WUWA_VIDEO_CPUS:-0.75}
-    mem_limit: ${WUWA_VIDEO_MEMORY:-1536m}
+    mem_limit: ${WUWA_VIDEO_MEMORY:-2g}
     deploy:
       replicas: ${WUWA_VIDEO_REPLICAS:-1}
 

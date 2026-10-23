@@ -124,7 +124,7 @@ def numeric_paths(index, identities):
 
 
 async def prefetch_media(root, voice_root, identities, cached, fmodel, tool, verify):
-    """Reuse A's files(name,path) index; otherwise list each source archive only once."""
+    """Reuse the shared file index; otherwise list each source archive only once."""
     base = json.loads((root / "plan.json").read_text(encoding="utf-8"))
     voice = json.loads((voice_root / "plan.json").read_text(encoding="utf-8"))
     extractor = await asyncio.to_thread(sha256, fmodel)
