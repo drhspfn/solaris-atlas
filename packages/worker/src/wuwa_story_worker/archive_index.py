@@ -1,9 +1,10 @@
 """Disk-backed archive lookup and bounded exact-path FModel filters.
 
-Shared by release and entity extraction; this module never imports either handler.
-Callers serialize index creation with their existing workspace execution lock.
+Shared by release and entity extraction. Index creation uses the same external
+character-index-lock for every caller; handler imports stay local to that helper.
 """
 
+import asyncio
 import re
 import sqlite3
 from contextlib import closing
@@ -13,6 +14,25 @@ from wuwa_story_worker.media_diagnostics import iter_archive_paths
 
 VOICE_FILTER_MAX_BYTES = 24 * 1024
 VOICE_FILTER_MAX_PATHS = 256
+
+
+async def ensure_archive_index(archive: Path, fmodel: Path, keys_root: Path) -> Path:
+    """List/index an archive once; cancellation must retain the lock through writes."""
+    from wuwa_story_worker.client_assets import wait_workspace_lock
+    from wuwa_story_worker.entity_media import tool
+    from wuwa_story_worker.media_workspace import finish_writes
+
+    index = archive / "archive-index.sqlite"
+    if index.is_file():
+        return index
+    async with wait_workspace_lock(archive / "character-index-lock"):
+        if not index.is_file():
+            log = archive / "archive-index.log"
+            await finish_writes(tool([
+                fmodel.resolve(), (archive / "game").resolve(),
+                "@" + str((keys_root / "keys.txt").resolve()), "--list"], log, 7200))
+            await finish_writes(asyncio.to_thread(index_voice_paths, log))
+    return index
 
 
 def index_voice_paths(log: Path) -> Path:
@@ -42,6 +62,34 @@ def indexed_audio_paths(index: Path, expected) -> list[str]:
             paths.update(row[0] for row in db.execute(
                 "SELECT path FROM files WHERE name IN (" + ",".join("?" for _ in batch) + ")", batch))
     return sorted(paths)
+
+
+def indexed_package_paths(index: Path, expected) -> dict[str, str]:
+    """Resolve exact authored stems only when both .uasset and .uexp exist.
+
+    Return authored input -> full archive .uasset path, preserving archive case.
+    The basename index bounds lookup; full path equality rejects suffix matches
+    and packages with the same basename in a different archive directory.
+    """
+    authored = sorted(set(expected))
+    for path in authored:
+        if (not re.fullmatch(r"[a-zA-Z0-9_/-]+", path)
+                or not path.casefold().startswith("aki/")
+                or PurePosixPath(path).as_posix() != path):
+            raise ValueError("Expected an authored extensionless Aki package path")
+    names = {PurePosixPath(path).name + suffix for path in authored for suffix in (".uasset", ".uexp")}
+    available = {}
+    for path in indexed_audio_paths(index, names):
+        identity = path.casefold()
+        if identity in available and available[identity] != path:
+            raise ValueError("Ambiguous case-insensitive archive package path")
+        available[identity] = path
+    result = {}
+    for path in authored:
+        stem = ("Client/Content/" + path).casefold()
+        if stem + ".uasset" in available and stem + ".uexp" in available:
+            result[path] = available[stem + ".uasset"]
+    return result
 
 
 def voice_filter_batches(paths) -> list[list[str]]:

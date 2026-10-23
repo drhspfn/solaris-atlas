@@ -27,8 +27,10 @@ from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
 from wuwa_story_worker.archive_index import (
+    ensure_archive_index,
     index_voice_paths,
     indexed_audio_paths,
+    indexed_package_paths,
     voice_filter_batches,
 )
 from wuwa_story_worker.asset_export import export_assets
@@ -380,11 +382,20 @@ async def cutscene_assets(payload, parent):
     config = await asyncio.to_thread(video_database, receipts[0].parent / "files",
                                      cache=receipts[0].parent / "video-database.json")
     with closing(sqlite3.connect(config.resolve().as_uri() + "?mode=ro", uri=True)) as db:
-        cg_ids = {row[0] for name in targets for row in db.execute("SELECT CgId FROM videodata WHERE CgName = ?", (name,))}
-        paths = {engine_path(row[0]).removeprefix("/Game/").split(".", 1)[0]
-                 for table in ("videodata", "videosound") for name in targets
-                 for row in db.execute(f"SELECT BinData FROM {table} WHERE CgName = ?", (name,))} if parent.get("workspace_id") else set()
-    receipts.extend([await export_assets(root, fmodel, path) for path in sorted(paths)])
+        videos = [(row[0], engine_path(row[1]).removeprefix("/Game/").split(".", 1)[0])
+                  for name in targets for row in db.execute("SELECT CgId, BinData FROM videodata WHERE CgName = ?", (name,))]
+    cg_ids = {cg_id for cg_id, _ in videos}
+    unavailable = []
+    if parent.get("workspace_id"):
+        # Historical config can retain wrappers removed from the current client.
+        # Sound events come from the localized package in extract_cutscene_audio.
+        paths = {path for _, path in videos}
+        index = await ensure_archive_index(root, fmodel, root)
+        available = await asyncio.to_thread(indexed_package_paths, index, paths)
+        unavailable = sorted(paths - available.keys())
+        cg_ids = {cg_id for cg_id, path in videos if path in available}
+        for batch in voice_filter_batches(path.removesuffix(".uasset") for path in available.values()):
+            receipts.append(await export_assets(root, fmodel, "|".join(batch)))
     assets = await asyncio.to_thread(merge_exports, receipts, root / "release-media" / "files")
     save_json(assets / "video-database.json", {"path": config.relative_to(receipts[0].parent / "files").as_posix()})
     from wuwa_story_worker.entity_media import tool
@@ -406,6 +417,7 @@ async def cutscene_assets(payload, parent):
                 raise RuntimeError(f"Video archive export failed; inspect {log}")
         await asyncio.to_thread(merge_exports, [destination.parent / "receipt.json"], assets)
     inventory = await publish_inventory(assets)
+    inventory["missing_video_packages"] = unavailable
     return {**parent, "video_plan_id": plan["id"], "stage": "cutscene_assets_ready", "media_report": inventory}, "completed"
 
 
@@ -416,9 +428,20 @@ async def cutscene(payload, parent):
         return {**parent, "stage": "cutscene_reused", "reused": 1}, "completed"
     root = client_root(parent)
     assets = root / "release-media" / "files"
+    config = await asyncio.to_thread(video_database, assets)
+    missing_assets = []
+    recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"], missing_assets=missing_assets)
+    missing_wrappers = [video["asset"] for video in recipe["videos"]
+                        if not (assets / ("Client/Content/" + video["asset"].removeprefix("asset:ue:/Game/").rsplit(".", 1)[0] + ".uexp")).is_file()]
+    if missing_wrappers:
+        # Keep the authored variant flow intact; never publish a different clip
+        # or discard an unavailable variant to make the task look successful.
+        await cleanup_published_output(parent, payload["run_id"], "cutscene")
+        return {"videos": 0, "asset_version": parent["asset_version"], "missing_assets": missing_wrappers,
+                "media_report": {"entries": [{"expected": path, "status": "not_in_archive", "matches": []}
+                                             for path in missing_wrappers]}}, "partial"
     voice_cache = root / "voices" if parent.get("workspace_id") else asset_workspace() / "voices"
     voice_roots = [package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace())] if parent.get("voice_plan_id") else sorted(voice_cache.glob(parent["asset_version"] + "-*"))
-    config = await asyncio.to_thread(video_database, assets)
     if parent.get("workspace_id") and parent.get("voice_plan_id"):
         audio = await extract_cutscene_audio(parent, config, payload["targets"][0])
         await asyncio.to_thread(merge_exports, [audio], assets)
@@ -432,7 +455,7 @@ async def cutscene(payload, parent):
                 raise ValueError("Cutscene voice export does not match its pinned package plan")
             if exported.get("plan_id") == plan.get("id"):
                 await asyncio.to_thread(merge_exports, [voice_root / "plot-audio"], assets)
-    missing_assets = []
+    missing_assets = []  # Rebuild after the selected multilingual banks are available.
     recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"], missing_assets=missing_assets)
     work = root / "release-media" / str(payload["run_id"])
     work.mkdir(parents=True, exist_ok=True)

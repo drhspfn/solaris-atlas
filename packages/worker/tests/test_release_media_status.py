@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -6,6 +7,61 @@ from unittest.mock import AsyncMock
 import pytest
 
 from wuwa_story_worker import release_media
+
+
+@pytest.mark.asyncio
+async def test_cutscene_preparation_batches_only_available_movie_wrappers(monkeypatch, tmp_path):
+    config_files = tmp_path / "config/files"
+    config_files.mkdir(parents=True)
+    config = config_files / "video.db"
+    with sqlite3.connect(config) as db:
+        db.execute("CREATE TABLE videodata(CgName TEXT, CgId INTEGER, BinData BLOB)")
+        db.executemany("INSERT INTO videodata VALUES (?, ?, ?)", [
+            ("Old", 1, b"/Game/Aki/Movies/Old.Old"),
+            ("New", 2, b"/Game/Aki/Movies/New.New"),
+            ("Second", 3, b"/Game/Aki/Movies/Second.Second"),
+        ])
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
+    monkeypatch.setattr(release_media, "video_database", lambda *_args, **_kwargs: config)
+    export = AsyncMock(return_value=tmp_path / "config/manifest.json")
+    monkeypatch.setattr(release_media, "export_assets", export)
+    monkeypatch.setattr(release_media, "ensure_archive_index", AsyncMock(return_value=tmp_path / "index.sqlite"))
+    monkeypatch.setattr(release_media, "indexed_package_paths", lambda _index, paths: {
+        path: "Client/Content/" + path + ".uasset" for path in paths if not path.endswith("Old")})
+    assets = tmp_path / "release-media/files"
+    assets.mkdir(parents=True)
+    monkeypatch.setattr(release_media, "merge_exports", lambda *_args: assets)
+    monkeypatch.setattr(release_media, "publish_inventory", AsyncMock(return_value={}))
+    from wuwa_story_worker import voice_bootstrap
+    def discover(_version, _assets, _tier, ids):
+        assert ids == {2, 3}
+        return {"id": "video-plan", "files": []}
+    monkeypatch.setattr(voice_bootstrap, "discover_video_plan", discover)
+    result, status = await release_media.cutscene_assets(
+        {"targets": ["Old", "New", "Second"]}, {"workspace_id": 11, "asset_version": "3.7.0", "tier": "hd"})
+    assert status == "completed"
+    assert result["media_report"]["missing_video_packages"] == ["Aki/Movies/Old"]
+    assert [call.args[2] for call in export.await_args_list] == [
+        "ConfigDB", "KuroPublicConfig", "Client/Content/Aki/Movies/New|Client/Content/Aki/Movies/Second"]
+
+
+@pytest.mark.asyncio
+async def test_missing_historical_cutscene_wrapper_is_partial_without_audio_or_publication(monkeypatch, tmp_path):
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "video_database", lambda _: tmp_path / "video.db")
+    monkeypatch.setattr(release_media, "plan_cutscene", lambda *_args, **_kwargs: {
+        "videos": [{"asset": "asset:ue:/Game/Aki/Movies/Old.Old"}]})
+    audio = AsyncMock(side_effect=AssertionError("absent wrapper needs no audio export"))
+    publish = AsyncMock(side_effect=AssertionError("must not publish an incomplete variant flow"))
+    monkeypatch.setattr(release_media, "extract_cutscene_audio", audio)
+    monkeypatch.setattr(release_media, "import_cutscene_recipe", publish)
+    result, status = await release_media.cutscene({"targets": ["Old"], "run_id": 90}, {
+        "workspace_id": 11, "asset_version": "3.7.0", "voice_plan_id": "voice"})
+    assert status == "partial" and result["videos"] == 0
+    assert result["missing_assets"] == ["asset:ue:/Game/Aki/Movies/Old.Old"]
+    audio.assert_not_awaited()
+    publish.assert_not_awaited()
 
 
 @pytest.fixture(autouse=True)

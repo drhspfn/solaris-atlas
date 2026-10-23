@@ -7,7 +7,7 @@ import shutil
 from pathlib import PurePosixPath
 
 from wuwa_story_worker.archive_index import (
-    index_voice_paths,
+    ensure_archive_index,
     indexed_audio_paths,
     voice_filter_batches,
 )
@@ -152,16 +152,7 @@ async def prefetch_media(root, voice_root, identities, cached, fmodel, tool, ver
             needed = identities - result.keys()
             if not needed:
                 break
-            index = archive / "archive-index.sqlite"
-            if not index.exists():
-                # Only index creation is shared; exports use batch-private directories.
-                log = archive / "archive-index.log"
-                async with wait_workspace_lock(archive / "character-index-lock"):
-                    index = log.with_suffix(".sqlite")
-                    if not index.exists():
-                        await tool([fmodel.resolve(), (archive / "game").resolve(),
-                                    "@" + str((root / "keys.txt").resolve()), "--list"], log, 7200)
-                        await asyncio.to_thread(index_voice_paths, log)
+            index = await ensure_archive_index(archive, fmodel, root)
             selected = await asyncio.to_thread(numeric_paths, index, needed)
             for batch in voice_filter_batches(selected.values()):
                 output = work / label / "files"
