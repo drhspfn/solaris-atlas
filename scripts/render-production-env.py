@@ -4,6 +4,7 @@
 import os
 import re
 import sys
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 KEY_RE = re.compile(r"[A-Z][A-Z0-9_]*")
@@ -24,6 +25,23 @@ GROUPS = {
         "S3_BUCKET": "wuwa",
         "S3_REGION": "",
         "S3_USE_SSL": "",
+        "WUWA_SNAPSHOT_REPLICAS": "2",
+        "WUWA_SNAPSHOT_CPUS": "1.0",
+        "WUWA_SNAPSHOT_MEMORY": "2g",
+        "WUWA_ASSET_CPUS": "0.5",
+        "WUWA_ASSET_MEMORY": "1280m",
+        "WUWA_COORDINATOR_REPLICAS": "1",
+        "WUWA_COORDINATOR_CPUS": "0.25",
+        "WUWA_COORDINATOR_MEMORY": "768m",
+        "WUWA_IMAGE_REPLICAS": "1",
+        "WUWA_IMAGE_CPUS": "0.75",
+        "WUWA_IMAGE_MEMORY": "1280m",
+        "WUWA_AUDIO_REPLICAS": "1",
+        "WUWA_AUDIO_CPUS": "0.75",
+        "WUWA_AUDIO_MEMORY": "1280m",
+        "WUWA_VIDEO_REPLICAS": "1",
+        "WUWA_VIDEO_CPUS": "0.75",
+        "WUWA_VIDEO_MEMORY": "1280m",
     },
     "shared.env": {
         "AGENT_PROVIDER": "responses",
@@ -76,7 +94,11 @@ GROUPS = {
         "TELEGRAM_BOT_TOKEN": "",
         "TELEGRAM_CHAT_ID": "",
         "TELEGRAM_ERROR_THREAD_ID": "",
-        "WUWA_QUEUE_CONCURRENCY": "snapshot_build=1",
+        "WUWA_QUEUE_CONCURRENCY": "snapshot_build=1,pool_coordinator=3,pool_image=1,pool_audio=1,pool_video=1",
+        "WUWA_SHUTDOWN_TIMEOUT_SECONDS": "90",
+        "WUWA_WORKER_DB_POOL_SIZE": "4",
+        "WUWA_WORKER_DB_MAX_OVERFLOW": "4",
+        "WUWA_WORKSPACE_RECOVERY_SECONDS": "300",
         "WUWA_WORKER_WORKSPACE": "/var/lib/wuwa-worker",
         "WUWA_IMPORT_BATCH_SIZE": "500",
         "WUWA_ASSET_WORKSPACE": "/var/lib/wuwa-worker/client-assets",
@@ -91,6 +113,46 @@ GROUPS = {
         "AGENT_VISION_OUTPUT_TOKENS": "4096",
     },
 }
+
+
+def validate_worker_config(rendered):
+    """Fail before deployment for invalid limits instead of crash-looping workers."""
+    compose, worker = rendered["compose.env"], rendered["worker.env"]
+    for key, value in compose.items():
+        if key.startswith("WUWA_") and key.endswith(("_REPLICAS", "_CPUS")):
+            try:
+                positive = Decimal(value).is_finite() and Decimal(value) > 0
+                if key.endswith("_REPLICAS"):
+                    positive = positive and int(value) > 0
+            except (ValueError, InvalidOperation):
+                positive = False
+            if not positive:
+                raise SystemExit(f"{key} must be positive")
+        if key.startswith("WUWA_") and key.endswith("_MEMORY") and not re.fullmatch(r"[1-9][0-9]*(?:[bkmgBKMG](?:[bB])?)?", value):
+            raise SystemExit(f"{key} must be a positive Compose memory size")
+    limits = {}
+    try:
+        for entry in worker["WUWA_QUEUE_CONCURRENCY"].split(","):
+            if not entry.strip():
+                continue
+            key, value = entry.strip().split("=", 1)
+            limits[key.strip()] = int(value)
+        if any(value < 1 for value in limits.values()):
+            raise ValueError
+        if limits.get("snapshot_build", 1) * int(compose["WUWA_SNAPSHOT_REPLICAS"]) > 4:
+            raise ValueError
+        if float(worker["WUWA_WORKSPACE_RECOVERY_SECONDS"]) <= 0:
+            raise ValueError
+        if not 0 < float(worker["WUWA_SHUTDOWN_TIMEOUT_SECONDS"]) < 120:
+            raise ValueError
+        capacity = int(worker["WUWA_WORKER_DB_POOL_SIZE"]) + int(worker["WUWA_WORKER_DB_MAX_OVERFLOW"])
+        if int(worker["WUWA_WORKER_DB_POOL_SIZE"]) < 1 or int(worker["WUWA_WORKER_DB_MAX_OVERFLOW"]) < 0:
+            raise ValueError
+        if any(2 * limits.get(f"pool_{pool}", 3 if pool == "coordinator" else 1) + 2 > capacity
+               for pool in ("coordinator", "image", "audio", "video")):
+            raise ValueError
+    except ValueError as error:
+        raise SystemExit("Invalid worker limits: positive concurrency, snapshot replicas * concurrency <=4, shutdown <120s, DB capacity >= 2 * pool concurrency +2 required") from error
 
 
 def main() -> None:
@@ -120,6 +182,8 @@ def main() -> None:
 
     if missing:
         raise SystemExit("Set these GitHub production Secrets before deploying: " + ", ".join(sorted(set(missing))))
+
+    validate_worker_config(rendered)
 
     use_minio = rendered["compose.env"].get("USE_MINIO", "true").lower()
     if use_minio not in {"true", "false"}:

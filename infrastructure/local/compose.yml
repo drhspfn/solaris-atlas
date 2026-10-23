@@ -119,20 +119,26 @@ services:
       - caddy_data:/data
       - caddy_config:/config
 
-  worker:
+  worker: &worker
     build:
       context: ../..
       dockerfile: packages/worker/Dockerfile
     env_file:
       - ../../packages/worker/.env
     profiles: ["worker"]
-    command: ["wuwa-story-worker", "run"]
+    command: ["wuwa-story-worker", "run", "--queue", "snapshot_build"]
+    stop_grace_period: 120s
+    cpus: ${WUWA_SNAPSHOT_CPUS:-1.0}
+    mem_limit: ${WUWA_SNAPSHOT_MEMORY:-2g}
+    deploy:
+      replicas: ${WUWA_SNAPSHOT_REPLICAS:-2}
     volumes:
       - wuwa_worker_data:/var/lib/wuwa-worker
     environment:
       DATABASE_URL: postgresql+asyncpg://wuwa:wuwa@postgres:5432/wuwa_story
       RABBITMQ_URL: amqp://wuwa:wuwa@rabbitmq:5672/
       WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
+      WUWA_SNAPSHOT_REPLICAS: ${WUWA_SNAPSHOT_REPLICAS:-2}
     depends_on:
       postgres:
         condition: service_healthy
@@ -177,14 +183,17 @@ services:
       rabbitmq:
         condition: service_healthy
 
-  asset-worker:
+  asset-worker: &asset-worker
     build:
       context: ../..
       dockerfile: packages/worker/Dockerfile
     env_file:
       - ../../packages/worker/.env
     profiles: ["assets"]
-    command: ["wuwa-story-worker", "run", "--queue", "asset_download", "--queue", "asset_extract", "--queue", "release_media", "--queue", "event_media", "--queue", "entity_media", "--queue", "release_images", "--queue", "entity_images"]
+    command: ["wuwa-story-worker", "run", "--queue", "asset_download", "--queue", "asset_extract"]
+    stop_grace_period: 120s
+    cpus: ${WUWA_ASSET_CPUS:-0.5}
+    mem_limit: ${WUWA_ASSET_MEMORY:-1280m}
     volumes:
       - ${WUWA_ASSET_HOST_PATH:-../../packages/worker/var/client-assets}:/var/lib/wuwa-assets
     environment:
@@ -203,6 +212,38 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+
+  media-worker:
+    <<: *asset-worker
+    command: ["wuwa-story-worker", "run", "--pool", "coordinator"]
+    cpus: ${WUWA_COORDINATOR_CPUS:-0.25}
+    mem_limit: ${WUWA_COORDINATOR_MEMORY:-768m}
+    deploy:
+      replicas: ${WUWA_COORDINATOR_REPLICAS:-1}
+
+  image-worker:
+    <<: *asset-worker
+    command: ["wuwa-story-worker", "run", "--pool", "image"]
+    cpus: ${WUWA_IMAGE_CPUS:-0.75}
+    mem_limit: ${WUWA_IMAGE_MEMORY:-1280m}
+    deploy:
+      replicas: ${WUWA_IMAGE_REPLICAS:-1}
+
+  audio-worker:
+    <<: *asset-worker
+    command: ["wuwa-story-worker", "run", "--pool", "audio"]
+    cpus: ${WUWA_AUDIO_CPUS:-0.75}
+    mem_limit: ${WUWA_AUDIO_MEMORY:-1280m}
+    deploy:
+      replicas: ${WUWA_AUDIO_REPLICAS:-1}
+
+  video-worker:
+    <<: *asset-worker
+    command: ["wuwa-story-worker", "run", "--pool", "video"]
+    cpus: ${WUWA_VIDEO_CPUS:-0.75}
+    mem_limit: ${WUWA_VIDEO_MEMORY:-1280m}
+    deploy:
+      replicas: ${WUWA_VIDEO_REPLICAS:-1}
 
   snapshot-scheduler:
     build:

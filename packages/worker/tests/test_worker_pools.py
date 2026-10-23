@@ -37,7 +37,7 @@ def delivery(body=b'{"run_id":1,"kind":"voices","job_type":"media.release"}', **
 
 @pytest.mark.parametrize("payload,pool", [
     ({"kind": "prepare"}, "coordinator"),
-    ({"kind": "event_catalog"}, "coordinator"),
+    ({"kind": "event_catalog"}, "image"),
     ({"kind": "images"}, "image"),
     ({"kind": "event_resources"}, "image"),
     ({"kind": "character_voices"}, "audio"),

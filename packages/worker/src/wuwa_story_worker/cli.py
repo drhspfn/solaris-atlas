@@ -223,8 +223,8 @@ async def _run(queues: list[str] | None = None, pool: str | None = None) -> None
     overflow = int(os.getenv("WUWA_WORKER_DB_MAX_OVERFLOW", "4"))
     if pool_size < 1 or overflow < 0:
         raise ValueError("Worker DB pool size must be positive and overflow nonnegative")
-    if pool and queue_concurrency()[f"pool_{pool}"] + 2 > pool_size + overflow:
-        raise ValueError("Worker DB capacity must leave two connections beyond pool concurrency")
+    if pool and 2 * queue_concurrency()[f"pool_{pool}"] + 2 > pool_size + overflow:
+        raise ValueError("Worker DB capacity must cover lease + job connection per task plus two spare")
     await engine.dispose()
     engine.sync_engine.pool = create_async_pool_from_url(
         get_settings().database_url, pool_size=pool_size, max_overflow=overflow,
@@ -250,13 +250,14 @@ async def _run(queues: list[str] | None = None, pool: str | None = None) -> None
         "story_agent": process_story_analysis,
         "cutscene_vision": process_cutscene_vision,
     }
+    async def media_handler(payload):
+        handler = process_entity_media if payload.get("job_type") == "media.entities" else process_release_media
+        await handler(payload)
+
+    handlers.update({f"pool_{name}": media_handler for name in MEDIA_POOLS})
     # Existing workers keep their snapshot-only role unless explicitly configured.
     selected = {key: handlers[key] for key in (queues or ["snapshot_build"])}
     if pool:
-        async def media_handler(payload):
-            handler = process_entity_media if payload.get("job_type") == "media.entities" else process_release_media
-            await handler(payload)
-
         selected = {f"pool_{pool}": media_handler}
         if pool == "coordinator":
             selected.update({key: handlers[key] for key in (

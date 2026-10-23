@@ -28,13 +28,13 @@ The worker consumes durable RabbitMQ messages from `wuwa.snapshot-build.v1`. Eac
 docker compose -f infrastructure/local/compose.yml --env-file infrastructure/local/.env --profile worker run --rm worker wuwa-story-worker replay-failed --limit 10
 ```
 
-Per-queue concurrency is controlled with `WUWA_QUEUE_CONCURRENCY`, for example `snapshot_build=1`. Keep snapshot concurrency at one unless each job is given a separate Git cache/workspace strategy. Import batch size is `WUWA_IMPORT_BATCH_SIZE`. Queue data and the shallow Git object cache are persisted in the `wuwa_worker_data` volume.
+Per-queue concurrency is controlled with `WUWA_QUEUE_CONCURRENCY`, for example `snapshot_build=1`. Snapshot replicas times per-process concurrency must stay at most four; the OS Git cache lock and ordered global DB import guard are required. Import batch size is `WUWA_IMPORT_BATCH_SIZE`. Queue data and the shallow Git object cache are persisted in the `wuwa_worker_data` volume.
 
-Release media and entity media default to two simultaneous tasks each. Event artwork
-uses the independent `wuwa.event-media.v1` queue (one task), so it does not wait behind
-voice or cutscene imports. Every queue has its own channel and delivery limit; shared
-asset workspaces still serialize exports through their existing locks. Override with
-`WUWA_QUEUE_CONCURRENCY=release_media=1,entity_media=1` to restore serial media processing.
+Public media queues feed independent coordinator/image/audio/video pools. Each
+queue has its own channel and prefetch/execution limit. Production defaults to one
+heavy task per image/audio/video container; configure `pool_image`, `pool_audio`
+and `pool_video` in `WUWA_QUEUE_CONCURRENCY` to tune execution, and use the matching
+Compose replica/CPU/memory settings. Public queue limits control forwarding.
 
 Admin data operations can cancel waiting import tasks and clear waiting/deferred or
 failed broker messages. Running tasks, exported files and run history are retained.
@@ -159,3 +159,14 @@ The first and final three IDs were also absent from the current PlotAudio config
 The other seven IDs still referenced the same unavailable filenames. They remain
 partial imports until compatible historical resources are available; repeated
 extraction of the current packages cannot recover files absent from their index.
+
+
+### Bounded execution pools
+
+Production runs separate coordinator/image/audio/video pools. Publishers keep the
+existing v1 queues; `run --pool coordinator` routes them to durable private pools.
+Use `run --pool image`, `run --pool audio` and `run --pool video` for execution.
+Set per-process execution limits with `WUWA_QUEUE_CONCURRENCY=pool_image=2,pool_audio=2`.
+Snapshot fetch/compile can use up to four slots with the ordered global DB import
+guard; DB ingestion is serial. See [deployment capacity and tuning](../../docs/deployment.md#media-worker-capacity-and-retries)
+for defaults, memory/CPU limits, DB headroom, safe rollout, shutdown and recovery.

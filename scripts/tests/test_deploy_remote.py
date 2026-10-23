@@ -68,14 +68,24 @@ compose=(record_compose)
         result = self.deploy("snapshot-worker")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("caddy", result.stdout)
-        self.assertIn("up -d snapshot-worker media-worker", result.stdout)
+        self.assertIn("up -d snapshot-worker asset-worker media-worker image-worker audio-worker video-worker", result.stdout)
+        commands = result.stdout.splitlines()
+        policy = next(i for i, command in enumerate(commands) if "set_policy" in command)
+        startup = next(i for i, command in enumerate(commands) if command.startswith("up -d"))
+        self.assertLess(policy, startup)
+        self.assertIn("pool-(coordinator|image|audio|video)", commands[policy])
+
+    def test_infrastructure_waits_for_broker_before_setting_job_policy(self):
+        result = self.deploy("infrastructure")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("up -d --wait postgres rabbitmq redis", result.stdout)
 
     def test_migrations_release_connections_and_restore_running_replicas(self):
         for fail in (False, True):
             with self.subTest(fail=fail):
                 result = self.deploy("api", fail_migration=fail)
                 self.assertEqual(result.returncode == 0, not fail, result.stderr)
-                self.assertIn("stop --time 60 api-container media-container-1 media-container-2", result.stdout)
+                self.assertIn("stop --time 120 api-container media-container-1 media-container-2", result.stdout)
                 # docker start output is suppressed by the EXIT trap; record to stderr too.
                 self.assertIn("start api-container media-container-1 media-container-2", result.stderr)
                 if fail:
@@ -85,7 +95,7 @@ compose=(record_compose)
         result = self.deploy("snapshot-worker", worker_image="solaris-atlas-worker:workers-test")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("pull snapshot-worker", result.stdout)
-        self.assertIn("up -d snapshot-worker media-worker", result.stdout)
+        self.assertIn("up -d snapshot-worker asset-worker media-worker image-worker audio-worker video-worker", result.stdout)
 
 
 if __name__ == "__main__":

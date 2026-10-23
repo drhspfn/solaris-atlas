@@ -43,7 +43,7 @@ QUEUES = {
 MEDIA_POOLS = ("coordinator", "image", "audio", "video")
 for _pool in MEDIA_POOLS:
     _key = f"pool_{_pool}"
-    QUEUES[_key] = QueueSpec(_key, f"wuwa.pool-{_pool}.v1", 1)
+    QUEUES[_key] = QueueSpec(_key, f"wuwa.pool-{_pool}.v1", 3 if _pool == "coordinator" else 1)
 
 
 def media_pool(payload: dict) -> str:
@@ -56,7 +56,7 @@ def media_pool(payload: dict) -> str:
         return "audio"
     if kind in {"cutscene", "cutscene_assets"}:
         return "video"
-    if kind in {"images", "event_images", "event_resources"}:
+    if kind in {"images", "event_images", "event_resources", "event_catalog"}:
         return "image"
     return "coordinator"
 
@@ -78,6 +78,6 @@ def queue_concurrency() -> dict[str, int]:
         if limit < 1:
             raise ValueError(f"Concurrency for queue {key!r} must be positive")
         values[key] = limit
-    if values["snapshot_build"] > 4:
+    if values["snapshot_build"] * int(os.getenv("WUWA_SNAPSHOT_REPLICAS", "1")) > 4:
         raise ValueError("snapshot_build concurrency cannot exceed 4 fetch/compile tasks")
     return values

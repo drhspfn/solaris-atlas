@@ -72,8 +72,8 @@ Redeploy a previous commit SHA to roll application images back. Database migrati
 Snapshot import now queues `release_media` jobs for images (including skills),
 quest voices, character voices and cutscenes. Shared client preparation, voice
 packages and cutscene exports are prerequisites; dependent jobs wait through a
-persistent RabbitMQ delay queue. Production snapshot-worker consumes both
-`release_media` and `entity_media`; locally start the `assets` Compose profile.
+persistent RabbitMQ delay queue. Production media-worker routes `release_media`
+and `entity_media` into the execution pools; locally start the `assets` Compose profile.
 
 For an already imported patch, use **Import / retry media** in Data operations.
 Completed tasks are reused; failed/partial tasks can be queued again. A completed
@@ -112,26 +112,132 @@ Compose updates install the selected images. This introduces a maintenance windo
 during migration. Queued messages and persistent exports are retained. A failed
 migration stops the rollout without replacing the running application images.
 
-Production runs one `snapshot-worker` for snapshot/download/extraction queues and
-two `media-worker` replicas for release, entity and event media. Per replica the
-defaults are `release_media=4,entity_media=3,event_media=2`; existing
-`WUWA_QUEUE_CONCURRENCY` settings override these values. Deploying
-`snapshot-worker` also deploys its media workers. All workers share the persistent
-workspace; extraction file locks remain nonblocking.
+Production uses independent worker pools. `snapshot-worker` deployments update all
+six worker services; `WORKER_IMAGE` pins their shared image. Existing public v1
+queue names and payloads remain unchanged. `media-worker --pool coordinator`
+forwards public deliveries with publisher confirms before ACK; private execution
+queues are `wuwa.pool-{coordinator,image,audio,video}.v1`. Pure entity voice tasks
+use audio; mixed legacy image/voice requests use image. Preparation/notice work
+uses coordinator, catalog extraction and image/event resource tasks use image, voice tasks use audio,
+and cutscene extraction/conversion uses video. Parent dependencies still defer
+through durable 60-second waiting queues; they do not hold execution slots.
 
-Busy job locks and unfinished dependencies are acknowledged into the durable
-60-second delay queue, releasing the consumer slot for another task. Session
-advisory locks use a dedicated discarded DB connection so they cannot remain in
-the connection pool. PostgreSQL deadlock/serialization failures retry at most
-three times, preserving the retry count in message headers. Other failures go
-to the failed queue. Media consumers allow 24-hour jobs to avoid RabbitMQ's
-default acknowledgement timeout redelivering long-running imports.
+Default capacity for a 6 CPU / 12 GiB host:
 
-`WORKER_IMAGE` optionally pins snapshot/media workers to a separately built image
-without changing API, web or AI worker images.
+| Service | Replicas | Tasks per replica | CPU per container | Memory per container |
+| --- | ---: | ---: | ---: | ---: |
+| snapshot-worker | 2 | 1 fetch/compile each, 1 global DB import total | 1 | 2 GiB |
+| asset-worker | 1 | 1 download + 1 extraction | 0.5 | 1280 MiB |
+| media-worker (coordinator) | 1 | 3 executions + public queue routing | 0.25 | 768 MiB |
+| image-worker | 1 | 1 | 0.75 | 1280 MiB |
+| audio-worker | 1 | 1 | 0.75 | 1280 MiB |
+| video-worker | 1 | 1 | 0.75 | 1280 MiB |
 
-Rollback: restore the previous worker image and Compose file, then recreate the
-worker services. Persistent volumes and queued messages must be retained.
+This provides 10 logical task slots in 7 containers: 2 snapshot fetch/compile,
+2 asset (download/extraction), 3 lightweight coordinator and 3 media executions.
+It is deliberately below 10–20 heavy processes. Each image/audio/video container
+runs one task at a time. Python alone previously showed roughly 475 MiB RSS in
+the operator screenshot; 768 MiB left too little space for .NET. The 1280 MiB
+starting cap leaves more room but is **unmeasured for representative exports**.
+Before opening the full queue, measure one FModel image export and one voice
+export including child-process/container peak memory, wall time and CPU. Parent
+will perform those live canaries after deployment; none were run remotely here.
+
+Aggregate container ceilings are 5 CPU and 9.75 GiB including snapshot/assets,
+leaving 1 CPU and 2.25 GiB for PostgreSQL, RabbitMQ, API, OS and screenshot work.
+These are caps, not reserved memory or a throughput promise. If screenshot work
+continues to saturate CPU, reduce snapshot replicas to one or pause compilations
+while measuring media. Optional AI consumers need additional budget. Memory caps
+include child .NET/FFmpeg processes. Reduce concurrency or adjust memory from
+canary measurements if a single export approaches its cap. Scaling snapshots to
+four requires freeing capacity from other pools or lowering measured per-process
+limits; do not start four 2 GiB snapshot containers alongside the default pools.
+
+Set `WUWA_QUEUE_CONCURRENCY` in worker.env (or the GitHub production Variable):
+`snapshot_build=1,pool_coordinator=3,pool_image=1,pool_audio=1,pool_video=1`. Values apply **per process and per queue**, and
+prefetch equals execution concurrency. Old overrides such as `release_media=4`
+now control forwarding only; tune `pool_audio`, `pool_image`, etc. for execution.
+Do not run additional legacy public-queue consumers during a controlled rollout:
+they can execute tasks outside these resource pools.
+
+Snapshot capacity is capped at four fetch/compile tasks across replicas:
+`WUWA_SNAPSHOT_REPLICAS * snapshot_build <= 4`. Default is two replicas with one
+task each; use four replicas at one task, or two replicas at two tasks only after
+measuring capacity. Increasing it requires the ordered global import guard in
+snapshot_jobs: release sequence allocation alone is insufficient because typed
+entity/search tables are global projections and imports commit in batches.
+Different compile completion order must never let an older patch overwrite a
+newer projection. DB ingestion remains globally serial and version gated. Keep
+snapshot concurrency at one when rolling back to an image without that guard.
+The shared OS Git cache lock serializes checkout preparation across replicas; compilation
+runs in subprocesses. Import JSON/file work can still block the event loop and
+is addressed by the importer performance work separately.
+
+`WUWA_{SNAPSHOT,COORDINATOR,IMAGE,AUDIO,VIDEO}_REPLICAS` are Compose variables. All six pools
+have `WUWA_<POOL>_CPUS` and `WUWA_<POOL>_MEMORY` controls (`SNAPSHOT` and `ASSET`
+are the other pool names). These go into compose.env; runtime concurrency goes
+into worker.env. The renderer, example env files and production workflow forward
+these settings. Local Compose uses infrastructure/local/.env for interpolation
+and packages/worker/.env for runtime settings; `--profile assets` enables the media
+and asset pools, `--profile worker` enables snapshot consumption/scheduling. The
+dev overlay mounts worker/server sources into every pool.
+
+Each worker process bounds the existing shared SQLAlchemy engine pool with
+`WUWA_WORKER_DB_POOL_SIZE=4` and `WUWA_WORKER_DB_MAX_OVERFLOW=4`; imports create
+separate engines and must be counted separately. A running task holds an
+execution lease and a job-lock connection, and needs additional connections for
+status writes/cleanup. Nested direct-handler/export leases must be reentrant or
+included in connection capacity. Budget at least two connections per active task plus two spare
+connections, and keep summed process budgets plus API/import connections
+below PostgreSQL max_connections. More prefetch cannot fix an exhausted pool.
+
+SIGTERM cancels consumers before waiting up to
+`WUWA_SHUTDOWN_TIMEOUT_SECONDS=90`; Compose allows 120 seconds. Remaining broker
+deliveries are requeued on cancellation/connection close. Media leases stay held
+until `finish_writes` finishes owned subprocess/thread work, even after task
+cancellation. A container killed after the grace period loses its DB leases;
+unacknowledged work is redelivered. Handlers must remain idempotent. Publish/ACK
+crashes can produce duplicates. PostgreSQL deadlocks/serialization failures use
+three durable retries with preserved headers; exhausted failures go to each
+queue's `.failed` queue. Long-task acknowledgement timeout policy (24 hours)
+is applied before worker startup and includes private queues and snapshot jobs.
+
+Broker execution resolves `run_workspace_id`, holds `workspace_lease` through
+writes, then calls `cleanup_workspace` after releasing the lease. Skipped
+cancelled/completed deliveries also trigger cleanup. The helper checks all
+siblings under an exclusive DB lease, retaining unknown/nonterminal trees and
+original client inputs. Coordinators retry crash cleanup every
+`WUWA_WORKSPACE_RECOVERY_SECONDS=300`; its nonblocking lock excludes duplicate
+cleanup. No raw workspace is deleted by routing or while owned writes continue.
+
+Tuning and rollout (operator actions; these were not run against production):
+
+1. Deploy the complete worker image, helper and snapshot-ordering changes together.
+   Stop/drain old media consumers, retain volumes, apply the acknowledgement
+   policy, then start all pools using the snapshot-worker deployment component.
+2. Verify RabbitMQ consumers, ready/unacknowledged counts and waiting/failed
+   queues with `rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers`.
+   Record `docker stats --no-stream`, OOM/restart counts, DB connections/waits,
+   scratch disk usage and completed media operations for at least 15–30 minutes.
+3. Compare completed operations and `job.delivery ... elapsed_seconds` logs per
+   kind. Delayed dependencies, busy workspace locks, synchronous file/JSON work,
+   subprocess CPU and DB pool waits are distinct limits. Separate pools prevent
+   long media jobs from monopolizing coordinator/event-loop capacity; they do
+   not make synchronous code nonblocking within a process.
+4. Increase only one pool's replicas or concurrency at a time. Stay within the
+   measured CPU/RSS/DB/disk budget. Prefer additional lightweight replicas;
+   keep video/extraction low while screenshot CPU is high. A 10–20 operation
+   target is a tuning goal, not permission for 20 .NET exports. No two-hour
+   completion estimate is supported without measuring representative patches.
+5. On failure, inspect the relevant public **and private** `.failed` queues.
+   `wuwa-story-worker replay-failed --queue pool_audio --limit 10` replays private
+   failures while retaining dispatch type and resetting DB retry count.
+
+Rollback: first stop routing new work, drain private queues using the current
+image, then restore previous image/Compose/concurrency. If private tasks cannot
+be drained, keep compatible private consumers until they can be replayed;
+older images do not know private queue names. Never delete broker queues or
+persistent volumes as part of rollback. Verify no active leases before cleanup.
 
 Character voice extraction resolves cooked Wwise IDs from the pinned main-client
 exports as well as multilingual voice packages. The numeric main-client Media
@@ -190,9 +296,9 @@ only missing/changed archives. The active client is the newest fully downloaded 
 This does not fetch unavailable historical clients or delete old client/extraction caches.
 Rollback: deploy the preceding image; already shared archives remain ordinary readable files.
 
-Image extraction has separate `release_images` and `entity_images` queues on the
-media workers (two slots per queue per replica). Long character/quest audio and
-cutscenes retain the original queues, so they cannot consume the image slots.
+Image extraction retains separate public `release_images` and `entity_images`
+queues, which the coordinator routes to the image execution pool. Long
+character/quest audio and cutscenes route to audio/video pools independently.
 Existing queued tasks keep their original queue; newly created image jobs use the
 separate queues. Deploy API and worker together; queue declarations remain durable.
 

@@ -132,19 +132,17 @@ services:
         format: raw
       - path: ./env/worker.env
         format: raw
-    command:
-      - wuwa-story-worker
-      - run
-      - --queue
-      - snapshot_build
-      - --queue
-      - asset_download
-      - --queue
-      - asset_extract
+    command: ["wuwa-story-worker", "run", "--queue", "snapshot_build"]
+    stop_grace_period: 120s
+    cpus: ${WUWA_SNAPSHOT_CPUS:-1.0}
+    mem_limit: ${WUWA_SNAPSHOT_MEMORY:-2g}
+    deploy:
+      replicas: ${WUWA_SNAPSHOT_REPLICAS:-2}
     volumes:
       - worker_data:/var/lib/wuwa-worker
     environment:
       WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
+      WUWA_SNAPSHOT_REPLICAS: ${WUWA_SNAPSHOT_REPLICAS:-2}
     depends_on:
       postgres:
         condition: service_healthy
@@ -154,11 +152,46 @@ services:
         condition: service_completed_successfully
         required: ${USE_MINIO:-true}
 
+  # Public queue router and lightweight preparation/notice tasks.
   media-worker:
     <<: *worker
-    command: ["wuwa-story-worker", "run", "--queue", "release_media", "--queue", "event_media", "--queue", "entity_media", "--queue", "release_images", "--queue", "entity_images"]
+    command: ["wuwa-story-worker", "run", "--pool", "coordinator"]
+    cpus: ${WUWA_COORDINATOR_CPUS:-0.25}
+    mem_limit: ${WUWA_COORDINATOR_MEMORY:-768m}
     deploy:
-      replicas: 2
+      replicas: ${WUWA_COORDINATOR_REPLICAS:-1}
+
+  asset-worker:
+    <<: *worker
+    command: ["wuwa-story-worker", "run", "--queue", "asset_download", "--queue", "asset_extract"]
+    cpus: ${WUWA_ASSET_CPUS:-0.5}
+    mem_limit: ${WUWA_ASSET_MEMORY:-1280m}
+    deploy:
+      replicas: 1
+
+  image-worker:
+    <<: *worker
+    command: ["wuwa-story-worker", "run", "--pool", "image"]
+    cpus: ${WUWA_IMAGE_CPUS:-0.75}
+    mem_limit: ${WUWA_IMAGE_MEMORY:-1280m}
+    deploy:
+      replicas: ${WUWA_IMAGE_REPLICAS:-1}
+
+  audio-worker:
+    <<: *worker
+    command: ["wuwa-story-worker", "run", "--pool", "audio"]
+    cpus: ${WUWA_AUDIO_CPUS:-0.75}
+    mem_limit: ${WUWA_AUDIO_MEMORY:-1280m}
+    deploy:
+      replicas: ${WUWA_AUDIO_REPLICAS:-1}
+
+  video-worker:
+    <<: *worker
+    command: ["wuwa-story-worker", "run", "--pool", "video"]
+    cpus: ${WUWA_VIDEO_CPUS:-0.75}
+    mem_limit: ${WUWA_VIDEO_MEMORY:-1280m}
+    deploy:
+      replicas: ${WUWA_VIDEO_REPLICAS:-1}
 
   story-agent:
     image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-worker:${IMAGE_TAG:-latest}
