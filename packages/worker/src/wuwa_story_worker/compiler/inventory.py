@@ -17,7 +17,7 @@ SUPPORTED = {
     "RandomPlot/plotreference.json", "RandomPlot/randomplot.json",
     "RandomPlot/randomplottrigger.json", "PlotGuest/plotguest.json",
     "cgVedio/videodata.json", "cgVedio/videosound.json", "cgVedio/videocaption.json",
-    "plot_audio/plotaudio.json", "audio/audio.json", "item/iteminfo.json",
+    "plot_audio/plotaudio.json", "audio/audio.json", "item/iteminfo.json", "weapon/weaponconf.json",
     "area/area.json", "role/roleinfo.json", "subtitle_text/subtitletext.json",
     "questtype/questtype.json", "quest_chapter/questchapter.json",
     "QuestTree/questtreenode.json", "QuestTree/questtreechapter.json",

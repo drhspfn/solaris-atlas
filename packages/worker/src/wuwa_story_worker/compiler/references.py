@@ -301,7 +301,7 @@ def compile_reference_tables(root: Path, writer: Writer,
     for table in (inventory or {}).get("tables", []):
         rel = table.get("file", "").removeprefix("BinData/")
         fields = set(table.get("all_field_names", []))
-        if rel in {"area/area.json", "item/iteminfo.json", "role/roleinfo.json",
+        if rel in {"area/area.json", "item/iteminfo.json", "weapon/weaponconf.json", "role/roleinfo.json",
                    "speaker/speaker.json", "npc_headinfo/npcheadinfo.json"}:
             continue
         if not rel or not fields.intersection(entity_fields):

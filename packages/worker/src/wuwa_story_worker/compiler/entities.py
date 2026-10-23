@@ -147,6 +147,18 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
     items = simple("item/iteminfo.json", "item", "Id", "item", ("Name", "BgDescription"))
     areas = simple("area/area.json", "area", "AreaId", "area", ("Title",))
     item_ids = {r.get("Id") for r in items}
+    weapon_path = base / "weapon/weaponconf.json"
+    for index, raw in enumerate(read_json(weapon_path) if weapon_path.is_file() else []):
+        identifier = raw.get("ItemId")
+        if identifier is None or identifier in item_ids:
+            continue
+        writer.emit("item", {"id": f"item:{identifier}", "game_id": identifier,
+                             "source": {"file": "BinData/weapon/weaponconf.json", "row": index,
+                                        "raw_path": f"$[{index}]"},
+                             "raw": raw, "name": loc(raw.get("WeaponName")),
+                             "bgdescription": loc(raw.get("BgDescription"))})
+        item_ids.add(identifier)
+        counts["item"] += 1
     area_ids = {r.get("AreaId") for r in areas}
     for index, raw in enumerate(items):
         components = raw.get("DecomposeInfo") or []

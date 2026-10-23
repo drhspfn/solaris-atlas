@@ -198,3 +198,11 @@ separate queues. Deploy API and worker together; queue declarations remain durab
 
 Successful deployments remove only untagged, unused Docker images older than 24 hours.
 Tagged rollback images, running/stopped container references and all volumes are retained.
+
+Weapons are projected from `BinData/weapon/weaponconf.json` into the existing item
+catalog using `item:<ItemId>`; ItemInfo identities are never overwritten. For an
+already imported release, restore missing weapon nodes and item search documents:
+`python -m wuwa_story.ingestion.weapon_backfill --release-id 4 --dry-run`, then the
+same command without `--dry-run`. It reuses durable raw records/localization,
+processes 100 records per batch, and is safe to repeat. New snapshot compilation
+includes weapons automatically.
