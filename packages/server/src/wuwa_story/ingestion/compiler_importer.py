@@ -10,6 +10,7 @@ from wuwa_story.db.models.ops import ImportRun
 from wuwa_story.ingestion.canonical import CanonicalRecordAdapter, detect_compiled_dataset
 from wuwa_story.ingestion.canonical_import import import_canonical_edges, import_canonical_entities
 from wuwa_story.ingestion.context import ImportSummary
+from wuwa_story.ingestion.import_progress import ImportProgress
 from wuwa_story.ingestion.importer import Importer
 from wuwa_story.ingestion.localization import import_localization_batch
 from wuwa_story.ingestion.raw import import_raw_snapshot
@@ -19,7 +20,7 @@ from wuwa_story.search.indexer import build_lexical_index
 
 class CompiledDatasetImporter(Importer):
     key = "wuwa-deterministic-compiler"
-    version = "0.1.0"
+    version = "0.2.0"
 
     def detect(self, source: Path) -> bool:
         return detect_compiled_dataset(source)
@@ -29,7 +30,8 @@ class CompiledDatasetImporter(Importer):
     ) -> ImportSummary:
         if not self.detect(source):
             raise ValueError(f"Not a compiled WuWa dataset: {source}")
-        manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+        manifest_bytes = (source / "manifest.json").read_bytes()
+        manifest = json.loads(manifest_bytes)
         release = await register_release(
             session,
             game_version=manifest["game_version"],
@@ -50,33 +52,41 @@ class CompiledDatasetImporter(Importer):
         await session.commit()
         seen = created = 0
         try:
-            raw_seen, raw_created = await import_raw_snapshot(
-                source, session, release.id, batch_size
+            progress = await ImportProgress.start(session, run, manifest_bytes)
+            raw_seen, raw_created = await progress.phase(
+                "raw", lambda: import_raw_snapshot(source, session, release.id, batch_size)
             )
             seen += raw_seen
             created += raw_created
-            localization_seen, localization_created = await self._import_localization(
-                source / "localization" / "all-locales.jsonl",
-                session,
-                release.id,
-                min(batch_size, 250),
+            localization_seen, localization_created = await progress.phase(
+                "localization", lambda: self._import_localization(
+                    source / "localization" / "all-locales.jsonl", session,
+                    release.id, min(batch_size, 250),
+                )
             )
             seen += localization_seen
             created += localization_created
             adapter = CanonicalRecordAdapter(source)
-            entity_count = await import_canonical_entities(
-                adapter,
-                session,
-                release.id,
-                release.sequence,
-                batch_size,
-            )
-            edge_count = await import_canonical_edges(adapter, session, release.id, batch_size)
+            async def entities():
+                count = await import_canonical_entities(
+                    adapter, session, release.id, release.sequence, batch_size)
+                return count, count
+
+            async def edges():
+                count = await import_canonical_edges(adapter, session, release.id, batch_size)
+                return count, count
+
+            entity_count, entity_created = await progress.phase("entities", entities)
+            edge_count, edge_created = await progress.phase("edges", edges)
             # Search documents are a deterministic projection of imported localized text.
             # Build them as part of snapshot import so freshly imported releases are searchable.
-            await build_lexical_index(session, release.game_version, batch_size)
+            async def search():
+                await build_lexical_index(session, release.game_version, batch_size)
+                return 0, 0
+
+            await progress.phase("search", search)
             seen += entity_count + edge_count
-            created += entity_count + edge_count
+            created += entity_created + edge_created
             run = await session.get(ImportRun, run_id)
             assert run is not None
             run.status = "succeeded"

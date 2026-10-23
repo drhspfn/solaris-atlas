@@ -25,7 +25,10 @@ from wuwa_story.ingestion.github_snapshots import (
 )
 from wuwa_story.ingestion.release_media import enqueue_release_media
 
+from wuwa_story_worker.broker import JobDeferred
+from wuwa_story_worker.client_assets import wait_workspace_lock
 from wuwa_story_worker.job_tracking import update_admin_run
+from wuwa_story_worker.snapshot_order import ordered_import
 
 logger = logging.getLogger(__name__)
 _cache_lock = asyncio.Lock()
@@ -74,7 +77,7 @@ async def _checkout_job(repository: str, version: str, commit: str, workspace: P
     cache = workspace / "git-cache"
     job_root = workspace / "jobs" / f"{version}-{commit}"
     source = job_root / "source"
-    async with _cache_lock:
+    async with _cache_lock, wait_workspace_lock(workspace / "git-cache-lock"):
         def checkout() -> None:
             prepare_checkout(repository, cache)
             if source.is_dir() and (source / ".git").exists():
@@ -109,6 +112,10 @@ async def build_and_import_snapshot(payload: dict[str, Any]) -> None:
         await _update_admin_run(run_id, "running")
     try:
         result = await _build_and_import_snapshot(payload)
+    except JobDeferred:
+        if run_id is not None:
+            await _update_admin_run(run_id, "waiting_dependency")
+        raise
     except Exception as error:
         if run_id is not None:
             try:
@@ -167,12 +174,13 @@ async def _build_and_import_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
     factory = async_sessionmaker(
         engine, expire_on_commit=False, autoflush=False)
     try:
-        async with factory() as session:
-            result = await CompiledDatasetImporter().import_release(
-                build_output, session, batch_size=int(
-                    os.getenv("WUWA_IMPORT_BATCH_SIZE", "500"))
-            )
-            media = await enqueue_release_media(session, result.release_id)
+        async with ordered_import(engine, version, payload.get("run_id")):
+            async with factory() as session:
+                result = await CompiledDatasetImporter().import_release(
+                    build_output, session, batch_size=int(
+                        os.getenv("WUWA_IMPORT_BATCH_SIZE", "500"))
+                )
+                media = await enqueue_release_media(session, result.release_id)
         logger.info("Imported WuWa %s at %s: %s",
                     actual_version, commit, result)
     finally:

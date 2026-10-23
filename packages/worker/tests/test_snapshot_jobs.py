@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from wuwa_story_worker import snapshot_jobs
+from wuwa_story_worker.broker import JobDeferred
+from wuwa_story_worker.snapshot_order import earlier_snapshot
 
 
 @pytest.mark.asyncio
@@ -57,3 +59,21 @@ async def test_snapshot_job_tracks_failure_and_rethrows(monkeypatch):
     assert update.await_args_list[0].args == (42, "running")
     assert update.await_args_list[1].args == (42, "failed")
     assert "compile failed" in update.await_args_list[1].kwargs["error"]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_waiting_for_database_keeps_retryable_status(monkeypatch):
+    update = AsyncMock()
+    monkeypatch.setattr(snapshot_jobs, "_update_admin_run", update)
+    monkeypatch.setattr(snapshot_jobs, "_build_and_import_snapshot",
+                        AsyncMock(side_effect=JobDeferred("Earlier snapshot is importing")))
+    with pytest.raises(JobDeferred):
+        await snapshot_jobs.build_and_import_snapshot({"run_id": 42})
+    assert update.await_args_list[-1].args == (42, "waiting_dependency")
+
+
+def test_snapshot_order_is_numeric_and_ignores_current_and_invalid_requests():
+    rows = [(42, {"request": {"version": "2.10"}}),
+            (43, {"request": {"version": "2.9"}}), (44, {"request": {"version": "broken"}})]
+    assert earlier_snapshot(rows, "2.10", 42) == "2.9"
+    assert earlier_snapshot(rows, "2.9", 43) is None
