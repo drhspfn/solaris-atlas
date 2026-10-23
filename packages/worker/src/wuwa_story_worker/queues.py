@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from wuwa_story.ingestion.media_queues import MEDIA_POOLS, media_pool  # noqa: F401
+
 
 @dataclass(frozen=True, slots=True)
 class QueueSpec:
@@ -40,25 +42,9 @@ QUEUES = {
 
 # Private execution queues. Publishers keep using the public v1 queues above;
 # the coordinator forwards their unchanged payloads with publisher confirmation.
-MEDIA_POOLS = ("coordinator", "image", "audio", "video")
 for _pool in MEDIA_POOLS:
     _key = f"pool_{_pool}"
     QUEUES[_key] = QueueSpec(_key, f"wuwa.pool-{_pool}.v1", 3 if _pool == "coordinator" else 1)
-
-
-def media_pool(payload: dict) -> str:
-    """Classify pinned tasks without changing their payload or parent dependency."""
-    kind = payload.get("kind")
-    if payload.get("job_type") == "media.entities":
-        kinds = (payload.get("request") or {}).get("kinds", [])
-        return "audio" if kinds == ["voice"] else "image"
-    if kind in {"voices", "voice_packages", "character_voices"}:
-        return "audio"
-    if kind in {"cutscene", "cutscene_assets"}:
-        return "video"
-    if kind in {"images", "event_images", "event_resources", "event_catalog"}:
-        return "image"
-    return "coordinator"
 
 
 def queue_concurrency() -> dict[str, int]:

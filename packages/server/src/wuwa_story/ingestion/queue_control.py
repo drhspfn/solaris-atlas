@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.ops import ProcessingRun, Processor
+from wuwa_story.ingestion.media_queues import MEDIA_POOLS, media_pool
 
 logger = logging.getLogger(__name__)
 QUEUE_PROCESSORS = {
@@ -21,6 +22,8 @@ QUEUE_PROCESSORS = {
     "wuwa.asset-extract.v1": {"asset_extract", "map_build"},
     "wuwa.snapshot-build.v1": {"snapshot_import"},
 }
+QUEUE_PROCESSORS.update({f"wuwa.pool-{pool}.v1": {"release_media", "entity_media"}
+                         for pool in MEDIA_POOLS})
 WAITING = {"queued", "pending", "waiting_dependency", "enqueue_failed"}
 
 
@@ -80,7 +83,9 @@ async def clear_queue(session, name, scope):
                 .with_for_update(of=ProcessingRun)
             )).all()
             for run, processor in rows:
-                if run_queue(processor, run.metadata_json or {}) != name:
+                metadata = run.metadata_json or {}
+                routed = f"wuwa.pool-{media_pool(metadata.get('payload') or metadata.get('request') or {})}.v1"
+                if run_queue(processor, metadata) != name and routed != name:
                     continue
                 if run.status != "cancelled":
                     run.status = "cancelled"

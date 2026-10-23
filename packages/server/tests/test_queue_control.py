@@ -44,6 +44,34 @@ def test_event_route_is_separate_from_regular_imports():
     assert run_queue("release_media", {"queue": "wuwa.event-media.v1"}) == "wuwa.event-media.v1"
 
 
+def test_private_execution_queues_are_supported_and_share_dispatch_rules():
+    from wuwa_story.ingestion.media_queues import media_pool
+
+    for pool in ("coordinator", "image", "audio", "video"):
+        assert f"wuwa.pool-{pool}.v1" in queue_control.QUEUE_PROCESSORS
+    assert media_pool({"job_type": "media.entities", "request": {"kinds": ["image", "voice"]}}) == "audio"
+    assert media_pool({"kind": "images"}) == "image"
+
+
+@pytest.mark.asyncio
+async def test_clearing_image_pool_leaves_queued_audio_untouched(monkeypatch):
+    image = SimpleNamespace(id=11, status="queued", metadata_json={
+        "queue": "wuwa.release-images.v1", "payload": {"kind": "images"}})
+    audio = SimpleNamespace(id=12, status="queued", metadata_json={
+        "queue": "wuwa.release-media.v1", "payload": {"kind": "voices"}})
+    session = AsyncMock()
+    session.execute.return_value = SimpleNamespace(all=lambda: [(image, "release_media"), (audio, "release_media")])
+    queue = SimpleNamespace(declaration_result=SimpleNamespace(message_count=0))
+    channel = AsyncMock()
+    channel.is_closed = False
+    channel.declare_queue.return_value = queue
+    connection = AsyncMock()
+    connection.channel.return_value = channel
+    monkeypatch.setattr(queue_control.aio_pika, "connect_robust", AsyncMock(return_value=connection))
+    assert await clear_queue(session, "wuwa.pool-image.v1", "waiting") == {"cancelled": 1, "removed": 0}
+    assert image.status == "cancelled" and audio.status == "queued"
+
+
 @pytest.mark.asyncio
 async def test_cleanup_retry_removes_previously_cancelled_deliveries(monkeypatch):
     run = SimpleNamespace(id=10, status="cancelled", metadata_json={})

@@ -45,7 +45,7 @@ def delivery(body=b'{"run_id":1,"kind":"voices","job_type":"media.release"}', **
     ({"kind": "cutscene_assets"}, "video"),
     ({"kind": "cutscene"}, "video"),
     ({"job_type": "media.entities", "request": {"kinds": ["voice"]}}, "audio"),
-    ({"job_type": "media.entities", "request": {"kinds": ["image", "voice"]}}, "image"),
+    ({"job_type": "media.entities", "request": {"kinds": ["image", "voice"]}}, "audio"),
 ])
 def test_media_pool_classification(payload, pool):
     assert media_pool(payload) == pool
