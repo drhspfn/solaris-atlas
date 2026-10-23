@@ -166,12 +166,17 @@ async def test_complete_published_map_is_checked_before_any_export(tmp_path, mon
     (tmp_path / "plan.json").write_text(json.dumps(plan))
     tool = tmp_path / "tool"
     tool.write_bytes(b"pinned tools")
+    manifest = tmp_path / "maps/manifest.json"
+    manifest.parent.mkdir()
+    previous = {"game_version": "3.7.0", "raw_root": "original/raw", "sources": {}, "maps": []}
+    manifest.write_text(json.dumps(previous))
     reuse = AsyncMock(return_value=True)
     export = AsyncMock(side_effect=AssertionError("No extraction for a complete map"))
     monkeypatch.setattr(map_provenance, "reuse_maps", reuse)
     monkeypatch.setattr(map_assets, "export_assets", export)
     receipt = await map_assets.build_maps(tmp_path, tool, tool, publish=True)
     assert json.loads(receipt.read_text())["reused_catalog"] is True
+    assert receipt != manifest and json.loads(manifest.read_text()) == previous
     reuse.assert_awaited_once()
     export.assert_not_awaited()
 

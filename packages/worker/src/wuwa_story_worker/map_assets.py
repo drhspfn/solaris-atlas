@@ -67,7 +67,7 @@ async def build_maps(root: Path, fmodel: Path, converter: Path, publish: bool = 
         from wuwa_story_worker.map_provenance import reuse_maps
 
         if await reuse_maps(root, plan, tools, fmodel, converter):
-            receipt = root / "maps/manifest.json"
+            receipt = root / "maps/reused-catalog.json"
             save_json(receipt, {"asset_job_id": plan["id"], "reused_catalog": True})
             return receipt
     config_receipt = await export_assets(root, fmodel, "ConfigDB")
