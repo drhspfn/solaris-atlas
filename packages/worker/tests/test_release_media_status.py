@@ -378,12 +378,13 @@ async def test_requested_voice_exports_are_bounded_and_do_not_use_full_audio(mon
     monkeypatch.setattr(release_media, "package_root", lambda *_args, **_kwargs: voice_root)
     monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
     monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
-    paths = [f"Audio/en_vo_{number}.wem" for number in range(43)]
+    paths = [f"Audio/en_vo_{number}.wem" for number in range(400)]
     calls = []
 
     async def extract(args, log, timeout):
         batch = args[-1].split("|")
-        assert 0 < len(batch) <= 20 and set(batch).issubset(paths)
+        assert 0 < len(batch) <= 256 and set(batch).issubset(paths)
+        assert len(args[-1].encode("ascii")) <= 24 * 1024
         calls.append(batch)
         for relative in batch:
             path = args[3] / relative
@@ -393,9 +394,36 @@ async def test_requested_voice_exports_are_bounded_and_do_not_use_full_audio(mon
 
     monkeypatch.setattr(entity_media, "tool", extract)
     await release_media.extract_voice_paths(parent, paths, voice_root / "batch/files")
-    assert len(calls) == 3
+    assert [len(batch) for batch in calls] == [256, 144]
+    assert [path for batch in calls for path in batch] == sorted(paths)
     await release_media.extract_voice_paths(parent, paths, voice_root / "batch/files")
-    assert len(calls) == 3  # Successful exact exports are reusable on retry.
+    assert len(calls) == 2  # Successful exact exports are reusable on retry.
+
+
+@pytest.mark.parametrize("count,length", [(530, 30), (80, 1000)])
+def test_voice_filter_batches_are_deterministic_bounded_and_complete(count, length):
+    paths = [f"Audio/{number:04d}_" + "a" * length + ".wem" for number in range(count)]
+    batches = release_media.voice_filter_batches(reversed(paths))
+    assert batches == release_media.voice_filter_batches(paths + paths[:3])
+    assert [path for batch in batches for path in batch] == paths
+    assert all(len(batch) <= 256 and len("|".join(batch).encode("ascii")) <= 24 * 1024
+               for batch in batches)
+    for batch, following in zip(batches, batches[1:], strict=False):
+        assert len(batch) == 256 or len("|".join([*batch, following[0]]).encode("ascii")) > 24 * 1024
+
+
+def test_voice_filter_byte_budget_counts_separators_at_exact_boundary():
+    first = "a" * 12000
+    second = "b" * (24 * 1024 - len(first) - 1)
+    assert release_media.voice_filter_batches([second, first]) == [[first, second]]
+    assert release_media.voice_filter_batches([second + "b", first]) == [[first], [second + "b"]]
+    assert release_media.voice_filter_batches([]) == []
+
+
+@pytest.mark.parametrize("path", ["Audio/non-ascii_я.wem", "Audio/file.wem|Audio/other.wem", "a" * (24 * 1024 + 1)])
+def test_voice_filter_rejects_invalid_or_oversized_paths(path):
+    with pytest.raises(ValueError):
+        release_media.voice_filter_batches(["Audio/valid.wem", path])
 
 
 @pytest.mark.asyncio

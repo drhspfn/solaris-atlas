@@ -57,6 +57,8 @@ from wuwa_story_worker.voice_import import (
 )
 
 logger = logging.getLogger(__name__)
+VOICE_FILTER_MAX_BYTES = 24 * 1024
+VOICE_FILTER_MAX_PATHS = 256
 
 
 async def source_context(parent, *, voice=False, video=False):
@@ -561,17 +563,34 @@ async def extract_requested_voices(parent, names, destination=None, *, paths=Non
             encoding="utf-8")
 
 
+def voice_filter_batches(paths):
+    """Stable exact-path alternatives bounded by both argv bytes and path count."""
+    batches, batch, size = [], [], 0
+    for path in sorted(set(paths)):
+        if not re.fullmatch(r"[a-zA-Z0-9_./-]+", path):
+            raise ValueError("Unsupported authored voice archive path")
+        path_size = len(path)  # The validated ASCII alphabet is one UTF-8 byte per character.
+        if path_size > VOICE_FILTER_MAX_BYTES:
+            raise ValueError("Authored voice archive path exceeds the filter byte budget")
+        if batch and (len(batch) == VOICE_FILTER_MAX_PATHS
+                      or size + 1 + path_size > VOICE_FILTER_MAX_BYTES):
+            batches.append(batch)
+            batch, size = [], 0
+        size += path_size + bool(batch)  # Include the | separator in the argv budget.
+        batch.append(path)
+    if batch:
+        batches.append(batch)
+    return batches
+
+
 async def extract_voice_paths(parent, selected, extracted):
     voice_root = package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace())
     extracted.mkdir(parents=True, exist_ok=True)
     from wuwa_story_worker.entity_media import tool
     with workspace_lock(voice_root):
         missing = [path for path in selected if not (extracted / path).is_file()]
-        # FModel's path alternatives are bounded to keep command lines small.
-        for offset in range(0, len(missing), 20):
-            paths = missing[offset:offset + 20]
-            if any(not re.fullmatch(r"[a-zA-Z0-9_./-]+", path) for path in paths):
-                raise ValueError("Unsupported authored voice archive path")
+        # Each batch remounts the archives, so fill the bounded filter argument.
+        for paths in voice_filter_batches(missing):
             log = voice_root / "selective-export.log"
             await tool([tool_path("WUWA_FMODEL_PATH"), voice_root / "game",
                         "@" + str(client_root(parent) / "keys.txt"), extracted,
