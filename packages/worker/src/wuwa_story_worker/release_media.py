@@ -354,6 +354,21 @@ async def voice_packages(parent):
     from wuwa_story_worker.voice_bootstrap import discover_client_voices
     from wuwa_story_worker.voice_packages import download_voice_plan
 
+    voice_cache = asset_workspace() / "voices"
+    markers = sorted(voice_cache.glob(f"{parent['asset_version']}-*/audio-export.json"),
+                     key=lambda path: path.stat().st_mtime, reverse=True)
+    for marker in markers:
+        try:
+            cached = json.loads((marker.parent / "plan.json").read_text(encoding="utf-8"))
+            status = json.loads((marker.parent / "status.json").read_text(encoding="utf-8"))
+            exported = json.loads(marker.read_text(encoding="utf-8"))
+            if (cached["version"] == parent["asset_version"]
+                    and status.get("state") == "downloaded" and status.get("id") == cached["id"]
+                    and exported.get("plan_id") == cached["id"]):
+                return {**parent, "voice_plan_id": cached["id"], "stage": "voice_packages_ready",
+                        "media_report": exported.get("media_report", {})}, "completed"
+        except (OSError, ValueError, KeyError):
+            continue
     root = client_root(parent)
     receipt = await export_assets(root, tool_path("WUWA_FMODEL_PATH"), "KuroPublicConfig")
     plan = await asyncio.to_thread(discover_client_voices, parent["asset_version"], receipt.parent / "files")

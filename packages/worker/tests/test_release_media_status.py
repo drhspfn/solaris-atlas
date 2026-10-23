@@ -202,3 +202,18 @@ async def test_prepare_reuses_completed_client_without_download_disk_reserve(mon
     archive.unlink()
     with pytest.raises(AssertionError, match="Already downloaded"):
         await release_media.prepare(run, AsyncMock())
+
+@pytest.mark.asyncio
+async def test_new_release_reuses_completed_voice_packages(monkeypatch, tmp_path):
+    import json
+    folder = tmp_path / 'voices/3.7.0-fixture'
+    folder.mkdir(parents=True)
+    (folder/'plan.json').write_text(json.dumps({'id':'pinned','version':'3.7.0'}))
+    (folder/'status.json').write_text(json.dumps({'id':'pinned','state':'downloaded'}))
+    (folder/'audio-export.json').write_text(json.dumps({'plan_id':'pinned','media_report':{'found':123}}))
+    monkeypatch.setattr(release_media,'asset_workspace',lambda:tmp_path)
+    monkeypatch.setattr(release_media,'export_assets',AsyncMock(side_effect=AssertionError('must reuse')))
+    result,status=await release_media.voice_packages({'asset_version':'3.7.0','download_id':'same-client'})
+    assert status=='completed' and result['voice_plan_id']=='pinned'
+    assert result['media_report']=={'found':123}
+    release_media.export_assets.assert_not_awaited()
