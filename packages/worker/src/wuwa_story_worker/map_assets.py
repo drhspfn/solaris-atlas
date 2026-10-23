@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.maps import MapMarker, MapTile, TileMap
+from wuwa_story.db.models.storage import FileReference
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
@@ -61,13 +62,22 @@ async def build_maps(root: Path, fmodel: Path, converter: Path, publish: bool = 
     if plan["version"] != "3.7.0":
         raise ValueError(
             "Map ConfigDB readers and coordinate transforms are verified for 3.7.0 only")
+    tools = {"WUWA_FMODEL_PATH": _sha256(fmodel), "WUWA_TEXTURE_CONVERTER_PATH": _sha256(converter)}
+    if publish:
+        from wuwa_story_worker.map_provenance import reuse_maps
+
+        if await reuse_maps(root, plan, tools, fmodel, converter):
+            receipt = root / "maps/manifest.json"
+            save_json(receipt, {"asset_job_id": plan["id"], "reused_catalog": True})
+            return receipt
     config_receipt = await export_assets(root, fmodel, "ConfigDB")
-    image_receipt = await export_assets(root, fmodel, "UiWorldMap/Image/")
     config = config_receipt.parent / "files/Client/Content/Aki/ConfigDB"
-    raw = image_receipt.parent / "files"
     tiles = await asyncio.to_thread(read_tiles, config)
+    packages = sorted({tile["source_path"] for tile in tiles})
+    image_receipt = await export_assets(root, fmodel, "|".join(path.removesuffix(".uasset") for path in packages))
+    raw = image_receipt.parent / "files"
     markers, details, diagnostics = await asyncio.to_thread(read_catalog, config, {tile["map_id"] for tile in tiles})
-    icons = await build_icons(root, fmodel, converter, markers)
+    icons = await build_icons(root, fmodel, converter, markers, entity_media=True, exact_textures=True)
     with workspace_lock(root):
         output = root / "maps"
         output.mkdir(exist_ok=True)
@@ -77,39 +87,12 @@ async def build_maps(root: Path, fmodel: Path, converter: Path, publish: bool = 
             if not (raw / package).is_file():
                 raise FileNotFoundError(
                     f"Configured map texture is missing: {package}")
-        package_list = output / "packages.txt"
-        # CUE4Parse prefixes loose-file paths with the input directory's name.
-        package_list.write_text(
-            "\n".join(raw.name + "/" + path for path in packages), encoding="utf-8")
-        textures = output / "textures"
-        textures.mkdir(exist_ok=True)
-        png_root = Path(tempfile.mkdtemp(prefix="decode-", dir=textures))
-        log = output / "converter.log"
-        logger.info("maps.convert packages=%s version=%s",
-                    len(packages), plan["version"])
-
-        def convert() -> None:
-            with log.open("w", encoding="utf-8") as stream:
-                subprocess.run([str(converter.resolve()), "-i", str(raw.resolve()),
-                                "-g", "GAME_WutheringWaves", "-c", str(
-                                    package_list.resolve()),
-                                "-f", "png", "-o", str(png_root.resolve()), "-y", "-v"],
-                               stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=7200)
-        await asyncio.to_thread(convert)
-        # The converter can return zero on failed packages. Validate every requested PNG.
-        pngs = {}
-        for path in png_root.rglob("*.png"):
-            relative = path.as_posix().split("/Client/Content/", 1)
-            if len(relative) == 2:
-                key = "Client/Content/" + relative[1][:-4] + ".uasset"
-                if key in pngs:
-                    raise ValueError(f"Ambiguous decoded texture: {key}")
-                pngs[key] = path
+        pngs = await decode_map_packages(raw, packages, output, converter)
         groups = defaultdict(list)
         for tile in tiles:
             if tile["source_path"] not in pngs:
                 raise ValueError(
-                    f"Texture decode failed: {tile['source_path']}; inspect {log}")
+                    f"Texture decode failed: {tile['source_path']}")
             tile["png"] = pngs[tile["source_path"]]
             tile["sha256"] = _sha256(tile["png"])
             source = raw / tile["source_path"]
@@ -137,6 +120,7 @@ async def build_maps(root: Path, fmodel: Path, converter: Path, publish: bool = 
         receipt = output / "manifest.json"
         save_json(receipt, {"schema_version": 1, "asset_job_id": plan["id"],
                             "game_version": plan["version"], "keys_commit": plan["keys_commit"],
+                            "tier": plan["tier"], "tools": tools,
                             "converter_sha256": _sha256(converter), "raw_root": str(raw.resolve()),
                             "coordinate_system": "Unreal world units; raster X=world X, raster Y=world Y; tile rows descend",
                             "sources": sources, "maps": maps, "markers": markers, "icons": icons, "diagnostics": diagnostics})
@@ -147,7 +131,37 @@ async def build_maps(root: Path, fmodel: Path, converter: Path, publish: bool = 
         return receipt
 
 
+async def decode_map_packages(raw, packages, output, converter):
+    output.mkdir(parents=True, exist_ok=True)
+    package_list = output / "packages.txt"
+    package_list.write_text("\n".join(raw.name + "/" + path for path in packages), encoding="utf-8")
+    png_root = Path(tempfile.mkdtemp(prefix="decode-", dir=output))
+    log = output / "converter.log"
+
+    def convert():
+        with log.open("w", encoding="utf-8") as stream:
+            subprocess.run([str(converter.resolve()), "-i", str(raw.resolve()),
+                            "-g", "GAME_WutheringWaves", "-c", str(package_list.resolve()),
+                            "-f", "png", "-o", str(png_root.resolve()), "-y", "-v"],
+                           stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=7200)
+    await asyncio.to_thread(convert)
+    pngs = {}
+    for path in png_root.rglob("*.png"):
+        relative = path.as_posix().split("/Client/Content/", 1)
+        if len(relative) == 2:
+            key = "Client/Content/" + relative[1][:-4] + ".uasset"
+            if key in pngs:
+                raise ValueError(f"Ambiguous decoded texture: {key}")
+            pngs[key] = path
+    missing = set(packages) - pngs.keys()
+    if missing:
+        raise ValueError(f"Texture decode failed: {sorted(missing)}; inspect {log}")
+    return pngs
+
+
 async def publish_maps(receipt: Path) -> None:
+    from wuwa_story_worker.map_provenance import MapPublication
+
     bundle = json.loads(receipt.read_text(encoding="utf-8"))
     settings = get_settings()
     engine = create_async_engine(settings.database_url)
@@ -159,34 +173,61 @@ async def publish_maps(receipt: Path) -> None:
             # Serialize retries for the same immutable client build.
             lock_id = int(bundle["asset_job_id"][:15], 16)
             await session.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": lock_id})
+            references = list(await session.scalars(select(FileReference).where(
+                FileReference.reference_type.in_(["map_catalog", "map_icon", "map_tile", "map_preview", "map_source"]),
+                FileReference.source_name.startswith(bundle["asset_job_id"]))))
+            publication = MapPublication(session, service, bundle, references)
+            catalog = {"maps": [], "icons": {}, "marker_count": len(bundle["markers"])}
             source_ids = {}
             icon_ids = {}
             for source, icon in bundle.get("icons", {}).items():
                 path = Path(icon["path"])
                 if _sha256(path) != icon["sha256"]:
                     raise ValueError("Map icon changed")
-                image = await service.register_file(session, path, "image", mime_type="image/png")
+                image = await publication.file(path, "image", mime_type="image/png")
                 icon_ids[source] = image.id
+                raw_ids = []
                 for original_path in icon.get("raw_paths", []):
-                    original = await service.register_file(session, Path(original_path), "unknown")
-                    await service.register_variant(session, original.id, image.id, "map_icon_png")
+                    original = await publication.file(Path(original_path), "unknown")
+                    raw_ids.append(original.id)
+                provenance = publication.provenance(source.split(".", 1)[0], raw_ids)
+                publication.reference("map_icon", source, bundle["asset_job_id"], image.id, provenance)
+                for original in raw_ids:
+                    await publication.variant(original, image.id, "map_icon_png", provenance)
+                catalog["icons"][source] = {"file_id": image.id}
             for name, source in bundle["sources"].items():
                 path = Path(source["path"])
                 if _sha256(path) != source["sha256"]:
                     raise ValueError(f"Map source changed: {name}")
-                source_ids[name] = (await service.register_file(session, path, "unknown")).id
+                source_ids[name] = (await publication.file(path, "unknown")).id
+                package = publication.files[str(source_ids[name])]["package_paths"][0]
+                publication.reference("map_source", package, bundle["asset_job_id"], source_ids[name],
+                                      publication.provenance(package, [source_ids[name]]))
             for data in bundle["maps"]:
                 preview_path = receipt.parent / data["preview"]
                 if _sha256(preview_path) != data["preview_sha256"]:
                     raise ValueError("Map preview changed")
-                preview = await service.register_file(session, preview_path, "image", mime_type="image/png")
+                preview = await publication.file(preview_path, "image", mime_type="image/png")
+                preview_source = f"maps/{data['game_map_id']}/{data['layer_key']}/preview.png"
+                preview_provenance = publication.provenance(preview_source, list(source_ids.values()))
+                preview_provenance["source_files"].extend(
+                    {"package_path": str(Path(tile["source_path"]).with_suffix(suffix)).replace("\\", "/"),
+                     "sha256": digest}
+                    for tile in data["tiles"] for suffix, digest in tile["raw_sha256"].items())
+                preview_provenance["tile_layout"] = [
+                    {key: tile[key] for key in ("x", "y", "source_path")} for tile in data["tiles"]]
+                publication.reference("map_preview", preview_source, bundle["asset_job_id"], preview.id, preview_provenance)
+                catalog_map = {"game_map_id": data["game_map_id"], "layer_key": data["layer_key"],
+                               "preview_file_id": preview.id, "tiles": []}
+                catalog["maps"].append(catalog_map)
                 values = {key: data[key] for key in (
                     "game_map_id", "layer_key", "tile_size", "world_tile_size", "min_x", "min_y", "max_x", "max_y")}
                 values.update(asset_job_id=bundle["asset_job_id"], game_version=bundle["game_version"],
                               preview_file_id=preview.id, metadata_json={"source_file_ids": source_ids,
                               "preview_width": data["preview_width"], "preview_height": data["preview_height"],
                               "keys_commit": bundle["keys_commit"], "converter_sha256": bundle["converter_sha256"],
-                              "catalog": data.get("catalog", {}), "icon_file_ids": icon_ids})
+                              "catalog": data.get("catalog", {}), "icon_file_ids": icon_ids,
+                              "game_source": preview_provenance})
                 stmt = insert(TileMap).values(**values)
                 map_id = await session.scalar(stmt.on_conflict_do_update(
                     index_elements=[TileMap.asset_job_id,
@@ -197,21 +238,31 @@ async def publish_maps(receipt: Path) -> None:
                     png = receipt.parent / tile["png"]
                     if _sha256(png) != tile["sha256"]:
                         raise ValueError("Decoded map tile changed")
-                    image = await service.register_file(session, png, "image", mime_type="image/png")
+                    image = await publication.file(png, "image", mime_type="image/png")
                     raw_path = Path(bundle["raw_root"]) / tile["source_path"]
                     originals = []
+                    raw_ids = {}
                     for suffix, digest in tile["raw_sha256"].items():
                         path = raw_path.with_suffix(suffix)
                         if _sha256(path) != digest:
                             raise ValueError("Raw map tile changed")
                         if path.is_file():
-                            original = await service.register_file(session, path, "unknown")
+                            original = await publication.file(path, "unknown")
                             originals.append(original.id)
-                            await service.register_variant(session, original.id, image.id, "map_texture_png")
+                            raw_ids[suffix] = original.id
+                    provenance = publication.provenance(tile["source_path"], originals)
+                    ref_name = f"{bundle['asset_job_id']}:{data['game_map_id']}:{data['layer_key']}:{tile['x']}:{tile['y']}"
+                    publication.reference("map_tile", tile["source_path"], ref_name, image.id, provenance)
+                    for original in originals:
+                        await publication.variant(original, image.id, "map_texture_png", provenance)
+                        await publication.variant(original, preview.id, "map_preview_png", preview_provenance)
+                    catalog_map["tiles"].append({"x": tile["x"], "y": tile["y"],
+                        "source_path": tile["source_path"], "file_id": image.id, "raw_ids": raw_ids})
                     values = {"map_id": map_id, "x": tile["x"], "y": tile["y"], "file_id": image.id,
                               "source_path": tile["source_path"], "metadata_json": {
                                   key: value for key, value in tile.items() if key != "png"}}
                     values["metadata_json"]["raw_file_ids"] = originals
+                    values["metadata_json"]["game_source"] = provenance
                     stmt = insert(MapTile).values(**values)
                     await session.execute(stmt.on_conflict_do_update(
                         index_elements=[MapTile.map_id, MapTile.x, MapTile.y],
@@ -231,6 +282,7 @@ async def publish_maps(receipt: Path) -> None:
                                         "metadata_json" else key]
                           for key in values[0] if key not in
                           ("asset_job_id", "game_map_id", "entity_id")}))
+            await publication.finish(receipt, catalog, list(source_ids.values()))
     finally:
         await engine.dispose()
 

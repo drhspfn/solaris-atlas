@@ -73,13 +73,17 @@ def test_raster_rows_follow_game_ui_and_stretch_floor_textures(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.skipif(not os.getenv("WUWA_TEST_DATABASE_URL"), reason="Test PostgreSQL not configured")
 async def test_map_publication_is_atomic_and_idempotent(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+
     from sqlalchemy import func, select
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from wuwa_story.config.settings import Settings
     from wuwa_story.db.models.maps import MapMarker, MapTile, TileMap
+    from wuwa_story.db.models.storage import FileReference
+    from wuwa_story.storage.hashing import content_object_key
     from wuwa_story.storage.local import LocalStorage
 
-    from wuwa_story_worker import map_assets
+    from wuwa_story_worker import map_assets, map_provenance
 
     class Storage(LocalStorage):
         backend = "s3"
@@ -91,6 +95,8 @@ async def test_map_publication_is_atomic_and_idempotent(tmp_path, monkeypatch):
     settings = Settings(database_url=os.environ["WUWA_TEST_DATABASE_URL"])
     monkeypatch.setattr(map_assets, "get_settings", lambda: settings)
     monkeypatch.setattr(map_assets, "S3Storage", lambda _: Storage(tmp_path / "objects"))
+    monkeypatch.setattr(map_provenance, "get_settings", lambda: settings)
+    monkeypatch.setattr(map_provenance, "S3Storage", lambda _: Storage(tmp_path / "objects"))
     png = tmp_path / "tile.png"
     Image.new("RGBA", (4, 4), (20, 30, 40, 255)).save(png)
     raw = tmp_path / "raw/Client/Content/Tile.uasset"
@@ -102,6 +108,7 @@ async def test_map_publication_is_atomic_and_idempotent(tmp_path, monkeypatch):
         return hashlib.sha256(path.read_bytes()).hexdigest()
     job_id = hashlib.sha256(uuid4().bytes).hexdigest()
     bundle = {"asset_job_id": job_id, "game_version": "3.7.0", "keys_commit": "a" * 40,
+              "tier": "hd", "tools": {"WUWA_FMODEL_PATH": "a" * 64, "WUWA_TEXTURE_CONVERTER_PATH": "b" * 64},
               "converter_sha256": "b" * 64, "raw_root": str(tmp_path / "raw"),
               "sources": {"config.db": {"path": str(source), "sha256": digest(source)}},
               "maps": [{"game_map_id": 8, "layer_key": "gravity:1", "tile_size": 4,
@@ -126,6 +133,17 @@ async def test_map_publication_is_atomic_and_idempotent(tmp_path, monkeypatch):
             assert maps[0].metadata_json["source_file_ids"]
             assert await session.scalar(select(func.count()).select_from(MapTile).where(MapTile.map_id == maps[0].id)) == 1
             assert await session.scalar(select(func.count()).select_from(MapMarker).where(MapMarker.asset_job_id == job_id)) == 1
+            refs = list(await session.scalars(select(FileReference).where(FileReference.source_name.startswith(job_id))))
+            assert {ref.reference_type for ref in refs} == {"map_tile", "map_preview", "map_source", "map_catalog"}
+            assert all(ref.metadata_json["game_source"]["download_id"] == job_id for ref in refs)
+        plan = {"id": job_id, "version": "3.7.0", "tier": "hd"}
+        assert await map_provenance.reuse_maps(tmp_path, plan, bundle["tools"], tmp_path / "fmodel", tmp_path / "converter")
+        await Storage(tmp_path / "objects").delete(content_object_key(bytes.fromhex(digest(png))))
+        export = AsyncMock(side_effect=AssertionError("A missing PNG must reuse stored raw packages"))
+        monkeypatch.setattr(map_provenance, "export_assets", export)
+        monkeypatch.setattr(map_assets, "decode_map_packages", AsyncMock(return_value={"Client/Content/Tile.uasset": png}))
+        assert await map_provenance.reuse_maps(tmp_path, plan, bundle["tools"], tmp_path / "fmodel", tmp_path / "converter")
+        export.assert_not_awaited()
         # Corruption must fail publication without creating a partial map build.
         bundle["asset_job_id"] = "c" * 64
         receipt.write_text(json.dumps(bundle))
@@ -136,3 +154,58 @@ async def test_map_publication_is_atomic_and_idempotent(tmp_path, monkeypatch):
             assert await session.scalar(select(func.count()).select_from(TileMap).where(TileMap.asset_job_id == "c" * 64)) == 0
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_complete_published_map_is_checked_before_any_export(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from wuwa_story_worker import map_assets, map_provenance
+
+    plan = {"id": "a" * 64, "version": "3.7.0", "tier": "hd"}
+    (tmp_path / "plan.json").write_text(json.dumps(plan))
+    tool = tmp_path / "tool"
+    tool.write_bytes(b"pinned tools")
+    reuse = AsyncMock(return_value=True)
+    export = AsyncMock(side_effect=AssertionError("No extraction for a complete map"))
+    monkeypatch.setattr(map_provenance, "reuse_maps", reuse)
+    monkeypatch.setattr(map_assets, "export_assets", export)
+    receipt = await map_assets.build_maps(tmp_path, tool, tool, publish=True)
+    assert json.loads(receipt.read_text())["reused_catalog"] is True
+    reuse.assert_awaited_once()
+    export.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_initial_build_exports_only_authored_tile_packages(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from wuwa_story_worker import map_assets
+
+    tool = tmp_path / "tool"
+    tool.write_bytes(b"pinned tool")
+    (tmp_path / "plan.json").write_text(json.dumps({
+        "id": "a" * 64, "version": "3.7.0", "tier": "hd", "keys_commit": "b" * 40}))
+    config = tmp_path / "config/files/Client/Content/Aki/ConfigDB"
+    config.mkdir(parents=True)
+    for name in ("db_map.db", "db_mapfog.db", "db_ui_resource.db", "db_level_entity.db",
+                 "db_area.db", "db_item.db", "db_enrichment.db", "db_map_mark.db",
+                 "db_monster_Info.db", "db_template.db", "db_drop.db"):
+        (config / name).write_bytes(b"configuration")
+    package = "Client/Content/Map/OnlyNeeded.uasset"
+    raw = tmp_path / "textures/files" / package
+    raw.parent.mkdir(parents=True)
+    raw.write_bytes(b"authored package")
+    png = tmp_path / "maps/decoded.png"
+    png.parent.mkdir()
+    Image.new("RGBA", (4, 4), "red").save(png)
+    tiles = [{"map_id": 8, "layer": "gravity:1", "x": 0, "y": 0, "source_path": package}]
+    monkeypatch.setattr(map_assets, "read_tiles", lambda _: tiles)
+    monkeypatch.setattr(map_assets, "read_catalog", lambda *_: ([], {}, []))
+    monkeypatch.setattr(map_assets, "build_icons", AsyncMock(return_value={}))
+    monkeypatch.setattr(map_assets, "decode_map_packages", AsyncMock(return_value={package: png}))
+    export = AsyncMock(side_effect=[tmp_path / "config/manifest.json", tmp_path / "textures/manifest.json"])
+    monkeypatch.setattr(map_assets, "export_assets", export)
+    await map_assets.build_maps(tmp_path, tool, tool)
+    assert [call.args[2] for call in export.await_args_list] == [
+        "ConfigDB", "Client/Content/Map/OnlyNeeded"]
