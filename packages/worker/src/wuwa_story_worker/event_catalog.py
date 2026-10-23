@@ -165,7 +165,7 @@ def read_event_catalog(config: Path, readers: Path | None = None) -> dict[str, d
     featured_ids = {identifier for record in records.values() for identifier in record.get("featured_ids", [])}
     portraits = {}
     for filename, name, key_column, fields in [
-        ("db_role.db", "roleinfo", "Id", [("featured_portrait", 21), ("featured_stand", 20), ("featured_card", 17)]),
+        ("db_role.db", "roleinfo", "Id", [("featured_portrait", 21), ("quest_illustration", 20), ("featured_card", 17)]),
         ("db_weapon.db", "weaponconf", "ItemId", [("featured_weapon", 23), ("featured_weapon_small", 24)]),
     ]:
         if (config / filename).is_file():

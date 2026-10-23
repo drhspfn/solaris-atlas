@@ -119,11 +119,8 @@ async def list_game_events(
             return snapshot_banners.get((data["notice_id"], data.get("notice_revision"))) or notice_banners.get(data["notice_id"])
         return None
     def preview(event, occurrence):
-        image = next((image_url(event, occurrence, asset["path"]) for role in (
-            "content", "featured_portrait", "featured_stand", "featured_weapon")
-            for asset in _artwork(event, occurrence)
-            if asset.get("role") == role and image_url(event, occurrence, asset["path"])
-            and not asset["path"].endswith("/T_CommonNone_UI")), None)
+        image = _client_preview(_artwork(event, occurrence),
+                                lambda path: image_url(event, occurrence, path))
         image = image or image_url(event, occurrence, (occurrence.banner_path if occurrence else None) or event.banner_path or "")
         notice = latest_notice.get(event.id)
         captured = ((occurrence.source_data or {}) if occurrence else {}).get("client", {}).get("download_id")
@@ -208,8 +205,24 @@ def _artwork(event, occurrence):
     client = _client_data(event, occurrence)
     unique = {}
     for asset in client.get("artwork", []) + client.get("prefab_artwork", []):
+        # Quest illustrations and prefab defaults do not prove a banner's subject,
+        # element or weapon type. Runtime bindings can replace these textures.
+        if asset.get("role") in {"featured_stand", "quest_illustration"}:
+            continue
+        if asset.get("role") == "prefab_texture" and any(part in asset["path"] for part in (
+            "/SkillIcon/SkillIconNor/", "/IconElementRound/", "/IconElement/")):
+            continue
         unique.setdefault(asset["path"], asset)
     return list(unique.values())
+
+
+def _client_preview(artwork, image_url):
+    for role in ("content", "tab_selected", "tab", "featured_portrait", "featured_weapon", "featured_card"):
+        for asset in artwork:
+            if asset.get("role") == role and not asset["path"].endswith("/T_CommonNone_UI"):
+                if url := image_url(asset["path"]):
+                    return url
+    return None
 
 
 def _presentation(event, occurrence, locale):

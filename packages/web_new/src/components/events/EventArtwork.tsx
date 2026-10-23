@@ -7,7 +7,10 @@ export function EventArtwork({ event }: { event: GameEvent }) {
   const [failed, setFailed] = useState('');
   const url = event.preview_url || event.banner_url;
   const subject =
-    !!event.preview_url && event.kind === 'banner' && !event.preview_provenance?.includes('notice');
+    !!event.preview_url &&
+    event.kind === 'banner' &&
+    !event.preview_provenance?.includes('notice') &&
+    !!event.artwork?.some((image) => image.url === url && image.role.startsWith('featured_'));
   const background = subject
     ? event.artwork?.find(
         (image) =>

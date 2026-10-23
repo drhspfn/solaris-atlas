@@ -120,3 +120,18 @@ def test_new_prefab_images_are_visible_with_the_same_occurrence_snapshot():
     assert _artwork(event, occurrence) == [image]
     occurrence.source_data["client"]["download_id"] = "b" * 64
     assert _artwork(event, occurrence) == []
+
+
+def test_banner_uses_promotional_art_not_generic_quest_or_prefab_defaults():
+    from types import SimpleNamespace
+    from wuwa_story.api.routes.game_events import _artwork, _client_preview
+    images=[{'role':'featured_stand','path':'/Game/Quest/Jiyan'},
+            {'role':'featured_card','path':'/Game/CorrectPortrait'},
+            {'role':'tab_selected','path':'/Game/CorrectBanner'}]
+    defaults=[{'role':'prefab_texture','path':'/Game/UI/IconElementRound/Wind'},
+              {'role':'prefab_texture','path':'/Game/UI/SkillIcon/SkillIconNor/Magic'}]
+    event=SimpleNamespace(source_data={'client':{'artwork':images,'prefab_artwork':defaults}})
+    artwork=_artwork(event,None)
+    assert [a['path'] for a in artwork]==['/Game/CorrectPortrait','/Game/CorrectBanner']
+    assert _client_preview(artwork,lambda path:path+'.png')=='/Game/CorrectBanner.png'
+    assert _client_preview([images[0]],lambda path:path+'.png') is None
