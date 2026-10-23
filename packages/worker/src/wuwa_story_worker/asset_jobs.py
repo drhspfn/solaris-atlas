@@ -15,6 +15,8 @@ from wuwa_story_worker.broker import publish_job
 from wuwa_story_worker.client_assets import download_plan, validate_plan
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.map_assets import build_maps
+from wuwa_story_worker.media_provenance import temporary_entity_workspace
+from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.tooling import asset_workspace, tool_path
 
 logger = logging.getLogger(__name__)
@@ -53,8 +55,10 @@ async def download_client_assets(plan: dict[str, Any]) -> None:
         async with _download_lock:
             root = await asyncio.to_thread(download_plan, plan, workspace, concurrency)
         logger.info("Asset job %s ready for extraction at %s", plan["id"], root)
-        for asset_filter in os.getenv("WUWA_ASSET_EXPORT_FILTERS", "ConfigDB").split(","):
+        for asset_filter in os.getenv("WUWA_ASSET_EXPORT_FILTERS", "").split(","):
             asset_filter = asset_filter.strip()
+            if not asset_filter:
+                continue
             if not re.fullmatch(r"[a-zA-Z0-9_./-]+", asset_filter):
                 raise ValueError("Invalid asset export filter")
             tag = hashlib.sha256(asset_filter.encode()).hexdigest()[:16]
@@ -104,21 +108,24 @@ async def extract_client_assets(payload: dict[str, Any]) -> None:
         workspace = asset_workspace()
         root = workspace / "assets" / f"{payload['version']}-{payload['tier']}-{payload['download_id'][:16]}"
         plan = json.loads((root / "plan.json").read_text(encoding="utf-8"))
-        if plan["id"] != payload["download_id"]:
+        validate_plan(plan)
+        status = json.loads((root / "status.json").read_text(encoding="utf-8"))
+        if (plan["id"] != payload["download_id"] or plan["version"] != payload["version"]
+                or plan["tier"] != payload["tier"] or status.get("state") != "downloaded"
+                or status.get("id") != plan["id"]):
             raise ValueError("Extraction job does not match downloaded plan")
-        if payload["job_type"] == "assets.maps":
-            receipt = await build_maps(
-                root,
-                tool_path("WUWA_FMODEL_PATH"),
-                tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
-                publish=True,
-            )
-            logger.info("Built and published map assets: %s", receipt)
-        else:
-            receipt = await export_assets(
-                root, tool_path("WUWA_FMODEL_PATH"), payload["filter"], upload=True
-            )
-            logger.info("Exported and published %s: %s", payload["filter"], receipt)
+        with temporary_entity_workspace(root) as scratch:
+            if payload["job_type"] == "assets.maps":
+                await finish_writes(build_maps(
+                    scratch, tool_path("WUWA_FMODEL_PATH"),
+                    tool_path("WUWA_TEXTURE_CONVERTER_PATH"), publish=True,
+                ))
+                logger.info("Published map assets download=%s", plan["id"])
+            else:
+                await finish_writes(export_assets(
+                    scratch, tool_path("WUWA_FMODEL_PATH"), payload["filter"], upload=True,
+                ))
+                logger.info("Published asset filter=%s download=%s", payload["filter"], plan["id"])
     except Exception as error:
         if run_id is not None:
             try:
