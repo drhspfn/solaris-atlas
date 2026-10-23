@@ -52,6 +52,8 @@ from wuwa_story_worker.voice_import import (
     exported_voices,
     import_voice_sample,
     missing_global_voice_identities,
+    missing_global_voice_paths,
+    voice_path_roster,
 )
 
 logger = logging.getLogger(__name__)
@@ -537,13 +539,19 @@ def indexed_audio_paths(index, expected):
     return sorted(paths)
 
 
-async def extract_requested_voices(parent, names, destination=None):
-    """Export only archive-confirmed names, including authored Rover variants."""
+async def requested_voice_paths(parent, names):
+    """Read the complete authored roster before deciding which files to reuse."""
     voice_root = package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace())
     index = voice_root / "archive-index.sqlite"
     if not index.is_file():
         await asyncio.to_thread(index_voice_paths, voice_root / "archive-index.log")
-    selected = await asyncio.to_thread(selected_voice_paths, index, names)
+    return await asyncio.to_thread(selected_voice_paths, index, names)
+
+
+async def extract_requested_voices(parent, names, destination=None, *, paths=None):
+    """Export only missing archive paths, including authored Rover variants."""
+    voice_root = package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace())
+    selected = await requested_voice_paths(parent, names) if paths is None else sorted(paths)
     destination = destination or voice_root / "plot-audio"
     await extract_voice_paths(parent, selected, destination)
     if destination != voice_root / "plot-audio":
@@ -600,43 +608,78 @@ async def extract_cutscene_audio(parent, config, name):
 
 async def voices(payload, parent):
     context = await source_context(parent, voice=True)
-    names = await missing_global_voice_identities(set(payload["targets"]), source_context=context)
+    scoped = parent.get("workspace_id") is not None
+    names = set(payload["targets"])
+    reused, missing_paths, absent_languages = set(), set(), []
+    roster = {}
+    if scoped:
+        context["voice_paths"] = await requested_voice_paths(parent, names)
+        roster = voice_path_roster(names, context["voice_paths"])
+        missing_paths = await missing_global_voice_paths(names, context["voice_paths"], source_context=context)
+        reused = set(context["voice_paths"]) - missing_paths
+        absent_languages = [f"{language}_{name}" for name, tracks in roster.items()
+                            for language in ("en", "ja", "ko", "zh")
+                            if not any(track["language"] == language for track in tracks)]
+        if not missing_paths:
+            return {**parent, "stage": "voices_reused", "reused": len(reused), "tracks": 0,
+                    "missing_voices": absent_languages}, "partial" if absent_languages else "completed"
+    else:
+        names = await missing_global_voice_identities(names, source_context=context)
     if not names:
         return {**parent, "stage": "voices_reused", "reused": len(payload["targets"]), "tracks": 0}, "completed"
     voice_root = package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace())
     extracted = voice_root / "plot-audio"
-    if parent.get("workspace_id"):
+    if scoped:
         extracted = voice_root / "voice-batches" / str(payload["run_id"]) / "files"
     from wuwa_story_worker.entity_media import tool
     inventory = parent.get("media_report")
     if inventory is None:
         # Existing successful package tasks predate inventories: reuse their pinned files.
-        with workspace_lock(extracted.parent):
-            marker = extracted.parent / "audio-export.json"
+        with workspace_lock(voice_root):
+            marker = voice_root / "audio-export.json"
             saved = json.loads(marker.read_text(encoding="utf-8"))
             if saved.get("plan_id") != parent["voice_plan_id"]:
                 raise ValueError("Voice export does not match its pinned package plan")
             inventory = saved.get("media_report")
             if inventory is None:
-                index = extracted.parent / "archive-index.log"
-                await tool([tool_path("WUWA_FMODEL_PATH"), extracted.parent / "game",
+                index = voice_root / "archive-index.log"
+                await tool([tool_path("WUWA_FMODEL_PATH"), voice_root / "game",
                             "@" + str(client_root(parent) / "keys.txt"), "--list"], index, 7200)
                 inventory = await publish_inventory(extracted, index)
                 save_json(marker, {**saved, "media_report": inventory})
-    if parent.get("workspace_id"):
-        await extract_requested_voices(parent, names, extracted)
+    if scoped:
+        await extract_requested_voices(parent, names, extracted, paths=missing_paths)
     grouped = await asyncio.to_thread(exported_voices, extracted, names)
+    if scoped:
+        # A retry can leave local copies of already published tracks in this batch.
+        grouped = {name: {key: path for key, path in tracks.items()
+                          if path.relative_to(extracted).as_posix() in missing_paths}
+                   for name, tracks in grouped.items()}
+        grouped = {name: tracks for name, tracks in grouped.items() if tracks}
     receipt = await export_assets(client_root(parent), tool_path("WUWA_FMODEL_PATH"), "ConfigDB")
     configs = list((receipt.parent / "files").rglob("db_plot_audio.db"))
     if len(configs) > 1:
         raise ValueError("Ambiguous client PlotAudio configuration")
     report = await asyncio.to_thread(voice_report, extracted, names, grouped,
                                      inventory=inventory, config=configs[0] if configs else None)
+    if scoped:
+        exported = {path.relative_to(extracted).as_posix()
+                    for tracks in grouped.values() for path in tracks.values()}
+        for entry in report["entries"]:
+            language, name = entry["expected"].removesuffix(".wem").split("_", 1)
+            paths = {track["path"] for track in roster[name] if track["language"] == language}
+            entry["matches"] = sorted(paths & (exported | reused))
+            entry["status"] = ("found" if paths and paths <= (exported | reused)
+                               else "export_missing" if paths else "not_in_archives")
+            if paths & reused:
+                entry["reused"] = True
+        report.update(found=sum(entry["status"] == "found" for entry in report["entries"]),
+                      missing=sum(entry["status"] != "found" for entry in report["entries"]))
     report.update(asset_version=parent["asset_version"], game_version=payload["game_version"])
     await update_admin_run(payload["run_id"], "release_media", "running", raw_output={"media_report": report})
     # Repair verified archive hits that a previous export left behind. No fuzzy substitutions.
     missing_exports = [entry for entry in report["entries"] if entry["status"] == "export_missing"]
-    if missing_exports:
+    if missing_exports and not scoped:
         with workspace_lock(extracted.parent):
             for entry in missing_exports:
                 await tool([tool_path("WUWA_FMODEL_PATH"), voice_root / "game",
@@ -653,8 +696,15 @@ async def voices(payload, parent):
     context["path_map"] = {path.relative_to(extracted).as_posix(): path.relative_to(extracted).as_posix()
                            for tracks in grouped.values() for path in tracks.values()}
     result = await import_voice_sample(extracted, tool_path("WUWA_VGMSTREAM_PATH"),
-                                      parent["asset_version"], names=names, require_all_languages=False, grouped=grouped,
+                                      parent["asset_version"], names=set(grouped) if scoped else names,
+                                      require_all_languages=False, grouped=grouped,
                                       source_context=context)
+    if scoped:
+        # Preserve authored files that extraction failed to produce, even when
+        # another name in the batch was repaired successfully.
+        result["missing_voices"] = sorted(set(result.get("missing_voices", []))
+            | (missing_paths - exported) | set(absent_languages))
+        result["reused"] = len(reused)
     return {**result, "media_report": report}, "partial" if result.get("missing_voices") else "completed"
 
 

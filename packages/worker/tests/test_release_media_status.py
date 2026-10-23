@@ -467,3 +467,78 @@ async def test_event_image_publication_persists_source_hashes(monkeypatch, tmp_p
     assert reference.metadata_json["game_source"]["source_files"] == [{
         "package_path": "Client/Content/Aki/UI/Texture.uasset",
         "sha256": hashlib.sha256(b"source bytes").hexdigest()}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("variants,produce", [(False, True), (True, True), (True, False)])
+async def test_release_exports_only_missing_voice_path_and_preserves_full_roster(
+        monkeypatch, tmp_path, variants, produce):
+    from wuwa_story_worker import entity_media
+
+    voice_root = tmp_path / "voice"
+    voice_root.mkdir()
+    paths = sorted({f"Audio/{language}_vo_test{suffix}.wem"
+                    for language in ("en", "ja", "ko", "zh")
+                    for suffix in (("_F", "_M") if variants else ("",))}
+                   | {f"Audio/{language}_vo_reused.wem" for language in ("en", "ja", "ko", "zh")})
+    missing = "Audio/ja_vo_test_M.wem" if variants else "Audio/ja_vo_test.wem"
+    (voice_root / "archive-index.log").write_text(
+        "".join(f"[File] {path}\n" for path in paths) + f"[Done] Listed {len(paths)} files\n")
+    parent = {"workspace_id": 11, "asset_version": "3.7.0", "voice_plan_id": "a" * 64,
+              "media_report": {}, "download_id": "b" * 64, "tier": "hd"}
+    monkeypatch.setattr(release_media, "package_root", lambda *_args, **_kwargs: voice_root)
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
+    monkeypatch.setattr(release_media, "missing_global_voice_identities",
+                        AsyncMock(side_effect=AssertionError("must use full archive roster first")))
+    select = AsyncMock(return_value={missing})
+    monkeypatch.setattr(release_media, "missing_global_voice_paths", select)
+    monkeypatch.setattr(release_media, "export_assets", AsyncMock(return_value=tmp_path / "config/manifest.json"))
+    monkeypatch.setattr(release_media, "update_admin_run", AsyncMock())
+    importer = AsyncMock(return_value={"tracks": int(produce), "missing_voices": []})
+    monkeypatch.setattr(release_media, "import_voice_sample", importer)
+    commands = []
+
+    async def extract(args, log, timeout):
+        commands.append(args[-1])
+        if produce:
+            path = args[3] / args[-1]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"wem")
+        log.write_text("[Done] Extracted files")
+
+    monkeypatch.setattr(entity_media, "tool", extract)
+    result, status = await release_media.voices(
+        {"run_id": 90, "game_version": "1.4.0", "targets": ["vo_test", "vo_reused"]}, parent)
+    assert commands == [missing]  # No sibling languages, variants, or fuzzy repair.
+    assert select.await_args.args == ({"vo_test", "vo_reused"}, paths)
+    kwargs = importer.await_args.kwargs
+    assert kwargs["source_context"]["voice_paths"] == paths
+    exported = [path for tracks in kwargs["grouped"].values() for path in tracks.values()]
+    assert [path.relative_to(importer.await_args.args[0]).as_posix() for path in exported] == ([missing] if produce else [])
+    assert result["reused"] == len(paths) - 1
+    assert status == ("completed" if produce else "partial")
+    assert result["missing_voices"] == ([] if produce else [missing])
+    report = result["media_report"]
+    assert report["found"] == (8 if produce else 7)
+    assert report["missing"] == int(not produce)
+    assert sum(entry.get("reused", False) for entry in report["entries"]) >= 7
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("languages", [("en", "ja", "ko", "zh"), ("en", "ja", "ko")])
+async def test_scoped_voice_roster_reuse_skips_extraction_and_reports_absent_language(
+        monkeypatch, languages):
+    paths = [f"Audio/{language}_vo_test.wem" for language in languages]
+    monkeypatch.setattr(release_media, "requested_voice_paths", AsyncMock(return_value=paths))
+    select = AsyncMock(return_value=set())
+    monkeypatch.setattr(release_media, "missing_global_voice_paths", select)
+    monkeypatch.setattr(release_media, "extract_voice_paths", AsyncMock(side_effect=AssertionError("verified paths")))
+    monkeypatch.setattr(release_media, "import_voice_sample", AsyncMock(side_effect=AssertionError("verified paths")))
+    result, status = await release_media.voices(
+        {"targets": ["vo_test"]}, {"workspace_id": 11})
+    assert select.await_args.args == ({"vo_test"}, paths)
+    assert select.await_args.kwargs["source_context"]["voice_paths"] == paths
+    assert result["reused"] == len(paths)
+    assert status == ("completed" if len(languages) == 4 else "partial")
+    assert result["missing_voices"] == ([] if len(languages) == 4 else ["zh_vo_test"])
