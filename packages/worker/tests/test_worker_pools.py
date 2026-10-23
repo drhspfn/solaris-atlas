@@ -170,6 +170,19 @@ async def test_cancelled_delivery_skips_handler_and_cleans_workspace(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_preflight_failure_is_visible_as_failed_instead_of_stuck_running(monkeypatch):
+    handler = AsyncMock()
+    monkeypatch.setattr(broker, "execute_media_job", AsyncMock(side_effect=AttributeError("invalid metadata codec")))
+    async with consumer(monkeypatch, "pool_audio", handler) as (callback, *_):
+        message = delivery()
+        await callback(message)
+        handler.assert_not_awaited()
+        broker.update_admin_run.assert_awaited_once_with(
+            1, "release_media", "failed", error="AttributeError: invalid metadata codec")
+        message.nack.assert_awaited_once_with(requeue=False)
+
+
+@pytest.mark.asyncio
 async def test_lease_survives_cancellation_until_writes_finish(monkeypatch):
     events = []
     entered, release = asyncio.Event(), asyncio.Event()

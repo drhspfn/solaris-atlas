@@ -30,6 +30,17 @@ JobHandler = Callable[[dict[str, Any]], Awaitable[None]]
 MEDIA_QUEUES = {"release_media", "event_media", "entity_media", "release_images", "entity_images"}
 
 
+async def record_job_failure(payload, processor_key, error):
+    if not isinstance(payload, dict) or payload.get("run_id") is None:
+        return
+    try:
+        await update_admin_run(payload["run_id"], processor_key, "failed",
+                               error=f"{type(error).__name__}: {error}"[:2000])
+    except Exception:
+        logger.exception("Could not record failed delivery run=%s processor=%s",
+                         payload["run_id"], processor_key)
+
+
 async def execute_media_job(payload: dict, handler: JobHandler) -> None:
     """One lease owns every write; cleanup rechecks durable terminal sibling state."""
     from wuwa_story_worker.media_workspace import (
@@ -319,6 +330,7 @@ async def consume_jobs(
                                 await message.nack(requeue=True)
                         else:
                             logger.exception("Database job failure exhausted retries (%s)", job_key)
+                            await record_job_failure(payload, processor_key, error)
                             await notify_job_result(payload.get("run_id"), processor_key, str(error))
                             await message.nack(requeue=False)
                     except Exception as error:
@@ -327,6 +339,7 @@ async def consume_jobs(
                             job_key,
                             message.message_id,
                         )
+                        await record_job_failure(payload, processor_key, error)
                         await notify_job_result(payload.get("run_id") if isinstance(payload, dict) else None,
                                                 processor_key, str(error))
                         await message.nack(requeue=False)

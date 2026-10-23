@@ -32,6 +32,8 @@ async def update_admin_run(
             )
             if run is None or run.status == "cancelled":
                 return
+            if status == "failed" and run.status in {"completed", "partial", "failed", "blocked"}:
+                return  # Preserve durable publication and the handler's more specific diagnosis.
             run.status = status
             run.error = error
             if raw_output is not None:
