@@ -14,13 +14,39 @@ from sqlalchemy import text as sql_text
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.graph import Edge, Node
 from wuwa_story.db.models.ontology import RelationType
-from wuwa_story.db.models.storage import FileReference
+from wuwa_story.db.models.storage import FileReference, FileVariant
 from wuwa_story.db.session import SessionFactory
 from wuwa_story.ingestion.cutscenes import Clip, CutsceneRecipe, PlaybackFlow
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
 from wuwa_story_worker.cutscene_segments import export_segments
+from wuwa_story_worker.publication_provenance import (
+    pinned_source,
+    publication_source,
+    recipe_identity,
+    verified_references,
+)
+
+
+async def missing_cutscene_identities(names: set[str], *, source_context: dict,
+                                      storage=None, recipe_hashes: dict | None = None) -> set[str]:
+    """Return canonical cutscene keys lacking a verified complete publication.
+
+    Safe before extraction for a pinned client/tools plan. When a recipe is already
+    available, pass recipe_hashes={cutscene: recipe_identity(spec, analyze_variants)}.
+    """
+    source = pinned_source(source_context)
+    if not names:
+        return set()
+    storage = storage or S3Storage(get_settings())
+    async with SessionFactory() as session:
+        refs = await verified_references(session, storage, "cutscene_flow", source, names)
+        present = {ref.source_path for ref in refs
+                   if ref.metadata_json.get("publication_complete")
+                   and (recipe_hashes is None or ref.metadata_json["game_source"].get("recipe_sha256")
+                        == recipe_hashes.get(ref.source_path))}
+        return names - present
 
 
 def movie_path(data: bytes) -> str:
@@ -219,8 +245,19 @@ async def import_cutscene_recipe(
     ffmpeg: Path,
     analyze_variants: bool = False,
     missing_assets: list[str] | None = None,
+    source_context: dict | None = None,
 ) -> dict:
     spec = CutsceneRecipe.model_validate_json(recipe.read_text(encoding="utf-8"))
+    requested_spec = spec
+    recipe_hash = recipe_identity(spec, analyze_variants)
+    if source_context is not None:
+        pinned_source(source_context, spec.asset_version)
+        missing = await missing_cutscene_identities(
+            {spec.cutscene}, source_context=source_context,
+            recipe_hashes={spec.cutscene: recipe_hash})
+        if not missing:
+            return {"videos": len(spec.videos), "cutscene": spec.cutscene,
+                    "asset_version": spec.asset_version, "skipped": True}
     spec = spec.model_copy(update={"videos": [available_soundtracks(video, assets, audio, missing_assets)
                                              for video in spec.videos]})
     # Separate working directories keep simultaneous publishers from overwriting each other.
@@ -228,6 +265,9 @@ async def import_cutscene_recipe(
     with tempfile.TemporaryDirectory(dir=output) as temporary:
         work = Path(temporary)
         prepared, decoded, bundles = [], {}, []
+        provenance_by_asset = {}
+        originals_by_asset = {}
+        published_references = {}
         for index, video in enumerate(spec.videos):
             engine = video.asset.removeprefix("asset:ue:")
             package, object_name = engine.rsplit(".", 1)
@@ -237,6 +277,20 @@ async def import_cutscene_recipe(
                 assets, "Client/Content/" + package.removeprefix("/Game/") + ".uexp"
             )
             movie = confined(movies, movie_path(exported.read_bytes()))
+            if source_context is not None:
+                originals = [exported, movie]
+                header = exported.with_suffix(".uasset")
+                if header.is_file():
+                    originals.append(header)
+                for track in video.soundtrack:
+                    bank = confined(assets, track.bank)
+                    originals.extend([bank, soundtrack_wem(audio, bank_media_id(bank.read_bytes(), track.media_id))])
+                provenance_by_asset[video.asset] = publication_source(
+                    source_context, {"path": engine, "kind": "video"}, list(dict.fromkeys(originals)),
+                    recipe_sha256=recipe_hash, recipe=requested_spec.model_dump(mode="json"),
+                    analyze_variants=analyze_variants,
+                )
+                originals_by_asset[video.asset] = list(dict.fromkeys(originals))
             duration, embedded_audio = await asyncio.to_thread(video_duration, ffmpeg, movie)
             for node in spec.flow.nodes:
                 if isinstance(node, Clip) and node.asset == video.asset:
@@ -430,10 +484,20 @@ async def import_cutscene_recipe(
                     session, playable, "video_mp4", mime_type="video/mp4"
                 )
                 playable_files.append(result)
-                await service.register_variant(
+                variant = await service.register_variant(
                     session, original.id, result.id, "cutscene_soundtrack_mix"
                 )
+                provenance = provenance_by_asset.get(video.asset)
+                if provenance:
+                    variant.metadata_json = {"game_source": provenance}
                 source_files = []
+                for path in originals_by_asset.get(video.asset, []):
+                    if path == movie:
+                        continue
+                    source = await service.register_file(
+                        session, path, "audio_wem" if path.suffix.casefold() == ".wem" else "unknown",
+                        mime_type="application/octet-stream")
+                    source_files.append(source.id)
                 for bank, wem, wav in source_paths:
                     for path, kind, mime in (
                         (bank, "unknown", "application/octet-stream"),
@@ -464,7 +528,10 @@ async def import_cutscene_recipe(
                     "soundtrack_recipe": [track.model_dump() for track in video.soundtrack],
                     "duration_seconds": duration,
                     "subtitles_included": False,
+                    "original_file_id": original.id,
+                    **({"game_source": provenance} if provenance else {}),
                 }
+                published_references[reference.id] = result.id
             if analysis:
                 analysis_file = output / "segments" / analysis["id"] / "analysis.json"
                 report_file = await service.register_file(
@@ -475,9 +542,12 @@ async def import_cutscene_recipe(
                     file = await service.register_file(
                         session, segment["path"], "video_mp4", mime_type="video/mp4"
                     )
-                    await service.register_variant(
+                    variant = await service.register_variant(
                         session, playable_files[index].id, file.id, "cutscene_segment"
                     )
+                    provenance = provenance_by_asset.get(spec.videos[index].asset)
+                    if provenance:
+                        variant.metadata_json = {"game_source": provenance}
                     reference = await publication_reference(
                         session,
                         service,
@@ -501,7 +571,9 @@ async def import_cutscene_recipe(
                         "end_frame": segment["end_frame"],
                         "fps": analysis["fps"],
                         "subtitles_included": False,
+                        **({"game_source": provenance} if provenance else {}),
                     }
+                    published_references[reference.id] = file.id
             flow_file = work / "recipe.json"
             flow_file.write_text(spec.model_dump_json(indent=2), encoding="utf-8")
             registered = await service.register_file(
@@ -519,6 +591,8 @@ async def import_cutscene_recipe(
                 "asset_version": spec.asset_version,
                 "flow": spec.flow.model_dump(),
             }
+            published_references[reference.id] = registered.id
+            reference.source_path = spec.cutscene
             await session.commit()
         if bundles:
             from wuwa_story_worker.cutscene_audio import publish_audio
@@ -526,11 +600,95 @@ async def import_cutscene_recipe(
                 bundle_path = bundle_root / "recipe.json"
                 bundle_path.write_text(bundle.model_dump_json(), encoding="utf-8")
                 await publish_audio(bundle_path, bundle_root, ffmpeg)
+        if source_context is not None:
+            await complete_cutscene_publication(
+                spec, provenance_by_asset, storage,
+                published_references=published_references,
+                complete=(spec.videos == requested_spec.videos and not missing_assets))
     return {
         "videos": len(spec.videos),
         "cutscene": spec.cutscene,
         "asset_version": spec.asset_version,
     }
+
+
+def publication_file_ids(reference) -> set[int]:
+    """Include audio manifests, stem evidence, silent videos and segment reports."""
+    metadata = reference.metadata_json or {}
+    ids = {reference.file_id} if reference.file_id else set()
+    for key in ("original_file_id", "analysis_file_id"):
+        if metadata.get(key):
+            ids.add(metadata[key])
+    ids.update(metadata.get("source_file_ids", []))
+    for track in metadata.get("tracks", []):
+        ids.add(track["file_id"])
+        ids.update(track.get("source_file_ids", []))
+    ids.update(metadata.get("videos", {}).values())
+    return ids
+
+
+async def complete_cutscene_publication(spec, provenance_by_asset, storage, *, complete,
+                                        published_references):
+    """Only mark complete after all separate stem transactions have succeeded."""
+    async with SessionFactory() as session:
+        nodes = {node.id: node.canonical_key for node in await session.scalars(
+            select(Node).where(Node.canonical_key.in_([spec.cutscene] + [v.asset for v in spec.videos])))}
+        for node_id in sorted(nodes):
+            await session.execute(sql_text("SELECT pg_advisory_xact_lock(:id)"), {"id": node_id})
+        refs = list(await session.scalars(select(FileReference).where(
+            FileReference.owner_node_id.in_(nodes),
+            FileReference.reference_type.in_(["cutscene_video", "cutscene_segment", "cutscene_audio_bundle", "cutscene_flow"]),
+            FileReference.metadata_json["asset_version"].astext == spec.asset_version)))
+        localized = {video.asset: {track.language for track in video.soundtrack if track.language}
+                     for video in spec.videos if any(track.language for track in video.soundtrack)}
+        refs = [ref for ref in refs if ref.id in published_references
+                or (ref.reference_type == "cutscene_audio_bundle" and nodes[ref.owner_node_id] in localized)]
+        # Another publisher may have changed these rows between the video and stem transactions.
+        current = {ref.id: ref.file_id for ref in refs}
+        if any(current.get(identity) != file_id for identity, file_id in published_references.items()):
+            return
+        for asset, languages in localized.items():
+            owned = [ref for ref in refs if nodes[ref.owner_node_id] == asset]
+            bundle = next((ref for ref in owned if ref.reference_type == "cutscene_audio_bundle"), None)
+            segments = {ref.metadata_json["segment_id"] for ref in owned
+                        if ref.reference_type == "cutscene_segment"}
+            complete = complete and audio_bundle_complete(bundle, languages, segments)
+        flow = next(ref for ref in refs if ref.reference_type == "cutscene_flow"
+                    and nodes[ref.owner_node_id] == spec.cutscene)
+        provenance = next(iter(provenance_by_asset.values()))
+        # The flow is the completion record for all its videos, not just the first.
+        provenance = {**provenance, "package_path": spec.cutscene,
+                      "source_files": [file for value in provenance_by_asset.values() for file in value["source_files"]]}
+        ids = set()
+        for ref in refs:
+            ids.update(publication_file_ids(ref))
+            value = provenance_by_asset.get(nodes[ref.owner_node_id], provenance)
+            ref.metadata_json = {**ref.metadata_json, "game_source": value}
+        for variant in await session.scalars(select(FileVariant).where(
+                FileVariant.child_file_id.in_(ids),
+                FileVariant.variant_type.in_(["cutscene_soundtrack_mix", "cutscene_segment", "cutscene_silent_video"]))):
+            if variant.variant_type == "cutscene_silent_video" or not (variant.metadata_json or {}).get("game_source"):
+                variant.metadata_json = {**(variant.metadata_json or {}), "game_source": provenance}
+        flow.metadata_json = {**flow.metadata_json, "publication_file_ids": sorted(ids),
+                              "publication_references": [{"id": ref.id, "file_id": ref.file_id} for ref in refs],
+                              "publication_complete": complete}
+        # Verify the closure now too: publication cannot be complete with missing bytes.
+        await session.flush()
+        verified = await verified_references(session, storage, "cutscene_flow",
+                                             pinned_source(provenance), {spec.cutscene})
+        if flow not in verified:
+            flow.metadata_json = {**flow.metadata_json, "publication_complete": False}
+        await session.commit()
+
+
+def audio_bundle_complete(bundle, languages, segments) -> bool:
+    if bundle is None:
+        return False
+    metadata = bundle.metadata_json or {}
+    available = {track.get("language") for track in metadata.get("tracks", [])
+                 if track.get("role") == "voice" and track.get("file_id")}
+    return (languages.issubset(available)
+            and ({"full"} | segments).issubset(metadata.get("videos", {})))
 
 
 async def publication_reference(session, service, owner_id, file_id, kind, version, segment=None):
