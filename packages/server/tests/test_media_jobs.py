@@ -74,5 +74,6 @@ async def test_completed_job_is_rechecked_and_workspace_membership_is_durable(mo
     run = await media_jobs.enqueue_entity_media(db, value)
     assert run is existing and run.status == "queued"
     assert run.metadata_json["request"]["workspace_id"] == 4
-    assert db.execute.await_args_list[0].args[1] == {"id": -4}
+    assert db.execute.await_args_list[0].args[1] == {"key": 4}
+    assert "pg_advisory_xact_lock_shared(706" in str(db.execute.await_args_list[0].args[0])
     publish.assert_awaited_once()

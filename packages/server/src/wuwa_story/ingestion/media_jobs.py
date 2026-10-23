@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.ops import ProcessingRun, Processor
 from wuwa_story.ingestion.entity_media import MediaRequest, entity_media_targets
+from wuwa_story.ingestion.media_workspaces import retain_workspace
 
 MEDIA_QUEUE = "wuwa.entity-media.v1"
 
@@ -51,8 +52,7 @@ async def publish_media_job(payload: dict, job_id: str, queue_name: str = MEDIA_
 
 async def enqueue_entity_media(session, request: MediaRequest, *, retry_partial: bool = False) -> ProcessingRun:
     if request.workspace_id is not None:
-        await session.execute(text("SELECT pg_advisory_xact_lock_shared(:id)"),
-                              {"id": -request.workspace_id})
+        await retain_workspace(session, request.workspace_id)
     targets = await entity_media_targets(session, request)
     payload = {
         "schema_version": 1,

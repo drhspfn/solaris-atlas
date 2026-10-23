@@ -119,6 +119,29 @@ async def test_queued_import_is_not_published_again(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cleaned_workspace_reinitializes_prerequisites_and_rechecks_completed_files(monkeypatch, tmp_path):
+    monkeypatch.setenv("WUWA_ASSET_WORKSPACE", str(tmp_path))
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version="1.4.0")
+    session.scalars.side_effect = [["character:1603"], [], []]
+    prepare = SimpleNamespace(id=10, status="completed", metadata_json={},
+                              raw_output={"workspace_id": 10, "asset_version": "3.7.0"})
+    voice = SimpleNamespace(id=11, status="completed", metadata_json={}, raw_output={})
+    images = SimpleNamespace(id=12, status="completed", metadata_json={}, raw_output={"entity_run_id": 90})
+    character = SimpleNamespace(id=13, status="cancelled", metadata_json={}, raw_output=None)
+    session.scalar.side_effect = [4, prepare, voice, images, character]
+    publish = AsyncMock()
+    monkeypatch.setattr(release_media, "publish_media_job", publish)
+    result = await release_media.enqueue_release_media(session, 4)
+    assert result["queued"] == 4
+    assert all(call.args[0]["recheck_files"] for call in publish.await_args_list)
+    assert all(run.status == "queued" for run in [prepare, voice, images, character])
+    assert images.raw_output is None
+    assert any(len(call.args) > 1 and call.args[1] == {"key": 10}
+               for call in session.execute.await_args_list)
+
+
+@pytest.mark.asyncio
 async def test_event_artwork_import_queues_extraction_after_client_preparation(monkeypatch):
     session = AsyncMock()
     session.get.return_value = SimpleNamespace(game_version="1.0.0")

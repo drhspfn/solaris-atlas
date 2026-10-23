@@ -10,6 +10,7 @@ from wuwa_story.db.models.core import Cutscene, VoiceReference
 from wuwa_story.db.models.graph import Node, NodeRevision
 from wuwa_story.db.models.ops import GameRelease, ProcessingRun, Processor
 from wuwa_story.ingestion.media_jobs import publish_media_job
+from wuwa_story.ingestion.media_workspaces import retain_workspace, workspace_expired
 
 QUEUE = "wuwa.release-media.v1"
 EVENT_QUEUE = "wuwa.event-media.v1"
@@ -63,6 +64,7 @@ async def enqueue_release_media(
     pending, runs = [], []
     parent_id = None
     dependencies = {}
+    refresh_files = False
     for kind, targets in specs:
         dependency = dependencies.get("event_catalog" if kind == "event_images" else "cutscene_assets" if kind == "cutscene" else "voice_packages" if kind in {"voices", "character_voices"} else "prepare")
         request = {"release_id": release_id, "game_version": release.game_version,
@@ -78,6 +80,11 @@ async def enqueue_release_media(
         dependencies[kind] = run.id
         if kind == "prepare":
             parent_id = run.id
+            await retain_workspace(session, parent_id)
+            refresh_files = run.status == "completed" and workspace_expired(run)
+        if refresh_files and run.status == "completed":
+            run.status = "pending"
+            run.raw_output = None
         queue = EVENT_QUEUE if event_artwork_only or notices_only else QUEUE
         if kind == "images":
             queue = "wuwa.release-images.v1"
@@ -89,6 +96,8 @@ async def enqueue_release_media(
         if run.status not in {"running", "completed", "waiting_dependency"} and not already_queued:
             payload = {"schema_version": 1, "job_type": "media.release", "run_id": run.id,
                        **request}
+            if refresh_files:
+                payload["recheck_files"] = True
             if run.status in {"partial", "failed", "blocked"}:
                 run.raw_output = None
             run.status, run.error, run.finished_at = "queued", None, None
@@ -115,6 +124,9 @@ async def enqueue_event_images(session, payload: dict, paths: list[str], *, kind
     parent = await session.get(ProcessingRun, payload["run_id"])
     if parent is None:
         raise ValueError("Event catalog task not found")
+    workspace_id = (parent.raw_output or {}).get("workspace_id") if getattr(parent, "raw_output", None) else None
+    if workspace_id is not None:
+        await retain_workspace(session, workspace_id)
     pending = []
     runs = []
     if kind not in {"event_images", "event_resources", "event_notices"}:
@@ -131,7 +143,7 @@ async def enqueue_event_images(session, payload: dict, paths: list[str], *, kind
                 processor_id=parent.processor_id, input_hash=digest)
             session.add(run)
             await session.flush()
-        if kind == "event_notices" and run.status == "completed":
+        if (kind == "event_notices" or payload.get("recheck_files")) and run.status == "completed":
             # Notices are live content; an explicit catalog refresh revisits the feed.
             run.status = "pending"
         if run.status not in {"running", "completed", "queued", "waiting_dependency"}:
