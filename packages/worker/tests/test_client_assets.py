@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -177,6 +178,96 @@ async def test_export_upload_publishes_manifest_last(tmp_path, monkeypatch):
     assert uploads[-1].endswith("/manifest.json")
     monkeypatch.setattr(asset_export.subprocess, "run", lambda *a, **k: pytest.fail("export should be reused"))
     await asset_export.export_assets(tmp_path, executable, "ConfigDB")
+
+
+@pytest.mark.asyncio
+async def test_cached_export_does_not_rehash_raw_files_but_publication_does(tmp_path, monkeypatch):
+    executable = _completed_download(tmp_path)
+
+    def extract(command, stdout, **kwargs):
+        (Path(command[3]) / "data.json").write_text("{}")
+        stdout.write('Pak "base.pak": 1 files\n[Done] Extracted 1 files\n')
+
+    monkeypatch.setattr(asset_export.subprocess, "run", extract)
+    receipt = await asset_export.export_assets(tmp_path, executable, "ConfigDB")
+    original_hash = asset_export._sha256
+    hashed = []
+
+    def track_hash(path):
+        hashed.append(path)
+        return original_hash(path)
+
+    monkeypatch.setattr(asset_export, "_sha256", track_hash)
+    assert await asset_export.export_assets(tmp_path, executable, "ConfigDB") == receipt
+    assert hashed == [executable]
+    (receipt.parent / "files/data.json").write_text("changed")
+    uploads = []
+
+    class Storage:
+        async def ensure_bucket(self):
+            pass
+
+        async def put_file(self, *args):
+            uploads.append(args)
+
+    monkeypatch.setattr(asset_export, "S3Storage", lambda _: Storage())
+    with pytest.raises(ValueError, match="Export file changed"):
+        await asset_export.export_assets(tmp_path, executable, "ConfigDB", upload=True)
+    assert not uploads  # Never publish a success manifest for corrupted files.
+
+
+@pytest.mark.asyncio
+async def test_deleted_export_directory_is_rebuilt_from_retained_download(tmp_path, monkeypatch):
+    executable = _completed_download(tmp_path)
+    calls = []
+
+    def extract(command, stdout, **kwargs):
+        calls.append(command[-1])
+        (Path(command[3]) / "data.json").write_text("{}")
+        stdout.write('Pak "base.pak": 1 files\n[Done] Extracted 1 files\n')
+
+    monkeypatch.setattr(asset_export.subprocess, "run", extract)
+    receipt = await asset_export.export_assets(tmp_path, executable, "ConfigDB")
+    (receipt.parent / "files/data.json").unlink()
+    (receipt.parent / "files").rmdir()
+    assert await asset_export.export_assets(tmp_path, executable, "ConfigDB") == receipt
+    assert (receipt.parent / "files/data.json").is_file()
+    assert calls == ["ConfigDB", "ConfigDB"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_export_caller_keeps_writer_lease_until_export_finishes(tmp_path, monkeypatch):
+    executable = _completed_download(tmp_path)
+    (tmp_path / "workspace.json").write_text(json.dumps({"workspace_id": 11}))
+    entered, finish = asyncio.Event(), asyncio.Event()
+    leases = []
+
+    @asynccontextmanager
+    async def lease(key):
+        assert key == 11
+        leases.append("acquired")
+        try:
+            yield
+        finally:
+            leases.append("released")
+
+    async def extract(*args):
+        entered.set()
+        await finish.wait()
+        return tmp_path / "receipt.json"
+
+    monkeypatch.setattr(asset_export, "workspace_lease", lease)
+    monkeypatch.setattr(asset_export, "_export_assets", extract)
+    caller = asyncio.create_task(asset_export.export_assets(tmp_path, executable, "ConfigDB"))
+    await entered.wait()
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    assert leases == ["acquired"]
+    writer = next(iter(asset_export._exports.values()))
+    finish.set()
+    await writer
+    assert leases == ["acquired", "released"]
 
 
 @pytest.mark.asyncio

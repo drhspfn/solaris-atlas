@@ -16,6 +16,7 @@ from wuwa_story.config.settings import get_settings
 from wuwa_story.storage.s3 import S3Storage
 
 from wuwa_story_worker.client_assets import save_json, validate_plan, wait_workspace_lock
+from wuwa_story_worker.media_workspace import finish_writes, workspace_lease
 
 _exports: dict[tuple, asyncio.Task] = {}
 
@@ -27,7 +28,25 @@ async def export_assets(root: Path, executable: Path, asset_filter: str, upload:
     key = (asyncio.get_running_loop(), root.resolve(), digest, asset_filter, upload)
     task = _exports.get(key)
     if task is None:
-        task = asyncio.create_task(_export_assets(root, executable, asset_filter, upload, digest))
+        marker = root / "workspace.json"
+        workspace_id = json.loads(marker.read_text(encoding="utf-8"))["workspace_id"] if marker.exists() else None
+        lease = workspace_lease(workspace_id)
+        # Acquire before scheduling: cancellation cannot leave an unleased writer
+        # waiting to start after the caller's broker lease has been released.
+        await lease.__aenter__()
+        # Another caller can have scheduled the same export while this awaited DB.
+        task = _exports.get(key)
+        if task is not None:
+            await lease.__aexit__(None, None, None)
+            return await asyncio.shield(task)
+
+        async def leased_export():
+            try:
+                return await _export_assets(root, executable, asset_filter, upload, digest)
+            finally:
+                await lease.__aexit__(None, None, None)
+
+        task = asyncio.create_task(leased_export())
         _exports[key] = task
 
         def finished(done):
@@ -69,14 +88,20 @@ async def _finish_export(root, executable, asset_filter, upload, plan, tag, outp
         existing = json.loads(receipt.read_text(encoding="utf-8"))
         if existing["extractor_sha256"] != executable_sha:
             raise ValueError("Export exists from a different extractor; use a new asset workspace")
-    else:
+        if existing["job_id"] != plan["id"] or existing["filter"] != asset_filter:
+            raise ValueError("Export does not match its pinned download/filter")
+        if not (output / "files").is_dir():
+            receipt.unlink()  # A removed raw cache must be rebuilt, not trusted.
+        elif not upload:
+            return receipt  # Our atomic manifest commits an immutable export.
+    if not receipt.exists():
         # FModelCLI can exit zero after failed exports, so the log and actual files
         # must be checked before publishing a success manifest.
         log = output / "fmodel.log"
         def extract() -> None:
             with tempfile.TemporaryDirectory(prefix=".export-", dir=output) as temporary:
                 _extract_files(root, executable, asset_filter, plan, output, Path(temporary), log)
-        await asyncio.to_thread(extract)
+        await finish_writes(asyncio.to_thread(extract))
         data = output / "files"
         files = []
         for path in sorted(data.rglob("*")):
@@ -87,15 +112,14 @@ async def _finish_export(root, executable, asset_filter, upload, plan, tag, outp
                             "tier": plan["tier"], "filter": asset_filter, "keys_commit": plan["keys_commit"],
                             "extractor_sha256": executable_sha, "files": files})
     manifest = json.loads(receipt.read_text(encoding="utf-8"))
-    for item in manifest["files"]:
-        if await asyncio.to_thread(_sha256, output / "files" / item["path"]) != item["sha256"]:
-            raise ValueError(f"Export file changed: {item['path']}")
     if upload:
         storage = S3Storage(get_settings())
         await storage.ensure_bucket()
         prefix = f"client-assets/{plan['version']}/{plan['tier']}/{plan['id']}/{tag}"
         for item in manifest["files"]:
             source = output / "files" / item["path"]
+            if await asyncio.to_thread(_sha256, source) != item["sha256"]:
+                raise ValueError(f"Export file changed: {item['path']}")
             key = f"{prefix}/files/{item['sha256']}/{item['path']}"
             await storage.put_file(source, key, mimetypes.guess_type(source.name)[0])
             item["object_key"] = key

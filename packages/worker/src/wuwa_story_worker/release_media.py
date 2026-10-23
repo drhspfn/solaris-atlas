@@ -1,11 +1,14 @@
 """Execute the media tasks queued by a snapshot import, with pinned dependencies."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from sqlalchemy import select
@@ -19,6 +22,7 @@ from wuwa_story.ingestion.client_events import store_client_events
 from wuwa_story.ingestion.entity_media import MediaRequest
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE, SOURCE
 from wuwa_story.ingestion.media_jobs import enqueue_entity_media
+from wuwa_story.ingestion.media_provenance import missing_media_targets
 from wuwa_story.ingestion.release_media import enqueue_event_images
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
@@ -26,21 +30,50 @@ from wuwa_story.storage.service import FileRegistrationService
 from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.broker import JobDeferred, job_lock
 from wuwa_story_worker.client_assets import download_plan, save_json, workspace_lock
-from wuwa_story_worker.cutscene_import import import_cutscene_recipe
-from wuwa_story_worker.cutscene_plan import plan_cutscene
+from wuwa_story_worker.cutscene_import import import_cutscene_recipe, missing_cutscene_identities
+from wuwa_story_worker.cutscene_plan import engine_path, plan_cutscene
 from wuwa_story_worker.event_catalog import client_event_record, read_event_catalog
 from wuwa_story_worker.event_resources import annotate_image_packages, event_resources
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.map_icons import build_icons
-from wuwa_story_worker.media_diagnostics import publish_inventory, voice_report
+from wuwa_story_worker.media_diagnostics import iter_archive_paths, publish_inventory, voice_report
+from wuwa_story_worker.media_provenance import package_path, sha256
+from wuwa_story_worker.media_workspace import (
+    bind_package,
+    cleanup_workspace,
+    finish_writes,
+    package_root,
+    resolve_workspace,
+    run_workspace_id,
+    workspace_lease,
+)
 from wuwa_story_worker.tooling import asset_workspace, tool_path
-from wuwa_story_worker.voice_import import exported_voices, import_voice_sample
+from wuwa_story_worker.voice_import import (
+    exported_voices,
+    import_voice_sample,
+    missing_global_voice_identities,
+)
 
 logger = logging.getLogger(__name__)
 
 
+async def source_context(parent, *, voice=False, video=False):
+    names = ["WUWA_FMODEL_PATH", "WUWA_TEXTURE_CONVERTER_PATH"]
+    if voice or video:
+        names.append("WUWA_VGMSTREAM_PATH")
+    tools = {name: await asyncio.to_thread(sha256, tool_path(name)) for name in names}
+    if video:
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            raise RuntimeError("ffmpeg is missing from the worker image")
+        tools["ffmpeg"] = await asyncio.to_thread(sha256, Path(ffmpeg))
+    return {key: parent[key] for key in ("asset_version", "download_id", "tier", "voice_plan_id", "video_plan_id")
+            if key in parent} | {"tools": tools}
+
+
 def client_root(result):
-    return asset_workspace() / "assets" / f"{result['asset_version']}-{result['tier']}-{result['download_id'][:16]}"
+    root = asset_workspace() / "assets" / f"{result['asset_version']}-{result['tier']}-{result['download_id'][:16]}"
+    return resolve_workspace(root, result.get("workspace_id"), base=asset_workspace())
 
 
 async def prepare(run, session):
@@ -75,8 +108,10 @@ async def prepare(run, session):
     if not await asyncio.to_thread(ready):
         root = await asyncio.to_thread(download_plan, plan, asset_workspace(),
                                        int(os.getenv("WUWA_ASSET_DOWNLOAD_CONCURRENCY", "4")))
-    return {"asset_version": plan["version"], "download_id": plan["id"], "tier": plan["tier"],
-            "stage": "client_ready"}
+    result = {"asset_version": plan["version"], "download_id": plan["id"], "tier": plan["tier"],
+              "workspace_id": run.id, "stage": "client_ready"}
+    await asyncio.to_thread(client_root, result)
+    return result
 
 
 async def image_batch(payload, parent, run, session):
@@ -87,7 +122,8 @@ async def image_batch(payload, parent, run, session):
                                tier=parent["tier"], game_version=payload["game_version"],
                                release_id=payload["release_id"],
                                entities=payload["targets"], kinds=["voice" if payload["kind"] == "character_voices" else "image"],
-                               voice_plan_id=parent.get("voice_plan_id"))
+                               voice_plan_id=parent.get("voice_plan_id"),
+                               **({"workspace_id": parent["workspace_id"]} if parent.get("workspace_id") else {}))
         try:
             child = await enqueue_entity_media(session, request, retry_partial=True)
         except ValueError as error:
@@ -195,20 +231,32 @@ async def event_images(payload, parent, session):
         path: path if path.startswith("/Game/") else "/Game/Aki/UI/UIResources/" + path.lstrip("/")
         for path in targets
     }
-    markers = [{"metadata_json": {"icon_source": source}} for source in sources.values()]
+    storage = S3Storage(get_settings())
+    source_identity = await source_context(parent)
+    requested = [{"owner": None, "release_id": payload["release_id"], "path": path,
+                  "language": None, "kind": "image"} for path in sources]
+    missing = await missing_media_targets(session, requested, source=source_identity,
+                                         storage=storage, reference_type="event_banner")
+    missing_paths = {target["path"] for target in missing}
+    reused = [{"expected": path, "status": "found", "matches": [], "reused": True}
+              for path in sources if path not in missing_paths]
+    await session.commit()  # Persist any cross-release references before extraction.
+    markers = [{"metadata_json": {"icon_source": source}} for path, source in sources.items()
+               if path in missing_paths]
     icons = await build_icons(
         root, tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
         markers, entity_media=True, exact_textures=True,
-    )
+    ) if markers else {}
     service = None
-    entries = unresolved
+    entries = unresolved + reused
     for original, source in sources.items():
+        if original not in missing_paths:
+            continue
         icon = icons.get(source)
         if icon is None:
             entries.append({"expected": original, "status": "not_resolved", "matches": []})
             continue
         if service is None:
-            storage = S3Storage(get_settings())
             await storage.ensure_bucket()
             service = FileRegistrationService(storage)
         image_path = Path(icon["path"])
@@ -230,7 +278,12 @@ async def event_images(payload, parent, session):
             )
         reference.file_id = image.id
         reference.metadata_json = {"asset_version": parent["asset_version"],
-                                   "download_id": parent["download_id"]}
+                                   "download_id": parent["download_id"],
+                                   "game_source": {**source_identity, "schema_version": 1,
+                                       "package_path": original.split(".", 1)[0],
+                                       "source_files": [{"package_path": package_path(Path(path)),
+                                           "sha256": await asyncio.to_thread(sha256, Path(path))}
+                                           for path in icon["raw_paths"]]}}
         entries.append({"expected": original, "status": "found",
                         "matches": [image_path.name]})
     await session.commit()
@@ -248,8 +301,18 @@ def merge_exports(receipts, destination):
     """Link cached exports; do not copy gigabytes of movies for each cutscene."""
     destination.mkdir(parents=True, exist_ok=True)
     with workspace_lock(destination):
+        marker = destination.parent / "merged-exports.json"
+        merged = json.loads(marker.read_text(encoding="utf-8")) if marker.exists() else {}
         for receipt in receipts:
             source = receipt if receipt.is_dir() else receipt.parent / "files"
+            identity_file = receipt if receipt.is_file() else source.parent / "audio-export.json"
+            if not identity_file.is_file():
+                identity_file = source
+            stamp = identity_file.stat()
+            identity = [stamp.st_mtime_ns, stamp.st_size]
+            key = str(source.resolve())
+            if merged.get(key) == identity:
+                continue
             for path in source.rglob("*"):
                 if not path.is_file():
                     continue
@@ -260,15 +323,24 @@ def merge_exports(receipts, destination):
                     continue
                 target.parent.mkdir(parents=True, exist_ok=True)
                 os.link(path, target)
+            merged[key] = identity
+            save_json(marker, merged)  # Only mark a fully merged source reusable.
     return destination
 
 
 def video_database(root):
+    marker = root / "video-database.json"
+    if marker.is_file():
+        relative = json.loads(marker.read_text(encoding="utf-8"))["path"]
+        candidate = root / relative
+        if candidate.resolve().is_relative_to(root.resolve()) and candidate.is_file():
+            return candidate
     for path in sorted(root.rglob("*.db")):
         try:
-            with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as db:
+            with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 if {"videodata", "videosound"}.issubset(tables):
+                    save_json(marker, {"path": path.relative_to(root).as_posix()})
                     return path
         except sqlite3.DatabaseError:
             continue
@@ -276,14 +348,26 @@ def video_database(root):
 
 
 async def cutscene_assets(payload, parent):
+    context = await source_context(parent, video=True)
+    missing = await missing_cutscene_identities({"cutscene:" + name for name in payload["targets"]},
+                                               source_context=context)
+    targets = [name for name in payload["targets"] if "cutscene:" + name in missing]
+    if not targets:
+        return {**parent, "stage": "cutscene_assets_reused", "reused": len(payload["targets"])}, "completed"
     root = client_root(parent)
     fmodel = tool_path("WUWA_FMODEL_PATH")
-    receipts = [await export_assets(root, fmodel, value)
-                for value in ("ConfigDB", "Aki/Sequence", "WwiseAudio", "KuroPublicConfig")]
+    filters = ("ConfigDB", "KuroPublicConfig") if parent.get("workspace_id") else (
+        "ConfigDB", "Aki/Sequence", "WwiseAudio", "KuroPublicConfig")
+    receipts = [await export_assets(root, fmodel, value) for value in filters]
+    config = await asyncio.to_thread(video_database, receipts[0].parent / "files")
+    with closing(sqlite3.connect(config.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+        cg_ids = {row[0] for name in targets for row in db.execute("SELECT CgId FROM videodata WHERE CgName = ?", (name,))}
+        paths = {engine_path(row[0]).removeprefix("/Game/").split(".", 1)[0]
+                 for table in ("videodata", "videosound") for name in targets
+                 for row in db.execute(f"SELECT BinData FROM {table} WHERE CgName = ?", (name,))} if parent.get("workspace_id") else set()
+    receipts.extend([await export_assets(root, fmodel, path) for path in sorted(paths)])
     assets = await asyncio.to_thread(merge_exports, receipts, root / "release-media" / "files")
-    config = await asyncio.to_thread(video_database, assets)
-    with sqlite3.connect(config.resolve().as_uri() + "?mode=ro", uri=True) as db:
-        cg_ids = {row[0] for name in payload["targets"] for row in db.execute("SELECT CgId FROM videodata WHERE CgName = ?", (name,))}
+    save_json(assets / "video-database.json", {"path": config.relative_to(receipts[0].parent / "files").as_posix()})
     from wuwa_story_worker.entity_media import tool
     from wuwa_story_worker.voice_bootstrap import discover_video_plan
     from wuwa_story_worker.voice_packages import download_voice_plan
@@ -291,6 +375,8 @@ async def cutscene_assets(payload, parent):
     if plan["files"]:
         video_root = await asyncio.to_thread(download_voice_plan, plan, asset_workspace() / "videos",
                                              concurrency=int(os.getenv("WUWA_ASSET_DOWNLOAD_CONCURRENCY", "4")))
+        video_root = await asyncio.to_thread(bind_package, parent, "videos", plan["id"], video_root,
+                                             base=asset_workspace())
         destination = video_root / "exports" / "files"
         destination.mkdir(parents=True, exist_ok=True)
         log = video_root / "exports" / "export.log"
@@ -301,13 +387,22 @@ async def cutscene_assets(payload, parent):
                 raise RuntimeError(f"Video archive export failed; inspect {log}")
         await asyncio.to_thread(merge_exports, [destination.parent / "receipt.json"], assets)
     inventory = await publish_inventory(assets)
-    return {**parent, "stage": "cutscene_assets_ready", "media_report": inventory}, "completed"
+    return {**parent, "video_plan_id": plan["id"], "stage": "cutscene_assets_ready", "media_report": inventory}, "completed"
 
 
 async def cutscene(payload, parent):
+    context = await source_context(parent, video=True)
+    if not await missing_cutscene_identities({"cutscene:" + payload["targets"][0]}, source_context=context):
+        return {**parent, "stage": "cutscene_reused", "reused": 1}, "completed"
     root = client_root(parent)
     assets = root / "release-media" / "files"
-    voice_roots = [asset_workspace() / "voices" / f"{parent['asset_version']}-{parent['voice_plan_id'][:16]}"] if parent.get("voice_plan_id") else sorted((asset_workspace() / "voices").glob(parent["asset_version"] + "-*"))
+    voice_cache = root / "voices" if parent.get("workspace_id") else asset_workspace() / "voices"
+    voice_roots = [package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace())] if parent.get("voice_plan_id") else sorted(voice_cache.glob(parent["asset_version"] + "-*"))
+    config = await asyncio.to_thread(video_database, assets)
+    if parent.get("workspace_id") and parent.get("voice_plan_id"):
+        audio = await extract_cutscene_audio(parent, config, payload["targets"][0])
+        await asyncio.to_thread(merge_exports, [audio], assets)
+        voice_roots = []  # Selected banks/media are already linked for this cutscene.
     for voice_root in voice_roots:
         marker = voice_root / "audio-export.json"
         if marker.is_file():
@@ -317,7 +412,6 @@ async def cutscene(payload, parent):
                 raise ValueError("Cutscene voice export does not match its pinned package plan")
             if exported.get("plan_id") == plan.get("id"):
                 await asyncio.to_thread(merge_exports, [voice_root / "plot-audio"], assets)
-    config = await asyncio.to_thread(video_database, assets)
     missing_assets = []
     recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"], missing_assets=missing_assets)
     work = root / "release-media" / str(payload["run_id"])
@@ -342,7 +436,8 @@ async def cutscene(payload, parent):
     if ffmpeg is None:
         raise RuntimeError("ffmpeg is missing from the worker image")
     result = await import_cutscene_recipe(recipe_path, assets, assets, assets, work,
-                                         tool_path("WUWA_VGMSTREAM_PATH"), Path(ffmpeg), missing_assets=missing_assets)
+                                         tool_path("WUWA_VGMSTREAM_PATH"), Path(ffmpeg), missing_assets=missing_assets,
+                                         source_context=context)
     entries.extend({"expected": name, "status": "not_resolved", "matches": []} for name in missing_assets)
     report.update(requested=len(entries), found=sum(e["status"] == "found" for e in entries),
                   missing=sum(e["status"] != "found" for e in entries))
@@ -354,7 +449,7 @@ async def voice_packages(parent):
     from wuwa_story_worker.voice_bootstrap import discover_client_voices
     from wuwa_story_worker.voice_packages import download_voice_plan
 
-    voice_cache = asset_workspace() / "voices"
+    voice_cache = client_root(parent) / "voices" if parent.get("workspace_id") else asset_workspace() / "voices"
     markers = sorted(voice_cache.glob(f"{parent['asset_version']}-*/audio-export.json"),
                      key=lambda path: path.stat().st_mtime, reverse=True)
     for marker in markers:
@@ -374,6 +469,8 @@ async def voice_packages(parent):
     plan = await asyncio.to_thread(discover_client_voices, parent["asset_version"], receipt.parent / "files")
     voice_root = await asyncio.to_thread(download_voice_plan, plan, asset_workspace() / "voices",
                                          concurrency=int(os.getenv("WUWA_ASSET_DOWNLOAD_CONCURRENCY", "4")))
+    voice_root = await asyncio.to_thread(bind_package, parent, "voices", plan["id"], voice_root,
+                                         base=asset_workspace())
     from wuwa_story_worker.entity_media import tool
     extracted = voice_root / "plot-audio"
     extracted.mkdir(exist_ok=True)
@@ -382,6 +479,13 @@ async def voice_packages(parent):
         index = voice_root / "archive-index.log"
         await tool([tool_path("WUWA_FMODEL_PATH"), voice_root / "game",
                     "@" + str(root / "keys.txt"), "--list"], index, 7200)
+        if parent.get("workspace_id"):
+            await asyncio.to_thread(index_voice_paths, index)
+            inventory = await publish_inventory(extracted, index)
+            save_json(voice_root / "audio-export.json", {"plan_id": plan["id"], "mode": "selective",
+                                                       "media_report": inventory})
+            return {**parent, "voice_plan_id": plan["id"], "stage": "voice_packages_ready",
+                    "media_report": inventory}, "completed"
         await tool([tool_path("WUWA_FMODEL_PATH"), voice_root / "game",
                     "@" + str(root / "keys.txt"), extracted, "Audio"], log, 7200)
         output = log.read_text(encoding="utf-8", errors="replace")
@@ -399,8 +503,108 @@ async def voice_packages(parent):
             "media_report": inventory}, "completed"
 
 
+def index_voice_paths(log):
+    """Build one disk index; batches must not rescan a million-line archive log."""
+    destination = log.with_suffix(".sqlite")
+    temporary = destination.with_suffix(".partial.sqlite")
+    temporary.unlink(missing_ok=True)
+    try:
+        with closing(sqlite3.connect(temporary)) as db, db:
+            db.execute("CREATE TABLE files (name TEXT, path TEXT PRIMARY KEY)")
+            db.executemany("INSERT OR IGNORE INTO files VALUES (?, ?)",
+                           ((Path(path).name.casefold(), path) for path in iter_archive_paths(log)))
+            db.execute("CREATE INDEX file_name ON files(name)")
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return destination
+
+
+def selected_voice_paths(index, names):
+    expected = sorted({f"{language}_{name}{suffix}.wem".casefold() for name in names
+                       for language in ("en", "ja", "ko", "zh") for suffix in ("", "_F", "_M")})
+    return indexed_audio_paths(index, expected)
+
+
+def indexed_audio_paths(index, expected):
+    paths = set()
+    with closing(sqlite3.connect(index.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+        for offset in range(0, len(expected), 500):
+            batch = expected[offset:offset + 500]
+            paths.update(row[0] for row in db.execute(
+                "SELECT path FROM files WHERE name IN (" + ",".join("?" for _ in batch) + ")", batch))
+    return sorted(paths)
+
+
+async def extract_requested_voices(parent, names, destination=None):
+    """Export only archive-confirmed names, including authored Rover variants."""
+    voice_root = package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace())
+    index = voice_root / "archive-index.sqlite"
+    if not index.is_file():
+        await asyncio.to_thread(index_voice_paths, voice_root / "archive-index.log")
+    selected = await asyncio.to_thread(selected_voice_paths, index, names)
+    destination = destination or voice_root / "plot-audio"
+    await extract_voice_paths(parent, selected, destination)
+    if destination != voice_root / "plot-audio":
+        # Diagnostics consume only this batch's paths, not the full archive log.
+        (destination.parent / "archive-index.log").write_text(
+            "".join(f"[File] {path}\n" for path in selected) + f"[Done] Listed {len(selected)} files\n",
+            encoding="utf-8")
+
+
+async def extract_voice_paths(parent, selected, extracted):
+    voice_root = package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace())
+    extracted.mkdir(parents=True, exist_ok=True)
+    from wuwa_story_worker.entity_media import tool
+    with workspace_lock(voice_root):
+        missing = [path for path in selected if not (extracted / path).is_file()]
+        # FModel's path alternatives are bounded to keep command lines small.
+        for offset in range(0, len(missing), 20):
+            paths = missing[offset:offset + 20]
+            if any(not re.fullmatch(r"[a-zA-Z0-9_./-]+", path) for path in paths):
+                raise ValueError("Unsupported authored voice archive path")
+            log = voice_root / "selective-export.log"
+            await tool([tool_path("WUWA_FMODEL_PATH"), voice_root / "game",
+                        "@" + str(client_root(parent) / "keys.txt"), extracted,
+                        "|".join(paths)], log, 7200)
+            output = log.read_text(encoding="utf-8", errors="replace")
+            if "[Fail]" in output or "[Error]" in output:
+                raise RuntimeError(f"Requested voice export failed; inspect {log}")
+
+
+async def extract_cutscene_audio(parent, config, name):
+    """Follow authored event banks, then their exact Wwise media identifiers."""
+    from wuwa_story_worker.cutscene_import import bank_media_id
+
+    voice_root = package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace())
+    destination = voice_root / "cutscene-audio" / hashlib.sha256(name.encode()).hexdigest()[:16] / "files"
+    index = voice_root / "archive-index.sqlite"
+    if not index.is_file():
+        await asyncio.to_thread(index_voice_paths, voice_root / "archive-index.log")
+    with closing(sqlite3.connect(config.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+        names = sorted({engine_path(row[0]).rsplit("/", 1)[-1].split(".", 1)[0].casefold() + ".bnk"
+                        for row in db.execute("SELECT BinData FROM videosound WHERE CgName = ?", (name,))})
+    banks = await asyncio.to_thread(indexed_audio_paths, index, names)
+    await extract_voice_paths(parent, banks, destination)
+    media = []
+    for path in banks:
+        bank = destination / path
+        if bank.is_file():
+            media.append(str(bank_media_id(await asyncio.to_thread(bank.read_bytes))) + ".wem")
+    paths = await asyncio.to_thread(indexed_audio_paths, index, sorted(set(media)))
+    await extract_voice_paths(parent, paths, destination)
+    return destination
+
+
 async def voices(payload, parent):
-    extracted = asset_workspace() / "voices" / f"{parent['asset_version']}-{parent['voice_plan_id'][:16]}" / "plot-audio"
+    context = await source_context(parent, voice=True)
+    names = await missing_global_voice_identities(set(payload["targets"]), source_context=context)
+    if not names:
+        return {**parent, "stage": "voices_reused", "reused": len(payload["targets"]), "tracks": 0}, "completed"
+    voice_root = package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace())
+    extracted = voice_root / "plot-audio"
+    if parent.get("workspace_id"):
+        extracted = voice_root / "voice-batches" / str(payload["run_id"]) / "files"
     from wuwa_story_worker.entity_media import tool
     inventory = parent.get("media_report")
     if inventory is None:
@@ -417,8 +621,11 @@ async def voices(payload, parent):
                             "@" + str(client_root(parent) / "keys.txt"), "--list"], index, 7200)
                 inventory = await publish_inventory(extracted, index)
                 save_json(marker, {**saved, "media_report": inventory})
-    names = set(payload["targets"])
+    if parent.get("workspace_id"):
+        await extract_requested_voices(parent, names, extracted)
     grouped = await asyncio.to_thread(exported_voices, extracted, names)
+    context["path_map"] = {path.relative_to(extracted).as_posix(): path.relative_to(extracted).as_posix()
+                           for tracks in grouped.values() for path in tracks.values()}
     receipt = await export_assets(client_root(parent), tool_path("WUWA_FMODEL_PATH"), "ConfigDB")
     configs = list((receipt.parent / "files").rglob("db_plot_audio.db"))
     if len(configs) > 1:
@@ -432,7 +639,7 @@ async def voices(payload, parent):
     if missing_exports:
         with workspace_lock(extracted.parent):
             for entry in missing_exports:
-                await tool([tool_path("WUWA_FMODEL_PATH"), extracted.parent / "game",
+                await tool([tool_path("WUWA_FMODEL_PATH"), voice_root / "game",
                             "@" + str(client_root(parent) / "keys.txt"), extracted,
                             entry["expected"].removesuffix(".wem")], extracted.parent / "repair-export.log", 1800)
         grouped = await asyncio.to_thread(exported_voices, extracted, names)
@@ -444,20 +651,34 @@ async def voices(payload, parent):
     logger.info("release_media.voice_lookup run=%s requested=%s found=%s missing=%s asset_version=%s",
                 payload["run_id"], report["requested"], report["found"], report["missing"], parent["asset_version"])
     result = await import_voice_sample(extracted, tool_path("WUWA_VGMSTREAM_PATH"),
-                                      parent["asset_version"], names=names, require_all_languages=False, grouped=grouped)
+                                      parent["asset_version"], names=names, require_all_languages=False, grouped=grouped,
+                                      source_context=context)
     return {**result, "media_report": report}, "partial" if result.get("missing_voices") else "completed"
 
 
 async def process_release_media(payload):
     if payload.get("schema_version") != 1 or payload.get("job_type") != "media.release" or type(payload.get("run_id")) is not int:
         raise ValueError("Invalid release media task")
+    workspace_id = await run_workspace_id(payload["run_id"])
+    try:
+        async with workspace_lease(workspace_id):
+            await finish_writes(_process_release_media(payload))
+    finally:
+        try:
+            await cleanup_workspace(workspace_id)
+        except Exception:
+            # Cleanup is retryable independently; don't replay a successful import.
+            logger.exception("media_workspace.cleanup_failed workspace=%s run=%s", workspace_id, payload["run_id"])
+
+
+async def _process_release_media(payload):
     async with engine.connect() as connection, job_lock(connection, 702, payload["run_id"]):
         try:
             async with SessionFactory(bind=connection) as session:
                 run = await session.get(ProcessingRun, payload["run_id"])
                 if run is None or run.metadata_json.get("payload") != payload:
                     raise ValueError("Media task is not the pinned backend request")
-                if run.status == "completed":
+                if run.status in {"completed", "partial", "cancelled"}:
                     return
                 await session.commit()
                 if payload["kind"] == "prepare":
@@ -512,6 +733,8 @@ async def process_release_media(payload):
                         result, status = await voices(payload, parent.raw_output)
                     else:
                         raise ValueError("Unsupported release media task kind")
+                if payload["kind"] != "prepare" and parent.raw_output.get("workspace_id"):
+                    result = {**result, "workspace_id": parent.raw_output["workspace_id"]}
                 await update_admin_run(run.id, "release_media", status, raw_output=result)
                 logger.info("release_media.finished run=%s kind=%s status=%s", run.id, payload["kind"], status)
         except JobDeferred as error:
