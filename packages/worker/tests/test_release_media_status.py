@@ -396,3 +396,74 @@ async def test_requested_voice_exports_are_bounded_and_do_not_use_full_audio(mon
     assert len(calls) == 3
     await release_media.extract_voice_paths(parent, paths, voice_root / "batch/files")
     assert len(calls) == 3  # Successful exact exports are reusable on retry.
+
+
+@pytest.mark.asyncio
+async def test_cutscene_audio_follows_authored_bank_then_exact_media_id(monkeypatch, tmp_path):
+    import sqlite3
+    from contextlib import closing
+
+    from wuwa_story_worker import cutscene_import, entity_media
+    root = tmp_path / "voice"
+    root.mkdir()
+    log = root / "archive-index.log"
+    log.write_text("[File] Audio/en/SceneEvent.bnk\n[File] Audio/en/42.wem\n"
+                   "[File] Audio/en/Unrelated.bnk\n[Done] Listed 3 files\n")
+    release_media.index_voice_paths(log)
+    config = tmp_path / "video.db"
+    with closing(sqlite3.connect(config)) as db, db:
+        db.execute("CREATE TABLE videosound (CgName TEXT, BinData BLOB)")
+        db.execute("INSERT INTO videosound VALUES (?, ?)",
+                   ("Scene", b"/Game/Aki/WwiseAudio/Events/SceneEvent.SceneEvent"))
+    monkeypatch.setattr(release_media, "package_root", lambda *_args, **_kwargs: root)
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
+    monkeypatch.setattr(cutscene_import, "bank_media_id", lambda _: 42)
+    calls = []
+
+    async def extract(args, log, timeout):
+        calls.append(args[-1])
+        path = args[3] / args[-1]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"selected")
+        log.write_text("[Done] Extracted 1 files")
+
+    monkeypatch.setattr(entity_media, "tool", extract)
+    result = await release_media.extract_cutscene_audio(
+        {"workspace_id": 11, "asset_version": "3.7.0", "voice_plan_id": "a" * 64}, config, "Scene")
+    assert calls == ["Audio/en/SceneEvent.bnk", "Audio/en/42.wem"]
+    assert (result / "Audio/en/42.wem").is_file()
+    assert not (result / "Audio/en/Unrelated.bnk").exists()
+
+
+@pytest.mark.asyncio
+async def test_event_image_publication_persists_source_hashes(monkeypatch, tmp_path):
+    import hashlib
+
+    original = "/Game/Aki/UI/Texture"
+    raw = tmp_path / "Client/Content/Aki/UI/Texture.uasset"
+    raw.parent.mkdir(parents=True)
+    raw.write_bytes(b"source bytes")
+    png = tmp_path / "converted.png"
+    png.write_bytes(b"png")
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
+    monkeypatch.setattr(release_media, "build_icons", AsyncMock(return_value={
+        original: {"path": str(png), "raw_paths": [str(raw)]}}))
+    storage = SimpleNamespace(ensure_bucket=AsyncMock())
+    monkeypatch.setattr(release_media, "S3Storage", lambda _: storage)
+    reference = SimpleNamespace()
+    service = AsyncMock()
+    service.register_file.return_value = SimpleNamespace(id=3)
+    service.register_reference.return_value = reference
+    monkeypatch.setattr(release_media, "FileRegistrationService", lambda _: service)
+    session = AsyncMock()
+    session.scalar.return_value = None
+    result, status = await release_media.event_images(
+        {"release_id": 9, "targets": [original]},
+        {"asset_version": "3.7.0", "download_id": "a" * 64}, session)
+    assert status == "completed" and result["found"] == 1
+    assert reference.metadata_json["game_source"]["package_path"] == original
+    assert reference.metadata_json["game_source"]["source_files"] == [{
+        "package_path": "Client/Content/Aki/UI/Texture.uasset",
+        "sha256": hashlib.sha256(b"source bytes").hexdigest()}]

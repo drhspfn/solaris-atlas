@@ -34,6 +34,7 @@ from wuwa_story_worker.tooling import asset_workspace
 
 logger = logging.getLogger(__name__)
 TERMINAL = {"completed", "partial", "failed", "blocked", "cancelled", "enqueue_failed"}
+_leases: dict[tuple, dict] = {}
 
 
 async def finish_writes(awaitable):
@@ -140,19 +141,58 @@ def bind_package(parent: dict, kind: str, plan_id: str, downloaded: Path,
 
 @asynccontextmanager
 async def workspace_lease(workspace_id: int | None):
-    """Shared session lock; a crashed worker loses its lease without a TTL race."""
+    """One DB lease per workspace/process, retained until its last writer exits.
+
+    Nested broker/handler/export leases share a connection, including an export
+    that outlives its cancelled caller. Other worker processes hold their own
+    shared lock. A process crash loses its lease without a TTL race.
+    """
     if workspace_id is None:
         yield
         return
     validate_workspace_id(workspace_id)
-    async with engine.connect() as connection:
+    key = (asyncio.get_running_loop(), workspace_id)
+    lease = _leases.get(key)
+    if lease is None:
+        lease = {"users": 0, "ready": asyncio.create_task(_open_lease(workspace_id))}
+        _leases[key] = lease
+    lease["users"] += 1
+    try:
+        await asyncio.shield(lease["ready"])
+        yield
+    finally:
+        lease["users"] -= 1
+        if not lease["users"]:
+            del _leases[key]
+            await finish_writes(_close_lease(lease["ready"]))
+
+
+async def _open_lease(workspace_id):
+    manager = engine.connect()
+    connection = await manager.__aenter__()
+    try:
+        # Modulo collisions only delay cleanup; they cannot allow early deletion.
+        await connection.execute(text("SELECT pg_advisory_lock_shared(706, :key)"), {"key": workspace_id % 2**31})
+        await connection.commit()
+        return manager, connection
+    except BaseException:
         try:
-            await connection.execute(text("SELECT pg_advisory_lock_shared(706, :key)"), {"key": workspace_id % 2**31})
-            await connection.commit()
-            yield
-        finally:
-            # Session locks survive rollback; never return this connection to pool.
             await connection.invalidate()
+        finally:
+            await manager.__aexit__(None, None, None)
+        raise
+
+
+async def _close_lease(ready):
+    try:
+        manager, connection = await ready
+    except BaseException:
+        return  # Failed acquisition already invalidated its connection.
+    try:
+        # Session locks survive rollback; never return this connection to pool.
+        await connection.invalidate()
+    finally:
+        await manager.__aexit__(None, None, None)
 
 
 async def run_workspace_id(run_id: int, session=None) -> int | None:

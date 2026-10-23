@@ -328,8 +328,8 @@ def merge_exports(receipts, destination):
     return destination
 
 
-def video_database(root):
-    marker = root / "video-database.json"
+def video_database(root, *, cache=None):
+    marker = cache or root / "video-database.json"
     if marker.is_file():
         relative = json.loads(marker.read_text(encoding="utf-8"))["path"]
         candidate = root / relative
@@ -359,7 +359,8 @@ async def cutscene_assets(payload, parent):
     filters = ("ConfigDB", "KuroPublicConfig") if parent.get("workspace_id") else (
         "ConfigDB", "Aki/Sequence", "WwiseAudio", "KuroPublicConfig")
     receipts = [await export_assets(root, fmodel, value) for value in filters]
-    config = await asyncio.to_thread(video_database, receipts[0].parent / "files")
+    config = await asyncio.to_thread(video_database, receipts[0].parent / "files",
+                                     cache=receipts[0].parent / "video-database.json")
     with closing(sqlite3.connect(config.resolve().as_uri() + "?mode=ro", uri=True)) as db:
         cg_ids = {row[0] for name in targets for row in db.execute("SELECT CgId FROM videodata WHERE CgName = ?", (name,))}
         paths = {engine_path(row[0]).removeprefix("/Game/").split(".", 1)[0]
@@ -593,6 +594,7 @@ async def extract_cutscene_audio(parent, config, name):
             media.append(str(bank_media_id(await asyncio.to_thread(bank.read_bytes))) + ".wem")
     paths = await asyncio.to_thread(indexed_audio_paths, index, sorted(set(media)))
     await extract_voice_paths(parent, paths, destination)
+    save_json(destination.parent / "audio-export.json", {"banks": banks, "media": paths})
     return destination
 
 
@@ -624,8 +626,6 @@ async def voices(payload, parent):
     if parent.get("workspace_id"):
         await extract_requested_voices(parent, names, extracted)
     grouped = await asyncio.to_thread(exported_voices, extracted, names)
-    context["path_map"] = {path.relative_to(extracted).as_posix(): path.relative_to(extracted).as_posix()
-                           for tracks in grouped.values() for path in tracks.values()}
     receipt = await export_assets(client_root(parent), tool_path("WUWA_FMODEL_PATH"), "ConfigDB")
     configs = list((receipt.parent / "files").rglob("db_plot_audio.db"))
     if len(configs) > 1:
@@ -650,6 +650,8 @@ async def voices(payload, parent):
     await update_admin_run(payload["run_id"], "release_media", "running", raw_output={"media_report": report})
     logger.info("release_media.voice_lookup run=%s requested=%s found=%s missing=%s asset_version=%s",
                 payload["run_id"], report["requested"], report["found"], report["missing"], parent["asset_version"])
+    context["path_map"] = {path.relative_to(extracted).as_posix(): path.relative_to(extracted).as_posix()
+                           for tracks in grouped.values() for path in tracks.values()}
     result = await import_voice_sample(extracted, tool_path("WUWA_VGMSTREAM_PATH"),
                                       parent["asset_version"], names=names, require_all_languages=False, grouped=grouped,
                                       source_context=context)

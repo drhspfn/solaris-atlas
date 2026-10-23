@@ -181,6 +181,28 @@ async def test_shared_lease_is_invalidated_even_on_cancellation(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_nested_and_detached_writer_leases_share_one_connection(monkeypatch):
+    connection, _ = mock_database(monkeypatch, [])
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def writer():
+        async with workspaces.workspace_lease(11):
+            started.set()
+            await finish.wait()
+
+    async with workspaces.workspace_lease(11):
+        async with workspaces.workspace_lease(11):
+            task = asyncio.create_task(writer())
+            await started.wait()
+            connection.execute.assert_awaited_once()
+    connection.invalidate.assert_not_awaited()  # Detached export still owns lease.
+    finish.set()
+    await task
+    connection.invalidate.assert_awaited_once()
+    assert not workspaces._leases
+
+
+@pytest.mark.asyncio
 async def test_cancellation_waits_for_owned_writer():
     started, finish = asyncio.Event(), asyncio.Event()
     stopped = False
