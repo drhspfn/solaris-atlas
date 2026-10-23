@@ -150,6 +150,8 @@ and URLs.
 
 Administration uses compact operation tables and separate activity/import/history
 views. Task results and technical worker details are closed native disclosures;
+the official client offers an immediate check/update action alongside a versioned download.
+Automatic update status includes its last check and any error; completed versions stay usable while a newer client downloads.
 status filters remain native selects. Queue cleanup uses a dark native dialog with
 an explicit scope and a safe initial focus. Lore Assistant messages use existing
 surface and text tokens; user messages differ through surface depth and a mint border.

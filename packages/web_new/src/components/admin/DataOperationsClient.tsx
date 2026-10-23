@@ -67,6 +67,7 @@ type InstalledClient = {
 
 type ClientAssetsOverview = {
   live_version: string | null;
+  updates?: { checked_at?: string; interval_seconds?: number; error?: string };
   installed: InstalledClient[];
   active_client: InstalledClient | null;
   active_download: {
@@ -187,8 +188,8 @@ export function DataOperationsClient() {
     }
   }
 
-  async function enqueueClientDownload(event: FormEvent) {
-    event.preventDefault();
+  async function enqueueClientDownload(event?: FormEvent) {
+    event?.preventDefault();
     setBusy(true);
     setError('');
     setNotice('');
@@ -201,15 +202,20 @@ export function DataOperationsClient() {
         download_id: string;
         file_count: number;
         size_bytes: number;
-      }>('/admin/data-operations/client-download', {
-        method: 'POST',
-        body: {
-          version: clientVersion.trim() || undefined,
-          tier: clientTier,
+      }>(
+        event ? '/admin/data-operations/client-download' : '/admin/data-operations/client-update',
+        {
+          method: 'POST',
+          body: {
+            ...(event ? { version: clientVersion.trim() || undefined } : {}),
+            tier: clientTier,
+          },
         },
-      });
+      );
       setNotice(
-        `Client ${result.version} (${result.tier.toUpperCase()}) download queued as run #${result.id} · ${result.file_count} files (${formatGiB(result.size_bytes)}).`,
+        result.status === 'completed'
+          ? `Client ${result.version} (${result.tier.toUpperCase()}) is already up to date.`
+          : `Client ${result.version} (${result.tier.toUpperCase()}) queued as run #${result.id}. Unchanged archives will be reused.`,
       );
       await refresh();
     } catch (reason) {
@@ -450,6 +456,15 @@ export function DataOperationsClient() {
                 client provides raw textures, icons, cutscene MP4s and audio banks for map and media
                 extractors.
               </p>
+              <p>
+                Installed tiers are checked for updates hourly. Unchanged archives are shared;
+                existing imports keep their pinned client.
+                {data?.client_assets?.updates?.checked_at &&
+                  ` Last automatic check: ${new Date(data.client_assets.updates.checked_at).toLocaleString()}.`}
+              </p>
+              {data?.client_assets?.updates?.error && (
+                <p role="alert">Update check failed: {data.client_assets.updates.error}</p>
+              )}
             </div>
           </header>
 
@@ -511,6 +526,14 @@ export function DataOperationsClient() {
                 pattern="[0-9]+\.[0-9]+(\.[0-9]+)?"
               />
             </label>
+            <button
+              className="agent-button"
+              type="button"
+              disabled={busy || loading || Boolean(activeDownload)}
+              onClick={() => void enqueueClientDownload()}
+            >
+              Check &amp; update client
+            </button>
             <label htmlFor="client-tier">
               Resource tier
               <select

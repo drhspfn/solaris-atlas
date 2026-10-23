@@ -28,6 +28,7 @@ from wuwa_story.ingestion.client_assets import (
     get_live_launcher_info,
     inspect_installed_clients,
 )
+from wuwa_story.ingestion.client_updates import check_client_update, enqueue_client_plan
 from wuwa_story.ingestion.github_snapshots import discover_remote_snapshots
 from wuwa_story.ingestion.media_jobs import publish_media_job
 from wuwa_story.ingestion.queue_control import clear_queue
@@ -267,10 +268,19 @@ async def _inspect_client_assets(session: AsyncSession) -> dict[str, Any]:
 
     return {
         "live_version": live_info.get("version"),
+        "updates": _client_update_status(workspace),
         "installed": installed,
         "active_client": active_client,
         "active_download": active_download,
     }
+
+
+def _client_update_status(workspace: Path) -> dict:
+    try:
+        status = json.loads((workspace / "client-update-status.json").read_text(encoding="utf-8"))
+        return status if isinstance(status, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 
 @router.get("")
@@ -520,6 +530,20 @@ async def enqueue_snapshot_import(
     }
 
 
+class ClientUpdateRequest(_PayloadModel):
+    tier: Literal["sd", "hd", "uhd"] = "hd"
+
+
+@router.post("/client-update", status_code=202, dependencies=[Depends(require_csrf)])
+async def update_client(
+    request: ClientUpdateRequest, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    try:
+        return await check_client_update(session, request.tier)
+    except (OSError, ValueError, RuntimeError) as error:
+        raise HTTPException(503, f"Client update unavailable: {error}") from error
+
+
 @router.post("/client-download", status_code=202, dependencies=[Depends(require_csrf)])
 async def enqueue_client_download(
     request: ClientAssetDownloadRequest, session: AsyncSession = Depends(get_session)
@@ -527,80 +551,13 @@ async def enqueue_client_download(
     try:
         plan = await asyncio.to_thread(discover_plan, request.version, request.tier)
     except (OSError, ValueError, RuntimeError) as error:
-        raise HTTPException(400, f"Could not resolve official client plan: {error}") from error
+        raise HTTPException(502, f"Could not resolve official client plan: {error}") from error
 
-    identity = hashlib.sha256(f"asset_download:{plan['id']}".encode()).digest()
-    await session.execute(
-        text("SELECT pg_advisory_xact_lock(:lock_id)"),
-        {"lock_id": int.from_bytes(identity[:7], "big")},
-    )
-    await session.execute(
-        insert(Processor)
-        .values(
-            key="asset_download",
-            version="1",
-            description="Download official game client archives",
-        )
-        .on_conflict_do_nothing(index_elements=[Processor.key])
-    )
-    processor_id = await session.scalar(
-        select(Processor.id).where(Processor.key == "asset_download")
-    )
-    assert processor_id is not None
-    run = await session.scalar(
-        select(ProcessingRun)
-        .where(ProcessingRun.processor_id == processor_id, ProcessingRun.input_hash == identity)
-        .order_by(ProcessingRun.id.desc())
-        .limit(1)
-    )
-    if run is None:
-        run = ProcessingRun(processor_id=processor_id, input_hash=identity)
-        session.add(run)
-        await session.flush()
-    elif run.status in {"queued", "running", "completed"}:
-        return {
-            "id": run.id,
-            "status": run.status,
-            "version": plan["version"],
-            "tier": plan["tier"],
-            "download_id": plan["id"],
-            "file_count": len(plan.get("files", [])),
-            "size_bytes": sum(f.get("size", 0) for f in plan.get("files", [])),
-        }
-
-    run.status, run.error, run.finished_at = "queued", None, None
-    total_size = sum(f.get("size", 0) for f in plan.get("files", []))
-    run.metadata_json = {
-        "request": {
-            "version": plan["version"],
-            "tier": plan["tier"],
-            "download_id": plan["id"],
-            "keys_commit": plan.get("keys_commit"),
-            "file_count": len(plan.get("files", [])),
-            "size_bytes": total_size,
-        }
-    }
-    payload = dict(plan)
-    payload["run_id"] = run.id
-    await session.commit()
     try:
-        await publish_media_job(payload, f"asset-download:{run.id}", "wuwa.asset-download.v1")
-    except Exception as error:
-        run.status = "enqueue_failed"
-        run.error = "Queue confirmation failed; retry downloading client assets"
-        await session.commit()
-        raise HTTPException(503, "Asset download queue unavailable; retry the download") from error
+        return await enqueue_client_plan(session, plan)
+    except RuntimeError as error:
+        raise HTTPException(503, str(error)) from error
 
-    return {
-        "id": run.id,
-        "status": run.status,
-        "version": plan["version"],
-        "tier": plan["tier"],
-        "download_id": plan["id"],
-        "file_count": len(plan.get("files", [])),
-        "size_bytes": total_size,
-        "queued_at": datetime.now(UTC),
-    }
 
 
 @router.post("/maps/build", status_code=202, dependencies=[Depends(require_csrf)])

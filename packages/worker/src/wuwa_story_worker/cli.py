@@ -217,8 +217,11 @@ async def _run(queues: list[str] | None = None) -> None:
     }
     # Existing workers keep their snapshot-only role unless explicitly configured.
     selected = {key: handlers[key] for key in (queues or ["snapshot_build"])}
-    if "story_agent" in selected or "cutscene_vision" in selected:
+    if "story_agent" in selected or "cutscene_vision" in selected or "asset_download" in selected:
         async with asyncio.TaskGroup() as tasks:
+            if "asset_download" in selected:
+                from wuwa_story_worker.client_updates import watch_client_updates
+                tasks.create_task(watch_client_updates())
             if "story_agent" in selected:
                 tasks.create_task(dispatch_story_revisits())
             if "cutscene_vision" in selected:

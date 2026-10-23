@@ -278,6 +278,45 @@ def download_plan(plan: dict[str, Any], workspace: Path, concurrency: int = 4) -
         return _download_plan(plan, workspace, concurrency)
 
 
+def reuse_archives(plan: dict[str, Any], workspace: Path, game: Path) -> int:
+    """Share verified immutable archives; replacements always use a new inode."""
+    candidates = {}
+    for manifest in (workspace / "assets").glob("*/plan.json"):
+        if manifest.parent == game.parent:
+            continue
+        try:
+            previous = json.loads(manifest.read_text(encoding="utf-8"))
+            status = json.loads((manifest.parent / "status.json").read_text(encoding="utf-8"))
+            validate_plan(previous)
+            if status.get("state") != "downloaded" or status.get("id") != previous["id"]:
+                continue
+            for item in previous["files"]:
+                candidates.setdefault((item["md5"], item["size"]), []).append(
+                    manifest.parent / "game" / item["path"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    reused = 0
+    for item in plan["files"]:
+        target = game / item["path"]
+        if matches(target, item):
+            continue
+        for source in candidates.get((item["md5"], item["size"]), []):
+            if not matches(source, item):
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary = target.with_name(target.name + ".reuse")
+            try:
+                temporary.unlink(missing_ok=True)
+                os.link(source, temporary)
+                temporary.replace(target)
+                reused += item["size"]
+                break
+            except OSError:
+                temporary.unlink(missing_ok=True)
+                logger.warning("Could not share archive %s; download will be used", item["path"])
+    return reused
+
+
 def _download_plan(plan: dict[str, Any], workspace: Path, concurrency: int) -> Path:
     validate_plan(plan)
     if not 1 <= concurrency <= 16:
@@ -286,17 +325,18 @@ def _download_plan(plan: dict[str, Any], workspace: Path, concurrency: int) -> P
     game = root / "game"
     game.mkdir(parents=True, exist_ok=True)
     save_json(root / "plan.json", plan)
+    reused = reuse_archives(plan, workspace, game)
+    pending = [item for item in plan["files"] if not matches(game / item["path"], item)]
     required = sum(max(0, item["size"] - (
-        (game / item["path"]).stat().st_size if (game / item["path"]).exists() else
         min((game / (item["path"] + ".part")).stat().st_size, item["size"])
         if (game / (item["path"] + ".part")).exists() else 0
-    )) for item in plan["files"])
+    )) for item in pending)
     # Reserve room for download repairs and extraction metadata.
-    reserve = min(concurrency, len(plan["files"])) * max(item["size"] for item in plan["files"]) + 5 * 1024 ** 3
+    reserve = sum(sorted((item["size"] for item in pending), reverse=True)[:concurrency]) + 5 * 1024 ** 3 if pending else 0
     if shutil.disk_usage(game).free < required + reserve:
         raise RuntimeError(f"Insufficient disk space: need {required / 1024 ** 3:.1f} GiB plus {reserve / 1024 ** 3:.1f} GiB reserve")
     save_json(root / "status.json", {"state": "downloading", "id": plan["id"]})
-    logger.info("Downloading WuWa %s %s: %d files, %.1f GiB", plan["version"], plan["tier"], len(plan["files"]), required / 1024 ** 3)
+    logger.info("Downloading WuWa %s %s: %d files, %.1f GiB, shared %.1f GiB", plan["version"], plan["tier"], len(plan["files"]), required / 1024 ** 3, reused / 1024 ** 3)
     def download(item: dict[str, Any]) -> None:
         urls = [cdn_url(cdn, plan["base_path"] + "/" + item["path"]) for cdn in plan["cdns"]]
         target = (game / item["path"]).resolve()

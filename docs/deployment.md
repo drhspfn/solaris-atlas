@@ -174,3 +174,18 @@ migration is needed; take an event-table backup before converting existing sourc
 identities. A catalog marked partial can still have successfully imported names
 and image children: inspect `not_in_client` package reports separately from decode
 failures. Missing historical bytes are not recovered by repeating the same build.
+
+### Automatic official client updates
+
+The worker consuming `asset_download` checks installed resource tiers hourly and queues
+updates through the same idempotent service as **Check & update client** in Data operations.
+`WUWA_CLIENT_UPDATE_INTERVAL_SECONDS` defaults to `3600`; set it to `0` to disable polling
+or to at least `60` to change the interval. An empty installation is bootstrapped by a
+manual download. `client-update-status.json` records the last check and failures.
+
+Each client manifest remains pinned. Verified unchanged archives use hard links across
+client directories on the shared worker volume; changed files are downloaded to temporary
+files and atomically replaced. Existing import paths remain valid, and disk checks count
+only missing/changed archives. The active client is the newest fully downloaded version.
+This does not fetch unavailable historical clients or delete old client/extraction caches.
+Rollback: deploy the preceding image; already shared archives remain ordinary readable files.

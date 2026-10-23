@@ -360,3 +360,38 @@ async def test_export_lock_rechecks_receipt_for_independent_workers(tmp_path, mo
     )), timeout=10)
     assert receipts[0] == receipts[1]
     assert calls == ['ConfigDB']
+
+
+def test_updated_client_shares_identical_archives_and_replacements_preserve_old_copy(tmp_path, monkeypatch):
+    import os
+    old = _plan()
+    root = tmp_path / 'assets' / ('3.7.0-hd-' + old['id'][:16])
+    source = root / 'game' / old['files'][0]['path']
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b'archive')
+    client_assets.save_json(root / 'plan.json', old)
+    client_assets.save_json(root / 'status.json', {'state': 'downloaded', 'id': old['id']})
+    newer = {**old, 'version': '3.7.1'}
+    newer['id'] = plan_id(newer)
+    game = tmp_path / 'assets' / ('3.7.1-hd-' + newer['id'][:16]) / 'game'
+    assert client_assets.reuse_archives(newer, tmp_path, game) == 7
+    target = game / old['files'][0]['path']
+    assert os.path.samefile(source, target)
+    monkeypatch.setattr(client_assets, 'urlopen', lambda *args, **kwargs: Response(b'updated'))
+    download_file(_item(b'updated'), ['https://cdn/file'], target)
+    assert target.read_bytes() == b'updated'
+    assert source.read_bytes() == b'archive'
+    assert not os.path.samefile(source, target)
+
+
+def test_client_update_does_not_reuse_corrupt_archive(tmp_path):
+    old = _plan()
+    root = tmp_path / 'assets/old'
+    source = root / 'game' / old['files'][0]['path']
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b'corrupt')
+    client_assets.save_json(root / 'plan.json', old)
+    client_assets.save_json(root / 'status.json', {'state': 'downloaded', 'id': old['id']})
+    game = tmp_path / 'assets/new/game'
+    assert client_assets.reuse_archives(old, tmp_path, game) == 0
+    assert not (game / old['files'][0]['path']).exists()

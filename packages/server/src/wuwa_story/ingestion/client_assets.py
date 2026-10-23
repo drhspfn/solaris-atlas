@@ -234,4 +234,4 @@ def inspect_installed_clients(workspace: Path) -> list[dict[str, Any]]:
             })
         except Exception:
             continue
-    return results
+    return sorted(results, key=lambda item: tuple(int(part) for part in item["version"].split(".")), reverse=True)
