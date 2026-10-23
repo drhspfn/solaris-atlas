@@ -26,7 +26,8 @@ from wuwa_story.ingestion.github_snapshots import (
 from wuwa_story.ingestion.release_media import enqueue_release_media
 
 from wuwa_story_worker.broker import JobDeferred
-from wuwa_story_worker.client_assets import wait_workspace_lock
+from wuwa_story_worker.client_assets import save_json, wait_workspace_lock, workspace_lock
+from wuwa_story_worker.compiler_cache import compiled_cache_valid, compiler_fingerprint
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.snapshot_order import ordered_import
 
@@ -132,11 +133,21 @@ async def _build_and_import_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
     version, repository, commit = _validate_job(payload)
     workspace = Path(os.getenv("WUWA_WORKER_WORKSPACE",
                      "/var/lib/wuwa-worker")).resolve()
+    try:
+        with workspace_lock(workspace / "job-locks" / f"{version}-{commit}"):
+            return await _build_and_import_locked(payload, version, repository, commit, workspace)
+    except BlockingIOError as error:
+        raise JobDeferred("Another worker owns this snapshot checkout") from error
+
+
+async def _build_and_import_locked(payload, version, repository, commit, workspace):
     source = await _checkout_job(repository, version, commit, workspace)
     job_root = source.parent
     dist = job_root / "dist"
     build_output = dist / _version_from_readme(source)
-    if not (build_output / "manifest.json").is_file():
+    fingerprint = compiler_fingerprint()
+    marker = job_root / "compiled-code.json"
+    if not compiled_cache_valid(build_output / "manifest.json", marker, fingerprint):
         shutil.rmtree(dist, ignore_errors=True)
         env = compiler_environment(source)
         env["PYTHONPATH"] = os.pathsep.join(
@@ -155,6 +166,7 @@ async def _build_and_import_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
         ]
         logger.info("Compiling WuWa %s at %s", version, commit)
         await asyncio.to_thread(subprocess.run, command, cwd=job_root, env=env, check=True)
+        save_json(marker, {"compiler_sha256": fingerprint})
 
     manifest_path = build_output / "manifest.json"
     if not manifest_path.is_file():
