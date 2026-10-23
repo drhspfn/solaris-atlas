@@ -205,7 +205,14 @@ esac
 case "$DEPLOY_COMPONENT" in
   infrastructure|snapshot-worker|all)
     "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-assets-long-jobs \
-      '^wuwa[.](asset-(download|extract)|release-media|entity-media|event-media)[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues \
+      '^wuwa[.](asset-(download|extract)|release-(media|images)|entity-(media|images)|event-media)[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues \
       || echo "WARNING: could not apply the long-running asset job RabbitMQ policy" >&2
     ;;
 esac
+# Keep tagged rollback images and every image referenced by a container. Only
+# obsolete untagged layers older than a day are eligible; never prune volumes.
+if ! docker image prune -f --filter until=24h > /tmp/solaris-image-prune.log 2>&1; then
+  echo "WARNING: could not clean obsolete Docker images" >&2
+else
+  tail -n 2 /tmp/solaris-image-prune.log
+fi

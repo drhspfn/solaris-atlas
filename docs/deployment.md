@@ -195,3 +195,6 @@ media workers (two slots per queue per replica). Long character/quest audio and
 cutscenes retain the original queues, so they cannot consume the image slots.
 Existing queued tasks keep their original queue; newly created image jobs use the
 separate queues. Deploy API and worker together; queue declarations remain durable.
+
+Successful deployments remove only untagged, unused Docker images older than 24 hours.
+Tagged rollback images, running/stopped container references and all volumes are retained.
