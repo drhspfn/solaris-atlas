@@ -51,7 +51,9 @@ RUN curl -fSL --retry 3 https://github.com/WorkingRobot/OodleUE/releases/downloa
          cp /tools/libdetex.so /tools/$tool/.data/Detex.dll; \
        done
 
-RUN curl -fSL --retry 3 https://github.com/vgmstream/vgmstream/releases/download/r2117/vgmstream-linux.zip -o /tmp/vgmstream.zip \
+RUN curl -fSL --retry 3 https://github.com/bnnm/wwiser/releases/download/v20260808/wwiser.pyz -o /tools/wwiser.pyz \
+    && echo 'f4ba1368895adab285f27fa37b142e5da805bcc6fb77e8daba282dac65d89411  /tools/wwiser.pyz' | sha256sum -c - \
+    && curl -fSL --retry 3 https://github.com/vgmstream/vgmstream/releases/download/r2117/vgmstream-linux.zip -o /tmp/vgmstream.zip \
     && echo '2f98c77f756079f63fbd119939067f1ed461d77e70993bc4cc372736d859c84a  /tmp/vgmstream.zip' | sha256sum -c - \
     && unzip /tmp/vgmstream.zip -d /tmp/vgmstream \
     && install -m 755 /tmp/vgmstream/vgmstream-cli /tools/vgmstream-cli \
@@ -80,6 +82,7 @@ USER appuser
 # Exercise actual managed/native calls in the final OS as the runtime user, offline.
 RUN --network=none /app/tools/fmodelcli/FModelCLI --check-native-libs \
     && /app/tools/cue-cli/cue4parse --check-native-libs \
+    && python /app/tools/wwiser.pyz --help >/dev/null \
     && python -c "import wave; w=wave.open('/tmp/audio-probe.wav','wb'); w.setparams((1,2,8000,0,'NONE','not compressed')); w.writeframes(b'\x00\x00'*8000); w.close()" \
     && /app/tools/vgmstream-cli -o /tmp/audio-decoded.wav /tmp/audio-probe.wav \
     && python -c "import wave; w=wave.open('/tmp/audio-decoded.wav'); assert w.getnframes()==8000; w.close()" \

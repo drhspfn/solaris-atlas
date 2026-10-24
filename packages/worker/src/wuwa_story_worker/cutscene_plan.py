@@ -6,6 +6,7 @@ import math
 import re
 import sqlite3
 import struct
+from collections import Counter
 from pathlib import Path
 
 from flatbuffers.table import Table
@@ -45,6 +46,7 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, 
         raise ValueError("Cutscene not found in VideoData")
     inputs, clips, options = [], [], []
     input_assets = {}
+    shared_assets = Counter(engine_path(blob) for _, _, blob in videos)
     banks_by_name = {}
     for path in assets.rglob("*"):
         if path.is_file() and path.suffix.casefold() == ".bnk":
@@ -73,6 +75,8 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, 
             for language, bank in selected:
                 soundtrack.append({"bank": bank.relative_to(assets).as_posix(),
                                    "language": language,
+                                   "rover": ("male" if gender == 1 else "female" if gender == 0 else None)
+                                   if shared_assets[engine_path(blob)] == 1 else None,
                                    "start_seconds": start, "end_seconds": end})
         if key in input_assets:
             if input_assets[key]["soundtrack"] != soundtrack:

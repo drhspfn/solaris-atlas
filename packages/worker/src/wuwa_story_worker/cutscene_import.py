@@ -27,6 +27,7 @@ from wuwa_story_worker.publication_provenance import (
     recipe_identity,
     verified_references,
 )
+from wuwa_story_worker.wwise_banks import bank_media_ids, has_authored_event, render_bank
 
 
 async def missing_cutscene_identities(names: set[str], *, source_context: dict,
@@ -166,8 +167,21 @@ def available_soundtracks(video, assets, audio, missing_assets=None):
     tracks = []
     for track in video.soundtrack:
         try:
-            identity = bank_media_id(confined(assets, track.bank).read_bytes(), track.media_id)
-            soundtrack_wem(audio, identity)
+            bank = confined(assets, track.bank)
+            data = bank.read_bytes()
+            if track.media_id is None and has_authored_event(data, bank.stem):
+                # Dependencies belong to the selected event/rover branch. An
+                # absent file in an unused branch must not discard this track.
+                tracks.append(track)
+                continue
+            try:
+                identities = [bank_media_id(data, track.media_id)]
+            except ValueError as error:
+                if track.media_id is not None or not any(text in str(error) for text in ("single-source", "Multiple music sources")):
+                    raise
+                identities = bank_media_ids(data)
+            for identity in identities:
+                soundtrack_wem(audio, identity)
         except ValueError as error:
             if missing_assets is None:
                 raise
@@ -179,22 +193,40 @@ def available_soundtracks(video, assets, audio, missing_assets=None):
     return video.model_copy(update={"soundtrack": tracks})
 
 
-async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffmpeg, duration, embedded_audio, asset_version):
+async def decode_soundtrack(track, assets, audio, work, decoder, decoded):
+    bank = confined(assets, track.bank)
+    key = (bank, track.media_id, getattr(track, "rover", None))
+    if key not in decoded:
+        if track.media_id is None and has_authored_event(bank.read_bytes(), bank.stem):
+            decoded[key] = await render_bank(bank, audio, work, decoder, getattr(track, "rover", None), run_tool)
+            return decoded[key]
+        try:
+            identity = bank_media_id(bank.read_bytes(), track.media_id)
+        except ValueError as error:
+            if track.media_id is not None or not any(text in str(error) for text in ("single-source", "Multiple music sources")):
+                raise
+            decoded[key] = await render_bank(bank, audio, work, decoder, getattr(track, "rover", None), run_tool)
+        else:
+            wem = soundtrack_wem(audio, identity)
+            wav = work / f"{identity}.wav"
+            await run_tool([str(decoder.resolve()), "-i", "-o", str(wav), str(wem.resolve())], 120)
+            decoded[key] = (wav, [bank, wem])
+    return decoded[key]
+
+
+async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffmpeg, duration, embedded_audio, asset_version, decoded=None):
     """Keep localized event voices separate from the original movie audio mix."""
     if not any(track.language for track in video.soundtrack):
         return None
     from wuwa_story.ingestion.cutscene_audio import CutsceneAudioRecipe
 
     work.mkdir(parents=True, exist_ok=True)
+    decoded = decoded if decoded is not None else {}
     groups = {}
     for index, track in enumerate(video.soundtrack):
-        bank = confined(assets, track.bank)
-        identity = bank_media_id(bank.read_bytes(), track.media_id)
-        wem = soundtrack_wem(audio, identity)
-        wav = work / f"decoded-{index}.wav"
-        await run_tool([str(decoder.resolve()), "-i", "-o", str(wav), str(wem)], 120)
+        wav, originals = await decode_soundtrack(track, assets, audio, work, decoder, decoded)
         evidence = []
-        for source in (bank, wem):
+        for source in originals:
             destination = work / f"source-{index}-{source.name}"
             shutil.copyfile(source, destination)
             evidence.append(destination.name)
@@ -268,6 +300,22 @@ async def import_cutscene_recipe(
         provenance_by_asset = {}
         originals_by_asset = {}
         published_references = {}
+        resolved_videos = []
+        for video in spec.videos:
+            tracks = []
+            for track in video.soundtrack:
+                try:
+                    await decode_soundtrack(track, assets, audio, work, decoder, decoded)
+                except ValueError as error:
+                    if missing_assets is None:
+                        raise
+                    reason = f"{Path(track.bank).name}: {error}"
+                    if reason not in missing_assets:
+                        missing_assets.append(reason)
+                else:
+                    tracks.append(track)
+            resolved_videos.append(video.model_copy(update={"soundtrack": tracks}))
+        spec = spec.model_copy(update={"videos": resolved_videos})
         for index, video in enumerate(spec.videos):
             engine = video.asset.removeprefix("asset:ue:")
             package, object_name = engine.rsplit(".", 1)
@@ -284,7 +332,8 @@ async def import_cutscene_recipe(
                     originals.append(header)
                 for track in video.soundtrack:
                     bank = confined(assets, track.bank)
-                    originals.extend([bank, soundtrack_wem(audio, bank_media_id(bank.read_bytes(), track.media_id))])
+                    _, evidence = await decode_soundtrack(track, assets, audio, work, decoder, decoded)
+                    originals.extend(path for path in evidence if path.suffix.casefold() in {".wem", ".bnk"})
                 provenance_by_asset[video.asset] = publication_source(
                     source_context, {"path": engine, "kind": "video"}, list(dict.fromkeys(originals)),
                     recipe_sha256=recipe_hash, recipe=requested_spec.model_dump(mode="json"),
@@ -306,18 +355,8 @@ async def import_cutscene_recipe(
                 streams.append("[0:a:0]")
             for track_index, track in enumerate([track for track in video.soundtrack if track.language in (None, "en")], 1):
                 bank = confined(assets, track.bank)
-                media_id = bank_media_id(bank.read_bytes(), track.media_id)
-                cache_key = (bank, media_id)
-                if cache_key not in decoded:
-                    wem = soundtrack_wem(audio, media_id)
-                    wav = work / f"{media_id}.wav"
-                    await run_tool(
-                        [str(decoder.resolve()), "-i", "-o", str(wav), str(wem.resolve())],
-                        120,
-                    )
-                    decoded[cache_key] = (bank, wem, wav)
-                bank_file, wem, wav = decoded[cache_key]
-                source_paths.append((bank_file, wem, wav))
+                wav, evidence = await decode_soundtrack(track, assets, audio, work, decoder, decoded)
+                source_paths.extend((bank, path, wav) for path in evidence if path.suffix.casefold() == ".wem")
                 command.extend(["-i", str(wav)])
                 length = (track.end_seconds or duration) - track.start_seconds
                 if length <= 0 or track.start_seconds >= duration:
@@ -356,7 +395,7 @@ async def import_cutscene_recipe(
             prepared.append((video, movie, playable, source_paths, duration, has_audio))
             bundle_root = work / f"audio-{index}"
             bundle = await localized_audio_recipe(video, movie, assets, audio, bundle_root,
-                                                   decoder, ffmpeg, duration, embedded_audio, spec.asset_version)
+                                                   decoder, ffmpeg, duration, embedded_audio, spec.asset_version, decoded)
             if bundle:
                 bundles.append((bundle_root, bundle))
         analysis, segments = None, []

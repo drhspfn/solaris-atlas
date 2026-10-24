@@ -12,6 +12,7 @@ TOOLS = {
     "WUWA_FMODEL_PATH": ("fmodelcli/FModelCLI", "FModelCLI extractor"),
     "WUWA_TEXTURE_CONVERTER_PATH": ("cue-cli/cue4parse", "CUE4Parse CLI texture/audio converter"),
     "WUWA_VGMSTREAM_PATH": ("vgmstream-cli", "vgmstream-cli audio decoder"),
+    "WUWA_WWISER_PATH": ("wwiser.pyz", "Wwise event and soundtrack renderer"),
 }
 
 

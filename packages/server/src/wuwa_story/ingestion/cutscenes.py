@@ -83,6 +83,7 @@ class Soundtrack(StrictModel):
     bank: str
     # Explicit source selection for verified layered/switch banks; never mix all branches.
     media_id: int | None = Field(default=None, gt=0, le=4294967295)
+    rover: Literal["male", "female"] | None = None
     start_seconds: float = Field(default=0, ge=0)
     end_seconds: float | None = Field(default=None, gt=0)
     gain_db: float = Field(default=0, ge=-120, le=12)
