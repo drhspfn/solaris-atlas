@@ -28,6 +28,12 @@ def classify_quest(data: dict, subtype: dict, main_type: dict) -> dict:
         kind, label = "test", "Test quest"
         explanation = "The game's quest type assigns this record to its test category."
         evidence.append({"field": "QuestMainType.QuestTabIcon", "value": main_type["QuestTabIcon"]})
+    elif re.fullmatch(r"测试[0-9]+(?:武器|物品|声骸)", key) or re.match(
+        r"^(?:test|debug)[/_]", key, re.I
+    ):
+        kind, label = "test", "Test quest"
+        explanation = "The internal source name explicitly identifies a developer test fixture."
+        evidence.append({"field": "Data.Key", "value": key})
     elif subtype.get("IsShowInQuestPanel") is False and (
         "测试" in key or "调试" in key or re.search(r"^(test|debug)[/_ -]", key, re.I)
     ):

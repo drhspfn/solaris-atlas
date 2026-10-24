@@ -41,6 +41,14 @@ def test_type_does_not_require_test_word_and_gallery_keeps_separate_role():
     )
 
 
+def test_older_snapshots_with_incomplete_type_dictionaries_keep_explicit_fixture_names():
+    for key in ("测试21020015武器", "测试42100020物品", "测试60000023声骸", "test/护送Npc"):
+        result = classify_quest({"Key": key}, {}, {})
+        assert result["kind"] == "test"
+        assert result["evidence"] == [{"field": "Data.Key", "value": key}]
+        assert result["visible_in_quest_panel"] is None
+
+
 def test_missing_dialogue_or_localization_and_ordinary_names_are_not_test_signals():
     for data in ({}, {"Key": "Contest"}, {"Key": "废弃工厂调查"}, {"Key": "测试勇气", "Type": 2}):
         assert classify_quest(data, {"IsShowInQuestPanel": True}, {})["kind"] == "unclassified"
