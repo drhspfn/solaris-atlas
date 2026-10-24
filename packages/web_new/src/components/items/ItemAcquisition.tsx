@@ -7,6 +7,13 @@ import { EmptyInline } from '../ui/Feedback';
 
 type Text = { content?: string; key?: string } | null;
 type Acquisition = {
+  banner_sources?: {
+    view_id: number;
+    banner_type: string;
+    roles: string[];
+    title?: Text;
+    source: { file: string; row: number; game_version: string };
+  }[];
   map_sources?: {
     map_id: number;
     url: string;
@@ -44,6 +51,7 @@ export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: s
     (path) => !shopNames.has(localizedText(path.description)),
   );
   const shops = data.shop_offers ?? [];
+  const banners = data.banner_sources ?? [];
   const quests = data.quest_rewards ?? [];
   const regions = maps.length ? [] : (data.harvest_world_maps ?? []);
   const locations = data.locations ?? [];
@@ -53,6 +61,7 @@ export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: s
     !maps.length &&
     !paths.length &&
     !shops.length &&
+    !banners.length &&
     !quests.length &&
     !regions.length &&
     !locations.length
@@ -60,6 +69,26 @@ export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: s
     return <EmptyInline text="No confirmed acquisition sources recorded yet." />;
   return (
     <div className="item-acquisition">
+      {banners.length > 0 && (
+        <div className="subsection">
+          <h3>Convene banners</h3>
+          {banners.map((banner) => (
+            <div key={banner.view_id}>
+              <div className="plain-row">
+                <span>
+                  <strong>{localizedText(banner.title,
+                    banner.banner_type === 'permanent_weapon' ? 'Permanent weapon Convene' : `Weapon Convene ${banner.view_id}`)}</strong>
+                  <small>{banner.roles.includes('featured') ? 'Featured weapon' :
+                    banner.roles.includes('preview') ? 'Listed in banner preview' : 'Shown in banner artwork'}</small>
+                </span>
+                <small>Snapshot {banner.source.game_version}</small>
+              </div>
+              <small className="source-caption">Source: {banner.source.file}, row {banner.source.row}</small>
+            </div>
+          ))}
+          <small>Banner references do not confirm current availability or drop rates.</small>
+        </div>
+      )}
       {maps.length > 0 && (
         <div className="subsection">
           <h3>On the map</h3>

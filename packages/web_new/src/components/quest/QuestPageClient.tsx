@@ -6,6 +6,7 @@ import { api } from '@/api/client';
 import { PlayerText } from '@/components/dialogue/PlayerText';
 import { AnalysisActions } from '@/components/story/AnalysisActions';
 import { cutsceneSlots } from '@/components/story/cutscenePlacement';
+import { QuestClassification } from '@/components/story/QuestClassification';
 import { QuestContinuity } from '@/components/story/QuestContinuity';
 import { Cutscene, QuestCutscenes } from '@/components/story/QuestCutscenes';
 import { QuestExplanation } from '@/components/story/QuestExplanation';
@@ -166,8 +167,8 @@ export function QuestPageClient({
   const quest = profile?.quest || {};
   const lines = transcript?.lines || [];
   const scenes = transcript?.scenes || profile?.scenes || [];
-  const storyGalleryRecord =
-    profile?.source?.raw_record?.Data?.Key?.includes('剧情图鉴专用') === true;
+  const classification = quest.classification;
+  const storyGalleryRecord = classification?.kind === 'story_gallery';
   const hasMediaReferences = Boolean(media?.events?.length || media?.video_packages?.length);
   const explicitLinks = profile?.explicit_links || [];
   const questConnections = explicitLinks.filter(
@@ -265,7 +266,7 @@ export function QuestPageClient({
       <section className="quest-hero">
         <div className="quest-emblem">
           <BookOpen size={28} />
-          <span>STORY RECORD</span>
+          <span>{classification?.kind === 'test' ? 'TEST QUEST' : 'STORY RECORD'}</span>
         </div>
         <div className="quest-intro">
           <span className="eyebrow left">QUEST DOSSIER / {quest.quest_type || 'NARRATIVE'}</span>
@@ -294,6 +295,26 @@ export function QuestPageClient({
           </div>
         </div>
       </section>
+      <QuestClassification value={classification} />
+      {profile?.item_requirements?.length > 0 && (
+        <section className="subsection" aria-label="Item requirements">
+          <h2>Item requirements</h2>
+          {profile.item_requirements.map((requirement: any, index: number) => (
+            <div className="plain-row" key={index}>
+              <span>
+                <strong>{requirement.alternatives ? 'Hand-in option' : requirement.label}</strong>
+                <small>
+                  {requirement.item ? (
+                    <Link to={requirement.item.href}>{requirement.item.label}</Link>
+                  ) : `Item ${requirement.item_id}`}
+                  {requirement.count != null ? ` · ${requirement.count} required` : ''}
+                </small>
+              </span>
+              <small>Requirement · not a reward</small>
+            </div>
+          ))}
+        </section>
+      )}
       {continuity && (
         <QuestContinuity continuity={continuity} title={quest.name?.content || `Quest ${questKey}`} />
       )}
@@ -311,16 +332,21 @@ export function QuestPageClient({
         <section className="quest-no-transcript" aria-labelledby="quest-no-transcript-title">
           <span className="eyebrow left">SOURCE RECORD · NO DIALOGUE TRANSCRIPT</span>
           <h2 id="quest-no-transcript-title">
-            {storyGalleryRecord ? 'Story gallery record' : 'No dialogue recorded for this quest'}
+            {classification?.kind === 'test' ? 'Test quest — no dialogue recorded' :
+              storyGalleryRecord ? 'Story gallery record' : 'No dialogue recorded for this quest'}
           </h2>
           <p>
-            {storyGalleryRecord
+            {classification?.kind === 'test'
+              ? 'The source classifies this as a test quest. No dialogue is recorded for it in this snapshot.'
+              : storyGalleryRecord
               ? `The game data marks this as a story gallery record. This import has ${scenes.length} scene records, but no dialogue lines or playable video for it.`
               : scenes.length > 0
                 ? `This import has ${scenes.length} scene records for this quest, but no dialogue lines. The source does not confirm what players see at this point.`
                 : 'The game data lists this quest, but this import has no dialogue or scene records for it.'}
           </p>
-          <p>Its place in the story and source links are still shown on this page.</p>
+          <p>{classification?.kind === 'test'
+            ? 'Recorded requirements and source links are still shown on this page.'
+            : 'Its place in the story and source links are still shown on this page.'}</p>
           {hasMediaReferences && <QuestMediaReferences manifest={media} stateAnchors={new Map()} />}
           <QuestCutscenes manifest={media} stateAnchors={new Map()} />
         </section>

@@ -7,8 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.api.item_acquisition import ITEM_QUEST_REWARD_LIMIT, item_map_sources
+from wuwa_story.api.public_addresses import public_addresses
+from wuwa_story.api.quest_classification import QUEST_NODES, quest_item_requirements
 from wuwa_story.api.routes.story.shared import (
     _character_progression_materials,
     _dialogue_payload,
@@ -23,6 +24,7 @@ from wuwa_story.api.routes.story.shared import (
     _release_id,
 )
 from wuwa_story.api.source_labels import source_family_label
+from wuwa_story.api.weapon_acquisition import weapon_banner_sources
 from wuwa_story.db.models.core import (
     Character,
     DialogueLine,
@@ -72,7 +74,7 @@ async def item_profile(
         if link["node"]["type"] in {"area", "location"}
         and link["relation"] in {"references_area", "within_area", "occurs_at"}
     ]
-    quest_references = await _quest_references_from_links(session, links, locale, game_version)
+    quest_references = await _quest_references_from_links(session, links, locale, game_version, node.canonical_key)
     access_ids = raw.get("ItemAccess", [])
     access_rows = await session.execute(
         select(SourceRecord, SourceFile)
@@ -649,6 +651,8 @@ async def item_profile(
         "quest_rewards": quest_rewards[:ITEM_QUEST_REWARD_LIMIT],
         "quest_rewards_has_more": len(quest_rewards) > ITEM_QUEST_REWARD_LIMIT,
         "acquisition_paths": access_paths,
+        "banner_sources": await weapon_banner_sources(session, item.game_item_id, release_id, locale)
+        if raw_source and raw_source["source_file"] == "BinData/weapon/weaponconf.json" and release_id else [],
         "harvest_sources": enrichment_sources,
         "harvest_world_maps": world_map_payloads,
         "progression_uses": progression_uses,
@@ -840,8 +844,23 @@ async def quest_profile(
             }
         )
     quest_links = await _explicit_entity_links(session, quest.node_id, locale)
+    release_id = await _release_id(session, game_version)
+    requirement_rows = await session.execute(
+        select(SourceRecord).join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+        .where(SourceRecord.release_id == release_id, SourceFile.logical_source_path == QUEST_NODES,
+               SourceRecord.data["Key"].astext.in_(
+                   [f"{game_quest_id}_{row[0].game_node_id}" for row in qnode_rows])))
+    requirements = []
+    for record in requirement_rows.scalars():
+        for requirement in quest_item_requirements(record.data.get("Data") or {}):
+            item_node = await get_node(session, f"item:{requirement['item_id']}", ("item",))
+            requirements.append({**requirement,
+                                 "item": await _node_label(session, item_node.id, locale) if item_node else None,
+                                 "source": {"file": QUEST_NODES, "row": record.row_index,
+                                            "release_id": release_id}})
     return {
         "quest": await _quest_info(session, quest, locale, game_version),
+        "item_requirements": requirements,
         "tree": [
             {
                 "canonical_key": node.canonical_key,
