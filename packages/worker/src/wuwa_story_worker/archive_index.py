@@ -82,7 +82,7 @@ def indexed_package_paths(index: Path, expected) -> dict[str, str]:
     """
     authored = sorted(set(expected))
     for path in authored:
-        if (not re.fullmatch(r"[a-zA-Z0-9_/-]+", path)
+        if (not re.fullmatch(r"[a-zA-Z0-9_ /-]+", path)
                 or PurePosixPath(path).is_absolute() or "/" not in path
                 or PurePosixPath(path).as_posix() != path):
             raise ValueError("Expected an authored extensionless Unreal package path")
@@ -105,7 +105,7 @@ def voice_filter_batches(paths) -> list[list[str]]:
     """Stable exact-path alternatives bounded by both argv bytes and path count."""
     batches, batch, size = [], [], 0
     for path in sorted(set(paths)):
-        if (not re.fullmatch(r"[a-zA-Z0-9_./-]+", path)
+        if (not re.fullmatch(r"[a-zA-Z0-9_ ./-]+", path)
                 or PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts):
             raise ValueError("Unsupported authored voice archive path")
         path_size = len(path)  # The validated ASCII alphabet is one UTF-8 byte per character.

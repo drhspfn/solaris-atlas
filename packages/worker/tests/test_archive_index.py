@@ -114,6 +114,17 @@ def test_package_lookup_rejects_non_authored_stems(tmp_path, path):
         archive_index.indexed_package_paths(tmp_path / "unused.sqlite", [path])
 
 
+def test_package_lookup_and_filter_preserve_authored_spaces(tmp_path):
+    stem = "Aki/UI/UIResources/UiActivity/Image/Activity 28/Tarlkov/HonamiStoryHead/T_HonamiStoryHeadBO1Nor"
+    paths = ["Client/Content/" + stem + suffix for suffix in (".uasset", ".uexp")]
+    log = tmp_path / "archive-index.log"
+    log.write_text("".join(f"[File] {path}\n" for path in paths) + "[Done] Listed 2 files\n",
+                   encoding="utf-8")
+    index = archive_index.index_voice_paths(log)
+    assert archive_index.indexed_package_paths(index, [stem]) == {stem: paths[0]}
+    assert archive_index.voice_filter_batches(paths) == [paths]
+
+
 @pytest.mark.asyncio
 async def test_patch_workspace_reuses_retained_client_index(tmp_path, monkeypatch):
     client = tmp_path / "assets" / "client"

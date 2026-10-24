@@ -433,7 +433,8 @@ async def test_failed_attempt_cannot_contaminate_retry(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_export_lock_rechecks_receipt_for_independent_workers(tmp_path, monkeypatch):
+@pytest.mark.parametrize("asset_filter", ["ConfigDB", "Aki/UI/Image/Activity 28/Texture"])
+async def test_export_lock_rechecks_receipt_for_independent_workers(tmp_path, monkeypatch, asset_filter):
     executable = _completed_download(tmp_path)
     calls = []
 
@@ -446,11 +447,11 @@ async def test_export_lock_rechecks_receipt_for_independent_workers(tmp_path, mo
     # Bypass the process-local shared task to exercise the OS lock used by
     # separate worker processes sharing the client volume.
     receipts = await asyncio.wait_for(asyncio.gather(*(
-        asset_export._export_assets(tmp_path, executable, 'ConfigDB', False,
+        asset_export._export_assets(tmp_path, executable, asset_filter, False,
                                     asset_export._sha256(executable)) for _ in range(2)
     )), timeout=10)
     assert receipts[0] == receipts[1]
-    assert calls == ['ConfigDB']
+    assert calls == [asset_filter]
 
 
 def test_updated_client_shares_identical_archives_and_replacements_preserve_old_copy(tmp_path, monkeypatch):

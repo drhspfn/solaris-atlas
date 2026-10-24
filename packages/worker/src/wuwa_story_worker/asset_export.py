@@ -59,7 +59,7 @@ async def export_assets(root: Path, executable: Path, asset_filter: str, upload:
 
 
 async def _export_assets(root: Path, executable: Path, asset_filter: str, upload: bool, executable_sha: str) -> Path:
-    if not asset_filter or not all(re.fullmatch(r"[a-zA-Z0-9_./-]+", part)
+    if not asset_filter or not all(re.fullmatch(r"[a-zA-Z0-9_ ./-]+", part)
                                    for part in asset_filter.split("|")):
         raise ValueError("Provide a nonempty FModel path filter, for example ConfigDB or Audio")
     if not executable.is_file():
