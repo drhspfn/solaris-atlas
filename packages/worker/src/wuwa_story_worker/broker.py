@@ -281,13 +281,18 @@ async def consume_jobs(
                         wrong_pool = job_key.startswith("pool_") and job_key != "pool_" + media_pool(payload)
                         if (route_media and job_key in MEDIA_QUEUES) or wrong_pool:
                             destination = "pool_" + media_pool(payload)
+                            headers = dict(message.headers or {})
+                            if message.redelivered:
+                                # A fresh publication loses RabbitMQ's redelivery
+                                # bit, but its DB run may still be running.
+                                headers["pool_redelivered"] = True
                             try:
                                 exchange, _ = await declare_queue(job_channel, destination)
                                 await exchange.publish(aio_pika.Message(
                                     body=message.body, content_type="application/json",
                                     delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
                                     message_id=message.message_id, type=source_key,
-                                    headers=dict(message.headers or {})),
+                                    headers=headers),
                                     routing_key=QUEUES[destination].name, mandatory=True)
                             except Exception:
                                 logger.exception("Could not forward %s to %s", message.message_id, destination)
@@ -297,7 +302,8 @@ async def consume_jobs(
                             return
                         if source_key in {"release_media", "event_media", "entity_media", "release_images", "entity_images", "asset_download",
                                        "asset_extract", "snapshot_build"}:
-                            if not await claim_import(payload, redelivered=message.redelivered):
+                            if not await claim_import(payload, redelivered=message.redelivered
+                                                      or (message.headers or {}).get("pool_redelivered") is True):
                                 if source_key in MEDIA_QUEUES:
                                     await cleanup_skipped_media(payload)
                                 await message.ack()
