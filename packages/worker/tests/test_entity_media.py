@@ -3,6 +3,17 @@ import pytest
 from wuwa_story_worker.entity_media import event_media
 
 
+@pytest.mark.asyncio
+async def test_absent_texture_packages_are_reported_without_failing_other_imports(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from wuwa_story_worker import entity_media
+    monkeypatch.setattr(entity_media, "build_icons", AsyncMock(return_value={}))
+    target = {"kind": "image", "path": "/Game/Aki/UI/Missing.Missing"}
+    files, missing = await entity_media.build_entity_files(tmp_path, [target], tmp_path / "fmodel", tmp_path / "converter")
+    assert files == [] and missing == [target["path"]]
+
+
 def cooked(entries):
     return [{"EventCookedData": {"EventLanguageMap": [{"Value": {"Media": entries}}]}}]
 

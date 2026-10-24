@@ -157,8 +157,6 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
         files.append((target, path, "image", "image/png", [Path(p) for p in icon["raw_paths"]]))
     voices = [t for t in targets if t["kind"] == "voice"]
     if not voices:
-        if not files:
-            raise ValueError("None of the requested textures could be decoded")
         return files, missing
     if voice_root is None and not os.getenv("WUWA_VOICE_ROOT"):
         raise RuntimeError("Set WUWA_VOICE_ROOT to the completed multilingual voice download directory")
