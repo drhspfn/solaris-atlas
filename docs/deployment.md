@@ -54,6 +54,67 @@ Later, update one Variable or Secret in the GitHub `production` environment and 
 
 The host is Ubuntu or Debian. Docker Compose v2.30 or newer is installed by the infrastructure workflow. Generated files are stored under `~/solaris-atlas/env/` with mode `0600`; the directory is mode `0700`. They are rebuilt from the GitHub entries on every deployment. Do not make manual edits to generated host files; change the corresponding GitHub entry so later deploys retain it.
 
+## API connection pooling
+
+Production API `DATABASE_URL` targets internal `pgbouncer:6432` in transaction
+mode. The API uses SQLAlchemy `NullPool` and UUID prepared statement names;
+PgBouncer tracks up to 200 prepared statements per server connection. It admits
+500 clients and caps API backend connections at 25 (20 normal plus 5 reserve).
+Clients wait up to 30 seconds for a backend. These are admission limits, not a
+replacement for fixing expensive queries. Neither PostgreSQL nor PgBouncer
+publishes a host port.
+
+Workers keep `postgres:5432`, their existing pool limits, and physical session
+affinity for workspace, broker and agent advisory locks. `agents.runner.execute_job`
+is called by the story worker only; API endpoints enqueue jobs. Keep any future
+session-lock, LISTEN or session-state workload off the transaction pool.
+Migrations override `DATABASE_URL` with `MIGRATION_DATABASE_URL` in the API's
+one-off container, with dependencies disabled, and therefore always connect
+directly. After migrations deployment recreates PgBouncer before starting API
+services, clearing cached plans after DDL.
+
+Infrastructure, API and full deployments export the existing login role's SCRAM
+verifier over the PostgreSQL container's local socket to
+`env/pgbouncer/userlist.txt`. The verifier is never printed or passed as a command
+argument. Its file is mode `0600`, owned by image UID/GID `70:70`, inside the
+protected env directory, and mounted read-only. No database password is changed.
+The deployment script needs root permissions to assign UID/GID 70 ownership
+(the production SSH account is root).
+An absent, expired or non-SCRAM verifier fails deployment. PgBouncer uses
+`scram-sha-256`, with no forced backend username, to reuse the identical server
+verifier. After rotating a PostgreSQL password and its GitHub Secret, redeploy
+infrastructure/API to refresh the verifier and pooler.
+
+The image is
+`docker.io/pgbouncer/pgbouncer:1.25.2-20260920@sha256:89f145c1f003340e9b38a37a8734013ec43d931abb9bd7ea739640f2348d4a67`.
+It is the Canary9-maintained PgBouncer Docker Hub namespace, **not** a Docker
+Official Image. The OCI index covers amd64 and arm64 and includes provenance
+attestation manifests. The upstream image entrypoint is bypassed so it cannot
+render credentials into config or logs; the binary runs as its default UID 70
+with a read-only root filesystem. See the [publisher's build/source documentation](https://hub.docker.com/r/pgbouncer/pgbouncer),
+[PgBouncer authentication and pooling reference](https://www.pgbouncer.org/config.html),
+[transaction prepared statement support](https://www.pgbouncer.org/faq.html), and
+[SQLAlchemy asyncpg guidance](https://docs.sqlalchemy.org/en/21/dialects/postgresql.html#prepared-statement-name-with-pgbouncer).
+
+Before deployment, run the disposable local Docker smoke with the server Python
+environment: `RUN_PGBOUNCER_SMOKE=1 packages/server/.venv/bin/python -m unittest discover -s scripts/tests -p test_pgbouncer_live.py`.
+On Windows use `packages/server/.venv/Scripts/python.exe` and set the environment
+variable in PowerShell. It exercises actual SCRAM pass-through, 60 concurrent
+clients, prepared statement reuse across transactions, rollback, transaction-lock
+release and direct worker session-lock retention. It removes its containers,
+anonymous volumes and network afterward. Container health checks only test the
+pooler's listening socket; they do not replace this authenticated smoke.
+
+For rollout, copy `pgbouncer/` alongside the Compose file and use the updated
+deployment script (the production workflow does both). Deploy infrastructure
+before the new API image when introducing pooling. Confirm PgBouncer is healthy,
+the API health endpoint succeeds, public quest/event browsing works, and workers
+still use direct PostgreSQL connections. Keep generated env/auth files and
+container environment output out of logs. To roll back pooling, redeploy the
+previous infrastructure/script revision together with the API image; its env
+renderer restores the direct API URL and removes the pooling flag. Preserve
+PostgreSQL data and passwords throughout rollback.
+
 ## Local development Compose
 
 `make dev` combines `infrastructure/local/compose.yml` and `infrastructure/dev/compose.yml`. The dev overlay retains Vite and API hot reload. `scripts/dev-up.sh` prepares local env examples, starts the database and object store, and migrates the schema.

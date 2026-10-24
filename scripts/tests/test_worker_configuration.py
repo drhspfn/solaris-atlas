@@ -88,6 +88,15 @@ class WorkerConfigurationTests(unittest.TestCase):
                     result = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=20, check=False)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     services = json.loads(result.stdout)["services"]
+                    if variant == "prod":
+                        pooler = services["pgbouncer"]
+                        self.assertNotIn("ports", pooler)
+                        self.assertTrue(pooler["read_only"])
+                        self.assertIn("@sha256:", pooler["image"])
+                        self.assertIn("pgbouncer", services["api"]["depends_on"])
+                        for name in ("snapshot-worker", "media-worker", "story-agent", "cutscene-vision"):
+                            self.assertNotIn("pgbouncer", services[name]["depends_on"])
+                            self.assertTrue(any(entry["path"].endswith("runtime.env") for entry in services[name]["env_file"]))
                     total_memory = 0
                     for service, pool, replicas in [("media-worker", "coordinator", 1), ("image-worker", "image", 1),
                                                      ("audio-worker", "audio", 1), ("video-worker", "video", 1)]:

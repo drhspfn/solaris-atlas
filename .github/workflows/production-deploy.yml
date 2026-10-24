@@ -187,9 +187,10 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
           target="$USER@$HOST"
-          ssh "$target" 'mkdir -p ~/solaris-atlas/postgres ~/solaris-atlas/scripts ~/solaris-atlas/env'
+          ssh "$target" 'mkdir -p ~/solaris-atlas/postgres ~/solaris-atlas/pgbouncer ~/solaris-atlas/scripts ~/solaris-atlas/env'
           scp infrastructure/prod/compose.yml infrastructure/prod/Caddyfile "$target:solaris-atlas/"
           scp infrastructure/local/postgres/init.sql "$target:solaris-atlas/postgres/"
+          scp infrastructure/prod/pgbouncer/pgbouncer.ini infrastructure/prod/pgbouncer/auth.sql "$target:solaris-atlas/pgbouncer/"
           scp scripts/deploy-remote.sh scripts/bootstrap-server.sh "$target:solaris-atlas/scripts/"
           scp -p "$RUNNER_TEMP/solaris-prod-env"/*.env "$target:solaris-atlas/env/"
           ssh "$target" 'chmod 700 ~/solaris-atlas/env && chmod 600 ~/solaris-atlas/env/*.env'
