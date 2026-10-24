@@ -38,12 +38,14 @@ export function QuestPageClient({
   initialTranscript,
   initialContinuity,
   initialMedia,
+  initialSelection,
 }: {
   questKey: string;
   initialProfile?: any;
   initialTranscript?: any;
   initialContinuity?: QuestContinuityData | null;
   initialMedia?: QuestMediaManifest | null;
+  initialSelection: { locale: string; gameVersion: string; citedLine: string };
 }) {
   const searchParams = useSearchParams();
   const gameVersion = searchParams?.get('game_version') || '';
@@ -112,10 +114,17 @@ export function QuestPageClient({
     if (
       initialProfile &&
       initialTranscript &&
-      locale === 'en' &&
-      !gameVersion &&
-      profile === initialProfile
+      locale === initialSelection.locale &&
+      gameVersion === initialSelection.gameVersion &&
+      (citedLine || '') === initialSelection.citedLine
     ) {
+      setProfile(initialProfile);
+      setTranscript(initialTranscript);
+      setContinuity(initialContinuity ?? null);
+      setMedia(initialMedia ?? null);
+      setContinuityError('');
+      setError('');
+      setLoading(false);
       return;
     }
     let active = true;
@@ -127,14 +136,14 @@ export function QuestPageClient({
     if (citedLine) transcriptSelection.set('focus_line', citedLine);
 
     Promise.all([
-      api<any>(`/quests/${questKey}/profile?${selection}`),
+      api<any>(`/quests/${encodeURIComponent(questKey)}/profile?${selection}`),
       api<any>(
-        `/quests/${questKey}/transcript?${transcriptSelection}&limit=${APP_SETTINGS.limits.transcript}`,
+        `/quests/${encodeURIComponent(questKey)}/transcript?${transcriptSelection}&limit=${APP_SETTINGS.limits.transcript}&include_raw=false`,
       ),
-      api<QuestContinuityData>(`/quests/${questKey}/continuity?${selection}`)
+      api<QuestContinuityData>(`/quests/${encodeURIComponent(questKey)}/continuity?${selection}`)
         .then((result) => ({ result, failure: '' }))
         .catch((reason: Error) => ({ result: null, failure: reason.message })),
-      api<QuestMediaManifest>(`/quests/${questKey}/media?${selection}`).catch(() => null),
+      api<QuestMediaManifest>(`/quests/${encodeURIComponent(questKey)}/media?${selection}`).catch(() => null),
     ])
       .then(([p, t, c, m]) => {
         if (!active) return;
@@ -154,7 +163,10 @@ export function QuestPageClient({
     return () => {
       active = false;
     };
-  }, [questKey, locale, gameVersion, citedLine]);
+  }, [
+    questKey, locale, gameVersion, citedLine, initialSelection, initialProfile,
+    initialTranscript, initialContinuity, initialMedia,
+  ]);
 
   if (loading && (!profile || !transcript)) return <PageLoader />;
   if (error && (!profile || !transcript))

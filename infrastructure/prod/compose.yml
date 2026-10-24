@@ -17,6 +17,31 @@ services:
       timeout: 5s
       retries: 20
 
+  pgbouncer:
+    # Canary9-maintained Docker Hub image; immutable multi-architecture release digest.
+    image: pgbouncer/pgbouncer:1.25.2-20260920@sha256:89f145c1f003340e9b38a37a8734013ec43d931abb9bd7ea739640f2348d4a67
+    restart: unless-stopped
+    entrypoint: ["/opt/pgbouncer/pgbouncer"]
+    command: ["/etc/pgbouncer/pgbouncer.ini"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./env/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "6432"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ulimits:
+      nofile:
+        soft: 2048
+        hard: 2048
+
   rabbitmq:
     image: rabbitmq:4-management-alpine
     restart: unless-stopped
@@ -78,7 +103,7 @@ services:
     volumes:
       - worker_data:/var/lib/wuwa-worker:ro
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy

@@ -151,9 +151,10 @@ async def test_redis_failure_serves_origin():
 
 
 @pytest.mark.asyncio
-async def test_concurrent_cold_reads_share_one_response():
+@pytest.mark.parametrize("origin_delay", [0.05, 1.2])
+async def test_concurrent_cold_reads_share_one_response(origin_delay):
     async def delay():
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(origin_delay)
     app, state, _ = setup_cache(block=delay)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
         results = await asyncio.gather(*(client.get("/catalog") for _ in range(5)))

@@ -13,7 +13,7 @@ BASH = str(GIT_BASH) if os.name == "nt" and GIT_BASH.is_file() else shutil.which
 
 @unittest.skipUnless(BASH, "Bash is required to test deployment orchestration")
 class DeploymentTests(unittest.TestCase):
-    def deploy(self, component, fail_validation=False, worker_image="", fail_migration=False):
+    def deploy(self, component, fail_validation=False, worker_image="", fail_migration=False, empty_auth=False):
         source = (ROOT / "scripts/deploy-remote.sh").read_text()
         tail = 'case "$DEPLOY_COMPONENT" in' + source.split('case "$DEPLOY_COMPONENT" in', 1)[1]
         harness = r'''
@@ -22,9 +22,18 @@ DEPLOY_COMPONENT=$1
 FAIL_VALIDATION=$2
 WORKER_IMAGE=$3
 FAIL_MIGRATION=$4
+EMPTY_AUTH=$5
 USE_MINIO=false
+ENV_DIR=$(mktemp -d)
+APP_DIR=$ENV_DIR
+mkdir "$APP_DIR/pgbouncer"
+touch "$APP_DIR/pgbouncer/auth.sql"
+trap 'rm -f "$ENV_DIR/pgbouncer/userlist.txt" "$ENV_DIR/pgbouncer/userlist.txt.next" "$ENV_DIR/pgbouncer/auth.sql"; rmdir "$ENV_DIR/pgbouncer" "$ENV_DIR"' EXIT
+chown() { :; }
+install() { mkdir -p "${@: -1}"; }
 docker() { printf '%s\n' "$*"; printf '%s\n' "$*" >&2; }
 record_compose() {
+  if [[ "$*" == "exec -T postgres "* && "$EMPTY_AUTH" == 1 ]]; then return; fi
   if [[ "$*" == "ps -q --status running "* ]]; then
     printf '%s\n' api-container media-container-1 media-container-2
     return
@@ -41,8 +50,8 @@ compose=(record_compose)
 '''
         return subprocess.run(
             [BASH, "-s", "--", component, "1" if fail_validation else "0", worker_image,
-             "1" if fail_migration else "0"],
-            input=harness + tail, text=True, capture_output=True, timeout=10, check=False,
+             "1" if fail_migration else "0", "1" if empty_auth else "0"],
+            input=harness + tail, text=True, encoding="utf-8", capture_output=True, timeout=10, check=False,
         )
 
     def test_web_and_full_deployments_reload_proxy_after_updating_services(self):
@@ -86,10 +95,26 @@ compose=(record_compose)
                 result = self.deploy("api", fail_migration=fail)
                 self.assertEqual(result.returncode == 0, not fail, result.stderr)
                 self.assertIn("stop --time 120 api-container media-container-1 media-container-2", result.stdout)
+                self.assertIn('run --rm --no-deps api sh -ec export DATABASE_URL="$MIGRATION_DATABASE_URL"', result.stdout)
                 # docker start output is suppressed by the EXIT trap; record to stderr too.
                 self.assertIn("start api-container media-container-1 media-container-2", result.stderr)
                 if fail:
                     self.assertNotIn("up -d", result.stdout)
+
+    def test_pooler_is_recreated_after_direct_migrations_before_api_start(self):
+        result = self.deploy("api")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commands = result.stdout.splitlines()
+        migration = next(i for i, line in enumerate(commands) if "alembic upgrade head" in line)
+        pooler = commands.index("up -d --force-recreate --wait pgbouncer")
+        self.assertLess(migration, pooler)
+        self.assertLess(pooler, commands.index("up -d api"))
+
+    def test_missing_scram_verifier_fails_before_starting_pooler_or_api(self):
+        result = self.deploy("api", empty_auth=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requires an existing valid SCRAM verifier", result.stderr)
+        self.assertNotIn("up -d", result.stdout)
 
     def test_local_worker_image_is_not_pulled_from_a_registry(self):
         result = self.deploy("snapshot-worker", worker_image="solaris-atlas-worker:workers-test")

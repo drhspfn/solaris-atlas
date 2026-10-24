@@ -17,6 +17,7 @@ export const kindLabels: Record<EventKind, string> = {
 export type GameEvent = {
   id: number;
   source_id: string;
+  detail_url?: string;
   slug?: string | null;
   href?: string;
   occurrence_id: number | null;

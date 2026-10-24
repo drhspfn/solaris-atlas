@@ -110,6 +110,11 @@ derived_api_config = {
     "GOOGLE_REDIRECT_URI": f"{api_url}/auth/google/callback",
 }
 api_runtime = {**runtime, **api, **derived_api_config}
+api_runtime.update({
+    "DATABASE_URL": runtime["DATABASE_URL"].replace("@postgres:5432/", "@pgbouncer:6432/"),
+    "MIGRATION_DATABASE_URL": runtime["DATABASE_URL"],
+    "WUWA_DB_TRANSACTION_POOLING": "1",
+})
 if "AUTH_CSRF_SECRET" in api and "AUTH_CSRF_SECRET" not in shared:
     shared["AUTH_CSRF_SECRET"] = api["AUTH_CSRF_SECRET"]
 if "AUTH_CSRF_SECRET" in shared:
@@ -174,7 +179,8 @@ if [[ "$DEPLOY_COMPONENT" == api || "$DEPLOY_COMPONENT" == all ]]; then
       trap 'docker start "${migration_clients[@]}" >/dev/null' EXIT
       docker stop --time 120 "${migration_clients[@]}"
     fi
-    "${compose[@]}" run --rm api alembic upgrade head
+    "${compose[@]}" run --rm --no-deps api sh -ec \
+      'export DATABASE_URL="$MIGRATION_DATABASE_URL"; unset WUWA_DB_TRANSACTION_POOLING; exec alembic upgrade head'
   )
 fi
 if [[ "$DEPLOY_COMPONENT" != infrastructure ]]; then
@@ -198,7 +204,26 @@ if [[ "$DEPLOY_COMPONENT" == caddy ]]; then
   "${compose[@]}" up -d --force-recreate caddy
 elif [[ "$DEPLOY_COMPONENT" == infrastructure ]]; then
   "${compose[@]}" up -d --wait "${services[@]}"
-else
+fi
+case "$DEPLOY_COMPONENT" in
+  infrastructure|api|all)
+    # Keep the verifier out of logs/arguments. The image runs as UID/GID 70.
+    install -m 700 -d "$ENV_DIR/pgbouncer"
+    "${compose[@]}" exec -T postgres sh -ec \
+      'exec psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d wuwa_story' \
+      < "$APP_DIR/pgbouncer/auth.sql" > "$ENV_DIR/pgbouncer/userlist.txt.next"
+    if [[ ! -s "$ENV_DIR/pgbouncer/userlist.txt.next" ]]; then
+      echo "PgBouncer requires an existing valid SCRAM verifier for POSTGRES_USER" >&2
+      exit 1
+    fi
+    chmod 600 "$ENV_DIR/pgbouncer/userlist.txt.next"
+    chown 70:70 "$ENV_DIR/pgbouncer/userlist.txt.next"
+    mv "$ENV_DIR/pgbouncer/userlist.txt.next" "$ENV_DIR/pgbouncer/userlist.txt"
+    # Remount rotated auth files and clear prepared plans after direct DDL.
+    "${compose[@]}" up -d --force-recreate --wait pgbouncer
+    ;;
+esac
+if [[ "$DEPLOY_COMPONENT" != caddy && "$DEPLOY_COMPONENT" != infrastructure ]]; then
   "${compose[@]}" up -d "${services[@]}"
 fi
 if [[ "$DEPLOY_COMPONENT" == infrastructure ]]; then

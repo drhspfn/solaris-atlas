@@ -15,15 +15,16 @@ export interface LinkProps extends Omit<React.AnchorHTMLAttributes<HTMLAnchorEle
   state?: any;
 }
 
+// Archive source lists can contain hundreds of links; fetch detail routes on navigation.
 export const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
-  { to, href, children, ...props },
+  { to, href, children, prefetch = false, ...props },
   ref,
 ) {
   const destination =
     (href ?? (typeof to === 'object' ? `${to.pathname || ''}${to.search || ''}${to.hash || ''}` : to)) ||
     '/';
   return (
-    <NextLink ref={ref} href={destination} {...props}>
+    <NextLink ref={ref} href={destination} prefetch={prefetch} {...props}>
       {children}
     </NextLink>
   );
@@ -35,7 +36,7 @@ export interface NavLinkProps extends Omit<LinkProps, 'className'> {
 }
 
 export const NavLink = forwardRef<HTMLAnchorElement, NavLinkProps>(function NavLink(
-  { to, href, className, end, children, ...props },
+  { to, href, className, end, children, prefetch = false, ...props },
   ref,
 ) {
   const pathname = usePathname();
@@ -48,7 +49,7 @@ export const NavLink = forwardRef<HTMLAnchorElement, NavLinkProps>(function NavL
   const computedClassName = typeof className === 'function' ? className({ isActive }) : className;
 
   return (
-    <NextLink ref={ref} href={destination} className={computedClassName} {...props}>
+    <NextLink ref={ref} href={destination} className={computedClassName} prefetch={prefetch} {...props}>
       {children}
     </NextLink>
   );

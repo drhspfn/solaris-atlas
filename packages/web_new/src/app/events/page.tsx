@@ -31,7 +31,7 @@ export default async function EventsPage({
   const params = await searchParams;
   const values = Array.isArray(params.event) ? params.event : [params.event ?? ''];
   const keys = values.flatMap((value) => value.split(','));
-  const initialData = await serverApi<any>('/events?server=europe', { revalidate: 0 });
+  const initialData = await serverApi<any>('/events?server=europe&summary=true', { revalidate: 0 });
   const ids: number[] = [...new Set<number>((initialData?.events ?? [])
     .filter((event: any) => keys.includes(event.slug) || keys.includes(String(event.id)))
     .map((event: any) => event.id))];
