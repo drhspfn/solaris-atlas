@@ -38,6 +38,7 @@ def delivery(body=b'{"run_id":1,"kind":"voices","job_type":"media.release"}', **
 @pytest.mark.parametrize("payload,pool", [
     ({"kind": "prepare"}, "coordinator"),
     ({"kind": "event_catalog"}, "image"),
+    ({"kind": "event_notices"}, "image"),
     ({"kind": "images"}, "image"),
     ({"kind": "event_resources"}, "image"),
     ({"kind": "character_voices"}, "audio"),
@@ -88,6 +89,30 @@ async def test_router_confirms_unchanged_payload_before_ack(monkeypatch, confirm
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("confirmed", [True, False])
+async def test_old_private_delivery_moves_to_new_pool_without_losing_identity(monkeypatch, confirmed):
+    handler = AsyncMock()
+    async with consumer(monkeypatch, "pool_coordinator", handler) as (callback, channel, *_):
+        message = delivery(body=b'{"run_id":5389,"kind":"event_notices","job_type":"media.release"}')
+        async def publish(sent, **options):
+            message.ack.assert_not_awaited()
+            assert sent.body == message.body and sent.message_id == message.message_id
+            assert sent.type == "release_media" and sent.headers == message.headers
+            assert options == {"routing_key": "wuwa.pool-image.v1", "mandatory": True}
+            if not confirmed:
+                raise OSError("Connection lost before confirmation")
+        channel.default_exchange.publish.side_effect = publish
+        await callback(message)
+        handler.assert_not_awaited()
+        broker.claim_import.assert_not_awaited()
+        if confirmed:
+            message.ack.assert_awaited_once()
+        else:
+            message.ack.assert_not_awaited()
+            message.nack.assert_awaited_once_with(requeue=True)
+
+
+@pytest.mark.asyncio
 async def test_private_queue_deferral_keeps_source_type_and_processor(monkeypatch):
     async def execute(payload, handler):
         await handler(payload)
@@ -120,7 +145,8 @@ async def test_pool_never_exceeds_its_execution_and_prefetch_budget(monkeypatch)
     monkeypatch.setattr(broker, "execute_media_job", execute)
     async with consumer(monkeypatch, "pool_image", handler) as (callback, channel, *_):
         channel.set_qos.assert_awaited_once_with(prefetch_count=2)
-        deliveries = [asyncio.create_task(callback(delivery())) for _ in range(5)]
+        deliveries = [asyncio.create_task(callback(delivery(
+            body=b'{"run_id":1,"kind":"images","job_type":"media.release"}'))) for _ in range(5)]
         await asyncio.wait_for(started.wait(), 1)
         assert maximum == 2
         release.set()
