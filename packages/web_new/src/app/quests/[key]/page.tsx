@@ -13,9 +13,25 @@ type Props = {
   searchParams?: Promise<RouteQuery>;
 };
 
-export async function generateMetadata({ params }: Props): Promise<Metadata> {
+function questSelection(query: RouteQuery) {
+  const first = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] : value;
+  return {
+    locale: first(query.locale) || 'en',
+    gameVersion: first(query.game_version) || '',
+    citedLine: first(query.line) || '',
+  };
+}
+
+function selectionQuery(selection: ReturnType<typeof questSelection>) {
+  const query = new URLSearchParams({ locale: selection.locale });
+  if (selection.gameVersion) query.set('game_version', selection.gameVersion);
+  return query;
+}
+
+export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
   const key = decodeRouteKey((await params).key);
-  const profile = await serverApi<any>(`/quests/${encodeURIComponent(key)}/profile?locale=en`);
+  const selection = selectionQuery(questSelection((await searchParams) ?? {}));
+  const profile = await serverApi<any>(`/quests/${encodeURIComponent(key)}/profile?${selection}`);
   const quest = profile?.quest;
   const title = quest?.name?.content || `Quest ${key}`;
   const description = `Story transcript, flow states, player choices and audio records for ${title} in Solaris Atlas.`;
@@ -41,22 +57,28 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function QuestTranscriptPage({ params, searchParams }: Props) {
   const key = decodeRouteKey((await params).key);
+  const initialSelection = questSelection((await searchParams) ?? {});
+  const selection = selectionQuery(initialSelection);
+  const transcriptSelection = new URLSearchParams(selection);
+  if (initialSelection.citedLine) transcriptSelection.set('focus_line', initialSelection.citedLine);
 
   // Server pre-fetch initial quest data for instant SSR
   const [profile, transcript, continuity, media] = await Promise.all([
-    serverApi<any>(`/quests/${encodeURIComponent(key)}/profile?locale=en`),
+    serverApi<any>(`/quests/${encodeURIComponent(key)}/profile?${selection}`),
     serverApi<any>(
-      `/quests/${encodeURIComponent(key)}/transcript?locale=en&limit=${APP_SETTINGS.limits.transcript}`,
+      `/quests/${encodeURIComponent(key)}/transcript?${transcriptSelection}&limit=${APP_SETTINGS.limits.transcript}&include_raw=false`,
     ),
-    serverApi<QuestContinuityData>(`/quests/${encodeURIComponent(key)}/continuity?locale=en`),
-    serverApi<QuestMediaManifest>(`/quests/${encodeURIComponent(key)}/media?locale=en`),
+    serverApi<QuestContinuityData>(`/quests/${encodeURIComponent(key)}/continuity?${selection}`),
+    serverApi<QuestMediaManifest>(`/quests/${encodeURIComponent(key)}/media?${selection}`),
   ]);
 
   await canonicalRoute("quests", key, profile?.quest, searchParams);
 
   return (
     <QuestPageClient
+      key={JSON.stringify([key, initialSelection])}
       questKey={key}
+      initialSelection={initialSelection}
       initialProfile={profile}
       initialTranscript={transcript}
       initialContinuity={continuity}

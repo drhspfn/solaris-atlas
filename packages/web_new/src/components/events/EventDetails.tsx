@@ -1,12 +1,13 @@
 'use client';
 import { ExternalLink, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { api } from '@/api/client';
 import { EventArtwork } from './EventArtwork';
 import { kindLabels, timeZoneLabel } from './calendar';
 import { artworkGroups, countdown, type GameEvent } from './calendar';
 
 export function EventDetails({
-  event,
+  event: selection,
   history,
   timeZone,
   now,
@@ -24,6 +25,30 @@ export function EventDetails({
   returnFocus: HTMLElement | null;
   fallbackFocus: HTMLElement | null;
 }) {
+  const [detail, setDetail] = useState<{ url: string; event: GameEvent } | null>(null);
+  const [failure, setFailure] = useState<{ url: string; message: string } | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const detailUrl = selection.detail_url;
+  const event = detailUrl && detail?.url === detailUrl ? detail.event : selection;
+  const detailError = failure?.url === detailUrl ? failure?.message : null;
+  const loadingDetail = !!detailUrl && detail?.url !== detailUrl && !detailError;
+  useEffect(() => {
+    if (!detailUrl) return;
+    const controller = new AbortController();
+    setFailure(null);
+    void api<GameEvent>(detailUrl, { signal: controller.signal, cacheTtl: 0 })
+      .then((event) => {
+        if (!controller.signal.aborted) setDetail({ url: detailUrl, event });
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted)
+          setFailure({
+            url: detailUrl,
+            message: reason instanceof Error ? reason.message : 'Could not load event artwork.',
+          });
+      });
+    return () => controller.abort();
+  }, [detailUrl, attempt]);
   const dialog = useRef<HTMLDialogElement>(null);
   const [clock, setClock] = useState(now);
   useEffect(() => {
@@ -139,7 +164,21 @@ export function EventDetails({
         <p className="events-countdown" role="timer">
           {clock === null ? 'Recorded schedule' : countdown(event, clock)}
         </p>
-        {Object.entries(gallery).map(
+        {loadingDetail && <p role="status">Loading event artwork…</p>}
+        {detailError && (
+          <div role="alert">
+            <p>{detailError}</p>
+            <button
+              onClick={() => {
+                setFailure(null);
+                setAttempt((value) => value + 1);
+              }}
+            >
+              Retry event artwork
+            </button>
+          </div>
+        )}
+        {(!detailUrl || detail?.url === detailUrl) && Object.entries(gallery).map(
           ([group, images]) =>
             !!images.length && (
               <details className="events-gallery" key={group}>

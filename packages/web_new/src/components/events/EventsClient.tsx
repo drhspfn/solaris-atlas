@@ -86,7 +86,7 @@ export function EventsPage({
     const controller = new AbortController();
     setLoading(true);
     setSelected(null);
-    void api<EventsResponse>(`/events?server=${server}`, {
+    void api<EventsResponse>(`/events?server=${server}&summary=true`, {
       signal: controller.signal,
     })
       .then((data) => {

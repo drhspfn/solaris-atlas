@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 // Run after `npm run build`. No browser scripts or external API are involved.
 const webDirectory = fileURLToPath(new URL('../', import.meta.url));
 const requests = [];
+const requestTimes = [];
 const biography = 'Sanhua guards the magistrate of Jinzhou.';
 const portrait = 'https://cdn.solarisatlas.fun/objects/test-sanhua';
 const notice = {
@@ -69,10 +70,23 @@ const archive = {
 };
 const backend = createServer(async (request, response) => {
   requests.push(request.url);
+  const timing = { path: request.url, start: performance.now(), end: Infinity };
+  requestTimes.push(timing);
   // A cold response must still produce visible HTML, not a streamed loader.
   await delay(150);
+  timing.end = performance.now();
   response.setHeader('Content-Type', 'application/json');
-  if (request.url === '/characters/character%3A1102/profile?locale=en') {
+  const questRequest = new URL(request.url, 'http://backend.test');
+  if (/^\/quests\/(662686-the-sacred-breeze-so-often-breathes|464283-when-the-night-knocks)\//.test(questRequest.pathname)) {
+    const title = `Selected quest ${questRequest.searchParams.get('locale')} ${questRequest.searchParams.get('game_version')}`;
+    const quest = { name: { content: title } };
+    if (questRequest.pathname.endsWith('/profile')) response.end(JSON.stringify({ quest }));
+    else if (questRequest.pathname.endsWith('/transcript')) response.end(JSON.stringify({
+      quest, lines: [{ id: questRequest.searchParams.get('focus_line') || 'dialogue:1',
+        text: { content: `Selected dialogue ${title}` } }], scenes: [],
+    }));
+    else response.end('null');
+  } else if (request.url === '/characters/character%3A1102/profile?locale=en') {
     response.end(JSON.stringify(profile));
   } else if (request.url === '/characters/character%3A1102/archive?locale=en') {
     response.end(JSON.stringify(archive));
@@ -117,7 +131,7 @@ const backend = createServer(async (request, response) => {
         },
       }),
     );
-  } else if (request.url === '/events?server=europe') {
+  } else if (request.url === '/events?server=europe&summary=true') {
     response.end(
       JSON.stringify({
         source_url: 'https://example.test/events',
@@ -232,6 +246,39 @@ test('weapon sources and test quest semantics are visible in server HTML', async
     'Requires obtaining this item', 'Emerald of Genesis']) assert.ok(questHtml.includes(value), value);
 });
 
+for (const [slug, version, locale] of [
+  ['662686-the-sacred-breeze-so-often-breathes', '2.0.0', 'en'],
+  ['464283-when-the-night-knocks', '1.4.0', 'ru'],
+  ['662686-the-sacred-breeze-so-often-breathes', '1.4.0', 'uk'],
+]) {
+  test(`quest SSR and metadata use the requested snapshot for ${slug}`, async () => {
+    const start = requests.length;
+    const response = await fetch(`${site}/quests/${slug}?game_version=${version}&locale=${locale}&line=dialogue%3A999`);
+    assert.equal(response.status, 200);
+    const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+    assert.ok(html.includes(`<title>Selected quest ${locale} ${version}`));
+    assert.ok(html.includes(`Selected dialogue Selected quest ${locale} ${version}`));
+    assert.ok(html.includes('data-dialogue-key="dialogue:999"'));
+    const calls = requests.slice(start).filter((path) => path.startsWith(`/quests/${slug}/`));
+    assert.equal(calls.length, 4, 'metadata and SSR must share the profile request');
+    const timings = requestTimes.slice(start).filter((entry) => entry.path.startsWith(`/quests/${slug}/`));
+    assert.ok(Math.max(...timings.map((entry) => entry.start)) < Math.min(...timings.map((entry) => entry.end)),
+      'all four requests must overlap rather than form an SSR waterfall');
+    for (const endpoint of ['profile', 'transcript', 'continuity', 'media']) {
+      const call = calls.find((path) => path.startsWith(`/quests/${slug}/${endpoint}?`));
+      assert.ok(call, endpoint);
+      const query = new URL(call, site).searchParams;
+      assert.equal(query.get('locale'), locale);
+      assert.equal(query.get('game_version'), version);
+      assert.equal(query.get('focus_line'), endpoint === 'transcript' ? 'dialogue:999' : null);
+      if (endpoint === 'transcript') {
+        assert.equal(query.get('limit'), '2000');
+        assert.equal(query.get('include_raw'), 'false');
+      }
+    }
+  });
+}
+
 for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
   test(`character details and preview are in initial HTML for ${userAgent}`, async () => {
     const response = await fetch(`${site}/characters/character%3A1102`, {
@@ -274,7 +321,7 @@ test('events fetch at request time and render their artwork without JavaScript',
   assert.ok(!html.includes('src="https://cdn.solarisatlas.fun/objects/empty-background"'));
   assert.ok(html.includes('Server schedule unavailable'));
   assert.doesNotMatch(html, /Opening archive record|id="S:\d+"/);
-  assert.ok(requests.includes('/events?server=europe'));
+  assert.ok(requests.includes('/events?server=europe&summary=true'));
 });
 
 test('public shell groups navigation and keeps service links in the footer', async () => {
