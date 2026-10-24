@@ -10,6 +10,7 @@ import os
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -125,6 +126,31 @@ async def main():
 
             assert await resumed.phase("raw", must_not_run) == (100, 0)
 
+            from wuwa_story.ingestion import release_media_retry
+            retry_processor = Processor(key="release_media", version="1")
+            session.add(retry_processor)
+            await session.flush()
+            failed = ProcessingRun(processor_id=retry_processor.id, status="failed", metadata_json={
+                "request": {"release_id": first.id, "kind": "cutscene", "targets": ["CG_missing"]}})
+            successful = ProcessingRun(processor_id=retry_processor.id, status="completed", metadata_json={
+                "request": {"release_id": first.id, "kind": "images", "targets": ["character:1"]}})
+            session.add_all([failed, successful])
+            await session.commit()
+            async def retry():
+                async with factory() as retry_session:
+                    return await release_media_retry.enqueue_failed_release_media(retry_session, first.id)
+            publish = AsyncMock()
+            with patch.object(release_media_retry, "publish_media_job", publish):
+                left, right = await asyncio.gather(retry(), retry())
+                assert left["parent_ids"] == right["parent_ids"]
+                assert left["queued"] + right["queued"] == 4
+                assert publish.await_count == 4
+                again = await retry()
+                assert again["reused"] == 4 and again["queued"] == 0
+            await session.refresh(failed)
+            await session.refresh(successful)
+            assert failed.status == "failed" and successful.status == "completed"
+
         async with ordered_import(engine, "2.0", None):
             try:
                 async with ordered_import(engine, "2.0", None):
@@ -132,7 +158,7 @@ async def main():
             except JobDeferred:
                 pass
         print("PASS: active-child guard, execution lease, cleanup, retained archives, "
-              "cross-release reuse, missing blob retry, phase resume, import exclusion")
+              "cross-release reuse, missing blob retry, phase resume, import exclusion, targeted concurrent retries")
     finally:
         await engine.dispose()
 
