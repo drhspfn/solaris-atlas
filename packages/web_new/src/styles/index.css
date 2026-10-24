@@ -3871,6 +3871,9 @@ select {
   line-height: 1.5;
   padding: 8px 4px 0;
 }
+.quest-classification {
+  overflow-wrap: anywhere;
+}
 .progression-row {
   gap: 10px;
 }

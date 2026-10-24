@@ -34,6 +34,16 @@ const profile = {
   character: { canonical_key: 'character:1102', name: { content: 'Sanhua' } },
   source: { version: '1.0' },
 };
+const testQuest = {
+  game_quest_id: 139000037, canonical_key: 'quest:139000037', name: { content: '' },
+  classification: {
+    kind: 'test', label: 'Test quest',
+    explanation: "The game's quest type assigns this record to its test category.",
+    internal_name: '测试21020015武器',
+    evidence: [{ field: 'QuestType.IsShowInQuestPanel', value: false }],
+    source: { file: 'BinData/QuestData/questdata.json', row: 253, release_id: 5 },
+  },
+};
 const archive = {
   biography: `<color=white>${biography}</color>`,
   profile: { birthday: 'January 20', affiliation: 'Jinzhou', voice_actors: {} },
@@ -66,6 +76,21 @@ const backend = createServer(async (request, response) => {
     response.end(JSON.stringify(profile));
   } else if (request.url === '/characters/character%3A1102/archive?locale=en') {
     response.end(JSON.stringify(archive));
+  } else if (request.url === '/items/595988-emerald-of-genesis/profile?locale=en') {
+    response.end(JSON.stringify({
+      item: { canonical_key: 'item:21020015', slug: '595988-emerald-of-genesis',
+        name: { content: 'Emerald of Genesis' } },
+      banner_sources: [{ view_id: 32, banner_type: 'permanent_weapon', roles: ['preview', 'display'],
+        source: { file: 'BinData/gacha/gachaviewinfo.json', row: 2, game_version: '2.0.0' } }],
+      quest_references: [{ quest: testQuest, references: [{ interpretation: {
+        label: 'Requires obtaining this item', is_reward: false } }] }],
+    }));
+  } else if (request.url === '/quests/139000037/profile?locale=en') {
+    response.end(JSON.stringify({ quest: testQuest, item_requirements: [{ item_id: 21020015,
+      label: 'Requires obtaining this item', count: 1,
+      item: { href: '/items/595988-emerald-of-genesis', label: 'Emerald of Genesis' } }] }));
+  } else if (request.url.startsWith('/quests/139000037/transcript?')) {
+    response.end(JSON.stringify({ quest: testQuest, lines: [], scenes: [] }));
   } else if (request.url === '/items/item%3A1/profile?locale=en') {
     response.end(
       JSON.stringify({
@@ -191,6 +216,20 @@ after(async () => {
     await exited;
   }
   await new Promise((resolve) => backend.close(resolve));
+});
+
+test('weapon sources and test quest semantics are visible in server HTML', async () => {
+  const item = await fetch(`${site}/items/595988-emerald-of-genesis`);
+  assert.equal(item.status, 200);
+  const html = (await item.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  for (const value of ['Permanent weapon Convene', 'Listed in banner preview', 'Test quest',
+    'Requires obtaining this item', 'not a reward']) assert.ok(html.includes(value), value);
+  assert.ok(!html.includes('No confirmed acquisition sources recorded yet.'));
+  const quest = await fetch(`${site}/quests/139000037`);
+  assert.equal(quest.status, 200);
+  const questHtml = (await quest.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  for (const value of ['Test quest', 'Classification evidence', '测试21020015武器',
+    'Requires obtaining this item', 'Emerald of Genesis']) assert.ok(questHtml.includes(value), value);
 });
 
 for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {

@@ -251,7 +251,8 @@ export function EntityProfileClient({
                         {localizedText(quest.name, localizedText(quest.title, `Quest ${id}`))}
                       </strong>
                       <small>
-                        {quest.quest_type || 'Story quest'}
+                        {quest.classification?.kind && quest.classification.kind !== 'unclassified'
+                          ? quest.classification.label : quest.quest_type || 'Quest record'}
                         {quest.game_quest_id ? ` · ${quest.game_quest_id}` : ''}
                       </small>
                     </div>
@@ -341,9 +342,15 @@ export function EntityProfileClient({
                             {localizedText(quest.name, localizedText(quest.title, `Quest ${id}`))}
                           </strong>
                           <small>
-                            {quest.quest_type || 'Story quest'}
+                            {quest.classification?.kind && quest.classification.kind !== 'unclassified'
+                              ? quest.classification.label : quest.quest_type || 'Quest record'}
                             {quest.game_quest_id ? ` · ${quest.game_quest_id}` : ''}
                           </small>
+                          {q.references?.map((reference: any, index: number) => reference.interpretation && (
+                            <small key={index}>{reference.interpretation.label}
+                              {reference.interpretation.is_reward === false ? ' · not a reward' : ''}
+                            </small>
+                          ))}
                         </div>
                         <ArrowRight size={16} />
                       </Link>
