@@ -33,8 +33,9 @@ async def test_cutscene_preparation_batches_only_available_movie_wrappers(monkey
     assets.mkdir(parents=True)
     monkeypatch.setattr(release_media, "merge_exports", lambda *_args: assets)
     monkeypatch.setattr(release_media, "publish_inventory", AsyncMock(return_value={}))
+    monkeypatch.setattr(release_media, "prepare_base_movies", AsyncMock(return_value={"receipts": [], "movies": {}, "missing": []}))
     from wuwa_story_worker import voice_bootstrap
-    def discover(_version, _assets, _tier, ids):
+    def discover(_version, _assets, _tier, ids, **_kwargs):
         assert ids == {2, 3}
         return {"id": "video-plan", "files": []}
     monkeypatch.setattr(voice_bootstrap, "discover_video_plan", discover)
@@ -62,6 +63,69 @@ async def test_missing_historical_cutscene_wrapper_is_partial_without_audio_or_p
     assert result["missing_assets"] == ["asset:ue:/Game/Aki/Movies/Old.Old"]
     audio.assert_not_awaited()
     publish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_authored_movie_is_reported_before_audio_export(monkeypatch, tmp_path):
+    wrapper = tmp_path / "release-media/files/Client/Content/Aki/Movies/Wrapper.uexp"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_bytes(b"filepath://./Aki/Movies/Actual.mp4\0")
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "video_database", lambda _: tmp_path / "video.db")
+    monkeypatch.setattr(release_media, "plan_cutscene", lambda *_args, **_kwargs: {
+        "videos": [{"asset": "asset:ue:/Game/Aki/Movies/Wrapper.Wrapper"}]})
+    audio = AsyncMock(side_effect=AssertionError("unavailable movie needs no audio extraction"))
+    monkeypatch.setattr(release_media, "extract_cutscene_audio", audio)
+    result, status = await release_media.cutscene({"targets": ["Scene"], "run_id": 90}, {
+        "asset_version": "3.7.0", "voice_plan_id": "voice"})
+    assert status == "partial" and result["missing_assets"] == ["Client/Content/Aki/Movies/Actual.mp4"]
+    audio.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cutscene_audio_finds_base_music_and_init_outside_localized_voice_archives(monkeypatch, tmp_path):
+    from wuwa_story_worker import wwise_banks
+    voice = tmp_path / "voice"
+    voice.mkdir()
+    log = voice / "archive-index.log"
+    log.write_text("[File] Audio/en/Scene.bnk\n[File] Audio/en/43.wem\n[Done] Listed 2 files\n")
+    release_media.index_voice_paths(log)
+    main_log = tmp_path / "archive-index.log"
+    main_log.write_text("[File] Client/Content/Aki/WwiseAudio_Generated/Media/44.wem\n"
+                        "[File] Client/Content/Aki/WwiseAudio_Generated/Init.bnk\n[Done] Listed 2 files\n")
+    main_index = release_media.index_voice_paths(main_log)
+    config = tmp_path / "video.db"
+    with sqlite3.connect(config) as db:
+        db.execute("CREATE TABLE videosound(CgName TEXT, BinData BLOB)")
+        db.execute("INSERT INTO videosound VALUES (?, ?)", ("Scene", b"/Game/Aki/Audio/Scene.Scene"))
+    monkeypatch.setattr(release_media, "package_root", lambda *_args, **_kwargs: voice)
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
+    monkeypatch.setattr(release_media, "ensure_archive_index", AsyncMock(return_value=main_index))
+    monkeypatch.setattr(wwise_banks, "bank_media_ids", lambda _: [43, 44])
+
+    async def voice_export(parent, paths, destination):
+        for path in paths:
+            target = destination / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"source")
+
+    async def base_export(root, fmodel, paths):
+        files = tmp_path / "base-export/files"
+        for path in paths.split("|"):
+            target = files / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"source")
+        return files.parent / "manifest.json"
+
+    monkeypatch.setattr(release_media, "extract_voice_paths", voice_export)
+    export = AsyncMock(side_effect=base_export)
+    monkeypatch.setattr(release_media, "export_assets", export)
+    destination = await release_media.extract_cutscene_audio({"voice_plan_id": "voice"}, config, "Scene")
+    assert (destination / "Audio/en/43.wem").is_file()
+    assert (destination / "Client/Content/Aki/WwiseAudio_Generated/Media/44.wem").is_file()
+    assert (destination / "Client/Content/Aki/WwiseAudio_Generated/Init.bnk").is_file()
+    assert export.await_count == 1
 
 
 @pytest.fixture(autouse=True)
@@ -540,7 +604,7 @@ async def test_cutscene_audio_follows_authored_bank_then_exact_media_id(monkeypa
     import sqlite3
     from contextlib import closing
 
-    from wuwa_story_worker import cutscene_import, entity_media
+    from wuwa_story_worker import entity_media, wwise_banks
     root = tmp_path / "voice"
     root.mkdir()
     log = root / "archive-index.log"
@@ -555,7 +619,11 @@ async def test_cutscene_audio_follows_authored_bank_then_exact_media_id(monkeypa
     monkeypatch.setattr(release_media, "package_root", lambda *_args, **_kwargs: root)
     monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
     monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
-    monkeypatch.setattr(cutscene_import, "bank_media_id", lambda _: 42)
+    monkeypatch.setattr(wwise_banks, "bank_media_ids", lambda _: [42])
+    main_log = tmp_path / "archive-index.log"
+    main_log.write_text("[Done] Listed 0 files\n")
+    main_index = release_media.index_voice_paths(main_log)
+    monkeypatch.setattr(release_media, "ensure_archive_index", AsyncMock(return_value=main_index))
     calls = []
 
     async def extract(args, log, timeout):
@@ -712,6 +780,8 @@ async def test_cutscene_publication_cleans_only_owned_conversions(monkeypatch, t
     for path in (shared, sibling):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"retained")
+    shared.write_bytes(b"filepath://./Aki/Movies/Scene.mp4\0")
+    shared.with_suffix(".mp4").write_bytes(b"retained movie")
     monkeypatch.setattr(release_media, "asset_workspace", lambda: tmp_path)
     monkeypatch.setattr(release_media, "client_root", lambda _: root)
     monkeypatch.setattr(release_media, "video_database", lambda _: tmp_path / "video.db")

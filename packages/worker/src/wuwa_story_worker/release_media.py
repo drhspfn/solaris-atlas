@@ -38,6 +38,7 @@ from wuwa_story_worker.broker import JobDeferred, job_lock
 from wuwa_story_worker.client_assets import download_plan, save_json, workspace_lock
 from wuwa_story_worker.cutscene_import import import_cutscene_recipe, missing_cutscene_identities
 from wuwa_story_worker.cutscene_plan import engine_path, plan_cutscene
+from wuwa_story_worker.cutscene_sources import prepare_base_movies
 from wuwa_story_worker.event_catalog import client_event_record, read_event_catalog
 from wuwa_story_worker.event_resources import annotate_image_packages, event_resources
 from wuwa_story_worker.job_tracking import update_admin_run
@@ -72,6 +73,7 @@ async def source_context(parent, *, voice=False, video=False):
         names.append("WUWA_VGMSTREAM_PATH")
     tools = {name: await asyncio.to_thread(sha256, tool_path(name)) for name in names}
     if video:
+        tools["WUWA_WWISER_PATH"] = await asyncio.to_thread(sha256, tool_path("WUWA_WWISER_PATH"))
         ffmpeg = shutil.which("ffmpeg")
         if ffmpeg is None:
             raise RuntimeError("ffmpeg is missing from the worker image")
@@ -386,6 +388,8 @@ async def cutscene_assets(payload, parent):
                   for name in targets for row in db.execute("SELECT CgId, BinData FROM videodata WHERE CgName = ?", (name,))]
     cg_ids = {cg_id for cg_id, _ in videos}
     unavailable = []
+    available = {}
+    index = None
     if parent.get("workspace_id"):
         # Historical config can retain wrappers removed from the current client.
         # Sound events come from the localized package in extract_cutscene_audio.
@@ -397,11 +401,16 @@ async def cutscene_assets(payload, parent):
         for batch in voice_filter_batches(path.removesuffix(".uasset") for path in available.values()):
             receipts.append(await export_assets(root, fmodel, "|".join(batch)))
     assets = await asyncio.to_thread(merge_exports, receipts, root / "release-media" / "files")
+    base_movies = await prepare_base_movies(root, assets, available.values(), fmodel, index=index)
+    if base_movies["receipts"]:
+        await asyncio.to_thread(merge_exports, base_movies["receipts"], assets)
     save_json(assets / "video-database.json", {"path": config.relative_to(receipts[0].parent / "files").as_posix()})
     from wuwa_story_worker.entity_media import tool
     from wuwa_story_worker.voice_bootstrap import discover_video_plan
     from wuwa_story_worker.voice_packages import download_voice_plan
-    plan = await asyncio.to_thread(discover_video_plan, parent["asset_version"], assets, parent["tier"], cg_ids)
+    video_diagnostics = {}
+    plan = await asyncio.to_thread(discover_video_plan, parent["asset_version"], assets, parent["tier"], cg_ids,
+                                   diagnostics=video_diagnostics)
     if plan["files"]:
         video_root = await asyncio.to_thread(download_voice_plan, plan, asset_workspace() / "videos",
                                              concurrency=int(os.getenv("WUWA_ASSET_DOWNLOAD_CONCURRENCY", "4")))
@@ -418,6 +427,10 @@ async def cutscene_assets(payload, parent):
         await asyncio.to_thread(merge_exports, [destination.parent / "receipt.json"], assets)
     inventory = await publish_inventory(assets)
     inventory["missing_video_packages"] = unavailable
+    inventory["video_packages"] = video_diagnostics
+    from wuwa_story_worker.cutscene_import import confined
+    inventory["missing_movies"] = [path for path in sorted(set(base_movies["movies"].values()))
+                                    if not confined(assets, path).is_file()]
     return {**parent, "video_plan_id": plan["id"], "stage": "cutscene_assets_ready", "media_report": inventory}, "completed"
 
 
@@ -440,6 +453,18 @@ async def cutscene(payload, parent):
         return {"videos": 0, "asset_version": parent["asset_version"], "missing_assets": missing_wrappers,
                 "media_report": {"entries": [{"expected": path, "status": "not_in_archive", "matches": []}
                                              for path in missing_wrappers]}}, "partial"
+    from wuwa_story_worker.cutscene_import import confined, movie_path
+    absent_movies = []
+    for video in recipe["videos"]:
+        package = video["asset"].removeprefix("asset:ue:/Game/").rsplit(".", 1)[0]
+        path = movie_path(confined(assets, "Client/Content/" + package + ".uexp").read_bytes())
+        if not confined(assets, path).is_file():
+            absent_movies.append(path)
+    if absent_movies:
+        await cleanup_published_output(parent, payload["run_id"], "cutscene")
+        return {"videos": 0, "asset_version": parent["asset_version"], "missing_assets": absent_movies,
+                "media_report": {"entries": [{"expected": path, "status": "not_in_archive", "matches": []}
+                                             for path in absent_movies]}}, "partial"
     voice_cache = root / "voices" if parent.get("workspace_id") else asset_workspace() / "voices"
     voice_roots = [package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace())] if parent.get("voice_plan_id") else sorted(voice_cache.glob(parent["asset_version"] + "-*"))
     if parent.get("workspace_id") and parent.get("voice_plan_id"):
@@ -594,7 +619,7 @@ async def extract_voice_paths(parent, selected, extracted):
 
 async def extract_cutscene_audio(parent, config, name):
     """Follow authored event banks, then their exact Wwise media identifiers."""
-    from wuwa_story_worker.cutscene_import import bank_media_id
+    from wuwa_story_worker.wwise_banks import bank_media_ids
 
     voice_root = package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace())
     destination = voice_root / "cutscene-audio" / hashlib.sha256(name.encode()).hexdigest()[:16] / "files"
@@ -606,14 +631,33 @@ async def extract_cutscene_audio(parent, config, name):
                         for row in db.execute("SELECT BinData FROM videosound WHERE CgName = ?", (name,))})
     banks = await asyncio.to_thread(indexed_audio_paths, index, names)
     await extract_voice_paths(parent, banks, destination)
-    media = []
-    for path in banks:
+    root = client_root(parent)
+    fmodel = tool_path("WUWA_FMODEL_PATH")
+    main_index = await ensure_archive_index(root, fmodel, root)
+    main_banks = await asyncio.to_thread(indexed_audio_paths, main_index,
+                                        set(names) - {Path(path).name.casefold() for path in banks})
+    for batch in voice_filter_batches(main_banks):
+        receipt = await export_assets(root, fmodel, "|".join(batch))
+        await asyncio.to_thread(merge_exports, [receipt], destination)
+    media = set()
+    for path in [*banks, *main_banks]:
         bank = destination / path
         if bank.is_file():
-            media.append(str(bank_media_id(await asyncio.to_thread(bank.read_bytes))) + ".wem")
-    paths = await asyncio.to_thread(indexed_audio_paths, index, sorted(set(media)))
+            try:
+                identities = bank_media_ids(await asyncio.to_thread(bank.read_bytes))
+            except ValueError:
+                continue  # The individual track reports its unsupported bank during publication.
+            media.update(f"{identity}.wem" for identity in identities)
+    paths = await asyncio.to_thread(indexed_audio_paths, index, media)
     await extract_voice_paths(parent, paths, destination)
-    save_json(destination.parent / "audio-export.json", {"banks": banks, "media": paths})
+    main_paths = await asyncio.to_thread(indexed_audio_paths, main_index,
+                                        media - {Path(path).name.casefold() for path in paths})
+    if banks or main_banks:
+        main_paths += await asyncio.to_thread(indexed_audio_paths, main_index, ["init.bnk"])
+    for batch in voice_filter_batches(main_paths):
+        receipt = await export_assets(root, fmodel, "|".join(batch))
+        await asyncio.to_thread(merge_exports, [receipt], destination)
+    save_json(destination.parent / "audio-export.json", {"banks": [*banks, *main_banks], "media": [*paths, *main_paths]})
     return destination
 
 

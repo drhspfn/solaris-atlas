@@ -144,7 +144,8 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
     report = (getattr(result, "stderr", b"") or b"").decode(errors="replace")
     (root / "renderer.log").write_text(report, encoding="utf-8")
     if "missing" in report.casefold() or "error" in report.casefold():
-        raise ValueError("Wwise event has unresolved dependencies; inspect its renderer report")
+        detail = next(line for line in report.splitlines() if "missing" in line.casefold() or "error" in line.casefold())
+        raise ValueError(f"Wwise event has unresolved dependencies: {detail[:220]}")
     outputs = list(root.glob("*.txtp"))
     if len(outputs) != 1:
         raise ValueError(f"Wwise event requires an explicit non-gender selection ({len(outputs)} renditions)")
