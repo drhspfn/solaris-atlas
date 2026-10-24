@@ -5,6 +5,7 @@ character-index-lock for every caller; handler imports stay local to that helper
 """
 
 import asyncio
+import json
 import re
 import sqlite3
 from contextlib import closing
@@ -22,6 +23,14 @@ async def ensure_archive_index(archive: Path, fmodel: Path, keys_root: Path) -> 
     from wuwa_story_worker.entity_media import tool
     from wuwa_story_worker.media_workspace import finish_writes
 
+    marker = archive / "workspace.json"
+    if marker.is_file():
+        # Patch exports are disposable, but the same pinned client's filename
+        # index is shared across image/audio/video preparation and patch retries.
+        source = Path(json.loads(marker.read_text(encoding="utf-8"))["source"]).resolve()
+        if source != (archive / "game").resolve().parent:
+            raise ValueError("Archive index source does not match workspace inputs")
+        archive = source
     index = archive / "archive-index.sqlite"
     if index.is_file():
         return index
@@ -74,9 +83,9 @@ def indexed_package_paths(index: Path, expected) -> dict[str, str]:
     authored = sorted(set(expected))
     for path in authored:
         if (not re.fullmatch(r"[a-zA-Z0-9_/-]+", path)
-                or not path.casefold().startswith("aki/")
+                or PurePosixPath(path).is_absolute() or "/" not in path
                 or PurePosixPath(path).as_posix() != path):
-            raise ValueError("Expected an authored extensionless Aki package path")
+            raise ValueError("Expected an authored extensionless Unreal package path")
     names = {PurePosixPath(path).name + suffix for path in authored for suffix in (".uasset", ".uexp")}
     available = {}
     for path in indexed_audio_paths(index, names):

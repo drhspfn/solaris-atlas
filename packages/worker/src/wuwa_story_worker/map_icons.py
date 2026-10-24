@@ -10,6 +10,11 @@ from pathlib import Path
 
 from PIL import Image
 
+from wuwa_story_worker.archive_index import (
+    ensure_archive_index,
+    indexed_package_paths,
+    voice_filter_batches,
+)
 from wuwa_story_worker.asset_export import _sha256, export_assets
 from wuwa_story_worker.client_assets import wait_workspace_lock
 
@@ -44,8 +49,16 @@ async def build_icons(
                 for path, digest in saved["files"].items()
             ):
                 return saved["icons"]
+    available = None
+    if entity_media and exact_textures and sources:
+        index = await ensure_archive_index(root, fmodel, root)
+        authored = [source.removeprefix("/Game/").split(".", 1)[0] for source in sources]
+        available = await asyncio.to_thread(indexed_package_paths, index, authored)
     folders = set()
     for source in sources:
+        authored = source.removeprefix("/Game/").split(".", 1)[0]
+        if available is not None and authored not in available:
+            continue
         if source.startswith("/Game/Aki/UI/UIResources/"):
             folder = source.removeprefix("/Game/Aki/UI/UIResources/").rsplit("/", 1)[0] + "/"
             if (
@@ -74,7 +87,7 @@ async def build_icons(
     elif folders:
         # Mount the client once for the bounded request, instead of once per
         # texture. The patched pinned FModel accepts an OR-list of path filters.
-        folders = {"|".join(sorted(folders))}
+        folders = {"|".join(batch) for batch in voice_filter_batches(folders)}
     for folder in sorted(folders):
         receipt = await export_assets(root, fmodel, folder)
         raw = receipt.parent / "files"

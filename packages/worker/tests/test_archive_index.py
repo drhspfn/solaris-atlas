@@ -1,4 +1,6 @@
 import asyncio
+import json
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -110,3 +112,25 @@ def test_package_lookup_requires_exact_full_stem_and_export_pair(tmp_path):
 def test_package_lookup_rejects_non_authored_stems(tmp_path, path):
     with pytest.raises(ValueError, match="authored extensionless"):
         archive_index.indexed_package_paths(tmp_path / "unused.sqlite", [path])
+
+
+@pytest.mark.asyncio
+async def test_patch_workspace_reuses_retained_client_index(tmp_path, monkeypatch):
+    client = tmp_path / "assets" / "client"
+    (client / "game").mkdir(parents=True)
+    workspace = tmp_path / "patch-workspaces" / "42"
+    workspace.mkdir(parents=True)
+    try:
+        (workspace / "game").symlink_to(client / "game", target_is_directory=True)
+    except OSError:
+        pytest.skip("Creating directory symlinks requires OS support/permission")
+    (workspace / "workspace.json").write_text(json.dumps({"source": str(client)}), encoding="utf-8")
+    log = client / "archive-index.log"
+    log.write_text("[File] Client/Content/Aki/UI/Image/Actual.uasset\n"
+                   "[File] Client/Content/Aki/UI/Image/Actual.uexp\n[Done] Listed 2 files\n", encoding="utf-8")
+    index = archive_index.index_voice_paths(log)
+    tool = AsyncMock(side_effect=AssertionError("must reuse retained index"))
+    monkeypatch.setattr(entity_media, "tool", tool)
+    assert await archive_index.ensure_archive_index(workspace, tmp_path / "fmodel", workspace) == index
+    assert not (workspace / "archive-index.sqlite").exists()
+    tool.assert_not_awaited()

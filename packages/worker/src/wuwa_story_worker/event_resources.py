@@ -11,6 +11,7 @@ from wuwa_story.db.models.game_events import GameEvent
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
 from wuwa_story.ingestion.release_media import enqueue_event_images
 
+from wuwa_story_worker.archive_index import ensure_archive_index, indexed_package_paths
 from wuwa_story_worker.asset_export import _sha256, export_assets
 from wuwa_story_worker.client_assets import workspace_lock
 from wuwa_story_worker.event_catalog import texture_path
@@ -22,28 +23,16 @@ DEPENDENCY_TYPES = {"PrefabAsset", "Material", "MaterialInstanceConstant", "Spin
 
 
 async def annotate_image_packages(root: Path, records: dict) -> list[dict]:
-    from wuwa_story_worker.entity_media import tool
-    from wuwa_story_worker.media_diagnostics import iter_archive_paths
-
-    directory = root / "event-inventory"
-    directory.mkdir(exist_ok=True)
-    index = directory / (_sha256(tool_path("WUWA_FMODEL_PATH")) + ".log")
-    with workspace_lock(directory):
-        if not index.is_file():
-            temporary = index.with_suffix(".partial")
-            await tool([tool_path("WUWA_FMODEL_PATH"), root / "game",
-                        "@" + str(root / "keys.txt"), "--list"], temporary, 7200)
-            for _ in iter_archive_paths(temporary):
-                pass
-            temporary.replace(index)
-        expected = {("Client/Content/" + image["path"][6:] + ".uasset").casefold()
-                    for record in records.values() for image in record.get("artwork", [])}
-        packages = {path.casefold() for path in iter_archive_paths(index) if path.casefold() in expected}
+    expected = {image["path"][6:] for record in records.values() for image in record.get("artwork", [])}
+    if not expected:
+        return []
+    index = await ensure_archive_index(root, tool_path("WUWA_FMODEL_PATH"), root)
+    packages = await asyncio.to_thread(indexed_package_paths, index, expected)
     missing = {}
     for record in records.values():
         for image in record.get("artwork", []):
             path = image["path"]
-            present = ("Client/Content/" + path[6:] + ".uasset").casefold() in packages
+            present = path[6:] in packages
             image["package_status"] = "present" if present else "not_in_client"
             if not present:
                 missing[path] = {"expected": path, "status": "not_in_client", "matches": []}
@@ -75,6 +64,7 @@ async def prefab_images(root: Path, paths: list[str]):
     missing = []
     fmodel, converter = tool_path("WUWA_FMODEL_PATH"), tool_path(
         "WUWA_TEXTURE_CONVERTER_PATH")
+    index = await ensure_archive_index(root, fmodel, root) if pending else None
     while pending:
         source = min(pending)
         pending.remove(source)
@@ -85,18 +75,25 @@ async def prefab_images(root: Path, paths: list[str]):
             raise ValueError(
                 "Event UI dependency graph exceeded 5000 packages; inspect its references")
         try:
-            receipt = await export_assets(root, fmodel, "Client/Content/" + source[6:])
+            available = await asyncio.to_thread(indexed_package_paths, index, [source[6:]])
+            if source[6:] not in available:
+                missing.append({"expected": source, "status": "not_in_client", "matches": []})
+                continue
+            package = available[source[6:]]
+            receipt = await export_assets(root, fmodel, package.rsplit(".", 1)[0])
             raw = receipt.parent / "files"
-            output = receipt.parent / ("event-json-" + _sha256(converter)[:16])
+            output = receipt.parent / ("event-json-exact-" + _sha256(converter)[:16])
             output.mkdir(exist_ok=True)
             complete = output / "references.json"
 
-            def decode(raw=raw, output=output, complete=complete):
+            def decode(raw=raw, output=output, complete=complete, package=package):
                 with workspace_lock(output):
                     if complete.is_file():
                         return json.loads(complete.read_text(encoding="utf-8"))
                     packages = output / "packages.txt"
-                    paths = sorted(raw.rglob("*.uasset"))
+                    paths = [raw / package]
+                    if not paths[0].is_file():
+                        raise ValueError("Indexed prefab package was not exported")
                     with (output / "converter.log").open("w", encoding="utf-8") as log:
                         for offset in range(0, len(paths), 8):
                             packages.write_text("\n".join(raw.name + "/" + p.relative_to(raw).as_posix()

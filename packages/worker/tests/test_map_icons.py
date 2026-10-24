@@ -1,6 +1,16 @@
 import pytest
 
+from wuwa_story_worker.archive_index import index_voice_paths
 from wuwa_story_worker.map_icons import sprite_box
+
+
+def package_index(root, sources):
+    log = root / "archive-index.log"
+    paths = ["Client/Content/" + source.removeprefix("/Game/").split(".", 1)[0] + suffix
+             for source in sources for suffix in (".uasset", ".uexp")]
+    log.write_text("".join(f"[File] {path}\n" for path in paths) + f"[Done] Listed {len(paths)} files\n",
+                   encoding="utf-8")
+    index_voice_paths(log)
 
 
 def test_atlas_uv_crop_and_bounds():
@@ -46,8 +56,10 @@ async def test_icon_conversion_bounds_loaded_texture_batches(tmp_path, monkeypat
             Image.new("RGB", (2, 2)).save(target)
         return subprocess.CompletedProcess(command, 0)
     monkeypatch.setattr(map_icons.subprocess, "run", convert)
+    package_index(tmp_path, sources)
+    requested = sources + (["/Game/Aki/UI/UIResources/Common/Image/Test/Missing"] if exact_textures else [])
     result = await map_icons.build_icons(tmp_path, fmodel, converter,
-        [{"metadata_json": {"icon_source": source}} for source in sources], entity_media=True,
+        [{"metadata_json": {"icon_source": source}} for source in requested], entity_media=True,
         exact_textures=exact_textures)
     assert [len(batch) for batch in batches] == [8, 8, 3]
     assert set(result) == set(sources)
@@ -91,6 +103,7 @@ async def test_exact_sprite_uses_its_atlas_and_matches_qualified_reference(tmp_p
             }}]), encoding="utf-8")
         return subprocess.CompletedProcess(command, 0)
     monkeypatch.setattr(map_icons.subprocess, "run", convert)
+    package_index(tmp_path, [source])
     result = await map_icons.build_icons(tmp_path, tool, tool,
         [{"metadata_json": {"icon_source": source}}], entity_media=True, exact_textures=True)
     assert export.await_args.args[2] == "Common/Atlas/Test/"
@@ -140,3 +153,21 @@ async def test_concurrent_icon_requests_reuse_conversion_after_waiting(tmp_path,
     assert results[0] == results[1]
     assert source in results[0]
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_all_absent_images_do_not_export_a_false_substring_match(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from wuwa_story_worker import map_icons
+
+    source = "/Game/Aki/UI/UIResources/Common/Image/Test/Removed"
+    package_index(tmp_path, [source + "Extra"])
+    tool = tmp_path / "tool"
+    tool.write_bytes(b"tool")
+    export = AsyncMock(side_effect=AssertionError("absent package must never reach FModel"))
+    monkeypatch.setattr(map_icons, "export_assets", export)
+    result = await map_icons.build_icons(tmp_path, tool, tool,
+        [{"metadata_json": {"icon_source": source}}], entity_media=True, exact_textures=True)
+    assert result == {}
+    export.assert_not_awaited()
