@@ -276,14 +276,17 @@ async def consume_jobs(
                         payload = json.loads(message.body)
                         if not isinstance(payload, dict):
                             raise ValueError("Job payload must be a JSON object")
-                        if route_media and job_key in MEDIA_QUEUES:
+                        # A deployment may change a kind's resource pool. Move
+                        # retained private deliveries too, before executing them.
+                        wrong_pool = job_key.startswith("pool_") and job_key != "pool_" + media_pool(payload)
+                        if (route_media and job_key in MEDIA_QUEUES) or wrong_pool:
                             destination = "pool_" + media_pool(payload)
                             try:
                                 exchange, _ = await declare_queue(job_channel, destination)
                                 await exchange.publish(aio_pika.Message(
                                     body=message.body, content_type="application/json",
                                     delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-                                    message_id=message.message_id, type=job_key,
+                                    message_id=message.message_id, type=source_key,
                                     headers=dict(message.headers or {})),
                                     routing_key=QUEUES[destination].name, mandatory=True)
                             except Exception:

@@ -12,6 +12,6 @@ def media_pool(payload: dict) -> str:
         return "audio"
     if kind in {"cutscene", "cutscene_assets"}:
         return "video"
-    if kind in {"images", "event_images", "event_resources", "event_catalog"}:
+    if kind in {"images", "event_images", "event_resources", "event_catalog", "event_notices"}:
         return "image"
     return "coordinator"
