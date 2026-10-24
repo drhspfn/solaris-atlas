@@ -32,7 +32,8 @@ def discover_client_voices(version: str, exported_config: Path) -> dict:
     return plan
 
 
-def discover_video_plan(version: str, exported_config: Path, tier: str, cg_ids: set[int]) -> dict:
+def discover_video_plan(version: str, exported_config: Path, tier: str, cg_ids: set[int],
+                        *, diagnostics: dict | None = None) -> dict:
     configs = sorted(exported_config.rglob("KuroPublicConfig.ini"))
     if len(configs) != 1 or tier not in {"hd", "sd", "uhd"} or not re.fullmatch(r"\d+\.\d+\.\d+", version):
         raise ValueError("Invalid video bootstrap configuration")
@@ -67,9 +68,14 @@ def discover_video_plan(version: str, exported_config: Path, tier: str, cg_ids: 
         raise ValueError("Video manifest checksum mismatch")
     manifest = decrypt_config(body, crypto)
     files = []
+    packages = []
+    matched_ids = set()
     for key, item in manifest["VideoInfos"]["PakMap"].items():
         if not re.fullmatch(r"\d+_\d+", key) or int(key.split("_")[0]) not in cg_ids:
             continue
+        cg_id, variant = map(int, key.split("_"))
+        matched_ids.add(cg_id)
+        package_files = []
         for field in ("Pak", "Sig"):
             name = safe_path(item[field + "Name"])
             if "/" in name or not name.endswith((".pak", ".sig")):
@@ -77,6 +83,12 @@ def discover_video_plan(version: str, exported_config: Path, tier: str, cg_ids: 
             files.append({"path": f"Video/{name}", "size": int(str(item[field + "Size"]).removeprefix("__kr_long__")),
                           "sha1": item[field + "Hash"].lower(),
                           "remote_path": f"{safe_path(entry['ResUri'])}/Windows/{version}/Video/{name}"})
+            package_files.append(f"Video/{name}")
+        packages.append({"key": key, "cg_id": cg_id, "variant": variant, "files": package_files})
+    if diagnostics is not None:
+        # Evidence must not change a download plan's content identity or cache root.
+        diagnostics.update(requested_cg_ids=sorted(cg_ids), missing_cg_ids=sorted(cg_ids - matched_ids),
+                           video_packages=packages)
     plan = {"schema_version": 1, "job_type": "voices.download", "version": version,
             "languages": [], "cdns": cdns, "files": files, "cipher_source": CIPHER_SOURCE,
             "sources": [{"sha256": hashlib.sha256(body).hexdigest()}]}
