@@ -143,7 +143,7 @@ class PublicResponseCache:
                 if cached_body is None and not owns_lock:
                     # Let the first reader populate a cold key. Slow queries
                     # eventually fall back to origin rather than blocking users.
-                    for _ in range(10):
+                    for _ in range(30):
                         await asyncio.sleep(0.1)
                         cached_body = await self.command(self.redis.get(key))
                         if cached_body is not None:
