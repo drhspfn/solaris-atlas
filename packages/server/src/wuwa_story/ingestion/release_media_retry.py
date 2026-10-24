@@ -12,7 +12,8 @@ from wuwa_story.ingestion.media_workspaces import retain_workspace, workspace_ex
 from wuwa_story.ingestion.release_media import EVENT_QUEUE, PROCESSOR, QUEUE
 
 logger = logging.getLogger(__name__)
-DEFAULT_STATUSES = {"cutscene": {"failed", "partial"}, "images": {"failed"}, "event_catalog": {"failed"}}
+DEFAULT_STATUSES = {"cutscene": {"failed", "partial", "blocked"},
+                    "images": {"failed", "blocked"}, "event_catalog": {"failed", "blocked"}}
 ACTIVE = {"pending", "queued", "running", "waiting_dependency"}
 
 
@@ -73,7 +74,8 @@ async def enqueue_failed_release_media(session, release_id: int, *, kinds: set[s
                                        statuses: set[str] | None = None) -> dict:
     """Retry latest failed logical tasks without resetting successful release work.
 
-    Defaults: failed/partial cutscenes; failed images and event catalogs. Explicit
+    Defaults: failed/partial cutscenes and failed images/event catalogs, including
+    leaves blocked by a failed prerequisite. Explicit
     statuses may select failed/partial for any requested supported kind. Active
     retry graphs are reused; unconfirmed publication is retried in the same graph
     while its workspace is valid. A failed retry leaf becomes a new source attempt.

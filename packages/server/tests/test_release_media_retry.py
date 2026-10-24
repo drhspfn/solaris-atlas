@@ -128,7 +128,8 @@ async def test_repeated_request_reuses_active_graph_without_duplicate_publicatio
 
 
 @pytest.mark.asyncio
-async def test_new_attempt_after_failure_keeps_successful_retry_jobs_untouched(monkeypatch, tmp_path):
+@pytest.mark.parametrize("leaf_status", ["failed", "blocked"])
+async def test_new_attempt_after_failure_keeps_successful_retry_jobs_untouched(monkeypatch, tmp_path, leaf_status):
     monkeypatch.setenv("WUWA_ASSET_WORKSPACE", str(tmp_path))
     session = Session([old_run(10, "cutscene", "failed", ["CG_A"]), old_run(11, "cutscene", "failed", ["CG_B"])])
     monkeypatch.setattr(retry, "publish_media_job", AsyncMock())
@@ -137,7 +138,9 @@ async def test_new_attempt_after_failure_keeps_successful_retry_jobs_untouched(m
     failed = next(run for run in previous if retry._request(run)["targets"] == ["CG_A"]
                   and retry._request(run)["kind"] == "cutscene")
     for run in previous:
-        run.status = "failed" if run is failed else "completed"
+        run.status = leaf_status if run is failed else "completed"
+        if leaf_status == "blocked" and retry._request(run)["kind"] == "prepare":
+            run.status = "failed"
     prepare = previous[0]
     prepare.raw_output = {"workspace_id": prepare.id, "asset_version": "3.7.0"}
     before = copy.deepcopy([(run.status, run.metadata_json, run.raw_output) for run in previous])
