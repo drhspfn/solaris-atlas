@@ -14,7 +14,7 @@ from wuwa_story.api.routes.story.cutscene_audio import audio_bundles
 from wuwa_story.api.routes.story.shared import _quest_state_ids, _release_id
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.content import Document, DocumentHead
-from wuwa_story.db.models.core import QuestAction, QuestState, VoiceReference
+from wuwa_story.db.models.core import QuestAction, QuestState
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.ontology import RelationType
@@ -25,6 +25,7 @@ from wuwa_story.db.repositories.nodes import get_quest
 from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.cutscenes import Clip, PlaybackFlow
 from wuwa_story.storage.s3 import S3Storage
+from wuwa_story.story import media as story_media
 
 router = APIRouter(tags=["story browsing"])
 
@@ -32,88 +33,16 @@ router = APIRouter(tags=["story browsing"])
 async def _links(
     session: AsyncSession, from_ids: list[int], relations: tuple[str, ...], release_id: int
 ) -> dict[int, list[dict[str, Any]]]:
-    if not from_ids:
-        return {}
-    rows = await session.execute(
-        select(Edge.from_node_id, Edge.to_node_id, Node.canonical_key,
-               RelationType.key, Edge.basis, EdgeEvidence.source_file_path,
-               EdgeEvidence.source_raw_path)
-        .join(RelationType, RelationType.id == Edge.relation_type_id)
-        .join(Node, Node.id == Edge.to_node_id)
-        .join(EdgeEvidence, EdgeEvidence.edge_id == Edge.id)
-        .where(Edge.from_node_id.in_(from_ids), RelationType.key.in_(relations),
-               Edge.layer == "source", EdgeEvidence.release_id == release_id)
-        .order_by(Edge.from_node_id, Edge.id, EdgeEvidence.id)
-    )
-    grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    for owner_id, target_id, target_key, relation, basis, source_file, raw_path in rows:
-        grouped[owner_id].append({
-            "node_id": target_id, "canonical_key": target_key, "relation": relation,
-            "basis": basis, "source": {"file": source_file, "raw_path": raw_path},
-        })
-    return grouped
-
+    return await story_media.media_links(session, from_ids, relations, release_id)
 
 async def dialogue_media(
     session: AsyncSession, line_ids: list[int], release_id: int | None
 ) -> dict[int, dict[str, Any]]:
-    """Return only voice/AK references explicitly linked to these talk items."""
-    if release_id is None or not line_ids:
-        return {}
-    links = await _links(
-        session, line_ids, ("has_voice_reference", "posts_audio_event"), release_id
+    """Compatibility entry point for existing media callers."""
+    return await story_media.dialogue_media(
+        session, line_ids, release_id, link_loader=_links,
+        settings_factory=get_settings, storage_factory=S3Storage,
     )
-    voice_ids = [link["node_id"] for entries in links.values() for link in entries
-                 if link["relation"] == "has_voice_reference"]
-    voices = {voice.node_id: voice for voice in await session.scalars(
-        select(VoiceReference).where(VoiceReference.node_id.in_(voice_ids))
-    )} if voice_ids else {}
-    tracks: dict[int, dict[tuple[str, str | None], dict]] = defaultdict(dict)
-    if voice_ids:
-        settings = get_settings()
-        storage = S3Storage(settings)
-        rows = await session.execute(
-            select(FileReference, FileLocation.object_key)
-            .join(FileLocation, FileLocation.file_id == FileReference.file_id)
-            .where(FileReference.owner_node_id.in_(voice_ids),
-                   FileReference.reference_type == "voice_audio",
-                   FileLocation.backend == "s3", FileLocation.bucket == settings.s3_bucket,
-                   FileLocation.available.is_(True), FileLocation.is_primary.is_(True))
-            .order_by(FileReference.id.desc())
-        )
-        for reference, object_key in rows:
-            language = reference.metadata_json.get("language")
-            if language in ("en", "ja", "ko", "zh"):
-                rover = reference.metadata_json.get("rover")
-                if rover not in (None, "male", "female"):
-                    continue
-                tracks[reference.owner_node_id].setdefault((language, rover), {
-                    "rover": rover, "language": language, "url": storage.public_url(object_key),
-                    "asset_version": reference.metadata_json.get("asset_version"),
-                    "duration_seconds": reference.metadata_json.get("duration_seconds"),
-                })
-    result = {}
-    for line_id, entries in links.items():
-        result[line_id] = {
-            "voice_references": [
-                {"canonical_key": link["canonical_key"], "plot_audio_id": voice.plot_audio_id,
-                 "file_name": voice.file_name, "reference_kind": "plot_audio_filename",
-                 "engine_path": None, "media_asset_linked": voice.media_asset_node_id is not None,
-                 "basis": link["basis"], "source": link["source"],
-                 "tracks": list(tracks.get(voice.node_id, {}).values())}
-                for link in entries if link["relation"] == "has_voice_reference"
-                if (voice := voices.get(link["node_id"])) is not None
-            ],
-            "audio_event_paths": [
-                {"engine_path": link["canonical_key"].removeprefix("asset:ue:"),
-                 "reference_kind": "unreal_asset_path", "basis": link["basis"],
-                 "source": link["source"]}
-                for link in entries if link["relation"] == "posts_audio_event"
-                and link["canonical_key"].startswith("asset:ue:")
-            ],
-        }
-    return result
-
 
 async def cutscene_videos(session: AsyncSession, asset_ids: list[int], asset_version: str | None = None) -> dict[int, dict]:
     """Published playable files for exact authored asset identities, across text snapshots."""

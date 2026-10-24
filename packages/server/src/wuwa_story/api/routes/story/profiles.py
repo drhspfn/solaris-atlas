@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.api.item_acquisition import ITEM_QUEST_REWARD_LIMIT, item_map_sources
 from wuwa_story.api.public_addresses import public_addresses
-from wuwa_story.api.quest_classification import QUEST_NODES, quest_item_requirements
 from wuwa_story.api.routes.story.shared import (
     _character_progression_materials,
     _dialogue_payload,
@@ -20,7 +19,6 @@ from wuwa_story.api.routes.story.shared import (
     _node_label,
     _quest_info,
     _quest_references_from_links,
-    _quest_state_ids,
     _release_id,
 )
 from wuwa_story.api.source_labels import source_family_label
@@ -42,10 +40,11 @@ from wuwa_story.db.models.i18n import Locale, LocalizationKey
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.search import EntityAlias, SearchDocument
-from wuwa_story.db.models.story import Scene
-from wuwa_story.db.repositories.nodes import get_node, get_quest
+from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.db.session import get_session
 from wuwa_story.storage.entity_media import entity_image_urls
+from wuwa_story.story import usecases
+from wuwa_story.story.domain import StoryBrowsingError
 from wuwa_story.urls import node_address
 
 router = APIRouter(tags=["story browsing"])
@@ -731,184 +730,11 @@ async def quest_profile(
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    quest = await get_quest(session, game_quest_id)
-    if quest is None:
-        raise HTTPException(status_code=404, detail="quest not found")
-    game_quest_id = quest.game_quest_id
-    quest_nodes = await session.execute(
-        select(QuestNode, Node, SourceRecord, SourceFile)
-        .join(Node, Node.id == QuestNode.node_id)
-        .outerjoin(SourceRecord, SourceRecord.id == QuestNode.source_record_id)
-        .outerjoin(SourceFile, SourceFile.id == SourceRecord.source_file_id)
-        .where(QuestNode.game_quest_id == game_quest_id)
-        .order_by(SourceFile.logical_source_path, SourceRecord.row_index, QuestNode.game_node_id)
-        .limit(2000)
-    )
-    qnode_rows = list(quest_nodes)
-    qnode_ids = {entry[0].node_id for entry in qnode_rows}
-    nodes_by_game_id = {entry[0].game_node_id: entry[1].canonical_key for entry in qnode_rows}
-    raw_parent_links = []
-    for quest_node, node, source_record, source_file in qnode_rows:
-        data = quest_node.metadata_json.get("data", {})
-        parent_id = data.get("ParentNodeId") if isinstance(data, dict) else None
-        parent_key = (
-            nodes_by_game_id.get(str(parent_id)) if parent_id not in (None, 0, "0") else None
-        )
-        if parent_key:
-            raw_parent_links.append(
-                {
-                    "from": parent_key,
-                    "to": node.canonical_key,
-                    "relation": "parent_of",
-                    "basis": "explicit_reference",
-                    "raw_field": "Data.ParentNodeId",
-                    "ordering": "hierarchy only; sibling traversal order is not implied",
-                    "source": {
-                        "file": source_file.logical_source_path if source_file else None,
-                        "row": source_record.row_index if source_record else None,
-                    },
-                }
-            )
-    hierarchy_rows = []
-    if qnode_ids:
-        hierarchy_rows = list(
-            await session.execute(
-                select(Edge, RelationType.key, Node, NodeType.key)
-                .join(RelationType, RelationType.id == Edge.relation_type_id)
-                .join(Node, Node.id == Edge.to_node_id)
-                .join(NodeType, NodeType.id == Node.type_id)
-                .where(
-                    Edge.from_node_id.in_(qnode_ids),
-                    Edge.to_node_id.in_(qnode_ids),
-                    RelationType.key.in_(["parent_of", "requires_quest", "checks_quest_node"]),
-                    Edge.layer == "source",
-                )
-                .order_by(RelationType.key, Edge.from_node_id, Edge.to_node_id)
-            )
-        )
-    states = await session.scalars(
-        select(QuestState)
-        .where(QuestState.node_id.in_(await _quest_state_ids(session, quest.node_id)))
-        .order_by(QuestState.flow_id, QuestState.state_id, QuestState.state_key)
-    )
-    state_payloads = []
-    for state in states:
-        actions = await session.scalars(
-            select(QuestAction)
-            .where(QuestAction.quest_state_node_id == state.node_id)
-            .order_by(QuestAction.action_index)
-        )
-        state_payloads.append(
-            {
-                "state_key": state.state_key,
-                "flow_id": state.flow_id,
-                "state_id": state.state_id,
-                "actions": [
-                    {
-                        "canonical_key": (await session.get(Node, action.node_id)).canonical_key,
-                        "action_id": action.action_id,
-                        "action_guid": action.action_guid,
-                        "name": action.action_name,
-                        "action_index": action.action_index,
-                        "params": action.params,
-                        "source_record_id": action.source_record_id,
-                    }
-                    for action in actions
-                ],
-            }
-        )
-    plot_steps = (
-        select(Edge.to_node_id)
-        .join(RelationType, RelationType.id == Edge.relation_type_id)
-        .where(Edge.from_node_id == quest.node_id, RelationType.key == "has_plot_step")
-    )
-    scene_ids = (
-        select(Edge.to_node_id)
-        .join(RelationType, RelationType.id == Edge.relation_type_id)
-        .where(Edge.from_node_id.in_(plot_steps), RelationType.key == "presents_scene")
-    )
-    scenes = await session.scalars(
-        select(Scene)
-        .where(Scene.node_id.in_(scene_ids))
-        .order_by(Scene.authored_order, Scene.node_id)
-    )
-    scene_payloads = []
-    for scene in scenes:
-        scene_node = await session.get(Node, scene.node_id)
-        scene_payloads.append(
-            {
-                "canonical_key": scene_node.canonical_key if scene_node else None,
-                "title": scene.title,
-                "authored_order": scene.authored_order,
-                "ordering_basis": scene.source_basis,
-            }
-        )
-    quest_links = await _explicit_entity_links(session, quest.node_id, locale)
-    release_id = await _release_id(session, game_version)
-    requirement_rows = await session.execute(
-        select(SourceRecord).join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
-        .where(SourceRecord.release_id == release_id, SourceFile.logical_source_path == QUEST_NODES,
-               SourceRecord.data["Key"].astext.in_(
-                   [f"{game_quest_id}_{row[0].game_node_id}" for row in qnode_rows])))
-    requirements = []
-    for record in requirement_rows.scalars():
-        for requirement in quest_item_requirements(record.data.get("Data") or {}):
-            item_node = await get_node(session, f"item:{requirement['item_id']}", ("item",))
-            requirements.append({**requirement,
-                                 "item": await _node_label(session, item_node.id, locale) if item_node else None,
-                                 "source": {"file": QUEST_NODES, "row": record.row_index,
-                                            "release_id": release_id}})
-    return {
-        "quest": await _quest_info(session, quest, locale, game_version),
-        "item_requirements": requirements,
-        "tree": [
-            {
-                "canonical_key": node.canonical_key,
-                "game_node_id": quest_node.game_node_id,
-                "node_type": quest_node.node_type,
-                "data": quest_node.metadata_json.get("data", {}),
-                "source_array_order": source_record.row_index if source_record else None,
-                "source": {
-                    "file": source_file.logical_source_path if source_file else None,
-                    "row": source_record.row_index if source_record else None,
-                },
-            }
-            for quest_node, node, source_record, source_file in qnode_rows
-        ],
-        "tree_edges": [
-            {
-                "from": source.canonical_key,
-                "relation": relation,
-                "to": target.canonical_key,
-                "basis": edge.basis,
-                "provenance": edge.metadata_json,
-            }
-            for edge, relation, target, _target_type in hierarchy_rows
-            if (source := await session.get(Node, edge.from_node_id)) is not None
-        ],
-        "raw_parent_links": raw_parent_links,
-        "flow_states": state_payloads,
-        "scenes": scene_payloads,
-        "quest_prerequisites": [
-            {
-                **link,
-                "meaning": "A raw PreQuest/runtime condition references this quest. It is a prerequisite relation, not an immediate next-quest order.",
-            }
-            for link in quest_links
-            if link["relation"] == "requires_quest" and link["direction"] == "outgoing"
-        ],
-        "related_quest_references": [
-            link for link in quest_links if link["relation"] == "references_quest"
-        ],
-        "ordering": {
-            "tree": "source file/row order; this is not a guaranteed traversal",
-            "actions": "authored action_index within each flow state",
-            "states": "flow/state IDs then state key; no linear runtime chronology is implied",
-        },
-        "transcript_endpoint": f"/quests/{game_quest_id}/transcript?locale={locale}&game_version={game_version or ''}",
-        "explicit_links": quest_links,
-        "source": await _latest_source_record(session, quest.node_id),
-    }
+    try:
+        return await usecases.quest_profile(session, game_quest_id, locale, game_version)
+    except StoryBrowsingError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+
 
 @router.get("/characters/{canonical_key:path}/profile")
 @public_addresses
