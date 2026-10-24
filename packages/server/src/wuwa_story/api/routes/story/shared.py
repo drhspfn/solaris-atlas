@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api.quest_classification import QUEST_NODES, item_requirement, quest_classification
 from wuwa_story.db.models.core import (
     Character,
     Item,
@@ -570,6 +571,7 @@ async def _quest_info(
     node = await session.get(Node, quest.node_id)
     release_id = await _release_id(session, game_version)
     name = await _localized(session, quest.name_key_id, locale_code, release_id)
+    classification = await quest_classification(session, quest.game_quest_id, release_id)
     quest_nodes = (
         select(Edge.to_node_id)
         .join(RelationType, RelationType.id == Edge.relation_type_id)
@@ -591,7 +593,8 @@ async def _quest_info(
         "canonical_key": node.canonical_key if node else f"quest:{quest.game_quest_id}",
         **(node_address(node, "quest") if node else {}),
         "name": name,
-        "quest_type": quest.quest_type,
+        "quest_type": str(classification["source_type"]) if classification["source_type"] is not None else quest.quest_type,
+        "classification": classification,
         "region_id": quest.region_id,
         "explicit_area_references": [
             {
@@ -630,6 +633,7 @@ async def _quest_references_from_links(
     links: list[dict[str, Any]],
     locale_code: str,
     game_version: str | None = None,
+    entity_key: str | None = None,
 ) -> list[dict[str, Any]]:
     quest_node_ids = {link["node"]["id"] for link in links if link["node"]["type"] == "quest_node"}
     if not quest_node_ids:
@@ -637,6 +641,15 @@ async def _quest_references_from_links(
     quest_nodes = list(
         await session.scalars(select(QuestNode).where(QuestNode.node_id.in_(quest_node_ids)))
     )
+    item_id = int(entity_key[5:]) if entity_key and re.fullmatch(r"item:[0-9]+", entity_key) else None
+    condition_rows = {}
+    if item_id is not None:
+        release_id = await _release_id(session, game_version)
+        keys = {f"{row.game_quest_id}_{row.game_node_id}" for row in quest_nodes}
+        condition_rows = {row.data["Key"]: row for row in await session.scalars(
+            select(SourceRecord).join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+            .where(SourceRecord.release_id == release_id, SourceFile.logical_source_path == QUEST_NODES,
+                   SourceRecord.data["Key"].astext.in_(keys)))}
     game_quest_ids = {row.game_quest_id for row in quest_nodes if row.game_quest_id is not None}
     quests = {
         quest.game_quest_id: quest
@@ -663,6 +676,8 @@ async def _quest_references_from_links(
             entry["quest"] = await _quest_info(
                 session, quests[quest_node.game_quest_id], locale_code, game_version
             )
+        source = condition_rows.get(f"{quest_node.game_quest_id}_{quest_node.game_node_id}")
+        interpretation = item_requirement(source.data.get("Data") or {}, item_id) if source else None
         entry["references"].append(
             {
                 "quest_node": {
@@ -674,6 +689,8 @@ async def _quest_references_from_links(
                 "relation": link["relation"],
                 "basis": link["basis"],
                 "provenance": link["provenance"],
+                "interpretation": {**interpretation, "source": {"file": QUEST_NODES, "row": source.row_index}}
+                if interpretation else None,
             }
         )
     return [grouped[key] for key in sorted(grouped)]
