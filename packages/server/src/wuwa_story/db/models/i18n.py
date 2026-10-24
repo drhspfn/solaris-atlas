@@ -5,6 +5,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Identity,
+    Index,
     SmallInteger,
     String,
     Text,
@@ -53,6 +54,7 @@ class LocalizationValue(Base):
         UniqueConstraint(
             "release_id", "key_id", "locale_id", name="uq_localization_release_key_locale"
         ),
+        Index("ix_localization_value_key_locale_release", "key_id", "locale_id", "release_id"),
         {"schema": "i18n"},
     )
     release_id: Mapped[int] = mapped_column(
