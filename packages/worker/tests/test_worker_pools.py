@@ -90,14 +90,17 @@ async def test_router_confirms_unchanged_payload_before_ack(monkeypatch, confirm
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("confirmed", [True, False])
-async def test_old_private_delivery_moves_to_new_pool_without_losing_identity(monkeypatch, confirmed):
+@pytest.mark.parametrize("redelivered", [True, False])
+async def test_old_private_delivery_moves_to_new_pool_without_losing_identity(monkeypatch, confirmed, redelivered):
     handler = AsyncMock()
     async with consumer(monkeypatch, "pool_coordinator", handler) as (callback, channel, *_):
         message = delivery(body=b'{"run_id":5389,"kind":"event_notices","job_type":"media.release"}')
+        message.redelivered = redelivered
         async def publish(sent, **options):
             message.ack.assert_not_awaited()
             assert sent.body == message.body and sent.message_id == message.message_id
-            assert sent.type == "release_media" and sent.headers == message.headers
+            assert sent.type == "release_media"
+            assert sent.headers == {**message.headers, **({"pool_redelivered": True} if redelivered else {})}
             assert options == {"routing_key": "wuwa.pool-image.v1", "mandatory": True}
             if not confirmed:
                 raise OSError("Connection lost before confirmation")
@@ -124,6 +127,20 @@ async def test_private_queue_deferral_keeps_source_type_and_processor(monkeypatc
         assert sent.type == "release_media"
         assert sent.headers["db_retry_count"] == 2
         broker.update_admin_run.assert_awaited_once_with(1, "release_media", "waiting_dependency", error="busy")
+
+
+@pytest.mark.asyncio
+async def test_republished_running_job_keeps_redelivery_when_claimed_in_new_pool(monkeypatch):
+    handler = AsyncMock()
+    monkeypatch.setattr(broker, "execute_media_job", AsyncMock())
+    async with consumer(monkeypatch, "pool_image", handler) as (callback, channel, *_):
+        message = delivery(body=b'{"run_id":5389,"kind":"event_notices","job_type":"media.release"}')
+        message.headers["pool_redelivered"] = True
+        await callback(message)
+        broker.claim_import.assert_awaited_once_with(
+            {"run_id":5389,"kind":"event_notices","job_type":"media.release"}, redelivered=True)
+        broker.execute_media_job.assert_awaited_once()
+        message.ack.assert_awaited_once()
         message.ack.assert_awaited_once()
 
 
