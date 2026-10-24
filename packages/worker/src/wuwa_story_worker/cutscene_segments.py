@@ -30,17 +30,23 @@ class ComparisonSettings:
     guard_frames: int = 3
     minimum_shared_seconds: float = 0.1
     timeout_seconds: int = 600
+    threads: int = 1
+    encoder_preset: str = "veryfast"
     algorithm: str = "localized-rgb-and-pcm-v1"
 
 
 def changed_pixels(left: bytes, right: bytes, settings: ComparisonSettings) -> int:
+    if left == right:
+        return 0
     size = (settings.width, settings.height)
     images = [Image.frombytes("RGB", size, value) for value in (left, right)]
-    red, green, blue = ImageChops.difference(*images).split()
-    difference = ImageChops.lighter(ImageChops.lighter(red, green), blue)
-    return difference.point(
-        [0 if value <= settings.pixel_tolerance else 255 for value in range(256)]
-    ).histogram()[255]
+    # Threshold channels first: an RGB mask converts to zero luminance iff all
+    # channels are zero. This counts exactly the same max-channel differences
+    # without splitting and merging full-size image bands for every frame.
+    mask = ImageChops.difference(*images).point(
+        [0 if value <= settings.pixel_tolerance else 255 for value in range(256)] * 3
+    )
+    return settings.width * settings.height - mask.convert("L").histogram()[0]
 
 
 def difference_window(
@@ -69,9 +75,16 @@ def probe(ffmpeg: Path, path: Path) -> tuple[float, bool]:
     return float(match[1]), "Audio:" in text
 
 
-def analyze(paths: list[Path], ffmpeg: Path, root: Path, settings: ComparisonSettings) -> dict:
+def analyze(paths: list[Path], ffmpeg: Path, root: Path, settings: ComparisonSettings,
+            *, input_hashes: list[str] | None = None) -> dict:
     if not 2 <= len(paths) <= 8:
         raise ValueError("Variant comparison requires between two and eight videos")
+    if input_hashes is not None:
+        if len(input_hashes) != len(paths):
+            raise ValueError("Input identities do not match the variant count")
+        # export_segments already hashed the complete files. Byte-identical
+        # variants cannot differ in video or audio, so decode each identity once.
+        paths = list(dict(zip(input_hashes, paths, strict=True)).values())
     formats = [probe(ffmpeg, path) for path in paths]
     fps = formats[0][0]
     if fps <= 0 or any(rate != fps for rate, _ in formats):
@@ -82,7 +95,7 @@ def analyze(paths: list[Path], ffmpeg: Path, root: Path, settings: ComparisonSet
     started = time.monotonic()
     try:
         for index, (path, (_, has_audio)) in enumerate(zip(paths, formats, strict=True)):
-            if has_audio:
+            if has_audio and len(paths) > 1:
                 wav_path = root / f"audio-{index}.wav"
                 subprocess.run(
                     [
@@ -90,6 +103,10 @@ def analyze(paths: list[Path], ffmpeg: Path, root: Path, settings: ComparisonSet
                         "-v",
                         "error",
                         "-y",
+                        "-threads",
+                        str(settings.threads),
+                        "-filter_threads",
+                        str(settings.threads),
                         "-i",
                         str(path),
                         "-vn",
@@ -116,8 +133,15 @@ def analyze(paths: list[Path], ffmpeg: Path, root: Path, settings: ComparisonSet
                         str(ffmpeg),
                         "-hide_banner",
                         "-nostats",
+                        "-threads",
+                        str(settings.threads),
+                        "-filter_threads",
+                        str(settings.threads),
                         "-i",
                         str(path),
+                        "-map",
+                        "0:v:0",
+                        "-an",
                         "-vf",
                         f"scale={settings.width}:{settings.height}:flags=area,gblur=sigma={settings.blur_sigma},showinfo",
                         "-fps_mode",
@@ -126,6 +150,8 @@ def analyze(paths: list[Path], ffmpeg: Path, root: Path, settings: ComparisonSet
                         "rgb24",
                         "-f",
                         "rawvideo",
+                        "-threads",
+                        str(settings.threads),
                         "pipe:1",
                     ],
                     stdout=subprocess.PIPE,
@@ -141,20 +167,21 @@ def analyze(paths: list[Path], ffmpeg: Path, root: Path, settings: ComparisonSet
                 break
             if any(len(blob) != frame_size for blob in blobs):
                 raise ValueError("Variant frame counts do not align; keep independent originals")
-            visual = max(changed_pixels(blobs[0], other, settings) for other in blobs[1:])
+            visual = max((changed_pixels(blobs[0], other, settings) for other in blobs[1:]), default=0)
             sample_frames = round((frame + 1) * 48000 / fps) - round(frame * 48000 / fps)
-            samples = []
+            chunks = []
             for stream in audio:
                 chunk = stream.readframes(sample_frames) if stream else b""
                 chunk = chunk.ljust(sample_frames * 4, b"\0")
-                samples.append(array.array("h", chunk))
-            sound = max(
-                sum(
+                chunks.append(chunk)
+            baseline = array.array("h", chunks[0])
+            sound = max((
+                0 if chunks[0] == other else sum(
                     abs(a - b) > settings.audio_tolerance
-                    for a, b in zip(samples[0], other, strict=True)
+                    for a, b in zip(baseline, array.array("h", other), strict=True)
                 )
-                for other in samples[1:]
-            )
+                for other in chunks[1:]
+            ), default=0)
             visual_counts.append(visual)
             audio_counts.append(sound)
             scores.append(
@@ -226,7 +253,7 @@ def export_segments(
             report = json.loads(report_path.read_text(encoding="utf-8"))
             logger.info("cutscene.comparison_cached id=%s", key)
         else:
-            report = {**identity, "id": key, **analyze(paths, ffmpeg, root, settings)}
+            report = {**identity, "id": key, **analyze(paths, ffmpeg, root, settings, input_hashes=hashes)}
             save_json(report_path, report)
             logger.info("cutscene.comparison_complete id=%s frames=%s window=%s", key, report["frames"], report["difference_window"])
         fps, count = report["fps"], report["frames"]
@@ -246,16 +273,26 @@ def export_segments(
             target = root / f"{role}.mp4"
             if not target.exists():
                 temporary = root / f"{role}.partial.mp4"
+                started = time.monotonic()
+                logger.info("cutscene.segment_started id=%s role=%s first=%s frames=%s threads=%s preset=%s",
+                            key, role, first, last - first, settings.threads, settings.encoder_preset)
                 subprocess.run(
                     [
                         str(ffmpeg),
                         "-v",
                         "error",
                         "-y",
-                        "-i",
-                        str(paths[index]),
+                        "-threads",
+                        str(settings.threads),
+                        "-filter_threads",
+                        str(settings.threads),
+                        # Transcoding keeps FFmpeg's accurate seek: seek to a
+                        # keyframe, then discard preroll up to this source frame.
                         "-ss",
                         str(first / fps),
+                        "-accurate_seek",
+                        "-i",
+                        str(paths[index]),
                         "-t",
                         str((last - first) / fps),
                         "-map",
@@ -265,7 +302,9 @@ def export_segments(
                         "-c:v",
                         "libx264",
                         "-preset",
-                        "fast",
+                        settings.encoder_preset,
+                        "-threads:v",
+                        str(settings.threads),
                         "-crf",
                         "18",
                         "-c:a",
@@ -286,6 +325,10 @@ def export_segments(
                         str(ffmpeg),
                         "-v",
                         "error",
+                        "-threads",
+                        str(settings.threads),
+                        "-filter_threads",
+                        str(settings.threads),
                         "-i",
                         str(temporary),
                         "-progress",
@@ -302,7 +345,8 @@ def export_segments(
                 if not counts or int(counts[-1]) != last - first:
                     raise ValueError("Exported segment frame count differs from its source range")
                 temporary.replace(target)
-                logger.info("cutscene.segment_exported id=%s role=%s frames=%s bytes=%s", key, role, last - first, target.stat().st_size)
+                logger.info("cutscene.segment_exported id=%s role=%s frames=%s bytes=%s elapsed_seconds=%.3f",
+                            key, role, last - first, target.stat().st_size, time.monotonic() - started)
             segments.append(
                 {
                     "id": f"segment-{key[:16]}-{role}",
