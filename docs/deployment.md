@@ -129,9 +129,9 @@ Default capacity for a 6 CPU / 12 GiB host:
 | snapshot-worker | 1 | 1 fetch/compile, 1 global DB import total | 1 | 2 GiB |
 | asset-worker | 1 | 1 download + 1 extraction | 0.5 | 1536 MiB |
 | media-worker (coordinator) | 1 | 3 executions + public queue routing | 0.25 | 768 MiB |
-| image-worker | 1 | 1 | 0.75 | 1536 MiB |
+| image-worker | 1 | 1 | 0.75 | 2 GiB |
 | audio-worker | 1 | 1 | 0.75 | 2 GiB |
-| video-worker | 1 | 1 | 0.75 | 2 GiB |
+| video-worker | 1 | 1 | 2 | 2560 MiB |
 
 This provides 9 logical task slots in 6 containers: 1 snapshot fetch/compile,
 2 asset (download/extraction), 3 lightweight coordinator and 3 media executions.
@@ -143,34 +143,43 @@ Each image/audio/video container runs one task at a time. A live operator probe
 exported the known CamellyaActivity texture correctly: one PNG in 14.51 seconds
 at 2 CPU, maximum child RSS 1188.2 MiB, and temporary scratch removal confirmed.
 Adding approximately 90 MiB of Python overhead leaves almost no margin under
-1280 MiB, before other container memory is counted. Asset/image defaults are
+1280 MiB, before other container memory is counted. Asset memory remains
 1536 MiB. A second cold probe resolved two Shorekeeper events into eight valid
 WAVs across English/Japanese/Korean/Chinese with no missing tracks: 131.05 seconds
 at 2 CPU, maximum child RSS 1370.9 MiB, scratch removal confirmed. It included
 building the main archive index (about 234 MB log / 515 MB SQLite); patch workers
-share that index across character jobs. Audio/video default to 2 GiB to leave
-headroom beyond the decoder/extractor and Python overhead. These checks do not
-establish full-patch throughput or performance at the default 0.75 CPU media limit.
+share that index across character jobs. A subsequent image-pool FModel `--list`
+aborted under its 1.5 GiB cap, and a native probe in the 2 GiB video container
+recorded a cgroup OOM kill while heavy work overlapped. Image memory now defaults
+to 2 GiB; audio remains at 2 GiB; video defaults to 2560 MiB and 2 CPU. The new
+limits are guardrails following those failures, not proof that every overlapping
+export/transcode fits. These checks do not establish full-patch throughput or
+performance at the image/audio defaults of 0.75 CPU.
 Product/queue canaries remain required before opening the full backlog.
 
-Aggregate container ceilings are 4 CPU and 9.75 GiB including snapshot/assets,
-leaving about 2 GiB on this host for PostgreSQL, RabbitMQ, API and the OS. Keep
-snapshot replicas at one while opening media backlog; use measured RSS to scale.
-These are caps, not reserved memory or a throughput promise. If screenshot work
-continues to saturate CPU, pause compilations
-while measuring media. Optional AI consumers need additional budget. Memory caps
+Summed default worker ceilings are 5.25 CPU and 10.75 GiB including snapshot/assets.
+These are caps, not reserved RAM, guaranteed host headroom or a throughput promise.
+PostgreSQL, RabbitMQ, API, OS and optional AI work also consume memory/CPU. Start
+heavy preparation with one image and one audio replica; keep snapshot replicas
+at one and pause snapshot/asset work when it is unnecessary during canaries.
+Do not overlap FModel indexing with a high-resolution FFmpeg/native probe in the
+same container. Coordinate those probes and check actual container peaks, host
+MemAvailable, memory.events and restart/OOM counters before adding replicas.
+If screenshot work continues to saturate CPU, pause compilations while measuring
+media. Memory caps
 include child .NET/FFmpeg processes. Reduce concurrency or adjust memory from
 canary measurements if a single export approaches its cap. Scaling snapshots to
 four requires freeing capacity from other pools or lowering measured per-process
 limits; do not start four 2 GiB snapshot containers alongside the default pools.
 
-A candidate production layout after measurement is image=3, audio=2,
-coordinator=1, snapshot=2, video=1 and asset=1: ten worker containers and thirteen
-logical task slots with the default per-process concurrency. Set
-`WUWA_IMAGE_REPLICAS=3` and `WUWA_AUDIO_REPLICAS=2`; keep one heavy task per
-container initially. At unchanged resource limits this layout has aggregate
-ceilings of 7.25 CPU and 16.75 GiB. Limits do not reserve that RAM, but simultaneous
-peaks can still exceed the 6 CPU / 12 GiB host. Choose per-pool limits from measured
+A production override with image=2, audio=2, coordinator=1, snapshot=1, video=1
+and asset=1 has eight worker containers and eleven logical task slots. Set
+`WUWA_IMAGE_REPLICAS=2` and `WUWA_AUDIO_REPLICAS=2` only after initial preparation
+and live RSS checks; keep one heavy task per container. At the configured limits
+this layout sums to 6.75 CPU and 14.75 GiB in caps. Those are not memory
+reservations, but simultaneous peaks exceed the 6 CPU / 12 GiB host budget.
+The renderer accepts measured deployment overrides rather than declaring that a
+sum of caps guarantees safety. Choose per-pool limits from measured
 container peaks including Python and child processes, retain DB/API/OS headroom,
 and stage compilation or video work when CPU is saturated. Compare completed
 media operations per minute and end-to-end patch progress before/after each

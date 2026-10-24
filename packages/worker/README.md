@@ -171,6 +171,15 @@ Snapshot fetch/compile can use up to four slots with the ordered global DB impor
 guard; DB ingestion is serial. See [deployment capacity and tuning](../../docs/deployment.md#media-worker-capacity-and-retries)
 for defaults, memory/CPU limits, DB headroom, safe rollout, shutdown and recovery.
 
+Image memory defaults to 2 GiB after a FModel listing aborted at 1.5 GiB. Video
+defaults to 2560 MiB and 2 CPU after a 2 GiB container recorded an OOM kill under
+overlapping native work; audio remains at 2 GiB. Start heavy preparation with one
+image replica (the default). With two image and two audio replicas, worker caps
+sum to 14.75 GiB and 6.75 CPU: these are ceilings, not reserved RAM or proof that
+all heavy jobs can run together on the 6 CPU / 12 GiB host. Stage indexing and
+high-resolution conversion, pause unnecessary compilation/download work, and
+scale from actual RSS/host headroom and completed operations.
+
 ### Disposable extraction files
 
 Downloaded game/voice/video archives remain available for subsequent imports.

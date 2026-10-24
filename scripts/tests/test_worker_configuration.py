@@ -28,11 +28,17 @@ class WorkerConfigurationTests(unittest.TestCase):
 
     def test_heavy_defaults_include_measured_export_headroom(self):
         settings = self.settings()
-        for pool in ("ASSET", "IMAGE"):
-            self.assertEqual(settings["compose.env"][f"WUWA_{pool}_MEMORY"], "1536m")
-        for pool in ("AUDIO", "VIDEO"):
+        self.assertEqual(settings["compose.env"]["WUWA_ASSET_MEMORY"], "1536m")
+        for pool in ("AUDIO", "IMAGE"):
             self.assertEqual(settings["compose.env"][f"WUWA_{pool}_MEMORY"], "2g")
+        self.assertEqual(settings["compose.env"]["WUWA_VIDEO_MEMORY"], "2560m")
+        self.assertEqual(settings["compose.env"]["WUWA_VIDEO_CPUS"], "2")
         self.assertEqual(settings["compose.env"]["WUWA_IMAGE_REPLICAS"], "1")
+
+    def test_measured_replica_overrides_are_supported_without_assuming_reserved_ram(self):
+        settings = self.settings()
+        settings["compose.env"].update({"WUWA_IMAGE_REPLICAS": "2", "WUWA_AUDIO_REPLICAS": "2"})
+        RENDERER["validate_worker_config"](settings)
 
     def test_invalid_replica_resources_concurrency_and_db_headroom_fail_early(self):
         for group, key, value in [
@@ -91,17 +97,19 @@ class WorkerConfigurationTests(unittest.TestCase):
                         self.assertGreater(float(config["cpus"]), 0)
                         self.assertEqual(config["stop_grace_period"], "2m0s")
                         if pool != "coordinator":
-                            expected = 1536 if pool == "image" else 2048
+                            expected = 2560 if pool == "video" else 2048
                             self.assertEqual(int(config["mem_limit"]), expected * 1024**2)
+                        if pool == "video":
+                            self.assertEqual(float(config["cpus"]), 2)
                         total_memory += int(config["mem_limit"]) * replicas
-                    self.assertEqual(total_memory, 6400 * 1024**2)
+                    self.assertEqual(total_memory, 7424 * 1024**2)
                     snapshot = services["snapshot-worker" if variant == "prod" else "worker"]
                     self.assertEqual(snapshot["command"][-1], "snapshot_build")
                     self.assertNotIn("asset_extract", snapshot["command"])
                     self.assertEqual(snapshot["deploy"]["replicas"], 1)
                     total_memory += int(snapshot["mem_limit"]) + int(services["asset-worker"]["mem_limit"])
                     self.assertEqual(int(services["asset-worker"]["mem_limit"]), 1536 * 1024**2)
-                    self.assertEqual(total_memory, 9984 * 1024**2)
+                    self.assertEqual(total_memory, 11008 * 1024**2)
 
 
 if __name__ == "__main__":

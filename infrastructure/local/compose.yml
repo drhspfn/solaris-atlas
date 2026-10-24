@@ -225,7 +225,7 @@ services:
     <<: *asset-worker
     command: ["wuwa-story-worker", "run", "--pool", "image"]
     cpus: ${WUWA_IMAGE_CPUS:-0.75}
-    mem_limit: ${WUWA_IMAGE_MEMORY:-1536m}
+    mem_limit: ${WUWA_IMAGE_MEMORY:-2g}
     deploy:
       replicas: ${WUWA_IMAGE_REPLICAS:-1}
 
@@ -240,8 +240,8 @@ services:
   video-worker:
     <<: *asset-worker
     command: ["wuwa-story-worker", "run", "--pool", "video"]
-    cpus: ${WUWA_VIDEO_CPUS:-0.75}
-    mem_limit: ${WUWA_VIDEO_MEMORY:-2g}
+    cpus: ${WUWA_VIDEO_CPUS:-2}
+    mem_limit: ${WUWA_VIDEO_MEMORY:-2560m}
     deploy:
       replicas: ${WUWA_VIDEO_REPLICAS:-1}
 
