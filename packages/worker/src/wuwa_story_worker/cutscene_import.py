@@ -131,9 +131,18 @@ def confined(root: Path, relative: str) -> Path:
 
 
 async def run_tool(args: list[str], timeout: int = 300):
-    return await asyncio.to_thread(
-        subprocess.run, args, capture_output=True, timeout=timeout, check=True
-    )
+    try:
+        return await asyncio.to_thread(
+            subprocess.run, args, capture_output=True, timeout=timeout, check=True
+        )
+    except subprocess.CalledProcessError as error:
+        # Local media tools receive file paths, never credentials. Preserve the
+        # diagnostic rather than just storing a command and an exit status.
+        detail = b"\n".join(part for part in (error.stdout, error.stderr) if part)
+        message = detail.decode("utf-8", errors="replace").strip()[-1200:]
+        raise RuntimeError(
+            f"{Path(args[0]).name} exited {error.returncode}: {message or 'no diagnostic output'}"
+        ) from error
 
 
 def video_duration(ffmpeg: Path, movie: Path) -> tuple[float, bool]:

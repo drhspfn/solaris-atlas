@@ -107,3 +107,19 @@ def test_unsupported_audio_bank_can_publish_partial_video_without_guessing(tmp_p
     assert result.soundtrack == []
     assert missing == ["layered.bnk: Unsupported Wwise bank version"]
     assert len(video.soundtrack) == 1
+
+
+@pytest.mark.asyncio
+async def test_media_tool_failure_preserves_bounded_decoder_diagnostics(monkeypatch):
+    import subprocess
+
+    from wuwa_story_worker import cutscene_import
+
+    def fail(*args, **kwargs):
+        raise subprocess.CalledProcessError(
+            1, args[0], output=b"WWISE: unknown mapping, channels=6", stderr=b"failed opening clip.txtp"
+        )
+    monkeypatch.setattr(cutscene_import.subprocess, "run", fail)
+    with pytest.raises(RuntimeError, match="vgmstream-cli exited 1: WWISE: unknown mapping") as caught:
+        await cutscene_import.run_tool(["/tools/vgmstream-cli", "clip.txtp"])
+    assert "failed opening clip.txtp" in str(caught.value)
