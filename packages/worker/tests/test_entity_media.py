@@ -67,7 +67,7 @@ async def test_image_cache_rejects_changed_source_bytes(tmp_path, monkeypatch):
     source = "/Game/Aki/UI/UIResources/Common/Image/IconA/Test.Test"
     markers = [{"metadata_json": {"icon_source": source}}]
     identity = json.dumps(
-        [[source], map_icons._sha256(converter), map_icons._sha256(fmodel)], sort_keys=True
+        [[source], map_icons._sha256(converter), map_icons._sha256(fmodel), "casefold_packages_v1"], sort_keys=True
     )
     cache = (
         tmp_path / "entity-image-cache" / (hashlib.sha256(identity.encode()).hexdigest() + ".json")

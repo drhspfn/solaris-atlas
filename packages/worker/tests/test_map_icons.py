@@ -68,7 +68,8 @@ async def test_icon_conversion_bounds_loaded_texture_batches(tmp_path, monkeypat
                        if exact_textures else {"Common/Image/Test/"})
 
 @pytest.mark.asyncio
-async def test_exact_sprite_uses_its_atlas_and_matches_qualified_reference(tmp_path, monkeypatch):
+@pytest.mark.parametrize("bad_index", [None, -1, 1, "0", .5, True, "missing_map", "missing_textures"])
+async def test_exact_sprite_uses_its_atlas_and_matches_qualified_reference(tmp_path, monkeypatch, capsys, bad_index):
     import json
     import subprocess
     from pathlib import Path
@@ -82,7 +83,9 @@ async def test_exact_sprite_uses_its_atlas_and_matches_qualified_reference(tmp_p
     folder.mkdir(parents=True)
     for name in ["SP_Icon.uasset", "T_Atlas.uasset", "TPI_Test.uasset"]:
         (folder / name).write_bytes(b"asset")
+        (folder / name).with_suffix(".uexp").write_bytes(b"export")
     source = "/Game/Aki/UI/UIResources/Common/Atlas/Test/SP_Icon"
+    broken = "/Game/Aki/UI/UIResources/Common/Atlas/Test/SP_Broken"
     texture = "/Game/Aki/UI/UIResources/Common/Atlas/Test/T_Atlas"
     tool = tmp_path / "tool"
     tool.write_bytes(b"tool")
@@ -95,19 +98,37 @@ async def test_exact_sprite_uses_its_atlas_and_matches_qualified_reference(tmp_p
         if command[command.index("-f") + 1] == "png":
             Image.new("RGBA", (8, 8), "red").save(out / "T_Atlas.png")
         else:
-            (out / "TPI_Test.json").write_text(json.dumps([{"Properties": {
+            data = {
                 "Sprites": [source + ".SP_Icon"],
                 "SpriteAtlasTextureMap": [{"Key": 0, "Value": 0}],
                 "SpriteInfoMap": [{"Key": 0, "Value": {"uv0X": 0, "uv3X": .5, "uv0Y": 0, "uv3Y": .5}}],
                 "SoftAtlasTextures": [{"AssetPathName": texture + ".T_Atlas"}],
-            }}]), encoding="utf-8")
+            }
+            malformed = {**data, "Sprites": [broken],
+                         "SpriteAtlasTextureMap": [{"Key": 0, "Value": bad_index}]}
+            if bad_index == "missing_map":
+                malformed.pop("SpriteAtlasTextureMap")
+            elif bad_index == "missing_textures":
+                malformed["SpriteAtlasTextureMap"] = [{"Key": 0, "Value": 0}]
+                malformed.pop("SoftAtlasTextures")
+            (out / "TPI_Test.json").write_text(json.dumps(
+                [{"Properties": data}, {"Properties": malformed}]), encoding="utf-8")
         return subprocess.CompletedProcess(command, 0)
     monkeypatch.setattr(map_icons.subprocess, "run", convert)
     package_index(tmp_path, [source])
+    alias = source.replace("SP_Icon", "SP_icon") + ".SP_icon"
     result = await map_icons.build_icons(tmp_path, tool, tool,
-        [{"metadata_json": {"icon_source": source}}], entity_media=True, exact_textures=True)
+        [{"metadata_json": {"icon_source": value}} for value in [source, alias, broken]],
+        entity_media=True, exact_textures=True)
     assert export.await_args.args[2] == "Common/Atlas/Test/"
     assert source in result
+    assert result[alias] == result[source]
+    assert broken not in result
+    assert "WARNING: Missing atlas texture reference: " + broken in capsys.readouterr().out
+    assert set(result[source]["raw_paths"]) == {
+        str((folder / (name + suffix)).resolve())
+        for name in ["SP_Icon", "T_Atlas", "TPI_Test"] for suffix in [".uasset", ".uexp"]
+    }
     with Image.open(result[source]["path"]) as image:
         assert image.size == (4, 4)
 
@@ -174,7 +195,7 @@ async def test_all_absent_images_do_not_export_a_false_substring_match(tmp_path,
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("packed", [False, True])
+@pytest.mark.parametrize("packed", [False, True, "discrete"])
 @pytest.mark.parametrize("stale_cache", [False, True])
 async def test_sp_named_textures_reach_existing_converter(tmp_path, monkeypatch, packed, stale_cache):
     """SP_ is an asset name, not a reliable Unreal export type discriminator."""
@@ -205,10 +226,14 @@ async def test_sp_named_textures_reach_existing_converter(tmp_path, monkeypatch,
 
     # The old final cache can contain a valid but empty result. Its decode receipt
     # can also be valid while lacking PNGs for every skipped SP_ package.
-    identity = json.dumps([[source], map_icons._sha256(tool), map_icons._sha256(tool),
-                           "exact_textures_v2"], sort_keys=True)
+    identity_parts = [[source], map_icons._sha256(tool), map_icons._sha256(tool), "exact_textures_v2"]
+    if packed == "discrete":
+        identity_parts.append("sp_textures_v1")
+    identity = json.dumps(identity_parts, sort_keys=True)
     cache = tmp_path / "entity-image-cache" / (hashlib.sha256(identity.encode()).hexdigest() + ".json")
     old_decoded = tmp_path / "maps/icons" / ("entity-atlas-" + map_icons._sha256(tool)[:16])
+    if packed == "discrete":
+        old_decoded = old_decoded.with_name(old_decoded.name + "-sp-textures-v1")
     if stale_cache:
         cache.parent.mkdir()
         cache.write_text(json.dumps({"icons": {}, "files": {}}), encoding="utf-8")
@@ -231,10 +256,13 @@ async def test_sp_named_textures_reach_existing_converter(tmp_path, monkeypatch,
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(json.dumps([{"Properties": {
                 "Sprites": [source + ".SP_CommonDefault"],
-                "SpriteAtlasTextureMap": [{"Key": "0", "Value": 0}],
+                # Production TPI_Common retains stale page IDs in discrete mode.
+                "bPackDiscreteSprites": packed == "discrete",
+                "SpriteAtlasTextureMap": [{"Key": "0", "Value": 1 if packed == "discrete" else 0}],
                 "SpriteInfoMap": [{"Key": "0", "Value": {
                     "uv0X": 0, "uv3X": .5, "uv0Y": 0, "uv3Y": .5}}],
-                "SoftAtlasTextures": [{"AssetPathName": texture + ".SP_CommonDefault"}],
+                "SoftAtlasTextures": [{"AssetPathName": texture + ".SP_CommonDefault"},
+                                      {"AssetPathName": "/Game/UnrelatedLegacyPage"}],
             }}]), encoding="utf-8")
         return subprocess.CompletedProcess(command, 0)
 
@@ -250,3 +278,39 @@ async def test_sp_named_textures_reach_existing_converter(tmp_path, monkeypatch,
     assert await map_icons.build_icons(tmp_path, tool, tool, markers,
                                        entity_media=True, exact_textures=True) == result
     assert converted == []
+
+
+@pytest.mark.asyncio
+async def test_exact_texture_matches_archive_case_and_preserves_authored_identity(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    from unittest.mock import AsyncMock
+
+    from PIL import Image
+
+    from wuwa_story_worker import map_icons
+
+    authored = "/Game/Aki/UI/UIResources/Common/Image/IconRolePile/T_IconRole_Pile_luhesi_UI"
+    canonical = authored.replace("_luhesi_", "_Luhesi_")
+    raw = tmp_path / "exports/role/files"
+    package = raw / ("Client/Content/" + canonical[6:] + ".uasset")
+    package.parent.mkdir(parents=True)
+    package.write_bytes(b"asset")
+    package.with_suffix(".uexp").write_bytes(b"export")
+    tool = tmp_path / "tool"
+    tool.write_bytes(b"tool")
+    package_index(tmp_path, [canonical])
+    monkeypatch.setattr(map_icons, "export_assets", AsyncMock(return_value=raw.parent / "manifest.json"))
+
+    def convert(command, **kwargs):
+        output = Path(command[command.index("-o") + 1])
+        target = output / ("files/Client/Content/" + canonical[6:] + ".png")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGBA", (8, 8), "red").save(target)
+
+    monkeypatch.setattr(map_icons.subprocess, "run", convert)
+    result = await map_icons.build_icons(tmp_path, tool, tool,
+        [{"metadata_json": {"icon_source": authored}}], entity_media=True, exact_textures=True)
+    assert set(result) == {authored}
+    assert result[authored]["raw_paths"] == [str(package.resolve()), str(package.with_suffix(".uexp").resolve())]
+    assert json.loads(next((tmp_path / "entity-image-cache").glob("*.json")).read_text(encoding="utf-8"))["icons"] == result

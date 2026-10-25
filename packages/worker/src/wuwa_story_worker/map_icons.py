@@ -32,14 +32,14 @@ async def build_icons(
     exact_textures: bool = False,
 ) -> dict:
     sources = {m["metadata_json"].get("icon_source") for m in markers} - {None, ""}
-    requested_sources = {source.split(".", 1)[0]: source for source in sources}
+    requested_sources = {source.split(".", 1)[0].casefold(): source for source in sources}
     cache = None
     if entity_media:
-        identity_parts = [sorted(sources), _sha256(converter), _sha256(fmodel)]
+        identity_parts = [sorted(sources), _sha256(converter), _sha256(fmodel), "casefold_packages_v1"]
         if exact_textures:
             identity_parts.append("exact_textures_v2")
         if any(source.rsplit("/", 1)[-1].startswith("SP_") for source in sources):
-            identity_parts.append("sp_textures_v1")
+            identity_parts.append("sp_textures_v3")
         identity = json.dumps(identity_parts, sort_keys=True)
         cache = (
             root / "entity-image-cache" / (hashlib.sha256(identity.encode()).hexdigest() + ".json")
@@ -96,10 +96,10 @@ async def build_icons(
         paths = list(raw.rglob("*.uasset"))
         for path in paths:
             key = "/Game/" + path.relative_to(raw / "Client/Content").with_suffix("").as_posix()
-            raw_files[key] = path
+            raw_files[key.casefold()] = path
         decoded = (
             (output / ("entity-" + receipt.parent.name + "-" + _sha256(converter)[:16]
-                       + ("-sp-textures-v1" if any(p.name.startswith("SP_") for p in paths) else "")))
+                       + ("-sp-textures-v2" if any(p.name.startswith("SP_") for p in paths) else "")))
             if entity_media
             else Path(tempfile.mkdtemp(prefix=receipt.parent.name + "-", dir=output))
         )
@@ -160,11 +160,14 @@ async def build_icons(
         await asyncio.shield(decoding)
         for path in decoded.rglob("*.png"):
             relative = path.relative_to(decoded / raw.name / "Client/Content")
-            pngs["/Game/" + relative.with_suffix("").as_posix()] = path
-        importers.extend(decoded.rglob("TPI_*.json"))
+            pngs[("/Game/" + relative.with_suffix("").as_posix()).casefold()] = path
+        for importer in decoded.rglob("TPI_*.json"):
+            relative = importer.relative_to(decoded / raw.name / "Client/Content")
+            key = ("/Game/" + relative.with_suffix("").as_posix()).casefold()
+            importers.append((importer, raw_files[key]))
     result = {}
     for source in sources:
-        key = source.split(".", 1)[0]
+        key = source.split(".", 1)[0].casefold()
         if key in pngs:
             result[source] = {
                 "path": str(pngs[key].resolve()),
@@ -179,22 +182,29 @@ async def build_icons(
                     if p.is_file()
                 ],
             }
-    for importer in importers:
+    for importer, importer_raw in importers:
         for export in json.loads(importer.read_text(encoding="utf-8-sig")):
             data = export.get("Properties", {})
             if not data.get("Sprites"):
                 continue
-            atlases = {int(x["Key"]): x["Value"] for x in data["SpriteAtlasTextureMap"]}
+            atlases = {int(x["Key"]): x["Value"] for x in data.get("SpriteAtlasTextureMap") or []}
             infos = {int(x["Key"]): x["Value"] for x in data["SpriteInfoMap"]}
             for index, sprite in enumerate(data["Sprites"]):
-                source = requested_sources.get(sprite.split(".", 1)[0])
-                if source is None or index not in infos or index not in atlases:
+                source = requested_sources.get(sprite.split(".", 1)[0].casefold())
+                if source is None or index not in infos:
                     continue
-                textures = data.get("SoftAtlasTextures") or data.get("AtlasTextures", [])
-                reference = textures[atlases[index]]
+                textures = data.get("SoftAtlasTextures") or data.get("AtlasTextures") or []
+                # Discrete packing stores one texture per sprite in array order;
+                # the legacy atlas map can remain populated with stale page IDs.
+                texture_index = index if data.get("bPackDiscreteSprites") else atlases.get(index)
+                if (not isinstance(textures, list) or type(texture_index) is not int
+                        or not 0 <= texture_index < len(textures)):
+                    print(f"WARNING: Missing atlas texture reference: {source}")
+                    continue
+                reference = textures[texture_index]
                 texture = (reference.get("AssetPathName") or reference["ObjectPath"]).split(".", 1)[
                     0
-                ]
+                ].casefold()
                 if texture not in pngs:
                     print(f"WARNING: Missing atlas texture: {texture}")
                     continue
@@ -215,14 +225,23 @@ async def build_icons(
                         for p in [
                             raw,
                             raw.with_suffix(".uexp"),
-                            raw_files.get(source.split(".", 1)[0]),
-                            raw_files.get(source.split(".", 1)[0]).with_suffix(".uexp")
-                            if raw_files.get(source.split(".", 1)[0])
+                            importer_raw,
+                            importer_raw.with_suffix(".uexp"),
+                            raw_files.get(source.split(".", 1)[0].casefold()),
+                            raw_files.get(source.split(".", 1)[0].casefold()).with_suffix(".uexp")
+                            if raw_files.get(source.split(".", 1)[0].casefold())
                             else None,
                         ]
                         if p and p.is_file()
                     ],
                 }
+    # Authored references can name the same package with different case/object
+    # suffixes. Preserve every requested identity after resolving its package.
+    resolved = {source.split(".", 1)[0].casefold(): icon for source, icon in result.items()}
+    for source in sources:
+        key = source.split(".", 1)[0].casefold()
+        if source not in result and key in resolved:
+            result[source] = resolved[key]
     if cache:
         cache.parent.mkdir(parents=True, exist_ok=True)
         files = {str(Path(icon["path"])): icon["sha256"] for icon in result.values()}
