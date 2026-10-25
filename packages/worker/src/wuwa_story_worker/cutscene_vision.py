@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import os
 import shutil
 import tempfile
@@ -115,6 +116,9 @@ def vision_request(provider: Provider, times: list[float], images: list[bytes], 
 
 
 async def sample_frame(ffmpeg: Path, movie: Path, time: float, output: Path) -> bytes:
+    # A successful seek past the final decodable frame can produce no output.
+    # Never reuse the previous cell's file in that case.
+    output.unlink(missing_ok=True)
     await run_tool(
         [
             str(ffmpeg),
@@ -128,7 +132,9 @@ async def sample_frame(ffmpeg: Path, movie: Path, time: float, output: Path) -> 
             "-frames:v",
             "1",
             "-vf",
-            "scale=640:-2",
+            "scale=640:-2,format=yuvj420p",
+            "-threads",
+            "1",
             "-q:v",
             "4",
             str(output),
@@ -327,7 +333,10 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
                     route, request = vision_request(provider, batch_times, images,
                                                     atlases=manifests, context=context)
                     # A deliberately conservative image bound, independent of base64 byte size.
-                    bound = len(images) * 8192 + len(json.dumps(
+                    image_bound = (sum(max(8192, math.ceil(m["width"] / 16)
+                                           * math.ceil(m["height"] / 16) * 2) for m in manifests)
+                                   if manifests is not None else len(images) * 8192)
+                    bound = image_bound + len(json.dumps(
                         {"prompt": ATLAS_PROMPT, "times": batch_times,
                          "atlases": manifests, "context": context}, ensure_ascii=False).encode()) + 1024
                     if bound > settings.max_input_tokens and len(batch_times) > 1:

@@ -104,7 +104,7 @@ def pipeline(monkeypatch):
     async def atlases(db, run, storage, ffmpeg, movie, times, root, settings):
         groups = [times[i:i + settings.vision_atlas_frames]
                   for i in range(0, len(times), settings.vision_atlas_frames)]
-        return ([b"jpeg"] * len(groups), [{"tiles": group} for group in groups],
+        return ([b"jpeg"] * len(groups), [{"tiles": group, "width": 1536, "height": 732} for group in groups],
                 [{"reference_id": int(group[0] * 10000) + len(group), "file_id": 3,
                   "sample_times": group} for group in groups])
     monkeypatch.setattr(vision, "prepare_atlases", atlases)
@@ -284,3 +284,12 @@ async def test_dense_batches_split_locally_when_input_reservation_would_exceed_l
     await vision.analyze_run(db, run, settings)
     assert run.status == "completed" and len(db.calls) == 2
     assert len(db.reports[0].metadata_json["events"]) == 44
+
+
+@pytest.mark.asyncio
+async def test_empty_frame_extraction_cannot_reuse_previous_timestamp(monkeypatch, tmp_path):
+    output = tmp_path / "frame.jpg"
+    output.write_bytes(jpeg())
+    monkeypatch.setattr(vision, "run_tool", AsyncMock())  # FFmpeg wrote no frame at EOF
+    with pytest.raises(FileNotFoundError):
+        await vision.sample_frame(tmp_path / "ffmpeg", tmp_path / "movie.mp4", 1.95, output)
