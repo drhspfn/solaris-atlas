@@ -37,9 +37,55 @@ controls, `packages/server/.env`. Keep the model, rates and shared budget settin
 consistent on both services. This uses the existing
 `AGENT_PROVIDER`, `AGENT_MODEL`, endpoint and prices, and the same $1 daily ledger
 as quest analysis. The configured model must accept images. Defaults: one frame
-every approximately 3 seconds, at most 600 frames, four frames per request and
-4096 output tokens. The capped sampling plan always includes the ending; it is
+every approximately 3 seconds, at most 600 frames, 48 frames per request and
+8192 output tokens. The capped sampling plan always includes the ending; it is
 not exhaustive coverage. Each supplied frame needs its own observation.
+
+### Dense frame atlases (visual protocol v2)
+
+The default request contains up to four JPEG contact sheets of twelve frames,
+instead of twelve requests containing four separate images. Each sheet uses four
+columns with 384-pixel-wide, letterboxed thumbnails and a separate timestamp strip.
+Cells run left-to-right, then top-to-bottom. Labels and the accompanying manifest
+give original video seconds; every sampled timestamp still needs an observation.
+Chat/Responses image inputs use `detail=high`; JPEG quality is 85. A higher image
+detail is needed to read individual cells. Fewer requests do not guarantee lower
+token usage; the existing spending ledger still reserves each request before sending.
+
+Tune `AGENT_VISION_BATCH_FRAMES` (1..64), `AGENT_VISION_ATLAS_FRAMES` (1..24),
+`AGENT_VISION_ATLAS_TILE_WIDTH` (160..640), and `AGENT_VISION_ATLAS_QUALITY` (60..95).
+Input-bound batches split locally; output-limited batches keep the existing
+checkpointed split behavior. Density changes grouping, not the sampling interval.
+
+Atlases are uploaded through the existing content-addressed S3/R2 registration
+service before any paid call. `video_frame_atlas` file variants link each sheet to
+the exact source video file. File references include the source SHA-256, sheet
+dimensions, cell rectangles and timestamps; checkpoints and completed reports keep
+their reference/file IDs. They survive removal of the worker's temporary directory.
+Publication is idempotent under a transaction lock. Old v1 jobs resume with their
+original single-frame input format; completed reports are not backfilled automatically.
+
+At enqueue time, source English captions are frozen as a bounded context snapshot
+(up to 100 rows / 12,000 JSON characters) and included in the job identity. Graph
+links, source records and localization must match the video's recording build;
+there is no fallback to an unrelated quest or historical snapshot. Missing captions
+leave explicit empty context. Text is reference data, never visual evidence or
+instructions. Corrected text creates a new job identity; retries retain the old snapshot.
+The source-independent atlas builder also handles portrait/landscape videos, and
+the enqueue helper accepts optional plain-text context for generic published videos.
+
+### Future source: official YouTube videos (not implemented)
+
+Potential catalog: [Wuthering Waves official channel](https://www.youtube.com/@WutheringWaves).
+Keep [lore/trailer material](https://www.youtube.com/watch?v=LXyEJPjiMsU) distinct from
+[meme/promotional shorts](https://www.youtube.com/watch?v=EqRYtREFQvY), gameplay,
+concerts and long streams. Do not treat every official upload as canon lore or
+concatenate unrelated videos. A future importer should preserve URL/video ID,
+title, publication date, source captions/language and exact downloaded content hash;
+publish the source through existing storage, then reuse atlases and bounded analysis.
+Two-hour videos need an explicit sampling/segmentation policy and cost preview.
+No channel crawler, downloader, scheduled ingestion or paid YouTube analysis is
+enabled by this change.
 
 From the repository root:
 

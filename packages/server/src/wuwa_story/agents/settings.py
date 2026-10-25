@@ -44,8 +44,11 @@ class AgentSettings(BaseSettings):
     vision_enabled: bool = False
     vision_frame_interval: float = Field(default=3, ge=1, le=30)
     vision_max_frames: int = Field(default=600, ge=2, le=1200)
-    vision_batch_frames: int = Field(default=4, ge=1, le=8)
-    vision_output_tokens: int = Field(default=4096, ge=1024, le=16000)
+    vision_batch_frames: int = Field(default=48, ge=1, le=64)
+    vision_atlas_frames: int = Field(default=12, ge=1, le=24)
+    vision_atlas_tile_width: int = Field(default=384, ge=160, le=640)
+    vision_atlas_quality: int = Field(default=85, ge=60, le=95)
+    vision_output_tokens: int = Field(default=8192, ge=1024, le=16000)
 
     @field_validator("budget_timezone")
     @classmethod
