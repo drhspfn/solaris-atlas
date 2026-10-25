@@ -12,11 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.agents.contracts import CutsceneDescription
 from wuwa_story.agents.settings import AgentSettings
+from wuwa_story.agents.video_context import video_context_snapshot
 from wuwa_story.db.models.agents import AgentCall
 from wuwa_story.db.models.ops import ProcessingRun, Processor
 from wuwa_story.db.models.storage import FileObject, FileReference
 
-VISION_VERSION = "cutscene-visual-v1"
+VISION_VERSION = "cutscene-visual-v2"
 
 
 class VisualEvent(BaseModel):
@@ -29,7 +30,7 @@ class VisualEvent(BaseModel):
 class VisualBatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     summary: str = Field(min_length=1, max_length=800)
-    events: list[VisualEvent] = Field(min_length=1, max_length=12)
+    events: list[VisualEvent] = Field(min_length=1, max_length=64)
 
     @model_validator(mode="after")
     def ordered(self):
@@ -96,22 +97,25 @@ def validate_description(
 
 
 async def enqueue_visual_job(
-    session: AsyncSession, reference: FileReference, settings: AgentSettings
+    session: AsyncSession, reference: FileReference, settings: AgentSettings, *,
+    context: str | None = None,
 ):
     if not settings.vision_enabled:
         return None
     file = await session.get(FileObject, reference.file_id)
     if file is None or file.sha256 is None:
         raise ValueError("Visual analysis needs a content-addressed published video")
+    text_context = await video_context_snapshot(session, reference, context=context)
     config = settings.public_config()
     identity = hashlib.sha256(
         json.dumps(
             {
                 "source": file.sha256.hex(),
                 "owner": reference.owner_node_id,
-                "version": reference.metadata_json["asset_version"],
+                "version": reference.metadata_json.get("asset_version"),
                 "protocol": VISION_VERSION,
                 "config": config,
+                "text_context": text_context,
             },
             sort_keys=True,
         ).encode()
@@ -142,8 +146,9 @@ async def enqueue_visual_job(
             "reference_id": reference.id,
             "file_id": file.id,
             "source_sha256": file.sha256.hex(),
-            "asset_version": reference.metadata_json["asset_version"],
+            "asset_version": reference.metadata_json.get("asset_version"),
             "settings": config,
+            "text_context": text_context,
         },
         raw_output={"batches": [], "step": 0},
     )

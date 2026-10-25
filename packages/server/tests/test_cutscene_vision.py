@@ -2,13 +2,14 @@ import hashlib
 import json
 import os
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+import wuwa_story.agents.cutscene_vision as vision
 from wuwa_story.agents.contracts import CutsceneDescription, QuestAssessment
 from wuwa_story.agents.cutscene_vision import (
     enqueue_visual_job,
@@ -126,6 +127,26 @@ async def test_disabled_vision_does_not_queue_or_read_storage():
         is None
     )
     db.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_job_identity_pins_source_text_and_supports_generic_video(monkeypatch):
+    snapshots = [{"basis": "caller", "context": text} for text in ("First transcript", "Corrected transcript")]
+    context = AsyncMock(side_effect=snapshots)
+    monkeypatch.setattr(vision, "video_context_snapshot", context)
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=SimpleNamespace(id=2, sha256=b"source")),
+        execute=AsyncMock(), scalar=AsyncMock(side_effect=[3, None, 3, None]),
+        add=Mock(), flush=AsyncMock())
+    reference = SimpleNamespace(id=1, file_id=2, owner_node_id=5, metadata_json={})
+    settings = AgentSettings(_env_file=None, vision_enabled=True)
+    first = await enqueue_visual_job(db, reference, settings, context="First transcript")
+    second = await enqueue_visual_job(db, reference, settings, context="Corrected transcript")
+    assert first.input_hash != second.input_hash
+    assert first.metadata_json["text_context"] == snapshots[0]
+    assert second.metadata_json["text_context"] == snapshots[1]
+    assert first.metadata_json["asset_version"] is None
+    assert first.prompt_version == vision.VISION_VERSION
 
 
 @pytest.mark.asyncio
