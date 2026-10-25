@@ -45,7 +45,7 @@ async def test_icon_conversion_bounds_loaded_texture_batches(tmp_path, monkeypat
     batches = []
 
     def convert(command, **kwargs):
-        packages = Path(command[command.index("-c") + 1]).read_text().splitlines()
+        packages = Path(command[command.index("-c") + 1]).read_text(encoding="utf-8").splitlines()
         assert len(packages) <= 8
         assert kwargs["env"]["DOTNET_PROCESSOR_COUNT"] == "2"
         batches.append(packages)
@@ -171,3 +171,82 @@ async def test_all_absent_images_do_not_export_a_false_substring_match(tmp_path,
         [{"metadata_json": {"icon_source": source}}], entity_media=True, exact_textures=True)
     assert result == {}
     export.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("packed", [False, True])
+@pytest.mark.parametrize("stale_cache", [False, True])
+async def test_sp_named_textures_reach_existing_converter(tmp_path, monkeypatch, packed, stale_cache):
+    """SP_ is an asset name, not a reliable Unreal export type discriminator."""
+    import hashlib
+    import json
+    import subprocess
+    from pathlib import Path
+    from unittest.mock import AsyncMock
+
+    from PIL import Image
+
+    from wuwa_story_worker import map_icons
+
+    directory = "Aki/UI/UIResources/Common/Atlas"
+    source = f"/Game/{directory}/SP_CommonDefault"
+    texture = f"/Game/{directory}/_SpriteTextures/SP_CommonDefault" if packed else source
+    raw = tmp_path / "exports/atlas/files"
+    names = [source, texture, f"/Game/{directory}/TPI_Common"] if packed else [source]
+    for name in names:
+        package = raw / ("Client/Content/" + name[6:] + ".uasset")
+        package.parent.mkdir(parents=True, exist_ok=True)
+        package.write_bytes(b"asset")
+        package.with_suffix(".uexp").write_bytes(b"export")
+    tool = tmp_path / "tool"
+    tool.write_bytes(b"tool")
+    monkeypatch.setattr(map_icons, "export_assets", AsyncMock(return_value=raw.parent / "manifest.json"))
+    package_index(tmp_path, [source])
+
+    # The old final cache can contain a valid but empty result. Its decode receipt
+    # can also be valid while lacking PNGs for every skipped SP_ package.
+    identity = json.dumps([[source], map_icons._sha256(tool), map_icons._sha256(tool),
+                           "exact_textures_v2"], sort_keys=True)
+    cache = tmp_path / "entity-image-cache" / (hashlib.sha256(identity.encode()).hexdigest() + ".json")
+    old_decoded = tmp_path / "maps/icons" / ("entity-atlas-" + map_icons._sha256(tool)[:16])
+    if stale_cache:
+        cache.parent.mkdir()
+        cache.write_text(json.dumps({"icons": {}, "files": {}}), encoding="utf-8")
+        old_decoded.mkdir(parents=True)
+        (old_decoded / "decode-receipt.json").write_text("{}", encoding="utf-8")
+    converted = []
+
+    def convert(command, **kwargs):
+        output = Path(command[command.index("-o") + 1])
+        packages = Path(command[command.index("-c") + 1]).read_text(encoding="utf-8").splitlines()
+        if command[command.index("-f") + 1] == "png":
+            converted.extend(packages)
+            for package in packages:
+                if package == "files/Client/Content/" + texture[6:] + ".uasset":
+                    target = (output / package).with_suffix(".png")
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    Image.new("RGBA", (8, 8), "red").save(target)
+        else:
+            target = output / f"files/Client/Content/{directory}/TPI_Common.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps([{"Properties": {
+                "Sprites": [source + ".SP_CommonDefault"],
+                "SpriteAtlasTextureMap": [{"Key": "0", "Value": 0}],
+                "SpriteInfoMap": [{"Key": "0", "Value": {
+                    "uv0X": 0, "uv3X": .5, "uv0Y": 0, "uv3Y": .5}}],
+                "SoftAtlasTextures": [{"AssetPathName": texture + ".SP_CommonDefault"}],
+            }}]), encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(map_icons.subprocess, "run", convert)
+    markers = [{"metadata_json": {"icon_source": source}}]
+    result = await map_icons.build_icons(tmp_path, tool, tool, markers,
+                                        entity_media=True, exact_textures=True)
+    assert "files/Client/Content/" + texture[6:] + ".uasset" in converted
+    with Image.open(result[source]["path"]) as image:
+        assert image.size == ((4, 4) if packed else (8, 8))
+    assert str((raw / ("Client/Content/" + texture[6:] + ".uasset")).resolve()) in result[source]["raw_paths"]
+    converted.clear()
+    assert await map_icons.build_icons(tmp_path, tool, tool, markers,
+                                       entity_media=True, exact_textures=True) == result
+    assert converted == []

@@ -38,6 +38,8 @@ async def build_icons(
         identity_parts = [sorted(sources), _sha256(converter), _sha256(fmodel)]
         if exact_textures:
             identity_parts.append("exact_textures_v2")
+        if any(source.rsplit("/", 1)[-1].startswith("SP_") for source in sources):
+            identity_parts.append("sp_textures_v1")
         identity = json.dumps(identity_parts, sort_keys=True)
         cache = (
             root / "entity-image-cache" / (hashlib.sha256(identity.encode()).hexdigest() + ".json")
@@ -96,14 +98,18 @@ async def build_icons(
             key = "/Game/" + path.relative_to(raw / "Client/Content").with_suffix("").as_posix()
             raw_files[key] = path
         decoded = (
-            (output / ("entity-" + receipt.parent.name + "-" + _sha256(converter)[:16]))
+            (output / ("entity-" + receipt.parent.name + "-" + _sha256(converter)[:16]
+                       + ("-sp-textures-v1" if any(p.name.startswith("SP_") for p in paths) else "")))
             if entity_media
             else Path(tempfile.mkdtemp(prefix=receipt.parent.name + "-", dir=output))
         )
         decoded.mkdir(exist_ok=True)
         complete = decoded / "decode-receipt.json"
         packages = decoded / "packages.txt"
-        textures = [p for p in paths if not p.name.startswith(("SP_", "TPI_"))]
+        # SP_ names can also be Texture2D exports (including _SpriteTextures).
+        # Let the existing converter discriminate Unreal types; LGUI sprite data
+        # still resolves through its TPI importer below.
+        textures = [p for p in paths if not p.name.startswith("TPI_")]
 
 
         def convert(raw=raw, packages=packages, decoded=decoded, paths=paths, textures=textures):
