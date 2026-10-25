@@ -1,3 +1,29 @@
+# Build against the same Debian/FFmpeg ABI as the worker runtime.
+FROM python:3.12-slim AS vgmstream-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake build-essential pkg-config ca-certificates \
+    libavcodec-dev libavformat-dev libavutil-dev libswresample-dev \
+    libmpg123-dev libvorbis-dev libspeex-dev libopus-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone https://github.com/vgmstream/vgmstream.git /src/vgmstream \
+    && git -C /src/vgmstream checkout 71e2361042531fe767fb98300cf8c1ee95e539a0
+COPY packages/worker/docker/vgmstream-anonymous-opus.patch /build/
+RUN git -C /src/vgmstream apply --check /build/vgmstream-anonymous-opus.patch \
+    && git -C /src/vgmstream apply /build/vgmstream-anonymous-opus.patch \
+    && cmake -S /src/vgmstream -B /src/vgmstream/build -DCMAKE_BUILD_TYPE=Release \
+       -DBUILD_V123=OFF -DBUILD_AUDACIOUS=OFF \
+    && cmake --build /src/vgmstream/build --parallel 4 \
+    && install -Dm755 /src/vgmstream/build/cli/vgmstream-cli /tools/vgmstream-cli
+
+# Independently buildable, offline native regression check without the managed tools.
+FROM python:3.12-slim AS vgmstream-tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg libmpg123-0 libvorbisfile3 libspeex1 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=vgmstream-builder /tools/vgmstream-cli /tools/vgmstream-cli
+COPY packages/worker/docker/vgmstream_probe.py /tools/vgmstream_probe.py
+RUN --network=none python /tools/vgmstream_probe.py /tools/vgmstream-cli
+
 FROM mcr.microsoft.com/dotnet/sdk:10.0.401 AS tools-builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git cmake clang build-essential curl unzip python3 ca-certificates \
@@ -15,7 +41,8 @@ RUN git clone https://github.com/Herselfta/FModelCLI.git /src/fmodel \
     && git -C /src/cue-cli -c user.email=build@example.com -c user.name=build merge --no-edit FETCH_HEAD \
     && git -C /src/cue-cli submodule update --init --recursive
 
-COPY packages/worker/docker /build
+COPY packages/worker/docker/patch_tools.py packages/worker/docker/native_probe.py \
+     packages/worker/docker/NativeTools.cs /build/
 RUN python3 /build/patch_tools.py /src/fmodel /src/cue-cli \
     && dotnet publish /src/fmodel/FModelCLI/FModelCLI.csproj -c Release -r linux-x64 \
        --self-contained true -p:PublishReadyToRun=false -p:PublishSingleFile=false \
@@ -53,18 +80,16 @@ RUN curl -fSL --retry 3 https://github.com/WorkingRobot/OodleUE/releases/downloa
 
 RUN curl -fSL --retry 3 https://github.com/bnnm/wwiser/releases/download/v20260808/wwiser.pyz -o /tools/wwiser.pyz \
     && echo 'f4ba1368895adab285f27fa37b142e5da805bcc6fb77e8daba282dac65d89411  /tools/wwiser.pyz' | sha256sum -c - \
-    && curl -fSL --retry 3 https://github.com/vgmstream/vgmstream/releases/download/r2117/vgmstream-linux.zip -o /tmp/vgmstream.zip \
-    && echo '2f98c77f756079f63fbd119939067f1ed461d77e70993bc4cc372736d859c84a  /tmp/vgmstream.zip' | sha256sum -c - \
-    && unzip /tmp/vgmstream.zip -d /tmp/vgmstream \
-    && install -m 755 /tmp/vgmstream/vgmstream-cli /tools/vgmstream-cli \
     && cd /tools && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
 
 FROM ghcr.io/astral-sh/uv:0.11.6 AS uv
 FROM python:3.12-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git ca-certificates ffmpeg libstdc++6 libgomp1 libssl3 \
+    git ca-certificates ffmpeg libstdc++6 libgomp1 libssl3 libmpg123-0 libvorbisfile3 libspeex1 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=tools-builder /tools /app/tools
+COPY --from=vgmstream-tools /tools /app/tools
+RUN cd /app/tools && sha256sum vgmstream-cli vgmstream_probe.py >> SHA256SUMS
 COPY --from=uv /uv /uvx /bin/
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
@@ -83,6 +108,7 @@ USER appuser
 RUN --network=none /app/tools/fmodelcli/FModelCLI --check-native-libs \
     && /app/tools/cue-cli/cue4parse --check-native-libs \
     && python /app/tools/wwiser.pyz --help >/dev/null \
+    && python /app/tools/vgmstream_probe.py /app/tools/vgmstream-cli \
     && python -c "import wave; w=wave.open('/tmp/audio-probe.wav','wb'); w.setparams((1,2,8000,0,'NONE','not compressed')); w.writeframes(b'\x00\x00'*8000); w.close()" \
     && /app/tools/vgmstream-cli -o /tmp/audio-decoded.wav /tmp/audio-probe.wav \
     && python -c "import wave; w=wave.open('/tmp/audio-decoded.wav'); assert w.getnframes()==8000; w.close()" \
