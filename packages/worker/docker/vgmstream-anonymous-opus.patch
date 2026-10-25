@@ -1,0 +1,42 @@
+diff --git a/src/coding/coding.h b/src/coding/coding.h
+index 8605f7b..16534de 100644
+--- a/src/coding/coding.h
++++ b/src/coding/coding.h
+@@ -636,6 +636,7 @@ typedef struct {
+     int coupled_count;
+     int stream_count;
+     uint8_t channel_mapping[255];
++    bool anonymous_channels; /* use family 255 without a Vorbis speaker-order remap */
+     /* frame table */
+     off_t table_offset;
+     int table_count;
+diff --git a/src/coding/ffmpeg_decoder_custom_opus.c b/src/coding/ffmpeg_decoder_custom_opus.c
+index a980cc8..a5009ff 100644
+--- a/src/coding/ffmpeg_decoder_custom_opus.c
++++ b/src/coding/ffmpeg_decoder_custom_opus.c
+@@ -526,8 +526,8 @@ static size_t make_opus_header(uint8_t* buf, int buf_size, opus_config *cfg) {
+      */
+ 
+     /* set mapping family */
+-    if (cfg->channels > 2 || cfg->stream_count > 1) {
+-        mapping_family = 1;
++    if (cfg->channels > 2 || cfg->stream_count > 1 || cfg->anonymous_channels) {
++        mapping_family = cfg->anonymous_channels ? 255 : 1;
+         header_size += 0x01 + 0x01 + cfg->channels; /* table size */
+     }
+ 
+diff --git a/src/meta/wwise.c b/src/meta/wwise.c
+index 686ec2c..5b56426 100644
+--- a/src/meta/wwise.c
++++ b/src/meta/wwise.c
+@@ -582,7 +582,9 @@ VGMSTREAM* init_vgmstream_wwise_bnk(STREAMFILE* sf, int* p_prefetch) {
+                     cfg.channel_mapping[i] = mapping_matrix[ww.channels - 1][i];
+                 }
+             }
+-            else if (ww.channel_type != 0 && mapping == 255) {
++            else if (mapping == 255) {
++                /* Anonymous Wwise channels have no speaker order (Wuthering Waves). */
++                cfg.anonymous_channels = (ww.channel_type == 0);
+                 /* Overwatch 2 (PC): type=1 12ch; Hello Neighbor 3 (PC): type=2 8ch */
+ 
+                 // seems to be what ChannelConfigToMapping would output with > 8
