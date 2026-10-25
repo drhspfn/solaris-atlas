@@ -31,7 +31,9 @@ def write_atlas(frames: list[bytes], times: list[float], output: Path, *,
                                 y + (image_height - image.height) // 2))
         minutes, second = divmod(seconds, 60)
         label = f"{index + 1:02d}  {int(minutes):02d}:{second:06.3f}  ({seconds:.4f}s)"
-        draw.text((x + 6, y + image_height + 3), label, font=font, fill="white")
+        label_font = ImageFont.load_default(size=max(
+            8, min(18, int(18 * (tile_width - 12) / draw.textlength(label, font=font)))))
+        draw.text((x + 6, y + image_height + 3), label, font=label_font, fill="white")
         tiles.append({"time": seconds, "row": index // columns, "column": index % columns,
                       "rect": [x, y, tile_width, image_height]})
     sheet.save(output, "JPEG", quality=quality, optimize=True, subsampling=0)
