@@ -50,7 +50,7 @@ async def test_side_quests_without_chapters_remain_in_story_map(monkeypatch: pyt
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("has_new_quest", [False, True])
-async def test_version_filter_keeps_complete_snapshot_and_all_patches_deduplicate(
+async def test_patch_filter_excludes_earlier_quests_and_all_patches_follow_order(
     monkeypatch: pytest.MonkeyPatch,
     has_new_quest: bool,
 ) -> None:
@@ -87,10 +87,11 @@ async def test_version_filter_keeps_complete_snapshot_and_all_patches_deduplicat
     expected_quests = [10, 11] if has_new_quest else [10]
     assert [chapter["snapshot_game_version"] for chapter in all_patches["chapters"]] == expected_versions
     assert [node["id"] for chapter in all_patches["chapters"] for node in chapter["nodes"]] == expected_quests
-    assert [node["id"] for chapter in selected["chapters"] for node in chapter["nodes"]] == expected_quests
-    assert selected["chapters"][0]["snapshot_game_version"] == "1.1.0"
-    assert selected["chapters"][0]["tree_available"] is False
-    assert selected["chapters"][0]["nodes"][0]["quests"][0]["first_observed_game_version"] == "1.0.0"
+    assert [node["id"] for chapter in selected["chapters"] for node in chapter["nodes"]] == ([11] if has_new_quest else [])
+    if has_new_quest:
+        assert selected["chapters"][0]["snapshot_game_version"] == "1.1.0"
+        assert selected["chapters"][0]["tree_available"] is False
+        assert selected["chapters"][0]["nodes"][0]["quests"][0]["first_observed_game_version"] == "1.1.0"
     with pytest.raises(HTTPException) as error:
         await story_map.story_map("en", "2.0.0", 1, session)
     assert error.value.status_code == 404
