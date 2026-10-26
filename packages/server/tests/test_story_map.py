@@ -49,7 +49,7 @@ async def test_side_quests_without_chapters_remain_in_story_map(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
-async def test_version_filter_keeps_only_quests_first_seen_in_that_patch(
+async def test_version_filter_keeps_complete_snapshot_and_all_patches_deduplicate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     releases = [SimpleNamespace(id=1, sequence=1, game_version="1.0.0"),
@@ -85,8 +85,10 @@ async def test_version_filter_keeps_only_quests_first_seen_in_that_patch(
         "1.0.0", "1.1.0"
     ]
     assert [node["id"] for chapter in all_patches["chapters"] for node in chapter["nodes"]] == [10, 11]
-    assert [node["id"] for chapter in selected["chapters"] for node in chapter["nodes"]] == [11]
+    assert [node["id"] for chapter in selected["chapters"] for node in chapter["nodes"]] == [10, 11]
     assert selected["chapters"][0]["snapshot_game_version"] == "1.1.0"
+    assert selected["chapters"][0]["tree_available"] is False
+    assert selected["chapters"][0]["nodes"][0]["quests"][0]["first_observed_game_version"] == "1.0.0"
     with pytest.raises(HTTPException) as error:
         await story_map.story_map("en", "2.0.0", 1, session)
     assert error.value.status_code == 404
