@@ -77,6 +77,21 @@ const backend = createServer(async (request, response) => {
   timing.end = performance.now();
   response.setHeader('Content-Type', 'application/json');
   const questRequest = new URL(request.url, 'http://backend.test');
+  if (questRequest.pathname === '/story-map') {
+    const version = questRequest.searchParams.get('game_version') || null;
+    const questType = Number(questRequest.searchParams.get('quest_type_id'));
+    const additions = version === '2.1.0' && questType !== 1;
+    const title = additions ? 'Silent as a Falling Leaf' : 'First Resonance';
+    const owningPatch = version || '1.0.0';
+    response.end(JSON.stringify({ selected_game_version: version, quest_type_id: questType,
+      imported_game_versions: ['1.0.0', '2.1.0'], tree_available: false,
+      chapters: version === '2.1.0' && questType === 1 ? [] : [{
+        id: 1, title, snapshot_game_version: owningPatch, tree_available: false,
+        nodes: [{ id: 10, title, source_kind: 'quest_prerequisite', previous_node_ids: [],
+          quests: [{ game_quest_id: 10, title, first_observed_game_version: owningPatch }] }],
+      }] }));
+    return;
+  }
   if (/^\/quests\/(662686-the-sacred-breeze-so-often-breathes|464283-when-the-night-knocks)\//.test(questRequest.pathname)) {
     const title = `Selected quest ${questRequest.searchParams.get('locale')} ${questRequest.searchParams.get('game_version')}`;
     const quest = { name: { content: title } };
@@ -298,6 +313,23 @@ for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
     assert.doesNotMatch(html, /Opening archive record|Loading character details|id="S:\d+"/);
     assert.ok(requests.includes('/characters/character%3A1102/archive?locale=en'));
     assert.ok(!requests.some((path) => path.includes('%253A')));
+  });
+}
+
+for (const storyType of ['', '&quest_type=9', '&quest_type=1']) {
+  test(`story map SSR honors selected patch and path ${storyType || 'all'}`, async () => {
+    const response = await fetch(`${site}/story-map?game_version=2.1.0${storyType}`);
+    assert.equal(response.status, 200);
+    const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+    assert.doesNotMatch(html, /First Resonance|Opening archive record/);
+    if (storyType === '&quest_type=1') {
+      assert.ok(html.includes('No additions in'));
+      assert.ok(requests.includes('/story-map?locale=en&quest_type_id=1&game_version=2.1.0'));
+    } else {
+      assert.ok(html.includes('Silent as a Falling Leaf'));
+      assert.ok(html.includes('game_version=2.1.0'));
+      assert.ok(requests.includes(`/story-map?locale=en&quest_type_id=${storyType ? 9 : 0}&game_version=2.1.0`));
+    }
   });
 }
 

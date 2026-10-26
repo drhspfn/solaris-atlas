@@ -22,12 +22,21 @@ export const metadata: Metadata = {
   },
 };
 
-export default async function StoryMapPage() {
+export default async function StoryMapPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   // Search-parameter controls must render on the server for the real request,
   // rather than making the whole story map a client-only prerender fallback.
   await connection();
-  // Server pre-fetch main story path
-  const initialMap = await serverApi<StoryMap>('/story-map?locale=en&quest_type_id=1');
+  const params = await searchParams;
+  const requestedType = typeof params.quest_type === 'string' ? Number(params.quest_type) : 0;
+  const questType = [0, 1, 2, 3, 9].includes(requestedType) ? requestedType : 0;
+  const query = new URLSearchParams({ locale: 'en', quest_type_id: String(questType) });
+  if (typeof params.game_version === 'string') query.set('game_version', params.game_version);
+  // Render the requested patch immediately; never flash the 1.0 overview first.
+  const initialMap = await serverApi<StoryMap>(`/story-map?${query}`);
 
   return <StoryMapClient initialMap={initialMap} />;
 }

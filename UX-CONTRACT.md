@@ -1,13 +1,15 @@
 # Interactive map UX contract
 
-## Story map snapshots
+## Story map patches
 
-Selecting a snapshot version shows every quest recorded in that imported snapshot
-for the selected story path, including quests also recorded in older versions.
-First observed version is provenance only and never filters a selected snapshot.
-Links open the selected snapshot's transcript. The All patches overview continues
-to group quests by their first observed snapshot to avoid duplicates. Only
-successfully completed snapshot imports appear in the version selector.
+Selecting a patch shows its additions for the selected story path, excluding quests
+already present in earlier imported patches. All patches presents these additions
+from 1.0 onward in version order, without repeats. Assignment is based on the first
+appearance in the available imported data, not a separately verified release date.
+All story paths is the default; main, companion, exploration and side paths remain
+explicit filters. A patch with no additions to the chosen path is a valid empty
+state, not an import failure. Links open the owning patch's transcript. Only
+successfully completed snapshot imports appear in the patch selector.
 
 ## Cited story explanations
 

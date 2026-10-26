@@ -296,10 +296,10 @@ def _first_seen_chapters(snapshot: dict[str, Any], version: str) -> list[dict[st
 async def story_map(
     locale: str = "en",
     game_version: str | None = None,
-    quest_type_id: int = Query(1, ge=0),
+    quest_type_id: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    """Browse first appearances across patches, or the complete selected snapshot."""
+    """Browse patch additions, in one selected patch or across all patches in order."""
     if await session.scalar(select(Locale.id).where(Locale.code == locale)) is None:
         raise HTTPException(status_code=400, detail=f"unknown locale: {locale}")
     releases = list(await session.scalars(
@@ -320,13 +320,7 @@ async def story_map(
         if release is None:
             raise HTTPException(status_code=404, detail="game version not imported")
         snapshot = await _snapshot_map(session, release, locale, quest_type_id, versions)
-        return {
-            **snapshot,
-            "chapters": [{**chapter, "snapshot_game_version": game_version,
-                          "tree_available": snapshot["tree_available"]}
-                         for chapter in snapshot["chapters"]],
-            "version_basis": "All quests recorded in the selected snapshot. First observed version is provenance, not a filter or a proven debut patch.",
-        }
+        return {**snapshot, "chapters": _first_seen_chapters(snapshot, game_version)}
 
     chapters = []
     for release in ordered:

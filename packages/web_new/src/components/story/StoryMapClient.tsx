@@ -10,10 +10,11 @@ import { Link, useSearchParams } from '@/lib/router';
 import { questPath } from '@/lib/routeKey';
 
 const questTypes = [
+  { id: 0, label: 'All story paths' },
   { id: 1, label: 'Main story' },
   { id: 3, label: 'Companion stories' },
+  { id: 9, label: 'Exploration stories' },
   { id: 2, label: 'Side stories' },
-  { id: 0, label: 'All story paths' },
 ];
 
 function StoryStep({ node, version }: { node: StoryTreeNode; version: string }) {
@@ -76,15 +77,17 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
   const locale = useLocale();
   const [params, setParams] = useSearchParams();
   const version = params?.get('game_version') || '';
-  const questType = Number(params?.get('quest_type') ?? '1');
-  const selectedType = questTypes.some((entry) => entry.id === questType) ? questType : 1;
+  const questType = Number(params?.get('quest_type') ?? '0');
+  const selectedType = questTypes.some((entry) => entry.id === questType) ? questType : 0;
   const [query, setQuery] = useState('');
   const [map, setMap] = useState<StoryMap | null>(initialMap ?? null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(!initialMap);
 
   useEffect(() => {
-    if (initialMap && locale === 'en' && !version && selectedType === 1 && map === initialMap) {
+    if (initialMap && locale === 'en' && map === initialMap &&
+        initialMap.selected_game_version === (version || null) &&
+        initialMap.quest_type_id === selectedType) {
       return;
     }
     let active = true;
@@ -214,7 +217,7 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
           </select>
         </label>
         <label>
-          Snapshot version
+          Patch
           <select
             value={version}
             onChange={(event) => updateParam('game_version', event.target.value)}
@@ -264,12 +267,14 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
             <div className="story-map-context">
               <span>
                 {visible} of {total} source entries ·{' '}
-                {version ? `recorded in ${version}` : 'all imported patches'}
+                {version ? `additions in ${version}` : 'all patches in order'}
               </span>
               <p>
                 {version
-                  ? 'All quests recorded in this snapshot are included, even if they also appear in earlier versions. '
-                  : 'Quests are grouped by their earliest imported snapshot, not a confirmed release date. '}
+                  ? 'Earlier quests are not repeated in this patch. '
+                  : 'Quests are grouped from the earliest imported patch to the latest, without repeats. '}
+                Patch assignments follow the first appearance in the available imported data.
+                {' '}
                 Chapters and links follow the available game data; prerequisite links do not prove
                 an immediate next quest.
               </p>
@@ -277,11 +282,11 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
             {!map.chapters.length ? (
               <div className="story-map-empty">
                 <h2>
-                  {version ? `No quests recorded in ${version} for this story path` : 'No source-backed story path'}
+                  {version ? `No additions in ${version} for this story path` : 'No source-backed story path'}
                 </h2>
                 <p>
-                  No quest records matched this story path. The quest transcript archive is still
-                  available.
+                  Try another story path or select All story paths to see this patch's other quests.
+                  The quest transcript archive is still available.
                 </p>
                 <Link className="text-link" to="/catalog/quest">
                   Browse quests <ArrowRight size={15} />
