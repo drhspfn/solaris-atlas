@@ -1,5 +1,14 @@
 # Interactive map UX contract
 
+## Story map snapshots
+
+Selecting a snapshot version shows every quest recorded in that imported snapshot
+for the selected story path, including quests also recorded in older versions.
+First observed version is provenance only and never filters a selected snapshot.
+Links open the selected snapshot's transcript. The All patches overview continues
+to group quests by their first observed snapshot to avoid duplicates. Only
+successfully completed snapshot imports appear in the version selector.
+
 ## Cited story explanations
 
 The primary explanation is readable prose with section headings and bounded

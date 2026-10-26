@@ -49,8 +49,10 @@ async def test_side_quests_without_chapters_remain_in_story_map(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
-async def test_version_filter_keeps_only_quests_first_seen_in_that_patch(
+@pytest.mark.parametrize("has_new_quest", [False, True])
+async def test_version_filter_keeps_complete_snapshot_and_all_patches_deduplicate(
     monkeypatch: pytest.MonkeyPatch,
+    has_new_quest: bool,
 ) -> None:
     releases = [SimpleNamespace(id=1, sequence=1, game_version="1.0.0"),
                 SimpleNamespace(id=2, sequence=2, game_version="1.1.0")]
@@ -68,7 +70,7 @@ async def test_version_filter_keeps_only_quests_first_seen_in_that_patch(
     async def snapshot(_session: object, release: object, *_args: object) -> dict[str, object]:
         version = release.game_version
         quests = [{"game_quest_id": 10, "first_observed_game_version": "1.0.0"}]
-        if version == "1.1.0":
+        if version == "1.1.0" and has_new_quest:
             quests.append({"game_quest_id": 11, "first_observed_game_version": "1.1.0"})
         return {"selected_game_version": version, "tree_available": False,
                 "chapters": [{"id": 5, "title": "Chapter", "nodes": [
@@ -81,12 +83,14 @@ async def test_version_filter_keeps_only_quests_first_seen_in_that_patch(
     selected = await story_map.story_map("en", "1.1.0", 1, session)
 
     assert all_patches["selected_game_version"] is None
-    assert [chapter["snapshot_game_version"] for chapter in all_patches["chapters"]] == [
-        "1.0.0", "1.1.0"
-    ]
-    assert [node["id"] for chapter in all_patches["chapters"] for node in chapter["nodes"]] == [10, 11]
-    assert [node["id"] for chapter in selected["chapters"] for node in chapter["nodes"]] == [11]
+    expected_versions = ["1.0.0", "1.1.0"] if has_new_quest else ["1.0.0"]
+    expected_quests = [10, 11] if has_new_quest else [10]
+    assert [chapter["snapshot_game_version"] for chapter in all_patches["chapters"]] == expected_versions
+    assert [node["id"] for chapter in all_patches["chapters"] for node in chapter["nodes"]] == expected_quests
+    assert [node["id"] for chapter in selected["chapters"] for node in chapter["nodes"]] == expected_quests
     assert selected["chapters"][0]["snapshot_game_version"] == "1.1.0"
+    assert selected["chapters"][0]["tree_available"] is False
+    assert selected["chapters"][0]["nodes"][0]["quests"][0]["first_observed_game_version"] == "1.0.0"
     with pytest.raises(HTTPException) as error:
         await story_map.story_map("en", "2.0.0", 1, session)
     assert error.value.status_code == 404

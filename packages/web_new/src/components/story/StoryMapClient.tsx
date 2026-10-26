@@ -214,7 +214,7 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
           </select>
         </label>
         <label>
-          Version
+          Snapshot version
           <select
             value={version}
             onChange={(event) => updateParam('game_version', event.target.value)}
@@ -264,18 +264,20 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
             <div className="story-map-context">
               <span>
                 {visible} of {total} source entries ·{' '}
-                {version ? `first seen in ${version}` : 'all imported patches'}
+                {version ? `recorded in ${version}` : 'all imported patches'}
               </span>
               <p>
-                Quests are grouped by their earliest imported snapshot, not a confirmed release
-                date. Chapters and links follow the available game data; prerequisite links do not
-                prove an immediate next quest.
+                {version
+                  ? 'All quests recorded in this snapshot are included, even if they also appear in earlier versions. '
+                  : 'Quests are grouped by their earliest imported snapshot, not a confirmed release date. '}
+                Chapters and links follow the available game data; prerequisite links do not prove
+                an immediate next quest.
               </p>
             </div>
             {!map.chapters.length ? (
               <div className="story-map-empty">
                 <h2>
-                  {version ? `No quests first seen in ${version}` : 'No source-backed story path'}
+                  {version ? `No quests recorded in ${version} for this story path` : 'No source-backed story path'}
                 </h2>
                 <p>
                   No quest records matched this story path. The quest transcript archive is still
