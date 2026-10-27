@@ -25,6 +25,27 @@ def test_exact_authored_movie_path():
         movie_path(b"filepath://./Aki/Movies/../secret.mp4\0")
 
 
+def test_authored_windows_separators_are_normalized():
+    assert movie_path(b"filepath://./Aki/Movies/LevelB_Seq\\02_7\\M2_12_20_Seq_Nan.mp4\0") == (
+        "Client/Content/Aki/Movies/LevelB_Seq/02_7/M2_12_20_Seq_Nan.mp4")
+
+
+@pytest.mark.parametrize("reference", [
+    b"filepath://./Aki/Movies/..\\secret.mp4\0",
+    b"filepath://./Aki/Movies/Folder\\..\\secret.mp4\0",
+    b"filepath://./Aki/Movies/C:\\secret.mp4\0",
+    b"filepath://./Aki/Movies/Folder//secret.mp4\0",
+    b"filepath://./Aki/Movies/./secret.mp4\0",
+    b"filepath://./Aki/Movies/clip.mp4",
+    b"filepath://./Aki/Movies/clip.mp4\0filepath://./Aki/Movies/other.mp4\0",
+    b"filepath://./Aki/Movies/clip.mp4\0filepath://./Aki/Movies/C:\\unsafe.mp4\0",
+    b"filepath://./Aki/Movies/clip.mp4\0filepath://./Other/unsafe.mp4\0",
+])
+def test_unsafe_or_ambiguous_movie_references_fail_closed(reference):
+    with pytest.raises(ValueError, match="Expected one safe authored MP4 path"):
+        movie_path(reference)
+
+
 def test_sound_and_music_source_layouts():
     sound = struct.pack("<II", 42, 0x00140001) + b"\x02" + struct.pack("<I", 988310690)
     music = struct.pack("<III", 42, 1, 0x00140001) + b"\x02" + struct.pack("<I", 633609166)
@@ -123,3 +144,102 @@ async def test_media_tool_failure_preserves_bounded_decoder_diagnostics(monkeypa
     with pytest.raises(RuntimeError, match="vgmstream-cli exited 1: WWISE: unknown mapping") as caught:
         await cutscene_import.run_tool(["/tools/vgmstream-cli", "clip.txtp"])
     assert "failed opening clip.txtp" in str(caught.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [None, "original_decoder", "playable_decoder", "timing"])
+async def test_unaligned_variants_publish_independent_authored_flow_only_if_valid(tmp_path, monkeypatch, failure, caplog):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from wuwa_story_worker import cutscene_import
+    from wuwa_story_worker.cutscene_segments import VariantAlignmentError
+
+    assets = [f"asset:ue:/Game/Video{index}.Video{index}" for index in range(2)]
+    flow = {
+        "entry": "variants", "evidence": "authored independent variants",
+        "nodes": [{"id": "variants", "kind": "choice", "prompt": "Choose a variant",
+                   "options": [{"label": "Male Rover", "next": "male", "rover": "male"},
+                               {"label": "Female Rover", "next": "female", "rover": "female"}]},
+                  *[{"id": key, "kind": "clip", "asset": asset}
+                    for key, asset in zip(("male", "female"), assets, strict=True)]],
+    }
+    recipe = tmp_path / "recipe.json"
+    recipe.write_text(json.dumps({"cutscene": "cutscene:Fly_M0297", "asset_version": "3.7.0",
+        "compare_variants": True, "videos": [{"asset": asset} for asset in assets], "flow": flow}))
+    originals = []
+    for index in range(2):
+        wrapper = tmp_path / f"Client/Content/Video{index}.uexp"
+        wrapper.parent.mkdir(parents=True, exist_ok=True)
+        wrapper.write_bytes(f"filepath://./Aki/Movies/Video{index}.mp4\0".encode())
+        movie = tmp_path / f"Client/Content/Aki/Movies/Video{index}.mp4"
+        movie.parent.mkdir(parents=True, exist_ok=True)
+        movie.write_bytes(f"independent original {index}".encode())
+        originals.append(movie)
+    monkeypatch.setattr(cutscene_import, "video_duration", lambda _ffmpeg, path: (1 + originals.index(path), False))
+    verified = []
+
+    async def convert(command, **kwargs):
+        if "-xerror" in command:
+            name = Path(command[command.index("-i") + 1]).name
+            verified.append(name)
+            assert kwargs["timeout"] == 600
+            if (failure, name) in {("original_decoder", "Video1.mp4"), ("playable_decoder", "1.mp4")}:
+                raise RuntimeError("corrupt video")
+        else:
+            Path(command[-1]).write_bytes(b"playable")
+
+    monkeypatch.setattr(cutscene_import, "run_tool", convert)
+
+    def compare(*args):
+        if failure == "timing":
+            raise ValueError("Variable frame timing cannot be segmented by frame indexes")
+        raise VariantAlignmentError("Variant frame counts do not align; keep independent originals")
+
+    monkeypatch.setattr(cutscene_import, "export_segments", compare)
+    storage = AsyncMock()
+    monkeypatch.setattr(cutscene_import, "get_settings", lambda: None)
+    monkeypatch.setattr(cutscene_import, "S3Storage", lambda _: storage)
+    session = AsyncMock()
+    session.__aenter__.return_value = session
+    nodes = [SimpleNamespace(id=1, canonical_key="cutscene:Fly_M0297"),
+             *[SimpleNamespace(id=index + 2, canonical_key=asset) for index, asset in enumerate(assets)]]
+    session.scalars.side_effect = [nodes, [10, 11], [2, 3]]
+    monkeypatch.setattr(cutscene_import, "SessionFactory", lambda: session)
+    service = AsyncMock()
+    files, references = [], []
+
+    async def register_file(_session, path, kind, **kwargs):
+        files.append((path, kind, path.read_bytes()))
+        return SimpleNamespace(id=len(files))
+
+    async def reference(*args):
+        ref = SimpleNamespace(id=len(references) + 1)
+        references.append(ref)
+        return ref
+
+    service.register_file.side_effect = register_file
+    monkeypatch.setattr(cutscene_import, "FileRegistrationService", lambda _: service)
+    monkeypatch.setattr(cutscene_import, "publication_reference", reference)
+    args = (recipe, tmp_path, tmp_path, tmp_path, tmp_path / "work", tmp_path / "decoder", tmp_path / "ffmpeg")
+    if failure:
+        with pytest.raises((RuntimeError, ValueError), match="corrupt video|Variable frame timing"):
+            await cutscene_import.import_cutscene_recipe(*args)
+        storage.ensure_bucket.assert_not_awaited()
+        service.register_file.assert_not_awaited()
+        session.commit.assert_not_awaited()
+        return
+    result = await cutscene_import.import_cutscene_recipe(*args)
+    assert result["videos"] == 2
+    assert verified == ["Video0.mp4", "0.mp4", "Video1.mp4", "1.mp4"]
+    published_recipe = json.loads(next(data for path, kind, data in files if path.name == "recipe.json"))
+    from wuwa_story.ingestion.cutscenes import PlaybackFlow
+    assert published_recipe["flow"] == PlaybackFlow.model_validate(flow).model_dump(mode="json")
+    assert [(path, data) for path, kind, data in files if kind == "video_game"] == [
+        (path, f"independent original {index}".encode()) for index, path in enumerate(originals)]
+    assert [ref.metadata_json["duration_seconds"] for ref in references[:2]] == [1, 2]
+    assert all("original_file_id" in ref.metadata_json for ref in references[:2])
+    assert "cutscene.independent_variants" in caplog.text
+    session.commit.assert_awaited_once()

@@ -102,9 +102,11 @@ async def test_job_lock_cannot_leak_after_completion_failure_or_cancellation(err
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("retries", [0, 3])
-async def test_database_contention_has_bounded_durable_retries(monkeypatch, retries):
+@pytest.mark.parametrize("sqlstate", ["40P01", "08006", "57014"])
+async def test_database_contention_has_bounded_durable_retries(monkeypatch, retries, sqlstate):
     class Deadlock(Exception):
-        sqlstate = "40P01"
+        pass
+    Deadlock.sqlstate = sqlstate
     handler = AsyncMock(side_effect=broker.DBAPIError(None, None, Deadlock()))
     channel, queue, connection = AsyncMock(), AsyncMock(), AsyncMock()
     connection.channel.return_value = channel

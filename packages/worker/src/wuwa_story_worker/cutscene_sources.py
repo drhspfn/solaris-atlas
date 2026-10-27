@@ -1,6 +1,7 @@
 """Resolve cooked movie references to exact base-client archive paths."""
 
 import asyncio
+import logging
 from pathlib import Path, PurePosixPath
 
 from wuwa_story_worker.archive_index import (
@@ -11,20 +12,28 @@ from wuwa_story_worker.archive_index import (
 from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.cutscene_import import movie_path
 
+logger = logging.getLogger(__name__)
 
-def authored_movie_paths(assets: Path, wrapper_paths) -> dict[str, str]:
+
+def authored_movie_paths(assets: Path, wrapper_paths, *, errors: dict[str, str] | None = None) -> dict[str, str]:
     """The wrapper filename/CgId is not evidence of its runtime movie filename."""
     movies = {}
     for package in sorted(set(wrapper_paths)):
-        relative = PurePosixPath(package)
-        if (relative.is_absolute() or ".." in relative.parts or "\\" in package
-                or ":" in package or not package.startswith("Client/Content/Aki/")
-                or relative.suffix.casefold() not in {".uasset", ".uexp"}):
-            raise ValueError("Expected an exact authored movie wrapper package")
-        path = assets / relative.with_suffix(".uexp")
-        if not path.resolve().is_relative_to(assets.resolve()):
-            raise ValueError("Movie wrapper escapes exported assets")
-        movies[package] = movie_path(path.read_bytes())
+        try:
+            relative = PurePosixPath(package)
+            if (relative.is_absolute() or ".." in relative.parts or "\\" in package
+                    or ":" in package or not package.startswith("Client/Content/Aki/")
+                    or relative.suffix.casefold() not in {".uasset", ".uexp"}):
+                raise ValueError("Expected an exact authored movie wrapper package")
+            path = assets / relative.with_suffix(".uexp")
+            if not path.resolve().is_relative_to(assets.resolve()):
+                raise ValueError("Movie wrapper escapes exported assets")
+            movies[package] = movie_path(path.read_bytes())
+        except (ValueError, OSError) as error:
+            if errors is None:
+                raise
+            errors[package] = str(error)
+            logger.warning("cutscene.movie_source_rejected wrapper=%s reason=%s", package, error)
     return movies
 
 
@@ -52,9 +61,11 @@ async def prepare_base_movies(root: Path, assets: Path, wrapper_paths, fmodel: P
     Missing base movies may still live in separately downloaded video packages.
     Never infer a substitute from a CG number, wrapper alias or matching basename.
     """
-    movies = await asyncio.to_thread(authored_movie_paths, assets, wrapper_paths)
+    errors = {}
+    movies = await asyncio.to_thread(authored_movie_paths, assets, wrapper_paths, errors=errors)
+    diagnostics = {"errors": errors} if errors else {}
     if not movies:
-        return {"receipts": [], "movies": {}, "missing": []}
+        return {"receipts": [], "movies": {}, "missing": [], **diagnostics}
     if index is None:
         index = await ensure_archive_index(root, fmodel, root)
     available = await asyncio.to_thread(indexed_movie_paths, index, movies.values())
@@ -62,4 +73,4 @@ async def prepare_base_movies(root: Path, assets: Path, wrapper_paths, fmodel: P
     for batch in voice_filter_batches(available.values()):
         receipts.append(await export_assets(root, fmodel, "|".join(batch)))
     return {"receipts": receipts, "movies": movies,
-            "missing": sorted(set(movies.values()) - available.keys())}
+            "missing": sorted(set(movies.values()) - available.keys()), **diagnostics}

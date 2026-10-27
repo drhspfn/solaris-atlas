@@ -11,6 +11,8 @@ from wuwa_story_worker import release_media
 
 @pytest.mark.asyncio
 async def test_cutscene_preparation_batches_only_available_movie_wrappers(monkeypatch, tmp_path):
+    # A preparation-only donor match cannot skip wrappers needed by final-identity leaves.
+    monkeypatch.setattr(release_media, "missing_cutscene_identities", AsyncMock(return_value=set()))
     config_files = tmp_path / "config/files"
     config_files.mkdir(parents=True)
     config = config_files / "video.db"
@@ -33,7 +35,8 @@ async def test_cutscene_preparation_batches_only_available_movie_wrappers(monkey
     assets.mkdir(parents=True)
     monkeypatch.setattr(release_media, "merge_exports", lambda *_args: assets)
     monkeypatch.setattr(release_media, "publish_inventory", AsyncMock(return_value={}))
-    monkeypatch.setattr(release_media, "prepare_base_movies", AsyncMock(return_value={"receipts": [], "movies": {}, "missing": []}))
+    monkeypatch.setattr(release_media, "prepare_base_movies", AsyncMock(return_value={
+        "receipts": [], "movies": {}, "missing": [], "errors": {"Bad.uexp": "No movie"}}))
     from wuwa_story_worker import voice_bootstrap
     def discover(_version, _assets, _tier, ids, **_kwargs):
         assert ids == {2, 3}
@@ -43,6 +46,7 @@ async def test_cutscene_preparation_batches_only_available_movie_wrappers(monkey
         {"targets": ["Old", "New", "Second"]}, {"workspace_id": 11, "asset_version": "3.7.0", "tier": "hd"})
     assert status == "completed"
     assert result["media_report"]["missing_video_packages"] == ["Aki/Movies/Old"]
+    assert result["media_report"]["invalid_movie_sources"] == {"Bad.uexp": "No movie"}
     assert [call.args[2] for call in export.await_args_list] == [
         "ConfigDB", "KuroPublicConfig", "Client/Content/Aki/Movies/New|Client/Content/Aki/Movies/Second"]
 
@@ -817,3 +821,20 @@ async def test_cutscene_publication_cleans_only_owned_conversions(monkeypatch, t
         assert result["videos"] == 1 and "media_report" in result
         assert not (root / "release-media/90").exists()
     assert shared.is_file() and sibling.is_file()
+
+@pytest.mark.asyncio
+async def test_invalid_authored_movie_is_partial_without_poisoning_other_cutscenes(monkeypatch, tmp_path):
+    wrapper = tmp_path / "release-media/files/Client/Content/Aki/Movies/Wrapper.uexp"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_bytes(b"filepath://./Aki/Movies/../Other.mp4\0")
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "video_database", lambda _: tmp_path / "video.db")
+    monkeypatch.setattr(release_media, "plan_cutscene", lambda *_args, **_kwargs: {
+        "videos": [{"asset": "asset:ue:/Game/Aki/Movies/Wrapper.Wrapper"}]})
+    audio = AsyncMock(side_effect=AssertionError("invalid source needs no audio extraction"))
+    monkeypatch.setattr(release_media, "extract_cutscene_audio", audio)
+    result, status = await release_media.cutscene({"targets": ["Scene"], "run_id": 90}, {
+        "asset_version": "3.7.0", "voice_plan_id": "voice"})
+    assert status == "partial" and result["videos"] == 0
+    assert result["media_report"]["entries"][0]["status"] == "invalid_source"
+    audio.assert_not_awaited()

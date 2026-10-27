@@ -85,8 +85,9 @@ the data. Rollbacks preserve the previous revision. Worker imports, media export
 admin writes and direct SQL updates all invalidate without sending Redis messages.
 Writes to auth/session/job bookkeeping do not invalidate public game data.
 
-Each cache lookup performs one small PostgreSQL revision read (~one row per content
-table). Hits avoid expensive content queries, but do not eliminate all DB access.
+Each API process refreshes the PostgreSQL revision at most once per five seconds
+(~one row per content table), coalescing concurrent refreshes behind a one-second
+deadline. Hits avoid expensive content queries, but do not eliminate all DB access.
 The global revision conservatively invalidates all public responses on any content
 commit. Old generations expire naturally; no blocking Redis key scan is required.
 An in-flight old response can only fill its old generation. Redis downtime during

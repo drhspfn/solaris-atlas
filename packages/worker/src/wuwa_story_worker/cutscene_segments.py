@@ -18,6 +18,10 @@ from wuwa_story_worker.client_assets import save_json, workspace_lock
 logger = logging.getLogger(__name__)
 
 
+class VariantAlignmentError(ValueError):
+    """Valid variants may require independent playback instead of shared ranges."""
+
+
 @dataclass(frozen=True)
 class ComparisonSettings:
     width: int = 960
@@ -87,8 +91,10 @@ def analyze(paths: list[Path], ffmpeg: Path, root: Path, settings: ComparisonSet
         paths = list(dict(zip(input_hashes, paths, strict=True)).values())
     formats = [probe(ffmpeg, path) for path in paths]
     fps = formats[0][0]
-    if fps <= 0 or any(rate != fps for rate, _ in formats):
-        raise ValueError("Variant frame rates do not align; keep independent originals")
+    if any(rate <= 0 for rate, _ in formats):
+        raise ValueError("Invalid source frame rate")
+    if any(rate != fps for rate, _ in formats):
+        raise VariantAlignmentError("Variant frame rates do not align; keep independent originals")
     processes, logs, audio = [], [], []
     scores, visual_counts, audio_counts = [], [], []
     frame_size = settings.width * settings.height * 3
@@ -166,7 +172,9 @@ def analyze(paths: list[Path], ffmpeg: Path, root: Path, settings: ComparisonSet
             if not any(blobs):
                 break
             if any(len(blob) != frame_size for blob in blobs):
-                raise ValueError("Variant frame counts do not align; keep independent originals")
+                if any(len(blob) not in (0, frame_size) for blob in blobs):
+                    raise ValueError("Video decoder returned an incomplete frame")
+                raise VariantAlignmentError("Variant frame counts do not align; keep independent originals")
             visual = max((changed_pixels(blobs[0], other, settings) for other in blobs[1:]), default=0)
             sample_frames = round((frame + 1) * 48000 / fps) - round(frame * 48000 / fps)
             chunks = []

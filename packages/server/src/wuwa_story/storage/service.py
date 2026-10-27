@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -13,13 +14,31 @@ from wuwa_story.db.models.storage import (
     FileType,
     FileVariant,
 )
-from wuwa_story.storage.base import ObjectStorage
+from wuwa_story.storage.base import ObjectInfo, ObjectStorage
 from wuwa_story.storage.hashing import content_object_key, sha256_file
+
+
+@dataclass(frozen=True)
+class PreparedFile:
+    digest: bytes
+    size: int
+    stored: ObjectInfo
 
 
 class FileRegistrationService:
     def __init__(self, storage: ObjectStorage) -> None:
         self.storage = storage
+
+    async def prepare_file(self, path: Path, mime_type: str | None = None) -> PreparedFile:
+        """Complete slow object I/O before callers acquire publication locks."""
+        digest, size = await asyncio.to_thread(sha256_file, path)
+        key = content_object_key(digest)
+        stored = await self.storage.stat(key)
+        if stored is None or stored.size_bytes != size:
+            stored = await self.storage.put_file(path, key, mime_type)
+        if stored.size_bytes != size:
+            raise OSError("Stored object size does not match the hashed source")
+        return PreparedFile(digest, size, stored)
 
     async def register_file(
         self,
@@ -28,8 +47,11 @@ class FileRegistrationService:
         file_type: str,
         logical_name: str | None = None,
         mime_type: str | None = None,
+        *,
+        prepared: PreparedFile | None = None,
     ) -> FileObject:
-        digest, size = await asyncio.to_thread(sha256_file, path)
+        prepared = prepared or await self.prepare_file(path, mime_type)
+        digest, size, stored = prepared.digest, prepared.size, prepared.stored
         kind = await session.scalar(select(FileType).where(FileType.key == file_type))
         if kind is None:
             raise ValueError(f"Unknown storage file type: {file_type}")
@@ -61,11 +83,6 @@ class FileRegistrationService:
         elif file_obj.size_bytes != size or file_obj.file_type_id != kind.id:
             raise ValueError("Existing SHA-256 identity has incompatible size or file type")
         key = content_object_key(digest)
-        stored = await self.storage.stat(key)
-        if stored is None or stored.size_bytes != size:
-            stored = await self.storage.put_file(path, key, mime_type)
-        if stored.size_bytes != size:
-            raise OSError("Stored object size does not match the hashed source")
         location = await session.scalar(
             select(FileLocation).where(
                 FileLocation.backend == self.storage.backend,
@@ -148,12 +165,13 @@ class FileRegistrationService:
     ) -> FileVariant:
         variant = await session.get(FileVariant, (parent_file_id, child_file_id, variant_type))
         if variant is None:
-            variant = FileVariant(
-                parent_file_id=parent_file_id,
-                child_file_id=child_file_id,
-                variant_type=variant_type,
-                processor_run_id=processor_run_id,
-            )
-            session.add(variant)
-            await session.flush()
+            await session.execute(insert(FileVariant).values(
+                parent_file_id=parent_file_id, child_file_id=child_file_id,
+                variant_type=variant_type, processor_run_id=processor_run_id,
+            ).on_conflict_do_nothing(index_elements=[
+                FileVariant.parent_file_id, FileVariant.child_file_id, FileVariant.variant_type,
+            ]))
+            variant = await session.get(FileVariant, (parent_file_id, child_file_id, variant_type))
+            if variant is None:
+                raise RuntimeError("File variant was not registered")
         return variant

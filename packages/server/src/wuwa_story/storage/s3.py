@@ -5,6 +5,7 @@ from typing import Any
 from urllib.parse import quote
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from wuwa_story.config.settings import Settings
@@ -27,6 +28,8 @@ class S3Storage:
             aws_secret_access_key=settings.s3_secret_access_key.get_secret_value(),
             region_name=settings.s3_region,
             use_ssl=settings.s3_use_ssl,
+            config=Config(connect_timeout=5, read_timeout=30, max_pool_connections=20,
+                          retries={"mode": "standard", "total_max_attempts": 3}),
         )
 
     def public_url(self, object_key: str) -> str:
