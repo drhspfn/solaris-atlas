@@ -244,10 +244,12 @@ async def item_profile(
         select(SourceRecord, SourceFile)
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
         .where(
+            SourceRecord.release_id == release_id,
+            SourceFile.release_id == release_id,
             SourceFile.logical_source_path == "BinData/role_level/rolebreach.json",
             SourceRecord.data["BreachConsume"].contains([{"Key": item.game_item_id}]),
         )
-        .order_by(SourceRecord.row_index)
+        .order_by(SourceRecord.row_index, SourceRecord.id)
     )
     breach_records = list(breach_rows)
     breach_group_ids = {
@@ -261,10 +263,12 @@ async def item_profile(
             select(SourceRecord, SourceFile)
             .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
             .where(
+                SourceRecord.release_id == release_id,
+                SourceFile.release_id == release_id,
                 SourceFile.logical_source_path == "BinData/role/roleinfo.json",
                 SourceRecord.data["BreachId"].as_integer() == group_id,
             )
-            .order_by(SourceRecord.row_index)
+            .order_by(SourceRecord.row_index, SourceRecord.id)
         )
         matches = list(role_rows)
         if matches:
@@ -291,6 +295,8 @@ async def item_profile(
             select(SourceRecord, SourceFile)
             .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
             .where(
+                SourceRecord.release_id == release_id,
+                SourceFile.release_id == release_id,
                 SourceFile.logical_source_path == "BinData/role_level/rolebreach.json",
                 SourceRecord.data["BreachGroupId"].as_integer() == group_id,
                 SourceRecord.data["MaxLevel"].as_integer() > raw.get("MaxLevel", 0),
@@ -298,12 +304,18 @@ async def item_profile(
             .order_by(
                 SourceRecord.data["MaxLevel"].as_integer(),
                 SourceRecord.row_index,
+                SourceRecord.id,
             )
             .limit(2)
         )
         next_breach_matches = list(next_breach_rows)
         next_breach = None
-        if len(next_breach_matches) == 1:
+        # Only another row at the nearest cap makes the next stage ambiguous.
+        if next_breach_matches and (
+            len(next_breach_matches) == 1
+            or next_breach_matches[0][0].data.get("MaxLevel")
+            != next_breach_matches[1][0].data.get("MaxLevel")
+        ):
             next_record, next_file = next_breach_matches[0]
             next_requirements = []
             for next_index, next_entry in enumerate(next_record.data.get("BreachConsume", [])):
@@ -329,6 +341,8 @@ async def item_profile(
                 "level_cap": next_record.data.get("MaxLevel"),
                 "requirements": next_requirements,
                 "source": {
+                    "record_id": next_record.id,
+                    "release_id": next_record.release_id,
                     "file": next_file.logical_source_path,
                     "row": next_record.row_index,
                     "raw_path": f"$[{next_record.row_index}].BreachConsume",
@@ -358,6 +372,8 @@ async def item_profile(
                     "level_cap": raw.get("MaxLevel"),
                     "next_breach": next_breach,
                     "source": {
+                        "record_id": record.id,
+                        "release_id": record.release_id,
                         "file": source_file.logical_source_path,
                         "row": record.row_index,
                         "raw_path": f"$[{record.row_index}].BreachConsume[{material_index}]",
@@ -366,6 +382,7 @@ async def item_profile(
                         if role_match
                         else None,
                         "role_source_row": role_match[0].row_index if role_match else None,
+                        "role_source_record_id": role_match[0].id if role_match else None,
                     },
                 }
             )
@@ -374,10 +391,12 @@ async def item_profile(
         select(SourceRecord, SourceFile)
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
         .where(
+            SourceRecord.release_id == release_id,
+            SourceFile.release_id == release_id,
             SourceFile.logical_source_path == "BinData/RoleDev/roledevprosroleitem.json",
             SourceRecord.data["ItemGroup"].contains([{"Item1": item.game_item_id}]),
         )
-        .order_by(SourceRecord.row_index)
+        .order_by(SourceRecord.row_index, SourceRecord.id)
     )
     for record, source_file in pros_rows:
         group_id = record.data.get("ItemGroupId")
@@ -385,10 +404,12 @@ async def item_profile(
             select(SourceRecord, SourceFile)
             .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
             .where(
+                SourceRecord.release_id == release_id,
+                SourceFile.release_id == release_id,
                 SourceFile.logical_source_path == "BinData/role/roleinfo.json",
                 SourceRecord.data["SkillBranchIds"].contains([group_id]),
             )
-            .order_by(SourceRecord.row_index)
+            .order_by(SourceRecord.row_index, SourceRecord.id)
             .limit(2)
         )
         role_matches = list(role_rows)
@@ -404,6 +425,8 @@ async def item_profile(
                 select(SourceRecord, SourceFile)
                 .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
                 .where(
+                    SourceRecord.release_id == release_id,
+                    SourceFile.release_id == release_id,
                     SourceFile.logical_source_path == "BinData/RoleDev/roledevprosproject.json",
                     or_(
                         SourceRecord.data["RoleItemGroup"].contains([group_id]),
@@ -411,7 +434,7 @@ async def item_profile(
                         SourceRecord.data["WeaponBreachItemGroup"].contains([group_id]),
                     ),
                 )
-                .order_by(SourceRecord.row_index)
+                .order_by(SourceRecord.row_index, SourceRecord.id)
                 .limit(2)
             )
             project_matches = list(project_rows)
@@ -433,10 +456,12 @@ async def item_profile(
                     select(SourceRecord, SourceFile)
                     .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
                     .where(
+                        SourceRecord.release_id == release_id,
+                        SourceFile.release_id == release_id,
                         SourceFile.logical_source_path == "BinData/role/roleinfo.json",
                         SourceRecord.data["Id"].as_integer() == role_id_from_project,
                     )
-                    .order_by(SourceRecord.row_index)
+                    .order_by(SourceRecord.row_index, SourceRecord.id)
                     .limit(2)
                 )
                 exact_roles = list(matching_role_rows)
@@ -460,8 +485,11 @@ async def item_profile(
                     else None,
                     "required_count": entry.get("Item2"),
                     "item_group_id": group_id,
+                    "item_type_id": record.data.get("ItemTypeId"),
                     "project_role_field": project_role_field,
                     "source": {
+                        "record_id": record.id,
+                        "release_id": record.release_id,
                         "file": source_file.logical_source_path,
                         "row": record.row_index,
                         "raw_path": f"$[{record.row_index}].ItemGroup[{material_index}]",
@@ -472,10 +500,12 @@ async def item_profile(
                         ),
                         "role_source_file": role_file.logical_source_path if role_file else None,
                         "role_source_row": role_record.row_index if role_record else None,
+                        "role_source_record_id": role_record.id if role_record else None,
                         "project_source_file": project_file.logical_source_path
                         if project_file
                         else None,
                         "project_source_row": project_record.row_index if project_record else None,
+                        "project_source_record_id": project_record.id if project_record else None,
                     },
                 }
             )

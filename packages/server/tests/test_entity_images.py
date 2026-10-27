@@ -12,7 +12,8 @@ async def test_catalog_prefers_large_character_portrait_and_keeps_latest_item_ic
     monkeypatch.setattr(entity_media, "S3Storage", lambda _: SimpleNamespace(
         public_url=lambda key: "https://media.example/" + key))
     def row(owner, path, file_id):
-        return SimpleNamespace(owner_node_id=owner, source_path=path), SimpleNamespace(id=file_id), f"objects/{file_id}"
+        return (SimpleNamespace(owner_node_id=owner, source_path=path), SimpleNamespace(id=file_id),
+                f"objects/{file_id}", f"{'character' if owner == 1 else 'item'}:{owner}")
     session = AsyncMock()
     session.execute.return_value = [
         row(1, "/Game/Other/Icon.png", 30),
@@ -28,3 +29,14 @@ async def test_empty_catalog_does_not_query_all_media():
     session = AsyncMock()
     assert await entity_image_urls(session, []) == {}
     session.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_shared_resource_cannot_become_character_avatar_but_remains_valid_for_items(monkeypatch):
+    monkeypatch.setattr(entity_media, "S3Storage", lambda _: SimpleNamespace(public_url=lambda key: key))
+    session = AsyncMock()
+    session.execute.return_value = [
+        (SimpleNamespace(owner_node_id=1, source_path="/Game/UiQuest/Image/ChuanShuo/Default"), None, "wrong", "character:1"),
+        (SimpleNamespace(owner_node_id=2, source_path="/Game/Common/IconRup/Material"), None, "item", "item:2"),
+    ]
+    assert await entity_image_urls(session, [1, 2]) == {2: "item"}
