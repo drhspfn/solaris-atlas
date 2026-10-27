@@ -19,6 +19,7 @@ from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.db.session import get_session
+from wuwa_story.ingestion.character_artwork import character_artwork_scope
 from wuwa_story.storage.s3 import S3Storage
 
 router = APIRouter(tags=["story browsing"])
@@ -184,7 +185,8 @@ async def character_archive(
 
     artwork_fields = ("RoleHeadIcon", "RoleHeadIconBig", "RoleHeadIconLarge", "RoleHeadIconCircle", "Card", "FormationRoleCard", "RolePortrait", "RoleStand", "Icon")
     artwork = [
-        {"kind": field, "engine_path": role[field], "url": media_url(role[field], "image/")}
+        {"kind": field, "engine_path": role[field], "url": media_url(role[field], "image/"),
+         "scope": character_artwork_scope(field, role[field])}
         for field in artwork_fields if isinstance(role.get(field), str) and role[field]
     ]
     skills = [

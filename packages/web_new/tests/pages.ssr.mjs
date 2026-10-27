@@ -12,6 +12,7 @@ const requests = [];
 const requestTimes = [];
 const biography = 'Sanhua guards the magistrate of Jinzhou.';
 const portrait = 'https://cdn.solarisatlas.fun/objects/test-sanhua';
+const sharedQuestArtwork = 'https://cdn.solarisatlas.fun/objects/shared-quest-art';
 const notice = {
   id: 42,
   source_id: 'official-42',
@@ -48,7 +49,11 @@ const testQuest = {
 const archive = {
   biography: `<color=white>${biography}</color>`,
   profile: { birthday: 'January 20', affiliation: 'Jinzhou', voice_actors: {} },
-  artwork: [{ kind: 'RoleHeadIconLarge', engine_path: 'test', url: portrait }],
+  artwork: [
+    { kind: 'RoleHeadIconLarge', engine_path: 'test', url: portrait, scope: 'character' },
+    { kind: 'RoleStand', engine_path: '/Game/UiQuest/ChuanShuo1', url: sharedQuestArtwork, scope: 'shared_resource' },
+    { kind: 'Icon', engine_path: '/Game/IconRup/1503', url: null, scope: 'shared_resource' },
+  ],
   skills: [
     {
       id: 1,
@@ -105,6 +110,15 @@ const backend = createServer(async (request, response) => {
     response.end(JSON.stringify(profile));
   } else if (request.url === '/characters/character%3A1102/archive?locale=en') {
     response.end(JSON.stringify(archive));
+  } else if (request.url === '/items/19875-coriolus/profile?locale=en') {
+    response.end(JSON.stringify({
+      item: { canonical_key: 'item:42300080', name: { content: 'Coriolus' } },
+      progression_uses: [4, 8, 12, 16, 20].map((count, index) => ({
+        kind: 'character_ascension', level_cap: 50 + index * 10, required_count: count,
+        character: { canonical_key: 'character:1203', label: 'Lingyang', href: '/characters/15511-lingyang' },
+        source: { file: 'BinData/role_level/rolebreach.json', row: index },
+      })),
+    }));
   } else if (request.url === '/items/595988-emerald-of-genesis/profile?locale=en') {
     response.end(JSON.stringify({
       item: { canonical_key: 'item:21020015', slug: '595988-emerald-of-genesis',
@@ -313,6 +327,12 @@ for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
     assert.doesNotMatch(html, /Opening archive record|Loading character details|id="S:\d+"/);
     assert.ok(requests.includes('/characters/character%3A1102/archive?locale=en'));
     assert.ok(!requests.some((path) => path.includes('%253A')));
+    const gallery = main.match(/<div class="character-artwork-gallery">([\s\S]*?)<\/figure><\/div>/)?.[1] ?? '';
+    assert.ok(gallery.includes(`src="${portrait}"`));
+    assert.ok(!gallery.includes(sharedQuestArtwork));
+    assert.ok(main.includes('Shared quest artwork'));
+    assert.ok(main.includes(`href="${sharedQuestArtwork}"`));
+    assert.doesNotMatch(main, /Awaiting export/);
   });
 }
 
@@ -341,6 +361,17 @@ test('item details are visible without JavaScript', async () => {
   assert.match(main, /<h1>Astrite/);
   assert.ok(main.includes('A bright crystal.'));
   assert.doesNotMatch(html, /Opening archive record|id="S:\d+"/);
+});
+
+test('item progression renders five real stages and their total compactly', async () => {
+  const response = await fetch(`${site}/items/19875-coriolus`);
+  assert.equal(response.status, 200);
+  const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.equal((html.match(/class="progression-level-chip"/g) || []).length, 5);
+  const text = html.replace(/<[^>]*>/g, '').replace(/<!--.*?-->/g, '');
+  assert.match(text, /Lv\. 50–90/);
+  assert.match(text, /60× total/);
+  assert.doesNotMatch(text, /845 source entries|10140/);
 });
 
 test('events fetch at request time and render their artwork without JavaScript', async () => {

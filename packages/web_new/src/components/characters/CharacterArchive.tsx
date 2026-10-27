@@ -27,7 +27,7 @@ export interface CharacterArchiveData {
     element: string | null;
     quality: string | null;
   };
-  artwork: { kind: string; engine_path: string; url: string | null }[];
+  artwork: { kind: string; engine_path: string; url: string | null; scope?: 'character' | 'shared_resource' }[];
   skills: {
     id: number;
     type: number;
@@ -79,6 +79,36 @@ type MaterialUse = {
   required_count?: number;
   group_id?: number;
 };
+
+function artworkLabel(art: CharacterArchiveData['artwork'][number]) {
+  if (art.scope === 'shared_resource') {
+    return art.kind === 'RoleStand' ? 'Shared quest artwork' : 'Shared resource icon';
+  }
+  return art.kind.replaceAll(/([a-z])([A-Z])/g, '$1 $2');
+}
+
+function ArtworkCard({ art }: { art: CharacterArchiveData['artwork'][number] }) {
+  const [failed, setFailed] = useState(false);
+  const label = artworkLabel(art);
+  return (
+    <figure className="character-artwork-card">
+      {art.url && !failed ? (
+        <a href={apiUrl(art.url.replace(/^\/api/, ''))} target="_blank" rel="noopener noreferrer"
+          aria-label={`Open ${label} image`}>
+          <img src={apiUrl(art.url.replace(/^\/api/, ''))} alt={label} loading="lazy"
+            width={256} height={256} onError={() => setFailed(true)} />
+        </a>
+      ) : (
+        <div className="character-artwork-placeholder">
+          <Image size={24} aria-hidden="true" />
+          <span>{failed ? 'Image unavailable' : 'Image not exported'}</span>
+          {failed && <button type="button" onClick={() => setFailed(false)}>Retry image</button>}
+        </div>
+      )}
+      <figcaption>{label}</figcaption>
+    </figure>
+  );
+}
 
 function gameText(value: string | null | undefined, params: string[] = []): string {
   if (!value) return 'Text unavailable in this language.';
@@ -205,14 +235,21 @@ export function CharacterArchive({
             </div>
           )}
           {!!archive?.artwork.length && (
+            <section aria-label="Character artwork" className="character-artwork">
+              <h3>Artwork</h3>
+              <div className="character-artwork-gallery">
+                {archive.artwork.filter((art) => art.scope !== 'shared_resource').map((art) => (
+                  <ArtworkCard key={`${art.kind}-${art.url}`} art={art} />
+                ))}
+              </div>
             <details className="character-subfold">
               <summary>
-                Artwork and icon source paths <span>{archive.artwork.length} references</span>
+                Source references <span>{archive.artwork.length} references</span>
               </summary>
               <div className="character-asset-list">
                 {archive.artwork.map((art) => (
                   <div key={art.kind}>
-                    <strong>{art.kind.replaceAll(/([a-z])([A-Z])/g, '$1 $2')}</strong>
+                    <strong>{artworkLabel(art)}</strong>
                     <code title={art.engine_path}>{art.engine_path}</code>
                     <small>
                       {art.url ? (
@@ -224,13 +261,14 @@ export function CharacterArchive({
                           View image
                         </a>
                       ) : (
-                        'Awaiting export'
+                        'No exported image'
                       )}
                     </small>
                   </div>
                 ))}
               </div>
             </details>
+            </section>
           )}
           <h3>
             Upgrade materials <span>{groups.size}</span>

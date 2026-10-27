@@ -3,7 +3,9 @@
 from sqlalchemy import select
 
 from wuwa_story.config.settings import get_settings
+from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
+from wuwa_story.ingestion.character_artwork import character_artwork_scope
 from wuwa_story.storage.s3 import S3Storage
 
 
@@ -13,7 +15,8 @@ async def entity_image_urls(session, owner_ids: list[int]) -> dict[int, str]:
     settings = get_settings()
     storage = S3Storage(settings)
     rows = await session.execute(
-        select(FileReference, FileObject, FileLocation.object_key)
+        select(FileReference, FileObject, FileLocation.object_key, Node.canonical_key)
+        .join(Node, Node.id == FileReference.owner_node_id)
         .join(FileObject, FileObject.id == FileReference.file_id)
         .join(FileLocation, FileLocation.file_id == FileObject.id)
         .where(
@@ -28,8 +31,12 @@ async def entity_image_urls(session, owner_ids: list[int]) -> dict[int, str]:
         .order_by(FileReference.id.desc())
     )
     best = {}
-    for reference, _file, object_key in rows:
+    for reference, _file, object_key, canonical_key in rows:
         path = reference.source_path or ""
+        if canonical_key.startswith("character:") and any(
+            character_artwork_scope(field, path) == "shared_resource" for field in ("RoleStand", "Icon")
+        ):
+            continue
         rank = 0 if "IconRoleHead256/" in path else 1 if "IconRoleHead150/" in path else 2
         if reference.owner_node_id not in best or rank < best[reference.owner_node_id][0]:
             best[reference.owner_node_id] = (rank, storage.public_url(object_key))

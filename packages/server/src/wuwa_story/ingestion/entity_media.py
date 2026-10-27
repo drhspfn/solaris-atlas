@@ -8,6 +8,7 @@ from sqlalchemy import select
 from wuwa_story.db.models.graph import Node, NodeRevision
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
+from wuwa_story.ingestion.character_artwork import character_artwork_scope
 
 
 class MediaRequest(BaseModel):
@@ -81,6 +82,8 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
             raise ValueError(f"Entity has no source in snapshot: {key}")
         rows = [raw]
         if kind == "character":
+            rows = [{field: value for field, value in raw.items()
+                     if character_artwork_scope(field, value) == "character"}]
             for path, field, value in (
                 ("BinData/skill/skill.json", "SkillGroupId", raw.get("SkillId") or int(identifier)),
                 (
