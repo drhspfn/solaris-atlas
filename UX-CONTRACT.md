@@ -360,7 +360,7 @@ start imports or playback. A fresh report is loaded when its disclosure is reope
 ## Character artwork and progression materials
 
 Character artwork uses a responsive thumbnail gallery; links open the original
-image. Shared RoleInfo quest art and resource icons stay in the closed source
+image. Shared RoleInfo quest art, borrowed portraits and resource icons stay in the closed source
 references disclosure and cannot become character portraits. Missing or failed
 images retain their space and an explicit unavailable state; failed loads offer Retry.
 Progression uses only the selected snapshot's authored stages. Cards show the real

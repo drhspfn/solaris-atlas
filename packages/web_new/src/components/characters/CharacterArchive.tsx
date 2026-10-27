@@ -82,6 +82,7 @@ type MaterialUse = {
 
 function artworkLabel(art: CharacterArchiveData['artwork'][number]) {
   if (art.scope === 'shared_resource') {
+    if (art.kind === 'RolePortrait') return 'Shared portrait reference';
     return art.kind === 'RoleStand' ? 'Shared quest artwork' : 'Shared resource icon';
   }
   return art.kind.replaceAll(/([a-z])([A-Z])/g, '$1 $2');

@@ -53,6 +53,7 @@ const archive = {
     { kind: 'RoleHeadIconLarge', engine_path: 'test', url: portrait, scope: 'character' },
     { kind: 'RoleStand', engine_path: '/Game/UiQuest/ChuanShuo1', url: sharedQuestArtwork, scope: 'shared_resource' },
     { kind: 'Icon', engine_path: '/Game/IconRup/1503', url: null, scope: 'shared_resource' },
+    { kind: 'RolePortrait', engine_path: '/Game/PixActivity/T_ActivityRoleYangyang', url: 'https://cdn.solarisatlas.fun/objects/foreign-yangyang', scope: 'shared_resource' },
   ],
   skills: [
     {
@@ -330,6 +331,8 @@ for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
     const gallery = main.match(/<div class="character-artwork-gallery">([\s\S]*?)<\/figure><\/div>/)?.[1] ?? '';
     assert.ok(gallery.includes(`src="${portrait}"`));
     assert.ok(!gallery.includes(sharedQuestArtwork));
+    assert.ok(!gallery.includes('foreign-yangyang'));
+    assert.ok(main.includes('Shared portrait reference'));
     assert.ok(main.includes('Shared quest artwork'));
     assert.ok(main.includes(`href="${sharedQuestArtwork}"`));
     assert.doesNotMatch(main, /Awaiting export/);
