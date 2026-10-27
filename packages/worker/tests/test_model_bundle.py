@@ -257,6 +257,17 @@ def test_rig_glb_rejects_broken_export_contract(tmp_path, change):
         rig_glb_stats(path, 2, 1, 1)
 
 
+def test_preview_glb_requires_zero_morph_targets(tmp_path):
+    path = tmp_path / "preview.glb"
+    document = rig_document()
+    write_test_glb(path, document)
+    with pytest.raises(ValueError, match="lost joints/morphs or contains animations"):
+        rig_glb_stats(path, 2, 0, 1)
+    del document["meshes"][0]["primitives"][0]["targets"]
+    write_test_glb(path, document)
+    assert rig_glb_stats(path, 2, 0, 1)["morph_targets"] == 0
+
+
 @pytest.mark.parametrize("rig_only,missing_texture", [(False, False), (True, False), (True, True)])
 def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_clips(
     tmp_path,
@@ -295,7 +306,7 @@ def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_
         data=SimpleNamespace(
             vertices=[0, 1, 2],
             materials=[],
-            shape_keys=SimpleNamespace(key_blocks=[0, 1]),
+            shape_keys=SimpleNamespace(key_blocks=list(range(87))),
         ),
     )
     if missing_texture:
@@ -318,6 +329,11 @@ def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_
         calls.append(kwargs)
         document = rig_document()
         document["images"] = []
+        primitive = document["meshes"][0]["primitives"][0]
+        if kwargs["export_morph"]:
+            primitive["targets"] = [{}] * 86
+        else:
+            del primitive["targets"]
         write_test_glb(Path(kwargs["filepath"]), document)
         return {"FINISHED"}
 
@@ -379,12 +395,14 @@ def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_
         return
     main()
     assert len(calls) == 2
-    assert all(
-        not call["export_animations"] and call["export_morph"] and call["export_skins"]
-        for call in calls
-    )
+    assert all(not call["export_animations"] and call["export_skins"] for call in calls)
+    assert calls[0]["export_morph"] is True
+    assert calls[1]["export_morph"] is False
+    assert len(mesh.data.shape_keys.key_blocks) == 87
     assert not (output / "character.blend").exists()
     report = json.loads((output / "report.json").read_text())
     assert report["preview_texture_size"] == 1024
     assert report["animations"] == report["missing_exports"] == report["missing_textures"] == []
-    assert report["glb_bytes"] == report["preview_glb_bytes"] > 0
+    assert report["morph_targets"] == report["character_glb"]["morph_targets"] == 86
+    assert report["preview_glb"]["morph_targets"] == 0
+    assert report["glb_bytes"] > report["preview_glb_bytes"] > 0

@@ -341,14 +341,14 @@ def main():
     from io_scene_gltf2.blender.exp.exporter import GlTF2Exporter
     from io_scene_gltf2.io.com.gltf2_io import Accessor, BufferView
 
-    def export_glb(name):
+    def export_glb(name, *, morph=True):
         options = dict(
             filepath=str((args.output / name).resolve()),
             export_format="GLB",
             export_animations=not args.rig_only,
             export_animation_mode="ACTIONS",
             export_force_sampling=False,
-            export_morph=True,
+            export_morph=morph,
             export_morph_normal=False,
             export_morph_animation=False,
             export_optimize_disable_viewport=True,
@@ -373,11 +373,11 @@ def main():
             report["textures"],
         )
         with preview_materials(meshes, args.preview_texture_size):
-            export_glb("preview.glb")
+            export_glb("preview.glb", morph=False)
         report["preview_glb"] = rig_glb_stats(
             args.output / "preview.glb",
             report["bones"],
-            report["morph_targets"],
+            0,
             report["textures"],
         )
         report["preview_texture_size"] = args.preview_texture_size
