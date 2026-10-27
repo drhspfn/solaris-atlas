@@ -10,6 +10,7 @@ from redis.backoff import NoBackoff
 from redis.retry import Retry
 from starlette.middleware.cors import CORSMiddleware
 
+from wuwa_story.api.admission import RequestAdmission
 from wuwa_story.api.cache import PublicResponseCache
 from wuwa_story.api.errors import install_error_handlers
 from wuwa_story.api.routes import (
@@ -59,6 +60,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 app.state.agent_query_redis = response_cache
+# Cached hits bypass admission; origin work leaves capacity for health/revision reads.
+app.add_middleware(RequestAdmission, limit=settings.api_max_concurrent_requests)
 app.add_middleware(PublicResponseCache, settings=settings, redis=response_cache)
 app.add_middleware(
     CORSMiddleware,

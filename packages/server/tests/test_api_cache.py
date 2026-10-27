@@ -12,6 +12,24 @@ from wuwa_story.config.settings import Settings
 
 
 @pytest.mark.asyncio
+async def test_cold_revision_lookup_is_single_flight(monkeypatch):
+    from wuwa_story.api import cache
+    monkeypatch.setattr(cache, "_REVISION_CACHE", {"value": "", "expires": 0.0})
+    monkeypatch.setattr(cache, "_REVISION_LOCK", asyncio.Lock())
+    connection = AsyncMock()
+    connection.__aenter__.return_value = connection
+
+    async def read(_):
+        await asyncio.sleep(0.01)
+        return "revision"
+
+    connection.scalar.side_effect = read
+    monkeypatch.setattr(cache, "engine", SimpleNamespace(connect=lambda: connection))
+    assert await asyncio.gather(*(cache.content_revision() for _ in range(30))) == ["revision"] * 30
+    assert connection.scalar.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_content_revision_refreshes_after_media_commit_within_seconds(monkeypatch):
     from wuwa_story.api import cache
     clock = [100.0]

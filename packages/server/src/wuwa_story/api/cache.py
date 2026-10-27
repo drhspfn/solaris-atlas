@@ -32,6 +32,7 @@ REVISION_SQL = text("""
 """)
 
 _REVISION_CACHE = {"value": "", "expires": 0.0}
+_REVISION_LOCK = asyncio.Lock()
 
 async def content_revision() -> str:
     # One tiny metadata read on a hit, never the multimillion-row content tables.
@@ -41,16 +42,19 @@ async def content_revision() -> str:
     if _REVISION_CACHE["value"] and now < _REVISION_CACHE["expires"]:
         return _REVISION_CACHE["value"]
 
-    async with engine.connect() as connection:
-        revision = await connection.scalar(REVISION_SQL)
-    if not revision:
-        raise RuntimeError(
-            "Public cache revision migration has not been installed")
-    
-    _REVISION_CACHE["value"] = str(revision)
-    # Completed media imports must invalidate cached empty audio links promptly.
-    _REVISION_CACHE["expires"] = now + 5.0
-    return _REVISION_CACHE["value"]
+    # A cold revision must not create a DB connection for every concurrent cache hit.
+    async with asyncio.timeout(1), _REVISION_LOCK:
+        now = time.monotonic()
+        if _REVISION_CACHE["value"] and now < _REVISION_CACHE["expires"]:
+            return _REVISION_CACHE["value"]
+        async with engine.connect() as connection:
+            revision = await connection.scalar(REVISION_SQL)
+        if not revision:
+            raise RuntimeError("Public cache revision migration has not been installed")
+        _REVISION_CACHE["value"] = str(revision)
+        # Completed media imports must invalidate cached empty audio links promptly.
+        _REVISION_CACHE["expires"] = time.monotonic() + 5.0
+        return _REVISION_CACHE["value"]
 
 
 def cache_key(scope: Scope, revision: str, namespace: str) -> str:

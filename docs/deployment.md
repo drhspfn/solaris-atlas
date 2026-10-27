@@ -60,9 +60,21 @@ Production API `DATABASE_URL` targets internal `pgbouncer:6432` in transaction
 mode. The API uses SQLAlchemy `NullPool` and UUID prepared statement names;
 PgBouncer tracks up to 200 prepared statements per server connection. It admits
 500 clients and caps API backend connections at 25 (20 normal plus 5 reserve).
-Clients wait up to 30 seconds for a backend. These are admission limits, not a
+Clients wait up to 10 seconds for a backend. These are admission limits, not a
 replacement for fixing expensive queries. Neither PostgreSQL nor PgBouncer
 publishes a host port.
+
+The API has two Uvicorn processes, each admitting at most 8 origin requests
+(`API_MAX_CONCURRENT_REQUESTS`). Cached responses and `/health` bypass this gate;
+excess origin traffic gets HTTP 503 with `Retry-After: 2` rather than an unbounded
+connection backlog. Keep the combined process limits below the normal PgBouncer
+pool size, leaving room for cache revisions and health checks. Each API transaction
+sets LOCAL statement and lock timeouts (20 seconds, configurable with
+`API_DB_STATEMENT_TIMEOUT_MS`, and 3 seconds respectively). Worker sessions are
+unaffected. Retryable connection/timeout failures produce a sanitized 503.
+PgBouncer exposes read-only `SHOW POOLS` / `SHOW STATS` to the existing `wuwa` role
+through its internal `pgbouncer` database; no administrative commands are granted.
+Rollback uses the preceding main image/configuration; no schema migration is needed.
 
 Workers keep `postgres:5432`, their existing pool limits, and physical session
 affinity for workspace, broker and agent advisory locks. `agents.runner.execute_job`

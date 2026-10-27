@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     api_cache_ttl_seconds: int = Field(default=3600, ge=1)
     api_cache_max_body_bytes: int = Field(default=8 * 1024 * 1024, ge=1)
     api_cache_timeout_seconds: float = Field(default=0.3, gt=0)
+    api_max_concurrent_requests: int = Field(default=8, ge=1)
+    api_db_statement_timeout_ms: int = Field(default=20000, ge=1)
     s3_access_key_id: str = "minio"
     s3_secret_access_key: SecretStr = Field(default=SecretStr("minioadmin"))
     s3_bucket: str = "wuwa"

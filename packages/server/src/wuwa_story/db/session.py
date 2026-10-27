@@ -2,6 +2,7 @@ import os
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -22,6 +23,14 @@ elif any(key in os.environ for key in ("WUWA_WORKER_DB_POOL_SIZE", "WUWA_WORKER_
     _pool_options = {"pool_size": _pool_size, "max_overflow": _max_overflow}
 
 engine = create_async_engine(get_settings().database_url, pool_pre_ping=True, **_pool_options)
+if os.getenv("WUWA_DB_TRANSACTION_POOLING") == "1":
+    @event.listens_for(engine.sync_engine, "begin")
+    def bound_api_transaction(connection):
+        # LOCAL settings survive transaction pooling correctly and never affect workers.
+        timeout = get_settings().api_db_statement_timeout_ms
+        connection.exec_driver_sql(f"SET LOCAL statement_timeout = '{timeout}ms'")
+        connection.exec_driver_sql("SET LOCAL lock_timeout = '3s'")
+
 SessionFactory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
 
 
