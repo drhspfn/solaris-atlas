@@ -114,6 +114,15 @@ mesh-space additive clips. Curve-only facial files are not empty animations.
 `animation-inventory.json` in the experiment directory records their source
 paths, frame rates, frame counts, bone tracks and facial-curve counts.
 
+The verified full browser GLB is 146,652,728 bytes and includes all 250
+non-additive clips: 249 moving animations and the static `Tanqin01` pose.
+It retains 250 skin joints, 86 morph targets and seven embedded textures.
+Khronos validation reports zero errors and one `NODE_SKINNED_MESH_NON_ROOT`
+warning. The optimized full export took 209.8 seconds on the local Windows
+machine. The separate 159,207,263-byte source archive retains all 542 clips,
+source metadata and file hashes; additive and facial layers are preserved
+there without claiming their in-game composition is reconstructed in GLB.
+
 For large collections, constant one-key channels trigger Blender's fallback
 sampling even when `export_force_sampling=False`. The assembler extends these
 constant channels with an equal end key, preserving their value and duration.
@@ -150,6 +159,6 @@ unchanged in size. Run the images workflow manually with `component=models` to
 build a pinned worker base and validate the optional model-tools image. This
 manual workflow does not deploy services. Both Linux builds and the offline
 plugin smoke check passed in run
-[`40560320871`](https://github.com/drhspfn/solaris-atlas/actions/runs/40560320871).
+[`40563461838`](https://github.com/drhspfn/solaris-atlas/actions/runs/40563461838).
 Actual game-model conversion and browser playback were exercised on Windows;
 the CI smoke check does not mount or publish the user's game assets.
