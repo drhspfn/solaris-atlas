@@ -17,6 +17,7 @@ import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '@/api/client';
 import { useAuth } from '@/auth/AuthProvider';
 import { ProcessingActivity } from '@/components/admin/ProcessingActivity';
+import { CharacterModelImport } from '@/components/characters/CharacterModelImport';
 
 type ImportRun = {
   id: number;
@@ -407,6 +408,13 @@ export function DataOperationsClient() {
         <ProcessingActivity />
       </div>
       <div className="operations-view" hidden={view !== 'imports'}>
+        <section className="content-panel data-operation-panel">
+          <header className="agent-panel-header">
+            <div><h3>Character models</h3><p>Publish a character preview and full-resolution GLB.</p></div>
+          </header>
+          <CharacterModelImport active={view === 'imports'}
+            versions={Array.from(new Set(data?.client_assets?.installed.map((client) => client.version) ?? []))} />
+        </section>
         <section className="content-panel data-operation-panel">
           <header className="agent-panel-header">
             <div>

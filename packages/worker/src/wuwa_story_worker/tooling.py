@@ -9,6 +9,7 @@ DEFAULT_TOOLS_DIR = "/app/tools"
 
 # env var -> (default relative path inside WUWA_TOOLS_DIR, human description)
 TOOLS = {
+    "WUWA_BLENDER_PATH": ("blender/blender", "Blender model converter (dedicated model worker image)"),
     "WUWA_FMODEL_PATH": ("fmodelcli/FModelCLI", "FModelCLI extractor"),
     "WUWA_TEXTURE_CONVERTER_PATH": ("cue-cli/cue4parse", "CUE4Parse CLI texture/audio converter"),
     "WUWA_VGMSTREAM_PATH": ("vgmstream-cli", "vgmstream-cli audio decoder"),
@@ -23,7 +24,8 @@ def tool_path(env_name: str) -> Path:
     """
     default, description = TOOLS[env_name]
     configured = os.getenv(env_name)
-    path = Path(configured) if configured else Path(os.getenv("WUWA_TOOLS_DIR") or DEFAULT_TOOLS_DIR) / default
+    path = Path(configured) if configured else Path(
+        os.getenv("WUWA_TOOLS_DIR") or DEFAULT_TOOLS_DIR) / default
     if not path.is_file():
         raise RuntimeError(
             f"{description} not found at {path}. Rebuild the worker image "

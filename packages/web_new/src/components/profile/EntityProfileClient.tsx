@@ -3,6 +3,7 @@
 import { ArrowRight, BookOpen, ChevronRight, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api, apiUrl } from '@/api/client';
+import { CharacterModel } from '@/components/characters/CharacterModel';
 import {
   CharacterArchive,
   type CharacterArchiveData,
@@ -224,6 +225,9 @@ export function EntityProfileClient({
         ) : (
           <div className="character-archive-loading">Loading character details…</div>
         ))}
+      {kind === 'character' && entity?.canonical_key && (
+        <CharacterModel key={entity.canonical_key} characterKey={entity.canonical_key} name={name} />
+      )}
       <div className="profile-columns">
         <section className="content-panel">
           <PanelTitle

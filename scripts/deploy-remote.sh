@@ -162,9 +162,9 @@ case "$DEPLOY_COMPONENT" in
   api) services=(api) ;;
   web) services=(web) ;;
   caddy) services=(caddy) ;;
-  snapshot-worker) services=(snapshot-worker asset-worker media-worker image-worker audio-worker video-worker) ;;
+  snapshot-worker) services=(snapshot-worker asset-worker media-worker image-worker audio-worker video-worker model-worker) ;;
   story-agent|cutscene-vision) services=("$DEPLOY_COMPONENT") ;;
-  all) services=(api web caddy snapshot-worker asset-worker media-worker image-worker audio-worker video-worker story-agent cutscene-vision) ;;
+  all) services=(api web caddy snapshot-worker asset-worker media-worker image-worker audio-worker video-worker model-worker story-agent cutscene-vision) ;;
   *) echo "Unsupported DEPLOY_COMPONENT: $DEPLOY_COMPONENT" >&2; exit 2 ;;
 esac
 
@@ -174,7 +174,7 @@ if [[ "$DEPLOY_COMPONENT" == api || "$DEPLOY_COMPONENT" == all ]]; then
   # before DDL, and restore exactly the running containers even if migration fails.
   (
     mapfile -t migration_clients < <("${compose[@]}" ps -q --status running \
-      api snapshot-worker asset-worker media-worker image-worker audio-worker video-worker story-agent cutscene-vision)
+      api snapshot-worker asset-worker media-worker image-worker audio-worker video-worker model-worker story-agent cutscene-vision)
     if (( ${#migration_clients[@]} )); then
       trap 'docker start "${migration_clients[@]}" >/dev/null' EXIT
       docker stop --time 120 "${migration_clients[@]}"
@@ -197,7 +197,7 @@ fi
 case "$DEPLOY_COMPONENT" in
   snapshot-worker|all)
     "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-assets-long-jobs \
-      '^wuwa[.](snapshot-build|asset-(download|extract)|release-(media|images)|entity-(media|images)|event-media|pool-(coordinator|image|audio|video))[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues
+      '^wuwa[.](snapshot-build|asset-(download|extract)|release-(media|images)|entity-(media|images)|event-media|character-model|pool-(coordinator|image|audio|video))[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues
     ;;
 esac
 if [[ "$DEPLOY_COMPONENT" == caddy ]]; then
@@ -228,7 +228,7 @@ if [[ "$DEPLOY_COMPONENT" != caddy && "$DEPLOY_COMPONENT" != infrastructure ]]; 
 fi
 if [[ "$DEPLOY_COMPONENT" == infrastructure ]]; then
   "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-assets-long-jobs \
-    '^wuwa[.](snapshot-build|asset-(download|extract)|release-(media|images)|entity-(media|images)|event-media|pool-(coordinator|image|audio|video))[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues
+    '^wuwa[.](snapshot-build|asset-(download|extract)|release-(media|images)|entity-(media|images)|event-media|character-model|pool-(coordinator|image|audio|video))[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues
 fi
 # Updating a bind-mounted Caddyfile does not reload the running proxy. In
 # particular, switching the web image from nginx to Next.js changes its port.

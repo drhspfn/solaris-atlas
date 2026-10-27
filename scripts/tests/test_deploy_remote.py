@@ -1,8 +1,10 @@
 """Exercise deployment orchestration with Docker commands recorded, not executed."""
 
+import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -35,7 +37,8 @@ docker() { printf '%s\n' "$*"; printf '%s\n' "$*" >&2; }
 record_compose() {
   if [[ "$*" == "exec -T postgres "* && "$EMPTY_AUTH" == 1 ]]; then return; fi
   if [[ "$*" == "ps -q --status running "* ]]; then
-    printf '%s\n' api-container media-container-1 media-container-2
+    printf '%s\n' "$*" >&2
+    printf '%s\n' api-container media-container-1 media-container-2 model-container
     return
   fi
   printf '%s\n' "$*"
@@ -77,27 +80,34 @@ compose=(record_compose)
         result = self.deploy("snapshot-worker")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("caddy", result.stdout)
-        self.assertIn("up -d snapshot-worker asset-worker media-worker image-worker audio-worker video-worker", result.stdout)
+        self.assertIn("up -d snapshot-worker asset-worker media-worker image-worker audio-worker video-worker model-worker", result.stdout)
         commands = result.stdout.splitlines()
         policy = next(i for i, command in enumerate(commands) if "set_policy" in command)
         startup = next(i for i, command in enumerate(commands) if command.startswith("up -d"))
         self.assertLess(policy, startup)
         self.assertIn("pool-(coordinator|image|audio|video)", commands[policy])
+        self.assertIn("character-model", commands[policy])
+        pattern = commands[policy].split("wuwa-assets-long-jobs ", 1)[1].split(" ", 1)[0]
+        self.assertRegex("wuwa.character-model.v1", pattern)
 
     def test_infrastructure_waits_for_broker_before_setting_job_policy(self):
         result = self.deploy("infrastructure")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("up -d --wait postgres rabbitmq redis", result.stdout)
+        self.assertIn("character-model", result.stdout)
+        pattern = result.stdout.split("wuwa-assets-long-jobs ", 1)[1].split(" ", 1)[0]
+        self.assertRegex("wuwa.character-model.v1", pattern)
 
     def test_migrations_release_connections_and_restore_running_replicas(self):
         for fail in (False, True):
             with self.subTest(fail=fail):
                 result = self.deploy("api", fail_migration=fail)
                 self.assertEqual(result.returncode == 0, not fail, result.stderr)
-                self.assertIn("stop --time 120 api-container media-container-1 media-container-2", result.stdout)
+                self.assertIn("model-worker story-agent cutscene-vision", result.stderr)
+                self.assertIn("stop --time 120 api-container media-container-1 media-container-2 model-container", result.stdout)
                 self.assertIn('run --rm --no-deps api sh -ec export DATABASE_URL="$MIGRATION_DATABASE_URL"', result.stdout)
                 # docker start output is suppressed by the EXIT trap; record to stderr too.
-                self.assertIn("start api-container media-container-1 media-container-2", result.stderr)
+                self.assertIn("start api-container media-container-1 media-container-2 model-container", result.stderr)
                 if fail:
                     self.assertNotIn("up -d", result.stdout)
 
@@ -120,7 +130,75 @@ compose=(record_compose)
         result = self.deploy("snapshot-worker", worker_image="solaris-atlas-worker:workers-test")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("pull snapshot-worker", result.stdout)
-        self.assertIn("up -d snapshot-worker asset-worker media-worker image-worker audio-worker video-worker", result.stdout)
+        self.assertIn("pull model-worker", result.stdout)
+        self.assertIn("up -d snapshot-worker asset-worker media-worker image-worker audio-worker video-worker model-worker", result.stdout)
+
+    def test_full_deployment_pulls_and_starts_model_worker(self):
+        result = self.deploy("all")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for command in ("pull ", "up -d api "):
+            line = next(line for line in result.stdout.splitlines() if line.startswith(command) and "model-worker" in line)
+            self.assertIn("model-worker", line)
+
+
+class ModelWorkerConfigurationTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("docker"), "Docker Compose CLI is required")
+    def test_model_image_limits_and_replicas_are_independent_of_normal_workers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            empty = Path(directory) / "empty.env"
+            empty.write_text("")
+            environment = {**os.environ, "GHCR_OWNER": "test", "IMAGE_TAG": "abc1234",
+                           "DOMAIN": "example.invalid", "POSTGRES_USER": "test", "POSTGRES_PASSWORD": "fake",
+                           "RABBITMQ_DEFAULT_USER": "test", "RABBITMQ_DEFAULT_PASS": "fake",
+                           "WORKER_IMAGE": "solaris-atlas-worker:local", "MODEL_WORKER_IMAGE": "",
+                           "WUWA_MODEL_REPLICAS": ""}
+            for overrides, expected_image, replicas in [
+                ({}, "ghcr.io/test/solaris-atlas-models:abc1234", 1),
+                ({"MODEL_WORKER_IMAGE": "ghcr.io/test/custom-models:pinned", "WUWA_MODEL_REPLICAS": "2"},
+                 "ghcr.io/test/custom-models:pinned", 2),
+            ]:
+                with self.subTest(overrides=overrides):
+                    result = subprocess.run(
+                        ["docker", "compose", "--env-file", str(empty), "-f", str(ROOT / "infrastructure/prod/compose.yml"),
+                         "--profile", "workers", "--profile", "local-storage",
+                         "config", "--no-env-resolution", "--format", "json"],
+                        env={**environment, **overrides}, text=True, capture_output=True, timeout=20, check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    services = json.loads(result.stdout)["services"]
+                    model = services["model-worker"]
+                    self.assertEqual(model["image"], expected_image)
+                    self.assertEqual(model["command"], ["wuwa-story-worker", "run", "--queue", "character_model"])
+                    self.assertEqual(model["environment"]["WUWA_QUEUE_CONCURRENCY"], "character_model=1")
+                    self.assertEqual(float(model["cpus"]), 1)
+                    self.assertEqual(int(model["mem_limit"]), 2 * 1024**3)
+                    self.assertEqual(model["deploy"]["replicas"], replicas)
+                    self.assertEqual(model["volumes"], services["snapshot-worker"]["volumes"])
+                    self.assertEqual(model["depends_on"], services["snapshot-worker"]["depends_on"])
+                    for name in ("snapshot-worker", "asset-worker", "media-worker", "image-worker", "audio-worker", "video-worker"):
+                        self.assertEqual(services[name]["image"], "solaris-atlas-worker:local")
+
+    def test_published_models_have_immutable_worker_base_and_gate_deployment(self):
+        workflow = (ROOT / ".github/workflows/images.yml").read_text()
+        models = workflow.split("  model-tools:\n", 1)[1].split("  deploy:\n", 1)[0]
+        self.assertIn("needs: build", models)
+        self.assertIn("github.event_name == 'push'", models)
+        self.assertIn("inputs.component == 'models'", models)
+        self.assertIn('image="ghcr.io/${GITHUB_REPOSITORY,,}-models"', models)
+        self.assertIn('worker=ghcr.io/${GITHUB_REPOSITORY,,}-worker:$GITHUB_SHA', models)
+        self.assertIn('tags="$image:$GITHUB_SHA,$image:${GITHUB_SHA:0:7}"', models)
+        self.assertIn('tags="$tags,$image:main"', models)
+        self.assertIn("file: packages/worker/Dockerfile.models", models)
+        self.assertIn("push: true", models)
+        self.assertIn("cache-to: type=gha,mode=max,scope=models", models)
+        self.assertIn("needs: [build, model-tools]", workflow.split("  deploy:\n", 1)[1])
+
+    def test_production_validates_model_image_for_both_worker_deployment_groups(self):
+        workflow = (ROOT / ".github/workflows/production-deploy.yml").read_text()
+        self.assertIn("snapshot-worker) components=(worker models)", workflow)
+        self.assertIn("all) components=(api web worker models)", workflow)
+        self.assertIn("MODEL_WORKER_IMAGE: ${{ vars.MODEL_WORKER_IMAGE }}", workflow)
+        self.assertIn("WUWA_MODEL_REPLICAS: ${{ vars.WUWA_MODEL_REPLICAS }}", workflow)
 
 
 if __name__ == "__main__":

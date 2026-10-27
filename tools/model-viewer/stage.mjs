@@ -31,8 +31,9 @@ export function physicsProfile(rows, source, sha256) {
 async function stage() {
   const { values } = parseArgs({ options: {
     model: { type: 'string' }, blueprint: { type: 'string' }, output: { type: 'string' },
+    'assets-only': { type: 'boolean', default: false },
   } });
-  if (!values.model || !values.blueprint || !values.output) {
+  if (!values.output || (!values['assets-only'] && (!values.model || !values.blueprint))) {
     throw new Error('Usage: npm run stage -- --model path.glb --blueprint ABP_PC.json --output preview-directory');
   }
   const root = dirname(fileURLToPath(import.meta.url));
@@ -41,9 +42,6 @@ async function stage() {
   if (!relativeOutput || (!relativeOutput.startsWith('..') && !isAbsolute(relativeOutput))) {
     throw new Error('Keep generated artifacts outside the source directory');
   }
-  const source = await readFile(values.blueprint);
-  const profile = physicsProfile(JSON.parse(source.toString('utf8').replace(/^\uFEFF/, '')),
-    values.blueprint, createHash('sha256').update(source).digest('hex'));
   await mkdir(output, { recursive: true });
   for (const name of ['index.html', 'viewer.css', 'viewer.js', 'spring-bones.js']) {
     await copyFile(join(root, name), join(output, name));
@@ -55,6 +53,10 @@ async function stage() {
     await mkdir(dirname(join(output, 'vendor', name)), { recursive: true });
     await copyFile(join(vendor, name), join(output, 'vendor', name));
   }
+  if (values['assets-only']) { console.log(JSON.stringify({ output, viewerAssets: true })); return; }
+  const source = await readFile(values.blueprint);
+  const profile = physicsProfile(JSON.parse(source.toString('utf8').replace(/^\uFEFF/, '')),
+    values.blueprint, createHash('sha256').update(source).digest('hex'));
   if (resolve(values.model) !== join(output, 'character.glb')) {
     await copyFile(values.model, join(output, 'character.glb'));
   }

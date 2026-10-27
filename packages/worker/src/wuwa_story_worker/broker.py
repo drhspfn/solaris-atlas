@@ -301,7 +301,7 @@ async def consume_jobs(
                             await message.ack()
                             return
                         if source_key in {"release_media", "event_media", "entity_media", "release_images", "entity_images", "asset_download",
-                                       "asset_extract", "snapshot_build"}:
+                                       "asset_extract", "snapshot_build", "character_model"}:
                             if not await claim_import(payload, redelivered=message.redelivered
                                                       or (message.headers or {}).get("pool_redelivered") is True):
                                 if source_key in MEDIA_QUEUES:

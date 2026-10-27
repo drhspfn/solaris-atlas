@@ -5,6 +5,16 @@ import { SpringBones } from './spring-bones.js';
 
 const $ = id => document.getElementById(id);
 const viewport = $('viewport'), status = $('status');
+const parameters = new URLSearchParams(location.search);
+const displayName = parameters.get('name');
+if (displayName) { document.querySelector('h1').textContent = displayName; document.title = `${displayName} · Model viewer`; }
+function resourceUrl(value) {
+  const url = new URL(value, location.href);
+  if (url.origin !== location.origin || !['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('Model resources must be served from the viewer origin.');
+  }
+  return url.href;
+}
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#111b1d');
 scene.fog = new THREE.Fog('#111b1d', 8, 24);
@@ -45,11 +55,12 @@ scene.add(floor);
 $('floor').onchange = () => { floor.visible = $('floor').checked; $('axis-key').hidden = !floor.visible; };
 
 let model, mixer, action, physics, applied = false, playing = !matchMedia('(prefers-reduced-motion: reduce)').matches;
-let height = 1.8, clips = [], previousTime = 0;
+let height = 1.8, modelWidth = 1.2, clips = [], previousTime = 0;
 const homeTarget = new THREE.Vector3();
 function resetView() {
   controls.target.copy(homeTarget);
-  camera.position.copy(homeTarget).add(new THREE.Vector3(0, height * 0.12, height * 2.05));
+  const distance = Math.max(height, modelWidth / camera.aspect) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.15;
+  camera.position.copy(homeTarget).add(new THREE.Vector3(0, height * 0.12, distance));
   controls.update();
 }
 $('reset').onclick = resetView;
@@ -100,21 +111,24 @@ function timestamp(seconds) {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 }
 function updateTime() {
+  if (!action) return;
   $('time').value = action.time;
   $('duration').value = `${timestamp(action.time)} / ${timestamp(action.getClip().duration)}`;
 }
 new ResizeObserver(() => {
   const { width, height } = viewport.getBoundingClientRect();
   renderer.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix();
+  if (model) resetView();
 }).observe(viewport);
 document.addEventListener('visibilitychange', () => { previousTime = 0; resetPhysics(); });
 renderer.setAnimationLoop(milliseconds => {
   const dt = previousTime ? (milliseconds - previousTime) / 1000 : 0;
   previousTime = milliseconds;
-  if (mixer && playing && !document.hidden) {
+  if (mixer && (playing || $('turntable').checked) && !document.hidden) {
     restorePhysics();
     const safeDelta = dt > 0.15 ? 0 : dt;
-    mixer.update(safeDelta * Number($('speed').value));
+    if ($('turntable').checked) model.rotation.y += safeDelta * 0.5;
+    mixer.update(playing ? safeDelta * Number($('speed').value) : 0);
     if ($('physics').checked) {
       if (dt > 0.15) physics.reset();
       physics.update(safeDelta, Number($('strength').value)); applied = safeDelta > 0;
@@ -126,13 +140,14 @@ renderer.setAnimationLoop(milliseconds => {
 
 async function load() {
   try {
-    const gltf = await new GLTFLoader().loadAsync('./character.glb', progress => {
+    const gltf = await new GLTFLoader().loadAsync(resourceUrl(parameters.get('model') || './character.glb'), progress => {
       status.textContent = progress.total ? `Loading model · ${Math.round(progress.loaded / progress.total * 100)}%` : 'Loading model…';
     });
     model = gltf.scene; scene.add(model);
     const bounds = new THREE.Box3().setFromObject(model);
     const center = bounds.getCenter(new THREE.Vector3());
     height = bounds.max.y - bounds.min.y;
+    modelWidth = bounds.max.x - bounds.min.x;
     model.position.add(new THREE.Vector3(-center.x, -bounds.min.y, -center.z));
     model.updateMatrixWorld(true);
     homeTarget.set(0, height * 0.5, 0); resetView();
@@ -149,10 +164,13 @@ async function load() {
       const posedBounds = new THREE.Box3().setFromObject(model, true);
       model.position.y -= posedBounds.min.y;
     }
-    status.textContent = `${clips.length} clips · local client export`;
+    status.textContent = clips.length ? `${clips.length} clips · local client export` : 'Rigged model · no animations';
+    $('playback').hidden = clips.length === 0;
     updatePlayButton();
     try {
-      const response = await fetch('./physics.json');
+      const physicsUrl = parameters.get('physics') || (parameters.has('model') ? null : './physics.json');
+      if (!physicsUrl) throw new Error('No physics profile');
+      const response = await fetch(resourceUrl(physicsUrl));
       if (!response.ok) throw new Error('Physics profile unavailable');
       physics = new SpringBones(model, await response.json());
       $('physics').disabled = physics.joints.length === 0;

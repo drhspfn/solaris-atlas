@@ -1,0 +1,21 @@
+.character-model { margin-block: 24px; }
+.character-model h2 { font-size: 20px; margin-bottom: 12px; }
+.character-model p, .character-model-import p { color: var(--text-secondary); line-height: 1.6; overflow-wrap: anywhere; }
+.character-model-actions, .character-model-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-block: 16px; }
+.character-model button, .character-model-import button, .character-model-actions a {
+  min-height: 44px; padding: 10px 14px; border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-primary);
+  font: inherit; cursor: pointer;
+}
+.character-model button:hover, .character-model-import button:hover, .character-model-actions a:hover { border-color: var(--mint); }
+.character-model button:disabled, .character-model-import button:disabled { opacity: .6; cursor: wait; }
+.character-model :focus-visible, .character-model-import :focus-visible { outline: 2px solid var(--accent-cyan); outline-offset: 3px; }
+.character-model-frame { display: block; width: 100%; height: min(720px, 75vh); min-height: 360px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); margin-top: 16px; }
+.character-model-import { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-default); }
+.data-operation-panel > .character-model-import { margin: 0; padding: 12px 20px 20px; border-top: 0; }
+.character-model-import summary { cursor: pointer; min-height: 44px; align-content: center; }
+.character-model-form label { display: grid; gap: 6px; font-size: 13px; color: var(--text-secondary); }
+.character-model-form input:not([type="checkbox"]) { min-height: 44px; max-width: 100%; padding: 8px 10px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-1); color: var(--text-primary); font: inherit; }
+.character-model-form .character-model-force { display: flex; align-items: center; min-height: 44px; }
+.character-model [role="alert"], .character-model-import [role="alert"] { color: var(--text-primary); }
+@media (max-width: 600px) { .character-model-form { align-items: stretch; flex-direction: column; } .character-model-actions { align-items: stretch; flex-direction: column; } }

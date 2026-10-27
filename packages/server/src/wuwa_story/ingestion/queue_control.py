@@ -13,6 +13,7 @@ from wuwa_story.ingestion.media_queues import MEDIA_POOLS, media_pool
 
 logger = logging.getLogger(__name__)
 QUEUE_PROCESSORS = {
+    "wuwa.character-model.v1": {"character_model"},
     "wuwa.release-images.v1": {"release_media"},
     "wuwa.entity-images.v1": {"entity_media"},
     "wuwa.release-media.v1": {"release_media"},
