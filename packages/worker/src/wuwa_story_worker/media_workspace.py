@@ -297,21 +297,69 @@ async def cleanup_workspace(workspace_id: int | None) -> bool:
                 logger.info("media_workspace.retained workspace=%s reason=active_lease", workspace_id)
                 return False
             async with SessionFactory(bind=connection) as session:
-                # Read after acquiring the lock, not from a stale task session.
+                # A positive direct match is enough to retain files. Avoid loading
+                # terminal reports while current jobs are obviously still queued.
+                active = await session.scalar(text("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM ops.processing_run
+                        WHERE status <> ALL(CAST(:terminal AS text[])) AND (
+                            id = :workspace_id
+                            OR metadata->'request'->>'workspace_id' = :identity
+                            OR metadata->'payload'->>'workspace_id' = :identity
+                            OR metadata->'request'->>'parent_id' = :identity
+                            OR metadata->'payload'->>'parent_id' = :identity)
+                    )
+                """), {"workspace_id": workspace_id, "identity": str(workspace_id),
+                       "terminal": sorted(TERMINAL)})
+                if active:
+                    return False
+                # Project once: recursive UNION over full reports repeatedly detoasts
+                # megabytes per run and holds the cleanup lease for minutes.
                 graph = text("""
-                    WITH RECURSIVE members AS (
-                        SELECT * FROM ops.processing_run
+                    WITH RECURSIVE nodes AS MATERIALIZED (
+                        SELECT id, status,
+                            jsonb_typeof(metadata->'request') = 'object'
+                                AND metadata->'request' <> '{}'::jsonb AS has_request,
+                            metadata->'request'->'kind' AS request_kind,
+                            metadata->'request'->'parent_id' AS request_parent,
+                            metadata->'request'->'workspace_id' AS request_workspace,
+                            metadata->'payload'->'kind' AS payload_kind,
+                            metadata->'payload'->'parent_id' AS payload_parent,
+                            metadata->'payload'->'workspace_id' AS payload_workspace,
+                            raw_output->'workspace_id' AS output_workspace,
+                            raw_output->'entity_run_id' AS entity_run
+                        FROM ops.processing_run
+                    ), links AS MATERIALIZED (
+                        SELECT id::text AS child, request_parent #>> '{}' AS parent
+                        FROM nodes WHERE request_parent IS NOT NULL
+                        UNION ALL
+                        SELECT id::text, payload_parent #>> '{}'
+                        FROM nodes WHERE payload_parent IS NOT NULL
+                        UNION ALL
+                        SELECT entity_run #>> '{}', id::text
+                        FROM nodes WHERE entity_run IS NOT NULL
+                    ), members(id) AS (
+                        SELECT id::text FROM nodes
                         WHERE id = :workspace_id
-                           OR metadata->'request'->>'workspace_id' = :identity
-                           OR metadata->'payload'->>'workspace_id' = :identity
-                           OR raw_output->>'workspace_id' = :identity
-                        UNION
-                        SELECT child.* FROM ops.processing_run child
-                        JOIN members parent ON
-                            child.metadata->'request'->>'parent_id' = parent.id::text
-                            OR child.metadata->'payload'->>'parent_id' = parent.id::text
-                            OR parent.raw_output->>'entity_run_id' = child.id::text
-                    ) SELECT * FROM members
+                           OR request_workspace #>> '{}' = :identity
+                           OR payload_workspace #>> '{}' = :identity
+                           OR output_workspace #>> '{}' = :identity
+                        UNION SELECT links.child FROM links JOIN members
+                            ON links.parent = members.id
+                    )
+                    SELECT run.id, run.status,
+                        jsonb_build_object(
+                            'request', CASE WHEN run.has_request THEN jsonb_build_object(
+                                'kind', run.request_kind, 'parent_id', run.request_parent,
+                                'workspace_id', run.request_workspace) END,
+                            'payload', jsonb_build_object(
+                                'kind', run.payload_kind, 'parent_id', run.payload_parent,
+                                'workspace_id', run.payload_workspace)
+                        ) AS metadata,
+                        jsonb_build_object(
+                            'workspace_id', run.output_workspace, 'entity_run_id', run.entity_run
+                        ) AS raw_output
+                    FROM nodes run JOIN members ON members.id = run.id::text
                 """)
                 runs = list(await session.scalars(select(ProcessingRun).from_statement(graph),
                                                  {"workspace_id": workspace_id, "identity": str(workspace_id)}))

@@ -146,6 +146,7 @@ def mock_database(monkeypatch, runs, *, acquired=True):
     connection, session = AsyncMock(), AsyncMock()
     connection.scalar.return_value = acquired
     session.scalars.return_value = runs
+    session.scalar.return_value = False
 
     @asynccontextmanager
     async def connect():
@@ -177,6 +178,16 @@ async def test_active_execution_lease_blocks_cleanup_even_for_cancelled_rows(mon
     assert not await workspaces.cleanup_workspace(11)
     session.scalars.assert_not_awaited()
     assert connection.scalar.await_args.args[1] == {"key": 11}
+    connection.invalidate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_obviously_active_tree_skips_full_reports_and_never_deletes(monkeypatch):
+    connection, session = mock_database(monkeypatch, [])
+    session.scalar.return_value = True
+    monkeypatch.setattr(workspaces, "remove_workspace", lambda *_: pytest.fail("active task"))
+    assert not await workspaces.cleanup_workspace(11)
+    session.scalars.assert_not_awaited()
     connection.invalidate.assert_awaited_once()
 
 
