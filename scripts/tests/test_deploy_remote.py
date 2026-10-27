@@ -171,7 +171,7 @@ class ModelWorkerConfigurationTests(unittest.TestCase):
                     self.assertEqual(model["command"], ["wuwa-story-worker", "run", "--queue", "character_model"])
                     self.assertEqual(model["environment"]["WUWA_QUEUE_CONCURRENCY"], "character_model=1")
                     self.assertEqual(float(model["cpus"]), 1)
-                    self.assertEqual(int(model["mem_limit"]), 3 * 1024**3)
+                    self.assertEqual(int(model["mem_limit"]), 4 * 1024**3)
                     self.assertEqual(model["deploy"]["replicas"], replicas)
                     self.assertEqual(model["volumes"], services["snapshot-worker"]["volumes"])
                     self.assertEqual(model["depends_on"], services["snapshot-worker"]["depends_on"])

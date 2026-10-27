@@ -226,7 +226,7 @@ services:
     command: ["wuwa-story-worker", "run", "--queue", "character_model"]
     cpus: 1
     # Animation export retains the rig and all decoded actions until GLB assembly.
-    mem_limit: 3g
+    mem_limit: 4g
     deploy:
       replicas: ${WUWA_MODEL_REPLICAS:-1}
     environment:
