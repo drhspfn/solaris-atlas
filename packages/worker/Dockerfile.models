@@ -1,6 +1,13 @@
 # Optional model conversion image. Build the normal worker first, then pass its
 # immutable image tag/digest as WORKER_IMAGE. Production workers stay unchanged.
 ARG WORKER_IMAGE
+FROM node:22-slim AS model-viewer-assets
+WORKDIR /viewer
+COPY tools/model-viewer/package.json tools/model-viewer/package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY tools/model-viewer/ ./
+RUN node stage.mjs --output /static/model-viewer --assets-only
+
 FROM ${WORKER_IMAGE}
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -23,6 +30,7 @@ RUN curl -fSL --retry 3 \
 ENV WUWA_BLENDER_PATH=/app/tools/blender/blender \
     WUWA_UEFORMAT_PLUGIN=/app/tools/ueformat/plugins/blender
 COPY packages/worker/src/wuwa_story_worker/model_bundle.py /app/packages/worker/src/wuwa_story_worker/model_bundle.py
+COPY --from=model-viewer-assets /static/model-viewer /app/model-viewer
 USER appuser
 RUN --network=none /app/tools/blender/blender -b --factory-startup --python-exit-code 1 \
     --python-expr "import sys; sys.path[:0]=['/app/tools/ueformat/plugins/blender','/app/packages/worker/src']; from io_scene_ueformat.importer.import_context import UEFormatImport; from wuwa_story_worker.model_bundle import indexed_gltf_references; from io_scene_gltf2.blender.exp.exporter import GlTF2Exporter; from io_scene_gltf2.io.com.gltf2_io import Accessor, BufferView; guard=indexed_gltf_references(GlTF2Exporter,(Accessor,BufferView)); guard.__enter__(); guard.__exit__(None,None,None); print('UEFormat and glTF reference index ready')"

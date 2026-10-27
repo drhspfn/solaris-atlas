@@ -5,6 +5,16 @@ import { SpringBones } from './spring-bones.js';
 
 const $ = id => document.getElementById(id);
 const viewport = $('viewport'), status = $('status');
+const parameters = new URLSearchParams(location.search);
+const displayName = parameters.get('name');
+if (displayName) { document.querySelector('h1').textContent = displayName; document.title = `${displayName} · Model viewer`; }
+function resourceUrl(value) {
+  const url = new URL(value, location.href);
+  if (url.origin !== location.origin || !['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('Model resources must be served from the viewer origin.');
+  }
+  return url.href;
+}
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#111b1d');
 scene.fog = new THREE.Fog('#111b1d', 8, 24);
@@ -126,7 +136,7 @@ renderer.setAnimationLoop(milliseconds => {
 
 async function load() {
   try {
-    const gltf = await new GLTFLoader().loadAsync('./character.glb', progress => {
+    const gltf = await new GLTFLoader().loadAsync(resourceUrl(parameters.get('model') || './character.glb'), progress => {
       status.textContent = progress.total ? `Loading model · ${Math.round(progress.loaded / progress.total * 100)}%` : 'Loading model…';
     });
     model = gltf.scene; scene.add(model);
@@ -149,10 +159,13 @@ async function load() {
       const posedBounds = new THREE.Box3().setFromObject(model, true);
       model.position.y -= posedBounds.min.y;
     }
-    status.textContent = `${clips.length} clips · local client export`;
+    status.textContent = clips.length ? `${clips.length} clips · local client export` : 'Rigged model · no animations';
+    $('playback').hidden = clips.length === 0;
     updatePlayButton();
     try {
-      const response = await fetch('./physics.json');
+      const physicsUrl = parameters.get('physics') || (parameters.has('model') ? null : './physics.json');
+      if (!physicsUrl) throw new Error('No physics profile');
+      const response = await fetch(resourceUrl(physicsUrl));
       if (!response.ok) throw new Error('Physics profile unavailable');
       physics = new SpringBones(model, await response.json());
       $('physics').disabled = physics.joints.length === 0;

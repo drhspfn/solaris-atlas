@@ -38,6 +38,7 @@ from wuwa_story_worker.asset_jobs import (
     extract_client_assets,
 )
 from wuwa_story_worker.broker import consume_jobs, recover_media_workspaces, replay_failed_jobs
+from wuwa_story_worker.character_models import process_character_model
 from wuwa_story_worker.client_assets import discover_plan, download_plan, save_json
 from wuwa_story_worker.cutscene_vision import dispatch_visual_jobs, process_cutscene_vision
 from wuwa_story_worker.entity_media import process_entity_media
@@ -237,6 +238,7 @@ async def _run(queues: list[str] | None = None, pool: str | None = None) -> None
         except NotImplementedError:  # Windows uses KeyboardInterrupt cancellation.
             pass
     handlers = {
+        "character_model": process_character_model,
         "release_images": process_release_media,
         "entity_images": process_entity_media,
         "release_media": process_release_media,

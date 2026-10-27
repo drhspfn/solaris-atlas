@@ -16,6 +16,7 @@ class QueueSpec:
 
 
 QUEUES = {
+    "character_model": QueueSpec(key="character_model", name="wuwa.character-model.v1", default_concurrency=1),
     "release_images": QueueSpec(key="release_images", name="wuwa.release-images.v1", default_concurrency=2),
     "entity_images": QueueSpec(key="entity_images", name="wuwa.entity-images.v1", default_concurrency=2),
     "release_media": QueueSpec(key="release_media", name="wuwa.release-media.v1", default_concurrency=4),
@@ -44,7 +45,8 @@ QUEUES = {
 # the coordinator forwards their unchanged payloads with publisher confirmation.
 for _pool in MEDIA_POOLS:
     _key = f"pool_{_pool}"
-    QUEUES[_key] = QueueSpec(_key, f"wuwa.pool-{_pool}.v1", 3 if _pool == "coordinator" else 1)
+    QUEUES[_key] = QueueSpec(
+        _key, f"wuwa.pool-{_pool}.v1", 3 if _pool == "coordinator" else 1)
 
 
 def queue_concurrency() -> dict[str, int]:
@@ -65,5 +67,6 @@ def queue_concurrency() -> dict[str, int]:
             raise ValueError(f"Concurrency for queue {key!r} must be positive")
         values[key] = limit
     if values["snapshot_build"] * int(os.getenv("WUWA_SNAPSHOT_REPLICAS", "1")) > 4:
-        raise ValueError("snapshot_build concurrency cannot exceed 4 fetch/compile tasks")
+        raise ValueError(
+            "snapshot_build concurrency cannot exceed 4 fetch/compile tasks")
     return values
