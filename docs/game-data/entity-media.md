@@ -54,6 +54,15 @@ reference publication per owner. Completed/partial jobs skip redelivery.
 Failures are visible in the run and the existing dead-letter queue; repeat the
 same admin request or replay the failed queue after correcting the cause.
 
+PlotAudio publication prepares decoded files and their durable objects before
+taking the per-owner transaction lock. The short transaction publishes all tracks
+and their complete roster together; a failed publication can safely retry using
+the same content hashes. File-variant registration uses conflict-safe inserts
+across independent workers. Storage calls have bounded connection/read timeouts
+and retries. Database disconnects, contention and timeout failures use the durable
+delay queue with at most three automatic retries before operator-visible failure.
+This does not turn missing source files into successful publications.
+
 Missing historical textures do not discard available images. A `partial` result
 lists exact unresolved image paths; converter failures still fail the job.
 Image decoding caches verify output and raw-file hashes and include both tool

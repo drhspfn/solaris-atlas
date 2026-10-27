@@ -326,7 +326,11 @@ async def consume_jobs(
                             await message.nack(requeue=True)
                     except DBAPIError as error:
                         retries = int((message.headers or {}).get("db_retry_count", 0))
-                        if getattr(error.orig, "sqlstate", None) in {"40P01", "40001"} and retries < 3:
+                        code = getattr(error.orig, "sqlstate", None)
+                        transient = (error.connection_invalidated or
+                                     code in {"40P01", "40001", "55P03", "57014", "53300", "57P01"}
+                                     or bool(code and code.startswith("08")))
+                        if transient and retries < 3:
                             try:
                                 if payload.get("run_id") is not None:
                                     await update_admin_run(payload["run_id"], processor_key, "waiting_dependency",

@@ -227,14 +227,21 @@ async def import_voice_sample(root: Path, decoder: Path, asset_version: str, *,
                  else {voice_package_path(root, path, source_context)
                        for tracks in grouped.values() for path in tracks.values()})
         existing = await verified_references(session, storage, "voice_audio", source, paths) if source else []
+        # Return the read connection before decoding, hashing or uploading any exports.
+        await session.commit()
+        existing_by_owner, existing_by_path = {}, {}
+        for ref in existing:
+            existing_by_owner.setdefault(ref.owner_node_id, []).append(ref)
+            existing_by_path.setdefault((ref.source_path, ref.source_name), []).append(ref)
         authoritative_missing = set()
         for voice in voices:
             inventory = roster[voice.file_name] if roster is not None else [
                          {"source_name": path.name, "path": voice_package_path(root, path, source_context),
                           "language": language, "rover": rover}
                          for (language, rover), path in grouped[voice.file_name].items()]
-            owned = {ref.source_path: ref for ref in existing if ref.owner_node_id == voice.node_id
-                     and ref.metadata_json.get("voice_name") == voice.file_name}
+            owned = {ref.source_path: ref for ref in existing_by_owner.get(voice.node_id, [])
+                     if ref.metadata_json.get("voice_name") == voice.file_name}
+            prepared_tracks = []
             for (language, rover), path in grouped[voice.file_name].items():
                 source_path = (voice_package_path(root, path, source_context) if source
                                else path.relative_to(root).as_posix())
@@ -248,10 +255,32 @@ async def import_voice_sample(root: Path, decoder: Path, asset_version: str, *,
                 ) if source else None
                 if provenance:
                     provenance["source_files"][0]["package_path"] = source_path
-                reusable = next((ref for ref in existing if ref.source_path == source_path
-                                 and ref.source_name == path.name
-                                 and ref.metadata_json["game_source"]["source_files"] == provenance["source_files"]), None)
-                await session.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": voice.node_id})
+                reusable = next((ref for ref in existing_by_path.get((source_path, path.name), [])
+                                 if ref.metadata_json["game_source"]["source_files"] == provenance["source_files"]), None)
+                prepared = None
+                if reusable is None and path not in converted:
+                    wav = path.with_suffix(".wav")
+                    temporary = path.with_suffix(".partial.wav")
+                    try:
+                        await asyncio.to_thread(subprocess.run,
+                                                [str(decoder.resolve()), "-i", "-o",
+                                                 str(temporary.resolve()), str(path.resolve())],
+                                                check=True, capture_output=True, timeout=120)
+                        with wave.open(str(temporary), "rb") as audio:
+                            duration = audio.getnframes() / audio.getframerate()
+                            if duration <= 0:
+                                raise ValueError(f"Empty decoded voice: {path.name}")
+                        temporary.replace(wav)
+                    finally:
+                        temporary.unlink(missing_ok=True)
+                    original = await registration.prepare_file(path, mime_type="audio/x-wem")
+                    playable = await registration.prepare_file(wav, mime_type="audio/wav")
+                    prepared = original, playable, duration
+                prepared_tracks.append((language, rover, path, source_path, provenance, reusable, prepared))
+
+            # Only database work remains; keep every track and the roster atomic per owner.
+            await session.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": voice.node_id})
+            for language, rover, path, source_path, provenance, reusable, prepared in prepared_tracks:
                 if reusable is not None:
                     ref = await session.scalar(select(FileReference).where(
                         FileReference.owner_node_id == voice.node_id,
@@ -272,20 +301,13 @@ async def import_voice_sample(root: Path, decoder: Path, asset_version: str, *,
                     owned[source_path] = ref
                     count += 1
                     continue
-                wav = path.with_suffix(".wav")
-                temporary = path.with_suffix(".partial.wav")
                 if path not in converted:
-                    await asyncio.to_thread(subprocess.run,
-                                        [str(decoder.resolve()), "-i", "-o",
-                                         str(temporary.resolve()), str(path.resolve())],
-                                        check=True, capture_output=True, timeout=120)
-                    with wave.open(str(temporary), "rb") as audio:
-                        duration = audio.getnframes() / audio.getframerate()
-                        if duration <= 0:
-                            raise ValueError(f"Empty decoded voice: {path.name}")
-                    temporary.replace(wav)
-                    original = await registration.register_file(session, path, "audio_wem", mime_type="audio/x-wem")
-                    playable = await registration.register_file(session, wav, "audio_wav", mime_type="audio/wav")
+                    original_prepared, playable_prepared, duration = prepared
+                    original = await registration.register_file(
+                        session, path, "audio_wem", mime_type="audio/x-wem", prepared=original_prepared)
+                    playable = await registration.register_file(
+                        session, path.with_suffix(".wav"), "audio_wav", mime_type="audio/wav",
+                        prepared=playable_prepared)
                     variant = await registration.register_variant(session, original.id, playable.id, "voice_pcm_wav")
                     if provenance:
                         variant.metadata_json = {"game_source": provenance}
