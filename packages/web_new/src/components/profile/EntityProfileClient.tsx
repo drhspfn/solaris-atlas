@@ -548,8 +548,12 @@ export function EntityProfileClient({
                               {character.label || character.canonical_key}
                             </Link>
                             <small>
-                              Resonator · {uses.length} source{' '}
-                              {uses.length === 1 ? 'entry' : 'entries'}
+                              Resonator
+                              {ascensionUses.length > 0 && (
+                                <> · Lv. {ascensionUses[0].level_cap}
+                                  {ascensionUses.length > 1 && `–${ascensionUses.at(-1)?.level_cap}`}
+                                </>
+                              )}
                             </small>
                           </div>
                           <ArrowRight size={14} />

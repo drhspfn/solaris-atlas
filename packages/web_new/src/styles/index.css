@@ -5605,6 +5605,46 @@ select {
   margin-top: 12px;
   border-top: 1px solid #334139;
 }
+.character-artwork-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+.character-artwork-card {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--surface-1);
+  overflow: hidden;
+}
+.character-artwork-card > a,
+.character-artwork-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  aspect-ratio: 1;
+}
+.character-artwork-card img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.character-artwork-placeholder {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.character-artwork-card figcaption {
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-default);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
 .character-asset-list > div {
   display: grid;
   grid-template-columns: 150px minmax(0, 1fr) auto;
