@@ -62,6 +62,7 @@ def test_admin_auth_and_csrf_are_enforced(monkeypatch):
         {"character_key": "../1505"},
         {"character_key": "item:1505"},
         {"force": "yes"},
+        {"include_animations": "yes"},
         {"source_path": "/private/model"},
         {"game_version": ""},
     ],
@@ -129,6 +130,7 @@ async def test_exact_durable_payload_and_confirmation(enqueue_context):
         "asset_version": "3.7.0",
         "download_id": "a" * 64,
         "tier": "hd",
+        "include_animations": True,
     }
     assert run.metadata_json == {"payload": expected, "queue": service.QUEUE}
     assert publish.await_args.args[0] == expected
@@ -169,6 +171,22 @@ async def test_idempotency_never_duplicates_active_or_unforced_completed(
     assert run is existing
     publish.assert_not_awaited()
     db.add.assert_not_called()
+
+
+async def test_animation_import_is_explicit_in_durable_identity(enqueue_context):
+    db, publish = enqueue_context
+    request = service.CharacterModelRequest(
+        character_key="character:1505", include_animations=False
+    )
+    run = await service.enqueue_character_model(db, request)
+    assert publish.await_args.args[0]["include_animations"] is False
+    legacy = {
+        key: value
+        for key, value in run.metadata_json["payload"].items()
+        if key != "include_animations"
+    }
+    assert service.CharacterModelJob.model_validate(legacy).include_animations is False
+    assert service.CharacterModelRequest(character_key="character:1505").include_animations is True
 
 
 @pytest.mark.parametrize(
@@ -238,6 +256,7 @@ async def test_status_is_processor_scoped():
 async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeypatch):
     rows = [
         ("character_model_preview", "new", "objects/new-preview", 100, None),
+        ("character_model_animations", "new", "objects/new-animations", 500, None),
         ("character_model_download", "old", "objects/old-download", 200, None),
         ("character_model_physics", "old", "objects/old-physics", 30, None),
     ]
@@ -255,6 +274,7 @@ async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeyp
         "preview": None,
         "download": None,
         "physics": None,
+        "animations": None,
         "viewer_url": None,
     }
     rows.append(("character_model_preview", "old", "objects/old-preview", 99, None))
@@ -267,6 +287,7 @@ async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeyp
     rows.insert(1, ("character_model_download", "new", "objects/new-download", 250, None))
     result = await service.public_character_model(AsyncMock(), 15, release)
     assert result["preview"]["size_bytes"] == 100
+    assert result["animations"]["size_bytes"] == 500
     assert result["download"]["size_bytes"] == 250
     assert result["physics"] is None
     assert result["viewer_url"] is None

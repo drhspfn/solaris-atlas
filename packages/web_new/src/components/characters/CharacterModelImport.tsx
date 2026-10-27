@@ -61,6 +61,7 @@ function ImportControls({
   const [key, setKey] = useState(characterKey ?? "");
   const [version, setVersion] = useState(initialGameVersion ?? "");
   const [force, setForce] = useState(false);
+  const [includeAnimations, setIncludeAnimations] = useState(true);
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -148,6 +149,7 @@ function ImportControls({
           character_key: key.trim(),
           ...(version.trim() ? { game_version: version.trim() } : {}),
           force,
+          include_animations: includeAnimations,
         },
       });
       if (controller.signal.aborted) return;
@@ -174,7 +176,10 @@ function ImportControls({
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary>Import character model · admin</summary>
-      <p>Import a rigged model with textures. Animations are not included.</p>
+      <p>
+        Import a rigged model with textures. Animations are stored separately and
+        load on demand.
+      </p>
       <form
         noValidate
         onSubmit={(event) => void submit(event)}
@@ -218,6 +223,15 @@ function ImportControls({
             />
           </label>
         )}
+        <label className="character-model-force">
+          <input
+            type="checkbox"
+            checked={includeAnimations}
+            disabled={busy || pending}
+            onChange={(event) => setIncludeAnimations(event.target.checked)}
+          />{" "}
+          Include animations as a separate download
+        </label>
         <label className="character-model-force">
           <input
             type="checkbox"

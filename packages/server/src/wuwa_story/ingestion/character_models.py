@@ -37,6 +37,7 @@ class CharacterModelRequest(BaseModel):
     character_key: str = Field(pattern=r"^character:[1-9][0-9]*$")
     game_version: str | None = Field(default=None, min_length=1, max_length=64)
     force: bool = Field(default=False, strict=True)
+    include_animations: bool = Field(default=True, strict=True)
 
 
 class CharacterModelJob(BaseModel):
@@ -51,6 +52,8 @@ class CharacterModelJob(BaseModel):
     asset_version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
     download_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     tier: Literal["sd", "hd", "uhd"]
+    # Legacy queued jobs contain only the rig; new requests opt in explicitly.
+    include_animations: bool = Field(default=False, strict=True)
 
 
 async def enqueue_character_model(session, request: CharacterModelRequest):
@@ -75,6 +78,7 @@ async def enqueue_character_model(session, request: CharacterModelRequest):
         asset_version=client["version"],
         download_id=client["download_id"],
         tier=client["tier"],
+        include_animations=request.include_animations,
     )
     identity = job.model_dump(exclude={"run_id"})
     digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).digest()
@@ -138,6 +142,7 @@ async def public_character_model(session, owner_node_id, release):
         "preview": None,
         "download": None,
         "physics": None,
+        "animations": None,
         "viewer_url": None,
     }
     if release is None:

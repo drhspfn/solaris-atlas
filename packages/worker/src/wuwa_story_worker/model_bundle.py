@@ -53,6 +53,19 @@ def retime_tracks(dto, fps=30):
                 keys.append(last)
 
 
+def animation_exclusion(dto, *, require_decoded=False):
+    """Distinguish intentional non-body clips from failed animation decoding."""
+    if not dto.metadata or not dto.tracks:
+        if require_decoded and (not dto.metadata or not dto.curves):
+            raise ValueError("Animation has no decoded tracks or curves")
+        return "curves_only" if dto.curves else "no_decoded_tracks"
+    if dto.metadata.additive_anim_type:
+        return "additive"
+    if dto.metadata.num_frames < 2:
+        return "single_frame"
+    return None
+
+
 @contextmanager
 def indexed_gltf_references(exporter_class, identity_types):
     """Index Blender 4.5's append-only accessor/view lists during this export.
@@ -227,7 +240,13 @@ def main():
     parser.add_argument("--ueformat-plugin", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--animation", help="Optional source name for a small verification bundle")
-    parser.add_argument(
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument(
+        "--with-animations",
+        action="store_true",
+        help="Export static rigs plus a separate skeleton/actions-only GLB",
+    )
+    modes.add_argument(
         "--rig-only",
         action="store_true",
         help="Export a rig and compact preview without animations or a blend file",
@@ -241,6 +260,7 @@ def main():
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1 :])
     if args.preview_texture_size < 1:
         parser.error("--preview-texture-size must be positive")
+    rig_mode = args.rig_only or args.with_animations
     import bpy
 
     sys.path.insert(0, str(args.ueformat_plugin.resolve()))
@@ -277,7 +297,7 @@ def main():
     ):
         path = (
             material_metadata_path(material.name, args.model, metadata_files)
-            if args.rig_only
+            if rig_mode
             else material_files.get(material.name)
         )
         metadata = json.loads(path.read_text(encoding="utf-8-sig")) if path else {}
@@ -300,77 +320,99 @@ def main():
         report["materials"].append(
             {"name": material.name, "texture": str(texture) if texture else None}
         )
-    if args.rig_only and report["missing_textures"]:
+    if rig_mode and report["missing_textures"]:
         (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         raise ValueError(f"Missing required base-color textures: {report['missing_textures']}")
 
     actions = []
-    seen_sources = set()
-    bpy.context.scene.render.fps = 30
-    for path in [] if args.rig_only else sorted(args.converted.rglob("*.ueanim")):
-        with FArchiveReader(path.read_bytes()) as archive:
-            header, body = parse_header(archive)
-            source_key = package_path(header.object_path)
-            source = sources.get(source_key)
-            if not source or not source["matches_skeleton"]:
+
+    def import_actions():
+        seen_sources = set()
+        bpy.context.scene.render.fps = 30
+        for path in [] if args.rig_only else sorted(args.converted.rglob("*.ueanim")):
+            with FArchiveReader(path.read_bytes()) as archive:
+                header, body = parse_header(archive)
+                source_key = package_path(header.object_path)
+                source = sources.get(source_key)
+                if not source or not source["matches_skeleton"]:
+                    continue
+                seen_sources.add(source_key)
+                dto = parse_body(header, body)
+            metadata = dto.metadata
+            row = {
+                **source,
+                "file": str(path.relative_to(args.converted)),
+                "frames": metadata.num_frames if metadata else 0,
+                "fps": metadata.frames_per_second if metadata else 0,
+                "tracks": len(dto.tracks),
+                "curves": len(dto.curves),
+                "additive": int(metadata.additive_anim_type) if metadata else None,
+                "included_in_glb": False,
+            }
+            report["animations"].append(row)
+            # Additive clips need a base pose/composition; retain them in UEFormat
+            # rather than presenting them as independent full-body animations.
+            excluded = animation_exclusion(dto, require_decoded=args.with_animations)
+            if excluded:
+                row["excluded_reason"] = excluded
                 continue
-            seen_sources.add(source_key)
-            dto = parse_body(header, body)
-        metadata = dto.metadata
-        row = {
-            **source,
-            "file": str(path.relative_to(args.converted)),
-            "frames": metadata.num_frames if metadata else 0,
-            "fps": metadata.frames_per_second if metadata else 0,
-            "tracks": len(dto.tracks),
-            "additive": int(metadata.additive_anim_type) if metadata else None,
-            "included_in_glb": False,
+            if args.animation and header.object_name != args.animation:
+                continue
+            unknown = {track.name.casefold() for track in dto.tracks} - {
+                bone.name.casefold() for bone in armature.data.bones
+            }
+            if unknown:
+                row["unknown_bones"] = sorted(unknown)
+                if args.with_animations:
+                    raise ValueError(f"Animation targets unknown bones: {row}")
+                continue
+            to_blender_space(dto, header.file_version, 0.01)
+            retime_tracks(dto)
+            action = create_anim(
+                dto,
+                UEAnimOptions(override_skeleton=armature, import_curves=False),
+                header.object_name,
+            )
+            action.use_fake_user = True
+            action["source_path"] = header.object_path
+            row["action"] = action.name
+            row["included_in_glb"] = True
+            actions.append(action)
+        report["missing_exports"] = [
+            row
+            for key, row in sources.items()
+            if row["matches_skeleton"] and key not in seen_sources
+        ]
+        if args.with_animations and report["missing_exports"]:
+            raise ValueError(f"Missing matching animation exports: {report['missing_exports']}")
+        if not actions:
+            raise ValueError("No verified, non-additive animation tracks available")
+        report["animation_coverage"] = {
+            "matching_sources": sum(row["matches_skeleton"] for row in sources.values()),
+            "decoded_clips": len(report["animations"]),
+            "playable_clips": len(actions),
+            "additive_clips": sum(bool(row["additive"]) for row in report["animations"]),
+            "single_frame_clips": sum(row["frames"] < 2 for row in report["animations"]),
+            "curves_only_clips": sum(
+                row.get("excluded_reason") == "curves_only" for row in report["animations"]
+            ),
+            "excluded_clips": [
+                {"source": row["source"], "reason": row["excluded_reason"]}
+                for row in report["animations"]
+                if "excluded_reason" in row
+            ],
+            "missing_exports": len(report["missing_exports"]),
         }
-        report["animations"].append(row)
-        # Additive clips need a base pose/composition; retain them in UEFormat
-        # rather than presenting them as independent full-body animations.
-        if not metadata or not dto.tracks or metadata.num_frames < 2 or metadata.additive_anim_type:
-            continue
-        if args.animation and header.object_name != args.animation:
-            continue
-        unknown = {track.name.casefold() for track in dto.tracks} - {
-            bone.name.casefold() for bone in armature.data.bones
-        }
-        if unknown:
-            row["unknown_bones"] = sorted(unknown)
-            continue
-        to_blender_space(dto, header.file_version, 0.01)
-        retime_tracks(dto)
-        action = create_anim(
-            dto, UEAnimOptions(override_skeleton=armature, import_curves=False), header.object_name
-        )
-        action.use_fake_user = True
-        action["source_path"] = header.object_path
-        row["action"] = action.name
-        row["included_in_glb"] = True
-        actions.append(action)
-    report["missing_exports"] = [
-        row for key, row in sources.items() if row["matches_skeleton"] and key not in seen_sources
-    ]
-    if not args.rig_only and not actions:
-        raise ValueError("No verified, non-additive animation tracks available")
-    if not args.rig_only:
-        armature.animation_data.action = next(
-            (action for action in actions if action.name == "Stand1"), actions[0]
-        )
-        bpy.context.scene.frame_set(30)
-        bpy.context.preferences.filepaths.save_version = 0
-        bpy.ops.wm.save_as_mainfile(
-            filepath=str((args.output / "character.blend").resolve()), compress=True
-        )
+
     from io_scene_gltf2.blender.exp.exporter import GlTF2Exporter
     from io_scene_gltf2.io.com.gltf2_io import Accessor, BufferView
 
-    def export_glb(name, *, morph=True):
+    def export_glb(name, *, morph=True, animations=False, selected=False):
         options = dict(
             filepath=str((args.output / name).resolve()),
             export_format="GLB",
-            export_animations=not args.rig_only,
+            export_animations=animations,
+            use_selection=selected,
             export_animation_mode="ACTIONS",
             export_force_sampling=False,
             export_morph=morph,
@@ -384,9 +426,19 @@ def main():
             if "FINISHED" not in bpy.ops.export_scene.gltf(**options):
                 raise RuntimeError(f"GLB export failed: {name}")
 
-    export_glb("character.glb")
-    if args.rig_only:
-        report["rig_only"] = True
+    if not rig_mode:
+        import_actions()
+        armature.animation_data.action = next(
+            (action for action in actions if action.name == "Stand1"), actions[0]
+        )
+        bpy.context.scene.frame_set(30)
+        bpy.context.preferences.filepaths.save_version = 0
+        bpy.ops.wm.save_as_mainfile(
+            filepath=str((args.output / "character.blend").resolve()), compress=True
+        )
+    export_glb("character.glb", animations=not rig_mode)
+    if rig_mode:
+        report["rig_only"] = args.rig_only
         report["textures"] = len({row["texture"] for row in report["materials"]})
         report["morph_targets"] = sum(
             len(mesh.data.shape_keys.key_blocks) - 1 for mesh in meshes if mesh.data.shape_keys
@@ -407,6 +459,29 @@ def main():
         )
         report["preview_texture_size"] = args.preview_texture_size
         report["preview_glb_bytes"] = report["preview_glb"]["bytes"]
+    if args.with_animations:
+        try:
+            import_actions()
+        finally:
+            (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        armature.animation_data.action = actions[0]
+        bpy.ops.object.select_all(action="DESELECT")
+        armature.select_set(True)
+        bpy.context.view_layer.objects.active = armature
+        export_glb("animations.glb", morph=False, animations=True, selected=True)
+        # Blender runs this file as a script, outside the worker package imports.
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from model_animations import animation_summary
+
+        summary = animation_summary(
+            args.output / "animations.glb", {bone.name for bone in armature.data.bones}
+        )
+        if summary["animations"] != len(actions):
+            raise ValueError("Animation export lost actions")
+        report["animations_glb"] = summary
+        (args.output / "animations.json").write_text(
+            json.dumps(summary, indent=2), encoding="utf-8"
+        )
     report["glb_bytes"] = (args.output / "character.glb").stat().st_size
     report["blender_version"] = bpy.app.version_string
     (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { SpringBones } from './spring-bones.js';
+import { resourceUrl as validatedResourceUrl, animationLoadLabel, bindAnimationClips, lazyAnimationPack } from './animations.js';
 
 const $ = id => document.getElementById(id);
 const viewport = $('viewport'), status = $('status');
@@ -9,11 +10,7 @@ const parameters = new URLSearchParams(location.search);
 const displayName = parameters.get('name');
 if (displayName) { document.querySelector('h1').textContent = displayName; document.title = `${displayName} · Model viewer`; }
 function resourceUrl(value) {
-  const url = new URL(value, location.href);
-  if (url.origin !== location.origin || !['http:', 'https:'].includes(url.protocol)) {
-    throw new Error('Model resources must be served from the viewer origin.');
-  }
-  return url.href;
+  return validatedResourceUrl(value, location.href);
 }
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#111b1d');
@@ -151,22 +148,61 @@ async function load() {
     model.position.add(new THREE.Vector3(-center.x, -bounds.min.y, -center.z));
     model.updateMatrixWorld(true);
     homeTarget.set(0, height * 0.5, 0); resetView();
-    clips = gltf.animations;
     mixer = new THREE.AnimationMixer(model);
-    $('animations').replaceChildren(...clips.map(clip => new Option(
-      clip.duration === 0 ? `${clip.name} · pose` : clip.name, clip.name)));
-    if (clips.length) {
-      $('playback').disabled = false;
-      $('animations').value = clips.some(clip => clip.name === 'Stand1') ? 'Stand1' : clips[0].name;
-      selectClip($('animations').value);
-      // Ground the initial animated skin, not just the GLB bind-pose bounds.
-      model.updateMatrixWorld(true);
-      const posedBounds = new THREE.Box3().setFromObject(model, true);
-      model.position.y -= posedBounds.min.y;
+    function installClips(nextClips) {
+      clips = nextClips;
+      $('animations').replaceChildren(...clips.map(clip => new Option(
+        clip.duration === 0 ? `${clip.name} · pose` : clip.name, clip.name)));
+      if (clips.length) {
+        $('playback').disabled = false;
+        $('animations').value = clips.some(clip => clip.name === 'Stand1') ? 'Stand1' : clips[0].name;
+        selectClip($('animations').value);
+        // Ground the initial animated skin, not just the GLB bind-pose bounds.
+        model.updateMatrixWorld(true);
+        const posedBounds = new THREE.Box3().setFromObject(model, true);
+        model.position.y -= posedBounds.min.y;
+      }
+      status.textContent = clips.length ? `${clips.length} clips · local client export` : 'Rigged model · no animations';
+      $('playback').hidden = clips.length === 0;
+      updatePlayButton();
     }
-    status.textContent = clips.length ? `${clips.length} clips · local client export` : 'Rigged model · no animations';
-    $('playback').hidden = clips.length === 0;
-    updatePlayButton();
+    installClips(gltf.animations);
+    const packUrl = parameters.get('animations');
+    if (packUrl) {
+      const button = $('load-animations');
+      const label = animationLoadLabel(parameters.get('animation_bytes'));
+      button.hidden = false;
+      button.textContent = label;
+      const loadPack = lazyAnimationPack(packUrl,
+        url => new GLTFLoader().loadAsync(resourceUrl(url)),
+        pack => {
+          const boundClips = bindAnimationClips(pack, gltf);
+          resetPhysics();
+          installClips(boundClips);
+          $('turntable').checked = false;
+          $('turntable').closest('label').hidden = true;
+        });
+      button.onclick = async () => {
+        if (button.disabled) return;
+        button.disabled = true;
+        button.setAttribute('aria-busy', 'true');
+        button.textContent = 'Loading animations…';
+        $('playback').disabled = true;
+        $('animation-status').textContent = 'Loading animations…';
+        try {
+          await loadPack();
+          button.hidden = true;
+          $('animation-status').textContent = `${clips.length} animations loaded`;
+        } catch (error) {
+          button.textContent = label.replace('Load', 'Retry loading');
+          $('animation-status').textContent = `Could not load animations: ${error.message}`;
+        } finally {
+          button.disabled = false;
+          button.removeAttribute('aria-busy');
+          $('playback').disabled = clips.length === 0;
+        }
+      };
+    }
     try {
       const physicsUrl = parameters.get('physics') || (parameters.has('model') ? null : './physics.json');
       if (!physicsUrl) throw new Error('No physics profile');

@@ -146,6 +146,7 @@ const model = {
   preview: { url: "/api/media/preview.glb?token=a&b=c", size_bytes: 1024 },
   download: { url: "https://cdn.example/full.glb", size_bytes: 4096 },
   physics: { url: "/api/media/physics.json", size_bytes: 100 },
+  animations: { url: "https://cdn.example/animations.glb", size_bytes: 8000 },
 };
 
 test("metadata is the only initial request; explicit View 3D mounts preview iframe and Close unloads it", async () => {
@@ -173,6 +174,8 @@ test("metadata is the only initial request; explicit View 3D mounts preview ifra
   const url = new URL(frame.props.src, "https://atlas.example");
   assert.equal(url.searchParams.get("model"), model.preview.url);
   assert.equal(url.searchParams.get("physics"), model.physics.url);
+  assert.equal(url.searchParams.get("animations"), model.animations.url);
+  assert.equal(url.searchParams.get("animation_bytes"), String(model.animations.size_bytes));
   assert.equal(url.searchParams.get("name"), h.props.name);
   nodes(tree)
     .find((n) => n.type === "button" && n.props["aria-expanded"] === true)
@@ -237,6 +240,31 @@ test("metadata failures can retry; stale metadata is ignored and missing models 
   h.close();
 });
 
+test("legacy rig metadata has no animation download or viewer parameter", async () => {
+  const h = harness();
+  h.render();
+  h.requests[0].resolve({ ...model, animations: null });
+  await flush();
+  let tree = h.render();
+  assert.equal(nodes(tree).filter((node) => node.type === "a").length, 1);
+  nodes(tree).find((node) => node.type === "button").props.onClick();
+  tree = h.render();
+  const frame = nodes(tree).find((node) => node.type === "iframe");
+  assert.equal(new URL(frame.props.src, "https://atlas.example").searchParams.has("animations"), false);
+  h.close();
+});
+
+test("administrators can explicitly skip the animation pack", () => {
+  const h = harness(true);
+  const controls = nodes(h.render());
+  const animations = controls.find((node) => node.type === "input" && node.props.type === "checkbox");
+  assert.equal(animations.props.checked, true);
+  animations.props.onChange({ target: { checked: false } });
+  nodes(h.render()).find((node) => node.type === "form").props.onSubmit({ preventDefault() {} });
+  assert.equal(h.requests[0].options.body.include_animations, false);
+  h.close();
+});
+
 test("character imports use the viewed patch and reset when the initial version changes", () => {
   const page = harness();
   page.props.gameVersion = "2.1";
@@ -286,7 +314,7 @@ test("import controls are gated; duplicate submits are blocked and polling stops
   assert.equal(h.requests.length, 1);
   assert.equal(
     JSON.stringify(h.requests[0].options.body),
-    JSON.stringify({ character_key: "character:1505", force: false }),
+    JSON.stringify({ character_key: "character:1505", force: false, include_animations: true }),
   );
   h.requests[0].resolve({ id: 7, status: "queued" });
   await flush();

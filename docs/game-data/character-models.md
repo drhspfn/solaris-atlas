@@ -1,8 +1,8 @@
-# Local character-model experiment
+# Character-model conversion and queued imports
 
 The first subject is The Shorekeeper (`character:1505`, internal asset name
-`Shouanren`). This is an offline conversion experiment, not a new production
-import queue or a published character viewer. Keep original packages read-only.
+`Shouanren`). The local experiment below established the conversion recipe;
+the queued production pipeline is documented afterward. Keep original packages read-only.
 
 ## Verified toolchain
 
@@ -151,11 +151,11 @@ reproducing Kuro's cloth/collision solver. It does not modify or enlarge the GLB
 
 The admin data page and admin actions on character profiles enqueue
 `POST /admin/character-models` with `character_key`, optional `game_version` and
-optional `force`. Admin authorization and CSRF are required. The response is an
+optional `force` and `include_animations` (default true). Admin authorization and CSRF are required. The response is an
 inspectable processing run; its status is available from
 `GET /admin/character-models/{run_id}`. Repeated active requests reuse a run.
 Completed requests require `force` to rebuild. There is no automatic 61-character
-bulk export or animation import.
+bulk export. Legacy queued jobs without `include_animations` remain rig-only.
 
 The dedicated `character_model` consumer reads the selected release's
 `BinData/role/roleinfo.json` MeshId and its exact
@@ -164,8 +164,11 @@ It does not infer models from portraits or character names. Composite rigs fail
 with an inspectable error rather than silently selecting an unrelated mesh.
 Physics blueprints must target the mesh's exact exported skeleton.
 
-Downloaded archives are shared read-only. Only the model directory and authored
-blueprints are exported into an owned transient workspace. Conversion, R2 writes
+Downloaded archives are shared read-only. Rig-only imports export the model
+directory and authored blueprints. Animation imports additionally export the authored
+character directory, shared gender base moves and ACL conversion dependencies;
+only clips matching the model's skeleton are admitted. All exports use an owned
+transient workspace. Conversion, R2 writes
 and atomic FileReference publication complete before scratch is removed; crash
 recovery collects orphaned transient directories. Source package paths/hashes,
 client identity and tool/recipe hashes remain in reference metadata. No raw
@@ -180,6 +183,11 @@ The default bundle contains:
   this GLB; KawaiiPhysics/MMD physics do not become Blender constraints automatically.
 - Optional spring profile JSON, with source group/limit evidence and explicit
   approximation limitations.
+- `animations.glb`, when requested: compatible non-additive skeletal clips and
+  skeleton nodes, without duplicated geometry or textures. Additive layers,
+  facial curves, montage events and game cloth simulation are not reconstructed
+  as standalone body clips. A failed requested animation export fails the run;
+  it does not replace a published bundle with a silently incomplete result.
 
 The verified Shorekeeper outputs are 5,974,204 bytes for the preview and
 20,107,368 bytes for the editable model. Both have 250 joints and seven embedded
@@ -190,7 +198,10 @@ are reused across repeated imports and releases.
 `GET /characters/{key}/model?game_version=...` returns only bundle metadata.
 The character page mounts the viewer and downloads the preview only after
 **View 3D**. Closing it unloads the iframe. The full GLB is a separate explicit
-download, with an attachment filename ending in `.glb`.
+download, with an attachment filename ending in `.glb`. Animation metadata belongs
+to the same publication as the rig. **Load animations** explicitly fetches the
+separate pack; opening a model never downloads it automatically. The pack can
+also be downloaded separately and imported alongside the rig in Blender.
 
 The worker publishes a hash-versioned viewer beside the models on the same CDN
 origin, avoiding cross-origin GLB fetches and API byte proxying. The viewer index

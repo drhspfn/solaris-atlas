@@ -12,6 +12,7 @@ type Model = {
   preview: Asset | null;
   download: Asset | null;
   physics: Asset | null;
+  animations?: Asset | null;
   viewer_url?: string | null;
 };
 const assetUrl = (url: string) => apiUrl(url.replace(/^\/api(?=\/)/, ""));
@@ -64,6 +65,10 @@ export function CharacterModel({
   const params = new URLSearchParams({ name });
   if (model?.preview) params.set("model", assetUrl(model.preview.url));
   if (model?.physics) params.set("physics", assetUrl(model.physics.url));
+  if (model?.animations) {
+    params.set("animations", assetUrl(model.animations.url));
+    params.set("animation_bytes", String(model.animations.size_bytes));
+  }
 
   let viewerSrc = `/model-viewer/index.html?${params}`;
   if (model?.viewer_url) {
@@ -101,7 +106,10 @@ export function CharacterModel({
       ) : (
         <>
           <p>
-            Rigged model with textures · no animations
+            Rigged model with textures ·{" "}
+            {model.animations
+              ? "animations load on demand"
+              : "no animations published"}
             {model.game_version ? ` · ${model.game_version}` : ""}
           </p>
           <div className="character-model-actions">
@@ -119,6 +127,11 @@ export function CharacterModel({
             {model.download && (
               <a href={assetUrl(model.download.url)} download>
                 Download full-resolution GLB · {size(model.download.size_bytes)}
+              </a>
+            )}
+            {model.animations && (
+              <a href={assetUrl(model.animations.url)} download>
+                Download animations · {size(model.animations.size_bytes)}
               </a>
             )}
           </div>
