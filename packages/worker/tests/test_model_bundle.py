@@ -13,6 +13,7 @@ from wuwa_story_worker.model_bundle import (
     indexed_gltf_references,
     main,
     material_metadata_path,
+    missing_animation_sources,
     package_path,
     preview_materials,
     preview_meshes,
@@ -28,6 +29,17 @@ def test_package_identity_ignores_object_suffix_and_preserves_path():
     assert package_path("Client\\Content\\Aki\\Character\\Test") == package_path(
         "/Game/Aki/Character/Test"
     )
+
+
+def test_animation_preflight_reports_only_missing_owned_packages():
+    owned = {"matches_skeleton": True, "source": "AM_Move_F.json"}
+    sources = {
+        "move": owned,
+        "stand": {"matches_skeleton": True, "source": "Stand1.json"},
+        "other": {"matches_skeleton": False, "source": "Other.json"},
+    }
+    assert missing_animation_sources(sources, {"stand"}) == [owned]
+    assert missing_animation_sources(sources, {"move", "stand"}) == []
 
 
 def test_animation_catalog_uses_exact_skeleton_reference_not_folder_name(tmp_path):

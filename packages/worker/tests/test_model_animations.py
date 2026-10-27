@@ -1,5 +1,6 @@
 import json
 import struct
+import subprocess
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from types import SimpleNamespace
@@ -10,6 +11,54 @@ import pytest
 from wuwa_story_worker import character_models as worker
 from wuwa_story_worker.model_bundle import animation_exclusion
 from wuwa_story_worker.model_sources import glb_summary
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timeout", [False, True])
+async def test_blender_failure_preserves_only_bounded_owned_log(tmp_path, monkeypatch, timeout):
+    failure = (
+        subprocess.TimeoutExpired(["blender"], 1800, output=b"untrusted captured output")
+        if timeout
+        else subprocess.CalledProcessError(1, ["blender"], output=b"untrusted captured output")
+    )
+    (tmp_path / "metadata.log").write_text("private converter secret")
+    (tmp_path / "convert.log").write_text("private converter secret")
+
+    async def fail(args, log, seconds):
+        assert args == ["blender"]
+        assert log == tmp_path / "blender.log"
+        assert seconds == 1800
+        log.write_bytes(
+            b"discarded prefix\n" + b"x" * 20000 + b"\xff\x00\x1b[31m"
+            b"Traceback: actual Blender root cause\x1b[0m\n"
+            b"\x1b]0;terminal title\x07final diagnostic\n"
+        )
+        raise failure
+
+    monkeypatch.setattr(worker, "tool", fail)
+    with pytest.raises(RuntimeError) as caught:
+        await worker.run_blender(["blender"], tmp_path)
+    message = str(caught.value)
+    assert ("timed out after 1800 seconds" if timeout else "exited with code 1") in message
+    assert "Traceback: actual Blender root cause\nfinal diagnostic\n" in message
+    assert "discarded prefix" not in message
+    assert "secret" not in message
+    assert "untrusted captured output" not in message
+    assert "terminal title" not in message
+    assert "\x1b" not in message
+    assert "\x00" not in message
+    assert len(message.split("(last 8 KiB):\n", 1)[1].encode("utf-8")) <= 8192
+    assert caught.value.__cause__ is failure
+
+
+@pytest.mark.asyncio
+async def test_blender_missing_log_preserves_failure_reason(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        worker, "tool", AsyncMock(side_effect=subprocess.CalledProcessError(2, ["blender"]))
+    )
+    with pytest.raises(RuntimeError, match="exited with code 2.*") as caught:
+        await worker.run_blender(["blender"], tmp_path)
+    assert "Blender log unavailable" in str(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -153,7 +202,7 @@ async def test_extraction_scope_includes_character_siblings_shared_moves_and_acl
         [
             "Aki/Character/Role/FemaleM/Shouanren/",
             "Aki/AuthoredBP",
-            "Aki/Character/Role/FemaleM/BaseAnim/",
+            "Aki/Character/Role/FemaleM/BaseAnim",
             "ACLAnim",
             "ACLPlugin.uplugin",
             "Shouanren",
@@ -161,6 +210,12 @@ async def test_extraction_scope_includes_character_siblings_shared_moves_and_acl
         if include
         else [model.rsplit("/", 1)[0] + "/", "Aki/AuthoredBP"]
     )
+
+    if include:
+        assert any(
+            "Aki/Character/Role/FemaleM/BaseAnim2/Move_F.uasset".startswith(value)
+            for value in filters
+        )
 
 
 def job_payload():

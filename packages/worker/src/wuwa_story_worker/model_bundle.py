@@ -53,6 +53,12 @@ def retime_tracks(dto, fps=30):
                 keys.append(last)
 
 
+def missing_animation_sources(sources, exported_keys):
+    return [
+        row for key, row in sources.items() if row["matches_skeleton"] and key not in exported_keys
+    ]
+
+
 def animation_exclusion(dto, *, require_decoded=False):
     """Distinguish intentional non-body clips from failed animation decoding."""
     if not dto.metadata or not dto.tracks:
@@ -329,7 +335,18 @@ def main():
     def import_actions():
         seen_sources = set()
         bpy.context.scene.render.fps = 30
-        for path in [] if args.rig_only else sorted(args.converted.rglob("*.ueanim")):
+        paths = [] if args.rig_only else sorted(args.converted.rglob("*.ueanim"))
+        if args.with_animations:
+            # Check coverage before allocating hundreds of Blender actions.
+            exported_keys = set()
+            for path in paths:
+                with FArchiveReader(path.read_bytes()) as archive:
+                    header, _ = parse_header(archive)
+                    exported_keys.add(package_path(header.object_path))
+            report["missing_exports"] = missing_animation_sources(sources, exported_keys)
+            if report["missing_exports"]:
+                raise ValueError(f"Missing matching animation exports: {report['missing_exports']}")
+        for path in paths:
             with FArchiveReader(path.read_bytes()) as archive:
                 header, body = parse_header(archive)
                 source_key = package_path(header.object_path)
@@ -378,11 +395,7 @@ def main():
             row["action"] = action.name
             row["included_in_glb"] = True
             actions.append(action)
-        report["missing_exports"] = [
-            row
-            for key, row in sources.items()
-            if row["matches_skeleton"] and key not in seen_sources
-        ]
+        report["missing_exports"] = missing_animation_sources(sources, seen_sources)
         if args.with_animations and report["missing_exports"]:
             raise ValueError(f"Missing matching animation exports: {report['missing_exports']}")
         if not actions:

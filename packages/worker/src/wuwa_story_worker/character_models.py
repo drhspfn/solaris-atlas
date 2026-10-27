@@ -2,6 +2,8 @@
 
 import json
 import os
+import re
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -60,7 +62,8 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
         filters = [
             character_dir + "/",
             *sources["blueprints"],
-            gender_dir + "/BaseAnim/",
+            # Shared movement sets are named BaseAnim, BaseAnim2, etc.
+            gender_dir + "/BaseAnim",
             "ACLAnim",
             "ACLPlugin.uplugin",
             # Candidate discovery only: NPC/cinematic paths can be outside
@@ -98,6 +101,36 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
     return model, converted, cooked, json.loads(receipt.read_text(encoding="utf-8"))
 
 
+async def run_blender(args, root, timeout=1800):
+    """Preserve only Blender's bounded diagnostic before scratch is removed."""
+    log = root / "blender.log"
+    try:
+        return await tool(args, log, timeout)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        reason = (
+            f"exited with code {exc.returncode}"
+            if isinstance(exc, subprocess.CalledProcessError)
+            else f"timed out after {exc.timeout} seconds"
+        )
+        try:
+            with log.open("rb") as stream:
+                stream.seek(0, os.SEEK_END)
+                stream.seek(max(0, stream.tell() - 8192))
+                tail = stream.read(8192)
+            # Strip CSI, OSC and other terminal escapes, then unsafe controls.
+            tail = re.sub(
+                rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\|$)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]",
+                b"",
+                tail,
+            )
+            tail = re.sub(rb"[\x00-\x08\x0b-\x1f\x7f]", b"", tail)
+            diagnostic = tail.decode("utf-8", errors="replace")
+            diagnostic = diagnostic.encode("utf-8")[-8192:].decode("utf-8", errors="ignore")
+        except OSError:
+            diagnostic = "Blender log unavailable"
+        raise RuntimeError(f"Blender {reason}; blender.log (last 8 KiB):\n{diagnostic}") from exc
+
+
 async def build_bundle(root, sources, include_animations=True):
     fmodel, converter = tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH")
     blender = tool_path("WUWA_BLENDER_PATH")
@@ -121,7 +154,7 @@ async def build_bundle(root, sources, include_animations=True):
     if len(skeletons) != 1 or not skeletons[0]:
         raise ValueError("The exported character mesh has no exact skeleton reference")
     skeleton = exported_package(skeletons[0])
-    await tool(
+    await run_blender(
         [
             blender,
             "-b",
@@ -147,7 +180,7 @@ async def build_bundle(root, sources, include_animations=True):
             "--preview-texture-size",
             "512",
         ],
-        root / "blender.log",
+        root,
         1800,
     )
     profile = None
