@@ -15,6 +15,7 @@ from wuwa_story.api.cache import PublicResponseCache
 from wuwa_story.api.errors import install_error_handlers
 from wuwa_story.api.routes import (
     admin_data,
+    character_models,
     game_events,
     graph_paths,
     health,
@@ -103,6 +104,7 @@ app.include_router(notices.router)
 app.include_router(admin_data.router)
 app.include_router(maps.router)
 app.include_router(media_jobs.router)
+app.include_router(character_models.router)
 app.include_router(nodes.router)
 app.include_router(graph_paths.router)
 app.include_router(search.router)
