@@ -161,3 +161,9 @@ substituted. All tracks reuse the archive's existing media query.
 The character UI converts these locale keys to display names before passing a
 plain optional name-to-URL map to the shared `TrackPlayer` wrapper. The underlying
 `AudioPlayer` accepts a source URL and has no language or character logic.
+
+Verified voice/video package archives are reused across manifest IDs by SHA-1 and
+size, using atomic hard links within the retained cache. Corrupt, incomplete or
+unsafe candidates fall back to download. Existing archive bytes are never modified
+in place, and abandoned partial downloads are removed only after a complete verified
+replacement exists under the destination plan's exclusive filesystem lock.

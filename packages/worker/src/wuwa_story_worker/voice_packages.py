@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 from concurrent.futures import ThreadPoolExecutor
@@ -133,6 +134,29 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, "sha1").hexdigest()
 
 
+def cached_archives(workspace: Path, excluded: Path) -> dict:
+    """Index completed manifests; every candidate is verified again before reuse."""
+    candidates = {}
+    for manifest in workspace.glob("*/plan.json"):
+        if manifest.parent == excluded or manifest.is_symlink() or manifest.parent.is_symlink():
+            continue
+        try:
+            previous = json.loads(manifest.read_text(encoding="utf-8"))
+            status = json.loads((manifest.parent / "status.json").read_text(encoding="utf-8"))
+            if (previous.get("job_type") != "voices.download" or previous.get("id") != plan_id(previous)
+                    or status.get("state") != "downloaded" or status.get("id") != previous["id"]
+                    or not re.fullmatch(r"\d+\.\d+\.\d+", previous["version"])):
+                continue
+            for item in previous["files"]:
+                source = manifest.parent / "game/Client/Saved/Resources" / previous["version"] / safe_path(item["path"])
+                if source.is_symlink() or not source.resolve().is_relative_to(manifest.parent.resolve()):
+                    continue
+                candidates.setdefault((item["sha1"], item["size"]), []).append(source)
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return candidates
+
+
 def download_voice_plan(plan: dict, workspace: Path, installed_game: Path | None = None,
                         concurrency: int = 4) -> Path:
     if plan.get("job_type") != "voices.download" or plan.get("id") != plan_id(plan):
@@ -148,13 +172,31 @@ def download_voice_plan(plan: dict, workspace: Path, installed_game: Path | None
             raise ValueError("Invalid voice archive identity")
         for cdn in plan["cdns"]:
             resource_url(cdn, item["remote_path"])
+    candidates = cached_archives(workspace, root)
 
     def download(item: dict) -> None:
         target = root / "game/Client/Saved/Resources" / \
             plan["version"] / item["path"]
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists() and target.stat().st_size == item["size"] and digest(target) == item["sha1"]:
+            target.with_suffix(target.suffix + ".part").unlink(missing_ok=True)
             return
+        # Manifest IDs include source metadata. Equal verified bytes can span plans.
+        for candidate in candidates.get((item["sha1"], item["size"]), []):
+            shared = target.with_suffix(target.suffix + ".reuse")
+            try:
+                if candidate.stat().st_size != item["size"] or digest(candidate) != item["sha1"]:
+                    continue
+                shared.unlink(missing_ok=True)
+                os.link(candidate, shared)
+                shared.replace(target)
+                target.with_suffix(target.suffix + ".part").unlink(missing_ok=True)
+                logger.info("voices.reused path=%s bytes=%s", item["path"], item["size"])
+                return
+            except OSError:
+                shared.unlink(missing_ok=True)
+                # Different filesystems can use the normal installed/download fallback.
+                continue
         source = installed_game / "Client/Saved/Resources" / \
             plan["version"] / item["path"] if installed_game else None
         temporary = target.with_suffix(target.suffix + ".part")
