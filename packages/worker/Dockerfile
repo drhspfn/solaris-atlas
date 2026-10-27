@@ -41,16 +41,21 @@ RUN git clone https://github.com/Herselfta/FModelCLI.git /src/fmodel \
     && git -C /src/cue-cli -c user.email=build@example.com -c user.name=build merge --no-edit FETCH_HEAD \
     && git -C /src/cue-cli submodule update --init --recursive
 
-COPY packages/worker/docker/patch_tools.py packages/worker/docker/native_probe.py \
+COPY packages/worker/docker/patch_tools.py packages/worker/docker/patch_model_tools.py packages/worker/docker/native_probe.py \
      packages/worker/docker/NativeTools.cs /build/
 RUN python3 /build/patch_tools.py /src/fmodel /src/cue-cli \
+    && python3 /build/patch_model_tools.py /src/cue-cli \
     && dotnet publish /src/fmodel/FModelCLI/FModelCLI.csproj -c Release -r linux-x64 \
        --self-contained true -p:PublishReadyToRun=false -p:PublishSingleFile=false \
        -p:PublishTrimmed=false -o /tools/fmodelcli \
     && dotnet publish /src/cue-cli/CUE4Parse.CLI/CUE4Parse.CLI.csproj -c Release -r linux-x64 \
        --self-contained true -p:PublishReadyToRun=false -p:PublishSingleFile=false \
        -p:PublishTrimmed=false -o /tools/cue-cli \
-    && mv /tools/cue-cli/CUE4Parse.CLI /tools/cue-cli/cue4parse
+    && mv /tools/cue-cli/CUE4Parse.CLI /tools/cue-cli/cue4parse \
+    && for symbol in IsFeatureAvailable nAllocate nDeallocate nCompressedTracks_IsValid nTracksHeader_SetDefaultScale nReadACLData nReadCurveACLData; do \
+         nm -D /tools/cue-cli/CUE4Parse-Natives.so | grep -q " T $symbol\$" \
+           || { echo "Missing published ACL export: $symbol" >&2; exit 1; }; \
+       done
 
 # Required native libraries. A missing download or symbol must fail the image build.
 RUN curl -fSL --retry 3 https://github.com/WorkingRobot/OodleUE/releases/download/2026-06-04-1357/gcc-x64-release.zip -o /tmp/oodle.zip \
@@ -107,6 +112,7 @@ USER appuser
 # Exercise actual managed/native calls in the final OS as the runtime user, offline.
 RUN --network=none /app/tools/fmodelcli/FModelCLI --check-native-libs \
     && /app/tools/cue-cli/cue4parse --check-native-libs \
+    && python -c "import ctypes; lib=ctypes.CDLL('/app/tools/cue-cli/CUE4Parse-Natives.so'); feature=lib.IsFeatureAvailable; feature.argtypes=[ctypes.c_char_p]; feature.restype=ctypes.c_bool; assert feature(b'ACL'), 'CUE4Parse-Natives lacks ACL support'; print('Native ACL OK: published library loads and reports ACL support')" \
     && python /app/tools/wwiser.pyz --help >/dev/null \
     && python /app/tools/vgmstream_probe.py /app/tools/vgmstream-cli \
     && python -c "import wave; w=wave.open('/tmp/audio-probe.wav','wb'); w.setparams((1,2,8000,0,'NONE','not compressed')); w.writeframes(b'\x00\x00'*8000); w.close()" \
