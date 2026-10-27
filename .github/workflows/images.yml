@@ -8,7 +8,7 @@ on:
       component:
         description: Images to build and publish
         type: choice
-        options: [all, api, web, worker]
+        options: [all, api, web, worker, models]
         default: all
         required: true
 
@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: ${{ fromJSON(github.event_name == 'push' && '["api","web","worker"]' || (inputs.component == 'all' && '["api","web","worker"]' || format('["{0}"]', inputs.component))) }}
+        component: ${{ fromJSON(github.event_name == 'push' && '["api","web","worker"]' || (inputs.component == 'all' && '["api","web","worker"]' || (inputs.component == 'models' && '["worker"]' || format('["{0}"]', inputs.component)))) }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -59,6 +59,24 @@ jobs:
             VITE_API_BASE=/api
             VITE_API_DOCS_URL=/docs
 
+
+  model-tools:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.component == 'models'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and smoke-test the optional model image
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}-worker:$GITHUB_SHA"
+          docker build -f packages/worker/Dockerfile.models \
+            --build-arg WORKER_IMAGE="$image" -t solaris-model-tools:check .
 
   deploy:
     needs: build
