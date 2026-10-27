@@ -91,9 +91,14 @@ def spring_profile(rows, source, digest, expected_skeleton=None):
     }
 
 
-def glb_summary(path):
+def glb_summary(path, allow_animations=False):
     """Verify the publication contract before any R2 upload."""
     import struct
+
+    if allow_animations:
+        from wuwa_story_worker.model_animations import animation_summary
+
+        return animation_summary(path)
 
     with path.open("rb") as stream:
         magic, version, size = struct.unpack("<4sII", stream.read(12))
