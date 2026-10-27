@@ -15,6 +15,7 @@ function nodes(tree) {
 }
 function harness(importing = false, role = "admin") {
   let stateIndex, effectIndex, refIndex;
+  let mountedKey;
   const states = [],
     effects = [],
     refs = [],
@@ -108,10 +109,18 @@ function harness(importing = false, role = "admin") {
     requests,
     timers,
     document,
+    importer: mocks["./CharacterModelImport"].CharacterModelImport,
     render() {
       stateIndex = effectIndex = refIndex = 0;
       let tree = exports[file](props);
-      if (importing && tree) tree = tree.type(tree.props);
+      if (importing && tree) {
+        if (mountedKey !== tree.key) {
+          effects.forEach((effect) => effect.cleanup?.());
+          states.length = effects.length = refs.length = 0;
+          mountedKey = tree.key;
+        }
+        tree = tree.type(tree.props);
+      }
       for (const effect of effects) {
         if (effect.run) {
           const run = effect.run;
@@ -226,6 +235,38 @@ test("metadata failures can retry; stale metadata is ignored and missing models 
   await flush();
   assert(!nodes(h.render()).some((n) => n.type === "iframe" || n.type === "a"));
   h.close();
+});
+
+test("character imports use the viewed patch and reset when the initial version changes", () => {
+  const page = harness();
+  page.props.gameVersion = "2.1";
+  const importer = nodes(page.render()).find(
+    (node) => node.type === page.importer,
+  );
+  assert.equal(importer.props.initialGameVersion, "2.1");
+  const form = harness(true);
+  form.props.initialGameVersion = importer.props.initialGameVersion;
+  for (const version of ["2.1", "2.2", undefined]) {
+    form.props.initialGameVersion = version;
+    const tree = form.render();
+    assert.equal(
+      nodes(tree).find(
+        (node) => node.type === "input" && node.props.id === "model-version",
+      ).props.value,
+      version ?? "",
+    );
+    nodes(tree)
+      .find((node) => node.type === "form")
+      .props.onSubmit({ preventDefault() {} });
+    const request = form.requests.at(-1);
+    assert.equal(request.options.body.game_version, version);
+    assert.equal(request.options.body.character_key, "character:1505");
+  }
+  assert.equal(form.requests.length, 3);
+  assert(form.requests[0].options.signal.aborted);
+  assert(form.requests[1].options.signal.aborted);
+  page.close();
+  form.close();
 });
 
 test("import controls are gated; duplicate submits are blocked and polling stops on close", async () => {

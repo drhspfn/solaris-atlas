@@ -131,7 +131,11 @@ export function CharacterModel({
           )}
         </>
       )}
-      <CharacterModelImport characterKey={characterKey} onComplete={refresh} />
+      <CharacterModelImport
+        characterKey={characterKey}
+        initialGameVersion={gameVersion}
+        onComplete={refresh}
+      />
     </section>
   );
 }

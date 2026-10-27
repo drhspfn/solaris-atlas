@@ -17,11 +17,13 @@ const terminal = (status: string) =>
 
 export function CharacterModelImport({
   characterKey,
+  initialGameVersion,
   versions = [],
   active = true,
   onComplete,
 }: {
   characterKey?: string;
+  initialGameVersion?: string;
   versions?: string[];
   active?: boolean;
   onComplete?: () => void;
@@ -30,8 +32,9 @@ export function CharacterModelImport({
   if (user?.role !== "admin") return null;
   return (
     <ImportControls
-      key={characterKey}
+      key={`${characterKey ?? ""}:${initialGameVersion ?? ""}`}
       characterKey={characterKey}
+      initialGameVersion={initialGameVersion}
       versions={versions}
       active={active}
       onComplete={onComplete}
@@ -41,11 +44,13 @@ export function CharacterModelImport({
 
 function ImportControls({
   characterKey,
+  initialGameVersion,
   versions,
   active,
   onComplete,
 }: {
   characterKey?: string;
+  initialGameVersion?: string;
   versions: string[];
   active: boolean;
   onComplete?: () => void;
@@ -54,7 +59,7 @@ function ImportControls({
   const id = useId();
   const [open, setOpen] = useState(false);
   const [key, setKey] = useState(characterKey ?? "");
-  const [version, setVersion] = useState("");
+  const [version, setVersion] = useState(initialGameVersion ?? "");
   const [force, setForce] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
