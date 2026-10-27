@@ -141,6 +141,12 @@ installed source files and the interactive user's settings are not modified.
 Serve only a separate preview directory containing GLB and viewer assets on
 `127.0.0.1`. Keep keys, original packages and private logs outside that directory.
 
+The reproducible [local mini viewer](../../tools/model-viewer/README.md) adds
+orbit/zoom, an optional ground grid, playback controls and switchable secondary
+bone springs. Its profile is extracted from the model's KawaiiPhysics blueprint;
+it preserves source groups/limits but approximates runtime physics rather than
+reproducing Kuro's cloth/collision solver. It does not modify or enlarge the GLB.
+
 ## Optional Linux model-tools image
 
 Blender is deliberately separate from the ordinary production worker image.

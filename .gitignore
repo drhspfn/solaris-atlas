@@ -28,3 +28,4 @@ packages/worker/var/
 var/upstream-sync/
 premium-audit.json
 scratch/
+/tools/model-viewer/node_modules/
