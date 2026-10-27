@@ -229,6 +229,9 @@ manual workflow does not deploy services. Main image builds now also publish the
 separate models image before deployment. Only `model-worker` uses that image;
 ordinary image/audio workers retain their existing runtime. Model concurrency is
 one per replica, controlled by `WUWA_MODEL_REPLICAS` (default one).
+The model worker has one CPU and a 3 GiB memory limit: full animation assembly
+can exceed the earlier 2 GiB rig-only budget. It does not reserve that memory
+while idle or change limits for ordinary media workers.
 Both Linux builds and the offline plugin smoke check passed in run
 [`40574532763`](https://github.com/drhspfn/solaris-atlas/actions/runs/40574532763).
 Actual game-model conversion and browser playback were exercised on Windows;

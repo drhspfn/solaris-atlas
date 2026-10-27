@@ -225,7 +225,8 @@ services:
     image: ${MODEL_WORKER_IMAGE:-ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-models:${IMAGE_TAG:-latest}}
     command: ["wuwa-story-worker", "run", "--queue", "character_model"]
     cpus: 1
-    mem_limit: 2g
+    # Animation export retains the rig and all decoded actions until GLB assembly.
+    mem_limit: 3g
     deploy:
       replicas: ${WUWA_MODEL_REPLICAS:-1}
     environment:
