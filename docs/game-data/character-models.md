@@ -174,6 +174,13 @@ recovery collects orphaned transient directories. Source package paths/hashes,
 client identity and tool/recipe hashes remain in reference metadata. No raw
 texture tree or Blender working file is uploaded.
 
+Shared movement dependencies include the whole `BaseAnim` prefix (`BaseAnim2`,
+etc.), not only the `BaseAnim/` directory. The 3.7 Shorekeeper montages reference
+four movement sequences in `BaseAnim2`; omitting them loses four montage exports.
+Animation coverage is checked before allocating Blender actions. On Blender
+failure, a bounded diagnostic tail survives in the job error even though scratch
+is deleted.
+
 The default bundle contains:
 
 - `preview.glb`: rig, base-color textures limited to 512px, no animations,

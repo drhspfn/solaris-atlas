@@ -62,7 +62,8 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
         filters = [
             character_dir + "/",
             *sources["blueprints"],
-            gender_dir + "/BaseAnim/",
+            # Shared movement sets are named BaseAnim, BaseAnim2, etc.
+            gender_dir + "/BaseAnim",
             "ACLAnim",
             "ACLPlugin.uplugin",
             # Candidate discovery only: NPC/cinematic paths can be outside

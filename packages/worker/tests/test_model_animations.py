@@ -202,7 +202,7 @@ async def test_extraction_scope_includes_character_siblings_shared_moves_and_acl
         [
             "Aki/Character/Role/FemaleM/Shouanren/",
             "Aki/AuthoredBP",
-            "Aki/Character/Role/FemaleM/BaseAnim/",
+            "Aki/Character/Role/FemaleM/BaseAnim",
             "ACLAnim",
             "ACLPlugin.uplugin",
             "Shouanren",
@@ -210,6 +210,12 @@ async def test_extraction_scope_includes_character_siblings_shared_moves_and_acl
         if include
         else [model.rsplit("/", 1)[0] + "/", "Aki/AuthoredBP"]
     )
+
+    if include:
+        assert any(
+            "Aki/Character/Role/FemaleM/BaseAnim2/Move_F.uasset".startswith(value)
+            for value in filters
+        )
 
 
 def job_payload():
