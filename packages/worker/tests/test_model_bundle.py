@@ -15,6 +15,7 @@ from wuwa_story_worker.model_bundle import (
     material_metadata_path,
     package_path,
     preview_materials,
+    preview_meshes,
     retime_tracks,
     rig_glb_stats,
 )
@@ -199,6 +200,30 @@ def test_preview_resizes_copies_preserves_aspect_alpha_and_restores_slots_on_fai
     assert mesh.data.materials == [material, material]
 
 
+def test_preview_mesh_copies_keep_render_uv_and_restore_original_attributes_on_failure():
+    class MeshData(SimpleNamespace):
+        def copy(self):
+            return deepcopy(self)
+
+    original = MeshData(
+        uv_layers=[
+            SimpleNamespace(name="UV0", active_render=False),
+            SimpleNamespace(name="UV1", active_render=True),
+        ],
+        color_attributes=["COL0"],
+        shape_keys=SimpleNamespace(key_blocks=list(range(87))),
+    )
+    mesh = SimpleNamespace(data=original)
+    with pytest.raises(RuntimeError, match="export failed"), preview_meshes([mesh]):
+        assert mesh.data is not original
+        assert [uv.name for uv in mesh.data.uv_layers] == ["UV1"]
+        assert mesh.data.color_attributes == []
+        assert len(mesh.data.shape_keys.key_blocks) == 87
+        raise RuntimeError("export failed")
+    assert mesh.data is original
+    assert len(original.uv_layers) == 2 and original.color_attributes == ["COL0"]
+
+
 def write_test_glb(path, document):
     payload = json.dumps(document).encode()
     payload += b" " * (-len(payload) % 4)
@@ -301,12 +326,19 @@ def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setattr(sys, "path", sys.path.copy())
     armature = SimpleNamespace(type="ARMATURE", data=SimpleNamespace(bones=[0, 1]))
+
+    class MeshData(SimpleNamespace):
+        def copy(self):
+            return deepcopy(self)
+
     mesh = SimpleNamespace(
         type="MESH",
-        data=SimpleNamespace(
+        data=MeshData(
             vertices=[0, 1, 2],
             materials=[],
             shape_keys=SimpleNamespace(key_blocks=list(range(87))),
+            uv_layers=[],
+            color_attributes=[],
         ),
     )
     if missing_texture:

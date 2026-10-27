@@ -123,6 +123,31 @@ def base_color_texture(metadata: dict, converted: Path) -> tuple[str | None, Pat
 
 
 @contextmanager
+def preview_meshes(meshes):
+    """The generated base-color shaders use only the render UV and no colors."""
+    originals = []
+    try:
+        for mesh in meshes:
+            original = mesh.data
+            originals.append((mesh, original))
+            mesh.data = original.copy()
+            uv_name = next(
+                (uv.name for uv in mesh.data.uv_layers if uv.active_render),
+                mesh.data.uv_layers[0].name if mesh.data.uv_layers else None,
+            )
+            for index in reversed(range(len(mesh.data.uv_layers))):
+                uv = mesh.data.uv_layers[index]
+                if uv.name != uv_name:
+                    mesh.data.uv_layers.remove(uv)
+            while mesh.data.color_attributes:
+                mesh.data.color_attributes.remove(mesh.data.color_attributes[0])
+        yield
+    finally:
+        for mesh, original in originals:
+            mesh.data = original
+
+
+@contextmanager
 def preview_materials(meshes, texture_size):
     """Resize isolated images after the canonical export, restoring all slots."""
     originals, materials, images = [], {}, {}
@@ -372,7 +397,7 @@ def main():
             report["morph_targets"],
             report["textures"],
         )
-        with preview_materials(meshes, args.preview_texture_size):
+        with preview_meshes(meshes), preview_materials(meshes, args.preview_texture_size):
             export_glb("preview.glb", morph=False)
         report["preview_glb"] = rig_glb_stats(
             args.output / "preview.glb",
