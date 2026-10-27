@@ -1,3 +1,7 @@
+import hashlib
+import io
+import json
+
 import pytest
 
 from wuwa_story_worker.voice_import import voice_identity
@@ -50,3 +54,42 @@ def test_exact_gender_named_reference_is_not_remapped(tmp_path):
     from wuwa_story_worker.voice_import import exported_voices
     (tmp_path / "en_vo_Line_F.wem").write_bytes(b"audio")
     assert set(exported_voices(tmp_path, {"vo_Line_F"})["vo_Line_F"]) == {("en", None)}
+
+
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_download_shares_only_checksum_verified_archives_across_plans(tmp_path, monkeypatch, corrupt):
+    from wuwa_story_worker import voice_packages as packages
+    from wuwa_story_worker.client_assets import plan_id
+
+    data = b"verified archive"
+    item = {"path": "Lang_en/Base/voice.pak", "remote_path": "old/voice.pak",
+            "size": len(data), "sha1": hashlib.sha1(data).hexdigest()}
+    old = {"job_type": "voices.download", "version": "3.7.0", "files": [item],
+           "cdns": ["https://cdn-aliyun-hw-mc.aki-game.net/prod/client/"]}
+    old["id"] = plan_id(old)
+    previous = tmp_path / ("3.7.0-" + old["id"][:16])
+    source = previous / "game/Client/Saved/Resources/3.7.0" / item["path"]
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"x" * len(data) if corrupt else data)
+    (previous / "plan.json").write_text(json.dumps(old))
+    (previous / "status.json").write_text(json.dumps({"state": "downloaded", "id": old["id"]}))
+    new = {**old, "files": [{**item, "remote_path": "new/voice.pak"}]}
+    new["id"] = plan_id(new)
+    target = tmp_path / ("3.7.0-" + new["id"][:16]) / "game/Client/Saved/Resources/3.7.0" / item["path"]
+    target.parent.mkdir(parents=True)
+    partial = target.with_suffix(".pak.part")
+    partial.write_bytes(b"interrupted download")
+    downloads = []
+
+    def fetch(*args, **kwargs):
+        downloads.append(args)
+        return io.BytesIO(data)
+
+    monkeypatch.setattr(packages, "urlopen", fetch)
+    packages.download_voice_plan(new, tmp_path)
+    assert target.read_bytes() == data
+    assert not partial.exists()
+    assert len(downloads) == int(corrupt)
+    if not corrupt:
+        assert target.samefile(source)
+    assert source.read_bytes() == (b"x" * len(data) if corrupt else data)
