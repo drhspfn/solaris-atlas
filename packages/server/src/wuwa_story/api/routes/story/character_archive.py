@@ -186,7 +186,7 @@ async def character_archive(
     artwork_fields = ("RoleHeadIcon", "RoleHeadIconBig", "RoleHeadIconLarge", "RoleHeadIconCircle", "Card", "FormationRoleCard", "RolePortrait", "RoleStand", "Icon")
     artwork = [
         {"kind": field, "engine_path": role[field], "url": media_url(role[field], "image/"),
-         "scope": character_artwork_scope(field, role[field])}
+         "scope": character_artwork_scope(field, role[field], role_id)}
         for field in artwork_fields if isinstance(role.get(field), str) and role[field]
     ]
     skills = [

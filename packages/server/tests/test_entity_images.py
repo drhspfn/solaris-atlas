@@ -38,5 +38,7 @@ async def test_shared_resource_cannot_become_character_avatar_but_remains_valid_
     session.execute.return_value = [
         (SimpleNamespace(owner_node_id=1, source_path="/Game/UiQuest/Image/ChuanShuo/Default"), None, "wrong", "character:1"),
         (SimpleNamespace(owner_node_id=2, source_path="/Game/Common/IconRup/Material"), None, "item", "item:2"),
+        (SimpleNamespace(owner_node_id=3, source_path="/Game/Common/T_ActivityRoleYangyang"), None, "foreign", "character:1409"),
+        (SimpleNamespace(owner_node_id=4, source_path="/Game/Common/T_ActivityRoleYangyang"), None, "own", "character:1402"),
     ]
-    assert await entity_image_urls(session, [1, 2]) == {2: "item"}
+    assert await entity_image_urls(session, [1, 2, 3, 4]) == {2: "item", 4: "own"}

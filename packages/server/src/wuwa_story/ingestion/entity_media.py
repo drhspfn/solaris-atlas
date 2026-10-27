@@ -83,7 +83,7 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
         rows = [raw]
         if kind == "character":
             rows = [{field: value for field, value in raw.items()
-                     if character_artwork_scope(field, value) == "character"}]
+                     if character_artwork_scope(field, value, int(identifier)) == "character"}]
             for path, field, value in (
                 ("BinData/skill/skill.json", "SkillGroupId", raw.get("SkillId") or int(identifier)),
                 (

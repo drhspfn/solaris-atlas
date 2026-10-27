@@ -33,8 +33,11 @@ async def entity_image_urls(session, owner_ids: list[int]) -> dict[int, str]:
     best = {}
     for reference, _file, object_key, canonical_key in rows:
         path = reference.source_path or ""
+        role_key = canonical_key.partition(":")[2]
+        role_id = int(role_key) if role_key.isdecimal() else None
         if canonical_key.startswith("character:") and any(
-            character_artwork_scope(field, path) == "shared_resource" for field in ("RoleStand", "Icon")
+            character_artwork_scope(field, path, role_id) == "shared_resource"
+            for field in ("RoleStand", "RolePortrait", "Icon")
         ):
             continue
         rank = 0 if "IconRoleHead256/" in path else 1 if "IconRoleHead150/" in path else 2
