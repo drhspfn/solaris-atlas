@@ -121,6 +121,14 @@ It also uses Blender's viewport optimization during armature export, retains
 bone resets, and disables morph animation because facial curves are not imported
 by this preview. Static morph targets remain on the exported model.
 
+Profiling the large export also identified quadratic root-reference interning
+in Blender's `GlTF2Exporter.__append_unique_and_get_index`. The assembler uses
+a scoped identity index for its append-only accessor and buffer-view arrays.
+Those pinned generated classes use identity equality; other types keep the
+original equality behavior. A guard checks the pinned implementation, and the
+original static method is restored after export, including on failure. Blender's
+installed source files and the interactive user's settings are not modified.
+
 Serve only a separate preview directory containing GLB and viewer assets on
 `127.0.0.1`. Keep keys, original packages and private logs outside that directory.
 

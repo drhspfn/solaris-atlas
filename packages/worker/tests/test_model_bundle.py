@@ -1,7 +1,14 @@
 import json
 from types import SimpleNamespace
 
-from wuwa_story_worker.model_bundle import animation_sources, package_path, retime_tracks
+import pytest
+
+from wuwa_story_worker.model_bundle import (
+    animation_sources,
+    indexed_gltf_references,
+    package_path,
+    retime_tracks,
+)
 
 
 def test_package_identity_ignores_object_suffix_and_preserves_path():
@@ -55,3 +62,62 @@ def test_constant_tracks_retain_values_and_duration_without_single_key_baking():
     assert position[0] is not position[1]
     assert [key.frame for key in rotation] == [0, 30]
     assert dto.tracks[0].scale_keys == []
+
+
+def legacy_index(target, obj):
+    if obj in target:
+        return target.index(obj)
+    index = len(target)
+    target.append(obj)
+    return index
+
+
+def test_gltf_index_preserves_references_value_fallback_and_restores_on_failure():
+    name = "_GlTF2Exporter__append_unique_and_get_index"
+    exporter = type("GlTF2Exporter", (), {name: staticmethod(legacy_index)})
+    original = vars(exporter)[name]
+
+    class Reference:
+        pass
+
+    first, second = Reference(), Reference()
+    refs = []
+    with (
+        pytest.raises(ValueError, match="export failed"),
+        indexed_gltf_references(exporter, (Reference,)),
+    ):
+        add = getattr(exporter, name)
+        assert add(refs, first) == 0
+        assert add(refs, first) == 0
+        refs.append(second)
+        assert add(refs, second) == 1
+        assert refs == [first, second]
+        assert add([[1]], [1]) == 0
+        raise ValueError("export failed")
+    assert vars(exporter)[name] is original
+
+
+def test_gltf_identity_index_does_not_scan_growing_root_arrays():
+    class Reference:
+        pass
+
+    class ScanCountingList(list):
+        scanned = 0
+
+        def __contains__(self, value):
+            self.scanned += len(self)
+            return super().__contains__(value)
+
+        def index(self, value):
+            self.scanned += len(self)
+            return super().index(value)
+
+    name = "_GlTF2Exporter__append_unique_and_get_index"
+    exporter = type("GlTF2Exporter", (), {name: staticmethod(legacy_index)})
+    refs = ScanCountingList()
+    values = [Reference() for _ in range(1000)]
+    with indexed_gltf_references(exporter, (Reference,)):
+        add = getattr(exporter, name)
+        assert [add(refs, value) for value in values] == list(range(1000))
+        assert [add(refs, value) for value in values] == list(range(1000))
+    assert refs.scanned < 1000

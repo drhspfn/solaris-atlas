@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 import sys
+from contextlib import contextmanager
 from copy import copy
 from pathlib import Path
 
@@ -49,6 +50,48 @@ def retime_tracks(dto, fps=30):
                 last = copy(keys[0])
                 last.frame = end
                 keys.append(last)
+
+
+@contextmanager
+def indexed_gltf_references(exporter_class, identity_types):
+    """Index Blender 4.5's append-only accessor/view lists during this export.
+
+    These generated glTF classes use object identity for equality. Other root
+    types retain Blender's original value/equality behavior. No installed file
+    is modified, and the original static method is restored even on failure.
+    """
+    name = "_GlTF2Exporter__append_unique_and_get_index"
+    descriptor = vars(exporter_class)[name]
+    original = getattr(exporter_class, name)
+    if original.__code__.co_names != ("index", "len", "append") or any(
+        cls.__eq__ is not object.__eq__ or cls.__hash__ is not object.__hash__
+        for cls in identity_types
+    ):
+        raise RuntimeError("Pinned Blender glTF reference contract changed")
+    caches = {}
+
+    def append_reference(target, obj):
+        if type(obj) not in identity_types:
+            return original(target, obj)
+        cached = caches.get(id(target))
+        if cached is None or cached[1] != len(target):
+            indices = {}
+            for index, value in enumerate(target):
+                indices.setdefault(value, index)
+            cached = [target, len(target), indices]
+            caches[id(target)] = cached
+        indices = cached[2]
+        if obj not in indices:
+            indices[obj] = len(target)
+            target.append(obj)
+            cached[1] = len(target)
+        return indices[obj]
+
+    setattr(exporter_class, name, staticmethod(append_reference))
+    try:
+        yield
+    finally:
+        setattr(exporter_class, name, descriptor)
 
 
 def main():
@@ -176,19 +219,23 @@ def main():
     bpy.ops.wm.save_as_mainfile(
         filepath=str((args.output / "character.blend").resolve()), compress=True
     )
-    bpy.ops.export_scene.gltf(
-        filepath=str((args.output / "character.glb").resolve()),
-        export_format="GLB",
-        export_animations=True,
-        export_animation_mode="ACTIONS",
-        export_force_sampling=False,
-        export_morph=True,
-        export_morph_normal=False,
-        export_morph_animation=False,
-        export_optimize_disable_viewport=True,
-        export_skins=True,
-        export_anim_single_armature=True,
-    )
+    from io_scene_gltf2.blender.exp.exporter import GlTF2Exporter
+    from io_scene_gltf2.io.com.gltf2_io import Accessor, BufferView
+
+    with indexed_gltf_references(GlTF2Exporter, (Accessor, BufferView)):
+        bpy.ops.export_scene.gltf(
+            filepath=str((args.output / "character.glb").resolve()),
+            export_format="GLB",
+            export_animations=True,
+            export_animation_mode="ACTIONS",
+            export_force_sampling=False,
+            export_morph=True,
+            export_morph_normal=False,
+            export_morph_animation=False,
+            export_optimize_disable_viewport=True,
+            export_skins=True,
+            export_anim_single_armature=True,
+        )
     report["glb_bytes"] = (args.output / "character.glb").stat().st_size
     report["blender_version"] = bpy.app.version_string
     (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

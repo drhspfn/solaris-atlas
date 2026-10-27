@@ -22,6 +22,7 @@ RUN curl -fSL --retry 3 \
        | sort -z | xargs -0 sha256sum >> /app/tools/SHA256SUMS
 ENV WUWA_BLENDER_PATH=/app/tools/blender/blender \
     WUWA_UEFORMAT_PLUGIN=/app/tools/ueformat/plugins/blender
+COPY packages/worker/src/wuwa_story_worker/model_bundle.py /app/packages/worker/src/wuwa_story_worker/model_bundle.py
 USER appuser
 RUN --network=none /app/tools/blender/blender -b --factory-startup --python-exit-code 1 \
-    --python-expr "import sys; sys.path.insert(0, '/app/tools/ueformat/plugins/blender'); from io_scene_ueformat.importer.import_context import UEFormatImport; print('UEFormat ready')"
+    --python-expr "import sys; sys.path[:0]=['/app/tools/ueformat/plugins/blender','/app/packages/worker/src']; from io_scene_ueformat.importer.import_context import UEFormatImport; from wuwa_story_worker.model_bundle import indexed_gltf_references; from io_scene_gltf2.blender.exp.exporter import GlTF2Exporter; from io_scene_gltf2.io.com.gltf2_io import Accessor, BufferView; guard=indexed_gltf_references(GlTF2Exporter,(Accessor,BufferView)); guard.__enter__(); guard.__exit__(None,None,None); print('UEFormat and glTF reference index ready')"
