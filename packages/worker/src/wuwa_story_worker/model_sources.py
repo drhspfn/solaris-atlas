@@ -36,7 +36,21 @@ def model_sources(role, preload):
     return {"model": mesh, "blueprints": sorted(set(blueprints))}
 
 
-def spring_profile(rows, source, digest):
+def exported_package(value):
+    if value.startswith("Client/Content/"):
+        value = "/Game/" + value[len("Client/Content/") :]
+    return authored_package(value)
+
+
+def spring_profile(rows, source, digest, expected_skeleton=None):
+    if expected_skeleton is not None:
+        targets = [
+            row.get("Properties", {}).get("TargetSkeleton", {}).get("ObjectPath")
+            for row in rows
+            if row.get("Type") == "AnimBlueprintGeneratedClass"
+        ]
+        if not any(value and exported_package(value) == expected_skeleton for value in targets):
+            raise ValueError("Physics blueprint does not target the exported model skeleton")
     groups = []
     for row in rows:
         if not row.get("Name", "").startswith("Default__"):

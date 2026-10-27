@@ -147,7 +147,58 @@ bone springs. Its profile is extracted from the model's KawaiiPhysics blueprint;
 it preserves source groups/limits but approximates runtime physics rather than
 reproducing Kuro's cloth/collision solver. It does not modify or enlarge the GLB.
 
-## Optional Linux model-tools image
+## Queued model imports
+
+The admin data page and admin actions on character profiles enqueue
+`POST /admin/character-models` with `character_key`, optional `game_version` and
+optional `force`. Admin authorization and CSRF are required. The response is an
+inspectable processing run; its status is available from
+`GET /admin/character-models/{run_id}`. Repeated active requests reuse a run.
+Completed requests require `force` to rebuild. There is no automatic 61-character
+bulk export or animation import.
+
+The dedicated `character_model` consumer reads the selected release's
+`BinData/role/roleinfo.json` MeshId and its exact
+`BinData/model_config_preload/modelconfigpreload.json` mesh/blueprint references.
+It does not infer models from portraits or character names. Composite rigs fail
+with an inspectable error rather than silently selecting an unrelated mesh.
+Physics blueprints must target the mesh's exact exported skeleton.
+
+Downloaded archives are shared read-only. Only the model directory and authored
+blueprints are exported into an owned transient workspace. Conversion, R2 writes
+and atomic FileReference publication complete before scratch is removed; crash
+recovery collects orphaned transient directories. Source package paths/hashes,
+client identity and tool/recipe hashes remain in reference metadata. No raw
+texture tree or Blender working file is uploaded.
+
+The default bundle contains:
+
+- `preview.glb`: rig, base-color textures limited to 512px, no animations,
+  facial morph targets, unused UV layers or vertex colors.
+- `character.glb`: full-resolution textured rig retaining morph targets and
+  original UV/color attributes, with no animations. Blender can import/edit
+  this GLB; KawaiiPhysics/MMD physics do not become Blender constraints automatically.
+- Optional spring profile JSON, with source group/limit evidence and explicit
+  approximation limitations.
+
+The verified Shorekeeper outputs are 5,974,204 bytes for the preview and
+20,107,368 bytes for the editable model. Both have 250 joints and seven embedded
+textures. The full model retains 86 morph targets. Sizes vary by character;
+these measurements are not a universal storage budget. Identical object hashes
+are reused across repeated imports and releases.
+
+`GET /characters/{key}/model?game_version=...` returns only bundle metadata.
+The character page mounts the viewer and downloads the preview only after
+**View 3D**. Closing it unloads the iframe. The full GLB is a separate explicit
+download, with an attachment filename ending in `.glb`.
+
+The worker publishes a hash-versioned viewer beside the models on the same CDN
+origin, avoiding cross-origin GLB fetches and API byte proxying. The viewer index
+is uploaded last; model references share one publication identity. Local
+viewer assets remain available for development. Static rigs hide animation
+controls; optional turntable rotation can exercise springs without animation clips.
+
+## Dedicated Linux model-tools image
 
 Blender is deliberately separate from the ordinary production worker image.
 Build the worker from this revision first, then extend that immutable image:
@@ -163,8 +214,11 @@ importer and runs its import smoke check offline as the runtime user. It exposes
 `WUWA_BLENDER_PATH` and `WUWA_UEFORMAT_PLUGIN`. The normal image build remains
 unchanged in size. Run the images workflow manually with `component=models` to
 build a pinned worker base and validate the optional model-tools image. This
-manual workflow does not deploy services. Both Linux builds and the offline
-plugin smoke check passed in run
-[`40563461838`](https://github.com/drhspfn/solaris-atlas/actions/runs/40563461838).
+manual workflow does not deploy services. Main image builds now also publish the
+separate models image before deployment. Only `model-worker` uses that image;
+ordinary image/audio workers retain their existing runtime. Model concurrency is
+one per replica, controlled by `WUWA_MODEL_REPLICAS` (default one).
+Both Linux builds and the offline plugin smoke check passed in run
+[`40574532763`](https://github.com/drhspfn/solaris-atlas/actions/runs/40574532763).
 Actual game-model conversion and browser playback were exercised on Windows;
 the CI smoke check does not mount or publish the user's game assets.

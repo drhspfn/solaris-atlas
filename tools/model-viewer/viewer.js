@@ -55,11 +55,12 @@ scene.add(floor);
 $('floor').onchange = () => { floor.visible = $('floor').checked; $('axis-key').hidden = !floor.visible; };
 
 let model, mixer, action, physics, applied = false, playing = !matchMedia('(prefers-reduced-motion: reduce)').matches;
-let height = 1.8, clips = [], previousTime = 0;
+let height = 1.8, modelWidth = 1.2, clips = [], previousTime = 0;
 const homeTarget = new THREE.Vector3();
 function resetView() {
   controls.target.copy(homeTarget);
-  camera.position.copy(homeTarget).add(new THREE.Vector3(0, height * 0.12, height * 2.05));
+  const distance = Math.max(height, modelWidth / camera.aspect) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.15;
+  camera.position.copy(homeTarget).add(new THREE.Vector3(0, height * 0.12, distance));
   controls.update();
 }
 $('reset').onclick = resetView;
@@ -110,21 +111,24 @@ function timestamp(seconds) {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
 }
 function updateTime() {
+  if (!action) return;
   $('time').value = action.time;
   $('duration').value = `${timestamp(action.time)} / ${timestamp(action.getClip().duration)}`;
 }
 new ResizeObserver(() => {
   const { width, height } = viewport.getBoundingClientRect();
   renderer.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix();
+  if (model) resetView();
 }).observe(viewport);
 document.addEventListener('visibilitychange', () => { previousTime = 0; resetPhysics(); });
 renderer.setAnimationLoop(milliseconds => {
   const dt = previousTime ? (milliseconds - previousTime) / 1000 : 0;
   previousTime = milliseconds;
-  if (mixer && playing && !document.hidden) {
+  if (mixer && (playing || $('turntable').checked) && !document.hidden) {
     restorePhysics();
     const safeDelta = dt > 0.15 ? 0 : dt;
-    mixer.update(safeDelta * Number($('speed').value));
+    if ($('turntable').checked) model.rotation.y += safeDelta * 0.5;
+    mixer.update(playing ? safeDelta * Number($('speed').value) : 0);
     if ($('physics').checked) {
       if (dt > 0.15) physics.reset();
       physics.update(safeDelta, Number($('strength').value)); applied = safeDelta > 0;
@@ -143,6 +147,7 @@ async function load() {
     const bounds = new THREE.Box3().setFromObject(model);
     const center = bounds.getCenter(new THREE.Vector3());
     height = bounds.max.y - bounds.min.y;
+    modelWidth = bounds.max.x - bounds.min.x;
     model.position.add(new THREE.Vector3(-center.x, -bounds.min.y, -center.z));
     model.updateMatrixWorld(true);
     homeTarget.set(0, height * 0.5, 0); resetView();

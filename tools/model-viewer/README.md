@@ -22,6 +22,8 @@ Serve only the generated preview folder, never the game, keys or source logs.
 
 - Floor & grid toggles a ground plane, a 0.5 m grid and XYZ axes. Reset view,
   orbit and zoom buttons supplement pointer/touch camera controls.
+- Rotate model enables an optional turntable, so a rig without animation clips
+  can move and drive secondary springs. A stationary rig has no artificial jiggle.
 - Animation, pause, timeline and speed control the existing clips. Static clips
   are labelled as poses. Reduced motion starts playback paused.
 - Secondary physics starts **off**; Strength mixes its rotations over the
@@ -41,6 +43,9 @@ Serve only the generated preview folder, never the game, keys or source logs.
 
 The GLB is unchanged. `physics.json` and viewer code add only a small amount of
 metadata/runtime code; no additional animation frames are baked or stored.
+For published bundles the viewer accepts `model`, optional `physics`, and `name`
+URL parameters. Resources must share the viewer origin. `--assets-only` stages
+the standalone runtime without reading or publishing any game files.
 
 ## Verification
 

@@ -58,6 +58,8 @@ def test_spring_profile_preserves_source_groups_and_units():
     assert profile["groups"][0]["dummyLength"] == 0.05
     assert profile["groups"][0]["roots"] == ["Chest"]
     assert profile["groups"][0]["limitAngle"] == 15
+    with pytest.raises(ValueError, match="skeleton"):
+        spring_profile(rows, "Aki/PC", "abc", expected_skeleton="Aki/OtherSkeleton")
 
 
 def glb(path, **extra):

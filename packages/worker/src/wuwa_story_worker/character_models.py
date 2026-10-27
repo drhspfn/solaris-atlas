@@ -23,7 +23,12 @@ from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.media_provenance import sha256, temporary_entity_workspace
 from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.model_publication import ensure_glb_download, publish_viewer
-from wuwa_story_worker.model_sources import glb_summary, model_sources, spring_profile
+from wuwa_story_worker.model_sources import (
+    exported_package,
+    glb_summary,
+    model_sources,
+    spring_profile,
+)
 from wuwa_story_worker.tooling import asset_workspace, tool_path
 
 
@@ -111,16 +116,33 @@ async def build_bundle(root, sources):
             "--output",
             output.resolve(),
             "--rig-only",
+            "--preview-texture-size",
+            "512",
         ],
         root / "blender.log",
         1800,
     )
     profile = None
+    model_metadata = json.loads(
+        (cooked / "Client/Content" / (sources["model"] + ".json")).read_text(encoding="utf-8-sig")
+    )
+    skeletons = [
+        row.get("Properties", {}).get("Skeleton", {}).get("ObjectPath")
+        for row in model_metadata
+        if row.get("Type") == "SkeletalMesh"
+        and row.get("Name") == sources["model"].rsplit("/", 1)[-1]
+    ]
+    if len(skeletons) != 1 or not skeletons[0]:
+        raise ValueError("The exported character mesh has no exact skeleton reference")
+    skeleton = exported_package(skeletons[0])
     for blueprint in sources["blueprints"]:
         path = cooked / "Client/Content" / (blueprint + ".json")
         if path.is_file():
             candidate = spring_profile(
-                json.loads(path.read_text(encoding="utf-8-sig")), blueprint, sha256(path)
+                json.loads(path.read_text(encoding="utf-8-sig")),
+                blueprint,
+                sha256(path),
+                expected_skeleton=skeleton,
             )
             if candidate["groups"]:
                 if profile is not None:
@@ -145,6 +167,7 @@ async def build_bundle(root, sources):
             for name, path in [("fmodel", fmodel), ("converter", converter), ("blender", blender)]
         },
         "recipe": sha256(Path(__file__).with_name("model_bundle.py")),
+        "preview_texture_size": 512,
     }
     return output, summaries, provenance
 
