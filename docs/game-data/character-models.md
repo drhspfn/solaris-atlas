@@ -1,8 +1,8 @@
-# Local character-model experiment
+# Character-model conversion and queued imports
 
 The first subject is The Shorekeeper (`character:1505`, internal asset name
-`Shouanren`). This is an offline conversion experiment, not a new production
-import queue or a published character viewer. Keep original packages read-only.
+`Shouanren`). The local experiment below established the conversion recipe;
+the queued production pipeline is documented afterward. Keep original packages read-only.
 
 ## Verified toolchain
 
