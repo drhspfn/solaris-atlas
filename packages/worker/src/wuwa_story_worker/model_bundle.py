@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 import sys
+from copy import copy
 from pathlib import Path
 
 
@@ -35,6 +36,19 @@ def animation_sources(root: Path, skeleton: str) -> dict[str, dict]:
                 "matches_skeleton": package_path(reference) == package_path(skeleton),
             }
     return result
+
+
+def retime_tracks(dto, fps=30):
+    """Preserve constant channels without Blender's single-key baking fallback."""
+    end = (dto.metadata.num_frames - 1) * fps / dto.metadata.frames_per_second
+    for track in dto.tracks:
+        for keys in (track.position_keys, track.rotation_keys, track.scale_keys):
+            for key in keys:
+                key.frame *= fps / dto.metadata.frames_per_second
+            if len(keys) == 1 and end > keys[0].frame:
+                last = copy(keys[0])
+                last.frame = end
+                keys.append(last)
 
 
 def main():
@@ -140,14 +154,12 @@ def main():
             row["unknown_bones"] = sorted(unknown)
             continue
         to_blender_space(dto, header.file_version, 0.01)
-        for track in dto.tracks:
-            for keys in (track.position_keys, track.rotation_keys, track.scale_keys):
-                for key in keys:
-                    key.frame *= 30 / metadata.frames_per_second
+        retime_tracks(dto)
         action = create_anim(
             dto, UEAnimOptions(override_skeleton=armature, import_curves=False), header.object_name
         )
         action.use_fake_user = True
+        action["source_path"] = header.object_path
         row["action"] = action.name
         row["included_in_glb"] = True
         actions.append(action)
@@ -172,6 +184,8 @@ def main():
         export_force_sampling=False,
         export_morph=True,
         export_morph_normal=False,
+        export_morph_animation=False,
+        export_optimize_disable_viewport=True,
         export_skins=True,
         export_anim_single_armature=True,
     )

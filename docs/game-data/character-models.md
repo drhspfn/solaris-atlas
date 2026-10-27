@@ -106,6 +106,21 @@ The initial base-only client export had 243 bones; including local hotfixes
 produced the current model with 250 bones, 59,675 vertices and eight materials.
 Do not combine files from these two resource sets.
 
+The complete local skeleton-linked inventory contains 504 source animation
+assets and 542 exported clips (montages can produce multiple clips). All 504
+sources have an export after dependency repair. There are 250 non-additive body
+clips, two curve-only facial clips, 281 local-space additive clips and nine
+mesh-space additive clips. Curve-only facial files are not empty animations.
+`animation-inventory.json` in the experiment directory records their source
+paths, frame rates, frame counts, bone tracks and facial-curve counts.
+
+For large collections, constant one-key channels trigger Blender's fallback
+sampling even when `export_force_sampling=False`. The assembler extends these
+constant channels with an equal end key, preserving their value and duration.
+It also uses Blender's viewport optimization during armature export, retains
+bone resets, and disables morph animation because facial curves are not imported
+by this preview. Static morph targets remain on the exported model.
+
 Serve only a separate preview directory containing GLB and viewer assets on
 `127.0.0.1`. Keep keys, original packages and private logs outside that directory.
 
@@ -123,5 +138,10 @@ docker build -f packages/worker/Dockerfile.models \
 The optional image pins the Linux Blender archive SHA256, pins the UEFormat
 importer and runs its import smoke check offline as the runtime user. It exposes
 `WUWA_BLENDER_PATH` and `WUWA_UEFORMAT_PLUGIN`. The normal image build remains
-unchanged in size. The Windows experiment is directly exercised; Linux image
-validation must be performed where a Docker daemon is available.
+unchanged in size. Run the images workflow manually with `component=models` to
+build a pinned worker base and validate the optional model-tools image. This
+manual workflow does not deploy services. Both Linux builds and the offline
+plugin smoke check passed in run
+[`40560320871`](https://github.com/drhspfn/solaris-atlas/actions/runs/40560320871).
+Actual game-model conversion and browser playback were exercised on Windows;
+the CI smoke check does not mount or publish the user's game assets.
