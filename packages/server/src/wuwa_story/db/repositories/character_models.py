@@ -32,6 +32,7 @@ async def published_model_files(session, owner_node_id, release_id, bucket):
                 FileReference.metadata_json["model_bundle_id"].astext.label("model_bundle_id"),
                 FileLocation.object_key,
                 FileObject.size_bytes,
+                FileReference.metadata_json["viewer_object_key"].astext.label("viewer_object_key"),
             )
             .join(FileObject, FileObject.id == FileReference.file_id)
             .join(FileLocation, FileLocation.file_id == FileObject.id)

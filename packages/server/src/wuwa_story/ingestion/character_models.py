@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -137,6 +138,7 @@ async def public_character_model(session, owner_node_id, release):
         "preview": None,
         "download": None,
         "physics": None,
+        "viewer_url": None,
     }
     if release is None:
         return result
@@ -144,10 +146,10 @@ async def public_character_model(session, owner_node_id, release):
     rows = await published_model_files(session, owner_node_id, release.id, settings.s3_bucket)
     # Rows are newest first. Never combine files from different publications.
     bundles = {}
-    for reference_type, model_bundle_id, object_key, size_bytes in rows:
+    for reference_type, model_bundle_id, object_key, size_bytes, viewer_object_key in rows:
         if model_bundle_id:
             bundles.setdefault(model_bundle_id, {}).setdefault(
-                REFERENCE_TYPES[reference_type], (object_key, size_bytes)
+                REFERENCE_TYPES[reference_type], (object_key, size_bytes, viewer_object_key)
             )
     bundle = next(
         (files for files in bundles.values() if "preview" in files and "download" in files), None
@@ -155,6 +157,10 @@ async def public_character_model(session, owner_node_id, release):
     if bundle is not None:
         storage = S3Storage(settings)
         result["status"] = "ready"
-        for kind, (object_key, size_bytes) in bundle.items():
+        for kind, (object_key, size_bytes, viewer_object_key) in bundle.items():
             result[kind] = {"url": storage.public_url(object_key), "size_bytes": size_bytes}
+            if isinstance(viewer_object_key, str) and re.fullmatch(
+                r"model-viewer/[0-9a-f]{64}/index\.html", viewer_object_key
+            ):
+                result["viewer_url"] = storage.public_url(viewer_object_key)
     return result

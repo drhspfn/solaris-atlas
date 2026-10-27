@@ -237,9 +237,9 @@ async def test_status_is_processor_scoped():
 
 async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeypatch):
     rows = [
-        ("character_model_preview", "new", "objects/new-preview", 100),
-        ("character_model_download", "old", "objects/old-download", 200),
-        ("character_model_physics", "old", "objects/old-physics", 30),
+        ("character_model_preview", "new", "objects/new-preview", 100, None),
+        ("character_model_download", "old", "objects/old-download", 200, None),
+        ("character_model_physics", "old", "objects/old-physics", 30, None),
     ]
     monkeypatch.setattr(service, "published_model_files", AsyncMock(return_value=rows))
     monkeypatch.setattr(
@@ -255,19 +255,57 @@ async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeyp
         "preview": None,
         "download": None,
         "physics": None,
+        "viewer_url": None,
     }
-    rows.append(("character_model_preview", "old", "objects/old-preview", 99))
+    rows.append(("character_model_preview", "old", "objects/old-preview", 99, None))
     result = await service.public_character_model(AsyncMock(), 15, release)
     assert result["status"] == "ready"
     assert result["preview"] == {
         "url": "https://media.example/objects/old-preview",
         "size_bytes": 99,
     }
-    rows.insert(1, ("character_model_download", "new", "objects/new-download", 250))
+    rows.insert(1, ("character_model_download", "new", "objects/new-download", 250, None))
     result = await service.public_character_model(AsyncMock(), 15, release)
     assert result["preview"]["size_bytes"] == 100
     assert result["download"]["size_bytes"] == 250
     assert result["physics"] is None
+    assert result["viewer_url"] is None
+
+
+@pytest.mark.parametrize(
+    "viewer_key",
+    [
+        None,
+        "private/index.html",
+        "https://other.example/index.html",
+        "model-viewer/" + "a" * 63 + "/index.html",
+        "model-viewer/" + "A" * 64 + "/index.html",
+        "model-viewer/" + "a" * 64 + "/../index.html",
+        "model-viewer/" + "a" * 64 + "/index.html\n",
+        "model-viewer/" + "a" * 64 + "/index.html",
+    ],
+)
+async def test_viewer_url_is_validated_and_scoped_to_complete_bundle(monkeypatch, viewer_key):
+    other_key = "model-viewer/" + "b" * 64 + "/index.html"
+    rows = [
+        ("character_model_preview", "incomplete", "objects/new-preview", 100, other_key),
+        ("character_model_preview", "complete", "objects/preview", 99, viewer_key),
+        ("character_model_download", "complete", "objects/download", 200, viewer_key),
+    ]
+    monkeypatch.setattr(service, "published_model_files", AsyncMock(return_value=rows))
+    monkeypatch.setattr(
+        service,
+        "S3Storage",
+        lambda _: SimpleNamespace(public_url=lambda key: "https://media.example/" + key),
+    )
+    result = await service.public_character_model(
+        AsyncMock(), 15, SimpleNamespace(id=8, game_version="1.4.0")
+    )
+    assert result["status"] == "ready"
+    valid_key = "model-viewer/" + "a" * 64 + "/index.html"
+    assert result["viewer_url"] == (
+        "https://media.example/" + valid_key if viewer_key == valid_key else None
+    )
 
 
 async def test_repository_filters_available_bucket_and_release():
@@ -290,6 +328,7 @@ async def test_repository_filters_available_bucket_and_release():
         assert clause in sql
     assert "source_path" not in sql and "source_name" not in sql
     assert "model_bundle_id" in sql
+    assert "viewer_object_key" in sql
 
 
 async def test_public_route_uses_existing_character_resolver(monkeypatch):
