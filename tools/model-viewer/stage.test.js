@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { physicsProfile } from './stage.mjs';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const blueprint = () => [{ Name: 'Default__ABP', Properties: { Kawaii: {
   RootBones: [{ BoneName: 'Chest' }], ExcludeBones: [{ BoneName: 'Excluded' }],
@@ -23,4 +28,17 @@ test('missing settings and unsupported coordinate axes fail before staging', () 
   data[0].Properties.Kawaii.BoneForwardAxis = 'EBoneForwardAxis::X_Positive';
   data[0].Properties.Kawaii.PhysicsSettings.Damping = NaN;
   assert.throws(() => physicsProfile(data, '', ''), /Damping/);
+});
+
+test('assets-only staging includes the lazy-animation runtime without game files', async () => {
+  const output = await mkdtemp(join(tmpdir(), 'model-viewer-stage-'));
+  try {
+    execFileSync(process.execPath, [fileURLToPath(new URL('./stage.mjs', import.meta.url)),
+      '--assets-only', '--output', output]);
+    assert.equal(await readFile(join(output, 'animations.js'), 'utf8'),
+      await readFile(new URL('./animations.js', import.meta.url), 'utf8'));
+    assert.match(await readFile(join(output, 'viewer.js'), 'utf8'), /from '\.\/animations.js'/);
+  } finally {
+    await rm(output, { recursive: true, force: true });
+  }
 });

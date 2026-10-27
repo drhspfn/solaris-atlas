@@ -43,7 +43,7 @@ async function stage() {
     throw new Error('Keep generated artifacts outside the source directory');
   }
   await mkdir(output, { recursive: true });
-  for (const name of ['index.html', 'viewer.css', 'viewer.js', 'spring-bones.js']) {
+  for (const name of ['index.html', 'viewer.css', 'viewer.js', 'spring-bones.js', 'animations.js']) {
     await copyFile(join(root, name), join(output, name));
   }
   const vendor = join(root, 'node_modules/three');

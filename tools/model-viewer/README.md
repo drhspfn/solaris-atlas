@@ -44,14 +44,44 @@ Serve only the generated preview folder, never the game, keys or source logs.
 The GLB is unchanged. `physics.json` and viewer code add only a small amount of
 metadata/runtime code; no additional animation frames are baked or stored.
 For published bundles the viewer accepts `model`, optional `physics`, and `name`
-URL parameters. Resources must share the viewer origin. `--assets-only` stages
+URL parameters. Resources must use HTTP(S) and share the viewer origin. `--assets-only` stages
 the standalone runtime without reading or publishing any game files.
+
+## Optional animation pack
+
+Pass `animations=<URL>` and optionally `animation_bytes=<positive integer>`
+alongside the existing parameters (URL-encode each parameter value). For example:
+
+```text
+?model=/models/preview.glb&physics=/models/physics.json&animations=/models/animations.glb&animation_bytes=10485760
+```
+
+The viewer shows **Load animations (~10.0 MiB)** for that size hint, or
+**Load animations** when the size is absent/invalid. The hint does not trigger a
+HEAD request. No animation-pack request occurs until the button is clicked.
+The pack must be a self-contained GLB containing a bone hierarchy and clips,
+without meshes, materials or textures, with the same authored bone names as the
+preview. Its hierarchy is never added to the visible scene. Clips are matched
+by original glTF node names and rebound to existing preview bone UUIDs, avoiding
+loader name suffix collisions. Missing/ambiguous bone targets and empty packs
+fail visibly and allow retry without replacing the preview or its physics.
+
+While loading, the load button and playback controls are disabled. On success,
+playback controls appear, `Stand1` is selected when present (otherwise the first
+clip), and the optional turntable stops and is hidden. Reduced motion still
+starts playback paused. Physics settings remain unchanged. Failed downloads
+offer an explicit retry; there is no automatic retry or background download.
+Embedded clips in local full GLBs continue to work without an animation URL.
 
 ## Verification
 
 `npm test` exercises response to movement, angular bounds, restoration/reset,
 changing animated rotations, several frame rates, nested roots, exclusions and
-source-profile validation. The GitHub workflow runs the same checks without
+source-profile validation. Animation checks execute the viewer orchestration
+with browser/rendering boundaries stubbed, assert zero initial pack requests,
+retry/busy states, URL validation, embedded clips, default selection and physics
+preservation, and verify target rebinding with a real Three.js mixer.
+The GitHub workflow runs the same checks without
 game files. Actual GLB/browser verification remains a separate local check.
 
 Manual checks:
@@ -62,3 +92,9 @@ Manual checks:
 4. Toggle the floor; orbit, zoom and reset. Seek and change playback speed.
 5. Reload in a narrow viewport; controls remain reachable without horizontal
    overflow. A missing physics profile keeps animation playback available.
+6. Open a rig-only preview with `animations` and `animation_bytes`. In browser
+   Network, verify no pack request before clicking **Load animations**. Enable
+   physics/turntable, click once, and verify one pack request, `Stand1` playback,
+   restored playback controls, stopped/hidden turntable and unchanged physics.
+7. Block the pack URL, click to load, verify the error and enabled retry button,
+   unblock it and retry. Repeat with reduced motion and at a narrow viewport.
