@@ -71,3 +71,44 @@ async def test_absent_base_movie_is_reported_for_video_package_resolution(tmp_pa
 def test_wrapper_paths_cannot_escape_export_root(tmp_path, wrapper):
     with pytest.raises(ValueError):
         cutscene_sources.authored_movie_paths(tmp_path, [wrapper])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("valid", [False, True])
+async def test_preparation_isolates_invalid_sources_and_reports_them(tmp_path, monkeypatch, valid):
+    wrappers = {
+        "Missing": None,
+        "NoMovie": b"authored sequence without a movie reference",
+        "Unsafe": b"filepath://./Aki/Movies/..\\escape.mp4\0",
+        "Ambiguous": b"filepath://./Aki/Movies/A.mp4\0filepath://./Aki/Movies/B.mp4\0",
+    }
+    if valid:
+        wrappers["Good"] = b"filepath://./Aki/Movies/LevelB_Seq\\02_7\\Actual.mp4\0"
+    packages = []
+    for name, data in wrappers.items():
+        package = f"Client/Content/Aki/Sequence/{name}.uasset"
+        packages.append(package)
+        if data is not None:
+            path = tmp_path / package.replace(".uasset", ".uexp")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+    packages.append("Client/Content/Aki/../escape.uasset")
+    movie = "Client/Content/Aki/Movies/LevelB_Seq/02_7/Actual.mp4"
+    index = archive_index(tmp_path, [movie])
+    export = AsyncMock(return_value=tmp_path / "receipt.json")
+    monkeypatch.setattr(cutscene_sources, "export_assets", export)
+    ensure_index = AsyncMock(side_effect=AssertionError("No index needed for rejected sources"))
+    monkeypatch.setattr(cutscene_sources, "ensure_archive_index", ensure_index)
+    result = await cutscene_sources.prepare_base_movies(
+        tmp_path, tmp_path, packages, tmp_path / "fmodel", index=index if valid else None)
+    expected = {"Client/Content/Aki/Sequence/Good.uasset": movie} if valid else {}
+    assert result["movies"] == expected
+    assert set(result["errors"]) == set(packages) - set(expected)
+    assert "Expected one safe authored MP4 path" in result["errors"].values()
+    assert result["missing"] == []
+    assert result["receipts"] == ([tmp_path / "receipt.json"] if valid else [])
+    if valid:
+        export.assert_awaited_once_with(tmp_path, tmp_path / "fmodel", movie)
+    else:
+        export.assert_not_awaited()
+    ensure_index.assert_not_awaited()

@@ -374,6 +374,10 @@ async def cutscene_assets(payload, parent):
     missing = await missing_cutscene_identities({"cutscene:" + name for name in payload["targets"]},
                                                source_context=context)
     targets = [name for name in payload["targets"] if "cutscene:" + name in missing]
+    if parent.get("workspace_id") and not parent.get("video_plan_id"):
+        # Preparation has not resolved its final video package identity yet.
+        # Leaves check reuse with that identity; retain exact wrappers for their fallback.
+        targets = payload["targets"]
     if not targets:
         return {**parent, "stage": "cutscene_assets_reused", "reused": len(payload["targets"])}, "completed"
     root = client_root(parent)
@@ -428,6 +432,7 @@ async def cutscene_assets(payload, parent):
     inventory = await publish_inventory(assets)
     inventory["missing_video_packages"] = unavailable
     inventory["video_packages"] = video_diagnostics
+    inventory["invalid_movie_sources"] = base_movies.get("errors", {})
     from wuwa_story_worker.cutscene_import import confined
     inventory["missing_movies"] = [path for path in sorted(set(base_movies["movies"].values()))
                                     if not confined(assets, path).is_file()]
@@ -455,16 +460,24 @@ async def cutscene(payload, parent):
                                              for path in missing_wrappers]}}, "partial"
     from wuwa_story_worker.cutscene_import import confined, movie_path
     absent_movies = []
+    invalid_movies = []
     for video in recipe["videos"]:
         package = video["asset"].removeprefix("asset:ue:/Game/").rsplit(".", 1)[0]
-        path = movie_path(confined(assets, "Client/Content/" + package + ".uexp").read_bytes())
+        wrapper = "Client/Content/" + package + ".uexp"
+        try:
+            path = movie_path(confined(assets, wrapper).read_bytes())
+        except ValueError as error:
+            invalid_movies.append({"expected": wrapper, "status": "invalid_source",
+                                   "matches": [], "reason": str(error)})
+            continue
         if not confined(assets, path).is_file():
             absent_movies.append(path)
-    if absent_movies:
+    if absent_movies or invalid_movies:
         await cleanup_published_output(parent, payload["run_id"], "cutscene")
-        return {"videos": 0, "asset_version": parent["asset_version"], "missing_assets": absent_movies,
+        return {"videos": 0, "asset_version": parent["asset_version"],
+                "missing_assets": absent_movies + [entry["expected"] for entry in invalid_movies],
                 "media_report": {"entries": [{"expected": path, "status": "not_in_archive", "matches": []}
-                                             for path in absent_movies]}}, "partial"
+                                             for path in absent_movies] + invalid_movies}}, "partial"
     voice_cache = root / "voices" if parent.get("workspace_id") else asset_workspace() / "voices"
     voice_roots = [package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace())] if parent.get("voice_plan_id") else sorted(voice_cache.glob(parent["asset_version"] + "-*"))
     if parent.get("workspace_id") and parent.get("voice_plan_id"):

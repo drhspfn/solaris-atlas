@@ -84,13 +84,61 @@ def test_streamed_comparison_records_small_early_changes(monkeypatch, tmp_path):
 def test_unaligned_frame_rates_are_not_guessed(monkeypatch, tmp_path):
     rates = iter([(30, False), (24, False)])
     monkeypatch.setattr(segments, "probe", lambda *_: next(rates))
-    with pytest.raises(ValueError, match="do not align"):
+    with pytest.raises(segments.VariantAlignmentError, match="do not align"):
         segments.analyze(
             [tmp_path / "a", tmp_path / "b"],
             tmp_path / "ffmpeg",
             tmp_path,
             segments.ComparisonSettings(),
         )
+
+
+@pytest.mark.parametrize("tail", [b"", b"partial"])
+def test_unequal_frame_counts_are_distinct_from_incomplete_frames(monkeypatch, tmp_path, tail):
+    monkeypatch.setattr(segments, "probe", lambda *_: (10, False))
+    streams = iter([bytes(600), bytes(300) + tail])
+    processes = []
+
+    class Process:
+        def __init__(self, *args, **kwargs):
+            self.stdout = io.BytesIO(next(streams))
+            self.stopped = False
+            processes.append(self)
+
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0 if self.stopped else None
+
+        def kill(self):
+            self.stopped = True
+
+    monkeypatch.setattr(segments.subprocess, "Popen", Process)
+    with pytest.raises(ValueError) as caught:
+        segments.analyze([tmp_path / "a", tmp_path / "b"], tmp_path / "ffmpeg", tmp_path,
+                         segments.ComparisonSettings(width=10, height=10))
+    assert isinstance(caught.value, segments.VariantAlignmentError) is (not tail)
+    assert all(process.stdout.closed and process.stopped for process in processes)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="native FFmpeg unavailable")
+def test_native_unequal_variants_leave_originals_intact_without_segments(tmp_path):
+    ffmpeg = Path(shutil.which("ffmpeg"))
+    paths = [tmp_path / "short.mp4", tmp_path / "long.mp4"]
+    for frames, path in zip((5, 7), paths, strict=True):
+        subprocess.run([
+            str(ffmpeg), "-v", "error", "-y", "-filter_threads", "1",
+            "-f", "lavfi", "-i", "testsrc2=size=32x32:rate=10",
+            "-frames:v", str(frames), "-c:v", "libx264", "-threads:v", "1", str(path),
+        ], check=True, capture_output=True, timeout=30)
+    originals = [path.read_bytes() for path in paths]
+    with pytest.raises(segments.VariantAlignmentError, match="frame counts do not align"):
+        segments.export_segments(paths, ffmpeg, tmp_path / "output",
+                                 segments.ComparisonSettings(width=32, height=32))
+    assert [path.read_bytes() for path in paths] == originals
+    assert not list((tmp_path / "output").rglob("*.mp4"))
+    assert not list((tmp_path / "output").rglob("analysis.json"))
 
 
 def test_audio_only_difference_prevents_false_shared_video(monkeypatch, tmp_path):

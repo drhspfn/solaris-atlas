@@ -135,3 +135,16 @@ video does not establish what was visible in a historical game build.
 
 To disable paid visual work, stop the dedicated consumer and set the flag false.
 Imported video/dialogue and previous valid descriptions continue to work.
+
+## Source failures and variant alignment
+
+Preparation normalizes authored Windows separators and records rejected movie
+wrappers under `media_report.invalid_movie_sources`. It continues preparing other
+sources; the affected leaf remains partial with exact source diagnostics. Ambiguous
+references and traversal paths are never replaced with a guessed movie.
+
+Valid variants with unequal frame counts/rates retain their independent originals
+and authored selection flow. They must decode fully before this fallback is allowed;
+corrupt/truncated decoding still fails. Preparation retains exact wrapper exports
+until its final video-package identity is known, so a preliminary reuse match cannot
+leave a leaf without the sources needed for its stricter publication check.

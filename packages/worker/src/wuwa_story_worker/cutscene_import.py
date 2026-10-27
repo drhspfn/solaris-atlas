@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import re
 import shutil
 import struct
@@ -20,7 +21,7 @@ from wuwa_story.ingestion.cutscenes import Clip, CutsceneRecipe, PlaybackFlow
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
-from wuwa_story_worker.cutscene_segments import export_segments
+from wuwa_story_worker.cutscene_segments import VariantAlignmentError, export_segments
 from wuwa_story_worker.publication_provenance import (
     pinned_source,
     publication_source,
@@ -28,6 +29,8 @@ from wuwa_story_worker.publication_provenance import (
     verified_references,
 )
 from wuwa_story_worker.wwise_banks import bank_media_ids, has_authored_event, render_bank
+
+logger = logging.getLogger(__name__)
 
 
 async def missing_cutscene_identities(names: set[str], *, source_context: dict,
@@ -51,10 +54,17 @@ async def missing_cutscene_identities(names: set[str], *, source_context: dict,
 
 
 def movie_path(data: bytes) -> str:
-    paths = re.findall(rb"filepath://\./(Aki/Movies/[A-Za-z0-9_./-]+\.mp4)\x00", data, re.IGNORECASE)
-    if len(paths) != 1 or b".." in paths[0].split(b"/"):
+    # Count all references before validation; an unsafe second reference must not
+    # disappear from the candidate set and make a different movie look unique.
+    references = re.findall(rb"filepath:[^\x00]*(?:\x00|$)", data, re.IGNORECASE)
+    match = re.fullmatch(
+        rb"filepath://\./(Aki/Movies/[A-Za-z0-9_./\\-]+\.mp4)\x00",
+        references[0], re.IGNORECASE,
+    ) if len(references) == 1 else None
+    path = match[1].replace(b"\\", b"/") if match else b""
+    if not path or any(part in {b"", b".", b".."} for part in path.split(b"/")):
         raise ValueError("Expected one safe authored MP4 path")
-    return "Client/Content/" + paths[0].decode("ascii")
+    return "Client/Content/" + path.decode("ascii")
 
 
 def bank_media_id(data: bytes, selected: int | None = None) -> int:
@@ -409,80 +419,93 @@ async def import_cutscene_recipe(
                 bundles.append((bundle_root, bundle))
         analysis, segments = None, []
         if (analyze_variants or spec.compare_variants) and len(prepared) > 1:
-            analysis, segments = await asyncio.to_thread(
-                export_segments,
-                [item[2] for item in prepared],
-                ffmpeg.resolve(),
-                output / "segments",
-            )
-            nodes = []
-            shared = next((segment for segment in segments if segment["role"] == "shared"), None)
-            intro = next((segment for segment in segments if segment["role"] == "intro"), None)
-            outro = next((segment for segment in segments if segment["role"] == "outro"), None)
-            branches = [segment for segment in segments if segment["role"].startswith("branch-")]
-            source_choices = next((node for node in spec.flow.nodes if node.kind == "choice"), None)
-            labels = (
-                [option.label for option in source_choices.options]
-                if source_choices
-                else [f"Variant {index + 1}" for index in range(len(prepared))]
-            )
-            if branches:
-                nodes.append(
+            try:
+                analysis, segments = await asyncio.to_thread(
+                    export_segments,
+                    [item[2] for item in prepared],
+                    ffmpeg.resolve(),
+                    output / "segments",
+                )
+            except VariantAlignmentError as error:
+                # Unequal lengths/rates can be valid. Verify complete originals
+                # and playables before retaining the authored independent flow.
+                for item in prepared:
+                    for path in (item[1], item[2]):
+                        await run_tool([
+                            str(ffmpeg.resolve()), "-v", "error", "-xerror",
+                            "-threads", "1", "-filter_threads", "1",
+                            "-i", str(path), "-f", "null", "-",
+                        ], timeout=600)
+                logger.warning("cutscene.independent_variants cutscene=%s reason=%s", spec.cutscene, error)
+            if analysis is not None:
+                nodes = []
+                shared = next((segment for segment in segments if segment["role"] == "shared"), None)
+                intro = next((segment for segment in segments if segment["role"] == "intro"), None)
+                outro = next((segment for segment in segments if segment["role"] == "outro"), None)
+                branches = [segment for segment in segments if segment["role"].startswith("branch-")]
+                source_choices = next((node for node in spec.flow.nodes if node.kind == "choice"), None)
+                labels = (
+                    [option.label for option in source_choices.options]
+                    if source_choices
+                    else [f"Variant {index + 1}" for index in range(len(prepared))]
+                )
+                if branches:
+                    nodes.append(
+                        {
+                            "id": "choice",
+                            "kind": "choice",
+                            "prompt": source_choices.prompt if source_choices else "Choose a variant",
+                            "options": [
+                                {
+                                    "label": labels[index]
+                                    if index < len(labels)
+                                    else f"Variant {index + 1}",
+                                    "next": segment["id"],
+                                    "rover": next(
+                                        (
+                                            option.rover
+                                            for option in source_choices.options
+                                            if any(
+                                                node.id == option.next
+                                                and node.kind == "clip"
+                                                and node.asset
+                                                == spec.videos[segment["source_index"]].asset
+                                                for node in spec.flow.nodes
+                                            )
+                                        ),
+                                        None,
+                                    )
+                                    if source_choices
+                                    else None,
+                                }
+                                for index, segment in enumerate(branches)
+                            ],
+                        }
+                    )
+                for segment in segments:
+                    nodes.append(
+                        {
+                            "id": segment["id"],
+                            "kind": "clip",
+                            "asset": spec.videos[segment["source_index"]].asset,
+                            "segment": segment["id"],
+                            "start": 0,
+                            "end": (segment["end_frame"] - segment["start_frame"]) / analysis["fps"],
+                            "next": "choice"
+                            if segment is intro
+                            else outro["id"]
+                            if segment in branches and outro
+                            else None,
+                        }
+                    )
+                flow = PlaybackFlow.model_validate(
                     {
-                        "id": "choice",
-                        "kind": "choice",
-                        "prompt": source_choices.prompt if source_choices else "Choose a variant",
-                        "options": [
-                            {
-                                "label": labels[index]
-                                if index < len(labels)
-                                else f"Variant {index + 1}",
-                                "next": segment["id"],
-                                "rover": next(
-                                    (
-                                        option.rover
-                                        for option in source_choices.options
-                                        if any(
-                                            node.id == option.next
-                                            and node.kind == "clip"
-                                            and node.asset
-                                            == spec.videos[segment["source_index"]].asset
-                                            for node in spec.flow.nodes
-                                        )
-                                    ),
-                                    None,
-                                )
-                                if source_choices
-                                else None,
-                            }
-                            for index, segment in enumerate(branches)
-                        ],
+                        "entry": (shared or intro or {"id": "choice"})["id"],
+                        "nodes": nodes,
+                        "evidence": f"Automatic frame and PCM comparison {analysis['id']}; source CG variants, not inferred narrative choices.",
                     }
                 )
-            for segment in segments:
-                nodes.append(
-                    {
-                        "id": segment["id"],
-                        "kind": "clip",
-                        "asset": spec.videos[segment["source_index"]].asset,
-                        "segment": segment["id"],
-                        "start": 0,
-                        "end": (segment["end_frame"] - segment["start_frame"]) / analysis["fps"],
-                        "next": "choice"
-                        if segment is intro
-                        else outro["id"]
-                        if segment in branches and outro
-                        else None,
-                    }
-                )
-            flow = PlaybackFlow.model_validate(
-                {
-                    "entry": (shared or intro or {"id": "choice"})["id"],
-                    "nodes": nodes,
-                    "evidence": f"Automatic frame and PCM comparison {analysis['id']}; source CG variants, not inferred narrative choices.",
-                }
-            )
-            spec = spec.model_copy(update={"flow": flow})
+                spec = spec.model_copy(update={"flow": flow})
         storage = S3Storage(get_settings())
         await storage.ensure_bucket()
         service = FileRegistrationService(storage)
