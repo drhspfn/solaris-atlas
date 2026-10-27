@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Solaris Atlas · Model lab</title>
+  <link rel="stylesheet" href="./viewer.css">
+  <script type="importmap">{"imports":{"three":"./vendor/build/three.module.js","three/addons/":"./vendor/examples/jsm/"}}</script>
+  <script type="module" src="./viewer.js"></script>
+</head>
+<body>
+  <header>
+    <div class="identity"><span class="eyebrow">SOLARIS / MODEL LAB</span><h1>The Shorekeeper</h1></div>
+    <p id="status" role="status">Loading model…</p>
+    <button id="retry" hidden>Retry loading</button>
+  </header>
+  <main id="viewport" aria-label="Interactive character preview">
+    <div class="scene-hint">Drag to orbit · scroll to zoom · right-drag to pan</div>
+    <div class="camera-tools" aria-label="Camera controls">
+      <button id="left" aria-label="Rotate camera left">↶</button>
+      <button id="right" aria-label="Rotate camera right">↷</button>
+      <button id="closer" aria-label="Zoom in">+</button>
+      <button id="farther" aria-label="Zoom out">−</button>
+      <button id="reset">Reset view</button>
+    </div>
+    <span class="axis-key" id="axis-key">X <i></i> Z · grid 0.5 m</span>
+  </main>
+  <footer>
+    <fieldset id="playback" disabled>
+      <legend class="sr-only">Animation playback</legend>
+      <label class="clip-field" for="animations">Animation<select id="animations" aria-label="Animation"><option>Loading…</option></select></label>
+      <button id="play" aria-label="Pause animation">Pause</button>
+      <label class="timeline" for="time"><span class="sr-only">Animation position</span><input id="time" type="range" min="0" max="1" step="0.01" value="0"><output id="duration" for="time">0:00 / 0:00</output></label>
+      <label class="speed-field" for="speed">Speed<select id="speed" aria-label="Speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option></select></label>
+    </fieldset>
+    <div class="settings">
+      <label><input id="floor" type="checkbox" checked> Floor &amp; grid</label>
+      <label><input id="physics" type="checkbox" disabled aria-describedby="physics-note"> Secondary physics</label>
+      <label class="strength-field" for="strength">Strength<input id="strength" type="range" min="0" max="1" step="0.05" value="0.65" disabled><output id="strength-value" for="strength">65%</output></label>
+      <span id="physics-state">Physics off</span>
+    </div>
+    <p id="physics-note">Experimental springs over the animation. Game shaders, cloth collisions and VFX are not reproduced.</p>
+  </footer>
+</body>
+</html>
