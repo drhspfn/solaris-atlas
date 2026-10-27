@@ -7,6 +7,7 @@ portable: this preview deliberately uses exported base-color textures only.
 import argparse
 import hashlib
 import json
+import struct
 import sys
 from contextlib import contextmanager
 from copy import copy
@@ -94,6 +95,104 @@ def indexed_gltf_references(exporter_class, identity_types):
         setattr(exporter_class, name, descriptor)
 
 
+def material_metadata_path(name: str, model: Path, files: list[Path]) -> Path | None:
+    matches = [path for path in files if path.stem == name]
+    local = model.parent / f"{name}.json"
+    if local in matches:
+        return local
+    if len(matches) > 1:
+        raise ValueError(f"Ambiguous material metadata: {name}")
+    return next(iter(matches), None)
+
+
+def base_color_texture(metadata: dict, converted: Path) -> tuple[str | None, Path | None]:
+    textures = metadata.get("Textures", {})
+    reference = next(
+        (textures[key].get("ObjectPath") for key in ("MainTex", "BaseColor") if key in textures),
+        None,
+    )
+    if not reference:
+        return None, None
+    relative = reference.replace("\\", "/").split(".", 1)[0]
+    if relative.startswith("/Game/"):
+        relative = "Client/Content/" + relative[6:]
+    candidate = converted / (relative + ".png")
+    if candidate.resolve().is_relative_to(converted.resolve()) and candidate.is_file():
+        return reference, candidate
+    return reference, None
+
+
+@contextmanager
+def preview_materials(meshes, texture_size):
+    """Resize isolated images after the canonical export, restoring all slots."""
+    originals, materials, images = [], {}, {}
+    try:
+        for mesh in meshes:
+            for index, original in enumerate(mesh.data.materials):
+                if original is None:
+                    continue
+                if original not in materials:
+                    material = original.copy()
+                    materials[original] = material
+                    for node in material.node_tree.nodes:
+                        if node.type != "TEX_IMAGE" or node.image is None:
+                            continue
+                        source = node.image
+                        if source not in images:
+                            image = source.copy()
+                            images[source] = image
+                            width, height = source.size
+                            ratio = min(1, texture_size / max(width, height))
+                            if ratio < 1:
+                                image.scale(
+                                    max(1, round(width * ratio)), max(1, round(height * ratio))
+                                )
+                            image.file_format = "PNG"
+                            image.pack()
+                        node.image = images[source]
+                originals.append((mesh, index, original))
+                mesh.data.materials[index] = materials[original]
+        yield
+    finally:
+        for mesh, index, original in originals:
+            mesh.data.materials[index] = original
+
+
+def rig_glb_stats(path: Path, bones: int, morph_targets: int, textures: int) -> dict:
+    """Check the actual GLB contract before reporting a successful rig export."""
+    with path.open("rb") as stream:
+        magic, version, length = struct.unpack("<4sII", stream.read(12))
+        size, kind = struct.unpack("<I4s", stream.read(8))
+        if magic != b"glTF" or version != 2 or length != path.stat().st_size or kind != b"JSON":
+            raise ValueError(f"Invalid GLB header: {path}")
+        document = json.loads(stream.read(size))
+    primitives = [p for mesh in document.get("meshes", []) for p in mesh["primitives"]]
+    stats = {
+        "bytes": length,
+        "animations": len(document.get("animations", [])),
+        "joints": len({joint for skin in document.get("skins", []) for joint in skin["joints"]}),
+        "morph_targets": sum(
+            max((len(p.get("targets", [])) for p in mesh["primitives"]), default=0)
+            for mesh in document.get("meshes", [])
+        ),
+        "vertices": sum(
+            document["accessors"][p["attributes"]["POSITION"]]["count"] for p in primitives
+        ),
+        "textures": len(document.get("images", [])),
+    }
+    if stats["animations"] or stats["joints"] != bones or stats["morph_targets"] != morph_targets:
+        raise ValueError(f"Rig GLB lost joints/morphs or contains animations: {stats}")
+    if (
+        stats["textures"] != textures
+        or any("bufferView" not in image or "uri" in image for image in document.get("images", []))
+        or any("uri" in buffer for buffer in document.get("buffers", []))
+    ):
+        raise ValueError(f"Rig GLB textures must be present and embedded: {stats}")
+    if not primitives or any("JOINTS_0" not in p["attributes"] for p in primitives):
+        raise ValueError("Rig GLB has no skinned geometry")
+    return stats
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
@@ -103,7 +202,20 @@ def main():
     parser.add_argument("--ueformat-plugin", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--animation", help="Optional source name for a small verification bundle")
+    parser.add_argument(
+        "--rig-only",
+        action="store_true",
+        help="Export a rig and compact preview without animations or a blend file",
+    )
+    parser.add_argument(
+        "--preview-texture-size",
+        type=int,
+        default=1024,
+        help="Maximum preview texture dimension (rig-only mode)",
+    )
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1 :])
+    if args.preview_texture_size < 1:
+        parser.error("--preview-texture-size must be positive")
     import bpy
 
     sys.path.insert(0, str(args.ueformat_plugin.resolve()))
@@ -120,7 +232,7 @@ def main():
     if armature is None or armature.type != "ARMATURE":
         raise ValueError("Export has no skinned armature")
     meshes = [obj for obj in bpy.data.objects if obj.type == "MESH"]
-    sources = animation_sources(args.source_json, args.skeleton)
+    sources = {} if args.rig_only else animation_sources(args.source_json, args.skeleton)
     report = {
         "model_source": str(args.model.resolve()),
         "model_sha256": hashlib.sha256(args.model.read_bytes()).hexdigest(),
@@ -129,21 +241,24 @@ def main():
         "materials": [],
         "animations": [],
         "missing_exports": [],
+        "missing_textures": [],
         "appearance": "Base-color preview; original game shaders and physics are not reproduced.",
     }
-    material_files = {path.stem: path for path in args.converted.rglob("*.json")}
-    for material in {material for mesh in meshes for material in mesh.data.materials}:
-        path = material_files.get(material.name)
+    metadata_files = list(args.converted.rglob("*.json"))
+    material_files = {path.stem: path for path in metadata_files}
+    for material in sorted(
+        {material for mesh in meshes for material in mesh.data.materials if material},
+        key=lambda material: material.name,
+    ):
+        path = (
+            material_metadata_path(material.name, args.model, metadata_files)
+            if args.rig_only
+            else material_files.get(material.name)
+        )
         metadata = json.loads(path.read_text(encoding="utf-8-sig")) if path else {}
-        reference = metadata.get("Textures", {}).get("MainTex", {}).get("ObjectPath")
-        texture = None
-        if reference:
-            relative = reference.split(".", 1)[0].replace("\\", "/").removeprefix("/Game/")
-            if reference.startswith("/Game/"):
-                relative = "Client/Content/" + relative
-            candidate = args.converted / (relative + ".png")
-            if candidate.resolve().is_relative_to(args.converted.resolve()) and candidate.is_file():
-                texture = candidate
+        reference, texture = base_color_texture(metadata, args.converted)
+        if texture is None:
+            report["missing_textures"].append({"material": material.name, "reference": reference})
         material.use_nodes = True
         shader = material.node_tree.nodes.get("Principled BSDF")
         shader.inputs["Roughness"].default_value = 0.85
@@ -160,11 +275,14 @@ def main():
         report["materials"].append(
             {"name": material.name, "texture": str(texture) if texture else None}
         )
+    if args.rig_only and report["missing_textures"]:
+        (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        raise ValueError(f"Missing required base-color textures: {report['missing_textures']}")
 
     actions = []
     seen_sources = set()
     bpy.context.scene.render.fps = 30
-    for path in sorted(args.converted.rglob("*.ueanim")):
+    for path in [] if args.rig_only else sorted(args.converted.rglob("*.ueanim")):
         with FArchiveReader(path.read_bytes()) as archive:
             header, body = parse_header(archive)
             source_key = package_path(header.object_path)
@@ -209,24 +327,25 @@ def main():
     report["missing_exports"] = [
         row for key, row in sources.items() if row["matches_skeleton"] and key not in seen_sources
     ]
-    if not actions:
+    if not args.rig_only and not actions:
         raise ValueError("No verified, non-additive animation tracks available")
-    armature.animation_data.action = next(
-        (action for action in actions if action.name == "Stand1"), actions[0]
-    )
-    bpy.context.scene.frame_set(30)
-    bpy.context.preferences.filepaths.save_version = 0
-    bpy.ops.wm.save_as_mainfile(
-        filepath=str((args.output / "character.blend").resolve()), compress=True
-    )
+    if not args.rig_only:
+        armature.animation_data.action = next(
+            (action for action in actions if action.name == "Stand1"), actions[0]
+        )
+        bpy.context.scene.frame_set(30)
+        bpy.context.preferences.filepaths.save_version = 0
+        bpy.ops.wm.save_as_mainfile(
+            filepath=str((args.output / "character.blend").resolve()), compress=True
+        )
     from io_scene_gltf2.blender.exp.exporter import GlTF2Exporter
     from io_scene_gltf2.io.com.gltf2_io import Accessor, BufferView
 
-    with indexed_gltf_references(GlTF2Exporter, (Accessor, BufferView)):
-        bpy.ops.export_scene.gltf(
-            filepath=str((args.output / "character.glb").resolve()),
+    def export_glb(name):
+        options = dict(
+            filepath=str((args.output / name).resolve()),
             export_format="GLB",
-            export_animations=True,
+            export_animations=not args.rig_only,
             export_animation_mode="ACTIONS",
             export_force_sampling=False,
             export_morph=True,
@@ -236,6 +355,33 @@ def main():
             export_skins=True,
             export_anim_single_armature=True,
         )
+        with indexed_gltf_references(GlTF2Exporter, (Accessor, BufferView)):
+            if "FINISHED" not in bpy.ops.export_scene.gltf(**options):
+                raise RuntimeError(f"GLB export failed: {name}")
+
+    export_glb("character.glb")
+    if args.rig_only:
+        report["rig_only"] = True
+        report["textures"] = len({row["texture"] for row in report["materials"]})
+        report["morph_targets"] = sum(
+            len(mesh.data.shape_keys.key_blocks) - 1 for mesh in meshes if mesh.data.shape_keys
+        )
+        report["character_glb"] = rig_glb_stats(
+            args.output / "character.glb",
+            report["bones"],
+            report["morph_targets"],
+            report["textures"],
+        )
+        with preview_materials(meshes, args.preview_texture_size):
+            export_glb("preview.glb")
+        report["preview_glb"] = rig_glb_stats(
+            args.output / "preview.glb",
+            report["bones"],
+            report["morph_targets"],
+            report["textures"],
+        )
+        report["preview_texture_size"] = args.preview_texture_size
+        report["preview_glb_bytes"] = report["preview_glb"]["bytes"]
     report["glb_bytes"] = (args.output / "character.glb").stat().st_size
     report["blender_version"] = bpy.app.version_string
     (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -248,6 +394,8 @@ def main():
                 "glb_actions": len(actions),
                 "missing_exports": len(report["missing_exports"]),
                 "glb_bytes": report["glb_bytes"],
+                "preview_glb_bytes": report.get("preview_glb_bytes"),
+                "missing_textures": len(report["missing_textures"]),
             }
         )
     )
