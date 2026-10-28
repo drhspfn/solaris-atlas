@@ -186,6 +186,15 @@ async def quest_media(
     if release_id is None:
         raise HTTPException(status_code=404, detail="game version not imported")
     state_ids = await _quest_state_ids(session, quest.node_id, release_id)
+    contextual_state_ids = set(await session.scalars(
+        select(Edge.to_node_id)
+        .join(RelationType, RelationType.id == Edge.relation_type_id)
+        .join(EdgeEvidence, EdgeEvidence.edge_id == Edge.id)
+        .where(Edge.from_node_id == quest.node_id, Edge.layer == "source",
+               RelationType.key == "references_scenario_flow_state",
+               EdgeEvidence.release_id == release_id)
+    )) - set(state_ids)
+    state_ids = list(set(state_ids) | contextual_state_ids)
     action_rows = list((await session.execute(
         select(QuestAction, QuestState, Node.canonical_key)
         .join(QuestState, QuestState.node_id == QuestAction.quest_state_node_id)
@@ -252,11 +261,14 @@ async def quest_media(
     events = []
     for action, state, action_key in action_rows:
         for link in action_links.get(action.node_id, []):
+            if state.node_id in contextual_state_ids and link["relation"] != "plays_cutscene":
+                continue
             entry = {
                 "kind": {"plays_cutscene": "cutscene", "plays_sequence_asset": "sequence",
                          "posts_audio_event": "audio_event"}[link["relation"]],
                 "action": action_key, "flow_state": state.state_key,
                 "action_index": action.action_index, "reference": link["canonical_key"],
+                "context_inferred": state.node_id in contextual_state_ids,
                 "basis": link["basis"], "source": link["source"],
                 "engine_path": link["canonical_key"].removeprefix("asset:ue:")
                 if link["canonical_key"].startswith("asset:ue:") else None,

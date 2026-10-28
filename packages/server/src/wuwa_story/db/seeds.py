@@ -137,6 +137,7 @@ RELATION_TYPES = [
     "uses_plot_reference",
     "within_area",
     "references_dungeon_flow_state",
+    "references_scenario_flow_state",
 ]
 EVENT_TYPES = [
     "meeting",

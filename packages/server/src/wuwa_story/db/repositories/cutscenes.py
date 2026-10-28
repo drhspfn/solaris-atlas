@@ -32,11 +32,12 @@ def observed_scenes():
                for part in (1, 2, 3)]
     return (
         select(NodeRevision.node_id, GameRelease.id.label("release_id"), GameRelease.game_version,
-               *[part.label(f"version_{index}") for index, part in enumerate(version)],
+               *[part.label(f"version_{index}")
+                 for index, part in enumerate(version)],
                func.row_number().over(partition_by=NodeRevision.node_id,
-                   order_by=(*version, GameRelease.sequence)).label("first_rank"),
+                                      order_by=(*version, GameRelease.sequence)).label("first_rank"),
                func.row_number().over(partition_by=NodeRevision.node_id,
-                   order_by=(*(part.desc() for part in version), GameRelease.sequence.desc())).label("last_rank"))
+                                      order_by=(*(part.desc() for part in version), GameRelease.sequence.desc())).label("last_rank"))
         .join(GameRelease, GameRelease.id == NodeRevision.release_id)
         .join(Cutscene, Cutscene.node_id == NodeRevision.node_id)
         .where(GameRelease.id.in_(select(ImportRun.release_id).where(ImportRun.status == "succeeded")))
@@ -46,7 +47,8 @@ def observed_scenes():
 
 def archive_query(release_id, q, playable):
     observations = observed_scenes()
-    first, latest = observations.alias("first_seen"), observations.alias("latest_seen")
+    first, latest = observations.alias(
+        "first_seen"), observations.alias("latest_seen")
     query = scene_query(release_id, q, playable)
     return (query.join(first, (first.c.node_id == Cutscene.node_id) & (first.c.first_rank == 1))
             .join(latest, (latest.c.node_id == Cutscene.node_id) & (latest.c.last_rank == 1))
@@ -66,7 +68,8 @@ async def page(session, release_id, q, playable, limit, offset):
 
 async def imported_versions(session):
     return list(await session.scalars(select(GameRelease.game_version).where(
-        GameRelease.id.in_(select(ImportRun.release_id).where(ImportRun.status == "succeeded"))
+        GameRelease.id.in_(select(ImportRun.release_id).where(
+            ImportRun.status == "succeeded"))
     ).distinct()))
 
 
@@ -91,7 +94,10 @@ async def owners(session, scene_ids, release_id):
     )} if movies else {}
     refs = await source_parents(session, set(actions.values()),
                                 ("references_flow_state", "references_dungeon_flow_state"), release_id)
-    owner_ids = {owner for _, owner in refs}
+    scenario_refs = await source_parents(session, set(actions.values()),
+                                         ("references_scenario_flow_state",), release_id)
+    all_refs = refs + scenario_refs
+    owner_ids = {owner for _, owner in all_refs}
     children = await source_parents(session, owner_ids, ("has_quest_node",), release_id)
     scenes = await source_parents(session, owner_ids, ("presents_scene",), release_id)
     steps = await source_parents(session, {step for _, step in scenes}, ("has_plot_step",), release_id)
@@ -106,13 +112,16 @@ async def owners(session, scene_ids, release_id):
         select(Quest, Node.slug).join(Node, Node.id == Quest.node_id)
         .where(Quest.node_id.in_(quest_ids)).order_by(Quest.game_quest_id)
     )} if quest_ids else {}
-    matches = set()
+    matches = {}
     for movie, action in movies:
-        for state, owner in refs:
+        for state, owner in all_refs:
             if actions.get(action) == state:
-                matches.update((movie, quest)
-                               for quest in candidates[owner] if quest in quests)
-    return [(movie, *quests[quest]) for movie, quest in sorted(matches)]
+                for quest in candidates[owner]:
+                    if quest in quests:
+                        key = (movie, quest)
+                        inferred = (state, owner) not in refs
+                        matches[key] = matches.get(key, True) and inferred
+    return [(movie, *quests[quest], matches[(movie, quest)]) for movie, quest in sorted(matches)]
 
 
 async def scene(session, name, release_id):
@@ -122,7 +131,8 @@ async def scene(session, name, release_id):
 
 async def first_line(session, state_keys, release_id):
     return await session.scalar(
-        select(Node.canonical_key).join(DialogueLine, DialogueLine.node_id == Node.id)
+        select(Node.canonical_key).join(
+            DialogueLine, DialogueLine.node_id == Node.id)
         .join(QuestAction, QuestAction.node_id == DialogueLine.action_node_id)
         .join(QuestState, QuestState.node_id == QuestAction.quest_state_node_id)
         .where(QuestState.state_key.in_(state_keys), select(NodeRevision.id).where(

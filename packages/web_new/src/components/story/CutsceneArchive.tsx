@@ -12,7 +12,7 @@ import { Cutscene } from "./QuestCutscenes";
 import { cutsceneAnchor } from "./cutsceneAnchor";
 import type { QuestMediaEvent } from "./QuestMediaReferences";
 
-type Quest = { game_quest_id: string; slug?: string; name: string };
+type Quest = { game_quest_id: string; slug?: string; name: string; context_inferred?: boolean };
 type Scene = {
   node_id: number;
   name: string;
@@ -302,7 +302,9 @@ export function CutsceneRecord({
             >
               <span>
                 {passage.name}
-                <small>Open at this scene in the quest</small>
+                <small>{passage.context_inferred
+                  ? "Scenario context inferred from game progress; exact playthrough order is unconfirmed"
+                  : "Open at this scene in the quest"}</small>
               </span>
               <ArrowRight size={19} />
             </Link>

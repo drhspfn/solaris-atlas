@@ -15,9 +15,16 @@ from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.session import SessionFactory
 from wuwa_story.ingestion.canonical_import import import_canonical_edges
 from wuwa_story.ingestion.dungeon_context import (
-    DUNGEONS, LEVEL_NODES, LEVELS, QUEST_NODES, RELATION,
-    dungeon_links, level_memberships, requirements,
+    DUNGEONS,
+    LEVEL_NODES,
+    LEVELS,
+    QUEST_NODES,
+    RELATION,
+    dungeon_links,
+    level_memberships,
+    requirements,
 )
+from wuwa_story.ingestion.scenario_context import scenario_links
 
 
 async def backfill(session, release_id, dry_run=False):
@@ -35,28 +42,45 @@ async def backfill(session, release_id, dry_run=False):
         ))
 
     dungeons = {row["Id"] for _, row in await rows(DUNGEONS)}
-    required = {key: value for key, value in requirements(await rows(QUEST_NODES)).items()
+    quest_nodes = await rows(QUEST_NODES)
+    level_nodes = await rows(LEVEL_NODES)
+    required = {key: value for key, value in requirements(quest_nodes).items()
                 if key in dungeons}
     memberships = level_memberships(await rows(LEVELS), required)
     states = set(await session.scalars(
-        select(QuestState.state_key).join(NodeRevision, NodeRevision.node_id == QuestState.node_id)
+        select(QuestState.state_key).join(NodeRevision,
+                                          NodeRevision.node_id == QuestState.node_id)
         .where(NodeRevision.release_id == release_id)
     ))
-    links = list(dungeon_links(required, memberships, await rows(LEVEL_NODES), states))
+    links = list(dungeon_links(required, memberships, level_nodes, states))
     records = [{**link, "type": RELATION, "relation": "exact_join", "version": release.game_version,
                 "source_repository": release.upstream_name, "source_commit": release.upstream_commit}
                for link in links]
-    records = list({(row["from"], row["to"], row["raw_path"]): row for row in records}.values())
-    source, target = Node.__table__.alias("source"), Node.__table__.alias("target")
+    scenario = list(scenario_links(quest_nodes, level_nodes, states))
+    scenario_quests = set(await session.scalars(
+        select(Node.canonical_key).join(NodeRevision, NodeRevision.node_id == Node.id)
+        .where(NodeRevision.release_id == release_id,
+               Node.canonical_key.in_({link["from"] for link in scenario}))
+    )) if scenario else set()
+    records += [{**link, "type": "references_scenario_flow_state", "relation": "inference",
+                 "version": release.game_version, "source_repository": release.upstream_name,
+                 "source_commit": release.upstream_commit}
+                for link in scenario if link["from"] in scenario_quests]
+    records = list({(row["type"], row["from"], row["to"],
+                   row["raw_path"]): row for row in records}.values())
+    source, target = Node.__table__.alias(
+        "source"), Node.__table__.alias("target")
     existing = set(await session.execute(
-        select(source.c.canonical_key, target.c.canonical_key, EdgeEvidence.source_raw_path)
+        select(RelationType.key, source.c.canonical_key,
+               target.c.canonical_key, EdgeEvidence.source_raw_path)
         .select_from(Edge).join(RelationType, RelationType.id == Edge.relation_type_id)
         .join(source, source.c.id == Edge.from_node_id).join(target, target.c.id == Edge.to_node_id)
         .join(EdgeEvidence, EdgeEvidence.edge_id == Edge.id)
-        .where(RelationType.key == RELATION, Edge.layer == "source", Edge.basis == "exact_join",
-               EdgeEvidence.release_id == release_id, EdgeEvidence.source_file_path == QUEST_NODES)
+        .where(RelationType.key.in_((RELATION, "references_scenario_flow_state")), Edge.layer == "source",
+               EdgeEvidence.release_id == release_id)
     ))
-    missing = [row for row in records if (row["from"], row["to"], row["raw_path"]) not in existing]
+    missing = [row for row in records if (
+        row["type"], row["from"], row["to"], row["raw_path"]) not in existing]
     if not dry_run and missing:
         await import_canonical_edges(SimpleNamespace(iter_edges=lambda: iter(missing)), session, release_id)
     result = {"release_id": release_id, "game_version": release.game_version,
@@ -69,7 +93,8 @@ async def backfill(session, release_id, dry_run=False):
 async def main(first, last, dry_run):
     async with SessionFactory() as session:
         releases = list(await session.scalars(select(GameRelease).order_by(GameRelease.sequence)))
-    version = lambda value: tuple(map(int, value.split(".")))
+
+    def version(value): return tuple(map(int, value.split(".")))
     for release in releases:
         if version(first) <= version(release.game_version) <= version(last):
             async with SessionFactory() as session:
