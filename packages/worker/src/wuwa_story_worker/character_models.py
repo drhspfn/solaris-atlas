@@ -1,9 +1,11 @@
 """Disposable model extraction, headless conversion and atomic bundle publication."""
 
+import asyncio
 import json
 import os
 import re
 import subprocess
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -24,6 +26,7 @@ from wuwa_story_worker.entity_media import tool
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.media_provenance import sha256, temporary_entity_workspace
 from wuwa_story_worker.media_workspace import finish_writes
+from wuwa_story_worker.model_animation_merge import merge_animation_glbs
 from wuwa_story_worker.model_publication import ensure_glb_download, publish_viewer
 from wuwa_story_worker.model_sources import (
     exported_package,
@@ -131,12 +134,20 @@ async def run_blender(args, root, timeout=1800):
         raise RuntimeError(f"Blender {reason}; blender.log (last 8 KiB):\n{diagnostic}") from exc
 
 
-async def build_bundle(root, sources, include_animations=True):
+async def model_progress(run_id, stage, **details):
+    if run_id is not None:
+        await update_admin_run(
+            run_id, "character_model", "running", raw_output={"stage": stage, **details}
+        )
+
+
+async def build_bundle(root, sources, include_animations=True, *, run_id=None):
     fmodel, converter = tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH")
     blender = tool_path("WUWA_BLENDER_PATH")
     plugin = Path(os.getenv("WUWA_UEFORMAT_PLUGIN", "/app/tools/ueformat/plugins/blender"))
     if not (plugin / "io_scene_ueformat").is_dir():
         raise ValueError("UEFormat importer unavailable; use the dedicated model worker image")
+    await model_progress(run_id, "extract")
     model, converted, cooked, manifest = await extract_model(
         root, sources, fmodel, converter, include_animations
     )
@@ -154,35 +165,89 @@ async def build_bundle(root, sources, include_animations=True):
     if len(skeletons) != 1 or not skeletons[0]:
         raise ValueError("The exported character mesh has no exact skeleton reference")
     skeleton = exported_package(skeletons[0])
+    command = [
+        blender,
+        "-b",
+        "--factory-startup",
+        "--python-exit-code",
+        "1",
+        "--python",
+        Path(__file__).with_name("model_bundle.py").resolve(),
+        "--",
+        "--model",
+        model.resolve(),
+        "--converted",
+        converted.resolve(),
+        "--source-json",
+        cooked.resolve(),
+        "--skeleton",
+        "/Game/" + skeleton,
+        "--ueformat-plugin",
+        plugin.resolve(),
+        "--output",
+        output.resolve(),
+        "--preview-texture-size",
+        "512",
+    ]
+    plan_path = output / "animation-plan.json"
+    await model_progress(run_id, "rig_and_animation_plan" if include_animations else "rig")
     await run_blender(
-        [
-            blender,
-            "-b",
-            "--factory-startup",
-            "--python-exit-code",
-            "1",
-            "--python",
-            Path(__file__).with_name("model_bundle.py").resolve(),
-            "--",
-            "--model",
-            model.resolve(),
-            "--converted",
-            converted.resolve(),
-            "--source-json",
-            cooked.resolve(),
-            "--skeleton",
-            "/Game/" + skeleton,
-            "--ueformat-plugin",
-            plugin.resolve(),
-            "--output",
-            output.resolve(),
-            "--with-animations" if include_animations else "--rig-only",
-            "--preview-texture-size",
-            "512",
-        ],
+        [*command, "--rig-only", *(["--animation-plan", plan_path] if include_animations else [])],
         root,
-        1800,
+        900,
     )
+    batch_count = 0
+    if include_animations:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        clips = plan["clips"]
+        if not clips:
+            raise ValueError("No playable clips in the verified animation plan")
+        batch_size = 20
+        batch_count = (len(clips) + batch_size - 1) // batch_size
+        parts = []
+        for index in range(batch_count):
+            await model_progress(
+                run_id,
+                "animation_batch",
+                batch=index + 1,
+                batches=batch_count,
+                clips=len(clips),
+                batch_size=batch_size,
+            )
+            started = time.monotonic()
+            await run_blender(
+                [
+                    *command,
+                    "--animation-plan",
+                    plan_path,
+                    "--animation-batch",
+                    str(index),
+                    "--animation-batch-size",
+                    str(batch_size),
+                ],
+                root,
+                600,
+            )
+            part = output / "animation-parts" / f"part-{index:04d}.glb"
+            stats = glb_summary(part, allow_animations=True)
+            expected = min(batch_size, len(clips) - index * batch_size)
+            if stats["animations"] != expected:
+                raise ValueError("Animation batch lost clips")
+            parts.append(part)
+            await model_progress(
+                run_id,
+                "animation_batch_completed",
+                batch=index + 1,
+                batches=batch_count,
+                seconds=round(time.monotonic() - started, 2),
+                clips=len(clips),
+            )
+        await model_progress(run_id, "merge_animation_batches", batches=batch_count)
+        await asyncio.to_thread(merge_animation_glbs, parts, output / "animations.glb")
+        summary = glb_summary(output / "animations.glb", allow_animations=True)
+        if summary["animations"] != len(clips):
+            raise ValueError("Merged animation collection lost clips")
+        (output / "animations.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     profile = None
     for blueprint in sources["blueprints"]:
         path = cooked / "Client/Content" / (blueprint + ".json")
@@ -220,6 +285,7 @@ async def build_bundle(root, sources, include_animations=True):
         "recipe": sha256(Path(__file__).with_name("model_bundle.py")),
         "preview_texture_size": 512,
         "include_animations": include_animations,
+        "animation_batches": batch_count,
     }
     if include_animations:
         provenance["animations"] = json.loads(
@@ -231,6 +297,9 @@ async def build_bundle(root, sources, include_animations=True):
         if provenance["animations"] != summaries["animations"]:
             raise ValueError("Animation report disagrees with exported clips")
         provenance["animation_recipe"] = sha256(Path(__file__).with_name("model_animations.py"))
+        provenance["animation_merge_recipe"] = sha256(
+            Path(__file__).with_name("model_animation_merge.py")
+        )
     return output, summaries, provenance
 
 
@@ -359,8 +428,9 @@ async def process_character_model(payload):
         async def execute():
             with temporary_entity_workspace(client) as root:
                 output, summaries, provenance = await build_bundle(
-                    root, sources, include_animations=job.include_animations
+                    root, sources, include_animations=job.include_animations, run_id=job.run_id
                 )
+                await model_progress(job.run_id, "publish")
                 await publish_bundle(job, output, summaries, provenance)
 
         # Never delete scratch while an owned subprocess/thread is still writing.

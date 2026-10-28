@@ -314,9 +314,12 @@ async def test_claim_accepts_legacy_payload_but_rejects_changed_animation_reques
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("include", [True, False])
+@pytest.mark.parametrize(
+    "include,clip_count,fail_batch",
+    [(False, 0, False), (True, 1, False), (True, 41, False), (True, 41, True)],
+)
 async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
-    tmp_path, monkeypatch, include
+    tmp_path, monkeypatch, include, clip_count, fail_batch
 ):
     model = "Aki/Character/Role/FemaleM/Test/Variant/Model/Rig"
     cooked = tmp_path / "source-json"
@@ -346,14 +349,34 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
 
     async def blender(args, log, timeout):
         assert args[args.index("--skeleton") + 1] == "/Game/Aki/ActualSkeleton"
-        assert ("--with-animations" in args) is include
-        assert ("--rig-only" in args) is not include
+        assert "--with-animations" not in args
         output = tmp_path / "bundle"
-        if include:
-            animation_glb(output / "animations.glb")
-            summary = glb_summary(output / "animations.glb", allow_animations=True)
-            (output / "animations.json").write_text(json.dumps(summary))
-            (output / "report.json").write_text('{"animation_coverage": {"playable_clips": 1}}')
+        if "--animation-batch" in args:
+            assert include and "--rig-only" not in args
+            index = int(args[args.index("--animation-batch") + 1])
+            if fail_batch and index == 1:
+                raise subprocess.CalledProcessError(1, args)
+            assert args[args.index("--animation-batch-size") + 1] == "20"
+            parts = output / "animation-parts"
+            parts.mkdir(exist_ok=True)
+
+            def names(data):
+                clip = data["animations"][0]
+                data["animations"] = [
+                    {**deepcopy(clip), "name": f"Clip{i}"}
+                    for i in range(index * 20, min(clip_count, (index + 1) * 20))
+                ]
+
+            animation_glb(parts / f"part-{index:04d}.glb", names)
+        else:
+            assert "--rig-only" in args
+            if include:
+                (output / "animation-plan.json").write_text(
+                    json.dumps({"clips": [{"name": f"Clip{i}"} for i in range(clip_count)]})
+                )
+                (output / "report.json").write_text(
+                    json.dumps({"animation_coverage": {"playable_clips": clip_count}})
+                )
 
     real_summary = worker.glb_summary
     monkeypatch.setattr(worker, "tool", blender)
@@ -362,12 +385,20 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
         "glb_summary",
         lambda path, **kwargs: real_summary(path, **kwargs) if kwargs else {"bytes": 10},
     )
+    if fail_batch:
+        with pytest.raises(RuntimeError, match="Blender exited"):
+            await worker.build_bundle(
+                tmp_path, {"model": model, "blueprints": []}, include_animations=True
+            )
+        assert not (tmp_path / "bundle/animations.glb").exists()
+        return
     _, summaries, provenance = await worker.build_bundle(
         tmp_path, {"model": model, "blueprints": []}, include_animations=include
     )
     assert extraction.call_args.args[-1] is include
     assert ("animations" in summaries) is include
     assert provenance["include_animations"] is include
+    assert provenance["animation_batches"] == (clip_count + 19) // 20
     if include:
-        assert provenance["animations"]["animations"] == 1
-        assert provenance["animation_coverage"]["playable_clips"] == 1
+        assert provenance["animations"]["animations"] == clip_count
+        assert provenance["animation_coverage"]["playable_clips"] == clip_count
