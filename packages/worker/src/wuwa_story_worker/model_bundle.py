@@ -126,7 +126,10 @@ def build_animation_plan(
             "included_in_glb": False,
         }
         rows.append(row)
-        excluded = animation_exclusion(dto, require_decoded=True)
+        try:
+            excluded = animation_exclusion(dto, require_decoded=True)
+        except ValueError as exc:
+            raise ValueError(f"{source['source']} ({row['file']}): {exc}") from exc
         if excluded:
             row["excluded_reason"] = excluded
             del dto
@@ -775,4 +778,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        # Blender buffers stdout; drain importer logs before stderr's traceback
+        # so bounded combined-log tails retain the actual failure.
+        sys.stdout.flush()
+        raise
