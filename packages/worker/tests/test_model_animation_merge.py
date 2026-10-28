@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from wuwa_story_worker import model_animation_merge as merger
+from wuwa_story_worker.model_animation_catalog import classify_animation
 from wuwa_story_worker.model_animations import animation_summary
 
 
@@ -149,6 +150,7 @@ def test_single_part_can_atomically_replace_itself(tmp_path):
     original, binary = part(path)
     merger.merge_animation_glbs([path], path)
     data, merged_binary = read_glb(path)
+    original["animations"][0]["extras"] = {"solaris_atlas": classify_animation("Walk")}
     assert data["animations"] == original["animations"]
     assert data["accessors"] == original["accessors"]
     assert merged_binary[: len(binary)] == binary
@@ -415,3 +417,37 @@ def test_binary_copy_is_bounded_and_copy_failure_is_atomic(tmp_path, monkeypatch
     assert reads == [1024 * 1024] * 3
     assert output.read_bytes() == b"existing"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["a.glb", "out.glb"]
+
+
+def test_catalog_injected_per_clip_preserving_other_extras_and_bindings(tmp_path):
+    source, output = tmp_path / "source.glb", tmp_path / "out.glb"
+    data, binary = part(source, "AM_AirAttack_Start")
+    data["animations"][0]["extras"] = {"exporter": {"source": 42}, "solaris_atlas": None}
+    other = deepcopy(data["animations"][0])
+    other["name"] = "UnknownThing"
+    data["animations"].append(other)
+    write_glb(source, data, binary)
+    merger.merge_animation_glbs([source], output)
+    merged, merged_binary = read_glb(output)
+    for before, after in zip(data["animations"], merged["animations"], strict=True):
+        assert after["extras"] == {
+            "exporter": {"source": 42},
+            "solaris_atlas": classify_animation(before["name"]),
+        }
+        assert {k: v for k, v in after.items() if k != "extras"} == {
+            k: v for k, v in before.items() if k != "extras"
+        }
+    assert merged_binary[: len(binary)] == binary
+    assert [c["seconds"] for c in animation_summary(output)["clips"]] == [2.0, 2.0]
+
+
+@pytest.mark.parametrize("extras", [None, [], "invalid", 42])
+def test_non_object_extras_fail_atomically(tmp_path, extras):
+    source, output = tmp_path / "source.glb", tmp_path / "out.glb"
+    data, binary = part(source)
+    data["animations"][0]["extras"] = extras
+    write_glb(source, data, binary)
+    output.write_bytes(b"existing")
+    with pytest.raises(ValueError, match="extras must be an object"):
+        merger.merge_animation_glbs([source], output)
+    assert output.read_bytes() == b"existing"

@@ -7,6 +7,7 @@ import struct
 import tempfile
 from pathlib import Path
 
+from .model_animation_catalog import classify_animation
 from .model_animations import animation_summary
 
 
@@ -303,6 +304,10 @@ def merge_animation_glbs(parts: list[Path], destination: Path) -> None:
                 for channel in clip["channels"]:
                     target = channel["target"]
                     target["node"] = node_indices[names[target["node"]]]
+                extras = clip.setdefault("extras", {})
+                if not isinstance(extras, dict):
+                    raise ValueError("Animation extras must be an object for catalog metadata")
+                extras["solaris_atlas"] = classify_animation(clip["name"])
                 merged["animations"].append(clip)
             sources.append((path, offset, length, before))
             binary_size += length + (-length % 4)
