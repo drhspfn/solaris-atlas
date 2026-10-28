@@ -15,11 +15,12 @@ function archive(queryText) {
   } }).outputText;
   const exports = {};
   const mocks = {
-    react: { useState: (value) => [value, () => {}], useEffect() {} },
+    react: { useState: (value) => [value, () => {}], useEffect() {}, useRef: (value) => ({ current: value }) },
     'lucide-react': dummy, '@/api/client': dummy, '@/hooks/useLocale': { useLocale: () => 'en' },
     '@/lib/router': { Link: 'a', useSearchParams: () => [query, (update) => { query = update(query); }] },
     '@/lib/routeKey': dummy, '@/components/ui/Feedback': dummy,
-    '@/components/ui/Select': { Select: 'atlas-select' }, './QuestCutscenes': dummy, './cutsceneAnchor': dummy,
+    '@/components/ui/Select': { Select: 'atlas-select' }, '@/components/ui/InfiniteScroll': { InfiniteScroll: 'infinite-scroll' },
+    './QuestCutscenes': dummy, './cutsceneAnchor': dummy,
   };
   vm.runInNewContext(code, { exports, require: (id) => mocks[id] ?? require(id), URLSearchParams });
   const tree = exports.CutsceneArchive({ initial: null, versions: ['2.10.0', '2.9.0'] });
