@@ -72,6 +72,132 @@ def animation_exclusion(dto, *, require_decoded=False):
     return None
 
 
+def file_sha256(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def animation_file(converted, relative):
+    # Check both path dialects, even when unit tests run outside Windows.
+    from pathlib import PureWindowsPath
+
+    if not isinstance(relative, str) or not relative or "\\" in relative:
+        raise ValueError("Animation file must be a relative converted path")
+    path = Path(relative)
+    if path.is_absolute() or PureWindowsPath(relative).drive or ".." in path.parts:
+        raise ValueError("Animation file must stay under converted")
+    resolved = (converted / path).resolve()
+    if not resolved.is_relative_to(converted.resolve()) or path.suffix != ".ueanim":
+        raise ValueError("Animation file must stay under converted and end in .ueanim")
+    if not resolved.is_file():
+        raise ValueError(f"Animation file missing: {relative}")
+    return resolved
+
+
+def validate_animation_bones(dto, bone_names):
+    unknown = {track.name.casefold() for track in dto.tracks} - {
+        name.casefold() for name in bone_names
+    }
+    if unknown:
+        raise ValueError(f"Animation targets unknown bones: {sorted(unknown)}")
+
+
+def build_animation_plan(
+    model, converted, skeleton, sources, bone_names, read_animation, animation=None
+):
+    """Decode one DTO at a time; never allocate Blender actions during preflight."""
+    rows, clips, seen, names = [], [], set(), set()
+    for path in sorted(converted.rglob("*.ueanim")):
+        header, dto = read_animation(path, sources)
+        key = package_path(header.object_path)
+        source = sources.get(key)
+        if not source or not source["matches_skeleton"]:
+            continue
+        seen.add(key)
+        metadata = dto.metadata
+        row = {
+            **source,
+            "file": path.relative_to(converted).as_posix(),
+            "frames": metadata.num_frames if metadata else 0,
+            "fps": metadata.frames_per_second if metadata else 0,
+            "tracks": len(dto.tracks),
+            "curves": len(dto.curves),
+            "additive": int(metadata.additive_anim_type) if metadata else None,
+            "included_in_glb": False,
+        }
+        rows.append(row)
+        excluded = animation_exclusion(dto, require_decoded=True)
+        if excluded:
+            row["excluded_reason"] = excluded
+            del dto
+            continue
+        validate_animation_bones(dto, bone_names)
+        if animation and header.object_name != animation:
+            del dto
+            continue
+        # Blender limits ID names to 63 UTF-8 bytes. Reserve room for suffixes.
+        base = header.object_name.encode("utf-8")[:48].decode("utf-8", errors="ignore")
+        name, suffix = base, 1
+        while name in names:
+            name = f"{base}.{suffix:03d}"
+            suffix += 1
+        names.add(name)
+        row.update(action=name, included_in_glb=True)
+        clips.append({**row, "name": name, "sha256": file_sha256(path)})
+        del dto
+    missing = missing_animation_sources(sources, seen)
+    if missing:
+        raise ValueError(f"Missing matching animation exports: {missing}")
+    if not clips:
+        raise ValueError("No verified, non-additive animation tracks available")
+    return {
+        "schema_version": 1,
+        "skeleton": package_path(skeleton),
+        "model_sha256": file_sha256(model),
+        "bones": sorted(bone_names),
+        "clips": clips,
+        "animations": rows,
+        "animation_coverage": {
+            "matching_sources": sum(row["matches_skeleton"] for row in sources.values()),
+            "decoded_clips": len(rows),
+            "playable_clips": len(clips),
+            "additive_clips": sum(bool(row["additive"]) for row in rows),
+            "single_frame_clips": sum(row["frames"] < 2 for row in rows),
+            "curves_only_clips": sum(row.get("excluded_reason") == "curves_only" for row in rows),
+            "excluded_clips": [
+                {"source": row["source"], "reason": row["excluded_reason"]}
+                for row in rows
+                if "excluded_reason" in row
+            ],
+            "missing_exports": 0,
+        },
+    }
+
+
+def animation_batch(plan, model, converted, skeleton, index, size):
+    if type(index) is not int or index < 0 or type(size) is not int or not 1 <= size <= 50:
+        raise ValueError("Animation batch index must be nonnegative and size must be 1..50")
+    if (
+        plan.get("schema_version") != 1
+        or plan.get("skeleton") != package_path(skeleton)
+        or plan.get("model_sha256") != file_sha256(model)
+    ):
+        raise ValueError("Animation plan identity does not match model/skeleton/schema")
+    clips = plan["clips"]
+    names = [clip["name"] for clip in clips]
+    if any(not name for name in names) or len(set(names)) != len(names):
+        raise ValueError("Animation plan action names must be globally unique")
+    for clip in clips:
+        animation_file(converted, clip["file"])
+    selected = clips[index * size : (index + 1) * size]
+    if not selected:
+        raise ValueError("Animation batch index is out of range")
+    for clip in selected:
+        if file_sha256(animation_file(converted, clip["file"])) != clip["sha256"]:
+            raise ValueError(f"Animation file hash mismatch: {clip['file']}")
+    return selected
+
+
 @contextmanager
 def indexed_gltf_references(exporter_class, identity_types):
     """Index Blender 4.5's append-only accessor/view lists during this export.
@@ -263,9 +389,27 @@ def main():
         default=1024,
         help="Maximum preview texture dimension (rig-only mode)",
     )
+    parser.add_argument("--animation-plan", type=Path)
+    parser.add_argument("--animation-batch", type=int)
+    parser.add_argument("--animation-batch-size", type=int, default=None)
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1 :])
     if args.preview_texture_size < 1:
         parser.error("--preview-texture-size must be positive")
+    batch_mode = args.animation_batch is not None
+    if args.animation_batch_size is not None and not 1 <= args.animation_batch_size <= 50:
+        parser.error("--animation-batch-size must be 1..50")
+    if batch_mode and args.animation_batch < 0:
+        parser.error("--animation-batch must be nonnegative")
+    if batch_mode and (
+        not args.animation_plan or args.rig_only or args.with_animations or args.animation
+    ):
+        parser.error(
+            "--animation-batch requires --animation-plan and no other animation mode/filter"
+        )
+    if args.animation_batch_size is not None and not batch_mode:
+        parser.error("--animation-batch-size requires --animation-batch")
+    if args.animation_plan and not batch_mode and not args.rig_only:
+        parser.error("Creating --animation-plan requires --rig-only")
     rig_mode = args.rig_only or args.with_animations
     import bpy
 
@@ -276,14 +420,116 @@ def main():
     from io_scene_ueformat.importer.import_context import UEFormatImport, parse_body, parse_header
     from io_scene_ueformat.options import UEAnimOptions, UEModelOptions
 
+    selected_clips = None
+    if batch_mode:
+        plan = json.loads(args.animation_plan.read_text(encoding="utf-8"))
+        selected_clips = animation_batch(
+            plan,
+            args.model,
+            args.converted,
+            args.skeleton,
+            args.animation_batch,
+            args.animation_batch_size or 20,
+        )
+
+    def read_animation(path, sources=None):
+        with FArchiveReader(path.read_bytes()) as archive:
+            header, body = parse_header(archive)
+            source = sources.get(package_path(header.object_path)) if sources is not None else None
+            dto = (
+                parse_body(header, body)
+                if sources is None or (source and source["matches_skeleton"])
+                else None
+            )
+        return header, dto
+
     args.output.mkdir(parents=True, exist_ok=True)
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
-    armature = UEFormatImport(UEModelOptions()).import_file(args.model)
+    if batch_mode:
+        # UEFormat has no skeleton-only import option: discard geometry before
+        # creation, then use the same space conversion and skeleton creator.
+        from io_scene_ueformat.importer.create.model import create_model
+
+        header, dto = read_animation(args.model)
+        dto.lods.clear()
+        dto.collisions.clear()
+        to_blender_space(dto, header.file_version, 0.01)
+        armature = create_model(dto, UEModelOptions(), header.object_name)
+        del dto
+    else:
+        armature = UEFormatImport(UEModelOptions()).import_file(args.model)
     if armature is None or armature.type != "ARMATURE":
         raise ValueError("Export has no skinned armature")
+    if batch_mode:
+        bones = {bone.name for bone in armature.data.bones}
+        if set(plan["bones"]) != bones:
+            raise ValueError("Animation plan bones do not match imported rig")
+        bpy.context.scene.render.fps = 30
+        actions = []
+        for clip in selected_clips:
+            header, dto = read_animation(animation_file(args.converted, clip["file"]))
+            if animation_exclusion(dto, require_decoded=True):
+                raise ValueError("Planned animation is no longer playable")
+            validate_animation_bones(dto, bones)
+            to_blender_space(dto, header.file_version, 0.01)
+            retime_tracks(dto)
+            action = create_anim(
+                dto, UEAnimOptions(override_skeleton=armature, import_curves=False), clip["name"]
+            )
+            if action.name != clip["name"]:
+                raise ValueError("Blender changed planned action name")
+            action.use_fake_user = True
+            action["source_path"] = header.object_path
+            actions.append(action)
+            del dto
+        # The last imported action may leave an evaluated pose behind. Node
+        # transforms must describe the same rest hierarchy in every process.
+        armature.animation_data.action = None
+        for bone in armature.pose.bones:
+            bone.matrix_basis.identity()
+        bpy.context.view_layer.update()
+        bpy.ops.object.select_all(action="DESELECT")
+        armature.select_set(True)
+        bpy.context.view_layer.objects.active = armature
+        part = args.output / "animation-parts" / f"part-{args.animation_batch:04d}.glb"
+        part.parent.mkdir(parents=True, exist_ok=True)
+        from io_scene_gltf2.blender.exp.exporter import GlTF2Exporter
+        from io_scene_gltf2.io.com.gltf2_io import Accessor, BufferView
+
+        with indexed_gltf_references(GlTF2Exporter, (Accessor, BufferView)):
+            result = bpy.ops.export_scene.gltf(
+                filepath=str(part.resolve()),
+                export_format="GLB",
+                use_selection=True,
+                export_animations=True,
+                export_animation_mode="ACTIONS",
+                export_force_sampling=False,
+                export_morph=False,
+                export_morph_animation=False,
+                export_skins=True,
+                export_anim_single_armature=True,
+                export_optimize_disable_viewport=True,
+            )
+        if "FINISHED" not in result:
+            raise RuntimeError(f"GLB export failed: {part}")
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from model_animations import animation_summary
+
+        summary = animation_summary(part, bones)
+        if summary["animations"] != len(selected_clips) or {
+            clip["name"] for clip in summary["clips"]
+        } != {clip["name"] for clip in selected_clips}:
+            raise ValueError("Animation batch export lost or renamed actions")
+        part.with_suffix(".json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        print(json.dumps(summary))
+        return
     meshes = [obj for obj in bpy.data.objects if obj.type == "MESH"]
-    sources = {} if args.rig_only else animation_sources(args.source_json, args.skeleton)
+    sources = (
+        {}
+        if args.rig_only and not args.animation_plan
+        else animation_sources(args.source_json, args.skeleton)
+    )
     report = {
         "model_source": str(args.model.resolve()),
         "model_sha256": hashlib.sha256(args.model.read_bytes()).hexdigest(),
@@ -295,6 +541,20 @@ def main():
         "missing_textures": [],
         "appearance": "Base-color preview; original game shaders and physics are not reproduced.",
     }
+    if args.animation_plan:
+        plan = build_animation_plan(
+            args.model,
+            args.converted,
+            args.skeleton,
+            sources,
+            {bone.name for bone in armature.data.bones},
+            read_animation,
+            args.animation,
+        )
+        args.animation_plan.parent.mkdir(parents=True, exist_ok=True)
+        args.animation_plan.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+        report["animations"] = plan["animations"]
+        report["animation_coverage"] = plan["animation_coverage"]
     metadata_files = list(args.converted.rglob("*.json"))
     material_files = {path.stem: path for path in metadata_files}
     for material in sorted(
