@@ -1,7 +1,7 @@
 import json
 import struct
 import subprocess
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -233,8 +233,9 @@ def job_payload():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("include", [None, True, False])
+@pytest.mark.parametrize("form_count", [1, 2])
 async def test_publication_validates_legacy_payload_and_publishes_actual_count(
-    tmp_path, monkeypatch, include
+    tmp_path, monkeypatch, include, form_count
 ):
     payload = job_payload()
     if include is not None:
@@ -270,16 +271,37 @@ async def test_publication_validates_legacy_payload_and_publishes_actual_count(
     if include:
         animation_glb(tmp_path / "animations.glb")
         summaries["animations"] = glb_summary(tmp_path / "animations.glb", allow_animations=True)
-    await worker.publish_bundle(job, tmp_path, summaries, {"model": "Aki/Rig"})
+    if form_count == 1:
+        await worker.publish_bundle(job, tmp_path, summaries, {"model": "Aki/Rig"})
+    else:
+        await worker.publish_forms(
+            job,
+            [
+                (
+                    {"id": f"mesh-{mesh_id}", "label": label, "order": index},
+                    tmp_path,
+                    summaries,
+                    {"model": f"Aki/Rig{mesh_id}"},
+                )
+                for index, (mesh_id, label) in enumerate(
+                    [(100038, "Default"), (100041, "Fleurdelys")]
+                )
+            ],
+        )
+        assert {ref.metadata_json["form_id"] for ref in references} == {
+            "mesh-100038",
+            "mesh-100041",
+        }
+        assert {ref.metadata_json["form_order"] for ref in references} == {0, 1}
     assert run.status == "completed"
-    assert run.raw_output["animations"] == int(bool(include))
+    assert run.raw_output["animations"] == int(bool(include)) * form_count
     assert {ref.kind for ref in references} == {
         "character_model_preview",
         "character_model_download",
     } | ({"character_model_animations"} if include else set())
     assert all(ref.metadata_json["model_bundle_id"] == "1" for ref in references)
     assert all(ref.metadata_json["animation_count"] == int(bool(include)) for ref in references)
-    assert worker.ensure_glb_download.await_count == (2 if include else 1)
+    assert worker.ensure_glb_download.await_count == (2 if include else 1) * form_count
     session.commit.assert_awaited_once()
 
 
@@ -402,3 +424,114 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
     if include:
         assert provenance["animations"]["animations"] == clip_count
         assert provenance["animation_coverage"]["playable_clips"] == clip_count
+
+
+@pytest.mark.asyncio
+async def test_second_form_failure_never_starts_publication(tmp_path, monkeypatch):
+    job = worker.CharacterModelJob.model_validate({**job_payload(), "include_animations": True})
+    complete, incomplete = tmp_path / "complete", tmp_path / "incomplete"
+    complete.mkdir()
+    incomplete.mkdir()
+    animation_glb(complete / "animations.glb")
+    stats = {"animations": glb_summary(complete / "animations.glb", allow_animations=True)}
+    storage = AsyncMock()
+    monkeypatch.setattr(worker, "S3Storage", storage)
+    with pytest.raises(FileNotFoundError):
+        await worker.publish_forms(
+            job,
+            [
+                ({"id": "mesh-100038"}, complete, stats, {}),
+                ({"id": "mesh-100041"}, incomplete, {}, {}),
+            ],
+        )
+    storage.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_second", [False, True])
+async def test_forms_build_in_isolated_disposable_workspaces_and_publish_together(
+    tmp_path, monkeypatch, fail_second
+):
+    payload = job_payload()
+    run = SimpleNamespace(metadata_json={"payload": payload}, status="queued")
+    session = SimpleNamespace(get=AsyncMock(return_value=run))
+
+    @asynccontextmanager
+    async def context(*args):
+        yield session
+
+    roots = []
+
+    @contextmanager
+    def workspace(client):
+        root = tmp_path / f"scratch-{len(roots)}"
+        root.mkdir()
+        roots.append(root)
+        try:
+            yield root
+        finally:
+            import shutil
+
+            shutil.rmtree(root)
+
+    forms = [
+        {
+            "id": f"mesh-{number}",
+            "label": label,
+            "order": index,
+            "source": {"table": "rolemorph"},
+            "model": f"Aki/{label}",
+            "blueprints": [],
+        }
+        for index, (number, label) in enumerate([(100038, "Default"), (100041, "Fleurdelys")])
+    ]
+    built = []
+
+    async def build(root, form, **options):
+        built.append(form)
+        (root / "raw.uasset").touch()
+        assert options == {"include_animations": False, "run_id": 1}
+        if fail_second and len(built) == 2:
+            raise ValueError("second rig failed")
+        output = root / "bundle"
+        output.mkdir()
+        (output / "preview.glb").touch()
+        return output, {}, {"model": form["model"]}
+
+    async def publish(job, bundles):
+        assert len(bundles) == 2
+        assert [form["id"] for form, *_ in bundles] == [form["id"] for form in forms]
+        assert all((output / "preview.glb").is_file() for _, output, *_ in bundles)
+        # No extracted source tree survives while another form is processed/published.
+        assert all(not root.exists() for root in roots[1:])
+        assert all(
+            provenance["form_source"] == form["source"] for form, _, _, provenance in bundles
+        )
+
+    client = tmp_path / "assets" / f"3.0.0-hd-{'a' * 16}"
+    client.mkdir(parents=True)
+    (client / "plan.json").write_text(
+        json.dumps({"id": "a" * 64, "version": "3.0.0", "tier": "hd"})
+    )
+    (client / "status.json").write_text(json.dumps({"id": "a" * 64, "state": "downloaded"}))
+    monkeypatch.setattr(worker, "engine", SimpleNamespace(connect=context))
+    monkeypatch.setattr(worker, "job_lock", context)
+    monkeypatch.setattr(worker, "SessionFactory", context)
+    monkeypatch.setattr(worker, "source_row", AsyncMock(return_value={"Id": 1505}))
+    monkeypatch.setattr(worker, "source_forms", AsyncMock(return_value=forms))
+    monkeypatch.setattr(worker, "asset_workspace", lambda: tmp_path)
+    monkeypatch.setattr(worker, "validate_plan", lambda plan: None)
+    monkeypatch.setattr(worker, "update_admin_run", AsyncMock())
+    monkeypatch.setattr(worker, "temporary_entity_workspace", workspace)
+    monkeypatch.setattr(worker, "build_bundle", build)
+    published = AsyncMock(side_effect=publish)
+    monkeypatch.setattr(worker, "publish_forms", published)
+    if fail_second:
+        with pytest.raises(ValueError, match="second rig failed"):
+            await worker.process_character_model(payload)
+        published.assert_not_awaited()
+    else:
+        await worker.process_character_model(payload)
+        published.assert_awaited_once()
+    assert len(built) == 2
+    assert all(not root.exists() for root in roots)

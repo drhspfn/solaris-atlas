@@ -144,6 +144,7 @@ async def public_character_model(session, owner_node_id, release):
         "physics": None,
         "animations": None,
         "viewer_url": None,
+        "forms": [],
     }
     if release is None:
         return result
@@ -151,21 +152,75 @@ async def public_character_model(session, owner_node_id, release):
     rows = await published_model_files(session, owner_node_id, release.id, settings.s3_bucket)
     # Rows are newest first. Never combine files from different publications.
     bundles = {}
-    for reference_type, model_bundle_id, object_key, size_bytes, viewer_object_key in rows:
-        if model_bundle_id:
-            bundles.setdefault(model_bundle_id, {}).setdefault(
-                REFERENCE_TYPES[reference_type], (object_key, size_bytes, viewer_object_key)
-            )
+    malformed = set()
+    for (
+        reference_type,
+        model_bundle_id,
+        object_key,
+        size_bytes,
+        viewer_object_key,
+        form_id,
+        form_label,
+        form_order,
+    ) in rows:
+        if not model_bundle_id:
+            continue
+        forms = bundles.setdefault(model_bundle_id, {})
+        form_id = "default" if form_id is None else form_id
+        form_label = "Default" if form_label is None and form_id == "default" else form_label
+        form_order = 0 if form_order is None else form_order
+        if (
+            not isinstance(form_id, str)
+            or re.fullmatch(r"default|mesh-[1-9][0-9]*", form_id) is None
+            or not isinstance(form_label, str)
+            or not form_label.strip()
+            or type(form_order) is not int
+            or form_order < 0
+        ):
+            malformed.add(model_bundle_id)
+            continue
+        form = forms.setdefault(form_id, {"label": form_label, "order": form_order, "files": {}})
+        if (form["label"], form["order"]) != (form_label, form_order):
+            malformed.add(model_bundle_id)
+        form["files"].setdefault(
+            REFERENCE_TYPES[reference_type], (object_key, size_bytes, viewer_object_key)
+        )
     bundle = next(
-        (files for files in bundles.values() if "preview" in files and "download" in files), None
+        (
+            forms
+            for bundle_id, forms in bundles.items()
+            if bundle_id not in malformed
+            and forms
+            and all(
+                "preview" in form["files"] and "download" in form["files"]
+                for form in forms.values()
+            )
+        ),
+        None,
     )
     if bundle is not None:
         storage = S3Storage(settings)
         result["status"] = "ready"
-        for kind, (object_key, size_bytes, viewer_object_key) in bundle.items():
-            result[kind] = {"url": storage.public_url(object_key), "size_bytes": size_bytes}
-            if isinstance(viewer_object_key, str) and re.fullmatch(
-                r"model-viewer/[0-9a-f]{64}/index\.html", viewer_object_key
-            ):
-                result["viewer_url"] = storage.public_url(viewer_object_key)
+        for form_id, form in sorted(bundle.items(), key=lambda item: (item[1]["order"], item[0])):
+            public_form = {
+                "id": form_id,
+                "label": form["label"],
+                "preview": None,
+                "download": None,
+                "physics": None,
+                "animations": None,
+                "viewer_url": None,
+            }
+            for kind, (object_key, size_bytes, viewer_object_key) in form["files"].items():
+                public_form[kind] = {
+                    "url": storage.public_url(object_key),
+                    "size_bytes": size_bytes,
+                }
+                if isinstance(viewer_object_key, str) and re.fullmatch(
+                    r"model-viewer/[0-9a-f]{64}/index\.html", viewer_object_key
+                ):
+                    public_form["viewer_url"] = storage.public_url(viewer_object_key)
+            result["forms"].append(public_form)
+        for kind in (*REFERENCE_TYPES.values(), "viewer_url"):
+            result[kind] = result["forms"][0][kind]
     return result

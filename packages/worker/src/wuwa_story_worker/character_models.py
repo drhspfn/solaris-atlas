@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from datetime import UTC, datetime
@@ -27,11 +28,11 @@ from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.media_provenance import sha256, temporary_entity_workspace
 from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.model_animation_merge import merge_animation_glbs
+from wuwa_story_worker.model_forms import resolve_model_forms
 from wuwa_story_worker.model_publication import ensure_glb_download, publish_viewer
 from wuwa_story_worker.model_sources import (
     exported_package,
     glb_summary,
-    model_sources,
     spring_profile,
 )
 from wuwa_story_worker.tooling import asset_workspace, tool_path
@@ -52,6 +53,34 @@ async def source_row(session, release_id, path, identity):
     if row is None:
         raise ValueError(f"Character model source is missing in the requested release: {path}")
     return row
+
+
+async def source_forms(session, release_id, role):
+    morphs = list(
+        await session.scalars(
+            select(SourceRecord.data)
+            .join(SourceFile)
+            .where(
+                SourceRecord.release_id == release_id,
+                SourceFile.logical_source_path == "BinData/role/rolemorph.json",
+                SourceRecord.data["RoleId"].astext == str(role["Id"]),
+            )
+        )
+    )
+    mesh_ids = {role.get("MeshId"), role.get("UiMeshId"), *(r.get("MeshId") for r in morphs)}
+    preloads = list(
+        await session.scalars(
+            select(SourceRecord.data)
+            .join(SourceFile)
+            .where(
+                SourceRecord.release_id == release_id,
+                SourceFile.logical_source_path
+                == "BinData/model_config_preload/modelconfigpreload.json",
+                SourceRecord.data["Id"].astext.in_([str(value) for value in mesh_ids if value]),
+            )
+        )
+    )
+    return resolve_model_forms(role, preloads, morphs)
 
 
 async def extract_model(root, sources, fmodel, converter, include_animations=True):
@@ -142,12 +171,17 @@ async def model_progress(run_id, stage, **details):
 
 
 async def build_bundle(root, sources, include_animations=True, *, run_id=None):
+    async def progress(stage, **details):
+        await model_progress(
+            run_id, stage, form_id=sources.get("id"), form_label=sources.get("label"), **details
+        )
+
     fmodel, converter = tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH")
     blender = tool_path("WUWA_BLENDER_PATH")
     plugin = Path(os.getenv("WUWA_UEFORMAT_PLUGIN", "/app/tools/ueformat/plugins/blender"))
     if not (plugin / "io_scene_ueformat").is_dir():
         raise ValueError("UEFormat importer unavailable; use the dedicated model worker image")
-    await model_progress(run_id, "extract")
+    await progress("extract")
     model, converted, cooked, manifest = await extract_model(
         root, sources, fmodel, converter, include_animations
     )
@@ -190,7 +224,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None):
         "512",
     ]
     plan_path = output / "animation-plan.json"
-    await model_progress(run_id, "rig_and_animation_plan" if include_animations else "rig")
+    await progress("rig_and_animation_plan" if include_animations else "rig")
     await run_blender(
         [*command, "--rig-only", *(["--animation-plan", plan_path] if include_animations else [])],
         root,
@@ -206,8 +240,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None):
         batch_count = (len(clips) + batch_size - 1) // batch_size
         parts = []
         for index in range(batch_count):
-            await model_progress(
-                run_id,
+            await progress(
                 "animation_batch",
                 batch=index + 1,
                 batches=batch_count,
@@ -234,15 +267,14 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None):
             if stats["animations"] != expected:
                 raise ValueError("Animation batch lost clips")
             parts.append(part)
-            await model_progress(
-                run_id,
+            await progress(
                 "animation_batch_completed",
                 batch=index + 1,
                 batches=batch_count,
                 seconds=round(time.monotonic() - started, 2),
                 clips=len(clips),
             )
-        await model_progress(run_id, "merge_animation_batches", batches=batch_count)
+        await progress("merge_animation_batches", batches=batch_count)
         await asyncio.to_thread(merge_animation_glbs, parts, output / "animations.glb")
         summary = glb_summary(output / "animations.glb", allow_animations=True)
         if summary["animations"] != len(clips):
@@ -303,8 +335,8 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None):
     return output, summaries, provenance
 
 
-async def publish_bundle(job, output, summaries, provenance):
-    animation_count = 0
+def publication_files(job, output, summaries):
+    """Validate every form before uploads or a database publication can begin."""
     if job.include_animations:
         actual = glb_summary(output / "animations.glb", allow_animations=True)
         if summaries.get("animations") != actual:
@@ -312,8 +344,8 @@ async def publish_bundle(job, output, summaries, provenance):
         animation_count = actual["animations"]
     elif "animations" in summaries or (output / "animations.glb").exists():
         raise ValueError("Unexpected animations for a rig-only job")
-    storage = S3Storage(get_settings())
-    service = FileRegistrationService(storage)
+    else:
+        animation_count = 0
     files = [
         ("preview", output / "preview.glb", "unknown", "model/gltf-binary"),
         ("download", output / "character.glb", "unknown", "model/gltf-binary"),
@@ -322,15 +354,32 @@ async def publish_bundle(job, output, summaries, provenance):
         files.append(("animations", output / "animations.glb", "unknown", "model/gltf-binary"))
     if (output / "physics.json").is_file():
         files.append(("physics", output / "physics.json", "raw_json", "application/json"))
-    prepared = [await service.prepare_file(path, mime) for _, path, _, mime in files]
-    viewer_key = await publish_viewer(storage)
-    await ensure_glb_download(
-        storage, content_object_key(prepared[1].digest), prepared[1].digest.hex()
+    return files, animation_count
+
+
+async def publish_bundle(job, output, summaries, provenance):
+    # Legacy single-form entry point also keeps the atomic publication contract.
+    await publish_forms(
+        job, [({"id": "default", "label": "Default", "order": 0}, output, summaries, provenance)]
     )
-    if job.include_animations:
-        await ensure_glb_download(
-            storage, content_object_key(prepared[2].digest), prepared[2].digest.hex()
-        )
+
+
+async def publish_forms(job, bundles):
+    if not bundles or len({form["id"] for form, *_ in bundles}) != len(bundles):
+        raise ValueError("Model publication requires distinct authored forms")
+    validated = [publication_files(job, output, summaries) for _, output, summaries, _ in bundles]
+    storage = S3Storage(get_settings())
+    service = FileRegistrationService(storage)
+    prepared_forms = []
+    for files, _ in validated:
+        prepared = [await service.prepare_file(path, mime) for _, path, _, mime in files]
+        for (kind, _, _, _), ready in zip(files, prepared, strict=True):
+            if kind in {"download", "animations"}:
+                await ensure_glb_download(
+                    storage, content_object_key(ready.digest), ready.digest.hex()
+                )
+        prepared_forms.append(prepared)
+    viewer_key = await publish_viewer(storage)
     async with SessionFactory() as session:
         run = await session.scalar(
             select(ProcessingRun).where(ProcessingRun.id == job.run_id).with_for_update()
@@ -339,41 +388,58 @@ async def publish_bundle(job, output, summaries, provenance):
             raise ValueError("Model job identity changed before publication")
         if run.status in {"completed", "cancelled"}:
             return
-        published = {}
-        for (kind, path, file_type, mime), ready in zip(files, prepared, strict=True):
-            file = await service.register_file(
-                session, path, file_type, mime_type=mime, prepared=ready
-            )
-            reference = await service.register_reference(
+        reports = []
+        for (form, output, summaries, provenance), (files, animation_count), prepared in zip(
+            bundles, validated, prepared_forms, strict=True
+        ):
+            published = {}
+            for (kind, path, file_type, mime), ready in zip(files, prepared, strict=True):
+                file = await service.register_file(
+                    session, path, file_type, mime_type=mime, prepared=ready
+                )
+                reference = await service.register_reference(
+                    session,
+                    file_id=file.id,
+                    reference_type="character_model_" + kind,
+                    owner_node_id=job.owner_node_id,
+                    release_id=job.release_id,
+                    source_path="/Game/" + provenance["model"],
+                )
+                published[kind] = file.id
+                reference.metadata_json = {
+                    "model_bundle_id": str(job.run_id),
+                    "form_id": form["id"],
+                    "form_label": form["label"],
+                    "form_order": form["order"],
+                    "viewer_object_key": viewer_key,
+                    "asset_version": job.asset_version,
+                    "download_id": job.download_id,
+                    "tier": job.tier,
+                    "game_source": provenance,
+                    "animation_count": animation_count,
+                }
+            await service.register_variant(
                 session,
-                file_id=file.id,
-                reference_type="character_model_" + kind,
-                owner_node_id=job.owner_node_id,
-                release_id=job.release_id,
-                source_path="/Game/" + provenance["model"],
+                published["download"],
+                published["preview"],
+                "character_model_preview",
+                job.run_id,
             )
-            published[kind] = file.id
-            reference.metadata_json = {
-                "model_bundle_id": str(job.run_id),
-                "viewer_object_key": viewer_key,
-                "asset_version": job.asset_version,
-                "download_id": job.download_id,
-                "tier": job.tier,
-                "game_source": provenance,
-                "animation_count": animation_count,
-            }
-        await service.register_variant(
-            session,
-            published["download"],
-            published["preview"],
-            "character_model_preview",
-            job.run_id,
-        )
+            reports.append(
+                {
+                    "id": form["id"],
+                    "label": form["label"],
+                    "files": summaries,
+                    "physics": (output / "physics.json").is_file(),
+                    "animations": animation_count,
+                }
+            )
         run.status, run.error, run.finished_at = "completed", None, datetime.now(UTC)
         run.raw_output = {
-            "files": summaries,
-            "physics": (output / "physics.json").is_file(),
-            "animations": animation_count,
+            "files": reports[0]["files"],
+            "physics": reports[0]["physics"],
+            "animations": sum(report["animations"] for report in reports),
+            "forms": reports,
             "temporary_exports_removed": True,
         }
         await session.commit()
@@ -400,13 +466,7 @@ async def process_character_model(payload):
                 "BinData/role/roleinfo.json",
                 int(job.character_key.split(":")[1]),
             )
-            preload = await source_row(
-                session,
-                job.release_id,
-                "BinData/model_config_preload/modelconfigpreload.json",
-                role.get("MeshId"),
-            )
-            sources = model_sources(role, preload)
+            forms = await source_forms(session, job.release_id, role)
         client = (
             asset_workspace() / "assets" / f"{job.asset_version}-{job.tier}-{job.download_id[:16]}"
         )
@@ -426,12 +486,21 @@ async def process_character_model(payload):
         )
 
         async def execute():
-            with temporary_entity_workspace(client) as root:
-                output, summaries, provenance = await build_bundle(
-                    root, sources, include_animations=job.include_animations, run_id=job.run_id
-                )
-                await model_progress(job.run_id, "publish")
-                await publish_bundle(job, output, summaries, provenance)
+            # Keep independently extracted rigs until all forms validate. One commit
+            # publishes the complete set; any failure leaves the previous bundle intact.
+            with temporary_entity_workspace(client) as staging:
+                bundles = []
+                for form in forms:
+                    with temporary_entity_workspace(client) as root:
+                        output, summaries, provenance = await build_bundle(
+                            root, form, include_animations=job.include_animations, run_id=job.run_id
+                        )
+                        retained = staging / form["id"]
+                        shutil.move(output, retained)
+                    provenance["form_source"] = form["source"]
+                    bundles.append((form, retained, summaries, provenance))
+                await model_progress(job.run_id, "publish", forms=len(bundles))
+                await publish_forms(job, bundles)
 
         # Never delete scratch while an owned subprocess/thread is still writing.
         await finish_writes(execute())

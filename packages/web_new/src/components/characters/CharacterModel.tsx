@@ -3,17 +3,22 @@
 import { Download, Maximize2, X } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { api, apiUrl } from "@/api/client";
+import { Select } from "@/components/ui/Select";
 import "@/styles/character-model.css";
 
 type Asset = { url: string; size_bytes: number };
-type Model = {
-  status: "ready" | "missing";
-  game_version: string | null;
+type ModelAssets = {
   preview: Asset | null;
   download: Asset | null;
   physics: Asset | null;
   animations?: Asset | null;
   viewer_url?: string | null;
+};
+type ModelForm = ModelAssets & { id: string; label: string };
+type Model = ModelAssets & {
+  status: "ready" | "missing";
+  game_version: string | null;
+  forms?: ModelForm[] | null;
 };
 const assetUrl = (url: string) => apiUrl(url.replace(/^\/api(?=\/)/, ""));
 const size = (bytes: number) => `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
@@ -34,6 +39,7 @@ export function CharacterModel({
   const dialog = useRef<HTMLDialogElement>(null);
   const [nearby, setNearby] = useState(false);
   const [model, setModel] = useState<Model | null>(null);
+  const [selectedForm, setSelectedForm] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
   const [viewing, setViewing] = useState(false);
@@ -42,6 +48,7 @@ export function CharacterModel({
   useEffect(() => {
     const controller = new AbortController();
     setModel(null);
+    setSelectedForm(null);
     setError("");
     setViewing(false);
     setNearby(false);
@@ -69,8 +76,13 @@ export function CharacterModel({
     return () => controller.abort();
   }, [characterKey, gameVersion, revision, refreshKey]);
 
+  // A form owns all its assets; absent optional assets never borrow the default rig.
+  const form = model?.forms?.find((item) => item.id === selectedForm)
+    ?? model?.forms?.[0];
+  const assets = form ?? model;
+
   useEffect(() => {
-    if (model?.status !== "ready" || !model.preview || !preview.current) return;
+    if (model?.status !== "ready" || !assets?.preview || !preview.current) return;
     if (typeof IntersectionObserver === "undefined") {
       setNearby(true);
       return;
@@ -86,7 +98,7 @@ export function CharacterModel({
     );
     observer.observe(preview.current);
     return () => observer.disconnect();
-  }, [model]);
+  }, [model, assets]);
 
   useEffect(() => {
     if (!viewing) return;
@@ -103,9 +115,9 @@ export function CharacterModel({
   }, [viewing]);
 
   let runtimeURL = "/model-viewer/index.html";
-  if (model?.viewer_url) {
+  if (assets?.viewer_url) {
     try {
-      const publishedViewer = new URL(model.viewer_url);
+      const publishedViewer = new URL(assets.viewer_url);
       if (["https:", "http:"].includes(publishedViewer.protocol)) {
         const current = new URL("../current/index.html", publishedViewer);
         runtimeURL = `${current.origin}${current.pathname}`;
@@ -115,22 +127,35 @@ export function CharacterModel({
     }
   }
   const params = new URLSearchParams({ name });
-  if (model?.preview) params.set("model", assetUrl(model.preview.url));
+  if (assets?.preview) params.set("model", assetUrl(assets.preview.url));
   const previewSrc = `${runtimeURL}?${params}&mode=preview`;
-  if (model?.physics) params.set("physics", assetUrl(model.physics.url));
-  if (model?.animations) {
-    params.set("animations", assetUrl(model.animations.url));
-    params.set("animation_bytes", String(model.animations.size_bytes));
+  if (assets?.physics) params.set("physics", assetUrl(assets.physics.url));
+  if (assets?.animations) {
+    params.set("animations", assetUrl(assets.animations.url));
+    params.set("animation_bytes", String(assets.animations.size_bytes));
   }
   // The current pointer upgrades published models without rebuilding their assets.
   const viewerSrc = `${runtimeURL}?${params}`;
+  const formOptions = model?.forms?.map(({ id, label }) => ({ value: id, label })) ?? [];
+  const formSelector = formOptions.length > 1 && (
+    <Select
+      className="character-model-form-select"
+      label="Model form"
+      value={form?.id ?? ""}
+      options={formOptions}
+      onChange={setSelectedForm}
+    />
+  );
 
   return (
     <section
       className="content-panel character-model"
       aria-label="Character model"
     >
-      <h2>Character model</h2>
+      <div className="character-model-heading">
+        <h2>Character model</h2>
+        {model?.status === "ready" && formSelector}
+      </div>
       {error ? (
         <div role="alert">
           <p>Model availability could not be loaded: {error}</p>
@@ -147,11 +172,11 @@ export function CharacterModel({
         </p>
       ) : (
         <>
-          {model.preview && (
+          {assets?.preview && (
             <div className="character-model-preview" ref={preview}>
               {nearby && (
                 <ModelFrame
-                  key={previewSrc}
+                  key={`${form?.id ?? "legacy"}:${previewSrc}`}
                   src={previewSrc}
                   title={`3D preview of ${name}`}
                   compact
@@ -174,20 +199,20 @@ export function CharacterModel({
             <p className="character-model-version">{model.game_version}</p>
           )}
           <div className="character-model-actions">
-            {model.download && (
-              <a href={assetUrl(model.download.url)} download>
+            {assets?.download && (
+              <a href={assetUrl(assets.download.url)} download>
                 <Download size={16} aria-hidden="true" /> Full-resolution GLB ·{" "}
-                {size(model.download.size_bytes)}
+                {size(assets.download.size_bytes)}
               </a>
             )}
-            {model.animations && (
-              <a href={assetUrl(model.animations.url)} download>
+            {assets?.animations && (
+              <a href={assetUrl(assets.animations.url)} download>
                 <Download size={16} aria-hidden="true" /> Animations ·{" "}
-                {size(model.animations.size_bytes)}
+                {size(assets.animations.size_bytes)}
               </a>
             )}
           </div>
-          {viewing && model.preview && (
+          {viewing && (
             <dialog
               ref={dialog}
               className="character-model-dialog character-model-viewer"
@@ -200,6 +225,7 @@ export function CharacterModel({
             >
               <header className="character-model-dialog-heading">
                 <h2 id={`${id}-viewer-title`}>{name} · 3D model</h2>
+                {formSelector}
                 <button
                   type="button"
                   autoFocus
@@ -209,11 +235,15 @@ export function CharacterModel({
                   <X size={20} aria-hidden="true" />
                 </button>
               </header>
-              <ModelFrame
-                key={viewerSrc}
-                src={viewerSrc}
-                title={`3D viewer of ${name}`}
-              />
+              {assets?.preview ? (
+                <ModelFrame
+                  key={`${form?.id ?? "legacy"}:${viewerSrc}`}
+                  src={viewerSrc}
+                  title={`3D viewer of ${name}`}
+                />
+              ) : (
+                <p role="status">No preview has been published for this form.</p>
+              )}
             </dialog>
           )}
         </>
