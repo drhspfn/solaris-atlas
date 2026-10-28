@@ -365,3 +365,40 @@ references disclosure and cannot become character portraits. Missing or failed
 images retain their space and an explicit unavailable state; failed loads offer Retry.
 Progression uses only the selected snapshot's authored stages. Cards show the real
 level-cap range, per-stage costs and their total; raw source evidence stays closed.
+
+## Character models
+
+Model availability comes from the existing public character-model endpoint. Near
+the visible profile stage, the page may automatically mount the small rig preview;
+the animation pack is never fetched by browsing or scrolling. Clicking the stage
+opens a full native dialog, Escape closes it and returns focus, and closing unloads
+the full viewer. Deployment activates the static viewer independently through the
+CDN's revalidated `model-viewer/current/index.html` entry point. It redirects to a
+complete immutable runtime, so existing published GLBs receive interface fixes
+without a model reimport. Media remains restricted to the viewer's own origin,
+without URL credentials. Preview readiness accepts messages only from the exact
+iframe window and its expected runtime origin.
+
+An explicit Load animations action shows loading/failure/retry feedback. Name-based
+category/group/subgroup metadata is stored in glTF extras by the import merger;
+old packs use the identical ordered rules in the viewer. These are navigation
+labels, not new gameplay claims. Unknown names remain Other. Authored clip names,
+bone bindings and timing are never rewritten by categorization. Search and group
+selection only filter the local loaded list, and do not request another pack.
+
+The right-hand full-height Settings drawer owns scene, physics and camera controls;
+at narrow widths it is anchored to the bottom. Animation/bone menus drill into
+categories and groups with a Back action; optional search traverses the whole list.
+The camera can follow
+any actual exported joint, with world-relative translation or bone-relative
+rotation and a configurable target offset in metres. Pause, frame, attach and
+resume are distinct actions. Detaching and resizing preserve the current view;
+Reset view explicitly releases attachment. Reduced motion begins paused and
+secondary physics begins off. Physics remains an animation-relative approximation.
+
+Character admin actions use the existing ActionMenu and authorization provider.
+Import opens a native dialog; submitting creates or reuses the existing durable
+job, prevents duplicate clicks and monitors its recorded state. Closing does not
+cancel server work. Monitoring resumes when reopened and links to the existing
+admin task page. Public users receive no import controls, and API authorization
+remains authoritative. These rules follow character_models API/use-case contracts.

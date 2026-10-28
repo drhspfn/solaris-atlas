@@ -15,7 +15,8 @@ BASH = str(GIT_BASH) if os.name == "nt" and GIT_BASH.is_file() else shutil.which
 
 @unittest.skipUnless(BASH, "Bash is required to test deployment orchestration")
 class DeploymentTests(unittest.TestCase):
-    def deploy(self, component, fail_validation=False, worker_image="", fail_migration=False, empty_auth=False):
+    def deploy(self, component, fail_validation=False, worker_image="", fail_migration=False, empty_auth=False,
+               fail_activation=False):
         source = (ROOT / "scripts/deploy-remote.sh").read_text()
         tail = 'case "$DEPLOY_COMPONENT" in' + source.split('case "$DEPLOY_COMPONENT" in', 1)[1]
         harness = r'''
@@ -25,6 +26,9 @@ FAIL_VALIDATION=$2
 WORKER_IMAGE=$3
 FAIL_MIGRATION=$4
 EMPTY_AUTH=$5
+FAIL_ACTIVATION=$6
+GHCR_OWNER=test
+IMAGE_TAG=abc1234
 USE_MINIO=false
 ENV_DIR=$(mktemp -d)
 APP_DIR=$ENV_DIR
@@ -35,6 +39,9 @@ chown() { :; }
 install() { mkdir -p "${@: -1}"; }
 docker() { printf '%s\n' "$*"; printf '%s\n' "$*" >&2; }
 record_compose() {
+  if [[ "$*" == "pull model-worker" || "$*" == *"model_publication --activate" ]]; then
+    printf 'activation-image=%s\n' "${MODEL_WORKER_IMAGE:-}" >&2
+  fi
   if [[ "$*" == "exec -T postgres "* && "$EMPTY_AUTH" == 1 ]]; then return; fi
   if [[ "$*" == "ps -q --status running "* ]]; then
     printf '%s\n' "$*" >&2
@@ -42,6 +49,9 @@ record_compose() {
     return
   fi
   printf '%s\n' "$*"
+  if [[ "$*" == *"model_publication --activate" && "$FAIL_ACTIVATION" == 1 ]]; then
+    return 1
+  fi
   if [[ "$*" == *"alembic upgrade head"* && "$FAIL_MIGRATION" == 1 ]]; then
     return 1
   fi
@@ -53,7 +63,7 @@ compose=(record_compose)
 '''
         return subprocess.run(
             [BASH, "-s", "--", component, "1" if fail_validation else "0", worker_image,
-             "1" if fail_migration else "0", "1" if empty_auth else "0"],
+             "1" if fail_migration else "0", "1" if empty_auth else "0", "1" if fail_activation else "0"],
             input=harness + tail, text=True, encoding="utf-8", capture_output=True, timeout=10, check=False,
         )
 
@@ -75,6 +85,33 @@ compose=(record_compose)
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("caddy reload", result.stdout)
         self.assertNotIn("\nps\n", result.stdout)
+
+    def test_viewer_activation_uses_fresh_release_image_before_web_starts(self):
+        activation = "run --rm --no-deps model-worker python -m wuwa_story_worker.model_publication --activate"
+        for component in ("web", "all"):
+            with self.subTest(component=component):
+                result = self.deploy(component)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                commands = result.stdout.splitlines()
+                activate = commands.index(activation)
+                pulls = [i for i, line in enumerate(commands) if line.startswith("pull ")]
+                self.assertLess(max(pulls), activate)
+                self.assertIn("pull model-worker", commands)
+                web = next(i for i, line in enumerate(commands) if line.startswith("up -d ") and "web" in line)
+                self.assertLess(activate, web)
+                self.assertEqual(commands.count(activation), 1)
+                self.assertEqual(result.stderr.count("activation-image=ghcr.io/test/solaris-atlas-models:abc1234"), 2)
+                if component == "web":
+                    self.assertNotIn("stop ", result.stdout)
+                    self.assertNotIn("up -d model-worker", result.stdout)
+
+    def test_activation_failure_prevents_new_web_start(self):
+        for component in ("web", "all"):
+            with self.subTest(component=component):
+                result = self.deploy(component, fail_activation=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("up -d", result.stdout)
+                self.assertNotIn("caddy reload", result.stdout)
 
     def test_worker_deployment_does_not_touch_the_proxy(self):
         result = self.deploy("snapshot-worker")

@@ -4,6 +4,7 @@ import { ArrowRight, BookOpen, ChevronRight, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api, apiUrl } from '@/api/client';
 import { CharacterModel } from '@/components/characters/CharacterModel';
+import { CharacterModelImport } from '@/components/characters/CharacterModelImport';
 import {
   CharacterArchive,
   type CharacterArchiveData,
@@ -40,6 +41,7 @@ export function EntityProfileClient({
   const [showAllRelated, setShowAllRelated] = useState(false);
   const [archive, setArchive] = useState<CharacterArchiveData | null>(initialArchive ?? null);
   const [archiveError, setArchiveError] = useState('');
+  const [modelRevision, setModelRevision] = useState(0);
 
   useEffect(() => {
     if (initialData && locale === 'en' && data === initialData) return;
@@ -181,10 +183,13 @@ export function EntityProfileClient({
         </div>
         <div className="profile-main">
           <span className="eyebrow left">{categoryTitle[kind].toUpperCase()} PROFILE</span>
-          <h1>
-            {name}
-            <span className="heading-period">.</span>
-          </h1>
+          <div className="character-profile-title-row">
+            <h1>{name}<span className="heading-period">.</span></h1>
+            {kind === 'character' && entity?.canonical_key && (
+              <CharacterModelImport characterKey={entity.canonical_key} variant="actions"
+                onComplete={() => setModelRevision((value) => value + 1)} />
+            )}
+          </div>
           <p>
             {description ||
               (kind === 'character'
@@ -226,7 +231,7 @@ export function EntityProfileClient({
           <div className="character-archive-loading">Loading character details…</div>
         ))}
       {kind === 'character' && entity?.canonical_key && (
-        <CharacterModel key={entity.canonical_key} characterKey={entity.canonical_key} name={name} />
+        <CharacterModel key={entity.canonical_key} characterKey={entity.canonical_key} name={name} refreshKey={modelRevision} />
       )}
       <div className="profile-columns">
         <section className="content-panel">

@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import mimetypes
+import re
 from pathlib import Path
 
 
@@ -21,6 +22,27 @@ async def publish_viewer(storage, root=Path("/app/model-viewer")):
             mime = mimetypes.guess_type(path.name)[0] or "text/plain"
             await storage.put_file(path, prefix + "/" + path.relative_to(root).as_posix(), mime)
     return index_key
+
+
+async def activate_viewer(storage, root=Path("/app/model-viewer")):
+    """Switch the stable entry point only after the immutable viewer is complete."""
+    index_key = await publish_viewer(storage, root)
+    if not re.fullmatch(r"model-viewer/[0-9a-f]{64}/index\.html", index_key):
+        raise ValueError("Invalid immutable model viewer key")
+    current_key = "model-viewer/current/index.html"
+    body = (
+        '<!doctype html><meta charset="utf-8"><title>Model viewer</title>'
+        f'<script>location.replace("../{index_key.split("/")[1]}/index.html" + location.search + location.hash);</script>'
+    ).encode()
+    await asyncio.to_thread(
+        storage.client.put_object,
+        Bucket=storage.bucket,
+        Key=current_key,
+        Body=body,
+        CacheControl="no-cache",
+        ContentType="text/html",
+    )
+    return current_key
 
 
 async def ensure_glb_download(storage, key, digest):
@@ -51,3 +73,19 @@ async def ensure_glb_download(storage, key, digest):
         ContentDisposition=disposition,
         **preserved,
     )
+
+
+def main():
+    import argparse
+
+    from wuwa_story.config.settings import get_settings
+    from wuwa_story.storage.s3 import S3Storage
+
+    parser = argparse.ArgumentParser(description="Activate the static model viewer")
+    parser.add_argument("--activate", action="store_true", required=True)
+    parser.parse_args()
+    print(asyncio.run(activate_viewer(S3Storage(get_settings()))))
+
+
+if __name__ == "__main__":
+    main()

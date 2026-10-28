@@ -194,6 +194,14 @@ if [[ "$DEPLOY_COMPONENT" != infrastructure ]]; then
   done
   if (( ${#pull_services[@]} )); then "${compose[@]}" pull "${pull_services[@]}"; fi
 fi
+if [[ "$DEPLOY_COMPONENT" == web || "$DEPLOY_COMPONENT" == all ]]; then
+  (
+    # Activate this release's viewer without replacing any running model worker.
+    export MODEL_WORKER_IMAGE="ghcr.io/$GHCR_OWNER/solaris-atlas-models:$IMAGE_TAG"
+    "${compose[@]}" pull model-worker
+    "${compose[@]}" run --rm --no-deps model-worker python -m wuwa_story_worker.model_publication --activate
+  )
+fi
 case "$DEPLOY_COMPONENT" in
   snapshot-worker|all)
     "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-assets-long-jobs \

@@ -4,28 +4,40 @@ import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { api, ApiError } from "@/api/client";
 import { useAuth } from "@/auth/AuthProvider";
 import { Select } from "@/components/ui/Select";
+import { ActionMenu } from "@/components/ui/ActionMenu";
+import { Upload, X } from "lucide-react";
 import "@/styles/character-model.css";
 
 type Job = {
   id: number;
   status: string;
-  result?: unknown;
+  result?: { stage?: string; batch?: number; batches?: number; animations?: number } | null;
   error?: string | null;
 };
 const terminal = (status: string) =>
   ["completed", "failed", "enqueue_failed", "cancelled"].includes(status);
+const stages: Record<string, string> = {
+  extract: "Extracting model resources",
+  rig_and_animation_plan: "Building rig and animation plan",
+  animation_batch: "Exporting animations",
+  animation_batch_completed: "Animation batch complete",
+  merge_animation_batches: "Assembling animations",
+  publish: "Publishing model",
+};
 
 export function CharacterModelImport({
   characterKey,
   initialGameVersion,
   versions = [],
   active = true,
+  variant = "inline",
   onComplete,
 }: {
   characterKey?: string;
   initialGameVersion?: string;
   versions?: string[];
   active?: boolean;
+  variant?: "inline" | "actions";
   onComplete?: () => void;
 }) {
   const { user } = useAuth();
@@ -37,6 +49,7 @@ export function CharacterModelImport({
       initialGameVersion={initialGameVersion}
       versions={versions}
       active={active}
+      variant={variant}
       onComplete={onComplete}
     />
   );
@@ -47,12 +60,14 @@ function ImportControls({
   initialGameVersion,
   versions,
   active,
+  variant,
   onComplete,
 }: {
   characterKey?: string;
   initialGameVersion?: string;
   versions: string[];
   active: boolean;
+  variant: "inline" | "actions";
   onComplete?: () => void;
 }) {
   const { refresh: refreshAuth } = useAuth();
@@ -73,9 +88,25 @@ function ImportControls({
   const complete = useRef(onComplete);
   complete.current = onComplete;
   const keyInput = useRef<HTMLInputElement>(null);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const opener = useRef<HTMLElement | null>(null);
   const pending = !!job && !terminal(job.status);
 
   useEffect(() => () => request.current?.abort(), []);
+
+  useEffect(() => {
+    if (variant !== "actions" || !open || !active) return;
+    const element = dialog.current;
+    const overflow = document.body.style.overflow;
+    element?.showModal();
+    document.body.style.overflow = "hidden";
+    return () => {
+      element?.close();
+      document.body.style.overflow = overflow;
+      if (opener.current?.isConnected)
+        opener.current.focus({ preventScroll: true });
+    };
+  }, [variant, open, active]);
 
   useEffect(() => {
     if (!open || !active || !pending || !job) return;
@@ -154,7 +185,10 @@ function ImportControls({
       });
       if (controller.signal.aborted) return;
       setJob(result);
-      if (result.status === "completed") complete.current?.();
+      if (result.status === "completed" && completed.current !== result.id) {
+        completed.current = result.id;
+        complete.current?.();
+      }
     } catch (cause) {
       if (controller.signal.aborted) return;
       setError(
@@ -170,15 +204,11 @@ function ImportControls({
     }
   }
 
-  return (
-    <details
-      className="character-model-import"
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <summary>Import character model · admin</summary>
+  const controls = (
+    <>
       <p>
-        Import a rigged model with textures. Animations are stored separately and
-        load on demand.
+        Import a rigged model with textures. Animations are stored separately
+        and load on demand.
       </p>
       <form
         noValidate
@@ -253,8 +283,18 @@ function ImportControls({
       </form>
       {job && (
         <p role="status">
-          Import #{job.id}: {job.status}
+          Import #{job.id}: {job.status.replaceAll("_", " ")}
           {job.status === "completed" ? " · Model ready." : ""}
+          {pending && job.result?.stage && ` · ${stages[job.result.stage] || "Processing model"}`}
+          {pending && Number.isInteger(job.result?.batch) && Number.isInteger(job.result?.batches)
+            && ` · Batch ${job.result!.batch} of ${job.result!.batches}`}
+        </p>
+      )}
+      {job && (
+        <p>
+          <a href="/admin/data-operations">
+            Open task monitor · run #{job.id}
+          </a>
         </p>
       )}
       {(error || job?.error) && (
@@ -273,6 +313,64 @@ function ImportControls({
           Check status
         </button>
       )}
-    </details>
+    </>
+  );
+
+  if (variant === "inline")
+    return (
+      <details
+        className="character-model-import"
+        onToggle={(event) => setOpen(event.currentTarget.open)}
+      >
+        <summary>Import character model · admin</summary>
+        {controls}
+      </details>
+    );
+
+  return (
+    <>
+      <ActionMenu label="Character actions">
+        <button
+          type="button"
+          aria-haspopup="dialog"
+          onClick={(event) => {
+            const menu = event.currentTarget.closest("details");
+            opener.current =
+              menu?.querySelector("summary") ?? event.currentTarget;
+            if (menu) menu.open = false;
+            opener.current?.focus({ preventScroll: true });
+            setOpen(true);
+          }}
+        >
+          <Upload size={16} aria-hidden="true" /> Import character model
+        </button>
+      </ActionMenu>
+      <dialog
+        ref={dialog}
+        className="character-model-dialog character-model-import-dialog"
+        aria-labelledby={`${id}-title`}
+        onCancel={(event) => {
+          event.preventDefault();
+          setOpen(false);
+        }}
+        onClose={() => setOpen(false)}
+      >
+        <header className="character-model-dialog-heading">
+          <h2 id={`${id}-title`}>Import character model</h2>
+          <button
+            type="button"
+            autoFocus
+            aria-label="Close model import"
+            onClick={() => setOpen(false)}
+          >
+            <X size={20} aria-hidden="true" />
+          </button>
+        </header>
+        {controls}
+        {pending && (
+          <p>Closing stops monitoring. The queued import continues.</p>
+        )}
+      </dialog>
+    </>
   );
 }

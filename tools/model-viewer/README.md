@@ -2,8 +2,9 @@
 
 A standalone inspection tool for the source-backed GLB produced by
 `wuwa_story_worker/model_bundle.py`. This does not add a public site route,
-upload game assets or start production imports. Native selects are intentional
-for this local tool; the maintained site's component owners are unchanged.
+upload game assets or start production imports. The same static runtime is staged
+into the maintained frontend. Its authored listboxes and settings panels adapt
+the site's controls without mounting another application inside the iframe.
 
 ```powershell
 cd E:/Projects/solaris-atlas/tools/model-viewer
@@ -44,7 +45,8 @@ Serve only the generated preview folder, never the game, keys or source logs.
 The GLB is unchanged. `physics.json` and viewer code add only a small amount of
 metadata/runtime code; no additional animation frames are baked or stored.
 For published bundles the viewer accepts `model`, optional `physics`, and `name`
-URL parameters. Resources must use HTTP(S) and share the viewer origin. `--assets-only` stages
+URL parameters. Resources must use HTTP(S) on the viewer origin;
+credentials and HTTPS downgrades are rejected. `--assets-only` stages
 the standalone runtime without reading or publishing any game files.
 
 ## Optional animation pack
@@ -74,6 +76,28 @@ offer an explicit retry; there is no automatic retry or background download.
 Embedded clips in local full GLBs continue to work without an animation URL.
 
 ## Verification
+
+### Model studio
+
+`mode=preview` renders a transparent, static rig without chrome, floor, physics or
+animation downloads. The profile mounts this lightweight mode near the viewport
+and opens the complete viewer in a native dialog on click. Deployment publishes a
+complete immutable runtime then switches the revalidated CDN entry point
+`model-viewer/current/index.html`. This preserves same-origin GLB loading and
+updates older published bundles without reimporting them.
+
+The animation browser drills into category/group/subgroup menus with Back and an
+optional search across authored names. New imports store these deterministic labels in animation
+`extras.solaris_atlas`; legacy packs use the matching fallback rules. Unknown names
+stay in Other. No clip name, bone binding or animation data is changed.
+
+Settings contains Scene, Physics and Camera. Camera supports a 0.015 m minimum
+orbit distance and a 0.001 m near plane, plus following any actual exported bone.
+Pause the animation, choose a bone, frame it, adjust target offsets in metres and
+attach, then resume playback. World mode follows translation; bone-relative mode
+also follows orientation. Pointer orbit/pan adjustments remain usable while
+attached. Detach preserves the view, and Reset view returns to the whole model.
+If no nose bone exists, select Head and adjust offsets instead of inventing a joint.
 
 `npm test` exercises response to movement, angular bounds, restoration/reset,
 changing animated rotations, several frame rates, nested roots, exclusions and
