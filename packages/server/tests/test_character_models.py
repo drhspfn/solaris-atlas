@@ -255,10 +255,19 @@ async def test_status_is_processor_scoped():
 
 async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeypatch):
     rows = [
-        ("character_model_preview", "new", "objects/new-preview", 100, None),
-        ("character_model_animations", "new", "objects/new-animations", 500, None),
-        ("character_model_download", "old", "objects/old-download", 200, None),
-        ("character_model_physics", "old", "objects/old-physics", 30, None),
+        ("character_model_preview", "new", "objects/new-preview", 100, None, None, None, None),
+        (
+            "character_model_animations",
+            "new",
+            "objects/new-animations",
+            500,
+            None,
+            None,
+            None,
+            None,
+        ),
+        ("character_model_download", "old", "objects/old-download", 200, None, None, None, None),
+        ("character_model_physics", "old", "objects/old-physics", 30, None, None, None, None),
     ]
     monkeypatch.setattr(service, "published_model_files", AsyncMock(return_value=rows))
     monkeypatch.setattr(
@@ -276,21 +285,33 @@ async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeyp
         "physics": None,
         "animations": None,
         "viewer_url": None,
+        "forms": [],
     }
-    rows.append(("character_model_preview", "old", "objects/old-preview", 99, None))
+    rows.append(
+        ("character_model_preview", "old", "objects/old-preview", 99, None, None, None, None)
+    )
     result = await service.public_character_model(AsyncMock(), 15, release)
     assert result["status"] == "ready"
     assert result["preview"] == {
         "url": "https://media.example/objects/old-preview",
         "size_bytes": 99,
     }
-    rows.insert(1, ("character_model_download", "new", "objects/new-download", 250, None))
+    rows.insert(
+        1, ("character_model_download", "new", "objects/new-download", 250, None, None, None, None)
+    )
     result = await service.public_character_model(AsyncMock(), 15, release)
     assert result["preview"]["size_bytes"] == 100
     assert result["animations"]["size_bytes"] == 500
     assert result["download"]["size_bytes"] == 250
     assert result["physics"] is None
     assert result["viewer_url"] is None
+    assert result["forms"] == [
+        {
+            "id": "default",
+            "label": "Default",
+            **{kind: result[kind] for kind in (*repository.REFERENCE_TYPES.values(), "viewer_url")},
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -309,9 +330,36 @@ async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeyp
 async def test_viewer_url_is_validated_and_scoped_to_complete_bundle(monkeypatch, viewer_key):
     other_key = "model-viewer/" + "b" * 64 + "/index.html"
     rows = [
-        ("character_model_preview", "incomplete", "objects/new-preview", 100, other_key),
-        ("character_model_preview", "complete", "objects/preview", 99, viewer_key),
-        ("character_model_download", "complete", "objects/download", 200, viewer_key),
+        (
+            "character_model_preview",
+            "incomplete",
+            "objects/new-preview",
+            100,
+            other_key,
+            None,
+            None,
+            None,
+        ),
+        (
+            "character_model_preview",
+            "complete",
+            "objects/preview",
+            99,
+            viewer_key,
+            None,
+            None,
+            None,
+        ),
+        (
+            "character_model_download",
+            "complete",
+            "objects/download",
+            200,
+            viewer_key,
+            None,
+            None,
+            None,
+        ),
     ]
     monkeypatch.setattr(service, "published_model_files", AsyncMock(return_value=rows))
     monkeypatch.setattr(
@@ -350,6 +398,192 @@ async def test_repository_filters_available_bucket_and_release():
     assert "source_path" not in sql and "source_name" not in sql
     assert "model_bundle_id" in sql
     assert "viewer_object_key" in sql
+    for field in ("form_id", "form_label", "form_order"):
+        assert field in sql
+    assert [column.name for column in db.execute.await_args.args[0].selected_columns][-3:] == [
+        "form_id",
+        "form_label",
+        "form_order",
+    ]
+
+
+@pytest.fixture
+def public_forms(monkeypatch):
+    rows = []
+    monkeypatch.setattr(service, "published_model_files", AsyncMock(return_value=rows))
+    monkeypatch.setattr(
+        service,
+        "S3Storage",
+        lambda _: SimpleNamespace(public_url=lambda key: "https://media.example/" + key),
+    )
+    return rows
+
+
+def form_rows(
+    bundle, form_id="mesh-100038", label="Normal", order=0, kinds=("preview", "download")
+):
+    return [
+        (
+            f"character_model_{kind}",
+            bundle,
+            f"objects/{bundle}/{form_id}/{kind}",
+            100,
+            None,
+            form_id,
+            label,
+            order,
+        )
+        for kind in kinds
+    ]
+
+
+async def test_public_forms_keep_files_and_viewers_in_their_form(public_forms):
+    viewer = "model-viewer/" + "a" * 64 + "/index.html"
+    public_forms.extend(
+        form_rows("new", "mesh-100039", "Transformed", 1, ("preview", "download", "animations"))
+    )
+    public_forms.extend(form_rows("new", kinds=("preview", "download", "physics")))
+    # Content-addressed files may be shared by multiple forms.
+    public_forms[0] = (
+        *public_forms[0][:2],
+        "objects/shared-preview",
+        100,
+        viewer,
+        *public_forms[0][5:],
+    )
+    public_forms[3] = (
+        *public_forms[3][:2],
+        "objects/shared-preview",
+        100,
+        None,
+        *public_forms[3][5:],
+    )
+    result = await service.public_character_model(
+        AsyncMock(), 15, SimpleNamespace(id=8, game_version="1.4.0")
+    )
+    default, transformed = result["forms"]
+    assert result["status"] == "ready"
+    assert [form["id"] for form in result["forms"]] == ["mesh-100038", "mesh-100039"]
+    assert [form["label"] for form in result["forms"]] == ["Normal", "Transformed"]
+    assert default["preview"] == transformed["preview"]
+    assert default["physics"] is not None and default["animations"] is None
+    assert transformed["physics"] is None and transformed["animations"] is not None
+    assert default["viewer_url"] is None
+    assert transformed["viewer_url"] == "https://media.example/" + viewer
+    for kind in (*repository.REFERENCE_TYPES.values(), "viewer_url"):
+        assert result[kind] == default[kind]
+    for form in result["forms"]:
+        assert set(form) == {
+            "id",
+            "label",
+            "preview",
+            "download",
+            "physics",
+            "animations",
+            "viewer_url",
+        }
+        for kind in repository.REFERENCE_TYPES.values():
+            if form[kind]:
+                assert set(form[kind]) == {"url", "size_bytes"}
+    assert "model_bundle_id" not in str(result) and "form_order" not in str(result)
+
+
+@pytest.mark.parametrize("missing_kind", ["preview", "download"])
+async def test_public_forms_skip_whole_incomplete_publication(public_forms, missing_kind):
+    public_forms.extend(form_rows("new"))
+    public_forms.extend(
+        form_rows(
+            "new",
+            "mesh-100039",
+            "Other",
+            1,
+            tuple(kind for kind in ("preview", "download", "animations") if kind != missing_kind),
+        )
+    )
+    # A matching form from another run must never complete the new run.
+    public_forms.extend(form_rows("partial", "mesh-100039", "Other", 1, (missing_kind,)))
+    public_forms.extend(form_rows("old"))
+    result = await service.public_character_model(
+        AsyncMock(), 15, SimpleNamespace(id=8, game_version="1.4.0")
+    )
+    assert result["status"] == "ready" and len(result["forms"]) == 1
+    assert "/old/" in result["preview"]["url"]
+    assert result["animations"] is None
+
+
+@pytest.mark.parametrize(
+    "column,value",
+    [
+        (5, "../private"),
+        (5, "mesh-0"),
+        (5, 100038),
+        (5, {}),
+        (6, ""),
+        (6, "  "),
+        (6, 42),
+        (6, None),
+        (7, -1),
+        (7, True),
+        (7, "0"),
+        (7, 1.5),
+        (6, "Inconsistent label"),
+        (7, 3),
+    ],
+)
+async def test_public_forms_skip_malformed_bundle(public_forms, column, value):
+    public_forms.extend(form_rows("bad"))
+    public_forms.extend(form_rows("bad", "mesh-100039", "Other", 1))
+    corrupted = list(public_forms[0])
+    corrupted[column] = value
+    public_forms[0] = tuple(corrupted)
+    result = await service.public_character_model(
+        AsyncMock(), 15, SimpleNamespace(id=8, game_version="1.4.0")
+    )
+    assert result["status"] == "missing" and result["forms"] == []
+    public_forms.extend(form_rows("good"))
+    result = await service.public_character_model(
+        AsyncMock(), 15, SimpleNamespace(id=8, game_version="1.4.0")
+    )
+    assert result["status"] == "ready"
+    assert "/good/" in result["preview"]["url"]
+
+
+async def test_public_forms_choose_newest_complete_and_sort_default_orders(public_forms):
+    public_forms.extend(form_rows("incomplete", kinds=("animations",)))
+    public_forms.extend(form_rows("new", "mesh-100039", "Other", None))
+    public_forms.extend(form_rows("old", kinds=("preview", "download", "physics")))
+    public_forms.extend(form_rows("new"))
+    result = await service.public_character_model(
+        AsyncMock(), 15, SimpleNamespace(id=8, game_version="1.4.0")
+    )
+    assert [form["id"] for form in result["forms"]] == ["mesh-100038", "mesh-100039"]
+    assert "/new/" in result["preview"]["url"]
+    assert result["physics"] is None and result["animations"] is None
+
+
+async def test_public_missing_release_has_empty_forms(public_forms):
+    result = await service.public_character_model(AsyncMock(), 15, None)
+    assert result["status"] == "missing" and result["forms"] == []
+
+
+def test_public_get_serializes_multiple_forms(public_forms, monkeypatch):
+    public_forms.extend(form_rows("new"))
+    public_forms.extend(form_rows("new", "mesh-100039", "Other", 1))
+    monkeypatch.setattr(routes, "get_node", AsyncMock(return_value=SimpleNamespace(id=15)))
+    monkeypatch.setattr(
+        routes,
+        "model_release",
+        AsyncMock(return_value=SimpleNamespace(id=8, game_version="1.4.0")),
+    )
+    app = FastAPI()
+    app.include_router(routes.router)
+    app.dependency_overrides[get_session] = lambda: AsyncMock()
+    response = TestClient(app).get("/characters/1505/model?game_version=1.4.0")
+    assert response.status_code == 200
+    result = response.json()
+    assert result["status"] == "ready" and result["game_version"] == "1.4.0"
+    assert [form["id"] for form in result["forms"]] == ["mesh-100038", "mesh-100039"]
+    assert result["preview"] == result["forms"][0]["preview"]
 
 
 async def test_public_route_uses_existing_character_resolver(monkeypatch):

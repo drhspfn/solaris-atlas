@@ -34,6 +34,9 @@ async def published_model_files(session, owner_node_id, release_id, bucket):
                 FileLocation.object_key,
                 FileObject.size_bytes,
                 FileReference.metadata_json["viewer_object_key"].astext.label("viewer_object_key"),
+                FileReference.metadata_json["form_id"].label("form_id"),
+                FileReference.metadata_json["form_label"].label("form_label"),
+                FileReference.metadata_json["form_order"].label("form_order"),
             )
             .join(FileObject, FileObject.id == FileReference.file_id)
             .join(FileLocation, FileLocation.file_id == FileObject.id)
