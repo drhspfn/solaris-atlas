@@ -160,9 +160,21 @@ bulk export. Legacy queued jobs without `include_animations` remain rig-only.
 The dedicated `character_model` consumer reads the selected release's
 `BinData/role/roleinfo.json` MeshId and its exact
 `BinData/model_config_preload/modelconfigpreload.json` mesh/blueprint references.
+It also resolves the same release's `BinData/role/rolemorph.json` entries by
+exact RoleId and MeshId. A distinct UiMeshId is admitted only when it belongs to
+the same authored character directory as the gameplay mesh. This covers Zani's
+normal/battle pair without accepting borrowed UI models from other characters.
+Explicit morph records cover Cartethyia/Fleurdelys, Aemeath/mecha and Hsin's
+transformation in the 3.7 source tables. Each form uses its own exact skeleton,
+physics validation and optional animation pack.
 It does not infer models from portraits or character names. Composite rigs fail
 with an inspectable error rather than silently selecting an unrelated mesh.
 Physics blueprints must target the mesh's exact exported skeleton.
+
+Denia's Blueprint uses the Body mesh and attaches two initially hidden ultimate
+hair components. Those component references are not standalone playable rigs;
+the importer does not invent additional forms from `_Up1`/`_Up2` filename suffixes.
+Reconstructing that runtime component visibility/pose composition remains unsupported.
 
 Downloaded archives are shared read-only. Rig-only imports export the model
 directory and authored blueprints. Animation imports additionally export the authored
@@ -173,6 +185,14 @@ and atomic FileReference publication complete before scratch is removed; crash
 recovery collects orphaned transient directories. Source package paths/hashes,
 client identity and tool/recipe hashes remain in reference metadata. No raw
 texture tree or Blender working file is uploaded.
+
+Forms build sequentially in separate disposable workspaces. After each build only
+its final bundle survives in a staging workspace; raw exports are removed before
+the next form builds. All form references share one publication ID and commit in
+one transaction after every form validates. A failed form leaves the previous
+published set intact. Metadata records stable `mesh-<MeshId>` form IDs, labels,
+ordering and the exact source table/record used for discovery. Existing imports
+must be rebuilt to add forms; an already-running old worker cannot gain this behavior.
 
 Shared movement dependencies include the whole `BaseAnim` prefix (`BaseAnim2`,
 etc.), not only the `BaseAnim/` directory. The 3.7 Shorekeeper montages reference
@@ -211,8 +231,13 @@ these measurements are not a universal storage budget. Identical object hashes
 are reused across repeated imports and releases.
 
 `GET /characters/{key}/model?game_version=...` returns only bundle metadata.
-The character page mounts the viewer and downloads the preview only after
-**View 3D**. Closing it unloads the iframe. The full GLB is a separate explicit
+Its `forms` list contains each form's independent asset URLs; legacy root asset
+fields retain the first form for older clients. Old single-form publications
+remain readable as a default form. The profile and full viewer share a form
+selector; switching remounts the viewer without carrying another rig's animation
+or physics URLs across. The character page lazily downloads the static preview
+near the viewport. **Explore model** opens the full viewer; closing it unloads
+that iframe. The full GLB is a separate explicit
 download, with an attachment filename ending in `.glb`. Animation metadata belongs
 to the same publication as the rig. **Load animations** explicitly fetches the
 separate pack; opening a model never downloads it automatically. The pack can
