@@ -21,7 +21,9 @@ async def test_activation_publishes_tree_before_single_atomic_pointer_write(tmp_
 
     client = SimpleNamespace(put_object=Mock(side_effect=lambda **kw: events.append(kw["Key"])))
     storage = SimpleNamespace(
-        bucket="public", client=client, stat=AsyncMock(return_value=None),
+        bucket="public",
+        client=client,
+        stat=AsyncMock(return_value=None),
         put_file=AsyncMock(side_effect=upload),
     )
     key = await model_publication.activate_viewer(storage, tmp_path)
@@ -58,7 +60,8 @@ async def test_publication_errors_leave_previous_pointer_untouched(tmp_path, fai
 
     client = SimpleNamespace(put_object=Mock())
     storage = SimpleNamespace(
-        client=client, bucket="public",
+        client=client,
+        bucket="public",
         stat=AsyncMock(side_effect=RuntimeError("stat failed") if failure == "stat" else None),
         put_file=AsyncMock(side_effect=upload),
     )
@@ -69,11 +72,16 @@ async def test_publication_errors_leave_previous_pointer_untouched(tmp_path, fai
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("key", [
-    "https://evil.example/index.html", "//evil.example/index.html",
-    "model-viewer/../index.html", 'model-viewer/"</script>/index.html',
-    "model-viewer/" + "a" * 64 + "/index.html?redirect=evil",
-])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "https://evil.example/index.html",
+        "//evil.example/index.html",
+        "model-viewer/../index.html",
+        'model-viewer/"</script>/index.html',
+        "model-viewer/" + "a" * 64 + "/index.html?redirect=evil",
+    ],
+)
 async def test_activation_rejects_non_hash_paths_before_writing_pointer(monkeypatch, key):
     monkeypatch.setattr(model_publication, "publish_viewer", AsyncMock(return_value=key))
     storage = SimpleNamespace(client=SimpleNamespace(put_object=Mock()))
@@ -84,9 +92,13 @@ async def test_activation_rejects_non_hash_paths_before_writing_pointer(monkeypa
 
 @pytest.mark.asyncio
 async def test_pointer_upload_failure_is_propagated_without_deleting_previous_pointer(monkeypatch):
-    monkeypatch.setattr(model_publication, "publish_viewer", AsyncMock(
-        return_value="model-viewer/" + "a" * 64 + "/index.html",
-    ))
+    monkeypatch.setattr(
+        model_publication,
+        "publish_viewer",
+        AsyncMock(
+            return_value="model-viewer/" + "a" * 64 + "/index.html",
+        ),
+    )
     client = SimpleNamespace(put_object=Mock(side_effect=RuntimeError("pointer upload failed")))
     with pytest.raises(RuntimeError, match="pointer upload failed"):
         await model_publication.activate_viewer(SimpleNamespace(client=client, bucket="public"))
@@ -102,13 +114,21 @@ async def test_redirect_preserves_query_flags_and_fragment_on_same_origin(monkey
     monkeypatch.setattr(model_publication, "publish_viewer", AsyncMock(return_value=index))
     client = SimpleNamespace(put_object=Mock())
     await model_publication.activate_viewer(SimpleNamespace(client=client, bucket="public"))
-    script = re.search(r"<script>(.*?)</script>", client.put_object.call_args.kwargs["Body"].decode())[1]
+    script = re.search(
+        r"<script>(.*?)</script>", client.put_object.call_args.kwargs["Body"].decode()
+    )[1]
     query = "?model=%2Fobjects%2Fhero.glb&physics=0&animations=1&debug=true"
     fragment = "#camera=front"
     result = subprocess.run(
-        [node, "-e", f"const location = {{search: {json.dumps(query)}, hash: {json.dumps(fragment)}, "
-         "replace: value => console.log(new URL(value, 'https://cdn.example').href)};" + script],
-        capture_output=True, text=True, check=True,
+        [
+            node,
+            "-e",
+            f"const location = {{search: {json.dumps(query)}, hash: {json.dumps(fragment)}, "
+            "replace: value => console.log(new URL(value, 'https://cdn.example').href)};" + script,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert result.stdout.strip() == "https://cdn.example/" + index + query + fragment
 
