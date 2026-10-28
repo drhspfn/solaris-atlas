@@ -20,6 +20,7 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
             (1, "references_flow_state"), (2, "has_quest_node"),
             (3, "has_plot_step"), (4, "presents_scene"),
             (5, "contains_action"), (6, "plays_cutscene"), (7, "has_transcript_state"),
+            (8, "references_dungeon_flow_state"),
         ])
         db.executemany("INSERT INTO graph.edge (from_node_id, to_node_id, relation_type_id, layer) VALUES (?, ?, ?, ?)", [
             (1, 101, 1, "source"),  # Direct quest reference.
@@ -32,6 +33,9 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
             (60, 106, 1, "source"),  # Orphan scene / same-flow state is not guessed.
             (101, 70, 5, "source"), (70, 80, 6, "source"), (80, 107, 7, "source"),
             (80, 108, 7, "semantic"),
+            (10, 109, 8, "source"), (109, 71, 5, "source"),
+            (71, 81, 6, "source"), (81, 110, 7, "source"),
+            (10, 111, 8, "semantic"),
         ])
         links = _quest_state_links()
 
@@ -39,17 +43,19 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
             sql = str(query.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
             return set(db.execute(sql).fetchall())
 
-        assert rows(select(links.c.state_id).where(links.c.quest_id == 1)) == {(101,), (102,), (103,), (107,)}
+        expected = {(101,), (102,), (103,), (107,), (109,), (110,)}
+        assert rows(select(links.c.state_id).where(links.c.quest_id == 1)) == expected
+        assert rows(select(links.c.quest_id).where(links.c.state_id == 110)) == {(1,)}
         assert rows(select(links.c.quest_id).where(links.c.state_id == 107)) == {(1,)}
         assert rows(select(links.c.quest_id).where(links.c.state_id == 103)) == {(1,), (2,)}
-        for orphan in (104, 105, 106, 108):
+        for orphan in (104, 105, 106, 108, 111):
             assert rows(select(links.c.quest_id).where(links.c.state_id == orphan)) == set()
 
         db.execute("INSERT INTO graph.edge_evidence (edge_id, release_id) SELECT id, 1 FROM graph.edge")
         pinned = quest_state_links(1)
-        assert rows(select(pinned.c.state_id).where(pinned.c.quest_id == 1)) == {(101,), (102,), (103,), (107,)}
+        assert rows(select(pinned.c.state_id).where(pinned.c.quest_id == 1)) == expected
         # Every hop must exist in the pinned snapshot, not just the final state.
         db.execute("UPDATE graph.edge_evidence SET release_id=2 WHERE edge_id IN (SELECT id FROM graph.edge WHERE (from_node_id=20 AND to_node_id=30) OR (from_node_id=80 AND to_node_id=107))")
-        assert rows(select(pinned.c.state_id).where(pinned.c.quest_id == 1)) == {(101,), (102,)}
+        assert rows(select(pinned.c.state_id).where(pinned.c.quest_id == 1)) == {(101,), (102,), (109,), (110,)}
         another = quest_state_links(2)
         assert rows(select(another.c.state_id).where(another.c.quest_id == 1)) == set()

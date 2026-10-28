@@ -330,7 +330,7 @@ async def node_narrative_context(
             Edge.layer == "source",
         )
     )
-    ownership = _quest_state_links()
+    ownership = _quest_state_links(release_id)
     quest_rows = await session.scalars(
         select(Quest)
         .where(
@@ -369,7 +369,7 @@ async def node_narrative_context(
         "quests": quests,
         "game_version": (await session.get(GameRelease, release_id)).game_version if release_id else None,
         "quest_resolution": {
-            "basis": "source quest/quest-node/scene flow references, including PlayMovie transcripts matched by complete caption localization keys",
+            "basis": "Explicit quest, scene or required-dungeon scenario references; PlayMovie transcripts match complete caption keys. Dungeon context does not prove every runtime branch occurred.",
             "quest_node_refs": owner_keys,
             "unresolved": not bool(quests),
         },
