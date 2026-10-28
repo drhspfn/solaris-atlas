@@ -1,19 +1,19 @@
 """Snapshot-scoped scene identities and explicit quest ownership."""
 
-from sqlalchemy import func, select
+from sqlalchemy import Integer, func, select
 
 from wuwa_story.db.models.core import Cutscene, DialogueLine, Quest, QuestAction, QuestState
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
 from wuwa_story.db.models.ontology import RelationType
+from wuwa_story.db.models.ops import GameRelease, ImportRun
 from wuwa_story.db.models.storage import FileReference
 
 
 def scene_query(release_id, q="", playable=True):
-    query = select(Cutscene.node_id, Cutscene.cg_name).where(
-        select(NodeRevision.id).where(
-            NodeRevision.node_id == Cutscene.node_id, NodeRevision.release_id == release_id
-        ).exists()
-    )
+    query = select(Cutscene.node_id, Cutscene.cg_name)
+    if release_id is not None:
+        query = query.where(select(NodeRevision.id).where(
+            NodeRevision.node_id == Cutscene.node_id, NodeRevision.release_id == release_id).exists())
     if q:
         query = query.where(Cutscene.cg_name.icontains(q, autoescape=True))
     if playable:
@@ -26,12 +26,48 @@ def scene_query(release_id, q="", playable=True):
     return query
 
 
-async def page(session, release_id, q, playable, limit, offset):
+def observed_scenes():
+    # Import sequence can differ from game chronology (e.g. a historical backfill).
+    version = [func.split_part(GameRelease.game_version, ".", part).cast(Integer)
+               for part in (1, 2, 3)]
+    return (
+        select(NodeRevision.node_id, GameRelease.id.label("release_id"), GameRelease.game_version,
+               *[part.label(f"version_{index}") for index, part in enumerate(version)],
+               func.row_number().over(partition_by=NodeRevision.node_id,
+                   order_by=(*version, GameRelease.sequence)).label("first_rank"),
+               func.row_number().over(partition_by=NodeRevision.node_id,
+                   order_by=(*(part.desc() for part in version), GameRelease.sequence.desc())).label("last_rank"))
+        .join(GameRelease, GameRelease.id == NodeRevision.release_id)
+        .join(Cutscene, Cutscene.node_id == NodeRevision.node_id)
+        .where(GameRelease.id.in_(select(ImportRun.release_id).where(ImportRun.status == "succeeded")))
+        .cte("scene_observations")
+    )
+
+
+def archive_query(release_id, q, playable):
+    observations = observed_scenes()
+    first, latest = observations.alias("first_seen"), observations.alias("latest_seen")
     query = scene_query(release_id, q, playable)
-    total = await session.scalar(select(func.count()).select_from(query.subquery()))
-    rows = list(await session.execute(query.order_by(Cutscene.cg_name, Cutscene.node_id)
-                                      .limit(limit).offset(offset)))
+    return (query.join(first, (first.c.node_id == Cutscene.node_id) & (first.c.first_rank == 1))
+            .join(latest, (latest.c.node_id == Cutscene.node_id) & (latest.c.last_rank == 1))
+            .add_columns(first.c.game_version.label("first_observed_game_version"),
+                         latest.c.release_id.label("latest_release_id"),
+                         latest.c.game_version.label("latest_game_version"))
+            .order_by(*(first.c[f"version_{index}"].desc() for index in range(3)),
+                      Cutscene.cg_name, Cutscene.node_id))
+
+
+async def page(session, release_id, q, playable, limit, offset):
+    query = archive_query(release_id, q, playable)
+    total = await session.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
+    rows = list(await session.execute(query.limit(limit).offset(offset)))
     return total, rows
+
+
+async def imported_versions(session):
+    return list(await session.scalars(select(GameRelease.game_version).where(
+        GameRelease.id.in_(select(ImportRun.release_id).where(ImportRun.status == "succeeded"))
+    ).distinct()))
 
 
 async def source_parents(session, child_ids, relations, release_id):
