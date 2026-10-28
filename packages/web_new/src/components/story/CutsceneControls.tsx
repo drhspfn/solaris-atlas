@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import {
   Captions,
@@ -10,18 +10,19 @@ import {
   Settings2,
   Volume2,
   VolumeX,
-} from 'lucide-react';
-import { useState } from 'react';
+} from "lucide-react";
+import { useState } from "react";
 
-import { APP_SETTINGS } from '../../config/settings';
-import type { cutsceneTimeline } from './cutsceneTimeline';
+import { Select } from "../ui/Select";
+import { APP_SETTINGS } from "../../config/settings";
+import type { cutsceneTimeline } from "./cutsceneTimeline";
 
 function clock(seconds: number) {
   const value = Math.floor(Math.max(0, seconds));
-  return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
+  return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, "0")}`;
 }
 
-type Language = 'en' | 'ja' | 'ko' | 'zh';
+type Language = "en" | "ja" | "ko" | "zh";
 export function CutsceneControls({
   timeline,
   position,
@@ -64,13 +65,15 @@ export function CutsceneControls({
   onChoice: (id: string) => void;
 }) {
   const [settings, setSettings] = useState(false);
-  const [unmuted, setUnmuted] = useState(volume || APP_SETTINGS.cutscene.masterVolume);
+  const [unmuted, setUnmuted] = useState(
+    volume || APP_SETTINGS.cutscene.masterVolume,
+  );
   const provisional = timeline.decisions.some((entry) => entry.unresolved);
   return (
     <div
       className="cutscene-controls"
       onKeyDown={(event) => {
-        if (event.key === 'Escape') {
+        if (event.key === "Escape") {
           setSettings(false);
           event.stopPropagation();
         }
@@ -91,7 +94,7 @@ export function CutsceneControls({
         </div>
         <input
           aria-label="Cutscene timeline"
-          aria-valuetext={`${clock(position)} of ${clock(timeline.total)}${provisional ? ', duration depends on choice' : ''}`}
+          aria-valuetext={`${clock(position)} of ${clock(timeline.total)}${provisional ? ", duration depends on choice" : ""}`}
           type="range"
           min="0"
           max={timeline.total || 1}
@@ -104,9 +107,11 @@ export function CutsceneControls({
           <button
             key={entry.id}
             className="cutscene-decision"
-            style={{ left: `${timeline.total ? (entry.time / timeline.total) * 100 : 0}%` }}
-            aria-label={entry.unresolved ? 'Choose a branch' : 'Change branch'}
-            title={entry.unresolved ? 'Choose a branch' : 'Change branch'}
+            style={{
+              left: `${timeline.total ? (entry.time / timeline.total) * 100 : 0}%`,
+            }}
+            aria-label={entry.unresolved ? "Choose a branch" : "Change branch"}
+            title={entry.unresolved ? "Choose a branch" : "Change branch"}
             onClick={() => onChoice(entry.id)}
           >
             <GitBranch size={12} />
@@ -116,15 +121,15 @@ export function CutsceneControls({
       <div className="cutscene-control-row">
         <button
           type="button"
-          aria-label={playing ? 'Pause cutscene' : 'Play cutscene'}
-          title={playing ? 'Pause (K)' : 'Play (K)'}
+          aria-label={playing ? "Pause cutscene" : "Play cutscene"}
+          title={playing ? "Pause (K)" : "Play (K)"}
           onClick={onPlay}
         >
           {playing ? <Pause size={20} /> : <Play size={20} />}
         </button>
         <button
           type="button"
-          aria-label={volume ? 'Mute cutscene' : 'Unmute cutscene'}
+          aria-label={volume ? "Mute cutscene" : "Unmute cutscene"}
           title="Mute (M)"
           onClick={() => {
             if (volume) {
@@ -147,9 +152,12 @@ export function CutsceneControls({
           onChange={(event) => onVolume(Number(event.target.value))}
         />
         <span className="cutscene-time">
-          {clock(position)} / {timeline.complete ? clock(timeline.total) : '…'}
+          {clock(position)} / {timeline.complete ? clock(timeline.total) : "…"}
           {provisional && (
-            <small title="Total duration follows the preview branch until you choose"> ≈</small>
+            <small title="Total duration follows the preview branch until you choose">
+              {" "}
+              ≈
+            </small>
           )}
         </span>
         <span className="cutscene-control-spacer" />
@@ -158,7 +166,7 @@ export function CutsceneControls({
           aria-label="Subtitles"
           aria-pressed={subtitles && hasCaptions}
           disabled={!hasCaptions}
-          title={hasCaptions ? 'Subtitles (C)' : 'Subtitles unavailable'}
+          title={hasCaptions ? "Subtitles (C)" : "Subtitles unavailable"}
           onClick={onSubtitles}
         >
           <Captions size={20} />
@@ -190,7 +198,11 @@ export function CutsceneControls({
         </button>
       </div>
       {settings && (
-        <div className="cutscene-options" role="group" aria-label="Playback settings">
+        <div
+          className="cutscene-options"
+          role="group"
+          aria-label="Playback settings"
+        >
           <header>
             <strong>Playback</strong>
             <button type="button" onClick={() => setSettings(false)}>
@@ -198,28 +210,26 @@ export function CutsceneControls({
             </button>
           </header>
           {!!languages.length && (
-            <label>
-              Voice
-              <select
-                aria-label="Cutscene voice language"
+            <div className="cutscene-voice-setting">
+              <span>Voice</span>
+              <Select
+                label="Cutscene voice language"
                 value={language}
-                onChange={(event) => onLanguage(event.target.value as Language)}
-              >
-                {(
+                onChange={(value) => onLanguage(value as Language)}
+                options={(
                   [
-                    ['en', 'English'],
-                    ['ja', 'Japanese'],
-                    ['ko', 'Korean'],
-                    ['zh', 'Chinese'],
+                    ["en", "English"],
+                    ["ja", "Japanese"],
+                    ["ko", "Korean"],
+                    ["zh", "Chinese"],
                   ] as const
-                ).map(([code, label]) => (
-                  <option key={code} value={code} disabled={!languages.includes(code)}>
-                    {label}
-                    {!languages.includes(code) ? ' · unavailable' : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
+                ).map(([code, label]) => ({
+                  value: code,
+                  label: `${label}${languages.includes(code) ? "" : " · unavailable"}`,
+                  disabled: !languages.includes(code),
+                }))}
+              />
+            </div>
           )}
           <label>
             Overall volume <output>{Math.round(volume * 100)}%</output>
@@ -245,10 +255,15 @@ export function CutsceneControls({
                 value={musicVolume}
                 onChange={(event) => onMusicVolume(Number(event.target.value))}
               />
-              <small>Relative to overall volume. Set to 0 to turn music off.</small>
+              <small>
+                Relative to overall volume. Set to 0 to turn music off.
+              </small>
             </label>
           ) : (
-            <p>Music is part of the original mix, or no separate music track is available.</p>
+            <p>
+              Music is part of the original mix, or no separate music track is
+              available.
+            </p>
           )}
         </div>
       )}

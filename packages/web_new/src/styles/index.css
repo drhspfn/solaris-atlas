@@ -6229,13 +6229,17 @@ button.search-clear:focus-visible {
   width: 100%;
   accent-color: var(--mint);
 }
-.cutscene-options select {
-  padding: 8px;
-  max-width: 65%;
-  color: var(--text-primary);
-  background: var(--surface-2);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
+.cutscene-voice-setting {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-top: 16px;
+  font-size: 13px;
+}
+.cutscene-voice-setting .atlas-select {
+  min-width: 140px;
+  max-width: 75%;
 }
 .cutscene-options small,
 .cutscene-options p {
