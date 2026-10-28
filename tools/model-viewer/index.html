@@ -1,50 +1,297 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Solaris Atlas · Model lab</title>
-  <link rel="stylesheet" href="./viewer.css">
-  <script type="importmap">{"imports":{"three":"./vendor/build/three.module.js","three/addons/":"./vendor/examples/jsm/"}}</script>
-  <script type="module" src="./viewer.js"></script>
-</head>
-<body>
-  <header>
-    <div class="identity"><span class="eyebrow">SOLARIS / MODEL LAB</span><h1>The Shorekeeper</h1></div>
-    <p id="status" role="status">Loading model…</p>
-    <button id="retry" hidden>Retry loading</button>
-  </header>
-  <main id="viewport" aria-label="Interactive character preview">
-    <div class="scene-hint">Drag to orbit · scroll to zoom · right-drag to pan</div>
-    <div class="camera-tools" aria-label="Camera controls">
-      <button id="left" aria-label="Rotate camera left">↶</button>
-      <button id="right" aria-label="Rotate camera right">↷</button>
-      <button id="closer" aria-label="Zoom in">+</button>
-      <button id="farther" aria-label="Zoom out">−</button>
-      <button id="reset">Reset view</button>
-    </div>
-    <span class="axis-key" id="axis-key">X <i></i> Z · grid 0.5 m</span>
-  </main>
-  <footer>
-    <div class="animation-download">
-      <button id="load-animations" hidden>Load animations</button>
-      <span id="animation-status" role="status"></span>
-    </div>
-    <fieldset id="playback" disabled>
-      <legend class="sr-only">Animation playback</legend>
-      <label class="clip-field" for="animations">Animation<select id="animations" aria-label="Animation"><option>Loading…</option></select></label>
-      <button id="play" aria-label="Pause animation">Pause</button>
-      <label class="timeline" for="time"><span class="sr-only">Animation position</span><input id="time" type="range" min="0" max="1" step="0.01" value="0"><output id="duration" for="time">0:00 / 0:00</output></label>
-      <label class="speed-field" for="speed">Speed<select id="speed" aria-label="Speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option></select></label>
-    </fieldset>
-    <div class="settings">
-      <label><input id="floor" type="checkbox" checked> Floor &amp; grid</label>
-      <label><input id="turntable" type="checkbox"> Rotate model</label>
-      <label><input id="physics" type="checkbox" disabled aria-describedby="physics-note"> Secondary physics</label>
-      <label class="strength-field" for="strength">Strength<input id="strength" type="range" min="0" max="1" step="0.05" value="0.65" disabled><output id="strength-value" for="strength">65%</output></label>
-      <span id="physics-state">Physics off</span>
-    </div>
-    <p id="physics-note">Experimental springs over the animation. Game shaders, cloth collisions and VFX are not reproduced.</p>
-  </footer>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Solaris Atlas · Model viewer</title>
+    <link rel="stylesheet" href="./viewer.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./vendor/build/three.module.js",
+          "three/addons/": "./vendor/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module">
+      import { createViewerUI } from "./viewer-ui.js";
+      createViewerUI();
+    </script>
+    <script type="module" src="./viewer.js"></script>
+  </head>
+  <body>
+    <header class="viewer-header">
+      <div class="identity">
+        <span class="eyebrow">SOLARIS ATLAS / MODEL VIEWER</span>
+        <h1>The Shorekeeper</h1>
+      </div>
+      <div class="model-status">
+        <p id="status" role="status">Loading model…</p>
+        <button id="retry" hidden>Retry loading</button>
+      </div>
+      <button id="fullscreen" aria-label="Enter fullscreen" title="Fullscreen">
+        ⛶
+      </button>
+      <button
+        id="settings-open"
+        aria-haspopup="dialog"
+        aria-controls="viewer-settings"
+      >
+        Settings <span aria-hidden="true">⚙</span>
+      </button>
+    </header>
+    <main id="viewport" aria-label="Interactive character preview">
+      <div class="scene-hint">
+        Drag to orbit · scroll to zoom · right-drag to pan
+      </div>
+      <div class="camera-tools" role="group" aria-label="Camera controls">
+        <button id="left" aria-label="Rotate camera left" title="Rotate left">
+          ↶</button
+        ><button
+          id="right"
+          aria-label="Rotate camera right"
+          title="Rotate right"
+        >
+          ↷
+        </button>
+        <button id="closer" aria-label="Zoom in" title="Zoom in">+</button
+        ><button id="farther" aria-label="Zoom out" title="Zoom out">−</button
+        ><button id="reset">Reset view</button>
+      </div>
+      <span class="axis-key" id="axis-key">X <i></i> Z · grid 0.5 m</span>
+    </main>
+    <footer class="viewer-footer">
+      <div class="animation-download">
+        <button id="load-animations" hidden>Load animations</button
+        ><span id="animation-status" role="status"></span>
+      </div>
+      <fieldset id="playback" disabled>
+        <legend class="sr-only">Animation playback</legend>
+        <div class="clip-field">
+          <span id="animation-label" class="field-label">Animation library</span
+          ><input id="animations" type="hidden" /><button
+            id="animation-picker"
+            class="picker-trigger"
+            aria-labelledby="animation-label animation-selection"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="animation-list"
+            disabled
+          >
+            <span id="animation-selection">No animations loaded</span
+            ><span aria-hidden="true">⌄</span>
+          </button>
+        </div>
+        <button id="play" aria-label="Pause animation">Pause</button>
+        <label class="timeline" for="time"
+          ><span class="sr-only">Animation position</span
+          ><input
+            id="time"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0"
+          /><output id="duration" for="time">0:00 / 0:00</output></label
+        >
+        <div class="speed-field">
+          <span id="speed-label" class="sr-only">Playback speed</span
+          ><input id="speed" type="hidden" value="1" /><button
+            id="speed-picker"
+            class="picker-trigger"
+            aria-labelledby="speed-label speed-selection"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="speed-list"
+          >
+            <span id="speed-selection">1×</span
+            ><span aria-hidden="true">⌄</span>
+          </button>
+        </div>
+      </fieldset>
+    </footer>
+    <dialog id="viewer-settings" aria-labelledby="settings-title">
+      <div class="settings-heading">
+        <div>
+          <span class="eyebrow">VIEW OPTIONS</span>
+          <h2 id="settings-title">Model settings</h2>
+        </div>
+        <button id="settings-close" aria-label="Close settings" autofocus>
+          ×
+        </button>
+      </div>
+      <div class="settings-tabs" role="tablist" aria-label="Model settings">
+        <button
+          id="tab-scene"
+          role="tab"
+          aria-selected="true"
+          aria-controls="panel-scene"
+        >
+          Scene</button
+        ><button
+          id="tab-physics"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-physics"
+          tabindex="-1"
+        >
+          Physics</button
+        ><button
+          id="tab-camera"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-camera"
+          tabindex="-1"
+        >
+          Camera
+        </button>
+      </div>
+      <section
+        id="panel-scene"
+        class="settings-panel"
+        role="tabpanel"
+        aria-labelledby="tab-scene"
+        tabindex="0"
+      >
+        <h3>Stage &amp; orientation</h3>
+        <p class="help">Keep a sense of scale while exploring the model.</p>
+        <label class="toggle-row"
+          ><span>Floor &amp; grid<small>Half-meter reference grid</small></span
+          ><input id="floor" type="checkbox" checked
+        /></label>
+        <label class="toggle-row"
+          ><span
+            >Rotate model<small
+              >Turntable around the model’s center</small
+            ></span
+          ><input id="turntable" type="checkbox"
+        /></label>
+      </section>
+      <section
+        id="panel-physics"
+        class="settings-panel"
+        role="tabpanel"
+        aria-labelledby="tab-physics"
+        tabindex="0"
+        hidden
+      >
+        <h3>Secondary motion</h3>
+        <p id="physics-state" class="state" role="status">Physics off</p>
+        <label class="toggle-row"
+          ><span
+            >Secondary physics<small>Experimental spring motion</small></span
+          ><input
+            id="physics"
+            type="checkbox"
+            disabled
+            aria-describedby="physics-note"
+        /></label>
+        <label class="strength-field" for="strength"
+          >Strength <output id="strength-value" for="strength">65%</output
+          ><input
+            id="strength"
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value="0.65"
+            disabled
+        /></label>
+        <p id="physics-note" class="help">
+          Experimental springs over the animation. Game shaders, cloth
+          collisions and VFX are not reproduced.
+        </p>
+      </section>
+      <section
+        id="panel-camera"
+        class="settings-panel"
+        role="tabpanel"
+        aria-labelledby="tab-camera"
+        tabindex="0"
+        hidden
+      >
+        <h3>Bone framing</h3>
+        <p class="help" id="camera-help">
+          Pause at a frame, choose an available bone, then adjust orbit, pan and
+          target offsets. Attach centers on that target while keeping your view
+          angle and distance. Resume with Play.
+        </p>
+        <button id="camera-pause">Pause for setup</button>
+        <div class="setting-field">
+          <span id="bone-label" class="field-label">Target bone</span
+          ><button
+            id="camera-bone"
+            class="picker-trigger"
+            aria-labelledby="bone-label bone-selection"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="bone-list"
+            disabled
+          >
+            <span id="bone-selection">No bones available</span
+            ><span aria-hidden="true">⌄</span>
+          </button>
+        </div>
+        <div class="setting-field">
+          <span id="space-label" class="field-label">Follow space</span
+          ><input id="camera-space" type="hidden" value="world" /><button
+            id="space-picker"
+            class="picker-trigger"
+            aria-labelledby="space-label space-selection"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="space-list"
+          >
+            <span id="space-selection">World · translation</span
+            ><span aria-hidden="true">⌄</span>
+          </button>
+          <p class="help">
+            World follows translation. Local follows the full bone transform,
+            including rotation.
+          </p>
+        </div>
+        <fieldset class="offsets">
+          <legend>Target offset · meters</legend>
+          <label for="camera-x"
+            >X<input
+              id="camera-x"
+              type="number"
+              step="0.01"
+              value="0"
+              inputmode="decimal" /></label
+          ><label for="camera-y"
+            >Y<input
+              id="camera-y"
+              type="number"
+              step="0.01"
+              value="0"
+              inputmode="decimal" /></label
+          ><label for="camera-z"
+            >Z<input
+              id="camera-z"
+              type="number"
+              step="0.01"
+              value="0"
+              inputmode="decimal"
+          /></label>
+        </fieldset>
+        <div class="camera-actions">
+          <button id="camera-focus" disabled>Frame bone</button
+          ><button id="camera-attach" class="primary" disabled>
+            Attach &amp; follow</button
+          ><button id="camera-detach">Detach</button>
+        </div>
+        <label class="toggle-row"
+          ><span
+            >Follow target<small
+              >Detach keeps the camera’s current position</small
+            ></span
+          ><input id="camera-follow" type="checkbox"
+        /></label>
+        <p id="camera-state" class="state" role="status">
+          Free camera · no target attached
+        </p>
+      </section>
+    </dialog>
+  </body>
 </html>

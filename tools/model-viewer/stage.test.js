@@ -37,7 +37,7 @@ test('assets-only staging includes the lazy-animation runtime without game files
       '--assets-only', '--output', output]);
     assert.equal(await readFile(join(output, 'animations.js'), 'utf8'),
       await readFile(new URL('./animations.js', import.meta.url), 'utf8'));
-    assert.match(await readFile(join(output, 'viewer.js'), 'utf8'), /from '\.\/animations.js'/);
+    assert.match(await readFile(join(output, 'viewer.js'), 'utf8'), /from ['"]\.\/animations.js['"]/);
   } finally {
     await rm(output, { recursive: true, force: true });
   }
