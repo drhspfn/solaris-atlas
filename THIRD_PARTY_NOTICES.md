@@ -23,3 +23,11 @@ NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPO
 NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
 DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
 OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+# Model studio fonts
+
+DM Sans and Manrope variable fonts are distributed unchanged from the official
+Google Fonts repository (`ofl/dmsans` and `ofl/manrope`) under the SIL Open Font
+License 1.1. Their copyright and complete license notices are preserved in
+`tools/model-viewer/fonts/DMSans-OFL.txt` and `Manrope-OFL.txt`, and staged beside
+the fonts in each frontend/viewer publication. The frontend uses these local files
+through `next/font/local`; builds make no Google Fonts requests.

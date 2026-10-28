@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { DM_Sans, Manrope } from 'next/font/google';
+import localFont from 'next/font/local';
 
 import '@/styles/index.css';
 import '@/styles/site-shell.css';
@@ -8,16 +8,16 @@ import { Footer } from '@/components/layout/Footer';
 import { Header } from '@/components/layout/Header';
 import { Providers } from '@/components/layout/Providers';
 
-const dmSans = DM_Sans({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
+const dmSans = localFont({
+  src: '../../public/model-viewer/fonts/DMSans.ttf',
+  weight: '100 1000',
   variable: '--font-body',
   display: 'swap',
 });
 
-const manrope = Manrope({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700', '800'],
+const manrope = localFont({
+  src: '../../public/model-viewer/fonts/Manrope.ttf',
+  weight: '200 800',
   variable: '--font-display',
   display: 'swap',
 });
