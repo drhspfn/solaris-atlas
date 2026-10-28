@@ -99,6 +99,8 @@ services:
     build:
       context: ../..
       dockerfile: packages/web_new/Dockerfile
+      args:
+        NEXT_PUBLIC_GOOGLE_ADSENSE_CLIENT: ${NEXT_PUBLIC_GOOGLE_ADSENSE_CLIENT:-}
     environment:
       INTERNAL_API_BASE: http://api:8000
       API_PROXY_TARGET: http://api:8000

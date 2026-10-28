@@ -8,6 +8,7 @@ import '@/styles/cutscene-archive.css';
 import { Footer } from '@/components/layout/Footer';
 import { Header } from '@/components/layout/Header';
 import { Providers } from '@/components/layout/Providers';
+import { adsenseClient } from '@/lib/adsense';
 
 const dmSans = localFont({
   src: '../../public/model-viewer/fonts/DMSans.ttf',
@@ -33,7 +34,7 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
-  other: { 'google-adsense-account': 'ca-pub-5630632993844792' },
+  other: adsenseClient ? { 'google-adsense-account': adsenseClient } : {},
   title: {
     default: 'Solaris Atlas — Story Archive for Solaris-3',
     template: '%s | Solaris Atlas',
