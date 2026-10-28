@@ -15,6 +15,7 @@ from wuwa_story.db.models.i18n import Locale, LocalizationKey, LocalizationValue
 from wuwa_story.db.models.ops import GameRelease, ImportRun
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.session import get_session
+from wuwa_story.story.domain import authored_order as _authored_order
 
 router = APIRouter(tags=["story browsing"])
 
@@ -22,39 +23,6 @@ TREE_NODE_PATH = "BinData/QuestTree/questtreenode.json"
 TREE_CHAPTER_PATH = "BinData/QuestTree/questtreechapter.json"
 QUEST_PATH = "BinData/QuestData/questdata.json"
 QUEST_CHAPTER_PATH = "BinData/quest_chapter/questchapter.json"
-
-
-def _authored_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Topologically order explicit links, using the source Id as a stable tie-breaker."""
-    by_id = {row["Id"]: row for row in rows}
-    followers: dict[int, set[int]] = defaultdict(set)
-    incoming = {identifier: 0 for identifier in by_id}
-    for row in rows:
-        identifier = row["Id"]
-        previous = row.get("PreNode") or []
-        if not isinstance(previous, list):
-            previous = [previous]
-        for predecessor in previous:
-            if predecessor in by_id and identifier not in followers[predecessor]:
-                followers[predecessor].add(identifier)
-                incoming[identifier] += 1
-        successor = row.get("NextNode")
-        if successor in by_id and successor not in followers[identifier]:
-            followers[identifier].add(successor)
-            incoming[successor] += 1
-    ready = sorted(identifier for identifier, count in incoming.items() if count == 0)
-    ordered: list[int] = []
-    while ready:
-        identifier = ready.pop(0)
-        ordered.append(identifier)
-        for successor in sorted(followers[identifier]):
-            incoming[successor] -= 1
-            if incoming[successor] == 0:
-                ready.append(successor)
-                ready.sort()
-    # Cycles or malformed links are retained, without inventing an order for them.
-    ordered.extend(sorted(set(by_id) - set(ordered)))
-    return [by_id[identifier] for identifier in ordered]
 
 
 async def _records(session: AsyncSession, release_id: int, path: str) -> list[SourceRecord]:

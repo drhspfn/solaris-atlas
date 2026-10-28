@@ -1,6 +1,7 @@
 """Pure story localization and authored choice resolution policies."""
 
 import re
+from collections import defaultdict
 from typing import Any
 
 
@@ -11,7 +12,8 @@ def version_key(value):
 def localization_payload(key, locale, requested, values, versions, *, available=True):
     if key is None or not available or requested is None:
         return {"key": key, "locale": locale, "content": None, "resolution": "unavailable"}
-    exact = next((value for value in values if value.release_id == requested.id), None)
+    exact = next(
+        (value for value in values if value.release_id == requested.id), None)
     chosen = exact
     if exact is None or exact.status != "resolved_nonempty" or not exact.content:
         previous = [
@@ -76,7 +78,8 @@ def choice_branch(
         candidates = local_ids.get(talk_id, [])
         return candidates[0] if len(candidates) == 1 else None
 
-    line_ids = [unique_line_id(talk_id) for talk_id in sequences[sequence_index][start:]]
+    line_ids = [unique_line_id(talk_id)
+                for talk_id in sequences[sequence_index][start:]]
     if not line_ids or any(line_id is None for line_id in line_ids):
         return None
     continuation_line_id = None
@@ -104,3 +107,37 @@ class StoryBrowsingError(ValueError):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+
+
+def authored_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Topologically order explicit links, using the source Id as a stable tie-breaker."""
+    by_id = {row["Id"]: row for row in rows}
+    followers: dict[int, set[int]] = defaultdict(set)
+    incoming = {identifier: 0 for identifier in by_id}
+    for row in rows:
+        identifier = row["Id"]
+        previous = row.get("PreNode") or []
+        if not isinstance(previous, list):
+            previous = [previous]
+        for predecessor in previous:
+            if predecessor in by_id and identifier not in followers[predecessor]:
+                followers[predecessor].add(identifier)
+                incoming[identifier] += 1
+        successor = row.get("NextNode")
+        if successor in by_id and successor not in followers[identifier]:
+            followers[identifier].add(successor)
+            incoming[successor] += 1
+    ready = sorted(identifier for identifier,
+                   count in incoming.items() if count == 0)
+    ordered: list[int] = []
+    while ready:
+        identifier = ready.pop(0)
+        ordered.append(identifier)
+        for successor in sorted(followers[identifier]):
+            incoming[successor] -= 1
+            if incoming[successor] == 0:
+                ready.append(successor)
+                ready.sort()
+    # Cycles or malformed links are retained, without inventing an order for them.
+    ordered.extend(sorted(set(by_id) - set(ordered)))
+    return [by_id[identifier] for identifier in ordered]

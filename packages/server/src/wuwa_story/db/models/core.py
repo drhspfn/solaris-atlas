@@ -7,6 +7,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -320,6 +321,29 @@ class ConversationMember(MetadataMixin, Base):
     )
     order_index: Mapped[int | None] = mapped_column(Integer)
     ordering_basis: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class CutsceneStoryOrder(Base):
+    """Derived browsing order for one scene in one imported snapshot."""
+
+    __tablename__ = "cutscene_story_order"
+    __table_args__ = ({"schema": "core"},)
+    release_id: Mapped[int] = mapped_column(
+        ForeignKey("ops.game_release.id", ondelete="CASCADE"), primary_key=True
+    )
+    cutscene_node_id: Mapped[int] = mapped_column(
+        ForeignKey("core.cutscene.node_id", ondelete="CASCADE"), primary_key=True
+    )
+    quest_rank: Mapped[int | None] = mapped_column(Integer)
+    sort_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    basis: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class CutsceneOrderRevision(Base):
+    __tablename__ = "cutscene_order_revision"
+    __table_args__ = ({"schema": "core"},)
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
 class MediaAsset(MetadataMixin, Base):

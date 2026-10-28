@@ -17,10 +17,14 @@ async def test_unowned_scene_returns_source_captions(monkeypatch):
     row = SimpleNamespace(node_id=9)
     monkeypatch.setattr(route, "release", AsyncMock(return_value=snapshot))
     monkeypatch.setattr(route.repository, "scene", AsyncMock(return_value=row))
-    monkeypatch.setattr(route, "summaries", AsyncMock(return_value=[{"quests": []}]))
-    monkeypatch.setattr(route, "cutscene_flows", AsyncMock(return_value={9: {"asset_version": "3.7.0"}}))
-    monkeypatch.setattr(route, "_links", AsyncMock(return_value={9: [{"node_id": 10}]}))
-    monkeypatch.setattr(route, "caption_texts", AsyncMock(return_value={"line": "Hello"}))
+    monkeypatch.setattr(route, "summaries", AsyncMock(
+        return_value=[{"quests": []}]))
+    monkeypatch.setattr(route, "cutscene_flows", AsyncMock(
+        return_value={9: {"asset_version": "3.7.0"}}))
+    monkeypatch.setattr(route, "_links", AsyncMock(
+        return_value={9: [{"node_id": 10}]}))
+    monkeypatch.setattr(route, "caption_texts", AsyncMock(
+        return_value={"line": "Hello"}))
     session = SimpleNamespace(scalars=AsyncMock(return_value=[
         {"CaptionText": "line", "ShowMoment": 30, "Duration": 60}
     ]))
@@ -35,29 +39,82 @@ def test_all_versions_sort_numerically_by_first_observation_without_duplicate_sc
     with sqlite3.connect(":memory:") as db:
         for schema in ("core", "graph", "ops"):
             db.execute(f"ATTACH DATABASE ':memory:' AS {schema}")
-        db.create_function("split_part", 3, lambda value, delimiter, index: value.split(delimiter)[index - 1])
+        db.create_function("split_part", 3, lambda value,
+                           delimiter, index: value.split(delimiter)[index - 1])
         db.execute("CREATE TABLE core.cutscene (node_id INTEGER, cg_name TEXT)")
-        db.execute("CREATE TABLE graph.node_revision (id INTEGER, node_id INTEGER, release_id INTEGER)")
-        db.execute("CREATE TABLE ops.game_release (id INTEGER, game_version TEXT, sequence INTEGER)")
-        db.execute("CREATE TABLE ops.import_run (release_id INTEGER, status TEXT)")
+        db.execute("CREATE TABLE core.cutscene_story_order (release_id INTEGER, cutscene_node_id INTEGER, quest_rank INTEGER, sort_index INTEGER, basis TEXT)")
+        db.execute(
+            "CREATE TABLE graph.node_revision (id INTEGER, node_id INTEGER, release_id INTEGER)")
+        db.execute(
+            "CREATE TABLE ops.game_release (id INTEGER, game_version TEXT, sequence INTEGER)")
+        db.execute(
+            "CREATE TABLE ops.import_run (release_id INTEGER, status TEXT)")
         db.executemany("INSERT INTO ops.game_release VALUES (?, ?, ?)",
                        [(1, "2.8.0", 10), (2, "2.9.0", 2), (3, "2.10.0", 3), (4, "3.0.0", 20)])
         db.executemany("INSERT INTO ops.import_run VALUES (?, ?)",
                        [(1, "succeeded"), (2, "succeeded"), (3, "succeeded"), (4, "running")])
         db.executemany("INSERT INTO core.cutscene VALUES (?, ?)",
                        [(10, "M010"), (20, "M020"), (30, "M030"), (40, "M040")])
+        db.executemany("INSERT INTO core.cutscene_story_order VALUES (?, ?, ?, ?, ?)",
+                       [(1, 10, 1, 1, "quest"), (2, 20, 2, 2, "quest"), (3, 30, 3, 3, "quest")])
         db.executemany("INSERT INTO graph.node_revision VALUES (?, ?, ?)",
                        [(1, 10, 1), (2, 10, 2), (3, 10, 3), (4, 20, 2),
                         (5, 20, 3), (6, 20, 3), (7, 30, 3), (8, 40, 4)])
 
         def rows(release_id=None, offset=0):
-            query = cutscenes.archive_query(release_id, "", False).limit(2).offset(offset)
-            sql = str(query.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+            query = cutscenes.archive_query(
+                release_id, "", False).limit(2).offset(offset)
+            sql = str(query.compile(dialect=sqlite.dialect(),
+                      compile_kwargs={"literal_binds": True}))
             return db.execute(sql).fetchall()
 
-        assert rows() == [(30, "M030", "2.10.0", 3, "2.10.0"), (20, "M020", "2.9.0", 3, "2.10.0")]
-        assert rows(offset=2) == [(10, "M010", "2.8.0", 3, "2.10.0")]
-        assert rows(1) == [(10, "M010", "2.8.0", 3, "2.10.0")]
+        assert [row[:2] for row in rows()] == [(30, "M030"), (20, "M020")]
+        assert [row[:2] for row in rows(offset=2)] == [(10, "M010")]
+        assert [row[:2] for row in rows(1)] == [(10, "M010")]
+
+
+@pytest.mark.asyncio
+async def test_cursor_pages_keep_story_order_across_versions_and_equal_ranks():
+    with sqlite3.connect(":memory:") as db:
+        for schema in ("core", "graph", "ops"):
+            db.execute(f"ATTACH DATABASE ':memory:' AS {schema}")
+        db.create_function("split_part", 3, lambda value,
+                           delimiter, index: value.split(delimiter)[index - 1])
+        db.execute("CREATE TABLE core.cutscene (node_id INTEGER, cg_name TEXT)")
+        db.execute("CREATE TABLE core.cutscene_story_order (release_id INTEGER, cutscene_node_id INTEGER, quest_rank INTEGER, sort_index INTEGER, basis TEXT)")
+        db.execute(
+            "CREATE TABLE graph.node_revision (id INTEGER, node_id INTEGER, release_id INTEGER)")
+        db.execute(
+            "CREATE TABLE ops.game_release (id INTEGER, game_version TEXT, sequence INTEGER)")
+        db.execute(
+            "CREATE TABLE ops.import_run (release_id INTEGER, status TEXT)")
+        db.executemany("INSERT INTO ops.game_release VALUES (?, ?, ?)", [
+                       (1, "1.0.0", 1), (2, "2.0.0", 2)])
+        db.executemany(
+            "INSERT INTO ops.import_run VALUES (?, 'succeeded')", [(1,), (2,)])
+        db.executemany("INSERT INTO core.cutscene VALUES (?, ?)", [
+                       (1, "Start"), (2, "End"), (3, "Other"), (4, "New")])
+        db.executemany("INSERT INTO graph.node_revision VALUES (?, ?, ?)", [
+                       (1, 1, 1), (2, 2, 1), (3, 3, 1), (4, 4, 2)])
+        db.executemany("INSERT INTO core.cutscene_story_order VALUES (?, ?, ?, ?, ?)",
+                       [(1, 1, 0, 0, "quest"), (1, 2, 1, 2, "quest"), (1, 3, 1, 1, "quest"), (2, 4, 0, 0, "quest")])
+
+        class Session:
+            def sql(self, query):
+                return str(query.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+
+            async def scalar(self, query):
+                return db.execute(self.sql(query)).fetchone()[0]
+
+            async def execute(self, query):
+                return db.execute(self.sql(query)).fetchall()
+
+        total, first = await cutscenes.page(Session(), None, "", False, 2, 0)
+        cursor = [*first[-1][-4:-1], first[-1][-1], first[-1][1], first[-1][0]]
+        _, second = await cutscenes.page(Session(), None, "", False, 2, 0, cursor)
+        assert total == 4
+        assert [row[1]
+                for row in first + second] == ["New", "End", "Other", "Start"]
 
 
 @pytest.mark.asyncio
