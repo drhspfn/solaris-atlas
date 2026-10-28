@@ -25,8 +25,22 @@ Serve only the generated preview folder, never the game, keys or source logs.
   orbit and zoom buttons supplement pointer/touch camera controls.
 - Rotate model enables an optional turntable, so a rig without animation clips
   can move and drive secondary springs. A stationary rig has no artificial jiggle.
+- Skinned parts remain renderable near viewport edges: their initial bounding
+  spheres become stale as bones and springs move. The single-character viewer
+  disables frustum culling only for skinned meshes instead of recomputing every
+  deformed vertex each frame. Static scene meshes retain normal culling.
 - Animation, pause, timeline and speed control the existing clips. Static clips
   are labelled as poses. Reduced motion starts playback paused.
+- Scene settings offer **Lock position**, off initially. X/Z are preselected to
+  hold the rig at the floor origin while retaining vertical motion; Y optionally
+  holds its original height. Compensation uses the single shared skeleton root
+  in viewer/world axes, before springs and bone-follow camera updates. Rotation,
+  child poses and downloadable GLBs remain unchanged. Turning the lock off restores
+  the current authored position, including after seeking or changing clips.
+- The animation picker retains the selected category/subgroup when reopened.
+  Previous/next buttons beside the current clip follow the loaded clip order and
+  stop at either end. Changing clips with arrows opens its own subgroup on the
+  next menu visit. Replacing the animation library clears obsolete menu paths.
 - Secondary physics starts **off**; Strength mixes its rotations over the
   animated pose. Turning it off restores animation rotations. Clip changes,
   seeking, hidden tabs, long frames and large anchor jumps reset spring state.

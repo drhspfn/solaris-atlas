@@ -15,7 +15,7 @@ export function createViewerUI() {
     $("fullscreen").title = label;
   });
 
-  function picker({ triggerId, selectionId, listId, label, empty, inputId, searchable = false }) {
+  function picker({ triggerId, selectionId, listId, label, empty, inputId, searchable = false, rememberPath = false }) {
     const trigger = $(triggerId), selection = $(selectionId), input = inputId && $(inputId);
     const popup = document.createElement("div");
     popup.className = "picker-popup";
@@ -172,12 +172,14 @@ export function createViewerUI() {
       highlight(focus);
       updating = false;
     }
-    function select(next) {
+    function select(next, followPath = false) {
       const option = options.find(item => item.value === String(next));
       value = option?.value ?? "";
       trigger.value = value;
       if (input) input.value = value;
       selection.textContent = option?.label ?? (options.length ? `Choose ${label.toLowerCase()}` : empty);
+      if (rememberPath) trigger.title = option?.value || "";
+      if (rememberPath && followPath && option) path = [...optionPath(option)];
       render(isOpen() && list.contains(document.activeElement));
     }
     function choose(index) {
@@ -188,7 +190,7 @@ export function createViewerUI() {
       } else {
         const next = entry.option.value;
         close();
-        select(next);
+        select(next, true);
         if (input) input.dispatchEvent(new Event("change", { bubbles: true }));
         callback?.(next);
       }
@@ -205,10 +207,13 @@ export function createViewerUI() {
     }
     function show() {
       if (trigger.matches(":disabled") || !options.length) return;
-      path = []; searching = false; search.value = ""; typeahead = ""; active = 0;
+      if (!rememberPath) path = [];
+      searching = false; search.value = ""; typeahead = ""; active = 0;
       popup.showPopover();
       trigger.setAttribute("aria-expanded", "true");
-      render(true); position();
+      render();
+      active = Math.max(0, entries.findIndex(entry => entry.option?.value === value));
+      highlight(true); position();
     }
     backButton.addEventListener("click", back);
     searchButton.addEventListener("click", () => {
@@ -286,6 +291,7 @@ export function createViewerUI() {
     label: "Animations",
     empty: "No animations loaded",
     searchable: true,
+    rememberPath: true,
   });
   const bones = picker({
     triggerId: "camera-bone",
@@ -378,8 +384,29 @@ export function createViewerUI() {
     });
   });
 
+  let animationNames = [], animationCallback;
+  function updateAnimationNavigation() {
+    const index = animationNames.indexOf($("animations").value);
+    $("animation-previous").disabled = index <= 0;
+    $("animation-next").disabled = index < 0 || index >= animationNames.length - 1;
+  }
+  function selectAnimation(name) {
+    animations.select(name, true);
+    updateAnimationNavigation();
+  }
+  for (const [id, direction] of [["animation-previous", -1], ["animation-next", 1]]) {
+    $(id).addEventListener("click", () => {
+      const index = animationNames.indexOf($("animations").value);
+      const name = index < 0 ? undefined : animationNames[index + direction];
+      if (!name) return;
+      selectAnimation(name);
+      animationCallback?.(name);
+    });
+  }
   instance = {
     setAnimations(clips, onSelect, initialName) {
+      animationNames = clips.map(clip => clip.name);
+      animationCallback = onSelect;
       animations.set(
         clips.map((clip) => {
           const catalog = clip.userData?.catalog || {};
@@ -389,11 +416,12 @@ export function createViewerUI() {
             path: [catalog.category || "Other animations", catalog.group, catalog.subgroup].filter(Boolean),
           };
         }),
-        onSelect,
+        name => { updateAnimationNavigation(); onSelect?.(name); },
         initialName,
       );
+      updateAnimationNavigation();
     },
-    selectAnimation: animations.select,
+    selectAnimation,
     setBones(options, onSelect) {
       bones.set(options.map(option => ({ ...option, group: option.group || "Other bones" })), onSelect);
       $("camera-focus").disabled = !options.length;

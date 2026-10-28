@@ -29,6 +29,12 @@ test("static UI preserves the scene integration IDs without native select contro
     "reset",
     "floor",
     "turntable",
+    "lock-position",
+    "lock-axes",
+    "lock-x",
+    "lock-y",
+    "lock-z",
+    "lock-note",
     "physics",
     "strength",
     "strength-value",
@@ -42,6 +48,8 @@ test("static UI preserves the scene integration IDs without native select contro
     "animation-status",
     "axis-key",
     "animations",
+    "animation-previous",
+    "animation-next",
     "speed",
     "camera-bone",
     "camera-follow",
@@ -197,6 +205,15 @@ test(
     assert.deepEqual(await page.evaluate(() => window.choices), ['Stand1']);
     assert.equal(await page.evaluate(() => document.activeElement.id), 'animation-picker');
 
+    // Opening again retains the selected subgroup, instead of returning to root.
+    await page.locator('#animation-picker').click();
+    assert.equal(await leaf('#animation-list', 'Quiet stance').count(), 1);
+    assert.equal(await menu('#animation-list').getByRole('menuitem').count(), 0);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+
     // Escape/Left/Back return one level and restore the row that opened it.
     await page.locator('#animation-picker').press('ArrowDown');
     await item('#animation-list', /^Locomotion/).click();
@@ -256,6 +273,15 @@ test(
     await page.evaluate(() => window.ui.selectAnimation('Attack'));
     assert.equal(await selected('#animation-selection'), 'Basic attack');
     assert.deepEqual(await page.evaluate(() => window.choices), ['Stand1', 'Stand1', 'Run']);
+    await page.locator('#animation-previous').click();
+    assert.equal(await selected('#animation-selection'), 'Run forward');
+    assert.equal(await page.evaluate(() => window.choices.at(-1)), 'Run');
+    await page.locator('#animation-picker').click();
+    assert.equal(await leaf('#animation-list', 'Run forward').count(), 1);
+    await page.locator('h1').click();
+    await page.locator('#animation-next').click();
+    assert.equal(await selected('#animation-selection'), 'Basic attack');
+    assert.equal(await page.evaluate(() => window.choices.at(-1)), 'Attack');
 
     await page.locator('#speed-picker').click();
     await page.keyboard.press('End');
@@ -312,6 +338,8 @@ test(
 
     // Replacing data while drilling/searching drops stale hierarchy and callbacks.
     await page.locator('#animation-picker').click();
+    await page.keyboard.press('Escape'); // Basic -> Combat
+    await page.keyboard.press('Escape'); // Combat -> root
     await item('#animation-list', /^Locomotion/).click();
     await page.evaluate(() => window.ui.setAnimations([{ name: 'Replacement' }], name => window.choices.push(name)));
     assert.equal(await page.locator('#animation-picker').getAttribute('aria-expanded'), 'false');
@@ -319,11 +347,15 @@ test(
     await item('#animation-list', /^Other animations/).click();
     await leaf('#animation-list', 'Replacement').click();
     assert.equal(await selected('#animation-selection'), 'Replacement');
+    assert.equal(await page.locator('#animation-previous').isDisabled(), true);
+    assert.equal(await page.locator('#animation-next').isDisabled(), true);
     await page.evaluate(() => {
       window.ui.setAnimations([], () => {});
       window.ui.setBones([], () => {});
     });
     assert.equal(await page.locator('#animation-picker').isDisabled(), true);
+    assert.equal(await page.locator('#animation-previous').isDisabled(), true);
+    assert.equal(await page.locator('#animation-next').isDisabled(), true);
     assert.equal(await selected('#animation-selection'), 'No animations loaded');
     assert.equal(await page.locator('#camera-attach').isDisabled(), true);
     assert.equal(await page.locator('#camera-focus').isDisabled(), true);

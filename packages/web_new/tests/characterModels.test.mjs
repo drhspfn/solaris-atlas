@@ -632,6 +632,7 @@ test("staged viewer contains only the explicit runtime allowlist and pinned Thre
     /\.[^/\\]+$/.test(name),
   );
   assert(files.includes("index.html"));
+  assert(files.includes("root-motion.js"));
   assert(
     files.some(
       (name) => name.replaceAll("\\", "/") === "vendor/build/three.core.js",

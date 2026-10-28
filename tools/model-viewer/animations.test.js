@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import * as THREE from "three";
 import { BoneCamera, cameraBones } from "./camera-rig.js";
+import { RootMotionLock } from "./root-motion.js";
 import {
   resourceUrl,
   animationLoadLabel,
@@ -11,6 +12,7 @@ import {
   lazyAnimationPack,
   classifyAnimation,
   attachAnimationCatalog,
+  prepareAnimatedMeshes,
 } from "./animations.js";
 
 function rig({ suffix = "", duplicate = false, missing = false } = {}) {
@@ -346,11 +348,13 @@ async function viewer(search, { embedded = false } = {}) {
     SpringBones: Springs,
     BoneCamera,
     cameraBones,
+    RootMotionLock,
     validatedResourceUrl: resourceUrl,
     animationLoadLabel,
     attachAnimationCatalog,
     bindAnimationClips,
     lazyAnimationPack,
+    prepareAnimatedMeshes,
     createViewerUI: () => ({
       setAnimations(clips, onSelect, initial) {
         element("animations").value = initial;
@@ -458,4 +462,25 @@ test("transparent profile preview requests only its rig, never physics or animat
   assert.equal(preview.element("playback").hidden, true);
   assert.equal(preview.element("load-animations").hidden, true);
   assert.equal(preview.element("status").textContent, "Model ready");
+});
+
+test('animated parts stay eligible at the viewport edge despite stale bind-pose bounds', () => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
+  geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(new Array(12).fill(0), 4));
+  geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], 4));
+  const scene = new THREE.Group(), part = new THREE.SkinnedMesh(geometry, new THREE.MeshBasicMaterial());
+  const bone = new THREE.Bone(), floor = new THREE.Mesh(new THREE.PlaneGeometry());
+  scene.add(part, floor); part.add(bone); part.bind(new THREE.Skeleton([bone]));
+  scene.updateMatrixWorld(true); part.computeBoundingSphere();
+  bone.position.x = 10; scene.updateMatrixWorld(true);
+  const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 100);
+  camera.position.set(10, 0, 3); camera.lookAt(10, 0, 0); camera.updateMatrixWorld(true);
+  const frustum = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+  assert(frustum.containsPoint(part.getVertexPosition(0, new THREE.Vector3())));
+  assert.equal(frustum.intersectsObject(part), false, 'bind bounds incorrectly reject visible animated vertices');
+  prepareAnimatedMeshes(scene);
+  assert.equal(part.frustumCulled, false);
+  assert.equal(!part.frustumCulled || frustum.intersectsObject(part), true);
+  assert.equal(floor.frustumCulled, true);
 });

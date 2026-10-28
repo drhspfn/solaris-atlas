@@ -1,5 +1,12 @@
 import { PropertyBinding } from "three";
 
+/** One character, a handful of parts: stale bind-pose bounds must not hide limbs/eyes. */
+export function prepareAnimatedMeshes(model) {
+  model.traverse(object => {
+    if (object.isSkinnedMesh) object.frustumCulled = false;
+  });
+}
+
 export function resourceUrl(value, base) {
   const url = new URL(value, base);
   if (
