@@ -179,7 +179,12 @@ Reconstructing that runtime component visibility/pose composition remains unsupp
 Downloaded archives are shared read-only. Rig-only imports export the model
 directory and authored blueprints. Animation imports additionally export the authored
 character directory, shared gender base moves and ACL conversion dependencies;
-only clips matching the model's skeleton are admitted. All exports use an owned
+Engine's `Animation/DefaultAnim*` compression settings are included too. Loose
+Client and Engine package roots are mounted relative to their own directory;
+using the Client directory for Engine files produces unresolved codec settings
+and empty decoded animation tracks. Decoder failures report their exact source
+package and retain the traceback after buffered importer output.
+Only clips matching the model's skeleton are admitted. All exports use an owned
 transient workspace. Conversion, R2 writes
 and atomic FileReference publication complete before scratch is removed; crash
 recovery collects orphaned transient directories. Source package paths/hashes,

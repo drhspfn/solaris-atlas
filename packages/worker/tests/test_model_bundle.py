@@ -1,5 +1,6 @@
 import json
 import struct
+import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -563,6 +564,65 @@ def test_plan_optional_filter_retains_full_coverage_and_exclusions(tmp_path, mon
     assert len(plan["clips"]) == 2
     assert len(plan["animations"]) == 6
     assert plan["animation_coverage"]["missing_exports"] == 0
+
+
+@pytest.mark.parametrize("decoded", [True, False])
+def test_cinematic_body_clip_requires_decoded_tracks_and_reports_source(
+    tmp_path, monkeypatch, decoded
+):
+    name = "M0260_Cam002_R2T1KatixiyaMd10011"
+
+    def change(sources, animations):
+        source = next(iter(sources.values()))
+        source.update(name=name, source=f"M0260/Anim/{name}.json")
+        header, dto = next(iter(animations.values()))
+        header.object_name = name
+        dto.metadata.num_frames = 71
+        dto.metadata.frames_per_second = 30.428571701049805
+        dto.tracks = [SimpleNamespace(name="root")] if decoded else []
+
+    if decoded:
+        _, _, plan = plan_fixture(tmp_path, monkeypatch, change=change)
+        assert plan["clips"][0]["name"] == name
+        assert plan["clips"][0]["included_in_glb"]
+    else:
+        with pytest.raises(ValueError) as error:
+            plan_fixture(tmp_path, monkeypatch, change=change)
+        assert f"M0260/Anim/{name}.json (0.ueanim)" in str(error.value)
+        assert "no decoded tracks or curves" in str(error.value)
+        assert isinstance(error.value.__cause__, ValueError)
+
+
+def test_entrypoint_flushes_importer_stdout_before_traceback():
+    script = """
+import builtins
+import runpy
+import sys
+
+original_import = builtins.__import__
+def import_module(name, *args, **kwargs):
+    if name == "bpy":
+        print("[UEFORMAT] Importing buffered output\\n" * 1000, end="")
+        raise RuntimeError("animation failure sentinel")
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = import_module
+path = sys.argv[1]
+sys.argv = [path, "--", "--model", "model", "--converted", "converted",
+            "--source-json", "source", "--skeleton", "rig",
+            "--ueformat-plugin", "plugin", "--output", "output"]
+runpy.run_path(path, run_name="__main__")
+"""
+    result = subprocess.run(
+        [sys.executable, "-E", "-c", script, str(Path(main.__code__.co_filename).resolve())],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert result.stdout.index(b"Traceback (most recent call last)") > result.stdout.rindex(
+        b"[UEFORMAT] Importing"
+    )
+    assert b"RuntimeError: animation failure sentinel" in result.stdout[-2048:]
 
 
 @pytest.mark.parametrize("problem", ["missing", "decode", "bone"])

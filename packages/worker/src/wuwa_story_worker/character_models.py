@@ -96,6 +96,8 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
             *sources["blueprints"],
             # Shared movement sets are named BaseAnim, BaseAnim2, etc.
             gender_dir + "/BaseAnim",
+            # Cooked clips can use Engine compression settings as well as ACL.
+            "Engine/Content/Animation/DefaultAnim",
             "ACLAnim",
             "ACLPlugin.uplugin",
             # Candidate discovery only: NPC/cinematic paths can be outside

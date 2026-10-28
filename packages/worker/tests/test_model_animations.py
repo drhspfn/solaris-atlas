@@ -203,6 +203,7 @@ async def test_extraction_scope_includes_character_siblings_shared_moves_and_acl
             "Aki/Character/Role/FemaleM/Shouanren/",
             "Aki/AuthoredBP",
             "Aki/Character/Role/FemaleM/BaseAnim",
+            "Engine/Content/Animation/DefaultAnim",
             "ACLAnim",
             "ACLPlugin.uplugin",
             "Shouanren",
