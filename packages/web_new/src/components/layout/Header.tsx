@@ -2,6 +2,7 @@
 
 import {
   CalendarDays,
+  Film,
   ChevronDown,
   Layers,
   LogOut,
@@ -129,6 +130,7 @@ export function Header() {
               className={
                 active('/catalog') ||
                 active('/notices') ||
+                active('/cutscenes') ||
                 ['/characters', '/quests', '/locations', '/items'].some(active)
                   ? 'is-active'
                   : ''
@@ -143,6 +145,9 @@ export function Header() {
                 <span>
                   Announcements<small>Official in-game news & event rules</small>
                 </span>
+              </Link>
+              <Link to="/cutscenes" aria-current={active('/cutscenes') ? 'page' : undefined}>
+                <Film size={18} /><span>Cutscenes<small>Watch scenes & find their quests</small></span>
               </Link>
               {categories.map((category) => (
                 <Link
@@ -195,7 +200,7 @@ export function Header() {
                 )}
                 <button onClick={() => void signOut()} disabled={signingOut}>
                   <LogOut size={17} />
-                  {signingOut ? 'Signing outâ€¦' : 'Sign out'}
+                  {signingOut ? 'Signing out…' : 'Sign out'}
                 </button>
               </div>
             </details>

@@ -16,6 +16,7 @@ from wuwa_story.api.errors import install_error_handlers
 from wuwa_story.api.routes import (
     admin_data,
     character_models,
+    cutscenes,
     game_events,
     graph_paths,
     health,
@@ -62,8 +63,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 app.state.agent_query_redis = response_cache
 # Cached hits bypass admission; origin work leaves capacity for health/revision reads.
-app.add_middleware(RequestAdmission, limit=settings.api_max_concurrent_requests)
-app.add_middleware(PublicResponseCache, settings=settings, redis=response_cache)
+app.add_middleware(
+    RequestAdmission, limit=settings.api_max_concurrent_requests)
+app.add_middleware(PublicResponseCache, settings=settings,
+                   redis=response_cache)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -80,7 +83,8 @@ async def keep_oauth_callback_credentials_out_of_access_logs(
 ) -> Response:
     if request.url.path == "/auth/google/callback":
         request.state.oauth_query = parse_qs(
-            request.scope.get("query_string", b"").decode("ascii", errors="ignore"),
+            request.scope.get("query_string", b"").decode(
+                "ascii", errors="ignore"),
             keep_blank_values=True,
         )
         # Keep Uvicorn access logs from recording Google's one-time code and OAuth state.
@@ -105,6 +109,7 @@ app.include_router(admin_data.router)
 app.include_router(maps.router)
 app.include_router(media_jobs.router)
 app.include_router(character_models.router)
+app.include_router(cutscenes.router)
 app.include_router(nodes.router)
 app.include_router(graph_paths.router)
 app.include_router(search.router)

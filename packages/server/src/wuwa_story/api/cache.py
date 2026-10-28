@@ -24,7 +24,7 @@ from wuwa_story.db.session import engine
 logger = logging.getLogger(__name__)
 PUBLIC_ROOTS = {
     "catalog", "categories", "items", "locations", "characters", "quests",
-    "dialogue", "story-map", "maps", "nodes", "graph", "search", "releases", "story-analysis", "events", "notices",
+    "dialogue", "story-map", "maps", "nodes", "graph", "search", "releases", "story-analysis", "events", "notices", "cutscenes",
 }
 REVISION_SQL = text("""
     SELECT md5(string_agg(table_name || ':' || transaction_id::text, ',' ORDER BY table_name))
@@ -33,6 +33,7 @@ REVISION_SQL = text("""
 
 _REVISION_CACHE = {"value": "", "expires": 0.0}
 _REVISION_LOCK = asyncio.Lock()
+
 
 async def content_revision() -> str:
     # One tiny metadata read on a hit, never the multimillion-row content tables.
@@ -50,7 +51,8 @@ async def content_revision() -> str:
         async with engine.connect() as connection:
             revision = await connection.scalar(REVISION_SQL)
         if not revision:
-            raise RuntimeError("Public cache revision migration has not been installed")
+            raise RuntimeError(
+                "Public cache revision migration has not been installed")
         _REVISION_CACHE["value"] = str(revision)
         # Completed media imports must invalidate cached empty audio links promptly.
         _REVISION_CACHE["expires"] = time.monotonic() + 5.0

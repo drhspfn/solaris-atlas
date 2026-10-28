@@ -50,7 +50,7 @@ async def search_dialogue(
         quest = await repository.quest_by_game_id(session, quest_id)
         if quest is None:
             raise StoryBrowsingError(status_code=404, detail="quest not found")
-        states = await _quest_state_ids(session, quest.node_id)
+        states = await _quest_state_ids(session, quest.node_id, release_id)
     rows = await repository.search_dialogue_rows(
         session,
         q,
@@ -92,8 +92,8 @@ async def quest_transcript(
     if quest is None:
         raise StoryBrowsingError(status_code=404, detail="quest not found")
     game_quest_id = quest.game_quest_id
-    states = await _quest_state_ids(session, quest.node_id)
     release_id = await _release_id(session, game_version)
+    states = await _quest_state_ids(session, quest.node_id, release_id)
     character_node = None
     if character:
         character_node = await node_lookup(session, character, ("character",))

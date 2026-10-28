@@ -71,6 +71,7 @@ export interface CutsceneFlow {
 }
 
 export interface QuestMediaEvent {
+  title?: string;
   kind: 'cutscene' | 'sequence' | 'audio_event';
   playback?: CutsceneFlow | null;
   action: string;
