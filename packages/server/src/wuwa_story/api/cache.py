@@ -34,7 +34,6 @@ REVISION_SQL = text("""
 _REVISION_CACHE = {"value": "", "expires": 0.0}
 _REVISION_LOCK = asyncio.Lock()
 
-
 async def content_revision() -> str:
     # One tiny metadata read on a hit, never the multimillion-row content tables.
     # Reading from PostgreSQL makes invalidation transactional, even if Redis
@@ -51,8 +50,7 @@ async def content_revision() -> str:
         async with engine.connect() as connection:
             revision = await connection.scalar(REVISION_SQL)
         if not revision:
-            raise RuntimeError(
-                "Public cache revision migration has not been installed")
+            raise RuntimeError("Public cache revision migration has not been installed")
         _REVISION_CACHE["value"] = str(revision)
         # Completed media imports must invalidate cached empty audio links promptly.
         _REVISION_CACHE["expires"] = time.monotonic() + 5.0

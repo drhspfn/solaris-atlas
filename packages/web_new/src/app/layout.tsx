@@ -34,11 +34,11 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: 'Solaris Atlas — Story Archive for Solaris-3',
+    default: 'Solaris Atlas â€” Story Archive for Solaris-3',
     template: '%s | Solaris Atlas',
   },
   description:
-    'Solaris Atlas — a connected story archive for Solaris-3. Explore Wuthering Waves characters, stories, factions, locations, lore and items.',
+    'Solaris Atlas â€” a connected story archive for Solaris-3. Explore Wuthering Waves characters, stories, factions, locations, lore and items.',
   icons: {
     icon: '/favicon.svg',
   },
@@ -50,13 +50,13 @@ export const metadata: Metadata = {
     locale: 'en_US',
     url: siteUrl,
     siteName: 'Solaris Atlas',
-    title: 'Solaris Atlas — Story Archive for Solaris-3',
+    title: 'Solaris Atlas â€” Story Archive for Solaris-3',
     description:
       'A connected story archive for Solaris-3. Explore Wuthering Waves characters, stories, factions, locations, lore and items.',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Solaris Atlas — Story Archive for Solaris-3',
+    title: 'Solaris Atlas â€” Story Archive for Solaris-3',
     description: 'A connected story archive for Solaris-3.',
   },
 };

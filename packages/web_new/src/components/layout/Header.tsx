@@ -200,7 +200,7 @@ export function Header() {
                 )}
                 <button onClick={() => void signOut()} disabled={signingOut}>
                   <LogOut size={17} />
-                  {signingOut ? 'Signing out…' : 'Sign out'}
+                  {signingOut ? 'Signing outâ€¦' : 'Sign out'}
                 </button>
               </div>
             </details>
