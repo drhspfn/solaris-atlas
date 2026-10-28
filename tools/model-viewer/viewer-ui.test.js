@@ -182,6 +182,14 @@ test(
     const item = (id, name) => menu(id).getByRole('menuitem', { name });
     const leaf = (id, name) => menu(id).getByRole('menuitemradio', { name, exact: true });
     const popup = () => page.locator('.picker-popup:popover-open');
+    async function aligned(ids) {
+      const centers = await page.evaluate(selectors => selectors.map(selector => {
+        const rect = document.querySelector(selector).getBoundingClientRect();
+        return rect.y + rect.height / 2;
+      }), ids);
+      assert.ok(Math.max(...centers) - Math.min(...centers) < 1, `${ids}: ${centers}`);
+    }
+    await aligned(['#animation-picker', '#play', '#time', '#speed-picker']);
     assert.equal(await selected('#animation-selection'), 'Run forward');
     assert.deepEqual(await page.evaluate(() => window.choices), []);
     await page.locator('#animation-picker').click();
@@ -327,6 +335,8 @@ test(
 
     // Constrain the picker itself; the parent owns settings sheet positioning.
     await page.setViewportSize({ width: 360, height: 640 });
+    await aligned(['#animation-picker', '#animation-previous', '#animation-next', '#play']);
+    await aligned(['#time', '#speed-picker']);
     await page.locator('#settings-open').click();
     await page.locator('#camera-bone').click();
     const popupBounds = await popup().boundingBox();

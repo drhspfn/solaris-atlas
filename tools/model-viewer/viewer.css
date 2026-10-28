@@ -44,15 +44,20 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 .animation-download:has(#load-animations[hidden]):has(#animation-status:empty) { display: none; }
 #animation-status { color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
-#playback { display: flex; align-items: end; gap: 12px; }
-.clip-field { flex: 0 1 340px; min-width: 0; }
-.animation-selection-row { display: flex; gap: 6px; align-items: center; }
+#playback { display: grid; grid-template-columns: minmax(180px, 340px) auto minmax(100px, 1fr) 82px; grid-template-rows: auto 44px; align-items: center; gap: 6px 12px; }
+.clip-field { display: contents; }
+#animation-label { grid-row: 1; margin-bottom: 0; }
+.animation-selection-row { grid-row: 2; display: flex; min-width: 0; gap: 6px; align-items: center; }
+#play { grid-area: 2 / 2; }
+#playback .timeline { grid-area: 2 / 3; }
+#playback .speed-field { grid-area: 2 / 4; }
 .animation-selection-row .picker-trigger { flex: 1; min-width: 0; }
 .animation-navigation { display: flex; flex-shrink: 0; gap: 4px; }
 .animation-navigation button { width: 44px; padding: 4px; font-size: 24px; }
 .field-label { display: block; margin-bottom: 6px; color: var(--text-secondary); font-size: 11px; }
 .picker-trigger { width: 100%; justify-content: space-between; text-align: left; }
 .picker-trigger > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-chevron { width: 16px; height: 16px; flex: 0 0 16px; }
 .picker-trigger[aria-expanded=true] { border-color: var(--accent-mint); }
 .timeline { display: flex; flex: 1; min-width: 100px; align-items: center; gap: 12px; min-height: 44px; }
 /* Same native-input treatment as the site's compact audio transport. */
@@ -62,7 +67,7 @@ input[type=range]::-moz-range-track { height: 3px; border-radius: 2px; backgroun
 input[type=range]::-webkit-slider-thumb { appearance: none; width: 10px; height: 10px; margin-top: -3.5px; border-radius: 50%; background: var(--accent-mint); }
 input[type=range]::-moz-range-thumb { width: 10px; height: 10px; border: 0; border-radius: 50%; background: var(--accent-mint); }
 output { color: var(--text-secondary); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.speed-field { width: 82px; flex-shrink: 0; }
+.speed-field { display: flex; align-items: center; width: 82px; }
 dialog { color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--border-default); border-radius: 14px; padding: 0; width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); }
 #viewer-settings[open] { display: flex; flex-direction: column; inset: 0 0 0 auto; margin: 0; height: 100dvh; max-height: 100dvh; width: min(420px, 100vw); max-width: 100vw; border-radius: 0; border-width: 0 0 0 1px; }
 dialog::backdrop { background: rgb(9 14 15 / .48); }
@@ -125,10 +130,10 @@ body[data-mode=preview] #viewport, body[data-mode=preview] canvas { background: 
   .eyebrow { font-size: 9px; }
   .model-status { order: 1; flex-basis: 100%; max-width: none; margin: 0; }
   .viewer-footer { padding: 10px 12px max(10px, env(safe-area-inset-bottom)); }
-  #playback { flex-wrap: wrap; gap: 8px; }
-  .clip-field { flex: 1 1 calc(100% - 86px); }
+  #playback { grid-template-columns: minmax(0, 1fr) 82px; grid-template-rows: auto 44px 44px; gap: 8px; }
+  #playback .timeline { grid-area: 3 / 1; }
+  #playback .speed-field { grid-area: 3 / 2; }
   #play { min-width: 76px; }
-  .timeline { flex: 1 1 calc(100% - 90px); }
   .camera-tools { top: 10px; right: 10px; }
   .scene-hint { display: none; }
   .axis-key { right: 12px; bottom: 10px; }
