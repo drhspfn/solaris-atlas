@@ -1,6 +1,7 @@
 import { APP_SETTINGS } from '../config/settings';
 import { requestCredentials } from './requestPolicy';
 import { resolveApiUrl } from './resolveApiUrl';
+import { retryableFetch } from './retryableFetch';
 
 const isBrowser = typeof window !== 'undefined';
 const defaultClientBase = (process.env.NEXT_PUBLIC_API_BASE ?? APP_SETTINGS.api.defaultBase).replace(/\/$/, '');
@@ -86,7 +87,7 @@ export async function api<T>(
       fetchOptions.next = options.next;
     }
 
-    const response = await fetch(url, fetchOptions);
+    const response = await (isBrowser ? retryableFetch : fetch)(url, fetchOptions);
     const result = await response.json().catch(() => null);
     if (!response.ok) {
       const detail = result?.detail;
