@@ -51,11 +51,22 @@ help interpret dialogue or names, but is NOT proof that an action is visible.
 Do not turn dialogue-only events into visual observations or assume a mentioned
 person is on screen. Continue to mark visually unestablished identities uncertain.
 """
+PREVIEW_PROMPT = """
+Also add preview_candidates: up to three objects with index (zero-based in Frame
+timestamps) and score (0..100, thumbnail quality). Choose only visually clear,
+representative frames; avoid black screens, text, transition frames and duplicates.
+If no frame is suitable, return an empty preview_candidates array. Never invent one.
+"""
+MIN_ANALYSIS_SECONDS = 5.0
+MAX_PREVIEWS = 5
 
 
 def vision_request(provider: Provider, times: list[float], images: list[bytes], *,
-                   atlases: list[dict] | None = None, context: dict | None = None):
+                   atlases: list[dict] | None = None, context: dict | None = None,
+                   choose_preview: bool = False):
     labels = ATLAS_PROMPT if atlases is not None else PROMPT
+    if choose_preview:
+        labels += PREVIEW_PROMPT
     if context:
         labels += "\nSource text context (reference data): " + json.dumps(context, ensure_ascii=False)
     if atlases is not None:
@@ -147,6 +158,42 @@ async def sample_frame(ffmpeg: Path, movie: Path, time: float, output: Path) -> 
     return result
 
 
+async def publish_preview(db, run, storage, ffmpeg, movie, root, batches):
+    """Export a bounded selection of model-chosen frames from the original video."""
+    scores = {}
+    for batch in batches:
+        for candidate in batch.get("preview_candidates", []):
+            timestamp = batch["sample_times"][candidate["index"]]
+            scores[timestamp] = max(scores.get(timestamp, 0), candidate["score"])
+    candidates = sorted(((score, timestamp) for timestamp, score in scores.items()),
+                        reverse=True)[:MAX_PREVIEWS]
+    if not candidates:
+        return []
+    path = root / "preview.jpg"
+    service = FileRegistrationService(storage)
+    result = []
+    for score, timestamp in candidates:
+        path.unlink(missing_ok=True)
+        await run_tool([str(ffmpeg), "-v", "error", "-y", "-ss", str(timestamp), "-i", str(movie),
+                        "-frames:v", "1", "-vf", "scale='min(1280,iw)':-2,format=yuvj420p",
+                        "-threads", "1", "-q:v", "2", str(path)], 60)
+        file = await service.register_file(db, path, "image", mime_type="image/jpeg")
+        await service.register_variant(db, run.metadata_json["file_id"], file.id, "cutscene_preview", run.id)
+        source_path = f"video:{run.metadata_json['file_id']}:preview:run:{run.id}:time:{timestamp}"
+        reference = await db.scalar(select(FileReference).where(
+            FileReference.reference_type == "cutscene_preview", FileReference.source_path == source_path,
+            FileReference.owner_node_id == run.target_node_id, FileReference.file_id == file.id))
+        if reference is None:
+            reference = await service.register_reference(db, file_id=file.id, reference_type="cutscene_preview",
+                                                         owner_node_id=run.target_node_id, source_path=source_path)
+            reference.metadata_json = {"source_file_id": run.metadata_json["file_id"],
+                                       "source_sha256": run.metadata_json["source_sha256"],
+                                       "asset_version": run.metadata_json["asset_version"],
+                                       "timestamp": timestamp, "score": score, "run_id": run.id}
+        result.append(file.id)
+    return result
+
+
 async def prepare_atlases(db, run, storage, ffmpeg, movie, times, root, settings):
     """Persist evidence before reserving a paid call; retries reuse file identities."""
     service = FileRegistrationService(storage)
@@ -158,7 +205,8 @@ async def prepare_atlases(db, run, storage, ffmpeg, movie, times, root, settings
         layout = await asyncio.to_thread(write_atlas, frames, selected, path,
                                         tile_width=settings.vision_atlas_tile_width,
                                         quality=settings.vision_atlas_quality)
-        manifest = {"protocol": VISION_VERSION, "source_file_id": run.metadata_json["file_id"],
+        manifest = {"protocol": getattr(run, "prompt_version", None) or VISION_VERSION,
+                    "source_file_id": run.metadata_json["file_id"],
                     "source_sha256": run.metadata_json["source_sha256"], **layout}
         identity = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
         source_path = f"video:{run.metadata_json['file_id']}:atlas:{identity}"
@@ -282,7 +330,7 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
     ffmpeg = Path(ffmpeg_name).resolve()
     checkpoint = dict(run.raw_output or {"batches": [], "step": 0})
     protocol = getattr(run, "prompt_version", None) or VISION_VERSION
-    use_atlases = protocol == VISION_VERSION
+    use_atlases = protocol in ("cutscene-visual-v2", VISION_VERSION)
     context = run.metadata_json.get("text_context") if use_atlases else None
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -295,6 +343,11 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
         if digest.hexdigest() != run.metadata_json["source_sha256"]:
             raise ValueError("Source content changed")
         duration, _ = await asyncio.to_thread(video_duration, ffmpeg, movie)
+        if protocol == VISION_VERSION and duration < MIN_ANALYSIS_SECONDS:
+            run.status, run.error, run.finished_at = "skipped", "Video is shorter than 5 seconds", datetime.now(UTC)
+            run.raw_output = {**checkpoint, "skip_reason": "short_video", "duration": duration}
+            await db.commit()
+            return
         times = sample_times(duration, settings.vision_frame_interval, settings.vision_max_frames)
         pending = checkpoint.get("pending")
         if pending is None:
@@ -331,13 +384,14 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
                                   for t in batch_times]
                         manifests = None
                     route, request = vision_request(provider, batch_times, images,
-                                                    atlases=manifests, context=context)
+                                                    atlases=manifests, context=context,
+                                                    choose_preview=protocol == VISION_VERSION)
                     # A deliberately conservative image bound, independent of base64 byte size.
                     image_bound = (sum(max(8192, math.ceil(m["width"] / 16)
                                            * math.ceil(m["height"] / 16) * 2) for m in manifests)
                                    if manifests is not None else len(images) * 8192)
                     bound = image_bound + len(json.dumps(
-                        {"prompt": ATLAS_PROMPT, "times": batch_times,
+                        {"prompt": ATLAS_PROMPT + (PREVIEW_PROMPT if protocol == VISION_VERSION else ""), "times": batch_times,
                          "atlases": manifests, "context": context}, ensure_ascii=False).encode()) + 1024
                     if bound > settings.max_input_tokens and len(batch_times) > 1:
                         middle = len(batch_times) // 2
@@ -410,6 +464,13 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
                     step,
                     len(pending),
                 )
+        preview_file_ids = []
+        if any(batch.get("preview_candidates") for batch in checkpoint["batches"]):
+            try:
+                async with db.begin_nested():
+                    preview_file_ids = await publish_preview(db, run, storage, ffmpeg, movie, root, checkpoint["batches"])
+            except Exception as error:
+                logger.warning("cutscene.preview_failed run_id=%s error_type=%s", run.id, type(error).__name__)
         report = {
             "protocol": protocol,
             "complete": True,
@@ -422,6 +483,8 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
             "events": [event for batch in checkpoint["batches"] for event in batch["events"]],
             "batch_summaries": [batch["summary"] for batch in checkpoint["batches"]],
             "atlases": checkpoint.get("atlases", []),
+            "preview_file_id": preview_file_ids[0] if preview_file_ids else None,
+            "preview_file_ids": preview_file_ids,
             "text_context": context,
         }
         # Report metadata is kept beside the exact source file; no schema migration required.

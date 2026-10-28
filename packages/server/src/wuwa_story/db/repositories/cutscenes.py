@@ -1,8 +1,15 @@
 """Snapshot-scoped scene identities and explicit quest ownership."""
 
-from sqlalchemy import Integer, func, select
+from sqlalchemy import Integer, func, select, tuple_
 
-from wuwa_story.db.models.core import Cutscene, DialogueLine, Quest, QuestAction, QuestState
+from wuwa_story.db.models.core import (
+    Cutscene,
+    CutsceneStoryOrder,
+    DialogueLine,
+    Quest,
+    QuestAction,
+    QuestState,
+)
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease, ImportRun
@@ -52,16 +59,29 @@ def archive_query(release_id, q, playable):
     query = scene_query(release_id, q, playable)
     return (query.join(first, (first.c.node_id == Cutscene.node_id) & (first.c.first_rank == 1))
             .join(latest, (latest.c.node_id == Cutscene.node_id) & (latest.c.last_rank == 1))
+            .outerjoin(CutsceneStoryOrder, (CutsceneStoryOrder.cutscene_node_id == Cutscene.node_id)
+                       & (CutsceneStoryOrder.release_id == first.c.release_id))
             .add_columns(first.c.game_version.label("first_observed_game_version"),
+                         CutsceneStoryOrder.basis.label("ordering_basis"),
                          latest.c.release_id.label("latest_release_id"),
-                         latest.c.game_version.label("latest_game_version"))
+                         latest.c.game_version.label("latest_game_version"),
+                         *(first.c[f"version_{index}"].label(f"cursor_version_{index}") for index in range(3)),
+                         func.coalesce(CutsceneStoryOrder.sort_index, -1).label("cursor_index"))
             .order_by(*(first.c[f"version_{index}"].desc() for index in range(3)),
-                      Cutscene.cg_name, Cutscene.node_id))
+                      func.coalesce(CutsceneStoryOrder.sort_index, -1).desc(),
+                      Cutscene.cg_name.desc(), Cutscene.node_id.desc()))
 
 
-async def page(session, release_id, q, playable, limit, offset):
+async def page(session, release_id, q, playable, limit, offset, cursor=None):
     query = archive_query(release_id, q, playable)
     total = await session.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
+    if cursor is not None:
+        rows_query = query.order_by(None).subquery()
+        fields = (rows_query.c.cursor_version_0, rows_query.c.cursor_version_1,
+                  rows_query.c.cursor_version_2, rows_query.c.cursor_index,
+                  rows_query.c.cg_name, rows_query.c.node_id)
+        query = select(rows_query).where(tuple_(*fields) < tuple_(*cursor)).order_by(
+            *(field.desc() for field in fields))
     rows = list(await session.execute(query.limit(limit).offset(offset)))
     return total, rows
 

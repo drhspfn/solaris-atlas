@@ -51,6 +51,20 @@ def test_batch_rejects_truncation_wrong_time_and_out_of_order():
         validate_batch(encode([event(1)]), [1, 2])
 
 
+def test_preview_candidates_must_reference_real_sampled_frames():
+    events = [{"time": t, "observation": "A scene",
+               "confidence": "observed"} for t in (1, 2)]
+    raw = {"summary": "A scene", "events": events,
+           "preview_candidates": [{"index": 1, "score": 90}, {"index": 0, "score": 80}]}
+    assert len(validate_batch(json.dumps(raw), [1, 2])[
+               "preview_candidates"]) == 2
+    raw["preview_candidates"] = []
+    assert validate_batch(json.dumps(raw), [1, 2])["preview_candidates"] == []
+    raw["preview_candidates"] = [{"index": 2, "score": 90}]
+    with pytest.raises(ValueError, match="outside"):
+        validate_batch(json.dumps(raw), [1, 2])
+
+
 def description(**changes):
     return CutsceneDescription.model_validate(
         {

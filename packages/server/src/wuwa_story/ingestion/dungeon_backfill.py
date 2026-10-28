@@ -14,6 +14,7 @@ from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.session import SessionFactory
 from wuwa_story.ingestion.canonical_import import import_canonical_edges
+from wuwa_story.ingestion.cutscene_order import rebuild as rebuild_cutscene_order
 from wuwa_story.ingestion.dungeon_context import (
     DUNGEONS,
     LEVEL_NODES,
@@ -58,7 +59,8 @@ async def backfill(session, release_id, dry_run=False):
                for link in links]
     scenario = list(scenario_links(quest_nodes, level_nodes, states))
     scenario_quests = set(await session.scalars(
-        select(Node.canonical_key).join(NodeRevision, NodeRevision.node_id == Node.id)
+        select(Node.canonical_key).join(
+            NodeRevision, NodeRevision.node_id == Node.id)
         .where(NodeRevision.release_id == release_id,
                Node.canonical_key.in_({link["from"] for link in scenario}))
     )) if scenario else set()
@@ -83,6 +85,7 @@ async def backfill(session, release_id, dry_run=False):
         row["type"], row["from"], row["to"], row["raw_path"]) not in existing]
     if not dry_run and missing:
         await import_canonical_edges(SimpleNamespace(iter_edges=lambda: iter(missing)), session, release_id)
+        await rebuild_cutscene_order(session, release_id)
     result = {"release_id": release_id, "game_version": release.game_version,
               "candidate_links": len(records), "missing_evidence": len(missing),
               "written": len(missing) if not dry_run else 0, "dry_run": dry_run}

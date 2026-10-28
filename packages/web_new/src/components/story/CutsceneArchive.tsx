@@ -1,18 +1,24 @@
 "use client";
 
 import { ArrowLeft, ArrowRight, Film, Play, Search } from "lucide-react";
-import { useEffect, useState } from "react";
-import { api } from "@/api/client";
+import { useEffect, useRef, useState } from "react";
+import { api, ApiError } from "@/api/client";
 import { useLocale } from "@/hooks/useLocale";
 import { Link, useSearchParams } from "@/lib/router";
 import { questPath } from "@/lib/routeKey";
 import { Select } from "@/components/ui/Select";
 import { ErrorPanel, PageLoader } from "@/components/ui/Feedback";
+import { InfiniteScroll } from "@/components/ui/InfiniteScroll";
 import { Cutscene } from "./QuestCutscenes";
 import { cutsceneAnchor } from "./cutsceneAnchor";
 import type { QuestMediaEvent } from "./QuestMediaReferences";
 
-type Quest = { game_quest_id: string; slug?: string; name: string; context_inferred?: boolean };
+type Quest = {
+  game_quest_id: string;
+  slug?: string;
+  name: string;
+  context_inferred?: boolean;
+};
 type Scene = {
   node_id: number;
   name: string;
@@ -20,6 +26,8 @@ type Scene = {
   title_kind: string;
   game_version: string;
   first_observed_game_version: string;
+  ordering_basis: string;
+  preview_url?: string | null;
   quests: Quest[];
 };
 export type CutscenePage = {
@@ -28,6 +36,7 @@ export type CutscenePage = {
   total: number;
   offset: number;
   limit: number;
+  next_cursor: string | null;
   items: Scene[];
 };
 export type CutsceneDetail = Scene & {
@@ -52,6 +61,10 @@ export function CutsceneArchive({
   const [data, setData] = useState(initial);
   const [loading, setLoading] = useState(!initial);
   const [error, setError] = useState("");
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState("");
+  const [refresh, setRefresh] = useState(0);
+  const pageRequest = useRef<AbortController | null>(null);
   const [searchText, setSearchText] = useState(params?.get("q") || "");
   useEffect(() => setSearchText(params?.get("q") || ""), [query]);
   function filter(key: string, value: string) {
@@ -60,16 +73,22 @@ export function CutsceneArchive({
       if (value) next.set(key, value);
       else next.delete(key);
       next.delete("offset");
+      next.delete("cursor");
       return next;
     });
   }
   useEffect(() => {
     const controller = new AbortController();
     const search = new URLSearchParams(query);
+    search.delete("cursor");
     search.set("locale", locale);
+    if (refresh) search.set("_refresh", String(refresh));
     setLoading(true);
     setError("");
-    api<CutscenePage>(`/cutscenes?${search}`, { signal: controller.signal })
+    setMoreError("");
+    setLoadingMore(false);
+    setData(null);
+    api<CutscenePage>(`/cutscenes?${search}`, { signal: controller.signal, cacheTtl: 0 })
       .then(setData)
       .catch((cause) => {
         if (!controller.signal.aborted) setError(String(cause));
@@ -77,12 +96,51 @@ export function CutsceneArchive({
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
-    return () => controller.abort();
-  }, [query, locale]);
-  function pageLink(offset: number) {
-    const next = new URLSearchParams(query);
-    next.set("offset", String(offset));
-    return `/cutscenes?${next}`;
+    return () => {
+      controller.abort();
+      pageRequest.current?.abort();
+      pageRequest.current = null;
+    };
+  }, [query, locale, refresh]);
+  async function loadMore() {
+    if (!data?.next_cursor || pageRequest.current) return;
+    const controller = new AbortController();
+    pageRequest.current = controller;
+    setLoadingMore(true);
+    setMoreError("");
+    const search = new URLSearchParams(query);
+    search.delete("offset");
+    search.set("cursor", data.next_cursor);
+    search.set("locale", locale);
+    try {
+      const next = await api<CutscenePage>(`/cutscenes?${search}`, {
+        signal: controller.signal,
+        cacheTtl: 0,
+      });
+      if (controller.signal.aborted) return;
+      setData((current) => {
+        if (!current) return current;
+        const seen = new Set(current.items.map((item) => item.node_id));
+        return {
+          ...next,
+          offset: current.offset,
+          items: [
+            ...current.items,
+            ...next.items.filter((item) => !seen.has(item.node_id)),
+          ],
+        };
+      });
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        if (cause instanceof ApiError && cause.code === "cursor_expired") setRefresh((value) => value + 1);
+        else setMoreError(String(cause));
+      }
+    } finally {
+      if (pageRequest.current === controller) {
+        pageRequest.current = null;
+        setLoadingMore(false);
+      }
+    }
   }
   return (
     <main className="page-container cutscene-archive">
@@ -145,8 +203,13 @@ export function CutsceneArchive({
       {error ? (
         <ErrorPanel message={error} />
       ) : loading ? (
-        <div role="status" className="empty-inline">
-          Loading scenes…
+        <div role="status" aria-live="polite">
+          <div className="cutscene-list" aria-hidden="true">
+            {Array.from({ length: 6 }, (_, index) => (
+              <div className="cutscene-card-skeleton skeleton" key={index} />
+            ))}
+          </div>
+          <p className="cutscene-loading">Loading scenes…</p>
         </div>
       ) : (
         data && (
@@ -161,8 +224,9 @@ export function CutsceneArchive({
               </span>
             </div>
             <p className="cutscene-snapshot-note">
-              Sorted by first appearance in imported game data. Each scene
-              appears once. Video assets may come from a newer client.
+              Newest imported versions first, then story-map order. Scenes
+              without a confirmed position use a stable fallback. Video assets
+              may come from a newer client.
             </p>
             {!data.items.length && (
               <div className="empty-state">
@@ -173,54 +237,60 @@ export function CutsceneArchive({
                 </p>
               </div>
             )}
-            <div className="cutscene-list">
-              {data.items.map((scene, index) => (
-                <Link
-                  key={scene.node_id}
-                  to={`/cutscenes/${encodeURIComponent(scene.name)}?game_version=${encodeURIComponent(scene.game_version)}&locale=${locale}`}
-                  className="cutscene-list-row"
-                >
-                  <span className="cutscene-list-index">
-                    {String(data.offset + index + 1).padStart(2, "0")}
-                  </span>
-                  <span className="cutscene-play-mark">
-                    <Play size={19} aria-hidden="true" />
-                  </span>
-                  <span className="cutscene-list-copy">
-                    <small>
-                      {scene.name} · v{scene.first_observed_game_version}
-                      {scene.title_kind === "analysis" ? " · AI title" : ""}
-                    </small>
-                    <h2>{scene.title}</h2>
-                    <span>
-                      {scene.quests.length
-                        ? `${scene.quests.length} linked quest${scene.quests.length > 1 ? "s" : ""}`
-                        : "Quest context not yet linked"}
+            <InfiniteScroll
+              hasMore={Boolean(data.next_cursor)}
+              loading={loadingMore}
+              onLoadMore={loadMore}
+              error={moreError}
+              loader={<p className="cutscene-loading">Loading more scenes…</p>}
+              skeleton={
+                <div className="cutscene-list" aria-hidden="true">
+                  {Array.from({ length: 3 }, (_, index) => (
+                    <div
+                      className="cutscene-card-skeleton skeleton"
+                      key={index}
+                    />
+                  ))}
+                </div>
+              }
+            >
+              <div className="cutscene-list">
+                {data.items.map((scene) => (
+                  <Link
+                    key={scene.node_id}
+                    to={`/cutscenes/${encodeURIComponent(scene.name)}?game_version=${encodeURIComponent(scene.game_version)}&locale=${locale}`}
+                    className="cutscene-list-row"
+                  >
+                    {scene.preview_url && (
+                      <span className="cutscene-card-image" aria-hidden="true">
+                        {/* Decorative artwork; the title remains readable without the image. */}
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={scene.preview_url} alt="" loading="lazy" />
+                      </span>
+                    )}
+                    <span className="cutscene-play-mark">
+                      <Play size={19} aria-hidden="true" />
                     </span>
-                  </span>
-                  <ArrowRight size={20} aria-hidden="true" />
-                </Link>
-              ))}
-            </div>
-            <nav className="cutscene-pagination" aria-label="Cutscene pages">
-              {data.offset > 0 && (
-                <Link to={pageLink(Math.max(0, data.offset - data.limit))}>
-                  <ArrowLeft size={16} />
-                  Previous
-                </Link>
-              )}
-              <span>
-                {data.total
-                  ? `${data.offset + 1}–${Math.min(data.offset + data.limit, data.total)} of ${data.total}`
-                  : "0 scenes"}
-              </span>
-              {data.offset + data.limit < data.total && (
-                <Link to={pageLink(data.offset + data.limit)}>
-                  Next
-                  <ArrowRight size={16} />
-                </Link>
-              )}
-            </nav>
+                    <span className="cutscene-list-copy">
+                      <small>
+                        {scene.name} · v{scene.first_observed_game_version}
+                        {scene.title_kind === "analysis" ? " · AI title" : ""}
+                      </small>
+                      <h2>{scene.title}</h2>
+                      <span>
+                        {scene.quests[0]?.name === scene.title
+                          ? "Quest scene"
+                          : scene.quests[0]?.name || "Story position not yet linked"}
+                        {scene.ordering_basis === "fallback"
+                          ? " · Order unconfirmed"
+                          : ""}
+                      </span>
+                    </span>
+                    <ArrowRight size={20} aria-hidden="true" />
+                  </Link>
+                ))}
+              </div>
+            </InfiniteScroll>
           </>
         )
       )}
@@ -302,9 +372,11 @@ export function CutsceneRecord({
             >
               <span>
                 {passage.name}
-                <small>{passage.context_inferred
-                  ? "Scenario context inferred from game progress; exact playthrough order is unconfirmed"
-                  : "Open at this scene in the quest"}</small>
+                <small>
+                  {passage.context_inferred
+                    ? "Scenario context inferred from game progress; exact playthrough order is unconfirmed"
+                    : "Open at this scene in the quest"}
+                </small>
               </span>
               <ArrowRight size={19} />
             </Link>

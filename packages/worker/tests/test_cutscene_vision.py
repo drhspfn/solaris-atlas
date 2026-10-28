@@ -293,3 +293,70 @@ async def test_empty_frame_extraction_cannot_reuse_previous_timestamp(monkeypatc
     monkeypatch.setattr(vision, "run_tool", AsyncMock())  # FFmpeg wrote no frame at EOF
     with pytest.raises(FileNotFoundError):
         await vision.sample_frame(tmp_path / "ffmpeg", tmp_path / "movie.mp4", 1.95, output)
+
+
+@pytest.mark.asyncio
+async def test_short_video_is_skipped_before_a_paid_call(monkeypatch, pipeline):
+    db, run, settings = pipeline
+    monkeypatch.setattr(vision, "video_duration", lambda *_: (2, False))
+    post = AsyncMock()
+    monkeypatch.setattr(vision.Provider, "post", post)
+    await vision.analyze_run(db, run, settings)
+    assert run.status == "skipped" and run.raw_output["skip_reason"] == "short_video"
+    assert not db.calls and not db.reports
+    post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_publish_multiple_ranked_previews_or_none(monkeypatch, tmp_path):
+    db = SimpleNamespace(scalar=AsyncMock(return_value=None))
+    run = SimpleNamespace(id=7, target_node_id=5, metadata_json={
+        "file_id": 2, "source_sha256": "abc", "asset_version": "1.0.0"})
+    register = AsyncMock(
+        side_effect=[SimpleNamespace(id=31), SimpleNamespace(id=32)])
+    reference = AsyncMock(side_effect=[SimpleNamespace(), SimpleNamespace()])
+    variant = AsyncMock()
+    monkeypatch.setattr(vision, "FileRegistrationService", lambda _: SimpleNamespace(
+        register_file=register, register_reference=reference, register_variant=variant))
+    tool = AsyncMock()
+    monkeypatch.setattr(vision, "run_tool", tool)
+    batches = [{"sample_times": [1, 2, 3], "preview_candidates": [
+        {"index": 0, "score": 70}, {"index": 2, "score": 90}]}]
+    ids = await vision.publish_preview(db, run, object(), tmp_path / "ffmpeg", tmp_path / "movie", tmp_path, batches)
+    assert ids == [31, 32]
+    assert tool.await_args_list[0].args[0][5] == "3"
+    assert reference.await_args_list[0].kwargs["owner_node_id"] == 5
+    assert await vision.publish_preview(db, run, object(), tmp_path / "ffmpeg", tmp_path / "movie", tmp_path, []) == []
+
+
+@pytest.mark.asyncio
+async def test_analysis_requests_and_publishes_ranked_candidates(monkeypatch, pipeline):
+    from contextlib import asynccontextmanager
+
+    db, run, settings = pipeline
+
+    @asynccontextmanager
+    async def savepoint():
+        yield
+
+    db.begin_nested = savepoint
+    publish = AsyncMock(return_value=[31, 32])
+    monkeypatch.setattr(vision, "publish_preview", publish)
+
+    async def post(_, route, request):
+        prompt = request["input"][0]["content"][0]["text"]
+        assert "preview_candidates" in prompt
+        times = json.loads(prompt.split("Frame timestamps: ")[1])
+        result = response(times)
+        message = result["output"][0]["content"][0]
+        payload = json.loads(message["text"])
+        payload["preview_candidates"] = [{"index": 1, "score": 95}, {"index": 0, "score": 75}]
+        message["text"] = json.dumps(payload)
+        return result
+
+    monkeypatch.setattr(vision.Provider, "post", post)
+    await vision.analyze_run(db, run, settings)
+    assert run.status == "completed"
+    assert db.reports[0].metadata_json["preview_file_ids"] == [31, 32]
+    assert db.reports[0].metadata_json["preview_file_id"] == 31
+    assert publish.await_args.args[-1][0]["preview_candidates"][0]["score"] == 95

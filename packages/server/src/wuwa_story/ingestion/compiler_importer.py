@@ -10,6 +10,7 @@ from wuwa_story.db.models.ops import ImportRun
 from wuwa_story.ingestion.canonical import CanonicalRecordAdapter, detect_compiled_dataset
 from wuwa_story.ingestion.canonical_import import import_canonical_edges, import_canonical_entities
 from wuwa_story.ingestion.context import ImportSummary
+from wuwa_story.ingestion.cutscene_order import rebuild as rebuild_cutscene_order
 from wuwa_story.ingestion.import_progress import ImportProgress
 from wuwa_story.ingestion.importer import Importer
 from wuwa_story.ingestion.localization import import_localization_batch
@@ -78,6 +79,7 @@ class CompiledDatasetImporter(Importer):
 
             entity_count, entity_created = await progress.phase("entities", entities)
             edge_count, edge_created = await progress.phase("edges", edges)
+            await progress.phase("cutscene_story_order", lambda: rebuild_cutscene_order(session, release.id))
             # Search documents are a deterministic projection of imported localized text.
             # Build them as part of snapshot import so freshly imported releases are searchable.
             async def search():
