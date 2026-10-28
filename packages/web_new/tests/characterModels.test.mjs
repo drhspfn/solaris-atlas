@@ -264,6 +264,7 @@ test("published viewer origins use the current pointer in both modes; invalid UR
   for (const viewer_url of [
     "https://cdn.solarisatlas.fun/model-viewer/old-hash/index.html?v=pinned#old",
     "http://cdn.example:8080/viewer/index.html?v=pinned",
+    "http://localhost:9000/wuwa/model-viewer/old/index.html",
     "javascript:alert(1)", "data:text/html,viewer", "file:///viewer/index.html",
     "/model-viewer/legacy/index.html", "invalid-url", null,
   ]) {
@@ -278,7 +279,7 @@ test("published viewer origins use the current pointer in both modes; invalid UR
       const url = new URL(frame.props.src, "https://atlas.example");
       const published = /^https?:/.test(viewer_url ?? "");
       assert.equal(url.origin, published ? new URL(viewer_url).origin : "https://atlas.example");
-      assert.equal(url.pathname, published ? "/model-viewer/current/index.html" : "/model-viewer/index.html");
+      assert.equal(url.pathname, published ? new URL("../current/index.html", viewer_url).pathname : "/model-viewer/index.html");
       assert.equal(url.searchParams.get("model"), model.preview.url);
       assert.equal(url.searchParams.get("name"), h.props.name);
       assert.equal(url.searchParams.has("v"), false);

@@ -161,6 +161,7 @@ let height = 1.8,
 const homeTarget = new THREE.Vector3();
 function resetView() {
   boneCamera.detach();
+  camera.up.set(0, 1, 0);
   cameraState();
   controls.target.copy(homeTarget);
   const distance =

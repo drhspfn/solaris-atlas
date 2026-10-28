@@ -32,7 +32,7 @@ async def activate_viewer(storage, root=Path("/app/model-viewer")):
     current_key = "model-viewer/current/index.html"
     body = (
         '<!doctype html><meta charset="utf-8"><title>Model viewer</title>'
-        f'<script>location.replace("/{index_key}" + location.search + location.hash);</script>'
+        f'<script>location.replace("../{index_key.split("/")[1]}/index.html" + location.search + location.hash);</script>'
     ).encode()
     await asyncio.to_thread(
         storage.client.put_object,

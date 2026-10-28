@@ -80,7 +80,8 @@ export class BoneCamera {
 
   setSpace(space) {
     this.space = space === 'local' ? 'local' : 'world';
-    if (this.bone) { this.sample(); this.remember(); }
+    if (this.following) this.frame(this.bone);
+    else if (this.bone) { this.sample(); this.remember(); }
   }
 
   remember() {
@@ -97,6 +98,7 @@ export class BoneCamera {
       if (this.space === 'local') point.applyQuaternion(this.delta);
       point.add(this.anchor);
     }
+    if (this.space === 'local') this.camera.up.applyQuaternion(this.delta).normalize();
     this.remember();
   }
 }

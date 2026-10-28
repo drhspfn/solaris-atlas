@@ -37,7 +37,7 @@ async def test_activation_publishes_tree_before_single_atomic_pointer_write(tmp_
     assert pointer["Key"] == key
     assert pointer["CacheControl"] == "no-cache"
     assert pointer["ContentType"] == "text/html"
-    assert f'"/{events[-2]}"' in pointer["Body"].decode()
+    assert f'"../{events[-2].split("/")[1]}/index.html"' in pointer["Body"].decode()
 
     # Reusing a complete immutable tree still refreshes just the current pointer.
     storage.stat.return_value = object()
@@ -106,7 +106,8 @@ async def test_pointer_upload_failure_is_propagated_without_deleting_previous_po
 
 
 @pytest.mark.asyncio
-async def test_redirect_preserves_query_flags_and_fragment_on_same_origin(monkeypatch):
+@pytest.mark.parametrize("prefix", ["", "/wuwa"])
+async def test_redirect_preserves_query_flags_and_fragment_on_same_origin(monkeypatch, prefix):
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node is required to execute the redirect JavaScript")
@@ -124,13 +125,14 @@ async def test_redirect_preserves_query_flags_and_fragment_on_same_origin(monkey
             node,
             "-e",
             f"const location = {{search: {json.dumps(query)}, hash: {json.dumps(fragment)}, "
-            "replace: value => console.log(new URL(value, 'https://cdn.example').href)};" + script,
+            f"replace: value => console.log(new URL(value, 'https://cdn.example{prefix}/model-viewer/current/index.html').href)}};"
+            + script,
         ],
         capture_output=True,
         text=True,
         check=True,
     )
-    assert result.stdout.strip() == "https://cdn.example/" + index + query + fragment
+    assert result.stdout.strip() == "https://cdn.example" + prefix + "/" + index + query + fragment
 
 
 def test_cli_uses_server_storage_settings_and_prints_only_key(monkeypatch, capsys):

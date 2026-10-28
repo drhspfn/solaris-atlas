@@ -107,7 +107,8 @@ export function CharacterModel({
     try {
       const publishedViewer = new URL(model.viewer_url);
       if (["https:", "http:"].includes(publishedViewer.protocol))
-        runtimeURL = `${publishedViewer.origin}/model-viewer/current/index.html`;
+        const current = new URL("../current/index.html", publishedViewer);
+        runtimeURL = `${current.origin}${current.pathname}`;
     } catch {
       // Invalid metadata retains the local runtime fallback.
     }
