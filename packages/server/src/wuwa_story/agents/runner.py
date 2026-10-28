@@ -56,6 +56,9 @@ read_cutscene_visual until next_offset is null. Visual observations are AI-gener
 sampled evidence, not dialogue or certain character identity. Combine them with exact
 dialogue, retaining variant identity. Write cutscene_descriptions with the exact
 visual_reference_id and observation_indices; use timed chapters only for longer scenes.
+Give each cutscene a concise, single-line title describing its subject or action in
+the output language. Use the same scene title for Rover variants. Never use an
+asset code such as M0311 as the title, and do not copy the whole quest title.
 Do not concatenate mutually exclusive Rover variants or fill gaps between sampled frames.
 State occurrence limits once in the overview, not after every fact. A main-quest label
 alone does not prove that a particular branch is mandatory: use actual source flow.

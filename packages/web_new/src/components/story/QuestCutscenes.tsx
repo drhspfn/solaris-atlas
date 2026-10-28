@@ -547,7 +547,7 @@ export function Cutscene({ event, anchor }: { event: QuestMediaEvent; anchor?: s
       <FlowPlayer
         key={`${flow.asset_version}-${flow.entry}`}
         flow={flow}
-        title={event.reference.replace('cutscene:', '')}
+        title={event.title || Object.values(flow.media).find((media) => media.description?.title)?.description?.title || event.reference.replace('cutscene:', '')}
         anchor={anchor}
         captions={event.captions}
       />

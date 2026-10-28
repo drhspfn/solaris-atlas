@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 PROMPT_VERSION = "story-v7"
 
@@ -226,10 +226,21 @@ class CutsceneChapter(StrictModel):
 class CutsceneDescription(StrictModel):
     asset_node_id: int = Field(gt=0)
     visual_reference_id: int = Field(gt=0)
-    title: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=120, pattern=r"^[^\r\n]+$")
     text: str = Field(min_length=1, max_length=2500)
     chapters: list[CutsceneChapter] = Field(default_factory=list, max_length=12)
     observation_indices: list[int] = Field(min_length=1, max_length=40)
+
+    @field_validator("title")
+    @classmethod
+    def readable_title(cls, value):
+        import re
+
+        value = value.strip()
+        if not value or re.fullmatch(r"(?:cutscene:)?(?:Fly_)?[MRCEmrce]\d+(?:_\d+)*", value):
+            raise ValueError(
+                "Write a short human-readable scene title, not a resource code")
+        return value
 
 
 class StoryEvent(StrictModel):

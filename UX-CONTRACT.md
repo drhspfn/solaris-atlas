@@ -1,5 +1,24 @@
 # Interactive map UX contract
 
+## Dungeon story context and cutscenes
+
+An explicit FinishDungeon condition can connect a quest to scenario flows from
+LevelPlay records whose LevelId equals the required dungeon. Such links retain
+the quest condition, LevelPlay membership and PlayFlow source paths. They are
+dungeon context, not evidence that every optional branch occurred. The shared
+quest scope includes these paths and their source-matched cutscene transcripts.
+Backfills only add missing versioned graph evidence; they never enqueue media.
+
+Cutscene analysis titles are short, localized single lines describing the scene.
+Resource codes remain visible as provenance, not as generated display titles.
+
+The public cutscene archive lists unique scene identities in a selected game-data
+snapshot, with ready-to-watch scenes selected by default. It does not describe
+the snapshot as a release date. Browsing never enqueues exports or analysis. Scene
+pages reuse the quest player and link to the exact scene anchor in each confirmed
+quest. Current source- and video-matched analysis supplies display titles; until
+then a linked quest name is shown with the scene code. Search is explicitly by code.
+
 ## Story map patches
 
 Selecting a patch shows its additions for the selected story path, excluding quests

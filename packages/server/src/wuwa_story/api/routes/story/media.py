@@ -185,7 +185,7 @@ async def quest_media(
     release_id = await _release_id(session, game_version)
     if release_id is None:
         raise HTTPException(status_code=404, detail="game version not imported")
-    state_ids = await _quest_state_ids(session, quest.node_id)
+    state_ids = await _quest_state_ids(session, quest.node_id, release_id)
     action_rows = list((await session.execute(
         select(QuestAction, QuestState, Node.canonical_key)
         .join(QuestState, QuestState.node_id == QuestAction.quest_state_node_id)

@@ -8,6 +8,18 @@ from wuwa_story.agents.contracts import AnalysisResult, StoryAssertion, validate
 from wuwa_story.agents.settings import AgentSettings
 
 
+def test_cutscene_titles_are_single_line_human_readable_labels():
+    from wuwa_story.agents.contracts import CutsceneDescription
+
+    fields = {"asset_node_id": 1, "visual_reference_id": 2, "text": "A sourced scene.",
+              "observation_indices": [0]}
+    assert CutsceneDescription(title="  Leviathan confronts Abraxas  ",
+                               **fields).title == "Leviathan confronts Abraxas"
+    for title in ("M0311", "cutscene:M0311", "First line\nSecond line", "   "):
+        with pytest.raises(ValidationError):
+            CutsceneDescription(title=title, **fields)
+
+
 def result(**changes):
     return AnalysisResult.model_validate(
         {
@@ -56,7 +68,8 @@ def test_decimal_prices_round_conservatively_and_reject_negative_usage():
     assert price(1000, 100, Decimal("0.10"), Decimal("0.50"), Decimal("1.25")) == Decimal(
         "0.00018750"
     )
-    assert price(1, 0, Decimal("0.001"), Decimal(0), Decimal(1)) == Decimal("0.00000001")
+    assert price(1, 0, Decimal("0.001"), Decimal(
+        0), Decimal(1)) == Decimal("0.00000001")
     with pytest.raises(ValueError):
         price(-1, 0, Decimal(1), Decimal(1), Decimal(1))
 

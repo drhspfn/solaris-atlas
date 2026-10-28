@@ -37,7 +37,11 @@ def quest_state_links(release_id: int | None = None):
         )
         .subquery()
     )
-    references = source_edges("references_flow_state")
+    references = (
+        select(source_edges("references_flow_state"))
+        .union(select(source_edges("references_dungeon_flow_state")))
+        .subquery()
+    )
     direct = (
         select(owners.c.quest_id, references.c.child.label("state_id"))
         .join(references, references.c.parent == owners.c.owner_id)

@@ -33,6 +33,7 @@ export function Footer() {
           <Link to="/story-map">Story map</Link>
           <Link to="/events">Events</Link>
           <Link to="/catalog/quest">Story archive</Link>
+          <Link to="/cutscenes">Cutscenes</Link>
         </nav>
         <nav aria-label="Project resources">
           <h2>Project</h2>

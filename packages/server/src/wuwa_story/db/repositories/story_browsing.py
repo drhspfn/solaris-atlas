@@ -206,8 +206,8 @@ async def entity_links(session, node_id, limit=200):
     return rows
 
 
-async def quest_state_ids(session, quest_node_id):
-    links = quest_state_links()
+async def quest_state_ids(session, quest_node_id, release_id=None):
+    links = quest_state_links(release_id)
     return list(
         await session.scalars(select(links.c.state_id).where(links.c.quest_id == quest_node_id))
     )

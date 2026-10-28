@@ -1,0 +1,38 @@
+.cutscene-archive { max-width: 1180px; padding-top: 44px; padding-bottom: 64px; }
+.cutscene-archive-heading { margin: 28px 0 36px; }
+.cutscene-archive-heading h1 { font-size: clamp(32px, 5vw, 52px); margin: 14px 0; letter-spacing: -.035em; }
+.cutscene-archive-heading p, .cutscene-context p { color: var(--text-secondary); line-height: 1.65; }
+.cutscene-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; padding-bottom: 28px; border-bottom: 1px solid var(--border-default); }
+.cutscene-filters label { display: grid; gap: 9px; flex: 1 1 210px; color: var(--text-secondary); font-size: 13px; min-width: 0; }
+.cutscene-filters input, .cutscene-filters select, .cutscene-filters button { box-sizing: border-box; height: 46px; max-width: 100%; border-radius: 8px; border: 1px solid var(--border-default); background: var(--surface-1); color: var(--text-primary); padding: 0 13px; font: inherit; }
+.cutscene-filters button { cursor: pointer; color: var(--mint); }
+.cutscene-search { position: relative; }
+.cutscene-search svg { position: absolute; left: 12px; top: 15px; }
+.cutscene-search input { width: 100%; padding-left: 38px; }
+.cutscene-count { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin: 25px 0 10px; font-size: 14px; }
+.cutscene-count span, .cutscene-snapshot-note { color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
+.cutscene-list { margin-top: 24px; border-top: 1px solid var(--border-default); }
+.cutscene-list-row { display: flex; align-items: center; gap: 22px; padding: 24px 10px; border-bottom: 1px solid var(--border-default); color: inherit; text-decoration: none; transition: background .15s ease; }
+.cutscene-list-row:hover { background: var(--surface-1); }
+.cutscene-list-index { font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.cutscene-play-mark { display: grid; place-items: center; width: 52px; height: 52px; border: 1px solid var(--border-default); border-radius: 50%; color: var(--mint); flex: 0 0 auto; }
+.cutscene-list-copy { min-width: 0; flex: 1; }
+.cutscene-list-copy h2 { margin: 6px 0 8px; font-size: 20px; overflow-wrap: anywhere; }
+.cutscene-list-copy small { color: var(--mint); font-size: 11px; letter-spacing: .08em; }
+.cutscene-list-copy > span { color: var(--text-secondary); font-size: 12px; }
+.cutscene-list-row > svg { flex: 0 0 auto; color: var(--mint); }
+.cutscene-pagination, .cutscene-pagination a, .cutscene-back { display: flex; align-items: center; gap: 10px; }
+.cutscene-pagination { margin-top: 28px; justify-content: center; gap: 26px; font-size: 14px; }
+.cutscene-context { margin-top: 36px; padding-top: 24px; border-top: 1px solid var(--border-default); }
+.cutscene-context h2 { font-size: 22px; }
+.cutscene-context-link { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--border-default); }
+.cutscene-context-link small { display: block; margin-top: 7px; color: var(--text-secondary); }
+@media (max-width: 600px) {
+  .cutscene-archive { padding-top: 20px; }
+  .cutscene-filters label { flex-basis: 100%; }
+  .cutscene-filters button { width: 100%; }
+  .cutscene-list-row { gap: 12px; padding: 20px 0; }
+  .cutscene-list-index { display: none; }
+  .cutscene-play-mark { width: 38px; height: 38px; }
+  .cutscene-list-copy h2 { font-size: 17px; }
+}

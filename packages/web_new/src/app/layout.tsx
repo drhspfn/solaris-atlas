@@ -3,6 +3,7 @@ import localFont from 'next/font/local';
 
 import '@/styles/index.css';
 import '@/styles/site-shell.css';
+import '@/styles/cutscene-archive.css';
 
 import { Footer } from '@/components/layout/Footer';
 import { Header } from '@/components/layout/Header';

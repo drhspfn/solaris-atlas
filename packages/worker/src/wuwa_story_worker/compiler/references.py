@@ -351,4 +351,25 @@ def compile_reference_tables(root: Path, writer: Writer,
                                       {"field": field, "value": target_value, "target_kind": kind})
         if emitted:
             counts[f"explicit_entity_refs:{rel}"] = emitted
+    from wuwa_story.ingestion.dungeon_context import (
+        DUNGEONS, LEVEL_NODES, LEVELS, QUEST_NODES, RELATION,
+        dungeon_links, level_memberships, requirements,
+    )
+
+    def optional_rows(source):
+        path = root / source
+        return list(enumerate(read_json(path))) if path.is_file() else []
+
+    dungeon_ids = {row.get("Id") for _, row in optional_rows(DUNGEONS)}
+    required = {key: value for key, value in requirements(optional_rows(QUEST_NODES)).items()
+                if key in dungeon_ids}
+    memberships = level_memberships(optional_rows(LEVELS), required)
+    links = dungeon_links(required, memberships, optional_rows(LEVEL_NODES), state_keys)
+    counts["dungeon_context_links"] = 0
+    for link in links:
+        if link["from"] not in writer.ids:
+            continue
+        writer.edge(link["from"], link["to"], RELATION, link["basis"],
+                    link["source"], link["raw_path"], {"relation": "exact_join"})
+        counts["dungeon_context_links"] += 1
     return counts
