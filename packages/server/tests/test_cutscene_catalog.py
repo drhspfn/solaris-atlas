@@ -10,6 +10,54 @@ from wuwa_story.story.cutscenes import descriptions
 
 
 @pytest.mark.asyncio
+async def test_previews_use_current_video_and_only_edges_from_requested_snapshot(monkeypatch):
+    import wuwa_story.story.cutscenes as service
+
+    monkeypatch.setattr(service, "get_settings",
+                        lambda: SimpleNamespace(s3_bucket="test"))
+    monkeypatch.setattr(service, "S3Storage", lambda _: SimpleNamespace(
+        public_url=lambda key: f"https://cdn/{key}"))
+    with sqlite3.connect(":memory:") as db:
+        for schema in ("storage", "graph", "ontology"):
+            db.execute(f"ATTACH DATABASE ':memory:' AS {schema}")
+        db.execute(
+            "CREATE TABLE graph.edge (id INTEGER, from_node_id INTEGER, to_node_id INTEGER, relation_type_id INTEGER, layer TEXT)")
+        db.execute(
+            "CREATE TABLE graph.edge_evidence (id INTEGER, edge_id INTEGER, release_id INTEGER)")
+        db.execute("CREATE TABLE ontology.relation_type (id INTEGER, key TEXT)")
+        db.execute("CREATE TABLE storage.file_reference (id INTEGER, owner_node_id INTEGER, file_id INTEGER, reference_type TEXT, metadata JSON)")
+        db.execute("CREATE TABLE storage.file_location (id INTEGER, file_id INTEGER, object_key TEXT, backend TEXT, bucket TEXT, available BOOLEAN, is_primary BOOLEAN)")
+        db.executemany("INSERT INTO ontology.relation_type VALUES (?, ?)", [
+                       (1, "has_variant"), (2, "references_asset")])
+        db.executemany("INSERT INTO graph.edge VALUES (?, ?, ?, ?, 'source')", [
+                       (1, 10, 11, 1), (2, 11, 12, 2)])
+        db.executemany("INSERT INTO graph.edge_evidence VALUES (?, ?, ?)", [
+                       (1, 1, 7), (2, 2, 7)])
+        db.executemany("INSERT INTO storage.file_reference VALUES (?, ?, ?, ?, ?)", [
+            (1, 12, 50, "cutscene_video", "{}"), (2,
+                                                  12, 51, "cutscene_video", "{}"),
+            (3, 12, 70, "cutscene_preview",
+             '{"source_file_id":50,"score":100}'),
+            (4, 12, 71, "cutscene_preview",
+             '{"source_file_id":51,"score":80}'),
+            (5, 12, 72, "cutscene_preview",
+             '{"source_file_id":51,"score":90}'),
+        ])
+        db.executemany("INSERT INTO storage.file_location VALUES (?, ?, ?, 's3', 'test', 1, 1)",
+                       [(1, 70, "stale"), (2, 71, "second"), (3, 72, "best")])
+
+        class Session:
+            async def execute(self, query):
+                return db.execute(str(query.compile(dialect=sqlite.dialect(),
+                                  compile_kwargs={"literal_binds": True}))).fetchall()
+
+        result = await service.previews(Session(), [10], 7)
+        assert result[10]["preview_file_id"] == 72
+        assert [item["file_id"] for item in result[10]["previews"]] == [72, 71]
+        assert await service.previews(Session(), [10], 8) == {}
+
+
+@pytest.mark.asyncio
 async def test_unowned_scene_returns_source_captions(monkeypatch):
     from wuwa_story.api.routes import cutscenes as route
 

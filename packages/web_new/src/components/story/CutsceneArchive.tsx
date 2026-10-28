@@ -27,6 +27,7 @@ type Scene = {
   game_version: string;
   first_observed_game_version: string;
   ordering_basis: string;
+  preview_url?: string | null;
   quests: Quest[];
 };
 export type CutscenePage = {
@@ -260,6 +261,13 @@ export function CutsceneArchive({
                     to={`/cutscenes/${encodeURIComponent(scene.name)}?game_version=${encodeURIComponent(scene.game_version)}&locale=${locale}`}
                     className="cutscene-list-row"
                   >
+                    {scene.preview_url && (
+                      <span className="cutscene-card-image" aria-hidden="true">
+                        {/* Decorative artwork; the title remains readable without the image. */}
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={scene.preview_url} alt="" loading="lazy" />
+                      </span>
+                    )}
                     <span className="cutscene-play-mark">
                       <Play size={19} aria-hidden="true" />
                     </span>

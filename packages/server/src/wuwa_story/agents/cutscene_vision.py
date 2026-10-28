@@ -17,7 +17,7 @@ from wuwa_story.db.models.agents import AgentCall
 from wuwa_story.db.models.ops import ProcessingRun, Processor
 from wuwa_story.db.models.storage import FileObject, FileReference
 
-VISION_VERSION = "cutscene-visual-v2"
+VISION_VERSION = "cutscene-visual-v3"
 
 
 class VisualEvent(BaseModel):
@@ -27,10 +27,17 @@ class VisualEvent(BaseModel):
     confidence: Literal["observed", "uncertain"]
 
 
+class PreviewCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    index: int = Field(ge=0, le=63, strict=True)
+    score: int = Field(ge=0, le=100, strict=True)
+
+
 class VisualBatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     summary: str = Field(min_length=1, max_length=800)
     events: list[VisualEvent] = Field(min_length=1, max_length=64)
+    preview_candidates: list[PreviewCandidate] = Field(default_factory=list, max_length=3)
 
     @model_validator(mode="after")
     def ordered(self):
@@ -58,6 +65,8 @@ def validate_batch(raw: str, times: list[float]) -> dict:
     if not times:
         raise ValueError("Empty visual batch")
     batch = VisualBatch.model_validate_json(raw)
+    if any(candidate.index >= len(times) for candidate in batch.preview_candidates):
+        raise ValueError("Preview index is outside the sampled batch")
     if any(not times[0] - 0.05 <= event.time <= times[-1] + 0.05 for event in batch.events):
         raise ValueError("Observation timestamp is outside the sampled batch")
     if len(batch.events) != len(times) or any(

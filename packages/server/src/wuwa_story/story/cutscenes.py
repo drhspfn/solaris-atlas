@@ -3,16 +3,62 @@
 from collections import defaultdict
 
 from sqlalchemy import select
+from sqlalchemy.orm import aliased
 
 from wuwa_story.agents.cutscene_vision import visual_reference
 from wuwa_story.agents.evidence import quest_fingerprint
+from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.content import Document, DocumentHead
-from wuwa_story.db.models.graph import Edge
+from wuwa_story.db.models.graph import Edge, EdgeEvidence
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.ontology import RelationType
-from wuwa_story.db.models.storage import FileReference
+from wuwa_story.db.models.storage import FileLocation, FileReference
 from wuwa_story.db.repositories import cutscenes as repository
+from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.story.service import _localized, prefetch_localizations
+
+
+async def previews(session, scene_ids, release_id):
+    """Resolve only previews tied to the currently published video and snapshot edges."""
+    if not scene_ids:
+        return {}
+    variants, assets = aliased(Edge), aliased(Edge)
+    variant_type, asset_type = aliased(RelationType), aliased(RelationType)
+    video = aliased(FileReference)
+    latest_video = (select(video.file_id).where(
+        video.owner_node_id == assets.to_node_id, video.reference_type == "cutscene_video")
+        .order_by(video.id.desc()).limit(1).correlate(assets).scalar_subquery())
+    settings = get_settings()
+    rows = await session.execute(
+        select(variants.from_node_id, FileReference.file_id,
+               FileLocation.object_key)
+        .join(variant_type, variant_type.id == variants.relation_type_id)
+        .join(assets, assets.from_node_id == variants.to_node_id)
+        .join(asset_type, asset_type.id == assets.relation_type_id)
+        .join(FileReference, FileReference.owner_node_id == assets.to_node_id)
+        .join(FileLocation, FileLocation.file_id == FileReference.file_id)
+        .where(variants.from_node_id.in_(scene_ids), variants.layer == "source", assets.layer == "source",
+               variant_type.key == "has_variant", asset_type.key == "references_asset",
+               select(EdgeEvidence.id).where(EdgeEvidence.edge_id == variants.id,
+                                             EdgeEvidence.release_id == release_id).exists(),
+               select(EdgeEvidence.id).where(EdgeEvidence.edge_id == assets.id,
+                                             EdgeEvidence.release_id == release_id).exists(),
+               FileReference.reference_type == "cutscene_preview",
+               FileReference.metadata_json["source_file_id"].as_integer(
+        ) == latest_video,
+            FileLocation.backend == "s3", FileLocation.bucket == settings.s3_bucket,
+            FileLocation.available.is_(True), FileLocation.is_primary.is_(True))
+        .order_by(FileReference.metadata_json["score"].as_integer().desc(), FileReference.id.desc())
+    )
+    storage = S3Storage(settings)
+    result = {}
+    for scene_id, file_id, key in rows:
+        entry = result.setdefault(scene_id, {"preview_file_id": file_id, "preview_url": storage.public_url(key),
+                                             "previews": []})
+        if len(entry["previews"]) < 5 and not any(item["file_id"] == file_id for item in entry["previews"]):
+            entry["previews"].append(
+                {"file_id": file_id, "url": storage.public_url(key)})
+    return result
 
 
 async def descriptions(session, owners, release_id, locale):
@@ -58,6 +104,7 @@ async def summaries(session, rows, release_id, locale):
                                  "name": (name or {}).get("text") or (name or {}).get("content")
                                  or f"Quest {quest.game_quest_id}"})
     titles = await descriptions(session, owner_rows, release_id, locale)
+    images = await previews(session, [row.node_id for row in rows], release_id)
     scene_titles = {}
     if titles:
         variants, assets = Edge.__table__.alias(
@@ -79,4 +126,4 @@ async def summaries(session, rows, release_id, locale):
              "title": scene_titles.get(row.node_id) or (
                  owners[row.node_id][0]["name"] if owners[row.node_id] else f"Cutscene {row.cg_name}"),
              "title_kind": "analysis" if row.node_id in scene_titles else "quest" if owners[row.node_id] else "resource",
-             "quests": owners[row.node_id]} for row in rows]
+             "quests": owners[row.node_id], **images.get(row.node_id, {})} for row in rows]
