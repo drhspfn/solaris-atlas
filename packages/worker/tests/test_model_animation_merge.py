@@ -28,6 +28,19 @@ def read_glb(path):
     return json.loads(raw[20 : 20 + length]), raw[28 + length :]
 
 
+def test_merge_preserves_joint_identity_without_counting_wrapper_as_bone(tmp_path):
+    paths = [tmp_path / "a.glb", tmp_path / "b.glb"]
+    for path, name in zip(paths, ["Walk", "Run"], strict=True):
+        part(path, name, skin=True)
+        data, binary = read_glb(path)
+        data["nodes"].append({"name": "Armature", "children": [0]})
+        data["scenes"][0]["nodes"] = [2]
+        write_glb(path, data, binary)
+    output = tmp_path / "all.glb"
+    merger.merge_animation_glbs(paths, output)
+    assert animation_summary(output)["bones"] == 2
+
+
 def part(path, name="Walk", reordered=False, skin=False):
     # Both view and accessor offsets matter; output samples are interleaved.
     binary = b"HEAD" + b"pad!" + struct.pack("<2f", 0, 2)
@@ -105,7 +118,7 @@ def test_rebases_reordered_nodes_accessors_views_and_preserves_samples(tmp_path,
     assert data["nodes"] == first["nodes"]
     assert data["scenes"] == first["scenes"]
     assert data["scene"] == first["scene"]
-    assert "skins" not in data
+    assert data["skins"] == first["skins"]
     padded_length = len(first_binary) + (-len(first_binary) % 4)
     assert data["buffers"] == [{"byteLength": padded_length * 2}]
     assert binary == first_binary + b"\0" * 3 + second_binary + b"\0" * 3

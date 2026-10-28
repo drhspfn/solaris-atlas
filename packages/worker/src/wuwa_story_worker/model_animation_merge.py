@@ -269,7 +269,9 @@ def merge_animation_glbs(parts: list[Path], destination: Path) -> None:
             data, offset, length, names, topology, transforms = _read_part(path)
             if merged is None:
                 merged = {
-                    key: data[key] for key in ("asset", "nodes", "scenes", "scene") if key in data
+                    key: data[key]
+                    for key in ("asset", "nodes", "scenes", "scene", "skins")
+                    if key in data
                 }
                 merged.update(animations=[], accessors=[], bufferViews=[])
                 first_topology, first_transforms = topology, transforms
