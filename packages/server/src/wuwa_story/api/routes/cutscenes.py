@@ -1,10 +1,14 @@
 """Public, paginated cutscene archive and existing playback manifests."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from wuwa_story.api.routes.story.media import cutscene_flows, quest_media
+from wuwa_story.api.routes.story.captions import caption_texts, caption_tracks
+from wuwa_story.api.routes.story.media import _links, cutscene_flows, quest_media
+from wuwa_story.db.models.graph import NodeRevision
 from wuwa_story.db.models.ops import GameRelease
+from wuwa_story.db.models.raw import SourceRecord
 from wuwa_story.db.repositories import cutscenes as repository
 from wuwa_story.db.session import get_session
 from wuwa_story.story.cutscenes import summaries
@@ -62,6 +66,18 @@ async def detail(name: str, game_version: str | None = None, locale: str = "en",
                                      candidate.get("transcript_states") or [candidate["flow_state"]], snapshot.id)})
     if event is None:
         flows = await cutscene_flows(session, [row.node_id])
+        playback = flows.get(row.node_id)
+        captions = {}
+        if playback and playback.get("asset_version") == "3.7.0":
+            links = await _links(session, [row.node_id], ("uses_caption",), snapshot.id)
+            ids = [link["node_id"] for link in links.get(row.node_id, [])]
+            if ids:
+                records = list(await session.scalars(
+                    select(SourceRecord.data)
+                    .join(NodeRevision, NodeRevision.source_record_id == SourceRecord.id)
+                    .where(NodeRevision.node_id.in_(ids), NodeRevision.release_id == snapshot.id)
+                ))
+                captions = caption_tracks(records, await caption_texts(session, records, locale, snapshot.id))
         event = {"kind": "cutscene", "reference": f"cutscene:{name}", "flow_state": "",
-                 "action_index": 0, "playback": flows.get(row.node_id), "resources": []}
+                 "action_index": 0, "playback": playback, "captions": captions, "resources": []}
     return {**item, "game_version": snapshot.game_version, "event": event, "passages": passages}
