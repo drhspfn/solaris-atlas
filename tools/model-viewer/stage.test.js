@@ -38,6 +38,10 @@ test('assets-only staging includes the lazy-animation runtime without game files
     assert.equal(await readFile(join(output, 'animations.js'), 'utf8'),
       await readFile(new URL('./animations.js', import.meta.url), 'utf8'));
     assert.match(await readFile(join(output, 'viewer.js'), 'utf8'), /from ['"]\.\/animations.js['"]/);
+    for (const font of ['DMSans', 'Manrope']) {
+      assert.equal((await readFile(join(output, 'fonts', `${font}.ttf`))).readUInt32BE(0), 0x00010000);
+      assert.match(await readFile(join(output, 'fonts', `${font}-OFL.txt`), 'utf8'), /SIL OPEN FONT LICENSE/);
+    }
   } finally {
     await rm(output, { recursive: true, force: true });
   }

@@ -10,7 +10,7 @@ const { version } = JSON.parse(await readFile(path.join(three, 'package.json'), 
 if (version !== '0.183.2') throw new Error(`Expected Three.js 0.183.2, found ${version}`);
 
 // Stage only the viewer and its pinned runtime, never local character/game assets.
-const files = ['index.html', 'viewer.js', 'viewer.css', 'spring-bones.js', 'animations.js', 'viewer-ui.js', 'camera-rig.js'];
+const files = ['index.html', 'viewer.js', 'viewer.css', 'spring-bones.js', 'animations.js', 'viewer-ui.js', 'camera-rig.js', 'fonts/DMSans.ttf', 'fonts/Manrope.ttf', 'fonts/DMSans-OFL.txt', 'fonts/Manrope-OFL.txt'];
 const vendor = [
   'build/three.module.js', 'build/three.core.js',
   'examples/jsm/controls/OrbitControls.js',

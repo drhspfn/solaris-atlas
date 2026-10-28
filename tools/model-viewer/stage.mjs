@@ -84,7 +84,12 @@ async function stage() {
     "animations.js",
     "viewer-ui.js",
     "camera-rig.js",
+    "fonts/DMSans.ttf",
+    "fonts/Manrope.ttf",
+    "fonts/DMSans-OFL.txt",
+    "fonts/Manrope-OFL.txt",
   ]) {
+    await mkdir(dirname(join(output, name)), { recursive: true });
     await copyFile(join(root, name), join(output, name));
   }
   const vendor = join(root, "node_modules/three");

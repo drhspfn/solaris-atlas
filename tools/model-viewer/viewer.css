@@ -1,4 +1,6 @@
 /* Static adapter of web_new index.css tokens and Select.tsx behavior; no React. */
+@font-face { font-family: 'DM Sans'; src: url('./fonts/DMSans.ttf') format('truetype'); font-weight: 100 1000; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Manrope'; src: url('./fonts/Manrope.ttf') format('truetype'); font-weight: 200 800; font-style: normal; font-display: swap; }
 :root {
   color-scheme: dark;
   --bg-root: #090e0f; --bg-page: #0b1112;
