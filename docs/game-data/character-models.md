@@ -181,6 +181,14 @@ Animation coverage is checked before allocating Blender actions. On Blender
 failure, a bounded diagnostic tail survives in the job error even though scratch
 is deleted.
 
+Production animation assembly uses a validated, hashed plan and separate Blender
+processes with at most 20 clips each. Batch processes import only the skeleton and
+their selected clips; they do not load textures or rescan source JSON. Each process
+exits before the next starts. Binary data from compatible parts is streamed into
+one final `animations.glb`, preserving the existing viewer/download interface.
+Runs report planning, batch index/count, merge and publication stages. Any failed
+or incomplete batch prevents publication of the entire new bundle.
+
 The default bundle contains:
 
 - `preview.glb`: rig, base-color textures limited to 512px, no animations,

@@ -8,8 +8,12 @@ from types import SimpleNamespace
 import pytest
 
 from wuwa_story_worker.model_bundle import (
+    animation_batch,
+    animation_file,
     animation_sources,
     base_color_texture,
+    build_animation_plan,
+    file_sha256,
     indexed_gltf_references,
     main,
     material_metadata_path,
@@ -305,12 +309,16 @@ def test_preview_glb_requires_zero_morph_targets(tmp_path):
     assert rig_glb_stats(path, 2, 0, 1)["morph_targets"] == 0
 
 
-@pytest.mark.parametrize("rig_only,missing_texture", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize(
+    "rig_only,missing_texture,planned",
+    [(False, False, False), (True, False, False), (True, True, False), (True, False, True)],
+)
 def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_clips(
     tmp_path,
     monkeypatch,
     rig_only,
     missing_texture,
+    planned,
 ):
     model = tmp_path / "Character.uemodel"
     model.touch()
@@ -335,9 +343,17 @@ def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_
     ]
     if rig_only:
         argv.append("--rig-only")
+    plan = {"animations": [{"action": "Stand1"}], "animation_coverage": {"playable_clips": 1}}
+    if planned:
+        argv.extend(["--animation-plan", str(tmp_path / "plan.json")])
+        monkeypatch.setattr("wuwa_story_worker.model_bundle.animation_sources", lambda *a: {})
+        monkeypatch.setattr("wuwa_story_worker.model_bundle.build_animation_plan", lambda *a: plan)
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setattr(sys, "path", sys.path.copy())
-    armature = SimpleNamespace(type="ARMATURE", data=SimpleNamespace(bones=[0, 1]))
+    armature = SimpleNamespace(
+        type="ARMATURE",
+        data=SimpleNamespace(bones=[SimpleNamespace(name="root"), SimpleNamespace(name="child")]),
+    )
 
     class MeshData(SimpleNamespace):
         def copy(self):
@@ -446,7 +462,422 @@ def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_
     assert not (output / "character.blend").exists()
     report = json.loads((output / "report.json").read_text())
     assert report["preview_texture_size"] == 1024
-    assert report["animations"] == report["missing_exports"] == report["missing_textures"] == []
+    assert report["missing_exports"] == report["missing_textures"] == []
+    if planned:
+        assert json.loads((tmp_path / "plan.json").read_text()) == plan
+        assert report["animations"] == plan["animations"]
+        assert report["animation_coverage"] == plan["animation_coverage"]
+    else:
+        assert report["animations"] == []
     assert report["morph_targets"] == report["character_glb"]["morph_targets"] == 86
     assert report["preview_glb"]["morph_targets"] == 0
     assert report["glb_bytes"] > report["preview_glb_bytes"] > 0
+
+
+def plan_fixture(tmp_path, monkeypatch, *, animation=None, change=None):
+    model = tmp_path / "Character.uemodel"
+    model.write_bytes(b"model")
+    converted = tmp_path / "converted"
+    converted.mkdir()
+    sources, decoded = {}, {}
+    for index, (name, excluded) in enumerate(
+        [
+            ("Stand1", None),
+            ("Stand1", None),
+            ("Stand1.001", None),
+            ("Additive", "additive"),
+            ("Curve", "curves_only"),
+            ("Pose", "single_frame"),
+        ]
+    ):
+        path = converted / f"{index}.ueanim"
+        path.write_bytes(str(index).encode())
+        key = f"client/content/clip{index}"
+        sources[key] = {
+            "source": f"{index}.json",
+            "name": name,
+            "type": "AnimSequence",
+            "skeleton": "/Game/Rig",
+            "matches_skeleton": True,
+        }
+        dto = SimpleNamespace(
+            metadata=SimpleNamespace(
+                num_frames=1 if excluded == "single_frame" else 31,
+                frames_per_second=30,
+                additive_anim_type=int(excluded == "additive"),
+            ),
+            tracks=[] if excluded == "curves_only" else [SimpleNamespace(name="root")],
+            curves=[1] if excluded == "curves_only" else [],
+        )
+        decoded[path] = (
+            SimpleNamespace(object_path=key, object_name=name),
+            dto,
+        )
+    if change:
+        change(sources, decoded)
+    calls = []
+
+    def read(path, catalog):
+        assert catalog is sources
+        calls.append(path)
+        return decoded[path]
+
+    plan = build_animation_plan(
+        model,
+        converted,
+        "/Game/Rig.Rig",
+        sources,
+        {"root"},
+        read,
+        animation,
+    )
+    assert len(calls) == 6
+    return model, converted, plan
+
+
+def test_plan_preflights_coverage_exclusions_and_names_globally(tmp_path, monkeypatch):
+    model, converted, plan = plan_fixture(tmp_path, monkeypatch)
+    assert plan["schema_version"] == 1
+    assert plan["skeleton"] == "client/content/rig"
+    assert plan["model_sha256"] == file_sha256(model)
+    assert [clip["name"] for clip in plan["clips"]] == ["Stand1", "Stand1.001", "Stand1.001.001"]
+    assert all(clip["sha256"] == file_sha256(converted / clip["file"]) for clip in plan["clips"])
+    assert plan["animation_coverage"] == {
+        "matching_sources": 6,
+        "decoded_clips": 6,
+        "playable_clips": 3,
+        "additive_clips": 1,
+        "single_frame_clips": 1,
+        "curves_only_clips": 1,
+        "excluded_clips": [
+            {"source": "3.json", "reason": "additive"},
+            {"source": "4.json", "reason": "curves_only"},
+            {"source": "5.json", "reason": "single_frame"},
+        ],
+        "missing_exports": 0,
+    }
+
+
+def test_plan_optional_filter_retains_full_coverage_and_exclusions(tmp_path, monkeypatch):
+    _, _, plan = plan_fixture(tmp_path, monkeypatch, animation="Stand1")
+    assert len(plan["clips"]) == 2
+    assert len(plan["animations"]) == 6
+    assert plan["animation_coverage"]["missing_exports"] == 0
+
+
+@pytest.mark.parametrize("problem", ["missing", "decode", "bone"])
+def test_plan_rejects_missing_exports_failed_decode_and_unknown_bones(
+    tmp_path, monkeypatch, problem
+):
+    def change(sources, decoded):
+        if problem == "missing":
+            sources["missing"] = {"matches_skeleton": True, "source": "missing.json"}
+        else:
+            dto = next(iter(decoded.values()))[1]
+            if problem == "decode":
+                dto.tracks = []
+            else:
+                dto.tracks[0].name = "foreign"
+
+    with pytest.raises(
+        ValueError,
+        match={
+            "missing": "Missing matching",
+            "decode": "no decoded",
+            "bone": "unknown bones",
+        }[problem],
+    ):
+        plan_fixture(tmp_path, monkeypatch, change=change)
+
+
+def test_batches_select_exact_ranges_and_hash_only_selected_clips(tmp_path, monkeypatch):
+    model, converted, plan = plan_fixture(tmp_path, monkeypatch)
+    assert animation_batch(plan, model, converted, "/Game/Rig", 0, 2) == plan["clips"][:2]
+    assert animation_batch(plan, model, converted, "/Game/Rig", 1, 2) == plan["clips"][2:]
+    (converted / plan["clips"][0]["file"]).write_bytes(b"changed")
+    assert animation_batch(plan, model, converted, "/Game/Rig", 1, 2) == plan["clips"][2:]
+    with pytest.raises(ValueError, match="hash mismatch"):
+        animation_batch(plan, model, converted, "/Game/Rig", 0, 2)
+
+
+@pytest.mark.parametrize(
+    "problem", ["schema", "model", "skeleton", "names", "index", "size", "empty"]
+)
+def test_batch_rejects_identity_and_selection_errors(tmp_path, monkeypatch, problem):
+    model, converted, plan = plan_fixture(tmp_path, monkeypatch)
+    index, size, skeleton = 0, 2, "/Game/Rig"
+    if problem == "schema":
+        plan["schema_version"] = 2
+    elif problem == "model":
+        model.write_bytes(b"different model")
+    elif problem == "skeleton":
+        skeleton = "/Game/OtherRig"
+    elif problem == "names":
+        plan["clips"][1]["name"] = plan["clips"][0]["name"]
+    elif problem == "index":
+        index = -1
+    elif problem == "size":
+        size = 51
+    elif problem == "empty":
+        index = 2
+    with pytest.raises(ValueError):
+        animation_batch(plan, model, converted, skeleton, index, size)
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "../outside.ueanim",
+        "/outside.ueanim",
+        "C:/outside.ueanim",
+        "C:outside.ueanim",
+        "folder/../../outside.ueanim",
+        "folder\\outside.ueanim",
+        "bad.json",
+        "",
+        "missing.ueanim",
+    ],
+)
+def test_animation_paths_reject_escape_absolute_wrong_extension_and_missing(tmp_path, relative):
+    with pytest.raises(ValueError):
+        animation_file(tmp_path, relative)
+
+
+def test_animation_paths_resolve_links_before_containment_check(tmp_path):
+    converted = tmp_path / "converted"
+    converted.mkdir()
+    outside = tmp_path / "outside.ueanim"
+    outside.touch()
+    try:
+        (converted / "linked.ueanim").symlink_to(outside)
+    except OSError:
+        pytest.skip("Creating symlinks requires Windows developer mode")
+    with pytest.raises(ValueError, match="under converted"):
+        animation_file(converted, "linked.ueanim")
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--animation-plan", "plan.json"],
+        ["--with-animations", "--animation-plan", "plan.json"],
+        ["--animation-batch", "0"],
+        ["--rig-only", "--animation-plan", "plan.json", "--animation-batch", "0"],
+        ["--with-animations", "--animation-plan", "plan.json", "--animation-batch", "0"],
+        ["--animation-plan", "plan.json", "--animation-batch", "-1"],
+        ["--animation-plan", "plan.json", "--animation-batch", "0", "--animation", "Stand1"],
+        ["--animation-plan", "plan.json", "--animation-batch", "0", "--animation-batch-size", "0"],
+        ["--animation-plan", "plan.json", "--animation-batch", "0", "--animation-batch-size", "51"],
+        ["--rig-only", "--animation-batch-size", "20"],
+    ],
+)
+def test_invalid_process_modes_fail_before_blender_import(monkeypatch, flags):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "blender",
+            "--",
+            "--model",
+            "model",
+            "--converted",
+            "converted",
+            "--source-json",
+            "source",
+            "--skeleton",
+            "rig",
+            "--ueformat-plugin",
+            "plugin",
+            "--output",
+            "output",
+            *flags,
+        ],
+    )
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+
+
+def test_batch_main_imports_only_skeleton_and_selected_actions_without_source_scan(
+    tmp_path, monkeypatch
+):
+    model, converted, plan = plan_fixture(tmp_path, monkeypatch)
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan))
+    output = tmp_path / "output"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "blender",
+            "--",
+            "--model",
+            str(model),
+            "--converted",
+            str(converted),
+            "--source-json",
+            str(tmp_path / "absent-source"),
+            "--skeleton",
+            "/Game/Rig",
+            "--ueformat-plugin",
+            str(tmp_path),
+            "--output",
+            str(output),
+            "--animation-plan",
+            str(plan_path),
+            "--animation-batch",
+            "1",
+            "--animation-batch-size",
+            "2",
+        ],
+    )
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+    calls, actions, reset = [], [], []
+    armature = SimpleNamespace(
+        type="ARMATURE",
+        data=SimpleNamespace(bones=[SimpleNamespace(name="root")]),
+        pose=SimpleNamespace(
+            bones=[
+                SimpleNamespace(
+                    matrix_basis=SimpleNamespace(identity=lambda: reset.append(True)),
+                )
+            ]
+        ),
+        animation_data=SimpleNamespace(action="old"),
+        select_set=lambda selected: None,
+    )
+    model_dto = SimpleNamespace(lods=["geometry"], collisions=["collision"])
+
+    class Archive:
+        def __init__(self, raw):
+            self.raw = raw
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+    def header(archive):
+        calls.append(archive.raw)
+        return SimpleNamespace(
+            object_name="Character", object_path="/Game/Clip", file_version=1
+        ), archive
+
+    def body(header, archive):
+        if archive.raw == b"model":
+            return model_dto
+        return SimpleNamespace(
+            metadata=SimpleNamespace(num_frames=31, frames_per_second=30, additive_anim_type=0),
+            tracks=[
+                SimpleNamespace(name="root", position_keys=[], rotation_keys=[], scale_keys=[])
+            ],
+            curves=[],
+        )
+
+    def create_model(dto, options, name):
+        assert not dto.lods and not dto.collisions
+        return armature
+
+    class Action(dict):
+        def __init__(self, name):
+            self.name = name
+
+    def create_anim(dto, options, name):
+        action = Action(name)
+        actions.append(action)
+        armature.animation_data.action = action
+        return action
+
+    def export(**kwargs):
+        assert armature.animation_data.action is None and reset == [True]
+        assert kwargs["use_selection"] and kwargs["export_animation_mode"] == "ACTIONS"
+        assert not kwargs["export_morph"]
+        Path(kwargs["filepath"]).touch()
+        return {"FINISHED"}
+
+    bpy = SimpleNamespace(
+        context=SimpleNamespace(
+            scene=SimpleNamespace(render=SimpleNamespace(fps=0)),
+            view_layer=SimpleNamespace(objects=SimpleNamespace(active=None), update=lambda: None),
+        ),
+        ops=SimpleNamespace(
+            object=SimpleNamespace(select_all=lambda **kw: None, delete=lambda **kw: None),
+            export_scene=SimpleNamespace(gltf=export),
+        ),
+    )
+    summary = {"animations": 1, "clips": [{"name": plan["clips"][2]["name"]}]}
+    modules = {
+        "bpy": bpy,
+        "io_scene_ueformat.importer.archive.reader": SimpleNamespace(FArchiveReader=Archive),
+        "io_scene_ueformat.importer.create.anim": SimpleNamespace(create_anim=create_anim),
+        "io_scene_ueformat.importer.create.model": SimpleNamespace(create_model=create_model),
+        "io_scene_ueformat.importer.create.space": SimpleNamespace(
+            to_blender_space=lambda *a: None
+        ),
+        "io_scene_ueformat.importer.import_context": SimpleNamespace(
+            UEFormatImport=None,
+            parse_body=body,
+            parse_header=header,
+        ),
+        "io_scene_ueformat.options": SimpleNamespace(
+            UEAnimOptions=lambda **kw: kw,
+            UEModelOptions=lambda: None,
+        ),
+        "io_scene_gltf2.blender.exp.exporter": SimpleNamespace(
+            GlTF2Exporter=type(
+                "Exporter",
+                (),
+                {"_GlTF2Exporter__append_unique_and_get_index": staticmethod(legacy_index)},
+            )
+        ),
+        "io_scene_gltf2.io.com.gltf2_io": SimpleNamespace(
+            Accessor=type("Accessor", (), {}),
+            BufferView=type("BufferView", (), {}),
+        ),
+        "model_animations": SimpleNamespace(animation_summary=lambda path, bones: summary),
+    }
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    def forbid_scan(*args):
+        raise AssertionError("Batch must not scan source JSON, animations or material metadata")
+
+    monkeypatch.setattr(Path, "rglob", forbid_scan)
+    main()
+    assert calls == [b"model", b"2"]
+    assert [action.name for action in actions] == [plan["clips"][2]["name"]]
+    assert (output / "animation-parts/part-0001.glb").exists()
+    assert json.loads((output / "animation-parts/part-0001.json").read_text()) == summary
+    assert not (output / "report.json").exists()
+
+
+def test_plan_skips_foreign_skeleton_before_dto_validation(tmp_path):
+    model = tmp_path / "model.uemodel"
+    model.touch()
+    converted = tmp_path / "converted"
+    converted.mkdir()
+    (converted / "owned.ueanim").touch()
+    (converted / "foreign.ueanim").touch()
+    sources = {
+        "owned": {"matches_skeleton": True, "source": "owned.json", "name": "Stand1"},
+        "foreign": {"matches_skeleton": False, "source": "foreign.json"},
+    }
+
+    def read(path, sources):
+        header = SimpleNamespace(object_path=path.stem, object_name="Stand1")
+        # A foreign skeleton's body must not be needed for plan coverage.
+        dto = (
+            None
+            if path.stem == "foreign"
+            else SimpleNamespace(
+                metadata=SimpleNamespace(num_frames=31, frames_per_second=30, additive_anim_type=0),
+                tracks=[SimpleNamespace(name="root")],
+                curves=[],
+            )
+        )
+        return header, dto
+
+    plan = build_animation_plan(model, converted, "rig", sources, {"root"}, read)
+    assert [clip["file"] for clip in plan["clips"]] == ["owned.ueanim"]
+    assert plan["animation_coverage"]["matching_sources"] == 1
