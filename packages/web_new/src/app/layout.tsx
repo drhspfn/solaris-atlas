@@ -4,10 +4,12 @@ import localFont from 'next/font/local';
 import '@/styles/index.css';
 import '@/styles/site-shell.css';
 import '@/styles/cutscene-archive.css';
+import '@/styles/cookie-consent.css';
 
 import { Footer } from '@/components/layout/Footer';
 import { Header } from '@/components/layout/Header';
 import { Providers } from '@/components/layout/Providers';
+import { CookieConsent } from '@/components/layout/CookieConsent';
 import { adsenseClient } from '@/lib/adsense';
 
 const dmSans = localFont({
@@ -72,6 +74,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Header />
             <main>{children}</main>
             <Footer />
+            <CookieConsent />
           </div>
         </Providers>
       </body>

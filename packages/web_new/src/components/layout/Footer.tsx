@@ -1,6 +1,7 @@
 import { ArrowUpRight, Mail, Sparkles } from 'lucide-react';
 import { Link } from '@/lib/router';
 import { APP_SETTINGS } from '@/config/settings';
+import { CookieSettingsButton } from './CookieConsent';
 
 const apiDocsUrl = process.env.NEXT_PUBLIC_API_DOCS_URL ?? APP_SETTINGS.api.defaultDocsUrl;
 
@@ -55,6 +56,7 @@ export function Footer() {
         </p>
         <div>
           <Link to="/legal#privacy">Privacy</Link>
+          <CookieSettingsButton />
           <Link to="/legal#copyright">Copyright requests</Link>
           <span>solarisatlas.fun</span>
         </div>
