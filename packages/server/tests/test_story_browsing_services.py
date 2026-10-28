@@ -241,3 +241,27 @@ async def test_localization_and_scene_reads_use_joined_projection_without_per_ro
     assert "canonical_key" in statement.selected_columns.keys()
     # The fake session deliberately has no get(): scene keys must be in this read.
     assert session.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_quest_profile_resolves_snapshot_before_loading_owned_states(monkeypatch):
+    quest = Row(node_id=7, game_quest_id=70)
+    session = Row(info={})
+    release = AsyncMock(return_value=13)
+    monkeypatch.setattr(service, "_release_id", release)
+    for name in ("quest_node_rows", "quest_hierarchy_rows", "quest_states", "quest_actions",
+                 "quest_scenes", "quest_requirement_records"):
+        monkeypatch.setattr(repository, name, AsyncMock(return_value=[]))
+
+    async def states(_session, quest_id, release_id):
+        release.assert_awaited_once_with(session, "2.8.0")
+        assert (quest_id, release_id) == (7, 13)
+        return []
+
+    monkeypatch.setattr(service, "_quest_state_ids", states)
+    monkeypatch.setattr(service, "_explicit_entity_links", AsyncMock(return_value=[]))
+    monkeypatch.setattr(service, "_quest_info", AsyncMock(return_value={"game_quest_id": 70}))
+    monkeypatch.setattr(service, "_latest_source_record", AsyncMock(return_value=None))
+    result = await service.quest_profile_payload(session, quest, game_version="2.8.0")
+    assert result["quest"]["game_quest_id"] == 70
+    assert result["flow_states"] == []

@@ -191,9 +191,9 @@ async def _character_progression_materials(
     return materials
 
 
-def _quest_state_links():
+def _quest_state_links(release_id: int | None = None):
     """The same explicit ownership paths for transcript and reverse navigation."""
-    return quest_state_links()
+    return quest_state_links(release_id)
 
 
 async def _quest_references_from_links(

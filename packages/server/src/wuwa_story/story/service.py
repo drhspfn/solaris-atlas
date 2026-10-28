@@ -369,6 +369,7 @@ async def _latest_source_record(session: AsyncSession, node_id: int) -> dict[str
 
 async def quest_profile_payload(session, quest, locale="en", game_version=None) -> dict[str, Any]:
     game_quest_id = quest.game_quest_id
+    release_id = await _release_id(session, game_version)
     qnode_rows = await repository.quest_node_rows(session, game_quest_id)
     qnode_ids = {entry[0].node_id for entry in qnode_rows}
     nodes_by_game_id = {entry[0].game_node_id: entry[1].canonical_key for entry in qnode_rows}
@@ -423,7 +424,6 @@ async def quest_profile_payload(session, quest, locale="en", game_version=None) 
     scenes = await repository.quest_scenes(session, quest.node_id)
     presented_scenes = scene_payloads(scenes)
     quest_links = await _explicit_entity_links(session, quest.node_id, locale)
-    release_id = await _release_id(session, game_version)
     requirement_rows = await repository.quest_requirement_records(
         session,
         release_id,
