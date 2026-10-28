@@ -226,6 +226,18 @@ controls; optional turntable rotation can exercise springs without animation cli
 
 ## Dedicated Linux model-tools image
 
+The public frontend uses the CDN's revalidated `model-viewer/current/index.html`
+entry point. Deployment uploads a complete immutable model-studio runtime then
+atomically switches that small redirect. Previously published immutable viewer
+URLs remain valid. GLBs and viewer stay on the same origin without requiring a
+bucket CORS change or proxying media through the API. This allows interface
+updates without reimporting model bytes. New
+animation merges add category/group/subgroup labels in each animation's
+`extras.solaris_atlas`; these ordered name-family rules do not change clip identity.
+Older packs receive the same navigation labels in the viewer. The profile's
+transparent preview never requests an animation pack; the full viewer does so only
+after an explicit Load animations action.
+
 Blender is deliberately separate from the ordinary production worker image.
 Build the worker from this revision first, then extend that immutable image:
 

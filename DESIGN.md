@@ -156,6 +156,28 @@ status filters remain native selects. Queue cleanup uses a dark native dialog wi
 an explicit scope and a safe initial focus. Lore Assistant messages use existing
 surface and text tokens; user messages differ through surface depth and a mint border.
 
+## Character model studio
+
+The character profile reserves a compact, transparent model stage. Its lightweight
+rig loads only near the viewport; animations require an explicit request inside
+the full viewer. Opening the stage uses a viewport-sized native dialog, keeping
+the profile in place and restoring focus on close. Download links remain secondary.
+The studio uses the same mint, cyan, dark surfaces, type scale, checkbox and range
+treatments as the maintained application. The static Three.js runtime adapts the
+authored Select's popover/listbox keyboard contract without adding a second React
+application. Animation and bone pickers use bounded drilldown menus with a Back
+action and an optional search view. Category/group/subgroup navigation describes
+name-family rules, while original clip names remain visible.
+
+The scene is the primary surface. Compact transport controls sit below it; scene,
+physics and camera options belong in a full-height Settings drawer on the right
+with a bounded internal scroller. Mobile settings become an anchored bottom sheet
+without hiding the close action.
+Camera attachments reference only exported bones and keep adjustable target
+offsets; no anatomical landmark is invented. Admin character actions reuse the
+quest's vertical-ellipsis menu and open a named import dialog with job status and
+a link to the existing task monitor.
+
 Map markers center their icons in a single bordered chip. Hover and keyboard focus expand that chip to reveal the name, opening left near the map's right edge. Region rail buttons use 44px targets and expand left to reveal full names. These controls use accessible labels without duplicate native title tooltips. Marker cards align category and title on one left edge; their header stays visible while the body scrolls. Search clear buttons use the shared `search-clear` treatment and a restrained focus indicator. The global scrollbar baseline in `index.css` uses thin tracks and shared border/text tokens, with a stable document gutter to keep the header fixed across route changes. The map menu uses 46px item rows and 25px item icons; dense icon-only rows remain 44px high.
 
 ## Game-client event catalog
