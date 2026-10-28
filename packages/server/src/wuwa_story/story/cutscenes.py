@@ -17,7 +17,7 @@ from wuwa_story.story.service import _localized, prefetch_localizations
 
 async def descriptions(session, owners, release_id, locale):
     """Only current analyses backed by the current visual observation may label a scene."""
-    quests = {quest.node_id: quest for _, quest, _ in owners}
+    quests = {quest.node_id: quest for _, quest, _, _ in owners}
     if not quests:
         return {}
     documents = await session.scalars(
@@ -48,12 +48,13 @@ async def descriptions(session, owners, release_id, locale):
 
 async def summaries(session, rows, release_id, locale):
     owner_rows = await repository.owners(session, [row.node_id for row in rows], release_id)
-    await prefetch_localizations(session, [quest.name_key_id for _, quest, _ in owner_rows
+    await prefetch_localizations(session, [quest.name_key_id for _, quest, _, _ in owner_rows
                                            if quest.name_key_id], locale, release_id)
     owners = defaultdict(list)
-    for scene_id, quest, slug in owner_rows:
+    for scene_id, quest, slug, inferred in owner_rows:
         name = await _localized(session, quest.name_key_id, locale, release_id)
         owners[scene_id].append({"game_quest_id": quest.game_quest_id, "slug": slug,
+                                 "context_inferred": inferred,
                                  "name": (name or {}).get("text") or (name or {}).get("content")
                                  or f"Quest {quest.game_quest_id}"})
     titles = await descriptions(session, owner_rows, release_id, locale)

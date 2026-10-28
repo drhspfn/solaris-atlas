@@ -50,6 +50,7 @@ EDGE_BASIS = {
     "manual",
 }
 SOURCE_BASIS_MAP = {
+    "inference": "inference",
     "explicit_reference": "explicit_reference",
     "exact_join": "exact_join",
     "runtime_condition": "explicit_reference",

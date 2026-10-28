@@ -544,6 +544,7 @@ export function Cutscene({ event, anchor }: { event: QuestMediaEvent; anchor?: s
   const flow = useMemo(() => event.playback || fallbackFlow(event), [event]);
   return flow ? (
     <div id={cutsceneAnchor(event)} className="quest-cutscene-anchor">
+      {event.context_inferred && <p>Related scenario; its exact position in the quest is unconfirmed.</p>}
       <FlowPlayer
         key={`${flow.asset_version}-${flow.entry}`}
         flow={flow}

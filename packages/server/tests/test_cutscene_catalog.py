@@ -9,6 +9,28 @@ from wuwa_story.db.repositories import cutscenes
 from wuwa_story.story.cutscenes import descriptions
 
 
+@pytest.mark.asyncio
+async def test_unowned_scene_returns_source_captions(monkeypatch):
+    from wuwa_story.api.routes import cutscenes as route
+
+    snapshot = SimpleNamespace(id=7, game_version="2.8.0")
+    row = SimpleNamespace(node_id=9)
+    monkeypatch.setattr(route, "release", AsyncMock(return_value=snapshot))
+    monkeypatch.setattr(route.repository, "scene", AsyncMock(return_value=row))
+    monkeypatch.setattr(route, "summaries", AsyncMock(return_value=[{"quests": []}]))
+    monkeypatch.setattr(route, "cutscene_flows", AsyncMock(return_value={9: {"asset_version": "3.7.0"}}))
+    monkeypatch.setattr(route, "_links", AsyncMock(return_value={9: [{"node_id": 10}]}))
+    monkeypatch.setattr(route, "caption_texts", AsyncMock(return_value={"line": "Hello"}))
+    session = SimpleNamespace(scalars=AsyncMock(return_value=[
+        {"CaptionText": "line", "ShowMoment": 30, "Duration": 60}
+    ]))
+
+    result = await route.detail("C0022", "2.8.0", "en", session)
+    assert result["event"]["captions"]["en"] == [
+        {"start": 1.0, "end": 3.0, "text": "Hello", "key": "line"}
+    ]
+
+
 def test_all_versions_sort_numerically_by_first_observation_without_duplicate_scenes():
     with sqlite3.connect(":memory:") as db:
         for schema in ("core", "graph", "ops"):
@@ -69,6 +91,7 @@ async def test_catalog_resolves_only_complete_quest_owner_paths_and_deduplicates
     parent_calls = AsyncMock(side_effect=[
         [(9, 10), (9, 11)],  # Two actions play the same scene.
         [(20, 30), (21, 31), (20, 999)],
+        [],  # No inferred scenario references.
         [(30, 100)],  # Quest node owner.
         [(31, 40)],  # Plot scene -> plot step -> quest.
         [(40, 100)],
@@ -77,8 +100,19 @@ async def test_catalog_resolves_only_complete_quest_owner_paths_and_deduplicates
     quest = SimpleNamespace(node_id=100)
     session = SimpleNamespace(execute=AsyncMock(
         side_effect=[[(10, 20), (11, 21)], [(quest, "quest-slug")]]))
-    assert await cutscenes.owners(session, [9], 7) == [(9, quest, "quest-slug")]
+    assert await cutscenes.owners(session, [9], 7) == [(9, quest, "quest-slug", False)]
     assert all(call.args[-1] == 7 for call in parent_calls.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_catalog_marks_scenario_owner_as_inferred(monkeypatch):
+    monkeypatch.setattr(cutscenes, "source_parents", AsyncMock(side_effect=[
+        [(9, 10)], [], [(20, 100)], [], [], [],
+    ]))
+    quest = SimpleNamespace(node_id=100)
+    session = SimpleNamespace(execute=AsyncMock(
+        side_effect=[[(10, 20)], [(quest, "quest-slug")]]))
+    assert await cutscenes.owners(session, [9], 7) == [(9, quest, "quest-slug", True)]
 
 
 @pytest.mark.asyncio
@@ -90,5 +124,5 @@ async def test_scene_title_does_not_consume_stale_analysis(monkeypatch):
         return_value=[doc]), get=AsyncMock())
     monkeypatch.setattr(
         "wuwa_story.story.cutscenes.quest_fingerprint", AsyncMock(return_value=b"new"))
-    assert await descriptions(session, [(9, quest, None)], 7, "en") == {}
+    assert await descriptions(session, [(9, quest, None, False)], 7, "en") == {}
     session.get.assert_not_awaited()

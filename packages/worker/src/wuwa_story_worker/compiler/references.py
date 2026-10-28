@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from wuwa_story.ingestion.scenario_context import scenario_links
+
 from .core import Writer, read_json
 
 FLOW_TABLES = {
@@ -64,6 +66,16 @@ def compile_reference_tables(root: Path, writer: Writer,
     state_keys = {entity_id.removeprefix("flow_state:") for entity_id in writer.ids
                   if entity_id.startswith("flow_state:")}
 
+    quest_nodes = root / "BinData/QuestNodeData/questnodedata.json"
+    level_nodes = root / "BinData/LevelPlayNodeData/levelplaynodedata.json"
+    if quest_nodes.is_file() and level_nodes.is_file():
+        for link in scenario_links(enumerate(read_json(quest_nodes)),
+                                   enumerate(read_json(level_nodes)), state_keys):
+            if link["from"].removeprefix("quest:") in quest_ids:
+                writer.edge(link["from"], link["to"], "references_scenario_flow_state",
+                            link["basis"], link["source"], link["raw_path"],
+                            {"relation": "inference"})
+
     map_source = "BinData/DownLoad/mapblockinfo.json"
     map_path = root / map_source
     map_block_ids: set[int] = set()
@@ -76,20 +88,22 @@ def compile_reference_tables(root: Path, writer: Writer,
                 continue
             identity = f"map_block:{block_id}"
             writer.emit("map_block", {"id": identity, "block_id": block_id,
-                                       "map_id": raw.get("MapId"),
-                                       "source": {"file": map_source, "row": row_index,
-                                                  "raw_path": f"$[{row_index}]"},
-                                       "raw": raw})
+                                      "map_id": raw.get("MapId"),
+                                      "source": {"file": map_source, "row": row_index,
+                                                 "raw_path": f"$[{row_index}]"},
+                                      "raw": raw})
             map_block_ids.add(block_id)
     else:
-        writer.diagnostic("missing_reference_table", "warning", map_source, "$", None)
+        writer.diagnostic("missing_reference_table",
+                          "warning", map_source, "$", None)
     counts["map_block"] = len(map_block_ids)
 
     for relative, kind in FLOW_TABLES.items():
         source = f"BinData/{relative}"
         path = root / source
         if not path.is_file():
-            writer.diagnostic("missing_reference_table", "warning", source, "$", None)
+            writer.diagnostic("missing_reference_table",
+                              "warning", source, "$", None)
             continue
         rows = read_json(path)
         count = 0
@@ -101,14 +115,16 @@ def compile_reference_tables(root: Path, writer: Writer,
                 list_name_field = "FlowListName" if isinstance(value.get("FlowListName"), str) else (
                     "PlotName" if relative == "PhantomBattle/phantombattledialog.json" and
                     isinstance(value.get("PlotName"), str) else None)
-                list_name = value.get(list_name_field) if list_name_field else None
+                list_name = value.get(
+                    list_name_field) if list_name_field else None
                 flow_number = value.get("FlowId")
                 state_number = value.get("StateId")
                 if not isinstance(list_name, str) or flow_number is None or state_number is None:
                     continue
                 flow_id = f"{list_name}_{flow_number}"
                 state_key = f"{flow_id}_{state_number}"
-                references.append((raw_path, flow_id, state_key, list_name_field))
+                references.append(
+                    (raw_path, flow_id, state_key, list_name_field))
             quest_refs = []
             if relative in ("InteractData/interactdata.json", "LevelPlayData/levelplaydata.json",
                             "LevelPlayNodeData/levelplaynodedata.json"):
@@ -147,11 +163,11 @@ def compile_reference_tables(root: Path, writer: Writer,
                                 f"{list_name_field} + FlowId + StateId in one source object",
                                 source, f"$[{row_index}]" + raw_path[1:],
                                 {"flow_id": flow_id, "state_key": state_key,
-                                                  "reference_kind": kind})
+                                 "reference_kind": kind})
             for raw_path, quest_id in quest_refs:
                 target = f"quest:{quest_id}"
                 relation = "runtime_condition" if any(token in raw_path for token in
-                                                       ("Condition", "PreChildQuest")) else "explicit_reference"
+                                                      ("Condition", "PreChildQuest")) else "explicit_reference"
                 if str(quest_id) in quest_ids:
                     writer.edge(identity, target, "condition_references_quest" if relation == "runtime_condition"
                                 else "references_quest", "QuestId", source,
@@ -166,7 +182,8 @@ def compile_reference_tables(root: Path, writer: Writer,
         source = f"BinData/{relative}"
         path = root / source
         if not path.is_file():
-            writer.diagnostic("missing_reference_table", "warning", source, "$", None)
+            writer.diagnostic("missing_reference_table",
+                              "warning", source, "$", None)
             continue
         rows = read_json(path)
         count = 0
@@ -222,7 +239,8 @@ def compile_reference_tables(root: Path, writer: Writer,
         try:
             rows = read_json(path)
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            writer.diagnostic("unreadable_reference_candidate", "error", f"BinData/{rel}", "$", str(exc))
+            writer.diagnostic("unreadable_reference_candidate",
+                              "error", f"BinData/{rel}", "$", str(exc))
             continue
         if not isinstance(rows, list):
             continue
@@ -239,7 +257,8 @@ def compile_reference_tables(root: Path, writer: Writer,
                     flow_refs.append((raw_path, f"{list_name}_{flow_number}",
                                       f"{list_name}_{flow_number}_{state_number}"))
                 if isinstance(value.get("QuestId"), int):
-                    quest_refs.append((f"{raw_path}.QuestId", value["QuestId"]))
+                    quest_refs.append(
+                        (f"{raw_path}.QuestId", value["QuestId"]))
             if not flow_refs and not quest_refs:
                 continue
             identity = f"source_reference:{rel}:{row_index}"
@@ -266,7 +285,8 @@ def compile_reference_tables(root: Path, writer: Writer,
                     writer.diagnostic("unresolved_external_quest", "warning", f"BinData/{rel}",
                                       full_path, quest_id)
                     continue
-                conditional = any(token in raw_path for token in ("Condition", "PreChildQuest"))
+                conditional = any(token in raw_path for token in (
+                    "Condition", "PreChildQuest"))
                 writer.edge(identity, f"quest:{quest_id}",
                             "condition_references_quest" if conditional else "references_quest",
                             "QuestId", f"BinData/{rel}", full_path,
@@ -326,7 +346,8 @@ def compile_reference_tables(root: Path, writer: Writer,
                 for field, (kind, relation) in entity_fields.items():
                     target_value = value.get(field)
                     if isinstance(target_value, (str, int)) and not isinstance(target_value, bool):
-                        found.append((raw_path, field, kind, relation, str(target_value)))
+                        found.append(
+                            (raw_path, field, kind, relation, str(target_value)))
             if not found:
                 continue
             identity = f"source_reference:{rel}:{row_index}"
@@ -352,8 +373,14 @@ def compile_reference_tables(root: Path, writer: Writer,
         if emitted:
             counts[f"explicit_entity_refs:{rel}"] = emitted
     from wuwa_story.ingestion.dungeon_context import (
-        DUNGEONS, LEVEL_NODES, LEVELS, QUEST_NODES, RELATION,
-        dungeon_links, level_memberships, requirements,
+        DUNGEONS,
+        LEVEL_NODES,
+        LEVELS,
+        QUEST_NODES,
+        RELATION,
+        dungeon_links,
+        level_memberships,
+        requirements,
     )
 
     def optional_rows(source):
@@ -364,7 +391,8 @@ def compile_reference_tables(root: Path, writer: Writer,
     required = {key: value for key, value in requirements(optional_rows(QUEST_NODES)).items()
                 if key in dungeon_ids}
     memberships = level_memberships(optional_rows(LEVELS), required)
-    links = dungeon_links(required, memberships, optional_rows(LEVEL_NODES), state_keys)
+    links = dungeon_links(required, memberships,
+                          optional_rows(LEVEL_NODES), state_keys)
     counts["dungeon_context_links"] = 0
     for link in links:
         if link["from"] not in writer.ids:

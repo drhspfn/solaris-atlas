@@ -1,15 +1,19 @@
 """Public, paginated cutscene archive and existing playback manifests."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from wuwa_story.api.routes.story.media import cutscene_flows, quest_media
+from wuwa_story.api.routes.story.captions import caption_texts, caption_tracks
+from wuwa_story.api.routes.story.media import _links, cutscene_flows, quest_media
+from wuwa_story.db.models.graph import NodeRevision
 from wuwa_story.db.models.ops import GameRelease
+from wuwa_story.db.models.raw import SourceRecord
 from wuwa_story.db.repositories import cutscenes as repository
 from wuwa_story.db.session import get_session
 from wuwa_story.story.cutscenes import summaries
-from wuwa_story.story.service import _release_id
 from wuwa_story.story.domain import version_key
+from wuwa_story.story.service import _release_id
 
 router = APIRouter(prefix="/cutscenes", tags=["story browsing"])
 
@@ -31,7 +35,8 @@ async def catalog(game_version: str | None = None, locale: str = "en",
     items = {}
     # Resolve each scene in an actual containing snapshot, never fabricate an all-version graph.
     for identity in {snapshot.id if snapshot else row.latest_release_id for row in rows}:
-        group = rows if snapshot else [row for row in rows if row.latest_release_id == identity]
+        group = rows if snapshot else [
+            row for row in rows if row.latest_release_id == identity]
         items.update({item["node_id"]: item for item in await summaries(session, group, identity, locale)})
     return {"game_version": snapshot.game_version if snapshot else None,
             "imported_game_versions": sorted(await repository.imported_versions(session), key=version_key, reverse=True),
@@ -58,10 +63,22 @@ async def detail(name: str, game_version: str | None = None, locale: str = "en",
                 passages.append({**quest, "flow_state": candidate["flow_state"],
                                  "action_index": candidate["action_index"],
                                  "reference": candidate["reference"],
-                                 "focus_line": await repository.first_line(session,
-                                     candidate.get("transcript_states") or [candidate["flow_state"]], snapshot.id)})
+                                 "focus_line": None if quest.get("context_inferred") else await repository.first_line(
+                                     session, candidate.get("transcript_states") or [candidate["flow_state"]], snapshot.id)})
     if event is None:
         flows = await cutscene_flows(session, [row.node_id])
+        playback = flows.get(row.node_id)
+        captions = {}
+        if playback and playback.get("asset_version") == "3.7.0":
+            links = await _links(session, [row.node_id], ("uses_caption",), snapshot.id)
+            ids = [link["node_id"] for link in links.get(row.node_id, [])]
+            if ids:
+                records = list(await session.scalars(
+                    select(SourceRecord.data)
+                    .join(NodeRevision, NodeRevision.source_record_id == SourceRecord.id)
+                    .where(NodeRevision.node_id.in_(ids), NodeRevision.release_id == snapshot.id)
+                ))
+                captions = caption_tracks(records, await caption_texts(session, records, locale, snapshot.id))
         event = {"kind": "cutscene", "reference": f"cutscene:{name}", "flow_state": "",
-                 "action_index": 0, "playback": flows.get(row.node_id), "resources": []}
+                 "action_index": 0, "playback": playback, "captions": captions, "resources": []}
     return {**item, "game_version": snapshot.game_version, "event": event, "passages": passages}
