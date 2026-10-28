@@ -7,7 +7,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 
 class RequestAdmission:
-    def __init__(self, app: ASGIApp, limit: int = 8, wait_seconds: float = 0.1):
+    def __init__(self, app: ASGIApp, limit: int = 8, wait_seconds: float = 2.0):
         self.app = app
         self.slots = asyncio.Semaphore(limit)
         self.wait_seconds = wait_seconds
