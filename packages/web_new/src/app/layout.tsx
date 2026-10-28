@@ -33,6 +33,7 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
+  other: { 'google-adsense-account': 'ca-pub-5630632993844792' },
   title: {
     default: 'Solaris Atlas — Story Archive for Solaris-3',
     template: '%s | Solaris Atlas',
