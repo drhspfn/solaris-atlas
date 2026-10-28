@@ -69,7 +69,7 @@
         <legend class="sr-only">Animation playback</legend>
         <div class="clip-field">
           <span id="animation-label" class="field-label">Animation library</span
-          ><input id="animations" type="hidden" /><button
+          ><input id="animations" type="hidden" /><div class="animation-selection-row"><button
             id="animation-picker"
             class="picker-trigger"
             aria-labelledby="animation-label animation-selection"
@@ -78,9 +78,13 @@
             aria-controls="animation-list"
             disabled
           >
-            <span id="animation-selection">No animations loaded</span
+            <span id="animation-selection" aria-live="polite" aria-atomic="true">No animations loaded</span
             ><span aria-hidden="true">⌄</span>
           </button>
+          <div class="animation-navigation" role="group" aria-label="Change animation">
+            <button id="animation-previous" aria-label="Previous animation" title="Previous animation" disabled>‹</button>
+            <button id="animation-next" aria-label="Next animation" title="Next animation" disabled>›</button>
+          </div></div>
         </div>
         <button id="play" aria-label="Pause animation">Pause</button>
         <label class="timeline" for="time"
@@ -166,6 +170,18 @@
             ></span
           ><input id="turntable" type="checkbox"
         /></label>
+        <h3 class="motion-heading">Animation movement</h3>
+        <label class="toggle-row"
+          ><span>Lock position<small>Keep the model in place along selected axes</small></span
+          ><input id="lock-position" type="checkbox" disabled aria-describedby="lock-note"
+        /></label>
+        <fieldset id="lock-axes" class="axis-locks" disabled>
+          <legend>Locked axes</legend>
+          <label><input id="lock-x" type="checkbox" checked />X</label>
+          <label><input id="lock-y" type="checkbox" />Y · up</label>
+          <label><input id="lock-z" type="checkbox" checked />Z</label>
+        </fieldset>
+        <p id="lock-note" class="help">X and Z keep movement on the floor in place. Leave Y free for jumps and height changes. Rotation is preserved.</p>
       </section>
       <section
         id="panel-physics"

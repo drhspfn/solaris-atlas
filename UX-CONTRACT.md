@@ -368,6 +368,14 @@ level-cap range, per-stage costs and their total; raw source evidence stays clos
 
 ## Character models
 
+The animation menu remembers its current branch during a viewer session. Previous
+and next controls beside the selected animation follow the loaded clip order,
+disable at list boundaries and select the corresponding subgroup when reopened.
+Scene settings may lock root translation independently in world X/Y/Z. The lock
+starts off; X/Z are preselected and Y stays free for jumps. Locking preserves
+rotation and pose, applies before physics/camera follow and never edits downloads.
+Settings remain local to the viewer session; no global site preference is needed.
+
 Model availability comes from the existing public character-model endpoint. Near
 the visible profile stage, the page may automatically mount the small rig preview;
 the animation pack is never fetched by browsing or scrolling. Clicking the stage

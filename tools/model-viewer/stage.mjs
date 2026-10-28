@@ -84,6 +84,7 @@ async function stage() {
     "animations.js",
     "viewer-ui.js",
     "camera-rig.js",
+    "root-motion.js",
     "fonts/DMSans.ttf",
     "fonts/Manrope.ttf",
     "fonts/DMSans-OFL.txt",

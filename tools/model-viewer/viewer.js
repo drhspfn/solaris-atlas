@@ -3,6 +3,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { SpringBones } from "./spring-bones.js";
 import { BoneCamera, cameraBones } from "./camera-rig.js";
+import { RootMotionLock } from "./root-motion.js";
 import { createViewerUI } from "./viewer-ui.js";
 import {
   resourceUrl as validatedResourceUrl,
@@ -10,6 +11,7 @@ import {
   attachAnimationCatalog,
   bindAnimationClips,
   lazyAnimationPack,
+  prepareAnimatedMeshes,
 } from "./animations.js";
 
 const $ = (id) => document.getElementById(id);
@@ -63,6 +65,9 @@ controls.minDistance = 0.015;
 controls.maxDistance = 12;
 controls.maxPolarAngle = Math.PI;
 const boneCamera = new BoneCamera(camera, controls);
+const motionStage = new THREE.Group();
+scene.add(motionStage);
+let rootMotion;
 let boneList, selectedBone;
 function cameraState() {
   $("camera-follow").checked = boneCamera.following;
@@ -147,6 +152,16 @@ $("floor").onchange = () => {
   floor.visible = $("floor").checked;
   $("axis-key").hidden = !floor.visible;
 };
+function updateAxisLocks() {
+  if (!rootMotion) return;
+  resetPhysics();
+  rootMotion.enabled = $("lock-position").checked;
+  $("lock-axes").disabled = !rootMotion.enabled;
+  for (const axis of ["x", "y", "z"]) rootMotion.axes[axis] = $("lock-" + axis).checked;
+  rootMotion.apply();
+}
+for (const id of ["lock-position", "lock-x", "lock-y", "lock-z"])
+  $(id).onchange = updateAxisLocks;
 
 let model,
   mixer,
@@ -245,6 +260,7 @@ function selectClip(name) {
   action = mixer.clipAction(clip);
   action.reset().play();
   mixer.update(0);
+  rootMotion?.apply();
   $("time").max = Math.max(action.getClip().duration, 0.001);
   $("time").disabled = action.getClip().duration === 0;
   updateTime();
@@ -255,6 +271,7 @@ $("time").oninput = () => {
   resetPhysics();
   action.time = Number($("time").value);
   mixer.update(0);
+  rootMotion?.apply();
   updateTime();
 };
 function timestamp(seconds) {
@@ -283,9 +300,11 @@ renderer.setAnimationLoop((milliseconds) => {
   if (document.hidden) return;
   if (mixer && (playing || $("turntable").checked) && !document.hidden) {
     restorePhysics();
+    rootMotion?.restore();
     const safeDelta = dt > 0.15 ? 0 : dt;
     if ($("turntable").checked) model.rotation.y += safeDelta * 0.5;
     mixer.update(playing ? safeDelta * Number($("speed").value) : 0);
+    rootMotion?.apply();
     if ($("physics").checked && physics) {
       if (dt > 0.15) physics.reset();
       physics.update(safeDelta, Number($("strength").value));
@@ -309,13 +328,17 @@ async function load() {
       },
     );
     model = gltf.scene;
-    scene.add(model);
+    motionStage.add(model);
+    prepareAnimatedMeshes(model);
     const bounds = new THREE.Box3().setFromObject(model);
     const center = bounds.getCenter(new THREE.Vector3());
     height = bounds.max.y - bounds.min.y;
     modelWidth = bounds.max.x - bounds.min.x;
     model.position.add(new THREE.Vector3(-center.x, -bounds.min.y, -center.z));
     model.updateMatrixWorld(true);
+    rootMotion = new RootMotionLock(motionStage, model);
+    $("lock-position").disabled = !rootMotion.root;
+    if (!rootMotion.root) $("lock-note").textContent = "Axis locking is unavailable for this model's skeleton.";
     boneList = cameraBones(model, gltf.parser);
     selectedBone = boneList.preferred;
     ui.setBones(boneList.options, (value) => {
@@ -341,6 +364,8 @@ async function load() {
         model.updateMatrixWorld(true);
         const posedBounds = new THREE.Box3().setFromObject(model, true);
         model.position.y -= posedBounds.min.y;
+        rootMotion.reference.y -= posedBounds.min.y;
+        rootMotion.apply();
       }
       status.textContent = clips.length
         ? `${clips.length} animations available`
