@@ -41,6 +41,25 @@ GitHub Variables have defaults in the renderer where appropriate; set the entrie
 
 `DOMAIN` is the only URL source of truth. Each deployment derives `API_URL=https://api.<DOMAIN>`, `FRONTEND_URL=https://<DOMAIN>`, `MEDIA_PUBLIC_BASE_URL=https://cdn.<DOMAIN>`, `CORS_ALLOWED_ORIGINS=https://<DOMAIN>`, `AUTH_COOKIE_DOMAIN=.<DOMAIN>`, and `GOOGLE_REDIRECT_URI=https://api.<DOMAIN>/auth/google/callback`. Point the root and `api` DNS names at this server; attach `cdn.<DOMAIN>` to the R2 bucket as its custom domain. Register the derived Google callback URI in Google Cloud Console. R2's S3 API endpoint and credentials remain separate storage settings.
 
+### AdSense publisher ID
+
+`NEXT_PUBLIC_GOOGLE_ADSENSE_CLIENT` is a public **build-time** GitHub repository
+variable (Actions > Variables), not a secret or a runtime server setting. It
+must be `ca-pub-` followed by 16 digits. The image build defaults to
+`ca-pub-5630632993844792`; changing the variable requires a new web image.
+The metadata tag and `/ads.txt` use this same validated value; an invalid or
+empty value omits the tag and makes `/ads.txt` return 404. Local Compose passes
+the value from `infrastructure/local/.env` as a build argument.
+
+The site currently does not load the AdSense script. Confirm the site in
+AdSense, configure Google Privacy & messaging or another Google-certified
+TCF CMP and its vendor disclosures, and review Google’s limited-ads settings
+before enabling ad requests. The local cookie choice is not a TCF signal.
+Google non-personalized ads can still use cookies; do not load them for a
+visitor who selected only necessary storage without an appropriate CMP and
+verified limited-ads setup. The Google CMP must obtain fresh consent when ads
+are enabled, including from visitors who already saved the site preference.
+
 ## Deployment
 
 1. Point the root and `api` subdomain A/AAAA records at the server, attach `cdn` to the R2 bucket custom domain, and allow inbound TCP 22, 80 and 443 (optionally UDP 443 for HTTP/3).

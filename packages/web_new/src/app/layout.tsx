@@ -4,10 +4,13 @@ import localFont from 'next/font/local';
 import '@/styles/index.css';
 import '@/styles/site-shell.css';
 import '@/styles/cutscene-archive.css';
+import '@/styles/cookie-consent.css';
 
 import { Footer } from '@/components/layout/Footer';
 import { Header } from '@/components/layout/Header';
 import { Providers } from '@/components/layout/Providers';
+import { CookieConsent } from '@/components/layout/CookieConsent';
+import { adsenseClient } from '@/lib/adsense';
 
 const dmSans = localFont({
   src: '../../public/model-viewer/fonts/DMSans.ttf',
@@ -33,7 +36,7 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
-  other: { 'google-adsense-account': 'ca-pub-5630632993844792' },
+  other: adsenseClient ? { 'google-adsense-account': adsenseClient } : {},
   title: {
     default: 'Solaris Atlas — Story Archive for Solaris-3',
     template: '%s | Solaris Atlas',
@@ -71,6 +74,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Header />
             <main>{children}</main>
             <Footer />
+            <CookieConsent />
           </div>
         </Providers>
       </body>

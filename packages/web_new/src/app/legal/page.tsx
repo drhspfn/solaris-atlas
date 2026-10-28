@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { CookieSettingsButton } from '@/components/layout/CookieConsent';
 
 export const metadata: Metadata = {
   title: 'Legal & privacy',
@@ -28,7 +29,7 @@ export default function LegalPage() {
           A clear account of who runs this archive, how to use it, and what happens to your data.
         </p>
         <p>
-          Last updated <time dateTime="2026-10-19">19 October 2026</time>
+          Last updated <time dateTime="2026-10-28">28 October 2026</time>
         </p>
       </header>
       <div className="legal-layout">
@@ -54,10 +55,9 @@ export default function LegalPage() {
               website.
             </p>
             <p>
-              The archive is currently free to use. There is no paid subscription, checkout or
-              advertising programme on the site. AI features have usage limits. Any future paid
-              offering or advertising will need its own published details and any required privacy
-              choices before it is introduced.
+              The archive is free to use, and AI features have usage limits. We are preparing
+              Google AdSense; advertising is not active yet. Before advertising is enabled, we will
+              provide the required advertising choices and update this notice with the actual providers.
             </p>
           </section>
           <section id="terms">
@@ -224,7 +224,9 @@ export default function LegalPage() {
             <p>
               Contabo provides server hosting. Cloudflare provides delivery and security
               infrastructure, including media delivery. Google processes information when you choose
-              its sign-in flow. OpenAI is the current AI API provider. Email you send is processed
+              its sign-in flow. We are preparing to use Google AdSense for advertising; Google and
+              its advertising partners would process advertising information when that service is
+              enabled. OpenAI is the current AI API provider. Email you send is processed
               by the email services used for the project’s contact addresses. These services may
               process information in countries other than your own.
             </p>
@@ -289,25 +291,40 @@ export default function LegalPage() {
           </section>
           <section id="storage">
             <h2>Cookies & local storage</h2>
-            <p>
-              Authentication cookies keep you signed in and support request protection. Short-lived
-              cookies may also support registration or Google sign-in. Security infrastructure may
-              set cookies to protect the service. Blocking these cookies can prevent account
-              features from working.
-            </p>
-            <p>
-              Your chosen archive language, narrative preferences, map filters and marked
-              collectibles are stored locally in your browser. This local map progress is not a
-              connection to your game account. Clearing site data removes these preferences and
-              locally saved progress; it does not itself delete server-side account records.
-            </p>
-            <p>
-              No advertising tags or paid-plan tracking are currently part of the website
-              implementation. If optional advertising or analytics is introduced, we will update
-              this information and provide choices or obtain consent where required before enabling
-              the relevant optional technologies. You can manage existing cookies and local storage
-              through your browser’s site settings.
-            </p>
+            <p>Cookies are small browser records; local storage is saved in your browser for a site.
+              Necessary storage supports sign-in, security and the site functions you choose.</p>
+            <div className="legal-table-wrap"><table>
+              <caption className="sr-only">Cookies and local storage used by Solaris Atlas</caption>
+              <thead><tr><th scope="col">Name</th><th scope="col">Purpose and duration</th></tr></thead>
+              <tbody>
+                <tr><td>solaris_session</td><td>Authentication session; normally up to 30 days, or until sign-out or revocation. The configured name and duration may differ.</td></tr>
+                <tr><td>solaris_csrf</td><td>Protects account requests against cross-site forgery; normally up to one day.</td></tr>
+                <tr><td>solaris_registration; solaris_pending_link</td><td>Short-lived Google sign-in completion or account-linking state; normally 15 and 10 minutes respectively, or until used.</td></tr>
+                <tr><td>wuwa-locale; atlas-map-filters; solaris-atlas:map-progress:v1; solaris-atlas:narrative-preferences:v1; solaris-atlas:guest-player-title:v1</td><td>Local language, map choices and saved progress, narrative settings and guest player name. They remain until changed or browser storage is cleared.</td></tr>
+                <tr><td>solaris-atlas:cookie-choice:v1</td><td>Stores your choice on this device until you change it or clear browser storage. It is not sent to our server.</td></tr>
+              </tbody>
+            </table></div>
+            <p>Cloudflare may use security cookies to protect the service. Their names and durations
+              depend on the protection applied. Blocking necessary storage can prevent account or site features from working.</p>
+            <h3>Advertising choices</h3>
+            <p>Google AdSense is being prepared, but its advertising script is not currently enabled.
+              You can choose “Only necessary” or “Accept all” in <CookieSettingsButton />. Your choice is stored
+              on this device and can be changed at any time. A certified consent management platform
+              will request advertising consent where required before ads are enabled; the current
+              site choice is not a Google TCF consent signal.</p>
+            <p>When advertising is enabled, Google and other advertising partners may use cookies or
+              similar storage and information about visits to this and other websites to show and
+              measure ads, including personalised ads when permitted. Even non-personalised AdSense
+              ads may use cookies for measurement and frequency limits. Limited advertising may use
+              IP addresses, and Google’s programmatic limited-ads setting can use storage for invalid
+              traffic detection. We do not currently load these ad technologies. The actual list of
+              advertising partners and their purposes will be available in the certified consent
+              manager when advertising is configured.</p>
+            <p>Learn how Google uses data in <a href="https://policies.google.com/technologies/partner-sites" target="_blank" rel="noreferrer">Google’s partner sites notice</a>,
+              manage Google ad personalisation in <a href="https://myadcenter.google.com/" target="_blank" rel="noreferrer">My Ad Center</a>,
+              or visit <a href="https://www.aboutads.info/choices/" target="_blank" rel="noreferrer">Your Ad Choices</a> for participating third-party networks.
+              Browser site settings can also remove existing cookies and local storage; clearing local
+              map progress does not delete server-side account records.</p>
           </section>
           <section id="ai">
             <h2>AI assistant</h2>

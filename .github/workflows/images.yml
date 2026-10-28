@@ -54,6 +54,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
           build-args: |
             NEXT_PUBLIC_API_BASE=/api
+            NEXT_PUBLIC_GOOGLE_ADSENSE_CLIENT=${{ vars.NEXT_PUBLIC_GOOGLE_ADSENSE_CLIENT || 'ca-pub-5630632993844792' }}
             INTERNAL_API_BASE=http://api:8000
             API_PROXY_TARGET=http://api:8000
             VITE_API_BASE=/api

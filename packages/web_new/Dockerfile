@@ -21,6 +21,8 @@ CMD ["npm", "run", "dev"]
 
 # 2. Build the Next.js application
 FROM base AS builder
+ARG NEXT_PUBLIC_GOOGLE_ADSENSE_CLIENT
+ENV NEXT_PUBLIC_GOOGLE_ADSENSE_CLIENT=${NEXT_PUBLIC_GOOGLE_ADSENSE_CLIENT}
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY packages/web_new ./

@@ -1,5 +1,13 @@
 # Interactive map UX contract
 
+## Cookie choices
+
+First visit presents equal choices for necessary storage and optional advertising.
+The site-wide footer and privacy policy reopen the choice. Selection is stored
+locally and never enables ad scripts on its own: AdSense account review and a
+Google-certified CMP must be configured before advertising can be activated.
+The current site preference is not an IAB TCF consent signal.
+
 ## Dungeon story context and cutscenes
 
 An explicit FinishDungeon condition can connect a quest to scenario flows from
