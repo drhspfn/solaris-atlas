@@ -22,10 +22,12 @@ function harness(importing = false, role = "admin") {
     requests = [],
     timers = new Map();
   let nextTimer = 0;
+  let nextChildId = 0;
   const focused = { isConnected: true, focusCount: 0, focus() { this.focusCount++; } };
   const document = { visibilityState: "visible", body: { style: { overflow: "auto" } }, activeElement: focused };
   const listeners = new Set();
   const window = {
+    innerWidth: 360, innerHeight: 720,
     location: { origin: "https://atlas.example" },
     addEventListener(type, listener) { if (type === "message") listeners.add(listener); },
     removeEventListener(type, listener) { if (type === "message") listeners.delete(listener); },
@@ -37,6 +39,9 @@ function harness(importing = false, role = "admin") {
   function element(path) {
     if (!elements.has(path)) elements.set(path, {
       open: false, isConnected: true, contentWindow: {},
+      style: {}, scrollTop: 0, clientHeight: 300,
+      showPopover() {}, hidePopover() {}, querySelector() { return null; },
+      getBoundingClientRect() { return { left: 12, top: 12, bottom: 56, width: 240 }; },
       showModal() { this.open = true; }, close() { this.open = false; }, focus() {},
     });
     return elements.get(path);
@@ -64,7 +69,7 @@ function harness(importing = false, role = "admin") {
           target[i] = { deps, run };
         }
       },
-      useId: () => "model",
+      useId: () => bucket ? `model-${bucket.id}` : "model",
       useCallback: (fn) => fn,
       useRef(value) {
         const i = refIndex++;
@@ -125,6 +130,14 @@ function harness(importing = false, role = "admin") {
       timers.delete(id);
     },
   });
+  const selectExports = {};
+  vm.runInNewContext(ts.transpileModule(
+    readFileSync(new URL("../src/components/ui/Select.tsx", import.meta.url), "utf8"),
+    { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } },
+  ).outputText, {
+    exports: selectExports, require: (id) => mocks[id] ?? require(id), window,
+  });
+  mocks["@/components/ui/Select"].Select = selectExports.Select;
   const props = importing
     ? { characterKey: "character:1505", versions: [], active: true }
     : {
@@ -164,10 +177,10 @@ function harness(importing = false, role = "admin") {
       function expand(node, path = "root") {
         if (!node || typeof node !== "object") return node;
         if (Array.isArray(node)) return node.map((n, i) => expand(n, `${path}.${i}`));
-        if (typeof node.type === "function" && node.type.name === "ModelFrame") {
+        if (typeof node.type === "function" && ["ModelFrame", "Select"].includes(node.type.name)) {
           const identity = `${path}:${node.key}`;
           used.add(identity);
-          if (!children.has(identity)) children.set(identity, { states: [], effects: [], refs: [] });
+          if (!children.has(identity)) children.set(identity, { id: nextChildId++, states: [], effects: [], refs: [] });
           bucket = children.get(identity);
           stateIndex = effectIndex = refIndex = 0;
           const result = expand(node.type(node.props), identity);
@@ -213,6 +226,175 @@ const model = {
   physics: { url: "/api/media/physics.json", size_bytes: 100 },
   animations: { url: "https://cdn.example/animations.glb", size_bytes: 8000 },
 };
+const forms = [
+  { ...model, id: "default", label: "Default" },
+  {
+    id: "alternate", label: "Alternate · authored form",
+    preview: { url: "/api/media/alternate-preview.glb", size_bytes: 2048 },
+    download: { url: "/api/media/alternate-full.glb", size_bytes: 8192 },
+    physics: { url: "/api/media/alternate-physics.json", size_bytes: 200 },
+    animations: { url: "/api/media/alternate-animations.glb", size_bytes: 16000 },
+    viewer_url: "https://alternate.example/model-viewer/old/index.html",
+  },
+];
+const formPickers = (tree) => nodes(tree).filter((n) => n.props.role === "listbox" && n.props["aria-label"] === "Model form");
+function chooseForm(tree, label, picker = 0) {
+  const option = nodes(formPickers(tree)[picker]).find((n) => n.props.role === "option" && nodes(n).some((child) => child.props.children === label));
+  assert(option, `Missing form option: ${label}`);
+  option.props.onClick();
+}
+
+test("form selection switches both stages while fullscreen is open, remounts rigs and isolates URLs", async () => {
+  const h = harness();
+  h.render();
+  h.requests[0].resolve({ ...model, forms });
+  await flush();
+  let tree = h.render();
+  assert.equal(formPickers(tree).length, 1);
+  assert.equal(nodes(tree).filter((n) => n.type === "iframe").length, 0);
+  h.observers.at(-1).callback([{ isIntersecting: true }]);
+  tree = h.render();
+  nodes(tree).find((n) => n.props["aria-haspopup"] === "dialog").props.onClick();
+  tree = h.render();
+  const oldFrames = nodes(tree).filter((n) => n.type === "iframe");
+  for (const frame of oldFrames) h.message(frame, "ready");
+  const modal = nodes(tree).find((n) => n.type === "dialog");
+  assert.equal(formPickers(nodes(modal).find((n) => n.type === "header")).length, 1);
+  const ids = nodes(tree).map((n) => n.props.id).filter(Boolean);
+  assert.equal(new Set(ids).size, ids.length);
+  chooseForm(tree, forms[1].label, 1);
+  tree = h.render();
+  assert.equal(nodes(tree).find((n) => n.type === "dialog").props.ref.current, modal.props.ref.current);
+  assert(modal.props.ref.current.open);
+  assert.equal(h.document.body.style.overflow, "hidden");
+  assert.equal(h.focused.focusCount, 0);
+  for (const picker of formPickers(tree)) {
+    assert.equal(nodes(picker).find((n) => n.props["aria-selected"]).props.children[0].props.children, forms[1].label);
+  }
+  const frames = nodes(tree).filter((n) => n.type === "iframe");
+  assert.equal(frames.length, 2);
+  frames.forEach((frame, index) => {
+    assert.notEqual(frame.props.ref.current.contentWindow, oldFrames[index].props.ref.current.contentWindow);
+    const url = new URL(frame.props.src);
+    assert.equal(url.origin, "https://alternate.example");
+    assert.equal(url.pathname, "/model-viewer/current/index.html");
+    assert.equal(url.searchParams.get("model"), forms[1].preview.url);
+    assert.equal(url.searchParams.get("physics"), index ? forms[1].physics.url : null);
+    assert.equal(url.searchParams.get("animations"), index ? forms[1].animations.url : null);
+    assert.equal(url.searchParams.get("animation_bytes"), index ? String(forms[1].animations.size_bytes) : null);
+  });
+  assert.deepEqual(nodes(tree).filter((n) => n.type === "a").map((n) => n.props.href), [forms[1].download.url, forms[1].animations.url]);
+  assert.equal(nodes(tree).filter((n) => n.props.role === "status").length, 2);
+  h.message(oldFrames[1], "ready", { origin: "https://alternate.example" });
+  h.message(frames[1], "ready"); // The previous form's origin cannot acknowledge this rig.
+  assert.equal(nodes(h.render()).filter((n) => n.props.role === "status").length, 2);
+  h.message(frames[1], "ready", { origin: "https://alternate.example" });
+  assert.equal(nodes(h.render()).filter((n) => n.props.role === "status").length, 1);
+  chooseForm(tree, forms[0].label); // The profile selector shares the modal state too.
+  tree = h.render();
+  assert(nodes(tree).find((n) => n.type === "dialog").props.ref.current.open);
+  assert.equal(new URL(nodes(tree).filter((n) => n.type === "iframe")[1].props.src, "https://atlas.example").searchParams.get("animations"), model.animations.url);
+  assert.equal(h.requests.length, 1); // Switching never downloads metadata or animation packs.
+  assert.equal(h.requests[0].options.cacheTtl, 0);
+  h.close();
+});
+
+test("forms never borrow missing assets or runtime URLs from root metadata", async () => {
+  const h = harness();
+  h.render();
+  const sparse = { id: "rig-only", label: "Rig only", preview: forms[1].preview, download: null, physics: null };
+  h.requests[0].resolve({ ...model, viewer_url: forms[1].viewer_url, forms: [forms[0], sparse, { ...sparse, id: "unpublished", label: "Unpublished", preview: null }] });
+  await flush();
+  let tree = h.render();
+  nodes(tree).find((n) => n.props["aria-haspopup"] === "dialog").props.onClick();
+  chooseForm(tree, sparse.label);
+  tree = h.render();
+  const frame = nodes(tree).find((n) => n.type === "iframe");
+  const url = new URL(frame.props.src, "https://atlas.example");
+  assert.equal(url.origin, "https://atlas.example");
+  assert.equal(url.searchParams.get("model"), sparse.preview.url);
+  for (const param of ["physics", "animations", "animation_bytes"]) assert(!url.searchParams.has(param));
+  assert.equal(nodes(tree).filter((n) => n.type === "a").length, 0);
+  chooseForm(tree, "Unpublished", 1);
+  tree = h.render();
+  assert(!nodes(tree).some((n) => n.type === "iframe"));
+  assert(nodes(tree).find((n) => n.type === "dialog").props.ref.current.open);
+  assert(nodes(tree).some((n) => n.props.children === "No preview has been published for this form."));
+  chooseForm(tree, sparse.label, 1);
+  assert(nodes(h.render()).some((n) => n.type === "iframe"));
+  h.close();
+  assert.equal(h.document.body.style.overflow, "auto");
+});
+
+test("switching forms with identical asset URLs still unloads the old iframe", async () => {
+  const h = harness();
+  h.render();
+  h.requests[0].resolve({ ...model, forms: [forms[0], { ...forms[0], id: "shared", label: "Shared rig" }] });
+  await flush();
+  let tree = h.render();
+  nodes(tree).find((n) => n.props["aria-haspopup"] === "dialog").props.onClick();
+  tree = h.render();
+  const old = nodes(tree).find((n) => n.type === "iframe");
+  h.message(old, "error");
+  chooseForm(h.render(), "Shared rig", 1);
+  tree = h.render();
+  const frame = nodes(tree).find((n) => n.type === "iframe");
+  assert.equal(frame.props.src, old.props.src);
+  assert.notEqual(frame.props.ref.current.contentWindow, old.props.ref.current.contentWindow);
+  assert(!nodes(tree).some((n) => n.props.role === "alert"));
+  assert(nodes(tree).some((n) => n.props.role === "status"));
+  h.close();
+});
+
+test("legacy, empty and single-form responses keep a single model without a selector", async () => {
+  for (const value of [undefined, null, [], [forms[1]]]) {
+    const h = harness();
+    h.render();
+    h.requests[0].resolve({ ...model, forms: value });
+    await flush();
+    let tree = h.render();
+    assert.equal(formPickers(tree).length, 0);
+    nodes(tree).find((n) => n.props["aria-haspopup"] === "dialog").props.onClick();
+    tree = h.render();
+    assert.equal(formPickers(tree).length, 0);
+    const assets = value?.[0] ?? model;
+    assert.equal(nodes(tree).find((n) => n.type === "a").props.href, assets.download.url);
+    assert.equal(new URL(nodes(tree).find((n) => n.type === "iframe").props.src, "https://atlas.example").searchParams.get("model"), assets.preview.url);
+    h.close();
+  }
+});
+
+test("character, game version and refresh changes reset selection and ignore stale forms", async () => {
+  for (const change of [{ characterKey: "character:1601" }, { gameVersion: "3.8.0" }, { refreshKey: 1 }]) {
+    const h = harness();
+    h.render();
+    h.requests[0].resolve({ ...model, forms });
+    await flush();
+    let tree = h.render();
+    chooseForm(tree, forms[1].label);
+    tree = h.render();
+    nodes(tree).find((n) => n.props["aria-haspopup"] === "dialog").props.onClick();
+    h.render();
+    Object.assign(h.props, change);
+    h.render();
+    tree = h.render();
+    assert(!nodes(tree).some((n) => n.type === "iframe" || n.type === "dialog" || n.type === "a"));
+    assert.equal(formPickers(tree).length, 0);
+    assert.equal(h.document.body.style.overflow, "auto");
+    assert(h.requests[0].options.signal.aborted);
+    h.props.refreshKey = 2;
+    h.render();
+    assert(h.requests[1].options.signal.aborted);
+    h.requests[1].resolve({ ...model, forms: [forms[1]] });
+    h.requests[2].resolve({ ...model, forms });
+    await flush();
+    tree = h.render();
+    assert.equal(nodes(formPickers(tree)[0]).find((n) => n.props["aria-selected"]).props.children[0].props.children, forms[0].label);
+    assert.equal(nodes(tree).find((n) => n.type === "a").props.href, model.download.url);
+    assert.equal(h.requests[2].options.cacheTtl, 0);
+    h.close();
+  }
+});
 
 test("near-visible preview is deferred, lightweight and opens a separate fullscreen viewer", async () => {
   const h = harness();

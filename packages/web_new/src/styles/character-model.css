@@ -1,5 +1,11 @@
 .character-model { margin-block: 24px; }
 .character-model h2 { font-size: 20px; margin: 0 0 12px; }
+.character-model-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.character-model-heading h2 { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.character-model-form-select { min-width: 0; max-width: 100%; width: min(240px, 100%); }
+.character-model-dialog-heading .character-model-form-select { flex: 0 1 240px; }
+.character-model-dialog-heading h2 { min-width: 0; }
+.character-model-form-select .atlas-select-trigger { width: 100%; min-width: 0; }
 .character-model p, .character-model-import p, .character-model-import-dialog p { color: var(--text-secondary); line-height: 1.6; overflow-wrap: anywhere; }
 .character-model-actions, .character-model-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-block: 16px; }
 .character-model button, .character-model-import button, .character-model-dialog button, .character-model-actions a {
@@ -46,6 +52,9 @@
 .character-model-viewer[open] { display: flex; flex-direction: column; }
 .character-model-viewer .character-model-embed { flex: 1; }
 @media (max-width: 600px) {
+  .character-model-viewer .character-model-dialog-heading { flex-wrap: wrap; gap: 8px; }
+  .character-model-viewer .character-model-dialog-heading h2 { flex: 1; }
+  .character-model-dialog-heading .character-model-form-select { order: 1; flex-basis: 100%; width: 100%; }
   .character-model-form, .character-model-actions { align-items: stretch; flex-direction: column; }
   .character-model-dialog-heading h2 { font-size: 18px; }
   .character-model-import-dialog { padding: 16px; }
