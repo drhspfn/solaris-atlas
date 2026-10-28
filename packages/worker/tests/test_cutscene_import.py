@@ -147,7 +147,7 @@ async def test_media_tool_failure_preserves_bounded_decoder_diagnostics(monkeypa
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", [None, "original_decoder", "playable_decoder", "timing"])
+@pytest.mark.parametrize("failure", [None, "reference_casing", "comparison_timeout", "encoding_timeout", "original_decoder", "playable_decoder", "timing"])
 async def test_unaligned_variants_publish_independent_authored_flow_only_if_valid(tmp_path, monkeypatch, failure, caplog):
     import json
     from pathlib import Path
@@ -157,7 +157,8 @@ async def test_unaligned_variants_publish_independent_authored_flow_only_if_vali
     from wuwa_story_worker import cutscene_import
     from wuwa_story_worker.cutscene_segments import VariantAlignmentError
 
-    assets = [f"asset:ue:/Game/Video{index}.Video{index}" for index in range(2)]
+    package = "video" if failure == "reference_casing" else "Video"
+    assets = [f"asset:ue:/Game/{package}{index}.Video{index}" for index in range(2)]
     flow = {
         "entry": "variants", "evidence": "authored independent variants",
         "nodes": [{"id": "variants", "kind": "choice", "prompt": "Choose a variant",
@@ -196,6 +197,11 @@ async def test_unaligned_variants_publish_independent_authored_flow_only_if_vali
     def compare(*args):
         if failure == "timing":
             raise ValueError("Variable frame timing cannot be segmented by frame indexes")
+        if failure == "comparison_timeout":
+            raise TimeoutError("Cutscene comparison timed out")
+        if failure == "encoding_timeout":
+            import subprocess
+            raise subprocess.TimeoutExpired(["ffmpeg", "branch.partial.mp4"], 600)
         raise VariantAlignmentError("Variant frame counts do not align; keep independent originals")
 
     monkeypatch.setattr(cutscene_import, "export_segments", compare)
@@ -224,7 +230,7 @@ async def test_unaligned_variants_publish_independent_authored_flow_only_if_vali
     monkeypatch.setattr(cutscene_import, "FileRegistrationService", lambda _: service)
     monkeypatch.setattr(cutscene_import, "publication_reference", reference)
     args = (recipe, tmp_path, tmp_path, tmp_path, tmp_path / "work", tmp_path / "decoder", tmp_path / "ffmpeg")
-    if failure:
+    if failure in {"original_decoder", "playable_decoder", "timing"}:
         with pytest.raises((RuntimeError, ValueError), match="corrupt video|Variable frame timing"):
             await cutscene_import.import_cutscene_recipe(*args)
         storage.ensure_bucket.assert_not_awaited()
@@ -242,4 +248,6 @@ async def test_unaligned_variants_publish_independent_authored_flow_only_if_vali
     assert [ref.metadata_json["duration_seconds"] for ref in references[:2]] == [1, 2]
     assert all("original_file_id" in ref.metadata_json for ref in references[:2])
     assert "cutscene.independent_variants" in caplog.text
+    assert references[-1].metadata_json["comparison_fallback"] == (
+        "timeout" if failure in {"comparison_timeout", "encoding_timeout"} else "unaligned")
     session.commit.assert_awaited_once()

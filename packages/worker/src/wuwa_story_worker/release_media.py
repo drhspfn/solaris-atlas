@@ -440,6 +440,8 @@ async def cutscene_assets(payload, parent):
 
 
 async def cutscene(payload, parent):
+    from wuwa_story_worker.cutscene_import import confined, movie_path
+
     context = await source_context(parent, video=True)
     if not await missing_cutscene_identities({"cutscene:" + payload["targets"][0]}, source_context=context):
         await cleanup_published_output(parent, payload.get("run_id"), "cutscene")
@@ -450,7 +452,7 @@ async def cutscene(payload, parent):
     missing_assets = []
     recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"], missing_assets=missing_assets)
     missing_wrappers = [video["asset"] for video in recipe["videos"]
-                        if not (assets / ("Client/Content/" + video["asset"].removeprefix("asset:ue:/Game/").rsplit(".", 1)[0] + ".uexp")).is_file()]
+                        if not confined(assets, "Client/Content/" + video["asset"].removeprefix("asset:ue:/Game/").rsplit(".", 1)[0] + ".uexp").is_file()]
     if missing_wrappers:
         # Keep the authored variant flow intact; never publish a different clip
         # or discard an unavailable variant to make the task look successful.
@@ -458,7 +460,6 @@ async def cutscene(payload, parent):
         return {"videos": 0, "asset_version": parent["asset_version"], "missing_assets": missing_wrappers,
                 "media_report": {"entries": [{"expected": path, "status": "not_in_archive", "matches": []}
                                              for path in missing_wrappers]}}, "partial"
-    from wuwa_story_worker.cutscene_import import confined, movie_path
     absent_movies = []
     invalid_movies = []
     for video in recipe["videos"]:
@@ -503,8 +504,9 @@ async def cutscene(payload, parent):
     for video in recipe["videos"]:
         package = video["asset"].removeprefix("asset:ue:/Game/").rsplit(".", 1)[0]
         expected = "Client/Content/" + package + ".uexp"
-        entries.append({"expected": expected, "status": "found" if (assets / expected).is_file() else "not_in_export",
-                        "matches": [expected] if (assets / expected).is_file() else []})
+        exported = confined(assets, expected)
+        entries.append({"expected": expected, "status": "found" if exported.is_file() else "not_in_export",
+                        "matches": [exported.relative_to(assets.resolve()).as_posix()] if exported.is_file() else []})
         for track in video.get("soundtrack", []):
             expected = track["bank"]
             entries.append({"expected": expected, "language": track.get("language"),

@@ -776,7 +776,8 @@ async def test_scoped_voice_roster_reuse_skips_extraction_and_reports_absent_lan
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("publication", ["completed", "partial", "failed"])
-async def test_cutscene_publication_cleans_only_owned_conversions(monkeypatch, tmp_path, publication):
+@pytest.mark.parametrize("package", ["Scene", "scene"])
+async def test_cutscene_publication_cleans_only_owned_conversions(monkeypatch, tmp_path, publication, package):
     root = tmp_path / "patch-workspaces/11"
     assets = root / "release-media/files"
     shared = assets / "Client/Content/Aki/Movies/Scene.uexp"
@@ -796,7 +797,7 @@ async def test_cutscene_publication_cleans_only_owned_conversions(monkeypatch, t
     def recipe(*_args, missing_assets, **_kwargs):
         if publication == "partial":
             missing_assets.append("MissingBank")
-        return {"videos": [{"asset": "asset:ue:/Game/Aki/Movies/Scene.Scene", "soundtrack": []}]}
+        return {"videos": [{"asset": f"asset:ue:/Game/Aki/Movies/{package}.Scene", "soundtrack": []}]}
 
     async def publish(recipe, _movies, _banks, _media, work, *_args, **_kwargs):
         assert recipe.is_file()

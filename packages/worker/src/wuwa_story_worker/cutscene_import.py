@@ -338,7 +338,7 @@ async def import_cutscene_recipe(
         for index, video in enumerate(spec.videos):
             engine = video.asset.removeprefix("asset:ue:")
             package, object_name = engine.rsplit(".", 1)
-            if package.rsplit("/", 1)[-1] != object_name:
+            if package.rsplit("/", 1)[-1].casefold() != object_name.casefold():
                 raise ValueError("Expected an exact Unreal media asset identity")
             exported = confined(
                 assets, "Client/Content/" + package.removeprefix("/Game/") + ".uexp"
@@ -418,6 +418,7 @@ async def import_cutscene_recipe(
             if bundle:
                 bundles.append((bundle_root, bundle))
         analysis, segments = None, []
+        comparison_fallback = None
         if (analyze_variants or spec.compare_variants) and len(prepared) > 1:
             try:
                 analysis, segments = await asyncio.to_thread(
@@ -426,9 +427,10 @@ async def import_cutscene_recipe(
                     ffmpeg.resolve(),
                     output / "segments",
                 )
-            except VariantAlignmentError as error:
-                # Unequal lengths/rates can be valid. Verify complete originals
-                # and playables before retaining the authored independent flow.
+            except (VariantAlignmentError, TimeoutError, subprocess.TimeoutExpired) as error:
+                # Segmentation is a storage optimization, not a prerequisite for
+                # playback. Keep the authored flow if its complete sources decode.
+                comparison_fallback = "unaligned" if isinstance(error, VariantAlignmentError) else "timeout"
                 for item in prepared:
                     for path in (item[1], item[2]):
                         await run_tool([
@@ -661,6 +663,7 @@ async def import_cutscene_recipe(
             reference.metadata_json = {
                 "asset_version": spec.asset_version,
                 "flow": spec.flow.model_dump(),
+                **({"comparison_fallback": comparison_fallback} if comparison_fallback else {}),
             }
             published_references[reference.id] = registered.id
             reference.source_path = spec.cutscene
