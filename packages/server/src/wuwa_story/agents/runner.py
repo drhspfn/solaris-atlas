@@ -56,6 +56,9 @@ read_cutscene_visual until next_offset is null. Visual observations are AI-gener
 sampled evidence, not dialogue or certain character identity. Combine them with exact
 dialogue, retaining variant identity. Write cutscene_descriptions with the exact
 visual_reference_id and observation_indices; use timed chapters only for longer scenes.
+Give each cutscene a concise, single-line title describing its subject or action in
+the output language. Use the same scene title for Rover variants. Never use an
+asset code such as M0311 as the title, and do not copy the whole quest title.
 Do not concatenate mutually exclusive Rover variants or fill gaps between sampled frames.
 State occurrence limits once in the overview, not after every fact. A main-quest label
 alone does not prove that a particular branch is mandatory: use actual source flow.
@@ -172,7 +175,8 @@ def system_prompt(
         + ", ".join(relations)
         + (
             ". AnalysisResult JSON schema: "
-            + json.dumps(AnalysisResult.model_json_schema(), ensure_ascii=False)
+            + json.dumps(AnalysisResult.model_json_schema(),
+                         ensure_ascii=False)
             if include_schema
             else ""
         )
@@ -198,7 +202,8 @@ async def pause(session: AsyncSession, run: ProcessingRun, status: str, reason: 
             )
     run.status, run.error = status, reason
     await session.commit()
-    logger.info("agent.paused run_id=%s status=%s reason=%s", run.id, status, reason)
+    logger.info("agent.paused run_id=%s status=%s reason=%s",
+                run.id, status, reason)
 
 
 async def remote_call(
@@ -214,7 +219,8 @@ async def remote_call(
     compaction: bool = False,
 ) -> dict[str, Any] | None:
     call = await session.scalar(
-        select(AgentCall).where(AgentCall.run_id == run.id, AgentCall.step == step)
+        select(AgentCall).where(AgentCall.run_id ==
+                                run.id, AgentCall.step == step)
     )
     if call:
         if call.status == "completed" and call.response is not None:
@@ -236,7 +242,8 @@ async def remote_call(
         try:
             counted = await provider.count_input(payload)
             tokens = counted.get("input_tokens")
-            fits = type(tokens) is int and 0 <= tokens <= settings.max_input_tokens
+            fits = type(
+                tokens) is int and 0 <= tokens <= settings.max_input_tokens
             if type(tokens) is int and 0 <= tokens <= settings.max_input_tokens:
                 input_bound = tokens
                 counted_input = True
@@ -313,7 +320,8 @@ async def remote_call(
     waited = 0.0
     next_retry = metadata.get("retry_at")
     delay = (
-        max(0.0, (datetime.fromisoformat(next_retry) - datetime.now(UTC)).total_seconds())
+        max(0.0, (datetime.fromisoformat(next_retry) -
+            datetime.now(UTC)).total_seconds())
         if next_retry
         else 0.0
     )
@@ -327,7 +335,8 @@ async def remote_call(
             )
             return None
         if delay:
-            logger.info("agent.rate_limit_wait run_id=%s step=%s seconds=%.1f", run.id, step, delay)
+            logger.info(
+                "agent.rate_limit_wait run_id=%s step=%s seconds=%.1f", run.id, step, delay)
             await asyncio.sleep(delay)
             waited += delay
         attempts += 1
@@ -479,10 +488,12 @@ async def run_locked(
     finalization_end = cp.get("finalization_end")
     if finalization_end:
         step_ceiling = finalization_end
-    cross_snapshot = run.prompt_version in ("story-v4", "story-v5", "story-v6", "story-v7")
+    cross_snapshot = run.prompt_version in (
+        "story-v4", "story-v5", "story-v6", "story-v7")
     adaptive = run.prompt_version in ("story-v5", "story-v6", "story-v7")
     revisit = run.metadata_json.get("revisit")
-    source_release_ids = run.metadata_json.get("source_release_ids") if cross_snapshot else None
+    source_release_ids = run.metadata_json.get(
+        "source_release_ids") if cross_snapshot else None
     if cross_snapshot and (not source_release_ids or job.release_id not in source_release_ids):
         await pause(session, run, "stale", "Pinned research snapshots missing; create a new job")
         return
@@ -492,7 +503,8 @@ async def run_locked(
         relations = list(await session.scalars(select(RelationType.key).order_by(RelationType.key)))
         history = provider.initial(
             system_prompt(
-                locale.code, relations, cross_snapshot, include_schema=not adaptive or bool(revisit)
+                locale.code, relations, cross_snapshot, include_schema=not adaptive or bool(
+                    revisit)
             )
             + (ADAPTIVE_INSTRUCTIONS if adaptive else ""),
             f"Analyze quest game ID {quest.game_quest_id}, node ID {quest.node_id}; snapshot ID {job.release_id}. Begin with read_quest.",
@@ -531,17 +543,20 @@ async def run_locked(
     run.status, run.error = "running", None
     await session.commit()
     logger.info("agent.started run_id=%s step=%s", run.id, cp.get("step", 0))
-    result = AnalysisResult.model_validate(cp["result"]) if "result" in cp else None
+    result = AnalysisResult.model_validate(
+        cp["result"]) if "result" in cp else None
     if result is None:
         visual_inventory = await evidence.cutscene_inventory(quest) if adaptive else []
         required_read_turns = (
             (len(await evidence.target_positions()) + 49) // 50
-            + sum((asset["observation_count"] + 19) // 20 for asset in visual_inventory)
+            + sum((asset["observation_count"] + 19) //
+                  20 for asset in visual_inventory)
             if adaptive else 0
         )
         for step in range(cp.get("step", 0), step_ceiling):
             assessment = (
-                QuestAssessment.model_validate(cp["assessment"]) if cp.get("assessment") else None
+                QuestAssessment.model_validate(
+                    cp["assessment"]) if cp.get("assessment") else None
             )
             prescan = adaptive and assessment is None
             step_tools = definitions()
@@ -553,17 +568,25 @@ async def run_locked(
                 covered = max(covered, offset + count)
             missing_visual = []
             for asset in visual_inventory:
-                receipt = evidence.visual_evidence.get(str(asset["visual_reference_id"]), {})
-                unread = sorted(set(range(asset["observation_count"])) - set(receipt.get("indices", [])))
+                receipt = evidence.visual_evidence.get(
+                    str(asset["visual_reference_id"]), {})
+                unread = sorted(
+                    set(range(asset["observation_count"])) - set(receipt.get("indices", [])))
                 if unread:
-                    missing_visual.append({"asset_node_id": asset["asset_node_id"], "offset": unread[0], "limit": 20})
-            history.extend(provider.initial("", f"Server progress: {remaining} turns remain. Target dialogue covered through offset {covered}; total={evidence.total_lines}. Read only missing pages via returned next_offset; do not reread covered pages. Finish with finish_analysis before the turn budget ends. Pagination limits: read_quest <=50, read_cutscene_visual <=20. Correct validation errors using saved evidence.")[1:])
+                    missing_visual.append(
+                        {"asset_node_id": asset["asset_node_id"], "offset": unread[0], "limit": 20})
+            history.extend(provider.initial(
+                "", f"Server progress: {remaining} turns remain. Target dialogue covered through offset {covered}; total={evidence.total_lines}. Read only missing pages via returned next_offset; do not reread covered pages. Finish with finish_analysis before the turn budget ends. Pagination limits: read_quest <=50, read_cutscene_visual <=20. Correct validation errors using saved evidence.")[1:])
             if missing_visual:
-                history.extend(provider.initial("", "Required unread visual pages (batch these reads within the per-turn tool limit): " + json.dumps(missing_visual))[1:])
+                history.extend(provider.initial(
+                    "", "Required unread visual pages (batch these reads within the per-turn tool limit): " + json.dumps(missing_visual))[1:])
             if finalization_end:
-                history.extend(provider.initial("", "Finalization only: use existing research, read required missing dialogue/visual pages or exact cited sources, then submit finish_analysis. Do not explore new connections or reassess depth. All citation, coverage and budget checks remain enforced.")[1:])
-                allowed = {"finish_analysis", "read_quest", "read_cutscene_visual", "read_node"}
-                step_tools = [tool for tool in step_tools if tool["name"] in allowed]
+                history.extend(provider.initial(
+                    "", "Finalization only: use existing research, read required missing dialogue/visual pages or exact cited sources, then submit finish_analysis. Do not explore new connections or reassess depth. All citation, coverage and budget checks remain enforced.")[1:])
+                allowed = {"finish_analysis", "read_quest",
+                           "read_cutscene_visual", "read_node"}
+                step_tools = [
+                    tool for tool in step_tools if tool["name"] in allowed]
             if adaptive and not finalization_end:
                 step_tools.append(
                     {
@@ -580,7 +603,8 @@ async def run_locked(
                     if cp.get("prescan_reads", 0) < 3
                     else {"assess_quest"}
                 )
-                step_tools = [tool for tool in step_tools if tool["name"] in allowed]
+                step_tools = [
+                    tool for tool in step_tools if tool["name"] in allowed]
             call_settings = (
                 settings.model_copy(update={"max_output_tokens": 2048})
                 if prescan and settings.max_output_tokens <= 4096
@@ -599,7 +623,8 @@ async def run_locked(
                 )
             ):
                 before = request_bound(payload)
-                compact_route, compact_payload = provider.compact_request(history)
+                compact_route, compact_payload = provider.compact_request(
+                    history)
                 compact_raw = await remote_call(
                     session,
                     run,
@@ -664,11 +689,13 @@ async def run_locked(
                 await pause(session, run, "failed", "Provider output was truncated or blocked")
                 return
             history.extend(turn.items)
-            trace = {"recorded": True, "text": preview(turn.text, 8000), "tools": []}
+            trace = {"recorded": True, "text": preview(
+                turn.text, 8000), "tools": []}
             signatures = dict(cp.get("tool_signatures", {}))
             if not turn.calls:
                 history.extend(
-                    provider.initial("", "Use tools to research or finish_analysis to publish.")[1:]
+                    provider.initial(
+                        "", "Use tools to research or finish_analysis to publish.")[1:]
                 )
             for tool_index, tool_call in enumerate(turn.calls):
                 executed_call = tool_call
@@ -693,7 +720,8 @@ async def run_locked(
                 previous_source_nodes = dict(evidence.source_nodes)
                 try:
                     if finalization_end and tool_call.name not in {"finish_analysis", "read_quest", "read_cutscene_visual", "read_node"}:
-                        raise ValueError("Finalization permits only missing required sources and finish_analysis")
+                        raise ValueError(
+                            "Finalization permits only missing required sources and finish_analysis")
                     if tool_index >= settings.max_tool_calls_per_step:
                         raise ValueError(
                             f"Tool call limit reached ({settings.max_tool_calls_per_step}); "
@@ -708,16 +736,21 @@ async def run_locked(
                         and tool_call.name != "assess_quest"
                         and cp.get("prescan_reads", 0) >= 3
                     ):
-                        raise ValueError("Pre-scan read allowance reached; submit assess_quest")
+                        raise ValueError(
+                            "Pre-scan read allowance reached; submit assess_quest")
                     if tool_call.name == "assess_quest" and adaptive:
                         if len(turn.calls) != 1:
-                            raise ValueError("Assessment must be the only call in this turn")
-                        selected = QuestAssessment.model_validate(tool_call.arguments)
+                            raise ValueError(
+                                "Assessment must be the only call in this turn")
+                        selected = QuestAssessment.model_validate(
+                            tool_call.arguments)
                         authored_type = None
                         if run.prompt_version in ("story-v6", "story-v7"):
                             authored_type = await evidence.authored_quest_type()
-                            selected = primary_quest_role(selected, authored_type)
-                        policy = assessment_policy(selected, authored_main=authored_type == "1")
+                            selected = primary_quest_role(
+                                selected, authored_type)
+                        policy = assessment_policy(
+                            selected, authored_main=authored_type == "1")
                         if assessment and (
                             not selected.upgrade_reason or policy["words"] <= cp["policy"]["words"]
                         ):
@@ -735,10 +768,12 @@ async def run_locked(
                             evidence_note = NoteRequest(
                                 text="Assessment evidence", citations=citations
                             )
-                            validate_citations(evidence_note, evidence.evidence)
+                            validate_citations(
+                                evidence_note, evidence.evidence)
                             evidence.validate_source_identity(evidence_note)
                         if not any(c.snapshot_id == job.release_id for c in selected.citations):
-                            raise ValueError("Assessment must cite the target quest snapshot")
+                            raise ValueError(
+                                "Assessment must cite the target quest snapshot")
                         output = {
                             "policy": policy,
                             "assessment": selected.model_dump(),
@@ -751,34 +786,39 @@ async def run_locked(
                             "policy": policy,
                             "stage": "research",
                         }
-                        settings.max_steps = min(step_ceiling, step + 1 + required_read_turns + policy["research_steps"])
+                        settings.max_steps = min(
+                            step_ceiling, step + 1 + required_read_turns + policy["research_steps"])
                         settings.max_output_tokens = max(
                             settings.max_output_tokens, policy["output_tokens"]
                         )
                         job.config = settings.public_config()
                     elif tool_call.name == "finish_analysis":
                         if len(turn.calls) != 1:
-                            raise ValueError("Finish must be the only call in a turn")
+                            raise ValueError(
+                                "Finish must be the only call in a turn")
                         candidate = AnalysisResult.model_validate_json(
                             tool_call.arguments["result_json"]
                         )
                         final_errors: list[str] = []
                         if adaptive:
                             if assessment is None:
-                                raise ValueError("Classify this quest before publishing")
+                                raise ValueError(
+                                    "Classify this quest before publishing")
                             candidate.assessment = assessment
                             try:
                                 validate_lore_result(
                                     candidate,
                                     assessment,
-                                    authored_main=cp.get("authored_quest_type") == "1",
+                                    authored_main=cp.get(
+                                        "authored_quest_type") == "1",
                                 )
                             except ValueError as error:
                                 final_errors.append(str(error))
                         if revisit:
                             validate_revisit(candidate, revisit)
                         elif candidate.revisited_hooks:
-                            raise ValueError("Hook reviews require a focused revisit job")
+                            raise ValueError(
+                                "Hook reviews require a focused revisit job")
                         if run.prompt_version in (
                             "story-v3",
                             "story-v4",
@@ -791,7 +831,8 @@ async def run_locked(
                             await evidence.validate_result(
                                 candidate,
                                 require_full_quest=not bool(revisit),
-                                require_visual=run.prompt_version in ("story-v6", "story-v7")
+                                require_visual=run.prompt_version in (
+                                    "story-v6", "story-v7")
                                 and not bool(revisit),
                             )
                         except ValueError as error:
@@ -811,10 +852,12 @@ async def run_locked(
                             and 1 <= tool_call.arguments.get("limit", 30) <= 50
                         ):
                             # Full-quest intake uses size-bounded pages, not tiny model-selected batches.
-                            executed_call = ToolCall(tool_call.id, tool_call.name, {**tool_call.arguments, "limit": 50}, tool_call.native_id)
+                            executed_call = ToolCall(tool_call.id, tool_call.name, {
+                                                     **tool_call.arguments, "limit": 50}, tool_call.native_id)
                         output = await evidence.call(executed_call)
                     if len(json.dumps(output, ensure_ascii=False)) > settings.tool_result_chars:
-                        raise ValueError("Tool result too large; request fewer records")
+                        raise ValueError(
+                            "Tool result too large; request fewer records")
                     if prescan and tool_call.name != "assess_quest":
                         cp["prescan_reads"] = cp.get("prescan_reads", 0) + 1
                 except (ValueError, TypeError, KeyError) as error:
@@ -864,7 +907,8 @@ async def run_locked(
                     provider.initial(
                         "",
                         "Research output contract, used by finish_analysis result_json: "
-                        + json.dumps(AnalysisResult.model_json_schema(), ensure_ascii=False),
+                        + json.dumps(AnalysisResult.model_json_schema(),
+                                     ensure_ascii=False),
                     )[1:]
                 )
                 cp["research_schema_sent"] = True
@@ -885,7 +929,8 @@ async def run_locked(
                 cp["result"] = result.model_dump()
             job.checkpoint = cp
             recorded_call = await session.scalar(
-                select(AgentCall).where(AgentCall.run_id == run.id, AgentCall.step == step)
+                select(AgentCall).where(AgentCall.run_id ==
+                                        run.id, AgentCall.step == step)
             )
             if recorded_call is not None:
                 recorded_call.response = {
@@ -937,7 +982,8 @@ async def run_locked(
                     if settings.provider == "gemini"
                     else raw["data"][0]["embedding"]
                 )
-                vectors.append(vector_values(value, settings.embedding_dimensions))
+                vectors.append(vector_values(
+                    value, settings.embedding_dimensions))
             except (ValueError, KeyError, IndexError, TypeError):
                 await pause(session, run, "failed", "Invalid embedding response")
                 return
@@ -962,7 +1008,8 @@ async def run_locked(
         await evidence.validate_result(
             result,
             require_full_quest=not bool(revisit),
-            require_visual=run.prompt_version in ("story-v6", "story-v7") and not bool(revisit),
+            require_visual=run.prompt_version in (
+                "story-v6", "story-v7") and not bool(revisit),
         )
     except ValueError:
         await pause(
@@ -978,7 +1025,8 @@ async def run_locked(
         source_receipts=evidence.validated_sources if cross_snapshot else None,
         source_nodes=evidence.source_nodes if cross_snapshot else None,
     )
-    run.status, run.error, run.finished_at = "completed", None, datetime.now(UTC)
+    run.status, run.error, run.finished_at = "completed", None, datetime.now(
+        UTC)
     run.raw_output = {
         "document_id": document.id,
         "blocks": len(result.blocks),
@@ -986,9 +1034,11 @@ async def run_locked(
         "events": len(result.events),
     }
     # Preserve evidence/coverage and result, drop large private native conversation once published.
-    job.checkpoint = {key: value for key, value in cp.items() if key not in ("history", "vectors")}
+    job.checkpoint = {key: value for key,
+                      value in cp.items() if key not in ("history", "vectors")}
     await session.commit()
-    logger.info("agent.completed run_id=%s document_id=%s", run.id, document.id)
+    logger.info("agent.completed run_id=%s document_id=%s",
+                run.id, document.id)
 
 
 async def execute_job(

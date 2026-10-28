@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 PROMPT_VERSION = "story-v7"
 
@@ -57,14 +57,16 @@ class QuestAssessment(StrictModel):
     reason: str = Field(min_length=1, max_length=600)
     signals: list[LoreSignal] = Field(default_factory=list, max_length=8)
     citations: list[Citation] = Field(min_length=1, max_length=4)
-    upgrade_reason: str | None = Field(default=None, min_length=1, max_length=600)
+    upgrade_reason: str | None = Field(
+        default=None, min_length=1, max_length=600)
 
 
 class OpenHook(StrictModel):
     key: str = Field(pattern=r"^[a-z][a-z0-9_-]{2,63}$")
     question: str = Field(min_length=10, max_length=500)
     priority: Priority
-    kind: Literal["mystery", "mundane_outcome", "character", "regional_system", "time_memory"]
+    kind: Literal["mystery", "mundane_outcome",
+                  "character", "regional_system", "time_memory"]
     revisit_on_new_versions: bool
     revisit_reason: str = Field(min_length=1, max_length=500)
     search_terms: list[str] = Field(min_length=1, max_length=6)
@@ -117,7 +119,8 @@ class QuestChronology(StrictModel):
 
 
 class WorldChronology(StrictModel):
-    placement: Literal["before_quest", "during_quest", "after_quest", "unknown"]
+    placement: Literal["before_quest",
+                       "during_quest", "after_quest", "unknown"]
     explanation: str = Field(min_length=1, max_length=1000)
 
 
@@ -129,7 +132,8 @@ class LaterResolution(StrictModel):
 
 
 class StoryAssertion(StrictModel):
-    text: str = Field(min_length=1, max_length=2000, description="One atomic claim")
+    text: str = Field(min_length=1, max_length=2000,
+                      description="One atomic claim")
     status: Literal[
         "confirmed",
         "observed_anomaly",
@@ -159,11 +163,14 @@ class StoryAssertion(StrictModel):
 class ExplanationBlock(StrictModel):
     title: str = Field(min_length=1, max_length=200)
     text: str = Field(min_length=1, max_length=5000)
-    kind: str = Field(default="explanation", pattern="^(summary|explanation|annotation)$")
+    kind: str = Field(default="explanation",
+                      pattern="^(summary|explanation|annotation)$")
     citations: list[Citation] = Field(min_length=1, max_length=12)
     related_node_ids: list[int] = Field(default_factory=list, max_length=12)
-    related_records: list[RelatedRecord] = Field(default_factory=list, max_length=12)
-    assertions: list[StoryAssertion] = Field(default_factory=list, max_length=30)
+    related_records: list[RelatedRecord] = Field(
+        default_factory=list, max_length=12)
+    assertions: list[StoryAssertion] = Field(
+        default_factory=list, max_length=30)
     scene_importance: Priority = "medium"
 
     def search_text(self) -> str:
@@ -193,8 +200,10 @@ class InferredLink(StrictModel):
     explanation: str = Field(min_length=1, max_length=2000)
     confidence: float = Field(ge=0, le=1)
     citations: list[Citation] = Field(min_length=1, max_length=12)
-    relation_label: str | None = Field(default=None, min_length=1, max_length=120)
-    certainty: Literal["confirmed", "suggested", "inferred", "theory"] = "inferred"
+    relation_label: str | None = Field(
+        default=None, min_length=1, max_length=120)
+    certainty: Literal["confirmed", "suggested",
+                       "inferred", "theory"] = "inferred"
     signals: list[LinkSignal] = Field(default_factory=list, max_length=6)
 
 
@@ -202,7 +211,8 @@ class InferredEvent(StrictModel):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(min_length=1, max_length=2000)
     citations: list[Citation] = Field(min_length=1, max_length=12)
-    participant_node_ids: list[int] = Field(default_factory=list, max_length=20)
+    participant_node_ids: list[int] = Field(
+        default_factory=list, max_length=20)
 
 
 class HookReview(StrictModel):
@@ -226,10 +236,22 @@ class CutsceneChapter(StrictModel):
 class CutsceneDescription(StrictModel):
     asset_node_id: int = Field(gt=0)
     visual_reference_id: int = Field(gt=0)
-    title: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=120, pattern=r"^[^\r\n]+$")
     text: str = Field(min_length=1, max_length=2500)
-    chapters: list[CutsceneChapter] = Field(default_factory=list, max_length=12)
+    chapters: list[CutsceneChapter] = Field(
+        default_factory=list, max_length=12)
     observation_indices: list[int] = Field(min_length=1, max_length=40)
+
+    @field_validator("title")
+    @classmethod
+    def readable_title(cls, value):
+        import re
+
+        value = value.strip()
+        if not value or re.fullmatch(r"(?:cutscene:)?(?:Fly_)?[MRCEmrce]\d+(?:_\d+)*", value):
+            raise ValueError(
+                "Write a short human-readable scene title, not a resource code")
+        return value
 
 
 class StoryEvent(StrictModel):
@@ -239,10 +261,12 @@ class StoryEvent(StrictModel):
     timestamp_start: float | None = None
     timestamp_end: float | None = None
 
+
 class StoryFact(StrictModel):
     claim: str = Field(min_length=1, max_length=2000)
     evidence_level: Literal["explicit", "inferred", "speculative"]
     references: list[str] = Field(default_factory=list, max_length=12)
+
 
 class EntityRelationship(StrictModel):
     subject: str = Field(min_length=1, max_length=100)
@@ -250,25 +274,32 @@ class EntityRelationship(StrictModel):
     target: str = Field(min_length=1, max_length=100)
     evidence_ids: list[str] = Field(default_factory=list, max_length=12)
 
+
 class SceneKnowledge(StrictModel):
     summary: str = Field(min_length=1, max_length=5000)
     characters: list[str] = Field(default_factory=list, max_length=30)
     events: list[StoryEvent] = Field(default_factory=list, max_length=30)
     facts: list[StoryFact] = Field(default_factory=list, max_length=30)
-    relationships: list[EntityRelationship] = Field(default_factory=list, max_length=30)
+    relationships: list[EntityRelationship] = Field(
+        default_factory=list, max_length=30)
     interpretations: list[str] = Field(default_factory=list, max_length=10)
     source_references: list[str] = Field(default_factory=list, max_length=30)
 
+
 class AnalysisResult(StrictModel):
-    cutscene_descriptions: list[CutsceneDescription] = Field(default_factory=list, max_length=30)
-    revisited_hooks: list[HookReview] = Field(default_factory=list, max_length=12)
+    cutscene_descriptions: list[CutsceneDescription] = Field(
+        default_factory=list, max_length=30)
+    revisited_hooks: list[HookReview] = Field(
+        default_factory=list, max_length=12)
     assessment: QuestAssessment | None = None
     title: str = Field(min_length=1, max_length=200)
     blocks: list[ExplanationBlock] = Field(min_length=1, max_length=60)
     links: list[InferredLink] = Field(default_factory=list, max_length=60)
     events: list[InferredEvent] = Field(default_factory=list, max_length=20)
-    unresolved_questions: list[str] = Field(default_factory=list, max_length=30)
-    narrative_function: str | None = Field(default=None, min_length=1, max_length=1000)
+    unresolved_questions: list[str] = Field(
+        default_factory=list, max_length=30)
+    narrative_function: str | None = Field(
+        default=None, min_length=1, max_length=1000)
     knowledge_boundary: KnowledgeBoundary | None = None
     hooks: list[OpenHook] = Field(default_factory=list, max_length=12)
     review: AnalysisReview | None = None
@@ -277,7 +308,9 @@ class AnalysisResult(StrictModel):
     def search_text(self, ordinal: int) -> str:
         text = self.blocks[ordinal].search_text()
         if ordinal == 0 and self.revisited_hooks:
-            text += "\n\n" + "\n\n".join(review.explanation for review in self.revisited_hooks)
+            text += "\n\n" + \
+                "\n\n".join(
+                    review.explanation for review in self.revisited_hooks)
         return text
 
     def validate_temporal_structure(self) -> None:
@@ -286,7 +319,8 @@ class AnalysisResult(StrictModel):
                 "Every story-v3 block requires atomic assertions with chronology and knowledge state"
             )
         if any(not link.relation_label for link in self.links):
-            raise ValueError("Every story-v3 link requires a human-readable relation_label")
+            raise ValueError(
+                "Every story-v3 link requires a human-readable relation_label")
 
 
 class AnalysisRequest(StrictModel):
@@ -298,7 +332,8 @@ class AnalysisRequest(StrictModel):
 
 class NoteRequest(StrictModel):
     text: str = Field(min_length=1, max_length=3000)
-    kind: str = Field(default="note", pattern="^(note|missing_data|contradiction|bug)$")
+    kind: str = Field(
+        default="note", pattern="^(note|missing_data|contradiction|bug)$")
     citations: list[Citation] = Field(default_factory=list, max_length=12)
 
 
@@ -339,7 +374,8 @@ def citation_groups(
             groups.extend([result.assessment, *result.assessment.signals])
         groups.extend(result.hooks)
         groups.extend(result.revisited_hooks)
-        groups.extend(signal for link in result.links for signal in link.signals)
+        groups.extend(
+            signal for link in result.links for signal in link.signals)
         for block in result.blocks:
             groups.extend(block.assertions)
             groups.extend(
@@ -366,4 +402,5 @@ def validate_citations(result: AnalysisResult | NoteRequest, evidence: dict[int,
                            "use read_node if the excerpt does not cover the quote")
                     )
     if failures:
-        raise ValueError("Citation must quote evidence read in this run exactly. " + "\n".join(failures))
+        raise ValueError(
+            "Citation must quote evidence read in this run exactly. " + "\n".join(failures))
