@@ -52,7 +52,7 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
             assert rows(select(links.c.quest_id).where(links.c.state_id == orphan)) == set()
 
         db.execute("INSERT INTO graph.edge_evidence (edge_id, release_id) SELECT id, 1 FROM graph.edge")
-        pinned = quest_state_links(1)
+        pinned = _quest_state_links(1)
         assert rows(select(pinned.c.state_id).where(pinned.c.quest_id == 1)) == expected
         # Every hop must exist in the pinned snapshot, not just the final state.
         db.execute("UPDATE graph.edge_evidence SET release_id=2 WHERE edge_id IN (SELECT id FROM graph.edge WHERE (from_node_id=20 AND to_node_id=30) OR (from_node_id=80 AND to_node_id=107))")

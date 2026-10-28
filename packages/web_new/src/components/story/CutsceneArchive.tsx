@@ -6,6 +6,7 @@ import { api } from "@/api/client";
 import { useLocale } from "@/hooks/useLocale";
 import { Link, useSearchParams } from "@/lib/router";
 import { questPath } from "@/lib/routeKey";
+import { Select } from "@/components/ui/Select";
 import { ErrorPanel, PageLoader } from "@/components/ui/Feedback";
 import { Cutscene } from "./QuestCutscenes";
 import { cutsceneAnchor } from "./cutsceneAnchor";
@@ -17,10 +18,13 @@ type Scene = {
   name: string;
   title: string;
   title_kind: string;
+  game_version: string;
+  first_observed_game_version: string;
   quests: Quest[];
 };
 export type CutscenePage = {
-  game_version: string;
+  game_version: string | null;
+  imported_game_versions: string[];
   total: number;
   offset: number;
   limit: number;
@@ -29,8 +33,10 @@ export type CutscenePage = {
 export type CutsceneDetail = Scene & {
   game_version: string;
   event: QuestMediaEvent;
-  passages: (Quest & { focus_line?: string | null } &
-    Pick<QuestMediaEvent, "flow_state" | "action_index" | "reference">)[];
+  passages: (Quest & { focus_line?: string | null } & Pick<
+      QuestMediaEvent,
+      "flow_state" | "action_index" | "reference"
+    >)[];
 };
 
 export function CutsceneArchive({
@@ -41,11 +47,22 @@ export function CutsceneArchive({
   versions: string[];
 }) {
   const locale = useLocale();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const query = params?.toString() || "";
   const [data, setData] = useState(initial);
   const [loading, setLoading] = useState(!initial);
   const [error, setError] = useState("");
+  const [searchText, setSearchText] = useState(params?.get("q") || "");
+  useEffect(() => setSearchText(params?.get("q") || ""), [query]);
+  function filter(key: string, value: string) {
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      if (value) next.set(key, value);
+      else next.delete(key);
+      next.delete("offset");
+      return next;
+    });
+  }
   useEffect(() => {
     const controller = new AbortController();
     const search = new URLSearchParams(query);
@@ -76,46 +93,53 @@ export function CutsceneArchive({
       </header>
       <form
         className="cutscene-filters"
-        action="/cutscenes"
-        method="get"
-        key={query}
+        onSubmit={(event) => {
+          event.preventDefault();
+          filter("q", searchText.trim());
+        }}
       >
-        <label>
+        <label className="cutscene-filter">
           Scene code
           <div className="cutscene-search">
             <Search size={17} aria-hidden="true" />
             <input
               name="q"
               placeholder="M0311…"
-              defaultValue={params?.get("q") || ""}
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
               maxLength={128}
             />
           </div>
         </label>
-        <label>
-          Game data snapshot
-          <select
-            name="game_version"
-            defaultValue={params?.get("game_version") || ""}
-          >
-            <option value="">Latest imported snapshot</option>
-            {versions.map((version) => (
-              <option key={version}>{version}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Availability
-          <select
-            name="playable"
-            defaultValue={params?.get("playable") || "true"}
-          >
-            <option value="true">Ready to watch</option>
-            <option value="false">All scene references</option>
-          </select>
-        </label>
-        <button type="submit" className="button">
-          Apply filters
+        <div className="cutscene-filter">
+          <span>Game version</span>
+          <Select
+            label="Game version"
+            value={params?.get("game_version") || ""}
+            onChange={(value) => filter("game_version", value)}
+            options={[
+              { value: "", label: "All versions" },
+              ...(data?.imported_game_versions || versions).map((version) => ({
+                value: version,
+                label: version,
+              })),
+            ]}
+          />
+        </div>
+        <div className="cutscene-filter">
+          <span>Availability</span>
+          <Select
+            label="Availability"
+            value={params?.get("playable") || "true"}
+            onChange={(value) => filter("playable", value)}
+            options={[
+              { value: "true", label: "Ready to watch" },
+              { value: "false", label: "All scene references" },
+            ]}
+          />
+        </div>
+        <button type="submit" className="cutscene-apply">
+          Search
         </button>
       </form>
       {error ? (
@@ -129,11 +153,16 @@ export function CutsceneArchive({
           <>
             <div className="cutscene-count">
               {data.total} scenes{" "}
-              <span>Snapshot {data.game_version} · Spoilers ahead</span>
+              <span>
+                {data.game_version
+                  ? `Snapshot ${data.game_version}`
+                  : "All versions"}{" "}
+                · Newest first · Spoilers ahead
+              </span>
             </div>
             <p className="cutscene-snapshot-note">
-              Includes scenes present in this snapshot, including earlier
-              chapters. Video assets may come from a newer client.
+              Sorted by first appearance in imported game data. Each scene
+              appears once. Video assets may come from a newer client.
             </p>
             {!data.items.length && (
               <div className="empty-state">
@@ -148,7 +177,7 @@ export function CutsceneArchive({
               {data.items.map((scene, index) => (
                 <Link
                   key={scene.node_id}
-                  to={`/cutscenes/${encodeURIComponent(scene.name)}?game_version=${encodeURIComponent(data.game_version)}&locale=${locale}`}
+                  to={`/cutscenes/${encodeURIComponent(scene.name)}?game_version=${encodeURIComponent(scene.game_version)}&locale=${locale}`}
                   className="cutscene-list-row"
                 >
                   <span className="cutscene-list-index">
@@ -159,7 +188,7 @@ export function CutsceneArchive({
                   </span>
                   <span className="cutscene-list-copy">
                     <small>
-                      {scene.name}
+                      {scene.name} · v{scene.first_observed_game_version}
                       {scene.title_kind === "analysis" ? " · AI title" : ""}
                     </small>
                     <h2>{scene.title}</h2>

@@ -9,6 +9,35 @@ from wuwa_story.db.repositories import cutscenes
 from wuwa_story.story.cutscenes import descriptions
 
 
+def test_all_versions_sort_numerically_by_first_observation_without_duplicate_scenes():
+    with sqlite3.connect(":memory:") as db:
+        for schema in ("core", "graph", "ops"):
+            db.execute(f"ATTACH DATABASE ':memory:' AS {schema}")
+        db.create_function("split_part", 3, lambda value, delimiter, index: value.split(delimiter)[index - 1])
+        db.execute("CREATE TABLE core.cutscene (node_id INTEGER, cg_name TEXT)")
+        db.execute("CREATE TABLE graph.node_revision (id INTEGER, node_id INTEGER, release_id INTEGER)")
+        db.execute("CREATE TABLE ops.game_release (id INTEGER, game_version TEXT, sequence INTEGER)")
+        db.execute("CREATE TABLE ops.import_run (release_id INTEGER, status TEXT)")
+        db.executemany("INSERT INTO ops.game_release VALUES (?, ?, ?)",
+                       [(1, "2.8.0", 10), (2, "2.9.0", 2), (3, "2.10.0", 3), (4, "3.0.0", 20)])
+        db.executemany("INSERT INTO ops.import_run VALUES (?, ?)",
+                       [(1, "succeeded"), (2, "succeeded"), (3, "succeeded"), (4, "running")])
+        db.executemany("INSERT INTO core.cutscene VALUES (?, ?)",
+                       [(10, "M010"), (20, "M020"), (30, "M030"), (40, "M040")])
+        db.executemany("INSERT INTO graph.node_revision VALUES (?, ?, ?)",
+                       [(1, 10, 1), (2, 10, 2), (3, 10, 3), (4, 20, 2),
+                        (5, 20, 3), (6, 20, 3), (7, 30, 3), (8, 40, 4)])
+
+        def rows(release_id=None, offset=0):
+            query = cutscenes.archive_query(release_id, "", False).limit(2).offset(offset)
+            sql = str(query.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+            return db.execute(sql).fetchall()
+
+        assert rows() == [(30, "M030", "2.10.0", 3, "2.10.0"), (20, "M020", "2.9.0", 3, "2.10.0")]
+        assert rows(offset=2) == [(10, "M010", "2.8.0", 3, "2.10.0")]
+        assert rows(1) == [(10, "M010", "2.8.0", 3, "2.10.0")]
+
+
 @pytest.mark.asyncio
 async def test_source_parent_lookup_excludes_other_snapshots_and_inferred_links():
     with sqlite3.connect(":memory:") as db:
