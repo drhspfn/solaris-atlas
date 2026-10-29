@@ -5,6 +5,7 @@ decoded node against the matching client table before accepting the order.
 """
 from __future__ import annotations
 
+import json
 import struct
 from dataclasses import dataclass
 from typing import Any
@@ -46,6 +47,15 @@ class _Reader:
             raise ValueError("Invalid tree buffer pointer")
         return target
 
+    def string(self, pos: int, index: int) -> str:
+        target = self.pointer(pos, index)
+        if target is None:
+            raise ValueError("Missing tree table string")
+        length = self.number(target, '<I')
+        if target + 4 + length > len(self.data):
+            raise ValueError("Invalid tree table string")
+        return self.data[target + 4:target + 4 + length].decode('utf-8')
+
     def vector(self, pos: int, index: int) -> list[int]:
         vector = self.pointer(pos, index)
         if vector is None:
@@ -61,6 +71,17 @@ class _Reader:
                 raise ValueError("Invalid tree child pointer")
             result.append(target)
         return result
+
+
+def read_tree_node_record(data: bytes) -> tuple[str, dict[str, Any]]:
+    """Decode a QuestNodeData/LevelPlayNodeData row from the client ConfigDB."""
+    reader = _Reader(data)
+    root = reader.number(0, '<I')
+    key = reader.string(root, 0)
+    value = json.loads(reader.string(root, 1))
+    if not isinstance(value, dict):
+        raise ValueError("Invalid tree node record")
+    return key, value
 
 
 def read_tree_order(data: bytes, kind: str, records: dict[int, dict[str, Any]]) -> list[TreePosition]:
