@@ -360,6 +360,16 @@ def same_rest_skeleton(primary, extra) -> bool:
     return True
 
 
+def canonical_animation_rig(armature):
+    """Keep animation-only container/skin names independent of a form's mesh."""
+    name = "SolarisAnimationRig"
+    bone_names = {bone.name for bone in armature.data.bones}
+    while name in bone_names:
+        name += "_"
+    armature.name = name
+    armature.data.name = name
+
+
 @contextmanager
 def preview_meshes(meshes):
     """The generated base-color shaders use only the render UV and no colors."""
@@ -604,6 +614,7 @@ def main():
         from io_scene_gltf2.blender.exp.exporter import GlTF2Exporter
         from io_scene_gltf2.io.com.gltf2_io import Accessor, BufferView
 
+        canonical_animation_rig(armature)
         with indexed_gltf_references(GlTF2Exporter, (Accessor, BufferView)):
             result = bpy.ops.export_scene.gltf(
                 filepath=str(part.resolve()),
@@ -882,6 +893,7 @@ def main():
         bpy.ops.object.select_all(action="DESELECT")
         armature.select_set(True)
         bpy.context.view_layer.objects.active = armature
+        canonical_animation_rig(armature)
         export_glb("animations.glb", morph=False, animations=True, selected=True)
         # Blender runs this file as a script, outside the worker package imports.
         sys.path.insert(0, str(Path(__file__).resolve().parent))

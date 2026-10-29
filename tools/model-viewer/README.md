@@ -119,6 +119,25 @@ Both full and compact rigs receive the skin repair. Cloth/hair masking remains
 unchanged; original game lighting, material effects and animation-blueprint
 composition are still outside this base-color preview.
 
+### Shared animation files across forms
+
+Animation-only exports use the stable `SolarisAnimationRig` name for the
+unanimated armature container and skin, retaining authored joint names, hierarchy,
+rest transforms and every animation channel. Identical collections therefore
+produce identical SHA-256-addressed files: each form keeps its own reference to
+that one object. Different rigs or clip data remain distinct automatically; no
+compatibility guess or union of unrelated clips is introduced. Per-form export
+computation still runs independently.
+
+The two published Denia archives were checked in full: 746 clips, 363 joints,
+identical JSON apart from the container/skin names, and identical 471,819,484-byte
+binary chunks (SHA-256 `5dc3e1874de7768c083b3398aefbea476b23bc8334045ae81a9f029b07d5f908`).
+Their 8-byte file-size difference was naming and JSON padding. New local exports
+from both source meshes also produce byte-identical animation parts after this
+normalization. Existing R2 objects/references are not deleted or rewritten; a
+rebuild publishes the deduplicated collection through the existing atomic bundle
+publication flow.
+
 ## Verification
 
 ### Model studio

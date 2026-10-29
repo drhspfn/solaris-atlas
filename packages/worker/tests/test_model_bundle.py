@@ -15,6 +15,7 @@ from wuwa_story_worker.model_bundle import (
     base_color_alpha_is_opacity,
     base_color_texture,
     build_animation_plan,
+    canonical_animation_rig,
     effect_space_only,
     file_sha256,
     indexed_gltf_references,
@@ -225,6 +226,16 @@ def test_denia_skin_passes_do_not_cut_neck_but_cloth_and_other_characters_keep_m
     assert base_color_alpha_is_opacity("MI_OtherCharacterUp01", skin)
     assert base_color_alpha_is_opacity("Hair", {"BlendMode": 2})
     assert not base_color_alpha_is_opacity("Face", {"BlendMode": 0})
+
+
+def test_animation_container_names_are_form_independent_without_renaming_joints():
+    rigs = [SimpleNamespace(name=name, data=SimpleNamespace(name=name, bones=[
+        SimpleNamespace(name="root"), SimpleNamespace(name="SolarisAnimationRig"),
+    ])) for name in ("Denia", "Denia_Body")]
+    for rig in rigs:
+        canonical_animation_rig(rig)
+        assert rig.name == rig.data.name == "SolarisAnimationRig_"
+        assert [bone.name for bone in rig.data.bones] == ["root", "SolarisAnimationRig"]
 
 
 def test_effect_space_pass_is_not_treated_as_color_geometry():
