@@ -69,7 +69,8 @@ class MemoryRedis:
 
 
 def setup_cache(redis=None, max_bytes=1024, block=None):
-    state = {"calls": 0, "revision": "initial", "response": {"data": "first"}}
+    state = {"calls": 0, "revision": "initial", "story_revision": "initial",
+             "response": {"data": "first"}}
     app = FastAPI()
 
     @app.get("/{path:path}")
@@ -88,10 +89,13 @@ def setup_cache(redis=None, max_bytes=1024, block=None):
     async def revision():
         return state["revision"]
 
+    async def story_revision():
+        return state["story_revision"]
+
     backend = redis if redis is not None else MemoryRedis()
     app.add_middleware(PublicResponseCache, settings=Settings(
         _env_file=None, api_cache_max_body_bytes=max_bytes), redis=backend,
-        revision_reader=revision)
+        revision_reader=revision, story_map_revision_reader=story_revision)
     return app, state, backend
 
 
@@ -132,6 +136,8 @@ async def test_hits_queries_invalidation_etags_and_ttl():
     ("/catalog", {"Cookie": "session=one"}),
     ("/catalog", {"Authorization": "Bearer one"}),
     ("/catalog", {"Range": "bytes=0-1"}),
+    ("/story-map", {"Cookie": "session=one"}),
+    ("/story-map", {"Authorization": "Bearer one"}),
 ])
 @pytest.mark.asyncio
 async def test_users_and_non_public_routes_bypass(path, headers):
@@ -195,3 +201,52 @@ async def test_inflight_old_response_cannot_fill_new_generation():
         await old
         assert (await client.get("/catalog")).headers["x-api-cache"] == "MISS"
     assert state["calls"] == 2
+
+
+@pytest.mark.asyncio
+async def test_story_map_uses_its_revision_without_affecting_other_routes():
+    app, state, _ = setup_cache()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        assert (await client.get("/story-map")).headers["x-api-cache"] == "MISS"
+        assert (await client.get("/catalog")).headers["x-api-cache"] == "MISS"
+        state["revision"] = "media-change"
+        assert (await client.get("/story-map")).headers["x-api-cache"] == "HIT"
+        assert (await client.get("/catalog")).headers["x-api-cache"] == "MISS"
+        state["story_revision"] = "quest-change"
+        assert (await client.get("/story-map")).headers["x-api-cache"] == "MISS"
+        assert (await client.get("/catalog")).headers["x-api-cache"] == "HIT"
+        # Only the exact story-map endpoint uses the narrower revision.
+        assert (await client.get("/story-map/other")).headers["x-api-cache"] == "MISS"
+        state["revision"] = "another-change"
+        assert (await client.get("/story-map/other")).headers["x-api-cache"] == "MISS"
+
+
+@pytest.mark.asyncio
+async def test_story_map_revision_single_flight_and_missing_coverage(monkeypatch):
+    from wuwa_story.api import cache
+
+    monkeypatch.setattr(cache, "_STORY_MAP_REVISION_CACHE", {"value": "", "expires": 0.0})
+    monkeypatch.setattr(cache, "_STORY_MAP_REVISION_LOCK", asyncio.Lock())
+    connection = AsyncMock()
+    connection.__aenter__.return_value = connection
+    connection.scalar.return_value = "story-revision"
+    monkeypatch.setattr(cache, "engine", SimpleNamespace(connect=lambda: connection))
+    assert await asyncio.gather(*(cache.story_map_revision() for _ in range(10))) == ["story-revision"] * 10
+    assert connection.scalar.await_count == 1
+    assert connection.scalar.await_args.args[1] == {
+        "expected_count": len(cache.STORY_MAP_TABLES), "tables": list(cache.STORY_MAP_TABLES)}
+    cache._STORY_MAP_REVISION_CACHE["expires"] = 0
+    connection.scalar.return_value = None
+    with pytest.raises(RuntimeError, match="coverage is incomplete"):
+        await cache.story_map_revision()
+
+
+@pytest.mark.asyncio
+async def test_story_map_revision_failure_bypasses_cache():
+    app, state, _ = setup_cache()
+    app.user_middleware[0].kwargs["story_map_revision_reader"] = AsyncMock(side_effect=RuntimeError())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        assert (await client.get("/story-map")).headers["x-api-cache"] == "BYPASS"
+        assert (await client.get("/story-map")).headers["x-api-cache"] == "BYPASS"
+        assert (await client.get("/catalog")).headers["x-api-cache"] == "MISS"
+    assert state["calls"] == 3
