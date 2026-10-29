@@ -5,12 +5,47 @@ import os
 import shutil
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 GIT_BASH = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe"
 BASH = str(GIT_BASH) if os.name == "nt" and GIT_BASH.is_file() else shutil.which("bash")
+
+
+@unittest.skipUnless(BASH, "Bash is required to test deployment orchestration")
+class DeploySshTests(unittest.TestCase):
+    def test_keepalive_and_exit_status_for_long_deploy(self):
+        workflow = (ROOT / ".github/workflows/production-deploy.yml").read_text()
+        step = workflow.split("      - name: Deploy component\n", 1)[1].split(
+            "      - name: Diagnose unhealthy containers\n", 1
+        )[0]
+        command = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        harness = r'''
+ssh() {
+  printf '%s\n' "$@" >&2
+  IFS= read -r token
+  [[ "$token" == test-token ]] || return 99
+  printf '%s\n' 'remote deployment output'
+  return "$SSH_RESULT"
+}
+'''
+        for status in (0, 37, 255):
+            with self.subTest(status=status):
+                result = subprocess.run(
+                    [BASH, "-e", "-o", "pipefail", "-s"], input=harness + command,
+                    env={**os.environ, "USER": "test", "HOST": "example.test",
+                         "GHCR_TOKEN": "test-token", "IMAGE_TAG": "abc1234",
+                         "COMPONENT": "api", "OWNER": "owner", "SSH_RESULT": str(status)},
+                    text=True, encoding="utf-8", capture_output=True, timeout=10, check=False,
+                )
+                self.assertEqual(result.returncode, status, result.stderr)
+                self.assertIn("remote deployment output", result.stdout)
+                args = result.stderr.splitlines()
+                self.assertEqual(args[:4], ["-o", "ServerAliveInterval=20", "-o", "ServerAliveCountMax=6"])
+                self.assertIn("test@example.test", args)
+                self.assertTrue(args[-1].endswith("bash scripts/deploy-remote.sh"))
 
 
 @unittest.skipUnless(BASH, "Bash is required to test deployment orchestration")

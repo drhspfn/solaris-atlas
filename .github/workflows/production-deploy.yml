@@ -224,7 +224,7 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: |
           printf '%s\n' "$GHCR_TOKEN" |
-            ssh "$USER@$HOST" "cd ~/solaris-atlas && IMAGE_TAG='$IMAGE_TAG' GHCR_OWNER='${OWNER,,}' DEPLOY_COMPONENT='$COMPONENT' bash scripts/deploy-remote.sh"
+            ssh -o ServerAliveInterval=20 -o ServerAliveCountMax=6 "$USER@$HOST" "cd ~/solaris-atlas && IMAGE_TAG='$IMAGE_TAG' GHCR_OWNER='${OWNER,,}' DEPLOY_COMPONENT='$COMPONENT' bash scripts/deploy-remote.sh"
       - name: Diagnose unhealthy containers
         if: ${{ failure() }}
         env:
