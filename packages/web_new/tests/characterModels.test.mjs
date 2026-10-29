@@ -117,6 +117,7 @@ function harness(importing = false, role = "admin") {
       disconnect() { this.disconnected = true; }
     },
     AbortController,
+    crypto: { randomUUID: () => "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
     URLSearchParams,
     document,
     window,
@@ -538,6 +539,31 @@ test("administrators can explicitly skip the animation pack", () => {
   animations.props.onChange({ target: { checked: false } });
   nodes(h.render()).find((node) => node.type === "form").props.onSubmit({ preventDefault() {} });
   assert.equal(h.requests[0].options.body.include_animations, false);
+  h.close();
+});
+
+test("an archive in the existing import form uploads bounded chunks then queues publication", async () => {
+  const h = harness(true);
+  const file = { size: 9, slice(start, end) { return { start, bytes: Math.min(end, 9) - start }; } };
+  nodes(h.render()).find(node => node.type === "input" && node.props.type === "file")
+    .props.onChange({ target: { files: [file] } });
+  let tree = h.render();
+  assert.equal(nodes(tree).find(node => node.type === "input" && node.props.type === "checkbox").props.disabled, true);
+  nodes(tree).find(node => node.type === "form").props.onSubmit({ preventDefault() {} });
+  assert.equal(h.requests[0].url, "/admin/character-models/uploads");
+  h.requests[0].resolve({ id: 8, status: "uploading", chunk_bytes: 4 });
+  await flush();
+  for (let part = 0; part < 3; part++) {
+    const request = h.requests[part + 1];
+    assert.equal(request.url, `/admin/character-models/uploads/8/parts/${part}`);
+    assert.equal(request.options.body.bytes, part === 2 ? 1 : 4);
+    request.resolve({ id: 8 }); await flush();
+  }
+  assert.equal(h.requests[4].url, "/admin/character-models/uploads/8/complete");
+  h.requests[4].resolve({ id: 8, status: "completed" });
+  await flush(); tree = h.render();
+  assert(nodes(tree).some(node => node.props.role === "status"));
+  assert(!h.requests.some(request => request.url === "/admin/character-models"));
   h.close();
 });
 

@@ -23,6 +23,7 @@ const stages: Record<string, string> = {
   animation_batch_completed: "Animation batch complete",
   merge_animation_batches: "Assembling animations",
   publish: "Publishing model",
+  validate_archive: "Validating the uploaded model archive",
 };
 
 export function CharacterModelImport({
@@ -77,6 +78,9 @@ function ImportControls({
   const [version, setVersion] = useState(initialGameVersion ?? "");
   const [force, setForce] = useState(false);
   const [includeAnimations, setIncludeAnimations] = useState(true);
+  const [archive, setArchive] = useState<File | null>(null);
+  const [uploadProgress, setUploadProgress] = useState("");
+  const uploadAttempt = useRef<{ file: File; key: string; version: string; token: string } | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -88,6 +92,7 @@ function ImportControls({
   const complete = useRef(onComplete);
   complete.current = onComplete;
   const keyInput = useRef<HTMLInputElement>(null);
+  const archiveInput = useRef<HTMLInputElement>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const pending = !!job && !terminal(job.status);
@@ -173,16 +178,56 @@ function ImportControls({
     const controller = new AbortController();
     request.current = controller;
     try {
-      const result = await api<Job>("/admin/character-models", {
-        method: "POST",
-        signal: controller.signal,
-        body: {
-          character_key: key.trim(),
-          ...(version.trim() ? { game_version: version.trim() } : {}),
-          force,
-          include_animations: includeAnimations,
-        },
-      });
+      let result: Job;
+      if (archive) {
+        if (archive.size > 4 * 1024 ** 3 || archive.size === 0)
+          throw new Error("Choose a nonempty model ZIP archive up to 4 GiB.");
+        if (
+          uploadAttempt.current?.file !== archive ||
+          uploadAttempt.current.key !== key.trim() ||
+          uploadAttempt.current.version !== version
+        ) {
+          uploadAttempt.current = {
+            file: archive, key: key.trim(), version,
+            token: crypto.randomUUID().replaceAll("-", ""),
+          };
+        }
+        const upload = await api<Job & { chunk_bytes: number }>("/admin/character-models/uploads", {
+          method: "POST",
+          signal: controller.signal,
+          body: {
+            character_key: key.trim(),
+            ...(version.trim() ? { game_version: version.trim() } : {}),
+            force, archive_bytes: archive.size, upload_token: uploadAttempt.current.token,
+          },
+        });
+        if (upload.status === "uploading") {
+          for (let offset = 0, part = 0; offset < archive.size; offset += upload.chunk_bytes, part++) {
+            setUploadProgress(`Uploading archive · ${Math.round(offset / archive.size * 100)}%`);
+            await api(`/admin/character-models/uploads/${upload.id}/parts/${part}`, {
+              method: "PUT",
+              body: archive.slice(offset, offset + upload.chunk_bytes),
+              signal: controller.signal,
+            });
+          }
+        }
+        setUploadProgress("Upload complete · queuing validation and publication");
+        result = await api<Job>(`/admin/character-models/uploads/${upload.id}/complete`, {
+          method: "POST",
+          signal: controller.signal,
+        });
+      } else {
+        result = await api<Job>("/admin/character-models", {
+          method: "POST",
+          signal: controller.signal,
+          body: {
+            character_key: key.trim(),
+            ...(version.trim() ? { game_version: version.trim() } : {}),
+            force,
+            include_animations: includeAnimations,
+          },
+        });
+      }
       if (controller.signal.aborted) return;
       setJob(result);
       if (result.status === "completed" && completed.current !== result.id) {
@@ -207,8 +252,8 @@ function ImportControls({
   const controls = (
     <>
       <p>
-        Import a rigged model with textures. Animations are stored separately
-        and load on demand.
+        Build from the game client, or upload a local model ZIP.
+        Animations load separately on demand.
       </p>
       <form
         noValidate
@@ -253,11 +298,33 @@ function ImportControls({
             />
           </label>
         )}
+        <label htmlFor={`${id}-archive`}>
+          Local model archive (optional)
+          <input ref={archiveInput} id={`${id}-archive`} type="file" accept=".zip,application/zip"
+            disabled={busy || pending} onChange={event => {
+              setArchive(event.target.files?.[0] ?? null); setUploadProgress("");
+            }} />
+          <small>Leave empty to build from the game. With an archive, its included animations and forms are used.</small>
+        </label>
+        {archive && <button type="button" disabled={busy || pending} onClick={() => {
+          setArchive(null); setUploadProgress("");
+          if (archiveInput.current) archiveInput.current.value = "";
+        }}>Use game client instead</button>}
+        <button type="button" disabled={busy || pending || !/^character:[1-9][0-9]*$/.test(key.trim())}
+          onClick={() => void (async () => {
+            try {
+              const query = new URLSearchParams({ character_key: key.trim(), ...(version ? { game_version: version } : {}) });
+              const recipe = await api<{ game_version: string }>(`/admin/character-models/recipe?${query}`, { cacheTtl: 0 });
+              const url = URL.createObjectURL(new Blob([JSON.stringify(recipe, null, 2)], { type: "application/json" }));
+              const link = document.createElement("a"); link.href = url; link.download = `${key.replace(":", "-")}-${recipe.game_version}-recipe.json`; link.click();
+              setTimeout(() => URL.revokeObjectURL(url), 1000);
+            } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not download model recipe."); }
+          })()}>Download local build recipe</button>
         <label className="character-model-force">
           <input
             type="checkbox"
             checked={includeAnimations}
-            disabled={busy || pending}
+            disabled={busy || pending || !!archive}
             onChange={(event) => setIncludeAnimations(event.target.checked)}
           />{" "}
           Include animations as a separate download
@@ -281,6 +348,7 @@ function ImportControls({
                 : "Import model"}
         </button>
       </form>
+      {busy && uploadProgress && <p role="status">{uploadProgress}</p>}
       {job && (
         <p role="status">
           Import #{job.id}: {job.status.replaceAll("_", " ")}
