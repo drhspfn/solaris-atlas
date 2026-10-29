@@ -267,6 +267,7 @@ async def node_narrative_context(
 
     from wuwa_story.api.routes.story import _dialogue_payload, _quest_info, _release_id
     from wuwa_story.api.routes.story.shared import _quest_state_links
+    from wuwa_story.db.repositories.quest_scope import quests_for_state
 
     release_id = await _release_id(session, game_version)
     line_query = (
@@ -330,13 +331,14 @@ async def node_narrative_context(
             Edge.layer == "source",
         )
     )
-    ownership = _quest_state_links(release_id)
+    ownership = _quest_state_links(release_id) if release_id is None else None
+    quest_ids = (await quests_for_state(session, target_state.node_id, release_id)
+                 if release_id is not None else select(ownership.c.quest_id).where(
+                     ownership.c.state_id == target_state.node_id))
     quest_rows = await session.scalars(
         select(Quest)
         .where(
-            Quest.node_id.in_(
-                select(ownership.c.quest_id).where(ownership.c.state_id == target_state.node_id)
-            )
+            Quest.node_id.in_(quest_ids)
         )
         .order_by(Quest.game_quest_id)
         .limit(20)
@@ -354,6 +356,7 @@ async def node_narrative_context(
         actions = {action.node_id: action for action in await session.scalars(
             select(QuestAction).where(QuestAction.node_id.in_({action for _, action in movies}))
         )} if movies else {}
+        memberships = set(await source_parents(session, actions.keys(), ("contains_action",), release_id))
         states = {state.node_id: state for state in await session.scalars(
             select(QuestState).where(QuestState.node_id.in_({action.quest_state_node_id for action in actions.values()}))
         )} if actions else {}
@@ -361,12 +364,14 @@ async def node_narrative_context(
         candidates = {quest.node_id: quest for quest in await session.scalars(
             select(Quest).where(Quest.node_id.in_({owner for _, owner in refs}))
         )} if refs else {}
-        scene_keys = dict(await session.execute(select(Node.id, Node.canonical_key).where(Node.id.in_(scene_ids)))) if scene_ids else {}
+        scene_keys = dict((await session.execute(
+            select(Node.id, Node.canonical_key).where(Node.id.in_(scene_ids))
+        )).all()) if scene_ids else {}
         seen = {quest["game_quest_id"] for quest in quests}
         for scene_id, action_id in movies:
             action = actions.get(action_id)
             state = states.get(action.quest_state_node_id) if action else None
-            if not state:
+            if not state or (action_id, state.node_id) not in memberships:
                 continue
             for state_id, owner in refs:
                 quest = candidates.get(owner)
