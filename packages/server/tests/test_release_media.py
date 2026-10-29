@@ -31,7 +31,7 @@ async def test_fanout_pins_dependencies_and_keeps_analysis_manual(monkeypatch):
     session = AsyncMock()
     session.get.return_value = SimpleNamespace(game_version="1.0.0")
     session.scalars.side_effect = [["character:1", "skill:2"], ["M0389"], ["vo_quest_1"]]
-    session.scalar.side_effect = [4] + [None] * 7
+    session.scalar.side_effect = [4] + [None] * 8
     session.add = lambda run: runs.append(run)
 
     async def flush():
@@ -40,10 +40,11 @@ async def test_fanout_pins_dependencies_and_keeps_analysis_manual(monkeypatch):
     published = AsyncMock()
     monkeypatch.setattr(release_media, "publish_media_job", published)
     result = await release_media.enqueue_release_media(session, 9)
-    assert result["queued"] == 7
+    assert result["queued"] == 8
     payloads = [call.args[0] for call in published.await_args_list]
     by_kind = {payload["kind"]: payload for payload in payloads}
     assert by_kind["prepare"]["parent_id"] is None
+    assert by_kind["tree_order"]["parent_id"] == by_kind["prepare"]["run_id"]
     assert by_kind["images"]["parent_id"] == by_kind["prepare"]["run_id"]
     assert by_kind["cutscene"]["parent_id"] == by_kind["cutscene_assets"]["run_id"]
     assert by_kind["voices"]["parent_id"] == by_kind["voice_packages"]["run_id"]
@@ -58,7 +59,7 @@ async def test_character_audio_is_published_in_independent_character_jobs(monkey
     session = AsyncMock()
     session.get.return_value = SimpleNamespace(game_version="1.1.0")
     session.scalars.side_effect = [["character:1302", "character:1304"], [], []]
-    session.scalar.side_effect = [4] + [None] * 5
+    session.scalar.side_effect = [4] + [None] * 6
     session.add = runs.append
     async def flush():
         runs[-1].id = len(runs)
@@ -78,7 +79,7 @@ async def test_unconfirmed_media_publication_is_recorded_for_retry(monkeypatch):
     session = AsyncMock()
     session.get.return_value = SimpleNamespace(game_version="1.0.0")
     session.scalars.side_effect = [[], [], []]
-    session.scalar.side_effect = [4, None]
+    session.scalar.side_effect = [4, None, None]
     runs = []
     session.add = lambda run: runs.append(run)
     async def flush():
@@ -86,9 +87,9 @@ async def test_unconfirmed_media_publication_is_recorded_for_retry(monkeypatch):
     session.flush.side_effect = flush
     monkeypatch.setattr(release_media, "publish_media_job", AsyncMock(side_effect=OSError("offline")))
     result = await release_media.enqueue_release_media(session, 9)
-    assert result["enqueue_failed"] == 1
+    assert result["enqueue_failed"] == 2
     assert runs[0].status == "enqueue_failed"
-    assert session.commit.await_count == 2
+    assert session.commit.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -96,7 +97,7 @@ async def test_completed_tasks_are_reused_without_publication(monkeypatch):
     session = AsyncMock()
     session.get.return_value = SimpleNamespace(game_version="1.0.0")
     session.scalars.side_effect = [[], [], []]
-    session.scalar.side_effect = [4, SimpleNamespace(id=10, status="completed")]
+    session.scalar.side_effect = [4, SimpleNamespace(id=10, status="completed"), SimpleNamespace(id=11, status="completed")]
     publish = AsyncMock()
     monkeypatch.setattr(release_media, "publish_media_job", publish)
     result = await release_media.enqueue_release_media(session, 9)
@@ -110,7 +111,7 @@ async def test_queued_import_is_not_published_again(monkeypatch):
     session = AsyncMock()
     session.get.return_value = SimpleNamespace(game_version="1.0.0")
     session.scalars.side_effect = [[], [], []]
-    session.scalar.side_effect = [4, SimpleNamespace(id=10, status="queued", metadata_json={})]
+    session.scalar.side_effect = [4, SimpleNamespace(id=10, status="queued", metadata_json={}), SimpleNamespace(id=11, status="queued", metadata_json={})]
     publish = AsyncMock()
     monkeypatch.setattr(release_media, "publish_media_job", publish)
     result = await release_media.enqueue_release_media(session, 9)
@@ -129,11 +130,12 @@ async def test_cleaned_workspace_reinitializes_prerequisites_and_rechecks_comple
     voice = SimpleNamespace(id=11, status="completed", metadata_json={}, raw_output={})
     images = SimpleNamespace(id=12, status="completed", metadata_json={}, raw_output={"entity_run_id": 90})
     character = SimpleNamespace(id=13, status="cancelled", metadata_json={}, raw_output=None)
-    session.scalar.side_effect = [4, prepare, voice, images, character]
+    tree = SimpleNamespace(id=14, status="completed", metadata_json={}, raw_output={})
+    session.scalar.side_effect = [4, prepare, voice, tree, images, character]
     publish = AsyncMock()
     monkeypatch.setattr(release_media, "publish_media_job", publish)
     result = await release_media.enqueue_release_media(session, 4)
-    assert result["queued"] == 4
+    assert result["queued"] == 5
     assert all(call.args[0]["recheck_files"] for call in publish.await_args_list)
     assert all(run.status == "queued" for run in [prepare, voice, images, character])
     assert images.raw_output is None

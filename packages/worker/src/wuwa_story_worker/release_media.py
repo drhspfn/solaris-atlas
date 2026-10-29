@@ -55,6 +55,7 @@ from wuwa_story_worker.media_workspace import (
     run_workspace_id,
     workspace_lease,
 )
+from wuwa_story_worker.quest_tree_order import store_tree_order, tree_records
 from wuwa_story_worker.tooling import asset_workspace, tool_path
 from wuwa_story_worker.voice_import import (
     exported_voices,
@@ -160,6 +161,33 @@ async def image_batch(payload, parent, run, session):
     if child.status not in {"completed", "partial"}:
         raise RuntimeError(f"Image extraction task #{child.id}: {child.error or child.status}")
     return {**(child.raw_output or {}), "entity_run_id": child.id}, child.status
+
+
+async def import_tree_orders(parent, session):
+    root = client_root(parent)
+    extractor = tool_path("WUWA_FMODEL_PATH")
+    config = await export_assets(root, extractor, "ConfigDB")
+    errors = []
+    total = 0
+    for kind, folder, dbname in (
+        ("quest", "Quests", "db_QuestNodeData.db"),
+        ("level_play", "LevelPlays", "db_LevelPlayNodeData.db"),
+    ):
+        receipt = await export_assets(root, extractor, f"Config/UniverseEditorConfig/{folder}/")
+        databases = list((config.parent / "files").rglob(dbname))
+        files = list((receipt.parent / "files").rglob("*.bytes"))
+        if len(databases) != 1 or not files:
+            raise ValueError(f"Missing client tree resources for {kind}")
+        records = await asyncio.to_thread(
+            list, tree_records(databases[0], files, kind, parent["asset_version"], errors)
+        )
+        for start in range(0, len(records), 25):
+            total += await store_tree_order(session, records[start:start + 25])
+            await session.commit()
+    logger.info("release_media.tree_order asset_version=%s stored=%s unresolved=%s",
+                parent["asset_version"], total, len(errors))
+    return {"asset_version": parent["asset_version"], "trees": total,
+            "unresolved": len(errors), "errors": errors[:100]}, "partial" if errors else "completed"
 
 
 async def event_catalog(payload, parent, session):
@@ -842,6 +870,8 @@ async def _process_release_media(payload):
                     elif payload["kind"] == "event_notices":
                         from wuwa_story_worker.notices import import_notices
                         result, status = await import_notices(client_root(parent.raw_output), session)
+                    elif payload["kind"] == "tree_order":
+                        result, status = await import_tree_orders(parent.raw_output, session)
                     elif payload["kind"] == "cutscene_assets":
                         result, status = await cutscene_assets(payload, parent.raw_output)
                     elif payload["kind"] == "voice_packages":

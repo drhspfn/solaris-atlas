@@ -12,7 +12,7 @@ from wuwa_story.db.models.core import AuthoredTreeOrder
 from wuwa_story.ingestion.quest_tree_order import read_tree_node_record, read_tree_order
 
 
-def tree_records(config_db: Path, files: list[Path], kind: str, asset_version: str):
+def tree_records(config_db: Path, files: list[Path], kind: str, asset_version: str, errors=None):
     if kind not in {'quest', 'level_play'} or not re.fullmatch(r'\d+\.\d+\.\d+', asset_version):
         raise ValueError('A tree kind and exact client version are required')
     table = 'questnodedata' if kind == 'quest' else 'levelplaynodedata'
@@ -28,8 +28,14 @@ def tree_records(config_db: Path, files: list[Path], kind: str, asset_version: s
                 raise ValueError('Client node key does not match its ConfigDB record')
             records[int(tree)][int(node)] = data
     for identity, path in sorted(selected.items()):
-        blob = path.read_bytes()
-        positions = read_tree_order(blob, kind, records[identity])
+        try:
+            blob = path.read_bytes()
+            positions = read_tree_order(blob, kind, records[identity])
+        except (ValueError, OSError) as error:
+            if errors is None:
+                raise
+            errors.append({'kind': kind, 'tree_id': identity, 'error': str(error)})
+            continue
         nodes = []
         for position in positions:
             raw = json.dumps(records[identity][position.node_id], sort_keys=True, separators=(',', ':'),
