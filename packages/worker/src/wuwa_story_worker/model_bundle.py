@@ -270,6 +270,74 @@ def base_color_texture(metadata: dict, converted: Path) -> tuple[str | None, Pat
     return reference, None
 
 
+def inherited_base_color_texture(metadata: dict, path: Path | None, converted: Path, source_json: Path):
+    """Follow explicit material-instance parents when a child has no color texture."""
+    visited = set()
+    while True:
+        reference, texture = base_color_texture(metadata, converted)
+        if reference or path is None:
+            return reference, texture
+        relative = path.relative_to(converted)
+        if relative in visited:
+            raise ValueError("Cyclic material parent chain")
+        visited.add(relative)
+        source = source_json / relative
+        if not source.is_file():
+            return None, None
+        rows = json.loads(source.read_text(encoding="utf-8-sig"))
+        parents = [
+            row.get("Properties", {}).get("Parent", {}).get("ObjectPath")
+            for row in rows
+            if row.get("Type") == "MaterialInstanceConstant" and row.get("Name") == path.stem
+        ]
+        if len(parents) != 1 or not parents[0]:
+            return None, None
+        parent = parents[0].replace("\\", "/").split(".", 1)[0]
+        if parent.startswith("/Game/"):
+            parent = "Client/Content/" + parent[6:]
+        if not parent.startswith("Client/Content/"):
+            return None, None
+        candidate = converted / (parent + ".json")
+        if not candidate.resolve().is_relative_to(converted.resolve()) or not candidate.is_file():
+            return None, None
+        path = candidate
+        metadata = json.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def opacity_mask_cutoff(metadata: dict) -> float:
+    """Use the cooked Unreal mask cutoff, or its engine default."""
+    cutoff = metadata.get("Properties", {}).get("BasePropertyOverrides", {}).get(
+        "OpacityMaskClipValue", 1 / 3
+    )
+    if type(cutoff) not in (int, float) or not 0 <= cutoff <= 1:
+        raise ValueError("Invalid opacity mask cutoff")
+    return float(cutoff)
+
+
+def effect_space_only(metadata: dict) -> bool:
+    """Effect-space write passes do not render as ordinary character surfaces."""
+    overrides = metadata.get("Properties", {}).get("BasePropertyOverrides", {})
+    return overrides.get("bEffectSpaceWrite") is True and "MaskTex" in metadata.get("Textures", {})
+
+
+def same_rest_skeleton(primary, extra) -> bool:
+    primary_bones = {bone.name: bone for bone in primary.data.bones}
+    extra_bones = {bone.name: bone for bone in extra.data.bones}
+    if primary_bones.keys() != extra_bones.keys():
+        return False
+    for name, bone in primary_bones.items():
+        other = extra_bones[name]
+        if (bone.parent.name if bone.parent else None) != (
+            other.parent.name if other.parent else None
+        ) or any(
+            abs(a - b) > 1e-4
+            for row_a, row_b in zip(bone.matrix_local, other.matrix_local, strict=True)
+            for a, b in zip(row_a, row_b, strict=True)
+        ):
+            return False
+    return True
+
+
 @contextmanager
 def preview_meshes(meshes):
     """The generated base-color shaders use only the render UV and no colors."""
@@ -369,6 +437,7 @@ def rig_glb_stats(path: Path, bones: int, morph_targets: int, textures: int) -> 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument("--extra-model", action="append", type=Path, default=[])
     parser.add_argument("--converted", type=Path, required=True)
     parser.add_argument("--source-json", type=Path, required=True)
     parser.add_argument("--skeleton", required=True)
@@ -464,6 +533,19 @@ def main():
         armature = UEFormatImport(UEModelOptions()).import_file(args.model)
     if armature is None or armature.type != "ARMATURE":
         raise ValueError("Export has no skinned armature")
+    if not batch_mode:
+        for extra_model in args.extra_model:
+            extra = UEFormatImport(UEModelOptions()).import_file(extra_model)
+            if extra is None or extra.type != "ARMATURE":
+                raise ValueError("Extra model has no skinned armature")
+            if not same_rest_skeleton(armature, extra):
+                raise ValueError("Extra model skeleton differs from the primary rig")
+            for obj in list(extra.children):
+                obj.parent = armature
+                for modifier in obj.modifiers:
+                    if modifier.type == "ARMATURE" and modifier.object == extra:
+                        modifier.object = armature
+            bpy.data.objects.remove(extra, do_unlink=True)
     if batch_mode:
         bones = {bone.name for bone in armature.data.bones}
         if set(plan["bones"]) != bones:
@@ -560,6 +642,22 @@ def main():
         report["animation_coverage"] = plan["animation_coverage"]
     metadata_files = list(args.converted.rglob("*.json"))
     material_files = {path.stem: path for path in metadata_files}
+    # An effect-space write is a non-color game render pass, not visible geometry.
+    for mesh in meshes:
+        skipped = set()
+        for index, material in enumerate(mesh.data.materials):
+            path = material_metadata_path(material.name, args.model, metadata_files) if material else None
+            metadata = json.loads(path.read_text(encoding="utf-8-sig")) if path else {}
+            if args.extra_model and effect_space_only(metadata):
+                skipped.add(index)
+        if skipped:
+            import bmesh
+
+            bm = bmesh.new()
+            bm.from_mesh(mesh.data)
+            bmesh.ops.delete(bm, geom=[face for face in bm.faces if face.material_index in skipped], context="FACES")
+            bm.to_mesh(mesh.data)
+            bm.free()
     for material in sorted(
         {material for mesh in meshes for material in mesh.data.materials if material},
         key=lambda material: material.name,
@@ -570,7 +668,10 @@ def main():
             else material_files.get(material.name)
         )
         metadata = json.loads(path.read_text(encoding="utf-8-sig")) if path else {}
-        reference, texture = base_color_texture(metadata, args.converted)
+        if args.extra_model and effect_space_only(metadata):
+            material.use_nodes = True
+            continue
+        reference, texture = inherited_base_color_texture(metadata, path, args.converted, args.source_json)
         if texture is None:
             report["missing_textures"].append({"material": material.name, "reference": reference})
         material.use_nodes = True
@@ -583,8 +684,16 @@ def main():
             node = material.node_tree.nodes.new("ShaderNodeTexImage")
             node.image = image
             material.node_tree.links.new(node.outputs["Color"], shader.inputs["Base Color"])
-            if metadata.get("BlendMode") in {1, 2}:
-                material.node_tree.links.new(node.outputs["Alpha"], shader.inputs["Alpha"])
+            blend_mode = metadata.get("BlendMode")
+            if blend_mode in {1, 2}:
+                alpha = node.outputs["Alpha"]
+                if blend_mode == 1:
+                    clip = material.node_tree.nodes.new("ShaderNodeMath")
+                    clip.operation = "GREATER_THAN"
+                    clip.inputs[1].default_value = opacity_mask_cutoff(metadata)
+                    material.node_tree.links.new(alpha, clip.inputs[0])
+                    alpha = clip.outputs[0]
+                material.node_tree.links.new(alpha, shader.inputs["Alpha"])
                 material.surface_render_method = "DITHERED"
         report["materials"].append(
             {"name": material.name, "texture": str(texture) if texture else None}

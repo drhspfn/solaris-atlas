@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from wuwa_story_worker.character_models import component_model
 from wuwa_story_worker.model_publication import ensure_glb_download, publish_viewer
 from wuwa_story_worker.model_sources import (
     authored_package,
@@ -29,6 +30,24 @@ def test_model_identity_comes_from_mesh_id_and_preload_not_portrait_names():
         model_sources({"MeshId": 99}, preload)
     with pytest.raises(ValueError, match="composite"):
         model_sources(role, {**preload, "Meshes": preload["Meshes"] * 2})
+
+
+def test_composite_component_requires_export_and_matching_skeleton(tmp_path):
+    converted, cooked = tmp_path / "converted", tmp_path / "cooked"
+    component = "Aki/Character/Role/Test/Model/Up2"
+    model = converted / "Client/Content" / (component + ".uemodel")
+    metadata = cooked / "Client/Content" / (component + ".json")
+    model.parent.mkdir(parents=True)
+    metadata.parent.mkdir(parents=True)
+    model.touch()
+    row = {"Type": "SkeletalMesh", "Name": "Up2", "Properties": {"Skeleton": {"ObjectPath": "/Game/Test/Rig.Rig"}}}
+    metadata.write_text(json.dumps([row]))
+    assert component_model(component, converted, cooked, "Test/Rig") == model.resolve()
+    with pytest.raises(ValueError, match="different skeleton"):
+        component_model(component, converted, cooked, "Test/Other")
+    model.unlink()
+    with pytest.raises(ValueError, match="not exported"):
+        component_model(component, converted, cooked, "Test/Rig")
 
 
 @pytest.mark.parametrize(

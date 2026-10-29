@@ -96,9 +96,8 @@ def preloads():
             ["Default", "Transformed form 1"],
             [("MeshId", 1311), ("rolemorph", 3)],
         ),
-        (ROLES[4], [100062], ["Default"], [("MeshId", 1211)]),
     ],
-    ids=["Cartethyia", "Zani", "Aemeath", "Hsin", "Denia-no-morph"],
+    ids=["Cartethyia", "Zani", "Aemeath", "Hsin"],
 )
 def test_exact_37_identities_and_complete_form_contract(preloads, role, mesh_ids, labels, sources):
     # Portraits and names must never participate in model lookup.
@@ -199,7 +198,16 @@ def test_malformed_declared_morph_identity_fails(preloads, field, value):
 
 def test_unrelated_malformed_morph_does_not_affect_role(preloads):
     forms = resolve_model_forms(ROLES[4], preloads, [{"RoleId": 1409}, {"MeshId": 100041}])
-    assert [form["id"] for form in forms] == ["mesh-100062"]
+    assert [form["id"] for form in forms] == ["mesh-100062", "mesh-100062-form-2"]
+
+
+def test_denia_forms_use_complete_light_and_composed_dark_assets(preloads):
+    light, dark = resolve_model_forms(ROLES[4], preloads, [])
+    assert light["label"] == "Stagecraft"
+    assert light["model"].endswith("/R2T1DaniyaMd10011")
+    assert dark["label"] == "Breakdown"
+    assert dark["model"].endswith("/R2T1DaniyaMd10011_Body")
+    assert dark["extra_models"] == [light["model"] + "_Up2"]
 
 
 @pytest.mark.parametrize("same_payload", [True, False])

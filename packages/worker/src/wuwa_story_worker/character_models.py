@@ -172,6 +172,26 @@ async def model_progress(run_id, stage, **details):
         )
 
 
+def component_model(component, converted, cooked, skeleton):
+    metadata_path = cooked / "Client/Content" / (component + ".json")
+    component_path = converted / "Client/Content" / (component + ".uemodel")
+    if not component_path.is_file() or not metadata_path.is_file():
+        raise ValueError("An authored character component was not exported")
+    rows = json.loads(metadata_path.read_text(encoding="utf-8-sig"))
+    component_skeletons = [
+        row.get("Properties", {}).get("Skeleton", {}).get("ObjectPath")
+        for row in rows
+        if row.get("Type") == "SkeletalMesh" and row.get("Name") == component.rsplit("/", 1)[-1]
+    ]
+    if (
+        len(component_skeletons) != 1
+        or not component_skeletons[0]
+        or exported_package(component_skeletons[0]) != skeleton
+    ):
+        raise ValueError("Character component uses a different skeleton")
+    return component_path.resolve()
+
+
 async def build_bundle(root, sources, include_animations=True, *, run_id=None):
     async def progress(stage, **details):
         await model_progress(
@@ -201,6 +221,10 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None):
     if len(skeletons) != 1 or not skeletons[0]:
         raise ValueError("The exported character mesh has no exact skeleton reference")
     skeleton = exported_package(skeletons[0])
+    extra_models = [
+        component_model(component, converted, cooked, skeleton)
+        for component in sources.get("extra_models", [])
+    ]
     command = [
         blender,
         "-b",
@@ -212,6 +236,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None):
         "--",
         "--model",
         model.resolve(),
+        *[arg for component in extra_models for arg in ("--extra-model", component)],
         "--converted",
         converted.resolve(),
         "--source-json",
@@ -311,6 +336,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None):
     provenance = {
         "source_files": manifest["files"],
         "model": sources["model"],
+        "extra_models": sources.get("extra_models", []),
         "blueprints": sources["blueprints"],
         "tools": {
             name: sha256(path)

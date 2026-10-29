@@ -171,10 +171,15 @@ It does not infer models from portraits or character names. Composite rigs fail
 with an inspectable error rather than silently selecting an unrelated mesh.
 Physics blueprints must target the mesh's exact exported skeleton.
 
-Denia's Blueprint uses the Body mesh and attaches two initially hidden ultimate
-hair components. Those component references are not standalone playable rigs;
-the importer does not invent additional forms from `_Up1`/`_Up2` filename suffixes.
-Reconstructing that runtime component visibility/pose composition remains unsupported.
+Denia's gameplay preload references an incomplete Body mesh. For the verified
+3.7 assets the importer explicitly builds the complete Stagecraft mesh and the
+Breakdown Body + Up2 composition as separate forms. The latter corresponds to the
+dark outfit and bare shoulders visible in gameplay. Its Blueprint references Up2
+as a component, but does not establish the runtime visibility transitions; this
+is a static reconstruction, not a reproduction of the in-game transformation.
+The components must have the same skeleton reference, hierarchy and rest pose.
+The effect-space-only pass is omitted and masked materials use their recorded
+cutoff. Original shaders and physics remain approximations.
 
 Downloaded archives are shared read-only. Rig-only imports export the model
 directory and authored blueprints. Animation imports additionally export the authored
