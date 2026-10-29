@@ -3,6 +3,7 @@
 from sqlalchemy import func, select
 
 from wuwa_story.db.models.ops import GameRelease
+from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.story.domain import version_key
 
@@ -13,6 +14,24 @@ REFERENCE_TYPES = {
     "character_model_animations": "animations",
     "character_model_facial": "facial",
 }
+
+
+async def model_recipe(session, release_id, character_id):
+    async def rows(path, field, values):
+        return list(await session.scalars(select(SourceRecord.data).join(SourceFile).where(
+            SourceRecord.release_id == release_id, SourceFile.logical_source_path == path,
+            SourceRecord.data[field].astext.in_([str(value) for value in values if value]),
+        ).order_by(SourceRecord.row_index)))
+
+    roles = await rows("BinData/role/roleinfo.json", "Id", [character_id])
+    if len(roles) != 1:
+        raise ValueError("Character model source is missing or ambiguous in this snapshot")
+    role = roles[0]
+    morphs = await rows("BinData/role/rolemorph.json", "RoleId", [character_id])
+    preloads = await rows("BinData/model_config_preload/modelconfigpreload.json", "Id", {
+        role.get("MeshId"), role.get("UiMeshId"), *(row.get("MeshId") for row in morphs),
+    })
+    return {"role": role, "preloads": preloads, "morphs": morphs}
 
 
 async def model_release(session, game_version=None):

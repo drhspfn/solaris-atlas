@@ -359,8 +359,9 @@ async def test_claim_accepts_legacy_payload_but_rejects_changed_animation_reques
     "include,clip_count,fail_batch",
     [(False, 0, False), (True, 1, False), (True, 41, False), (True, 41, True)],
 )
+@pytest.mark.parametrize("animation_workers", [1, 3])
 async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
-    tmp_path, monkeypatch, include, clip_count, fail_batch
+    tmp_path, monkeypatch, include, clip_count, fail_batch, animation_workers
 ):
     model = "Aki/Character/Role/FemaleM/Test/Variant/Model/Rig"
     cooked = tmp_path / "source-json"
@@ -429,12 +430,14 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
     if fail_batch:
         with pytest.raises(RuntimeError, match="Blender exited"):
             await worker.build_bundle(
-                tmp_path, {"model": model, "blueprints": []}, include_animations=True
+                tmp_path, {"model": model, "blueprints": []}, include_animations=True,
+                animation_workers=animation_workers,
             )
         assert not (tmp_path / "bundle/animations.glb").exists()
         return
     _, summaries, provenance = await worker.build_bundle(
-        tmp_path, {"model": model, "blueprints": []}, include_animations=include
+        tmp_path, {"model": model, "blueprints": []}, include_animations=include,
+        animation_workers=animation_workers,
     )
     assert extraction.call_args.args[-1] is include
     assert ("animations" in summaries) is include

@@ -46,7 +46,8 @@ def test_archive_rejects_unsafe_or_corrupt_members(tmp_path, mutation):
         for name, data in entries.items():
             archive.writestr(name, data)
         if mutation == "duplicate":
-            archive.writestr("manifest.json", json.dumps(manifest))
+            with pytest.warns(UserWarning, match="Duplicate name"):
+                archive.writestr("manifest.json", json.dumps(manifest))
     with pytest.raises(ValueError):
         read_archive(path, tmp_path / "decoded")
     assert not (tmp_path / "outside").exists()

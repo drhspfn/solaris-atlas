@@ -74,10 +74,18 @@ def write_archive(destination, metadata, bundles):
         forms.append({"form": form, "files": files, "provenance": provenance})
     manifest = validate_manifest({**metadata, "format": FORMAT, "forms": forms, "objects": objects})
     destination = Path(destination)
-    with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
-        archive.writestr("manifest.json", json.dumps(manifest, separators=(",", ":")))
-        for key, source in sources.items():
-            archive.write(source, "objects/" + key)
+    created = False
+    try:
+        with destination.open("xb") as target:
+            created = True
+            with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
+                archive.writestr("manifest.json", json.dumps(manifest, separators=(",", ":")))
+                for key, source in sources.items():
+                    archive.write(source, "objects/" + key)
+    except BaseException:
+        if created:
+            destination.unlink(missing_ok=True)
+        raise
     if destination.stat().st_size > MAX_ARCHIVE_BYTES:
         destination.unlink()
         raise ValueError("Model archive exceeds upload limit")
