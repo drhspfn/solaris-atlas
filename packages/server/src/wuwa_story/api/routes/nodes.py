@@ -268,6 +268,7 @@ async def node_narrative_context(
     from wuwa_story.api.routes.story import _dialogue_payload, _quest_info, _release_id
     from wuwa_story.api.routes.story.shared import _quest_state_links
     from wuwa_story.db.repositories.quest_scope import quests_for_state
+    from wuwa_story.story.service import prefetch_dialogue
 
     release_id = await _release_id(session, game_version)
     line_query = (
@@ -281,9 +282,6 @@ async def node_narrative_context(
     target_row = (await session.execute(line_query.where(DialogueLine.node_id == node.id))).first()
     if target_row is None:
         return {"canonical_key": node.canonical_key, "available": False, "reason": "dialogue source row is incomplete"}
-    target_payload = await _dialogue_payload(
-        session, target_row, locale_code=locale, release_id=release_id
-    )
     def compact_dialogue(payload: dict[str, Any]) -> dict[str, Any]:
         """Keep display/provenance fields without repeating an entire ShowTalk blob."""
         action = payload.get("action")
@@ -298,7 +296,6 @@ async def node_narrative_context(
                 choice_provenance.pop("raw_record", None)
         return payload
 
-    target_payload = compact_dialogue(target_payload)
     target_action = target_row[1]
     target_state = target_row[2]
 
@@ -314,6 +311,10 @@ async def node_narrative_context(
                 ).order_by(DialogueLine.source_index, DialogueLine.node_id)
             )
         ).all()
+    )
+    await prefetch_dialogue(session, [target_row, *context_rows], locale, release_id)
+    target_payload = compact_dialogue(
+        await _dialogue_payload(session, target_row, locale_code=locale, release_id=release_id)
     )
     context = [
         compact_dialogue(
