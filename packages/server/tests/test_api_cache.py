@@ -189,7 +189,7 @@ async def test_concurrent_cold_reads_share_one_response(origin_delay):
 @pytest.mark.asyncio
 async def test_slow_story_map_is_built_once_for_concurrent_readers():
     async def delay():
-        await asyncio.sleep(3.2)
+        await asyncio.sleep(4.5)
     app, state, _ = setup_cache(block=delay)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
         results = await asyncio.gather(*(client.get("/story-map") for _ in range(4)))
