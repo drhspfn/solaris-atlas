@@ -152,8 +152,10 @@ async def search(
     # name. Keep the matched alias for traceability, but always give catalog
     # cards a canonical localized title.
     from wuwa_story.api.routes.story import _node_label
+    from wuwa_story.story.service import prefetch_node_labels
 
     images = await entity_image_urls(session, [result["id"] for result in results])
+    await prefetch_node_labels(session, [result["id"] for result in results], locale)
     for result in results:
         result["image_url"] = images.get(result["id"])
         label = await _node_label(session, result["id"], locale)
