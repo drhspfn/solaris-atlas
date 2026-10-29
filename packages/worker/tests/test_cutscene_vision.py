@@ -256,6 +256,24 @@ async def test_legacy_jobs_retain_original_image_requests(monkeypatch, pipeline)
 
 
 @pytest.mark.asyncio
+async def test_previous_atlas_jobs_keep_their_protocol_and_preview_prompt(monkeypatch, pipeline):
+    db, run, settings = pipeline
+    run.prompt_version = "cutscene-visual-v3"
+
+    async def post(_, route, request):
+        content = request["input"][0]["content"]
+        prompt = content[0]["text"]
+        assert "preview_candidates" in prompt and 'Also provide title:' not in prompt
+        assert all(image["detail"] == "high" for image in content[1:])
+        return response(json.loads(prompt.split("Frame timestamps: ")[1]))
+
+    monkeypatch.setattr(vision.Provider, "post", post)
+    await vision.analyze_run(db, run, settings)
+    assert run.status == "completed"
+    assert db.reports[0].metadata_json["protocol"] == "cutscene-visual-v3"
+
+
+@pytest.mark.asyncio
 async def test_atlas_storage_failure_happens_before_paid_reservation(monkeypatch, pipeline):
     db, run, settings = pipeline
     monkeypatch.setattr(vision, "prepare_atlases", AsyncMock(side_effect=OSError("Storage unavailable")))
@@ -351,6 +369,7 @@ async def test_analysis_requests_and_publishes_ranked_candidates(monkeypatch, pi
         message = result["output"][0]["content"][0]
         payload = json.loads(message["text"])
         payload["preview_candidates"] = [{"index": 1, "score": 95}, {"index": 0, "score": 75}]
+        payload["title"] = "A Last Stand"
         message["text"] = json.dumps(payload)
         return result
 
@@ -359,4 +378,6 @@ async def test_analysis_requests_and_publishes_ranked_candidates(monkeypatch, pi
     assert run.status == "completed"
     assert db.reports[0].metadata_json["preview_file_ids"] == [31, 32]
     assert db.reports[0].metadata_json["preview_file_id"] == 31
+    assert db.reports[0].metadata_json["title"] == "A Last Stand"
+    assert db.reports[0].metadata_json["title_language"] == "en"
     assert publish.await_args.args[-1][0]["preview_candidates"][0]["score"] == 95

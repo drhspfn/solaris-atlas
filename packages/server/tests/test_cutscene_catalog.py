@@ -10,6 +10,20 @@ from wuwa_story.story.cutscenes import descriptions
 
 
 @pytest.mark.asyncio
+async def test_unlinked_scene_uses_visual_title_in_both_catalog_and_detail(monkeypatch):
+    import wuwa_story.story.cutscenes as service
+
+    monkeypatch.setattr(service.repository, "owners", AsyncMock(return_value=[]))
+    monkeypatch.setattr(service, "prefetch_localizations", AsyncMock())
+    monkeypatch.setattr(service, "previews", AsyncMock(return_value={}))
+    monkeypatch.setattr(service, "visual_titles", AsyncMock(return_value={9: "A Last Stand"}))
+    row = SimpleNamespace(node_id=9, cg_name="C3jiyanfight")
+    item = (await service.summaries(SimpleNamespace(), [row], 7, "en"))[0]
+    assert item["title"] == "A Last Stand"
+    assert item["title_kind"] == "analysis" and item["quests"] == []
+
+
+@pytest.mark.asyncio
 async def test_previews_use_current_video_and_only_edges_from_requested_snapshot(monkeypatch):
     import wuwa_story.story.cutscenes as service
 
@@ -42,6 +56,9 @@ async def test_previews_use_current_video_and_only_edges_from_requested_snapshot
              '{"source_file_id":51,"score":80}'),
             (5, 12, 72, "cutscene_preview",
              '{"source_file_id":51,"score":90}'),
+            (6, 12, 50, "cutscene_visual_description", '{"complete":true,"title_language":"en","title":"Outdated"}'),
+            (7, 12, 51, "cutscene_visual_description", '{"complete":true,"title_language":"en","title":"A Last Stand"}'),
+            (8, 12, 51, "cutscene_visual_title", '{"source_report_id":6,"title_language":"en","title":"Stale backfill"}'),
         ])
         db.executemany("INSERT INTO storage.file_location VALUES (?, ?, ?, 's3', 'test', 1, 1)",
                        [(1, 70, "stale"), (2, 71, "second"), (3, 72, "best")])
@@ -55,6 +72,12 @@ async def test_previews_use_current_video_and_only_edges_from_requested_snapshot
         assert result[10]["preview_file_id"] == 72
         assert [item["file_id"] for item in result[10]["previews"]] == [72, 71]
         assert await service.previews(Session(), [10], 8) == {}
+        assert await service.visual_titles(Session(), [10], 7, "en") == {10: "A Last Stand"}
+        db.execute("INSERT INTO storage.file_reference VALUES (9, 12, 51, 'cutscene_visual_title', ?)",
+                   ('{"source_report_id":7,"title_language":"en","title":"Backfilled title"}',))
+        assert await service.visual_titles(Session(), [10], 7, "en") == {10: "Backfilled title"}
+        assert await service.visual_titles(Session(), [10], 8, "en") == {}
+        assert await service.visual_titles(Session(), [10], 7, "ja") == {}
 
 
 @pytest.mark.asyncio
@@ -197,6 +220,7 @@ async def test_catalog_resolves_only_complete_quest_owner_paths_and_deduplicates
         [(9, 10), (9, 11)],  # Two actions play the same scene.
         [(20, 30), (21, 31), (20, 999)],
         [],  # No inferred scenario references.
+        [],  # No package-based scene references.
         [(30, 100)],  # Quest node owner.
         [(31, 40)],  # Plot scene -> plot step -> quest.
         [(40, 100)],
@@ -212,11 +236,21 @@ async def test_catalog_resolves_only_complete_quest_owner_paths_and_deduplicates
 @pytest.mark.asyncio
 async def test_catalog_marks_scenario_owner_as_inferred(monkeypatch):
     monkeypatch.setattr(cutscenes, "source_parents", AsyncMock(side_effect=[
-        [(9, 10)], [], [(20, 100)], [], [], [],
+        [(9, 10)], [], [(20, 100)], [], [], [], [],
     ]))
     quest = SimpleNamespace(node_id=100)
     session = SimpleNamespace(execute=AsyncMock(
         side_effect=[[(10, 20)], [(quest, "quest-slug")]]))
+    assert await cutscenes.owners(session, [9], 7) == [(9, quest, "quest-slug", True)]
+
+
+@pytest.mark.asyncio
+async def test_catalog_marks_package_owner_as_inferred(monkeypatch):
+    monkeypatch.setattr(cutscenes, "source_parents", AsyncMock(side_effect=[
+        [], [], [], [(9, 100)], [], [], [],
+    ]))
+    quest = SimpleNamespace(node_id=100)
+    session = SimpleNamespace(execute=AsyncMock(return_value=[(quest, "quest-slug")]))
     assert await cutscenes.owners(session, [9], 7) == [(9, quest, "quest-slug", True)]
 
 

@@ -20,6 +20,8 @@ type Job = {
   asset_node_id: number;
   game_version: string;
   status: string;
+  title_only?: boolean;
+  title_generated?: boolean | null;
   step: number;
   frames_done: number;
   frames_remaining: number;
@@ -382,8 +384,8 @@ export function CutsceneAnalysisClient() {
               </strong>
               <span className="agent-status">{statusLabel(job.status)}</span>
               <small>
-                Video version {job.game_version} · {job.step} requests · {job.frames_done} frames
-                analyzed{job.frames_remaining > 0 && ` · ${job.frames_remaining} remaining`}
+                Video version {job.game_version} · {job.step} requests ·{' '}
+                {job.title_only ? 'Title from existing observations' : `${job.frames_done} frames analyzed${job.frames_remaining > 0 ? ` · ${job.frames_remaining} remaining` : ''}`}
               </small>
               <small>
                 {(job.tokens_input || 0).toLocaleString('en-US')} input ·{' '}
@@ -400,7 +402,9 @@ export function CutsceneAnalysisClient() {
               {job.error && <p>{job.error}</p>}
               {job.status === 'completed' && (
                 <small>
-                  Visual evidence is ready. Analyze the quest to generate its reader description.
+                  {job.title_only
+                    ? job.title_generated ? 'Title is ready.' : 'No suitable title could be generated from these observations.'
+                    : 'Visual evidence is ready. Analyze the quest to generate its reader description.'}
                 </small>
               )}
               {job.status === 'paused_uncertain' && (

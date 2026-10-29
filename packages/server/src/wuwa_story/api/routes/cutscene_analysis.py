@@ -60,6 +60,8 @@ def public_job(run: ProcessingRun) -> dict[str, Any]:
         "asset_node_id": run.target_node_id,
         "game_version": run.metadata_json.get("asset_version"),
         "status": run.status,
+        "title_only": bool(run.metadata_json.get("title_only_report_id")),
+        "title_generated": bool(checkpoint.get("title")) if run.metadata_json.get("title_only_report_id") else None,
         "step": checkpoint.get("step", 0),
         "frames_done": sum(len(batch.get("events", [])) for batch in batches),
         "frames_remaining": sum(len(batch) for batch in checkpoint.get("pending", [])),

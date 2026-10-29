@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from sqlalchemy import select
+from sqlalchemy import BigInteger, and_, or_, select
 from sqlalchemy.orm import aliased
 
 from wuwa_story.agents.cutscene_vision import visual_reference
@@ -92,6 +92,48 @@ async def descriptions(session, owners, release_id, locale):
     return valid
 
 
+async def visual_titles(session, scene_ids, release_id, locale):
+    """Resolve English visual titles even when no quest association exists."""
+    if not scene_ids or locale != "en":
+        return {}
+    variants, assets = aliased(Edge), aliased(Edge)
+    variant_type, asset_type = aliased(RelationType), aliased(RelationType)
+    video = aliased(FileReference)
+    latest_video = (select(video.file_id).where(
+        video.owner_node_id == assets.to_node_id, video.reference_type == "cutscene_video")
+        .order_by(video.id.desc()).limit(1).correlate(assets).scalar_subquery())
+    report = aliased(FileReference)
+    latest_report = (select(report.id).where(
+        report.owner_node_id == assets.to_node_id, report.reference_type == "cutscene_visual_description",
+        report.file_id == latest_video, report.metadata_json["complete"].as_boolean().is_(True))
+        .order_by(report.id.desc()).limit(1).correlate(assets).scalar_subquery())
+    rows = await session.execute(
+        select(variants.from_node_id, FileReference.metadata_json["title"].as_string())
+        .join(variant_type, variant_type.id == variants.relation_type_id)
+        .join(assets, assets.from_node_id == variants.to_node_id)
+        .join(asset_type, asset_type.id == assets.relation_type_id)
+        .join(FileReference, FileReference.owner_node_id == assets.to_node_id)
+        .where(variants.from_node_id.in_(scene_ids), variants.layer == "source", assets.layer == "source",
+               variant_type.key == "has_variant", asset_type.key == "references_asset",
+               select(EdgeEvidence.id).where(EdgeEvidence.edge_id == variants.id,
+                                             EdgeEvidence.release_id == release_id).exists(),
+               select(EdgeEvidence.id).where(EdgeEvidence.edge_id == assets.id,
+                                             EdgeEvidence.release_id == release_id).exists(),
+               FileReference.file_id == latest_video,
+               or_(and_(FileReference.reference_type == "cutscene_visual_description",
+                        FileReference.id == latest_report),
+                   and_(FileReference.reference_type == "cutscene_visual_title",
+                        FileReference.metadata_json["source_report_id"].as_string().cast(BigInteger) == latest_report)),
+               FileReference.metadata_json["title_language"].as_string() == locale)
+        .order_by(FileReference.id.desc())
+    )
+    result = {}
+    for scene_id, title in rows:
+        if isinstance(title, str) and title.strip():
+            result.setdefault(scene_id, title.strip())
+    return result
+
+
 async def summaries(session, rows, release_id, locale):
     owner_rows = await repository.owners(session, [row.node_id for row in rows], release_id)
     await prefetch_localizations(session, [quest.name_key_id for _, quest, _, _ in owner_rows
@@ -105,6 +147,7 @@ async def summaries(session, rows, release_id, locale):
                                  or f"Quest {quest.game_quest_id}"})
     titles = await descriptions(session, owner_rows, release_id, locale)
     images = await previews(session, [row.node_id for row in rows], release_id)
+    visual = await visual_titles(session, [row.node_id for row in rows], release_id, locale)
     scene_titles = {}
     if titles:
         variants, assets = Edge.__table__.alias(
@@ -123,7 +166,7 @@ async def summaries(session, rows, release_id, locale):
         ):
             scene_titles.setdefault(scene_id, titles[asset_id]["title"])
     return [{"node_id": row.node_id, "name": row.cg_name,
-             "title": scene_titles.get(row.node_id) or (
+             "title": scene_titles.get(row.node_id) or visual.get(row.node_id) or (
                  owners[row.node_id][0]["name"] if owners[row.node_id] else f"Cutscene {row.cg_name}"),
-             "title_kind": "analysis" if row.node_id in scene_titles else "quest" if owners[row.node_id] else "resource",
+             "title_kind": "analysis" if row.node_id in scene_titles or row.node_id in visual else "quest" if owners[row.node_id] else "resource",
              "quests": owners[row.node_id], **images.get(row.node_id, {})} for row in rows]

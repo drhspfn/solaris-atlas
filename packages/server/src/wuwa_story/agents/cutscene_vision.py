@@ -3,9 +3,10 @@
 import hashlib
 import json
 import math
+import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +18,8 @@ from wuwa_story.db.models.agents import AgentCall
 from wuwa_story.db.models.ops import ProcessingRun, Processor
 from wuwa_story.db.models.storage import FileObject, FileReference
 
-VISION_VERSION = "cutscene-visual-v3"
+VISION_VERSION = "cutscene-visual-v4"
+MIN_VISUAL_SECONDS = 5.0
 
 
 class VisualEvent(BaseModel):
@@ -38,6 +40,17 @@ class VisualBatch(BaseModel):
     summary: str = Field(min_length=1, max_length=800)
     events: list[VisualEvent] = Field(min_length=1, max_length=64)
     preview_candidates: list[PreviewCandidate] = Field(default_factory=list, max_length=3)
+    title: str | None = Field(default=None, min_length=1, max_length=120, pattern=r"^[^\r\n]+$")
+
+    @field_validator("title")
+    @classmethod
+    def readable_title(cls, value):
+        if value is None:
+            return None
+        value = value.strip()
+        if not value or re.fullmatch(r"(?:cutscene\s*:?[ ]*)?[A-Za-z_]*\d[A-Za-z0-9_-]*", value, re.I):
+            raise ValueError("Visual title must describe the scene, not a resource code")
+        return value
 
     @model_validator(mode="after")
     def ordered(self):
@@ -116,6 +129,12 @@ async def enqueue_visual_job(
         raise ValueError("Visual analysis needs a content-addressed published video")
     text_context = await video_context_snapshot(session, reference, context=context)
     config = settings.public_config()
+    report = None
+    if getattr(reference, "reference_type", None) == "cutscene_video" and reference.owner_node_id:
+        report = await visual_reference(session, reference.owner_node_id, reference.metadata_json.get("asset_version"))
+        if report and (report.file_id != file.id or not report.metadata_json.get("events")
+                       or report.metadata_json.get("title")):
+            report = None
     identity = hashlib.sha256(
         json.dumps(
             {
@@ -125,6 +144,7 @@ async def enqueue_visual_job(
                 "protocol": VISION_VERSION,
                 "config": config,
                 "text_context": text_context,
+                "title_source_report": report.id if report else None,
             },
             sort_keys=True,
         ).encode()
@@ -158,6 +178,7 @@ async def enqueue_visual_job(
             "asset_version": reference.metadata_json.get("asset_version"),
             "settings": config,
             "text_context": text_context,
+            **({"title_only_report_id": report.id} if report else {}),
         },
         raw_output={"batches": [], "step": 0},
     )

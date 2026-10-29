@@ -101,7 +101,8 @@ paused jobs. The quest and cutscene header action menus offer the same operation
 cutscene analysis queues every unique imported variant in its player, while quest
 analysis uses the existing English story pipeline. All write endpoints enforce
 administrator access and CSRF verification. Matching visual jobs are reused;
-completed evidence is not charged again. Uncertain charges cannot be resumed.
+completed frame analysis is not repeated. Missing titles can require a separate
+bounded text-only request. Uncertain charges cannot be resumed.
 The visual consumer must be running to process pending jobs. After visual evidence
 completes, analyze the quest to publish its reader-facing description.
 
@@ -127,6 +128,22 @@ the shared call ledger and content-addressed file references already exist.
 
 After reports complete, queue a new quest analysis in the admin panel. Story V6
 reads every available variant through paginated visual tools before publishing.
+Explicit quest links and conservatively inferred scenario links are included in
+the inventory; `context_inferred` distinguishes the latter and does not establish
+runtime traversal. Quest video packages also identify related cutscenes by their
+unambiguous `CgId`, without claiming that a package proves playback order. Existing
+snapshots need the targeted `wuwa_story.ingestion.dungeon_backfill` command after
+the relation migration; select the desired version range explicitly. Existing
+quest-level titles take precedence over visual titles.
+
+Protocol v4 can also generate a short English title from the sampled visual
+evidence, even when no quest is linked. A scene with insufficient evidence keeps
+its resource name. Requeueing an older complete visual report without a title
+creates a bounded text-only title job from its stored observations: it does not
+download the video or resend frames. This separate paid request uses the shared
+ledger and keeps the original report immutable; a title is hidden if its source
+report or video changes. The admin can queue it using the existing cutscene
+analysis action. Existing reports are not automatically reprocessed.
 Readable descriptions and timed chapters are stored in the explanation document
 and exposed in the corresponding player's AI disclosure. Visual report changes
 invalidate the analysis fingerprint; changed video bytes hide outdated reports.
