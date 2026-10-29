@@ -18,6 +18,7 @@ type ModelForm = ModelAssets & { id: string; label: string };
 type Model = ModelAssets & {
   status: "ready" | "missing";
   game_version: string | null;
+  source_game_version?: string;
   forms?: ModelForm[] | null;
 };
 const assetUrl = (url: string) => apiUrl(url.replace(/^\/api(?=\/)/, ""));
@@ -196,7 +197,7 @@ export function CharacterModel({
             </div>
           )}
           {model.game_version && (
-            <p className="character-model-version">{model.game_version}</p>
+            <p className="character-model-version">{model.source_game_version ? `Model from ${model.source_game_version}` : model.game_version}</p>
           )}
           <div className="character-model-actions">
             {assets?.download && (
