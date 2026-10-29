@@ -40,6 +40,7 @@ def delivery(body=b'{"run_id":1,"kind":"voices","job_type":"media.release"}', **
     ({"kind": "event_catalog"}, "image"),
     ({"kind": "event_notices"}, "image"),
     ({"kind": "images"}, "image"),
+    ({"kind": "tree_order"}, "image"),
     ({"kind": "event_resources"}, "image"),
     ({"kind": "character_voices"}, "audio"),
     ({"kind": "voice_packages"}, "audio"),
