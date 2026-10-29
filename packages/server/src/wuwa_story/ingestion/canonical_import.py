@@ -36,9 +36,11 @@ from wuwa_story.db.models import (
     VoiceReference,
 )
 from wuwa_story.db.models.i18n import LocalizationKey
+from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.seeds import NODE_TYPES
 from wuwa_story.ingestion.canonical import CanonicalRecordAdapter
+from wuwa_story.ingestion.releases import release_order
 
 EDGE_BASIS = {
     "explicit_reference",
@@ -136,6 +138,9 @@ async def import_canonical_entities(
     """Import compiler entities as stable graph identities and typed source records."""
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
+    releases = list(await session.scalars(select(GameRelease)))
+    current = next(release for release in releases if release.id == release_id)
+    newer_release_ids = [release.id for release in releases if release_order(release) > release_order(current)]
     type_ids = {row.key: row.id for row in await session.scalars(select(NodeType))}
     total = 0
     for path in adapter.entity_files():
@@ -252,7 +257,7 @@ async def import_canonical_entities(
             source_ids = await _source_record_ids(
                 session, release_id, (ref for ref in refs if ref is not None)
             )
-            await _insert_typed_entities(session, kind, batch, node_map, source_ids)
+            await _insert_typed_entities(session, kind, batch, node_map, source_ids, newer_release_ids)
             await session.commit()
     return total
 
@@ -263,6 +268,7 @@ async def _insert_typed_entities(
     records: list[dict[str, Any]],
     node_map: dict[str, tuple[int, int]],
     source_ids: dict[tuple[str, int], int],
+    newer_release_ids: list[int] | None = None,
 ) -> None:
     keys = {_text_key(record, "TidName", "Name", "Title", "CaptionText") for record in records}
     keys |= {_nested_key(record, "localization") for record in records}
@@ -662,10 +668,23 @@ async def _insert_typed_entities(
         }
         update_columns = updates_by_model.get(model)
         if update_columns:
+            protected = set(await session.scalars(select(NodeRevision.node_id).where(
+                NodeRevision.node_id.in_([value["node_id"] for value in values]),
+                NodeRevision.release_id.in_(newer_release_ids),
+            ))) if newer_release_ids else set()
+            if protected:
+                projected = set(await session.scalars(select(model.node_id).where(
+                    model.node_id.in_(protected)
+                )))
+                if protected - projected:
+                    raise ValueError(
+                        f"Cannot import historical {kind}: a newer revision has no typed projection"
+                    )
             await session.execute(
                 statement.on_conflict_do_update(
                     index_elements=[model.node_id],
                     set_={column: getattr(statement.excluded, column) for column in update_columns},
+                    where=statement.excluded.node_id.not_in(protected) if protected else None,
                 )
             )
         else:
