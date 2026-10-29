@@ -16,8 +16,10 @@ BASH = str(GIT_BASH) if os.name == "nt" and GIT_BASH.is_file() else shutil.which
 @unittest.skipUnless(BASH, "Bash is required to test deployment orchestration")
 class DeploymentTests(unittest.TestCase):
     def deploy(self, component, fail_validation=False, worker_image="", fail_migration=False, empty_auth=False,
-               fail_activation=False):
+               fail_activation=False, migration_plan="done:last", fail_online=False, fail_lock=False,
+               fail_client_listing=False):
         source = (ROOT / "scripts/deploy-remote.sh").read_text()
+        lock_block = source.split("# Serialize deployments", 1)[1].split("\numask 077", 1)[0]
         tail = 'case "$DEPLOY_COMPONENT" in' + source.split('case "$DEPLOY_COMPONENT" in', 1)[1]
         harness = r'''
 set -euo pipefail
@@ -27,6 +29,10 @@ WORKER_IMAGE=$3
 FAIL_MIGRATION=$4
 EMPTY_AUTH=$5
 FAIL_ACTIVATION=$6
+MIGRATION_PLAN=$7
+FAIL_ONLINE=$8
+FAIL_LOCK=$9
+FAIL_CLIENT_LISTING=${10}
 GHCR_OWNER=test
 IMAGE_TAG=abc1234
 USE_MINIO=false
@@ -34,25 +40,36 @@ ENV_DIR=$(mktemp -d)
 APP_DIR=$ENV_DIR
 mkdir "$APP_DIR/pgbouncer"
 touch "$APP_DIR/pgbouncer/auth.sql"
-trap 'rm -f "$ENV_DIR/pgbouncer/userlist.txt" "$ENV_DIR/pgbouncer/userlist.txt.next" "$ENV_DIR/pgbouncer/auth.sql"; rmdir "$ENV_DIR/pgbouncer" "$ENV_DIR"' EXIT
+trap 'rm -f "$ENV_DIR/pgbouncer/userlist.txt" "$ENV_DIR/pgbouncer/userlist.txt.next" "$ENV_DIR/pgbouncer/auth.sql" "$ENV_DIR/.migration-deploy.lock"; rmdir "$ENV_DIR/pgbouncer" "$ENV_DIR"' EXIT
 chown() { :; }
 install() { mkdir -p "${@: -1}"; }
+flock() { [[ "$FAIL_LOCK" != 1 ]]; }
 docker() { printf '%s\n' "$*"; printf '%s\n' "$*" >&2; }
 record_compose() {
+  if [[ "$*" == *"scripts/search_index_deploy_plan.py"* ]]; then
+    printf '%s\n' "$*" >&2
+    printf '%s\n' "$MIGRATION_PLAN"
+    return
+  fi
   if [[ "$*" == "pull model-worker" || "$*" == *"model_publication --activate" ]]; then
     printf 'activation-image=%s\n' "${MODEL_WORKER_IMAGE:-}" >&2
   fi
   if [[ "$*" == "exec -T postgres "* && "$EMPTY_AUTH" == 1 ]]; then return; fi
   if [[ "$*" == "ps -q --status running "* ]]; then
     printf '%s\n' "$*" >&2
+    if [[ "$FAIL_CLIENT_LISTING" == 1 ]]; then return 1; fi
     printf '%s\n' api-container media-container-1 media-container-2 model-container
     return
   fi
+  if [[ "$*" == *"alembic upgrade"* ]]; then printf '%s\n' "$*" >&2; fi
   printf '%s\n' "$*"
   if [[ "$*" == *"model_publication --activate" && "$FAIL_ACTIVATION" == 1 ]]; then
     return 1
   fi
-  if [[ "$*" == *"alembic upgrade head"* && "$FAIL_MIGRATION" == 1 ]]; then
+  if [[ "$*" == *'alembic upgrade "$1"'* && "$FAIL_MIGRATION" == 1 ]]; then
+    return 1
+  fi
+  if [[ "$*" == *"alembic upgrade 0023_search_body_trgm"* && "$FAIL_ONLINE" == 1 ]]; then
     return 1
   fi
   if [[ "$*" == *"caddy validate"* && "$FAIL_VALIDATION" == 1 ]]; then
@@ -63,8 +80,11 @@ compose=(record_compose)
 '''
         return subprocess.run(
             [BASH, "-s", "--", component, "1" if fail_validation else "0", worker_image,
-             "1" if fail_migration else "0", "1" if empty_auth else "0", "1" if fail_activation else "0"],
-            input=harness + tail, text=True, encoding="utf-8", capture_output=True, timeout=10, check=False,
+             "1" if fail_migration else "0", "1" if empty_auth else "0", "1" if fail_activation else "0",
+             migration_plan, "1" if fail_online else "0", "1" if fail_lock else "0",
+             "1" if fail_client_listing else "0"],
+            input=harness + "\n# Serialize deployments" + lock_block + "\n" + tail,
+            text=True, encoding="utf-8", capture_output=True, timeout=10, check=False,
         )
 
     def test_web_and_full_deployments_reload_proxy_after_updating_services(self):
@@ -152,10 +172,55 @@ compose=(record_compose)
         result = self.deploy("api")
         self.assertEqual(result.returncode, 0, result.stderr)
         commands = result.stdout.splitlines()
-        migration = next(i for i, line in enumerate(commands) if "alembic upgrade head" in line)
+        migration = next(i for i, line in enumerate(commands) if 'alembic upgrade "$1"' in line)
         pooler = commands.index("up -d --force-recreate --wait pgbouncer")
         self.assertLess(migration, pooler)
         self.assertLess(pooler, commands.index("up -d api"))
+
+    def test_online_index_does_not_stop_clients_during_build(self):
+        for plan in ("before:last", "ready:last", "before:more", "ready:more"):
+            with self.subTest(plan=plan):
+                result = self.deploy("api", migration_plan=plan)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                commands = result.stdout.splitlines()
+                index = next(i for i, line in enumerate(commands) if "alembic upgrade 0023_search_body_trgm" in line)
+                stops = [i for i, line in enumerate(commands) if line.startswith("stop --time")]
+                self.assertEqual(len(stops), int(plan.startswith("before")) + int(plan.endswith("more")))
+                if plan.startswith("before"):
+                    self.assertLess(stops[0], index)
+                    self.assertIn("sh 0022_tree_index_schema_version", commands[stops[0] + 1])
+                    self.assertIn("start api-container", result.stderr)
+                    self.assertLess(result.stderr.index("start api-container"),
+                                    result.stderr.index("alembic upgrade 0023_search_body_trgm"))
+                if plan.endswith("more"):
+                    self.assertGreater(stops[-1], index)
+                    self.assertIn("sh head", commands[stops[-1] + 1])
+
+    def test_online_failure_stops_deployment_without_stopping_running_clients(self):
+        result = self.deploy("api", migration_plan="ready:last", fail_online=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("stop --time", result.stdout)
+        self.assertNotIn("up -d", result.stdout)
+
+    def test_previous_migration_failure_restores_clients_and_never_builds_online_index(self):
+        result = self.deploy("api", migration_plan="before:last", fail_migration=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("start api-container", result.stderr)
+        self.assertNotIn("alembic upgrade 0023_search_body_trgm", result.stdout)
+
+    def test_failure_to_list_clients_never_runs_stopped_migrations(self):
+        result = self.deploy("api", migration_plan="before:last", fail_client_listing=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("alembic upgrade", result.stdout)
+        self.assertNotIn("up -d", result.stdout)
+
+    def test_unknown_plan_and_competing_deployment_fail_closed(self):
+        result = self.deploy("api", migration_plan="unknown")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("alembic upgrade", result.stdout)
+        result = self.deploy("api", fail_lock=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("pull api", result.stdout)
 
     def test_missing_scram_verifier_fails_before_starting_pooler_or_api(self):
         result = self.deploy("api", empty_auth=True)
