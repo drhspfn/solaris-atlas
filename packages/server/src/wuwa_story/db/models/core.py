@@ -7,6 +7,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     SmallInteger,
     String,
     Text,
@@ -179,6 +180,31 @@ class QuestNode(MetadataMixin, Base):
     source_record_id: Mapped[int | None] = mapped_column(
         ForeignKey("raw.source_record.id", ondelete="SET NULL")
     )
+
+
+class AuthoredTreeImport(Base):
+    """Completion marker for an indexed client download."""
+
+    __tablename__ = "authored_tree_import"
+    __table_args__ = {"schema": "core"}
+    asset_version: Mapped[str] = mapped_column(String(32), primary_key=True)
+    download_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    tree_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class AuthoredTreeOrder(Base):
+    """Authored child paths from one identifiable game-client resource."""
+
+    __tablename__ = "authored_tree_order"
+    __table_args__ = (Index("ix_authored_tree_order_identity", "tree_kind", "tree_id", "asset_version"),
+                      {"schema": "core"})
+    asset_version: Mapped[str] = mapped_column(String(32), primary_key=True)
+    download_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    tree_kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    tree_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    source_sha256: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    nodes: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
 
 
 class QuestState(MetadataMixin, Base):

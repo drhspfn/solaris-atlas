@@ -72,6 +72,7 @@ export interface CutsceneFlow {
 
 export interface QuestMediaEvent {
   context_inferred?: boolean;
+  story_order_mapped?: boolean;
   title?: string;
   kind: 'cutscene' | 'sequence' | 'audio_event';
   playback?: CutsceneFlow | null;

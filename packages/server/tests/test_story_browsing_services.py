@@ -188,6 +188,7 @@ async def test_transcript_default_is_raw_and_compact_preserves_authored_choice_b
     )
     monkeypatch.setattr(usecases, "_release_id", AsyncMock(return_value=2))
     monkeypatch.setattr(usecases, "_quest_state_ids", AsyncMock(return_value=[3]))
+    monkeypatch.setattr(usecases, "authored_order", AsyncMock(return_value=None))
     monkeypatch.setattr(usecases, "_quest_info", AsyncMock(return_value={"game_quest_id": 70}))
     monkeypatch.setattr(usecases, "dialogue_media", AsyncMock(return_value={}))
     monkeypatch.setattr(repository, "quest_transcript_rows", AsyncMock(return_value=([row], 0)))

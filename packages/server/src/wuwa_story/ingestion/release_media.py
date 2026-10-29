@@ -57,6 +57,7 @@ async def enqueue_release_media(
     if not (event_artwork_only or notices_only) and (voices or characters):
         specs.append(("voice_packages", []))
     if not (event_artwork_only or notices_only):
+        specs.append(("tree_order", []))
         specs.extend(("images", batch) for batch in batches(entities))
         specs.extend(("cutscene", [name]) for name in sorted(set(cutscenes)))
         specs.extend(("voices", batch) for batch in batches(voices))

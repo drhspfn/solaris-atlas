@@ -250,10 +250,10 @@ export function QuestPageClient({
     anchor: `flow-state-${index}`,
   }));
   const stateAnchors = new Map(stateIndex.map((state) => [state.key, state.anchor]));
-  const contextualCutscenes = (media?.events || []).filter((event) => event.kind === 'cutscene' && event.context_inferred);
+  const contextualCutscenes = (media?.events || []).filter((event) => event.kind === 'cutscene' && event.context_inferred && !event.story_order_mapped);
   const videoSlots = cutsceneSlots(
     shown,
-    onlyLines || onlyChoices ? [] : (media?.events || []).filter((event) => !event.context_inferred),
+    onlyLines || onlyChoices ? [] : (media?.events || []).filter((event) => !event.context_inferred || event.story_order_mapped),
     Boolean(transcript?.offset || lines.length >= (transcript?.limit || 0)),
   );
   const lineAnchors = new Map<string, string>();
@@ -374,6 +374,7 @@ export function QuestPageClient({
                 Choices with a recorded path show their own lines. Select an answer to highlight its
                 branch; this is not a single guaranteed playthrough.
               </p>
+              {transcript?.tree_order_asset_version && <p>Scene order uses game client {transcript.tree_order_asset_version}.</p>}
             </div>
             <div className="transcript-filters">
               <label className="voice-language">
@@ -447,6 +448,9 @@ export function QuestPageClient({
                   const active = branch?.choice.id === activeChoiceId;
                   return (
                     <Fragment key={line.id || i}>
+                      {line.story_order_mapped === false && (i === 0 || shown[i - 1].story_order_mapped !== false) && (
+                        <p>Additional dialogue · position in the story is not mapped</p>
+                      )}
                       {videoSlots.get(i)?.map((event) => (
                         <Cutscene key={`${event.action}-${event.reference}`} event={event} />
                       ))}
