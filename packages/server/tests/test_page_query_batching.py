@@ -5,6 +5,7 @@ import pytest
 
 from wuwa_story.api.routes import nodes, story
 from wuwa_story.api.routes.story import profiles
+from wuwa_story.db.repositories import story_browsing as repository
 from wuwa_story.story import service
 
 
@@ -68,3 +69,41 @@ async def test_character_reuses_shared_scene_and_batches_transcript(monkeypatch)
     assert not scenes[0]["dialogue_truncated"]
     prefetch.assert_awaited_once_with(session, transcript, "en", 5)
     assert session.execute.await_count == 6
+
+
+@pytest.mark.asyncio
+async def test_quest_requirement_items_batch_and_prefer_canonical_keys():
+    canonical = Row(id=1, canonical_key="item:1", slug="other")
+    slug_match = Row(id=2, canonical_key="item:2", slug="item:1")
+    session = Row(scalars=AsyncMock(side_effect=[[canonical, slug_match], []]))
+    keys = ["item:1", *[f"item:{i}" for i in range(3, 503)]]
+    result = await repository.quest_requirement_items(session, keys)
+    assert result["item:1"] is canonical
+    assert len(result) == 1
+    assert session.scalars.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_quest_requirements_batch_items_and_keep_order_and_missing_entries(monkeypatch):
+    quest = Row(node_id=7, game_quest_id=70)
+    records = [Row(data={"Data": {"items": [1, 2]}}, row_index=4),
+               Row(data={"Data": {"items": [1]}}, row_index=5)]
+    monkeypatch.setattr(service, "quest_item_requirements", lambda data: [{"item_id": i} for i in data["items"]])
+    monkeypatch.setattr(service, "_release_id", AsyncMock(return_value=5))
+    monkeypatch.setattr(service, "_quest_state_ids", AsyncMock(return_value=[]))
+    monkeypatch.setattr(service, "_explicit_entity_links", AsyncMock(return_value=[]))
+    monkeypatch.setattr(service, "_quest_info", AsyncMock(return_value={}))
+    monkeypatch.setattr(service, "_latest_source_record", AsyncMock(return_value=None))
+    monkeypatch.setattr(service, "prefetch_node_labels", AsyncMock())
+    monkeypatch.setattr(service, "_node_label", AsyncMock(return_value={"id": 11}))
+    for name in ("quest_node_rows", "quest_hierarchy_rows", "quest_states", "quest_actions", "quest_scenes"):
+        monkeypatch.setattr(repository, name, AsyncMock(return_value=[]))
+    monkeypatch.setattr(repository, "quest_requirement_records", AsyncMock(return_value=records))
+    items = AsyncMock(return_value={"item:1": Row(id=11)})
+    monkeypatch.setattr(repository, "quest_requirement_items", items)
+    session = Row(info={})
+    result = await service.quest_profile_payload(session, quest)
+    items.assert_awaited_once_with(session, ["item:1", "item:2"])
+    assert [(entry["item_id"], entry["item"], entry["source"]["row"]) for entry in result["item_requirements"]] == [
+        (1, {"id": 11}, 4), (2, None, 4), (1, {"id": 11}, 5),
+    ]

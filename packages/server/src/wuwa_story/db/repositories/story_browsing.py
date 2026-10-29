@@ -339,6 +339,23 @@ async def quest_requirement_records(session, release_id, keys, source_path):
     return list(requirement_rows.scalars())
 
 
+async def quest_requirement_items(session, keys):
+    items = {}
+    for offset in range(0, len(keys), 500):
+        batch = keys[offset : offset + 500]
+        rows = await session.scalars(
+            select(Node).join(NodeType).where(
+                NodeType.key == "item", or_(Node.canonical_key.in_(batch), Node.slug.in_(batch))
+            )
+        )
+        for node in rows:
+            if node.slug in batch:
+                items.setdefault(node.slug, node)
+            if node.canonical_key in batch:
+                items[node.canonical_key] = node
+    return items
+
+
 async def search_dialogue_rows(
     session, q, locale_row, release_id, character_node_id, states, limit, offset
 ):
