@@ -12,6 +12,7 @@ from wuwa_story_worker.model_bundle import (
     animation_batch,
     animation_file,
     animation_sources,
+    base_color_alpha_is_opacity,
     base_color_texture,
     build_animation_plan,
     effect_space_only,
@@ -213,6 +214,17 @@ def test_mask_cutoff_uses_cooked_value_and_rejects_invalid_values():
     assert opacity_mask_cutoff({"Properties": {"BasePropertyOverrides": {"OpacityMaskClipValue": 0.2}}}) == 0.2
     with pytest.raises(ValueError, match="Invalid opacity mask cutoff"):
         opacity_mask_cutoff({"Properties": {"BasePropertyOverrides": {"OpacityMaskClipValue": 2}}})
+
+
+def test_denia_skin_passes_do_not_cut_neck_but_cloth_and_other_characters_keep_masks():
+    skin = {"BlendMode": 1, "Switches": {"UseOnlySkinRampColor": True}}
+    for name in ("MI_R2T1DaniyaMd10011Up01", "MI_R2T1DaniyaMd10011Up02"):
+        assert not base_color_alpha_is_opacity(name, skin)
+        assert base_color_alpha_is_opacity(name, {"BlendMode": 1})
+    assert base_color_alpha_is_opacity("MI_R2T1DaniyaMd10011Cloth", skin)
+    assert base_color_alpha_is_opacity("MI_OtherCharacterUp01", skin)
+    assert base_color_alpha_is_opacity("Hair", {"BlendMode": 2})
+    assert not base_color_alpha_is_opacity("Face", {"BlendMode": 0})
 
 
 def test_effect_space_pass_is_not_treated_as_color_geometry():

@@ -331,6 +331,17 @@ def effect_space_only(metadata: dict) -> bool:
     return overrides.get("bEffectSpaceWrite") is True and "MaskTex" in metadata.get("Textures", {})
 
 
+def base_color_alpha_is_opacity(material_name: str, metadata: dict) -> bool:
+    """The base-color fallback must not treat Denia's skin shader data as holes."""
+    if material_name in {"MI_R2T1DaniyaMd10011Up01", "MI_R2T1DaniyaMd10011Up02"} and (
+        metadata.get("Switches", {}).get("UseOnlySkinRampColor") is True
+    ):
+        # Verified against both cooked skin passes and before/after renders.
+        # Their diffuse alpha clips the neck; retain cloth/hair mask behavior.
+        return False
+    return metadata.get("BlendMode") in {1, 2}
+
+
 def same_rest_skeleton(primary, extra) -> bool:
     primary_bones = {bone.name: bone for bone in primary.data.bones}
     extra_bones = {bone.name: bone for bone in extra.data.bones}
@@ -703,7 +714,7 @@ def main():
             node.image = image
             material.node_tree.links.new(node.outputs["Color"], shader.inputs["Base Color"])
             blend_mode = metadata.get("BlendMode")
-            if blend_mode in {1, 2}:
+            if base_color_alpha_is_opacity(path.stem if path else material.name, metadata):
                 alpha = node.outputs["Alpha"]
                 if blend_mode == 1:
                     clip = material.node_tree.nodes.new("ShaderNodeMath")
