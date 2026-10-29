@@ -20,6 +20,7 @@ from wuwa_story_worker.model_bundle import (
     main,
     material_metadata_path,
     missing_animation_sources,
+    opacity_mask_cutoff,
     package_path,
     preview_materials,
     preview_meshes,
@@ -203,6 +204,13 @@ def test_material_color_inherits_from_explicit_parent_and_rejects_cycles(tmp_pat
     source("Cloth", "Fur")
     with pytest.raises(ValueError, match="Cyclic material parent"):
         inherited_base_color_texture({"Textures": {}}, child, converted, sources)
+
+
+def test_mask_cutoff_uses_cooked_value_and_rejects_invalid_values():
+    assert opacity_mask_cutoff({}) == pytest.approx(1 / 3)
+    assert opacity_mask_cutoff({"Properties": {"BasePropertyOverrides": {"OpacityMaskClipValue": 0.2}}}) == 0.2
+    with pytest.raises(ValueError, match="Invalid opacity mask cutoff"):
+        opacity_mask_cutoff({"Properties": {"BasePropertyOverrides": {"OpacityMaskClipValue": 2}}})
 
 
 def test_preview_resizes_copies_preserves_aspect_alpha_and_restores_slots_on_failure():

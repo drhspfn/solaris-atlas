@@ -304,6 +304,16 @@ def inherited_base_color_texture(metadata: dict, path: Path | None, converted: P
         metadata = json.loads(path.read_text(encoding="utf-8-sig"))
 
 
+def opacity_mask_cutoff(metadata: dict) -> float:
+    """Use the cooked Unreal mask cutoff, or its engine default."""
+    cutoff = metadata.get("Properties", {}).get("BasePropertyOverrides", {}).get(
+        "OpacityMaskClipValue", 1 / 3
+    )
+    if type(cutoff) not in (int, float) or not 0 <= cutoff <= 1:
+        raise ValueError("Invalid opacity mask cutoff")
+    return float(cutoff)
+
+
 @contextmanager
 def preview_meshes(meshes):
     """The generated base-color shaders use only the render UV and no colors."""
@@ -617,8 +627,16 @@ def main():
             node = material.node_tree.nodes.new("ShaderNodeTexImage")
             node.image = image
             material.node_tree.links.new(node.outputs["Color"], shader.inputs["Base Color"])
-            if metadata.get("BlendMode") in {1, 2}:
-                material.node_tree.links.new(node.outputs["Alpha"], shader.inputs["Alpha"])
+            blend_mode = metadata.get("BlendMode")
+            if blend_mode in {1, 2}:
+                alpha = node.outputs["Alpha"]
+                if blend_mode == 1:
+                    clip = material.node_tree.nodes.new("ShaderNodeMath")
+                    clip.operation = "GREATER_THAN"
+                    clip.inputs[1].default_value = opacity_mask_cutoff(metadata)
+                    material.node_tree.links.new(alpha, clip.inputs[0])
+                    alpha = clip.outputs[0]
+                material.node_tree.links.new(alpha, shader.inputs["Alpha"])
                 material.surface_render_method = "DITHERED"
         report["materials"].append(
             {"name": material.name, "texture": str(texture) if texture else None}
