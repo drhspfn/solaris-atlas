@@ -22,6 +22,10 @@ def upgrade():
             sa.Column("nodes", JSONB(), nullable=False),
             schema="core",
         )
+    if not any(index['name'] == 'ix_authored_tree_order_identity' for index in
+               sa.inspect(op.get_bind()).get_indexes('authored_tree_order', schema='core')):
+        op.create_index('ix_authored_tree_order_identity', 'authored_tree_order',
+                        ['tree_kind', 'tree_id', 'asset_version'], schema='core')
 
 
 def downgrade():

@@ -84,7 +84,8 @@ def read_tree_node_record(data: bytes) -> tuple[str, dict[str, Any]]:
     return key, value
 
 
-def read_tree_order(data: bytes, kind: str, records: dict[int, dict[str, Any]]) -> list[TreePosition]:
+def read_tree_order(data: bytes, kind: str, records: dict[int, dict[str, Any]],
+                    *, tree_id: int | None = None) -> list[TreePosition]:
     """Return source order, rejecting mismatched client tables and incomplete trees.
 
     Paths describe authored child position, not a guaranteed traversal through
@@ -94,6 +95,9 @@ def read_tree_order(data: bytes, kind: str, records: dict[int, dict[str, Any]]) 
         raise ValueError("Unsupported tree kind")
     reader = _Reader(data)
     root = reader.number(0, '<I')
+    identity = reader.field(root, 6 if kind == 'quest' else 4)
+    if tree_id is not None and (identity is None or reader.number(identity, '<I') != tree_id):
+        raise ValueError("Tree identity does not match its resource path")
     wrapper = reader.pointer(root, 41 if kind == 'quest' else 42)
     wrapper = reader.pointer(wrapper, 1) if wrapper is not None else None
     root = reader.pointer(wrapper, 7) if wrapper is not None else None

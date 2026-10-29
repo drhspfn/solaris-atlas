@@ -27,5 +27,7 @@ def test_rejects_mismatched_snapshots_and_corrupt_data():
         read_tree_order(TREE, 'quest', wrong_parent)
     with pytest.raises(ValueError):
         read_tree_order(TREE[:-20], 'quest', RECORDS)
+    with pytest.raises(ValueError, match='identity'):
+        read_tree_order(TREE, 'quest', RECORDS, tree_id=43)
     with pytest.raises(ValueError, match='incomplete'):
         read_tree_order(TREE, 'quest', {**RECORDS, 5: {'Id': 5, 'ParentNodeId': 1, 'Type': 'ChildQuest'}})

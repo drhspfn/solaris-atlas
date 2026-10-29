@@ -30,7 +30,7 @@ def tree_records(config_db: Path, files: list[Path], kind: str, asset_version: s
     for identity, path in sorted(selected.items()):
         try:
             blob = path.read_bytes()
-            positions = read_tree_order(blob, kind, records[identity])
+            positions = read_tree_order(blob, kind, records[identity], tree_id=identity)
         except (ValueError, OSError) as error:
             if errors is None:
                 raise

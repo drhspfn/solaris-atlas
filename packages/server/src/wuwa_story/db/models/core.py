@@ -186,7 +186,8 @@ class AuthoredTreeOrder(Base):
     """Authored child paths from one identifiable game-client resource."""
 
     __tablename__ = "authored_tree_order"
-    __table_args__ = ({"schema": "core"},)
+    __table_args__ = (Index("ix_authored_tree_order_identity", "tree_kind", "tree_id", "asset_version"),
+                      {"schema": "core"})
     asset_version: Mapped[str] = mapped_column(String(32), primary_key=True)
     tree_kind: Mapped[str] = mapped_column(String(16), primary_key=True)
     tree_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
