@@ -28,6 +28,7 @@ from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.media_provenance import sha256, temporary_entity_workspace
 from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.model_animation_merge import merge_animation_glbs
+from wuwa_story_worker.model_facial import validate_facial_pack
 from wuwa_story_worker.model_forms import resolve_model_forms
 from wuwa_story_worker.model_publication import ensure_glb_download, publish_viewer
 from wuwa_story_worker.model_sources import (
@@ -357,6 +358,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None):
         if provenance["animations"] != summaries["animations"]:
             raise ValueError("Animation report disagrees with exported clips")
         provenance["animation_recipe"] = sha256(Path(__file__).with_name("model_animations.py"))
+        provenance["facial_recipe"] = sha256(Path(__file__).with_name("model_facial.py"))
         provenance["animation_merge_recipe"] = sha256(
             Path(__file__).with_name("model_animation_merge.py")
         )
@@ -380,6 +382,14 @@ def publication_files(job, output, summaries):
     ]
     if job.include_animations:
         files.append(("animations", output / "animations.glb", "unknown", "model/gltf-binary"))
+        facial_path = output / "facial.json"
+        if facial_path.is_file():
+            facial = validate_facial_pack(json.loads(facial_path.read_text(encoding="utf-8")))
+            names = {clip["name"] for clip in actual["clips"]}
+            if any(clip["body_clip"] is not None and clip["body_clip"] not in names for clip in facial["clips"]):
+                raise ValueError("Facial curves refer to an unpublished body clip")
+            if facial["clips"]:
+                files.append(("facial", facial_path, "raw_json", "application/json"))
     if (output / "physics.json").is_file():
         files.append(("physics", output / "physics.json", "raw_json", "application/json"))
     return files, animation_count

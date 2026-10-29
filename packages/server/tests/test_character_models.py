@@ -327,6 +327,7 @@ async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeyp
         "download": None,
         "physics": None,
         "animations": None,
+        "facial": None,
         "viewer_url": None,
         "forms": [],
     }
@@ -523,6 +524,7 @@ async def test_public_forms_keep_files_and_viewers_in_their_form(public_forms):
             "download",
             "physics",
             "animations",
+            "facial",
             "viewer_url",
         }
         for kind in repository.REFERENCE_TYPES.values():

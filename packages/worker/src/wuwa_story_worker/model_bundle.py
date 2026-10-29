@@ -103,10 +103,13 @@ def validate_animation_bones(dto, bone_names):
 
 
 def build_animation_plan(
-    model, converted, skeleton, sources, bone_names, read_animation, animation=None
+    model, converted, skeleton, sources, bone_names, read_animation, animation=None, morph_names=()
 ):
     """Decode one DTO at a time; never allocate Blender actions during preflight."""
-    rows, clips, seen, names = [], [], set(), set()
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from model_facial import FORMAT, facial_clip
+
+    rows, clips, seen, names, facial = [], [], set(), set(), []
     for path in sorted(converted.rglob("*.ueanim")):
         header, dto = read_animation(path, sources)
         key = package_path(header.object_path)
@@ -132,6 +135,10 @@ def build_animation_plan(
             raise ValueError(f"{source['source']} ({row['file']}): {exc}") from exc
         if excluded:
             row["excluded_reason"] = excluded
+            # Facial curves are weights, independent of additive bone transforms.
+            face = facial_clip(dto, f"Expression {len(facial) + 1}: {header.object_name}", morph_names)
+            if face is not None:
+                facial.append(face)
             del dto
             continue
         validate_animation_bones(dto, bone_names)
@@ -147,6 +154,9 @@ def build_animation_plan(
         names.add(name)
         row.update(action=name, included_in_glb=True)
         clips.append({**row, "name": name, "sha256": file_sha256(path)})
+        face = facial_clip(dto, name, morph_names, body_clip=name)
+        if face is not None:
+            facial.append(face)
         del dto
     missing = missing_animation_sources(sources, seen)
     if missing:
@@ -160,6 +170,7 @@ def build_animation_plan(
         "bones": sorted(bone_names),
         "clips": clips,
         "animations": rows,
+        "facial": {"format": FORMAT, "clips": facial},
         "animation_coverage": {
             "matching_sources": sum(row["matches_skeleton"] for row in sources.values()),
             "decoded_clips": len(rows),
@@ -635,11 +646,18 @@ def main():
             {bone.name for bone in armature.data.bones},
             read_animation,
             args.animation,
+            morph_names={
+                key.name for mesh in meshes if mesh.data.shape_keys
+                for key in list(mesh.data.shape_keys.key_blocks)[1:]
+            },
         )
         args.animation_plan.parent.mkdir(parents=True, exist_ok=True)
         args.animation_plan.write_text(json.dumps(plan, indent=2), encoding="utf-8")
         report["animations"] = plan["animations"]
         report["animation_coverage"] = plan["animation_coverage"]
+        (args.output / "facial.json").write_text(
+            json.dumps(plan["facial"], separators=(",", ":")), encoding="utf-8"
+        )
     metadata_files = list(args.converted.rglob("*.json"))
     material_files = {path.stem: path for path in metadata_files}
     # An effect-space write is a non-color game render pass, not visible geometry.

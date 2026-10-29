@@ -152,6 +152,7 @@ async def public_character_model(session, owner_node_id, release):
         "download": None,
         "physics": None,
         "animations": None,
+        "facial": None,
         "viewer_url": None,
         "forms": [],
     }
@@ -218,6 +219,7 @@ async def public_character_model(session, owner_node_id, release):
                 "download": None,
                 "physics": None,
                 "animations": None,
+                "facial": None,
                 "viewer_url": None,
             }
             for kind, (object_key, size_bytes, viewer_object_key) in form["files"].items():

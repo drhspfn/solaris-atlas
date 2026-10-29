@@ -396,11 +396,12 @@ def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_
     ]
     if rig_only:
         argv.append("--rig-only")
-    plan = {"animations": [{"action": "Stand1"}], "animation_coverage": {"playable_clips": 1}}
+    plan = {"animations": [{"action": "Stand1"}], "animation_coverage": {"playable_clips": 1},
+            "facial": {"format": "solaris-facial-v1", "clips": []}}
     if planned:
         argv.extend(["--animation-plan", str(tmp_path / "plan.json")])
         monkeypatch.setattr("wuwa_story_worker.model_bundle.animation_sources", lambda *a: {})
-        monkeypatch.setattr("wuwa_story_worker.model_bundle.build_animation_plan", lambda *a: plan)
+        monkeypatch.setattr("wuwa_story_worker.model_bundle.build_animation_plan", lambda *a, **kw: plan)
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setattr(sys, "path", sys.path.copy())
     armature = SimpleNamespace(
@@ -417,7 +418,7 @@ def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_
         data=MeshData(
             vertices=[0, 1, 2],
             materials=[],
-            shape_keys=SimpleNamespace(key_blocks=list(range(87))),
+            shape_keys=SimpleNamespace(key_blocks=[SimpleNamespace(name=f"Shape{i}") for i in range(87)]),
             uv_layers=[],
             color_attributes=[],
         ),
