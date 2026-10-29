@@ -782,6 +782,12 @@ async def character_profile(
     if character is None:
         raise HTTPException(status_code=404, detail="node is not a character")
     release_id = await _release_id(session, game_version)
+    quest_info_cache: dict[int, dict[str, Any]] = {}
+
+    async def character_quest_info(quest: Quest) -> dict[str, Any]:
+        if quest.node_id not in quest_info_cache:
+            quest_info_cache[quest.node_id] = await _quest_info(session, quest, locale, game_version)
+        return quest_info_cache[quest.node_id]
 
     link_rows = await session.execute(
         select(SpeakerEntityLink, Speaker, Node)
@@ -986,7 +992,7 @@ async def character_profile(
                 shared_scene_cache[shared_state.node_id] = {
                     "flow_state": shared_state.state_key,
                     "quest_refs": [
-                        await _quest_info(session, quest, locale, game_version)
+                        await character_quest_info(quest)
                         for quest in quest_rows
                     ],
                     "dialogue": transcript,
@@ -1085,7 +1091,7 @@ async def character_profile(
         quest_rows = await session.scalars(
             select(Quest).where(Quest.node_id.in_(quest_ids)).order_by(Quest.game_quest_id)
         )
-        quests = [await _quest_info(session, quest, locale, game_version) for quest in quest_rows]
+        quests = [await character_quest_info(quest) for quest in quest_rows]
 
     # Keep real entity links readable; raw config-row references are summarized below.
     edge_rows = await session.execute(
