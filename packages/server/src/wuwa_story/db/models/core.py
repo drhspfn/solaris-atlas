@@ -190,6 +190,7 @@ class AuthoredTreeImport(Base):
     asset_version: Mapped[str] = mapped_column(String(32), primary_key=True)
     download_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     tree_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
 
 
 class AuthoredTreeOrder(Base):

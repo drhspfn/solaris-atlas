@@ -44,7 +44,7 @@ async def test_completed_client_index_is_reused_and_partial_import_is_not_marked
     import_index = AsyncMock(return_value=({'trees': 2, 'unresolved': 1}, 'partial'))
     monkeypatch.setattr(release_media, '_import_tree_orders', import_index)
     session = MagicMock()
-    session.get = AsyncMock(return_value=MagicMock(tree_count=25))
+    session.get = AsyncMock(return_value=MagicMock(tree_count=25, schema_version=2))
     session.commit = AsyncMock()
     parent = {'asset_version': '3.7.0', 'download_id': 'client-123'}
     result, status = await release_media.import_tree_orders(parent, session)
@@ -55,3 +55,10 @@ async def test_completed_client_index_is_reused_and_partial_import_is_not_marked
     _, status = await release_media.import_tree_orders(parent, session)
     assert status == 'partial'
     session.add.assert_not_called()
+
+    old_index = MagicMock(tree_count=25, schema_version=1)
+    session.get.return_value = old_index
+    import_index.return_value = ({'trees': 28, 'unresolved': 0}, 'completed')
+    _, status = await release_media.import_tree_orders(parent, session)
+    assert status == 'completed'
+    assert old_index.schema_version == 2 and old_index.tree_count == 28

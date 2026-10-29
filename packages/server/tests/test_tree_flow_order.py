@@ -1,7 +1,8 @@
 import hashlib
 import json
 
-from wuwa_story.story.tree_order import flow_positions
+from wuwa_story.ingestion.quest_tree_order import tree_node_order_hash
+from wuwa_story.story.tree_order import flow_positions, records_match
 
 
 def nodes(records, paths):
@@ -40,3 +41,15 @@ def test_parent_finish_actions_follow_children():
     order = flow_positions(nodes(quest, [(1, []), (2, [0])]), quest, {},
                            {'Cave_1_1', 'Cave_1_2', 'Cave_1_3'})
     assert [key for key, _ in order] == ['Cave_1_1', 'Cave_1_2', 'Cave_1_3']
+
+
+def test_tree_match_ignores_runtime_repair_but_not_order_or_flow_changes():
+    client = {'Id': 1, 'Type': 'ChildQuest', 'ParentNodeId': 0,
+              'Condition': {'Type': 'CheckLevelPlay', 'LevelPlayIds': [183]},
+              'FixProcessor': {'FixActions': []}}
+    node = nodes({1: client}, [(1, [])])[0]
+    node['order_sha256'] = tree_node_order_hash(client)
+    snapshot = {key: value for key, value in client.items() if key != 'FixProcessor'}
+    assert records_match([node], {1: snapshot})
+    snapshot['Condition'] = {'Type': 'CheckLevelPlay', 'LevelPlayIds': [184]}
+    assert not records_match([node], {1: snapshot})

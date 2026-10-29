@@ -9,7 +9,11 @@ from pathlib import Path
 
 from sqlalchemy.dialects.postgresql import insert
 from wuwa_story.db.models.core import AuthoredTreeOrder
-from wuwa_story.ingestion.quest_tree_order import read_tree_node_record, read_tree_order
+from wuwa_story.ingestion.quest_tree_order import (
+    read_tree_node_record,
+    read_tree_order,
+    tree_node_order_hash,
+)
 
 
 def tree_records(config_db: Path, files: list[Path], kind: str, asset_version: str, download_id: str, errors=None):
@@ -43,7 +47,8 @@ def tree_records(config_db: Path, files: list[Path], kind: str, asset_version: s
                              ensure_ascii=False).encode('utf-8')
             nodes.append({'id': position.node_id, 'parent_id': position.parent_id,
                           'type': position.node_type, 'path': list(position.path),
-                          'record_sha256': hashlib.sha256(raw).hexdigest()})
+                          'record_sha256': hashlib.sha256(raw).hexdigest(),
+                          'order_sha256': tree_node_order_hash(records[identity][position.node_id])})
         folder = 'Quests' if kind == 'quest' else 'LevelPlays'
         yield {'asset_version': asset_version, 'download_id': download_id, 'tree_kind': kind, 'tree_id': identity,
                'source_path': f'Client/Content/Aki/Config/UniverseEditorConfig/{folder}/{identity}.bytes',

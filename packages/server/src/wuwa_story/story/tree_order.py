@@ -12,6 +12,7 @@ from wuwa_story.db.models.graph import NodeRevision
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.repositories.cutscenes import source_parents
 from wuwa_story.ingestion.dungeon_context import walk
+from wuwa_story.ingestion.quest_tree_order import tree_node_order_hash
 from wuwa_story.story.media import media_links
 
 
@@ -21,7 +22,8 @@ def records_match(nodes: list[dict], records: dict[int, dict]) -> bool:
     for node in nodes:
         raw = json.dumps(records[node['id']], sort_keys=True, separators=(',', ':'),
                          ensure_ascii=False).encode('utf-8')
-        if hashlib.sha256(raw).hexdigest() != node.get('record_sha256'):
+        if (hashlib.sha256(raw).hexdigest() != node.get('record_sha256')
+                and tree_node_order_hash(records[node['id']]) != node.get('order_sha256')):
             return False
     return True
 

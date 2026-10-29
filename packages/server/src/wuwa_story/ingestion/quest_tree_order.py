@@ -5,6 +5,7 @@ decoded node against the matching client table before accepting the order.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import struct
 from dataclasses import dataclass
@@ -17,6 +18,13 @@ class TreePosition:
     parent_id: int
     node_type: str
     path: tuple[int, ...]
+
+
+def tree_node_order_hash(record: dict[str, Any]) -> str:
+    """Hash the node except its independent runtime repair actions."""
+    relevant = {key: value for key, value in record.items() if key != 'FixProcessor'}
+    raw = json.dumps(relevant, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    return hashlib.sha256(raw).hexdigest()
 
 
 class _Reader:
