@@ -12,7 +12,12 @@ from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.api.routes.story.shared import _display_label, _version_key
 from wuwa_story.db.models.core import Quest
 from wuwa_story.db.models.graph import NodeRevision
-from wuwa_story.db.models.i18n import Locale, LocalizationKey, LocalizationValue
+from wuwa_story.db.models.i18n import (
+    Locale,
+    LocalizationContent,
+    LocalizationKey,
+    LocalizationValue,
+)
 from wuwa_story.db.models.ops import GameRelease, ImportRun
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.session import get_session
@@ -61,9 +66,10 @@ async def _localized_titles(
     if not keys:
         return {}
     rows = (await session.execute(
-        select(LocalizationKey.key, LocalizationValue.content, GameRelease.game_version,
+        select(LocalizationKey.key, LocalizationContent.content, GameRelease.game_version,
                GameRelease.sequence)
         .join(LocalizationValue, LocalizationValue.key_id == LocalizationKey.id)
+        .outerjoin(LocalizationContent, LocalizationContent.id == LocalizationValue.content_id)
         .join(Locale, Locale.id == LocalizationValue.locale_id)
         .join(GameRelease, GameRelease.id == LocalizationValue.release_id)
         .where(LocalizationKey.key.in_(keys), Locale.code == locale,
@@ -137,9 +143,10 @@ async def _snapshot_batch(
     titles: dict[str, list[tuple[tuple[int, ...], int, str]]] = defaultdict(list)
     if keys:
         title_rows = await session.execute(
-            select(LocalizationKey.key, LocalizationValue.content, GameRelease.game_version,
+            select(LocalizationKey.key, LocalizationContent.content, GameRelease.game_version,
                    GameRelease.sequence)
             .join(LocalizationValue, LocalizationValue.key_id == LocalizationKey.id)
+            .outerjoin(LocalizationContent, LocalizationContent.id == LocalizationValue.content_id)
             .join(Locale, Locale.id == LocalizationValue.locale_id)
             .join(GameRelease, GameRelease.id == LocalizationValue.release_id)
             .where(LocalizationKey.key.in_(keys), Locale.code == locale,
