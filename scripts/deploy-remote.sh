@@ -209,7 +209,7 @@ if [[ "$DEPLOY_COMPONENT" == api || "$DEPLOY_COMPONENT" == all ]]; then
       ;;
   esac
   case "$migration_plan" in
-    before:more|ready:more|done:*|legacy) migrate_stopped head ;;
+    before:more|ready:more|done:more|legacy) migrate_stopped head ;;
   esac
 fi
 if [[ "$DEPLOY_COMPONENT" != infrastructure ]]; then

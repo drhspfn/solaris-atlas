@@ -51,7 +51,7 @@ ssh() {
 @unittest.skipUnless(BASH, "Bash is required to test deployment orchestration")
 class DeploymentTests(unittest.TestCase):
     def deploy(self, component, fail_validation=False, worker_image="", fail_migration=False, empty_auth=False,
-               fail_activation=False, migration_plan="done:last", fail_online=False, fail_lock=False,
+               fail_activation=False, migration_plan="done:more", fail_online=False, fail_lock=False,
                fail_client_listing=False):
         source = (ROOT / "scripts/deploy-remote.sh").read_text()
         lock_block = source.split("# Serialize deployments", 1)[1].split("\numask 077", 1)[0]
@@ -202,6 +202,29 @@ compose=(record_compose)
                 self.assertIn("start api-container media-container-1 media-container-2 model-container", result.stderr)
                 if fail:
                     self.assertNotIn("up -d", result.stdout)
+
+    def test_up_to_date_database_skips_migration_and_client_shutdown(self):
+        for component in ("api", "all"):
+            with self.subTest(component=component):
+                result = self.deploy(component, migration_plan="done:last")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("stop --time", result.stdout)
+                self.assertNotIn("alembic upgrade", result.stdout)
+                self.assertIn("up -d --force-recreate --wait pgbouncer", result.stdout)
+                self.assertIn("up -d api", result.stdout)
+
+    def test_pending_and_legacy_migrations_still_stop_and_restore_clients(self):
+        for plan in ("done:more", "legacy"):
+            for fail in (False, True):
+                with self.subTest(plan=plan, fail=fail):
+                    result = self.deploy("api", migration_plan=plan, fail_migration=fail)
+                    self.assertEqual(result.returncode == 0, not fail, result.stderr)
+                    self.assertIn("stop --time 120 api-container", result.stdout)
+                    self.assertIn('alembic upgrade "$1"', result.stdout)
+                    self.assertIn("sh head", result.stdout)
+                    self.assertIn("start api-container", result.stderr)
+                    if fail:
+                        self.assertNotIn("up -d", result.stdout)
 
     def test_pooler_is_recreated_after_direct_migrations_before_api_start(self):
         result = self.deploy("api")
