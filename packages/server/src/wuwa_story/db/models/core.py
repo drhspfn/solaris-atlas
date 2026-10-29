@@ -189,6 +189,7 @@ class AuthoredTreeOrder(Base):
     __table_args__ = (Index("ix_authored_tree_order_identity", "tree_kind", "tree_id", "asset_version"),
                       {"schema": "core"})
     asset_version: Mapped[str] = mapped_column(String(32), primary_key=True)
+    download_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     tree_kind: Mapped[str] = mapped_column(String(16), primary_key=True)
     tree_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     source_path: Mapped[str] = mapped_column(String(1024), nullable=False)

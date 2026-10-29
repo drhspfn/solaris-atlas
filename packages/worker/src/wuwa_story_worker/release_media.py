@@ -179,7 +179,7 @@ async def import_tree_orders(parent, session):
         if len(databases) != 1 or not files:
             raise ValueError(f"Missing client tree resources for {kind}")
         records = await asyncio.to_thread(
-            list, tree_records(databases[0], files, kind, parent["asset_version"], errors)
+            list, tree_records(databases[0], files, kind, parent["asset_version"], parent["download_id"], errors)
         )
         for start in range(0, len(records), 25):
             total += await store_tree_order(session, records[start:start + 25])

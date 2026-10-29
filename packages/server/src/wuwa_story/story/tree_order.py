@@ -82,7 +82,7 @@ async def authored_order(session, quest_id: int, release_id: int | None):
     if not candidates:
         return None
     qrecords = await rows('BinData/QuestNodeData/questnodedata.json', quest_id)
-    candidates.sort(key=lambda value: tuple(map(int, value.asset_version.split('.'))), reverse=True)
+    candidates.sort(key=lambda value: (tuple(map(int, value.asset_version.split('.'))), value.download_id), reverse=True)
     quest_tree = next((tree for tree in candidates if records_match(tree.nodes, qrecords)), None)
     if quest_tree is None:
         return None
@@ -95,6 +95,7 @@ async def authored_order(session, quest_id: int, release_id: int | None):
             level_ids.add(ids[0])
     trees = list(await session.scalars(select(AuthoredTreeOrder).where(
         AuthoredTreeOrder.asset_version == quest_tree.asset_version,
+        AuthoredTreeOrder.download_id == quest_tree.download_id,
         AuthoredTreeOrder.tree_kind == 'level_play', AuthoredTreeOrder.tree_id.in_(level_ids)))) if level_ids else []
     level_trees = {tree.tree_id: (tree.nodes, await rows(
         'BinData/LevelPlayNodeData/levelplaynodedata.json', tree.tree_id)) for tree in trees}

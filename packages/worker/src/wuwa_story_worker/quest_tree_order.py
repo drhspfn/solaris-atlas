@@ -12,8 +12,9 @@ from wuwa_story.db.models.core import AuthoredTreeOrder
 from wuwa_story.ingestion.quest_tree_order import read_tree_node_record, read_tree_order
 
 
-def tree_records(config_db: Path, files: list[Path], kind: str, asset_version: str, errors=None):
-    if kind not in {'quest', 'level_play'} or not re.fullmatch(r'\d+\.\d+\.\d+', asset_version):
+def tree_records(config_db: Path, files: list[Path], kind: str, asset_version: str, download_id: str, errors=None):
+    if (kind not in {'quest', 'level_play'} or not re.fullmatch(r'\d+\.\d+\.\d+', asset_version)
+            or not download_id or len(download_id) > 128):
         raise ValueError('A tree kind and exact client version are required')
     table = 'questnodedata' if kind == 'quest' else 'levelplaynodedata'
     selected = {int(path.stem): path for path in files if path.suffix == '.bytes' and path.stem.isdecimal()}
@@ -44,7 +45,7 @@ def tree_records(config_db: Path, files: list[Path], kind: str, asset_version: s
                           'type': position.node_type, 'path': list(position.path),
                           'record_sha256': hashlib.sha256(raw).hexdigest()})
         folder = 'Quests' if kind == 'quest' else 'LevelPlays'
-        yield {'asset_version': asset_version, 'tree_kind': kind, 'tree_id': identity,
+        yield {'asset_version': asset_version, 'download_id': download_id, 'tree_kind': kind, 'tree_id': identity,
                'source_path': f'Client/Content/Aki/Config/UniverseEditorConfig/{folder}/{identity}.bytes',
                'source_sha256': hashlib.sha256(blob).digest(), 'nodes': nodes}
 
@@ -54,7 +55,7 @@ async def store_tree_order(session, records):
     for record in records:
         statement = insert(AuthoredTreeOrder).values(**record)
         await session.execute(statement.on_conflict_do_update(
-            index_elements=['asset_version', 'tree_kind', 'tree_id'],
+            index_elements=['asset_version', 'download_id', 'tree_kind', 'tree_id'],
             set_={'source_path': statement.excluded.source_path,
                   'source_sha256': statement.excluded.source_sha256, 'nodes': statement.excluded.nodes}))
         count += 1

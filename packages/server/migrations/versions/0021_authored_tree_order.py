@@ -15,6 +15,7 @@ def upgrade():
         op.create_table(
             "authored_tree_order",
             sa.Column("asset_version", sa.String(32), primary_key=True),
+            sa.Column("download_id", sa.String(128), primary_key=True),
             sa.Column("tree_kind", sa.String(16), primary_key=True),
             sa.Column("tree_id", sa.BigInteger(), primary_key=True),
             sa.Column("source_path", sa.String(1024), nullable=False),
