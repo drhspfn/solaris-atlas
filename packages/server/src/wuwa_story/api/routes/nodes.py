@@ -343,6 +343,41 @@ async def node_narrative_context(
     )
     quests = [await _quest_info(session, quest, locale, game_version) for quest in quest_rows]
 
+    # A caption-matched transcript may belong to a scene reached through LevelPlay,
+    # even when that dialogue state is not part of the quest's ordered transcript.
+    if release_id is not None:
+        from wuwa_story.db.repositories.cutscenes import source_parents
+
+        scene_refs = await source_parents(session, [target_state.node_id], ("has_transcript_state",), release_id)
+        scene_ids = {scene for _, scene in scene_refs}
+        movies = await source_parents(session, scene_ids, ("plays_cutscene",), release_id)
+        actions = {action.node_id: action for action in await session.scalars(
+            select(QuestAction).where(QuestAction.node_id.in_({action for _, action in movies}))
+        )} if movies else {}
+        states = {state.node_id: state for state in await session.scalars(
+            select(QuestState).where(QuestState.node_id.in_({action.quest_state_node_id for action in actions.values()}))
+        )} if actions else {}
+        refs = await source_parents(session, states.keys(), ("references_scenario_flow_state",), release_id)
+        candidates = {quest.node_id: quest for quest in await session.scalars(
+            select(Quest).where(Quest.node_id.in_({owner for _, owner in refs}))
+        )} if refs else {}
+        scene_keys = dict(await session.execute(select(Node.id, Node.canonical_key).where(Node.id.in_(scene_ids)))) if scene_ids else {}
+        seen = {quest["game_quest_id"] for quest in quests}
+        for scene_id, action_id in movies:
+            action = actions.get(action_id)
+            state = states.get(action.quest_state_node_id) if action else None
+            if not state:
+                continue
+            for state_id, owner in refs:
+                quest = candidates.get(owner)
+                if state_id != state.node_id or not quest or quest.game_quest_id in seen:
+                    continue
+                quests.append({**(await _quest_info(session, quest, locale, game_version)),
+                               "context_inferred": True,
+                               "scene": {"reference": scene_keys[scene_id], "flow_state": state.state_key,
+                                         "action_index": action.action_index}})
+                seen.add(quest.game_quest_id)
+
     source_rows = await session.execute(
         select(SourceRecord, SourceFile)
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
@@ -369,7 +404,7 @@ async def node_narrative_context(
         "quests": quests,
         "game_version": (await session.get(GameRelease, release_id)).game_version if release_id else None,
         "quest_resolution": {
-            "basis": "Explicit quest, scene or required-dungeon scenario references; PlayMovie transcripts match complete caption keys. Dungeon context does not prove every runtime branch occurred.",
+            "basis": "Quest and scenario references; PlayMovie transcripts match complete caption keys. Scenario context does not prove every runtime branch occurred.",
             "quest_node_refs": owner_keys,
             "unresolved": not bool(quests),
         },

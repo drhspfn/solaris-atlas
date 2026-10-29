@@ -9,6 +9,7 @@ def scenario_links(quest_rows, level_rows, valid_states):
     """Return contextual links, not claims about runtime traversal or quest ownership."""
     setters = defaultdict(set)
     quest_flows = defaultdict(set)
+    required_levels = defaultdict(list)
     evidence = {}
     for index, row in quest_rows:
         key = row.get("Key", "")
@@ -16,6 +17,14 @@ def scenario_links(quest_rows, level_rows, valid_states):
         if not sep or not quest.isdecimal() or not node.isdecimal():
             continue
         data = decoded(row.get("Data"))
+        if isinstance(data, dict):
+            condition = decoded(data.get("Condition"))
+            if isinstance(condition, dict):
+                ids = condition.get("LevelPlayIds")
+                if (condition.get("Type") == "CheckLevelPlay" and isinstance(ids, list)
+                        and len(ids) == 1 and type(ids[0]) is int
+                        and condition.get("CompleteNumber") == 1):
+                    required_levels[str(ids[0])].append((quest, index, f"$[{index}].Data.Condition"))
         for path, obj in walk(data, f"$[{index}].Data"):
             if isinstance(obj.get("FlowListName"), str) and type(obj.get("FlowId")) is int:
                 quest_flows[quest].add(obj["FlowListName"])
@@ -36,6 +45,28 @@ def scenario_links(quest_rows, level_rows, valid_states):
         levels[level].append((index, data))
 
     for level, rows in levels.items():
+        for index, data in rows:
+            for slot in ("EnterActions", "FinishActions"):
+                for path, action in walk(data.get(slot), f"$[{index}].Data.{slot}"):
+                    params = action.get("Params")
+                    if action.get("Name") != "PlayFlow" or not isinstance(params, dict):
+                        continue
+                    name, flow, state = (params.get(k) for k in ("FlowListName", "FlowId", "StateId"))
+                    if not isinstance(name, str) or type(flow) is not int or type(state) is not int:
+                        continue
+                    state_key = f"{name}_{flow}_{state}"
+                    if state_key not in valid_states:
+                        continue
+                    for quest, quest_row, quest_path in required_levels[level]:
+                        yield {"from": f"quest:{quest}", "to": f"flow_state:{state_key}",
+                               "source": "BinData/LevelPlayNodeData/levelplaynodedata.json",
+                               "raw_path": path, "basis": json.dumps({
+                                   "meaning": "Quest requires this LevelPlay; individual branches and transcript position are not established",
+                                   "level_play_id": level,
+                                   "quest_condition": {"file": "BinData/QuestNodeData/questnodedata.json",
+                                                       "row": quest_row, "path": quest_path},
+                                   "flow_source_row": index, "flow_list": name,
+                               }, ensure_ascii=False, sort_keys=True)}
         variables = set()
         flows = []
         for index, data in rows:
