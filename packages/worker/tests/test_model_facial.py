@@ -40,6 +40,14 @@ def test_constant_runs_are_compacted_without_changing_transition_times():
     assert clip["tracks"][0]["keys"] == [[0, 0], [1 / 3, 0], [0.5, 1], [1, 1]]
 
 
+def test_pack_rejects_ambiguous_body_mapping_and_nonobject_rows():
+    clip = facial_clip(dto([(0, 1)]), "Book", {"E_Close"}, body_clip="Book")
+    with pytest.raises(ValueError, match="Ambiguous"):
+        validate_facial_pack({"format": FORMAT, "clips": [clip, {**clip, "name": "Duplicate"}]})
+    with pytest.raises(ValueError, match="Invalid facial animation clip"):
+        validate_facial_pack({"format": FORMAT, "clips": [1]})
+
+
 def test_plan_keeps_synchronized_curves_and_independent_facial_poses(tmp_path):
     model = tmp_path / "model.uemodel"
     model.write_bytes(b"model")

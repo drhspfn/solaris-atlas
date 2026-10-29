@@ -47,8 +47,10 @@ def validate_facial_pack(pack):
     clips = pack.get("clips")
     if not isinstance(clips, list):
         raise ValueError("Invalid facial animation clips")
-    names = set()
+    names, body_clips = set(), set()
     for clip in clips:
+        if not isinstance(clip, dict):
+            raise ValueError("Invalid facial animation clip")
         name = clip.get("name")
         seconds = clip.get("seconds")
         if not isinstance(name, str) or not name or name in names:
@@ -58,10 +60,16 @@ def validate_facial_pack(pack):
             raise ValueError("Invalid facial animation duration")
         if clip.get("body_clip") is not None and not isinstance(clip["body_clip"], str):
             raise ValueError("Invalid facial body clip")
+        if clip.get("body_clip") is not None:
+            if not clip["body_clip"] or clip["body_clip"] in body_clips:
+                raise ValueError("Ambiguous facial body clip")
+            body_clips.add(clip["body_clip"])
         if not isinstance(clip.get("tracks"), list) or not clip["tracks"]:
             raise ValueError("Empty facial animation")
         targets = set()
         for track in clip["tracks"]:
+            if not isinstance(track, dict):
+                raise ValueError("Invalid facial animation track")
             target = track.get("target")
             if not isinstance(target, str) or not target or target.casefold() in targets:
                 raise ValueError("Facial targets must be unique")

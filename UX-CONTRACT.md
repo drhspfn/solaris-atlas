@@ -1,5 +1,16 @@
 # Interactive map UX contract
 
+## Character model quality and facial playback
+
+The profile remains a deferred compact preview. Full-resolution textures and
+morph targets load only through an explicit full-quality or animation action.
+Loading body animations includes their available facial curves automatically;
+pause, speed and seeking affect the matching face too. Independent expressions
+are an override in a collapsed Face control. Loading only the facial library
+does not download the skeletal animation collection. A failed quality download
+retains the compact model and offers retry. Model forms isolate all optional
+assets by publication; a missing facial pack never borrows another form's pack.
+
 ## Cookie choices
 
 First visit presents equal choices for necessary storage and optional advertising.

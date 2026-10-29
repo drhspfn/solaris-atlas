@@ -4,6 +4,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { SpringBones } from "./spring-bones.js";
 import { BoneCamera, cameraBones } from "./camera-rig.js";
 import { RootMotionLock } from "./root-motion.js";
+import { FacialAnimation } from "./facial.js";
 import { createViewerUI } from "./viewer-ui.js";
 import {
   resourceUrl as validatedResourceUrl,
@@ -169,6 +170,8 @@ let model,
   physics,
   applied = false,
   playing = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+let currentGltf, loadedAnimationPack, facial;
+let fullQuality = false, qualityRequest, facialRequest;
 let height = 1.8,
   modelWidth = 1.2,
   clips = [],
@@ -260,6 +263,7 @@ function selectClip(name) {
   action = mixer.clipAction(clip);
   action.reset().play();
   mixer.update(0);
+  facial?.update(clip.name, action.time);
   rootMotion?.apply();
   $("time").max = Math.max(action.getClip().duration, 0.001);
   $("time").disabled = action.getClip().duration === 0;
@@ -267,10 +271,18 @@ function selectClip(name) {
   ui.selectAnimation(name);
 }
 $("time").oninput = () => {
-  if (!action) return;
+  if (!action) {
+    if (facial?.clips.has(facial.selected)) {
+      facial.time = Number($("time").value);
+      facial.update(undefined, 0);
+      updateTime();
+    }
+    return;
+  }
   resetPhysics();
   action.time = Number($("time").value);
   mixer.update(0);
+  facial?.update(action.getClip().name, action.time);
   rootMotion?.apply();
   updateTime();
 };
@@ -278,10 +290,13 @@ function timestamp(seconds) {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 }
 function updateTime() {
-  if (!action) return;
-  $("time").value = action.time;
+  const faceClip = facial?.clips.get(facial.selected);
+  if (!action && !faceClip) return;
+  const duration = action?.getClip().duration ?? faceClip.seconds;
+  const time = action?.time ?? (duration ? facial.time % duration : 0);
+  $("time").value = time;
   $("duration").value =
-    `${timestamp(action.time)} / ${timestamp(action.getClip().duration)}`;
+    `${timestamp(time)} / ${timestamp(duration)}`;
 }
 new ResizeObserver(() => {
   const { width, height } = viewport.getBoundingClientRect();
@@ -310,23 +325,38 @@ renderer.setAnimationLoop((milliseconds) => {
       physics.update(safeDelta, Number($("strength").value));
       applied = safeDelta > 0;
     }
-    updateTime();
   }
+  facial?.update(action?.getClip().name, action?.time || 0,
+    playing && dt <= 0.15 ? dt * Number($("speed").value) : 0);
+  updateTime();
   boneCamera.update();
   controls.update();
   renderer.render(scene, camera);
 });
 
-async function load() {
+async function load(source, upgrading = false) {
   try {
     const gltf = await new GLTFLoader().loadAsync(
-      resourceUrl(parameters.get("model") || "./character.glb"),
+      resourceUrl(source || parameters.get("model") || "./character.glb"),
       (progress) => {
         status.textContent = progress.total
           ? `Loading model · ${Math.round((progress.loaded / progress.total) * 100)}%`
           : "Loading model…";
       },
     );
+    const nextClips = previewMode ? [] : loadedAnimationPack
+      ? bindAnimationClips(loadedAnimationPack, gltf)
+      : gltf.animations.map((clip, index) => attachAnimationCatalog(clip, gltf, index));
+    const previous = upgrading ? { name: action?.getClip().name, time: action?.time || 0,
+      rotation: model.rotation.clone() } : null;
+    const oldModel = model;
+    resetPhysics();
+    rootMotion?.restore();
+    physics = undefined;
+    boneCamera.detach();
+    if (mixer) { mixer.stopAllAction(); mixer.uncacheRoot(model); }
+    if (model) motionStage.remove(model);
+    currentGltf = gltf;
     model = gltf.scene;
     motionStage.add(model);
     prepareAnimatedMeshes(model);
@@ -349,23 +379,25 @@ async function load() {
     for (const id of ["camera-attach", "camera-focus", "camera-follow"])
       $(id).disabled = !selectedBone;
     homeTarget.set(0, height * 0.5, 0);
-    resetView();
+    if (!upgrading) resetView();
+    if (previous) model.rotation.copy(previous.rotation);
     mixer = new THREE.AnimationMixer(model);
     function installClips(nextClips) {
       clips = nextClips;
-      const initial = clips.some((clip) => clip.name === "Stand1")
-        ? "Stand1"
-        : clips[0]?.name;
+      const initial = clips.some(clip => clip.name === previous?.name) ? previous.name
+        : clips.some((clip) => clip.name === "Stand1") ? "Stand1" : clips[0]?.name;
       ui.setAnimations(clips, selectClip, initial);
       if (clips.length) {
         $("playback").disabled = false;
         selectClip(initial);
+        if (previous?.name === initial) { action.time = previous.time; mixer.update(0); }
         // Ground the initial animated skin, not just the GLB bind-pose bounds.
         model.updateMatrixWorld(true);
         const posedBounds = new THREE.Box3().setFromObject(model, true);
         model.position.y -= posedBounds.min.y;
         rootMotion.reference.y -= posedBounds.min.y;
         rootMotion.apply();
+        updateTime();
       }
       status.textContent = clips.length
         ? `${clips.length} animations available`
@@ -373,26 +405,38 @@ async function load() {
       $("playback").hidden = clips.length === 0;
       updatePlayButton();
     }
-    installClips(
-      previewMode
-        ? []
-        : gltf.animations.map((clip, index) =>
-            attachAnimationCatalog(clip, gltf, index),
-          ),
-    );
+    installClips(nextClips);
+    updateAxisLocks();
+    if (oldModel && oldModel !== model) {
+      // Release the compact rig only after the replacement has loaded successfully.
+      const textures = new Set(), materials = new Set(), geometries = new Set();
+      oldModel.traverse(node => {
+        if (node.geometry) geometries.add(node.geometry);
+        for (const material of node.material ? [node.material].flat() : []) {
+          materials.add(material);
+          for (const value of Object.values(material)) if (value?.isTexture) textures.add(value);
+        }
+        node.skeleton?.dispose();
+      });
+      for (const item of [...textures, ...materials, ...geometries]) item.dispose();
+    }
     const packUrl = parameters.get("animations");
-    if (packUrl && !previewMode) {
+    if (packUrl && !previewMode && !loadedAnimationPack) {
       const button = $("load-animations");
-      const label = animationLoadLabel(parameters.get("animation_bytes"));
+      const label = parameters.get("facial") && !fullQuality
+        ? assetLabel("Load animations, face + full model", Number(parameters.get("animation_bytes"))
+          + Number(parameters.get("model_bytes")) + Number(parameters.get("facial_bytes")))
+        : animationLoadLabel(parameters.get("animation_bytes"));
       button.hidden = false;
       button.textContent = label;
       const loadPack = lazyAnimationPack(
         packUrl,
         (url) => new GLTFLoader().loadAsync(resourceUrl(url)),
         (pack) => {
-          const boundClips = bindAnimationClips(pack, gltf);
+          const boundClips = bindAnimationClips(pack, currentGltf);
           resetPhysics();
           installClips(boundClips);
+          loadedAnimationPack = pack;
           $("turntable").checked = false;
           $("turntable").closest("label").hidden = true;
         },
@@ -403,8 +447,11 @@ async function load() {
         button.setAttribute("aria-busy", "true");
         button.textContent = "Loading animations…";
         $("playback").disabled = true;
+        $("load-quality").disabled = true;
+        $("load-facial").disabled = true;
         $("animation-status").textContent = "Loading animations…";
         try {
+          if (parameters.get("facial")) await loadFacial();
           await loadPack();
           button.hidden = true;
           $("animation-status").textContent =
@@ -417,11 +464,14 @@ async function load() {
           button.disabled = false;
           button.removeAttribute("aria-busy");
           $("playback").disabled = clips.length === 0;
+          $("load-quality").disabled = false;
+          $("load-facial").disabled = false;
         }
       };
     }
     notifyViewer("ready");
     if (previewMode) return;
+    if (!upgrading) qualityButton.disabled = facialButton.disabled = false;
     try {
       const physicsUrl =
         parameters.get("physics") ||
@@ -440,11 +490,95 @@ async function load() {
         "Physics profile unavailable · animation only";
     }
   } catch (error) {
+    if (upgrading) throw error;
     status.textContent = `Could not load the model: ${error.message}`;
     notifyViewer("error", status.textContent);
     $("retry").hidden = false;
   }
 }
+function assetLabel(label, bytes) {
+  const size = Number(bytes);
+  return Number.isFinite(size) && size > 0 ? `${label} (~${(size / 1024 ** 2).toFixed(1)} MiB)` : label;
+}
+const fullModelUrl = parameters.get("full_model");
+const qualityButton = $("load-quality"), facialButton = $("load-facial");
+qualityButton.disabled = facialButton.disabled = true;
+const qualityLabel = assetLabel("Load full quality", parameters.get("model_bytes"));
+qualityButton.hidden = previewMode || !fullModelUrl;
+qualityButton.textContent = qualityLabel;
+async function loadFullQuality() {
+  if (fullQuality) return;
+  if (!fullModelUrl) throw new Error("Full model is not available");
+  if (!qualityRequest) qualityRequest = load(fullModelUrl, true).then(() => {
+    fullQuality = true;
+    qualityButton.hidden = true;
+    $("model-quality-status").textContent = "Full quality · original textures and facial morphs";
+  }).finally(() => { qualityRequest = undefined; });
+  return qualityRequest;
+}
+qualityButton.onclick = async () => {
+  if (qualityButton.disabled) return;
+  qualityButton.disabled = facialButton.disabled = true;
+  $("load-animations").disabled = true;
+  qualityButton.textContent = "Loading full model…";
+  try { await loadFullQuality(); }
+  catch (error) {
+    qualityButton.textContent = qualityLabel.replace("Load", "Retry loading");
+    $("model-quality-status").textContent = error.message;
+    status.textContent = "Compact model retained";
+  } finally {
+    qualityButton.disabled = facialButton.disabled = false;
+    $("load-animations").disabled = false;
+  }
+};
+facialButton.hidden = previewMode || !parameters.get("facial");
+const facialLabel = assetLabel("Load facial animations + full model",
+  Number(parameters.get("facial_bytes")) + Number(parameters.get("model_bytes")));
+facialButton.textContent = facialLabel;
+async function loadFacial() {
+  if (facial) return;
+  if (facialRequest) return facialRequest;
+  facialRequest = (async () => {
+    await loadFullQuality();
+    const response = await fetch(resourceUrl(parameters.get("facial")));
+    if (!response.ok) throw new Error("Facial animation pack unavailable");
+    const next = new FacialAnimation(await response.json(), model);
+    facial = next;
+    ui.setFacial([...facial.clips.values()], name => {
+      facial.select(name);
+      facial.update(action?.getClip().name, action?.time || 0);
+      if (!action) {
+        const clip = facial.clips.get(name);
+        $("playback").hidden = !clip;
+        $("playback").disabled = !clip;
+        $("time").max = clip?.seconds || 0.001;
+        $("time").disabled = !clip?.seconds;
+        updateTime();
+      }
+      $("facial-mode").textContent = name === "auto" ? "Face · follows body animation" : name === "off" ? "Face · neutral expression" : `Face · ${name}`;
+      $("facial-status").textContent = name === "auto" ? "Follows matching body clips" : name === "off" ? "Neutral expression" : "Independent facial animation";
+    });
+    $("facial-controls").hidden = false;
+    $("facial-status").textContent = `${facial.clips.size} facial animations loaded · follows matching body clips`;
+    facialButton.hidden = true;
+  })().finally(() => { facialRequest = undefined; });
+  return facialRequest;
+}
+facialButton.onclick = async () => {
+  if (facialButton.disabled) return;
+  qualityButton.disabled = facialButton.disabled = true;
+  $("load-animations").disabled = true;
+  facialButton.textContent = "Loading facial animations…";
+  try {
+    await loadFacial();
+  } catch (error) {
+    facialButton.textContent = facialLabel.replace("Load", "Retry loading");
+    $("model-quality-status").textContent = error.message;
+  } finally {
+    qualityButton.disabled = facialButton.disabled = false;
+    $("load-animations").disabled = false;
+  }
+};
 $("retry").onclick = () => location.reload();
 renderer.domElement.addEventListener("webglcontextlost", (event) => {
   event.preventDefault();

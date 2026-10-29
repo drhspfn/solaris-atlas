@@ -61,6 +61,20 @@
       <span class="axis-key" id="axis-key">X <i></i> Z · grid 0.5 m</span>
     </main>
     <footer class="viewer-footer">
+      <div class="animation-download" id="model-downloads">
+        <button id="load-quality" hidden>Load full quality</button>
+        <button id="load-facial" hidden>Load facial animations</button>
+        <span id="model-quality-status" role="status"></span>
+      </div>
+      <details id="facial-controls" hidden>
+        <summary><span id="facial-mode">Face · follows body animation</span><svg class="picker-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>
+        <span id="facial-label" class="field-label">Facial animation</span>
+        <button id="facial-picker" class="picker-trigger" aria-labelledby="facial-label facial-selection" aria-expanded="false" aria-controls="facial-list" disabled>
+          <span id="facial-selection">Follow body animation</span>
+          <svg class="picker-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <span id="facial-status" role="status"></span>
+      </details>
       <div class="animation-download">
         <button id="load-animations" hidden>Load animations</button
         ><span id="animation-status" role="status"></span>

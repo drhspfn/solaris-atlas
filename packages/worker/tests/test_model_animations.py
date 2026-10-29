@@ -232,6 +232,24 @@ def job_payload():
     )
 
 
+def test_facial_publication_is_validated_against_the_body_animation_collection(tmp_path):
+    job = worker.CharacterModelJob.model_validate({**job_payload(), "include_animations": True})
+    animation_glb(tmp_path / "animations.glb")
+    summaries = {"animations": glb_summary(tmp_path / "animations.glb", allow_animations=True)}
+    pack = {"format": "solaris-facial-v1", "clips": [
+        {"name": "Stand1", "body_clip": "Stand1", "seconds": 1,
+         "tracks": [{"target": "E_Close", "keys": [[0, 0], [1, 1]]}]},
+    ]}
+    path = tmp_path / "facial.json"
+    path.write_text(json.dumps(pack))
+    files, count = worker.publication_files(job, tmp_path, summaries)
+    assert ("facial", path, "raw_json", "application/json") in files and count == 1
+    pack["clips"][0]["body_clip"] = "Missing"
+    path.write_text(json.dumps(pack))
+    with pytest.raises(ValueError, match="unpublished body clip"):
+        worker.publication_files(job, tmp_path, summaries)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("include", [None, True, False])
 @pytest.mark.parametrize("form_count", [1, 2])

@@ -386,7 +386,7 @@ def publication_files(job, output, summaries):
         if facial_path.is_file():
             facial = validate_facial_pack(json.loads(facial_path.read_text(encoding="utf-8")))
             names = {clip["name"] for clip in actual["clips"]}
-            if any(clip["body_clip"] is not None and clip["body_clip"] not in names for clip in facial["clips"]):
+            if any(clip.get("body_clip") is not None and clip["body_clip"] not in names for clip in facial["clips"]):
                 raise ValueError("Facial curves refer to an unpublished body clip")
             if facial["clips"]:
                 files.append(("facial", facial_path, "raw_json", "application/json"))

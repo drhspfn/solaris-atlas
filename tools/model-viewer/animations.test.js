@@ -5,6 +5,7 @@ import vm from "node:vm";
 import * as THREE from "three";
 import { BoneCamera, cameraBones } from "./camera-rig.js";
 import { RootMotionLock } from "./root-motion.js";
+import { FacialAnimation } from "./facial.js";
 import {
   resourceUrl,
   animationLoadLabel,
@@ -310,13 +311,23 @@ async function viewer(search, { embedded = false } = {}) {
   };
   element("load-animations").hidden = true;
   const preview = rig(),
-    pack = rig();
+    pack = rig(), full = rig();
+  const faceMesh = new THREE.Object3D();
+  faceMesh.morphTargetDictionary = { E_Close: 0 };
+  faceMesh.morphTargetInfluences = [0];
+  full.scene.add(faceMesh);
+  full.animations = [];
   if (!embedded) preview.animations = [];
   const requests = [];
   let fail = false;
+  let frame, faceSelection;
   class Loader {
     async loadAsync(url) {
       requests.push(url);
+      if (url.includes("full")) {
+        if (fail) throw new Error("offline");
+        return full;
+      }
       if (url.includes("pack")) {
         if (fail) throw new Error("offline");
         return pack;
@@ -327,7 +338,7 @@ async function viewer(search, { embedded = false } = {}) {
   class Renderer {
     domElement = element("canvas");
     setPixelRatio() {}
-    setAnimationLoop() {}
+    setAnimationLoop(fn) { frame = fn; }
   }
   class Controls {
     target = new THREE.Vector3();
@@ -349,6 +360,7 @@ async function viewer(search, { embedded = false } = {}) {
     BoneCamera,
     cameraBones,
     RootMotionLock,
+    FacialAnimation,
     validatedResourceUrl: resourceUrl,
     animationLoadLabel,
     attachAnimationCatalog,
@@ -363,6 +375,7 @@ async function viewer(search, { embedded = false } = {}) {
         element("animations").value = name;
       },
       setBones() {},
+      setFacial(clips, onSelect) { faceSelection = onSelect; },
       selectBone() {},
     }),
     document: {
@@ -390,6 +403,13 @@ async function viewer(search, { embedded = false } = {}) {
     },
     fetch: async (url) => {
       requests.push(url);
+      if (url.includes("face")) {
+        if (fail) throw new Error("offline");
+        return { ok: true, json: async () => ({ format: "solaris-facial-v1", clips: [
+          { name: "Stand1", body_clip: "Stand1", seconds: 1,
+            tracks: [{ target: "E_Close", keys: [[0, 0], [0.5, 1], [1, 0]] }] },
+        ] }) };
+      }
       return { ok: true, json: async () => ({}) };
     },
   });
@@ -397,6 +417,8 @@ async function viewer(search, { embedded = false } = {}) {
   return {
     element,
     requests,
+    full, faceMesh, frame,
+    selectFace: (name) => faceSelection(name),
     setFailure: (value) => {
       fail = value;
     },
@@ -439,6 +461,61 @@ test("viewer stays static until click, retries, installs Stand1 and preserves ph
   assert.equal(element("physics").checked, true);
   assert.equal(element("physics").disabled, false);
   assert.equal(element("load-animations").hidden, true);
+});
+
+test("full quality is lazy, retries safely and rebinds an already loaded animation", async () => {
+  const { element, requests, setFailure, full } = await viewer(
+    "?model=/model.glb&full_model=/full.glb&model_bytes=2097152&animations=/pack.glb",
+  );
+  assert.equal(requests.some(url => url.includes("full")), false);
+  await element("load-animations").onclick();
+  element("time").value = "0.5"; element("time").oninput();
+  setFailure(true);
+  await element("load-quality").onclick();
+  assert.match(element("model-quality-status").textContent, /offline/);
+  assert.equal(element("load-quality").hidden, false);
+  setFailure(false);
+  const loading = element("load-quality").onclick();
+  await element("load-quality").onclick();
+  await loading;
+  assert.equal(element("load-quality").hidden, true);
+  assert.equal(element("animations").value, "Stand1");
+  assert.equal(element("time").value, 0.5);
+  assert.equal(full.bone.position.x, 1);
+  assert.equal(requests.filter(url => url.includes("pack")).length, 1);
+  assert.equal(requests.filter(url => url.includes("full")).length, 2);
+});
+
+test("body animation automatically loads full rig and matching face; scrubbing follows body", async () => {
+  const { element, requests, faceMesh } = await viewer(
+    "?model=/model.glb&full_model=/full.glb&facial=/face.json&animations=/pack.glb",
+  );
+  assert.equal(requests.some(url => /full|face|pack/.test(url)), false);
+  await element("load-animations").onclick();
+  assert.equal(element("load-facial").hidden, true);
+  assert.equal(element("load-animations").hidden, true);
+  assert.equal(element("facial-controls").hidden, false);
+  element("time").value = "0.5"; element("time").oninput();
+  assert.equal(faceMesh.morphTargetInfluences[0], 1);
+  assert.equal(requests.filter(url => url.includes("full")).length, 1);
+  assert.equal(requests.filter(url => url.includes("face")).length, 1);
+  assert.equal(requests.filter(url => url.includes("pack")).length, 1);
+});
+
+test("facial library alone has pause and seek controls without loading skeletal animations", async () => {
+  const { element, requests, faceMesh, selectFace } = await viewer(
+    "?model=/model.glb&full_model=/full.glb&facial=/face.json&animations=/pack.glb",
+  );
+  await element("load-facial").onclick();
+  selectFace("Stand1");
+  assert.equal(element("playback").hidden, false);
+  assert.equal(element("playback").disabled, false);
+  element("time").value = "0.5"; element("time").oninput();
+  assert.equal(faceMesh.morphTargetInfluences[0], 1);
+  assert.equal(requests.some(url => url.includes("pack")), false);
+  selectFace("off");
+  assert.equal(element("playback").hidden, true);
+  assert.equal(faceMesh.morphTargetInfluences[0], 0);
 });
 
 test("embedded clips remain available without a pack; unsafe pack URLs never reach loader", async () => {

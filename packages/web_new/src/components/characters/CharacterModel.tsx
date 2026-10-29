@@ -12,6 +12,7 @@ type ModelAssets = {
   download: Asset | null;
   physics: Asset | null;
   animations?: Asset | null;
+  facial?: Asset | null;
   viewer_url?: string | null;
 };
 type ModelForm = ModelAssets & { id: string; label: string };
@@ -129,6 +130,14 @@ export function CharacterModel({
   const params = new URLSearchParams({ name });
   if (assets?.preview) params.set("model", assetUrl(assets.preview.url));
   const previewSrc = `${runtimeURL}?${params}&mode=preview`;
+  if (assets?.download) {
+    params.set("full_model", assetUrl(assets.download.url));
+    params.set("model_bytes", String(assets.download.size_bytes));
+  }
+  if (assets?.facial) {
+    params.set("facial", assetUrl(assets.facial.url));
+    params.set("facial_bytes", String(assets.facial.size_bytes));
+  }
   if (assets?.physics) params.set("physics", assetUrl(assets.physics.url));
   if (assets?.animations) {
     params.set("animations", assetUrl(assets.animations.url));

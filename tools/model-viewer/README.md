@@ -89,6 +89,36 @@ starts playback paused. Physics settings remain unchanged. Failed downloads
 offer an explicit retry; there is no automatic retry or background download.
 Embedded clips in local full GLBs continue to work without an animation URL.
 
+### Full quality and facial animation
+
+`full_model` points to the existing full-resolution rig GLB; `model_bytes` is
+its optional download size. **Load full quality** replaces the compact rig on
+demand, preserves the camera and current skeletal clip/time, and releases the
+old GPU resources. Profile previews never request it.
+
+The optional `facial` URL points to a `solaris-facial-v1` JSON pack, with an
+optional `facial_bytes` size hint. Loading body animations automatically loads
+this pack and the full rig, so authored facial curves follow the selected body
+clip, its pause state, speed, loops and seeks. There is no separate opt-in for
+the matching face. The collapsed Face menu can override this with an independent
+facial clip, or restore neutral/automatic mode. The facial library can also be
+loaded alone, without the skeletal GLB; its playback and seek controls then
+operate on the selected expression.
+
+Workers extract curves during the existing animation preflight, matching exact
+authored morph names (case insensitive). Unrelated gameplay curves are omitted;
+constant runs are compacted without changing interpolation. Additive bone and
+curve-only clips can contribute independent facial curves without being
+misrepresented as full-body animations. Each pack belongs to its published form
+and bundle; absent assets never borrow another form's face.
+
+Existing publications still work without a facial pack. To add facial curves
+and repair Denia's masked neck/body skin, rebuild the model with **Include
+animations as a separate download** and **Rebuild existing model** enabled.
+Both full and compact rigs receive the skin repair. Cloth/hair masking remains
+unchanged; original game lighting, material effects and animation-blueprint
+composition are still outside this base-color preview.
+
 ## Verification
 
 ### Model studio

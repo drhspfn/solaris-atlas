@@ -225,6 +225,7 @@ const model = {
   download: { url: "https://cdn.example/full.glb", size_bytes: 4096 },
   physics: { url: "/api/media/physics.json", size_bytes: 100 },
   animations: { url: "https://cdn.example/animations.glb", size_bytes: 8000 },
+  facial: { url: "https://cdn.example/facial.json", size_bytes: 500 },
 };
 const forms = [
   { ...model, id: "default", label: "Default" },
@@ -234,6 +235,7 @@ const forms = [
     download: { url: "/api/media/alternate-full.glb", size_bytes: 8192 },
     physics: { url: "/api/media/alternate-physics.json", size_bytes: 200 },
     animations: { url: "/api/media/alternate-animations.glb", size_bytes: 16000 },
+    facial: { url: "/api/media/alternate-facial.json", size_bytes: 700 },
     viewer_url: "https://alternate.example/model-viewer/old/index.html",
   },
 ];
@@ -282,6 +284,8 @@ test("form selection switches both stages while fullscreen is open, remounts rig
     assert.equal(url.searchParams.get("physics"), index ? forms[1].physics.url : null);
     assert.equal(url.searchParams.get("animations"), index ? forms[1].animations.url : null);
     assert.equal(url.searchParams.get("animation_bytes"), index ? String(forms[1].animations.size_bytes) : null);
+    assert.equal(url.searchParams.get("facial"), index ? forms[1].facial.url : null);
+    assert.equal(url.searchParams.get("full_model"), index ? forms[1].download.url : null);
   });
   assert.deepEqual(nodes(tree).filter((n) => n.type === "a").map((n) => n.props.href), [forms[1].download.url, forms[1].animations.url]);
   assert.equal(nodes(tree).filter((n) => n.props.role === "status").length, 2);
@@ -313,7 +317,7 @@ test("forms never borrow missing assets or runtime URLs from root metadata", asy
   const url = new URL(frame.props.src, "https://atlas.example");
   assert.equal(url.origin, "https://atlas.example");
   assert.equal(url.searchParams.get("model"), sparse.preview.url);
-  for (const param of ["physics", "animations", "animation_bytes"]) assert(!url.searchParams.has(param));
+  for (const param of ["physics", "animations", "animation_bytes", "facial", "full_model"]) assert(!url.searchParams.has(param));
   assert.equal(nodes(tree).filter((n) => n.type === "a").length, 0);
   chooseForm(tree, "Unpublished", 1);
   tree = h.render();
@@ -416,6 +420,8 @@ test("near-visible preview is deferred, lightweight and opens a separate fullscr
   assert.equal(previewUrl.searchParams.get("model"), model.preview.url);
   assert(!previewUrl.searchParams.has("animations"));
   assert(!previewUrl.searchParams.has("physics"));
+  assert(!previewUrl.searchParams.has("facial"));
+  assert(!previewUrl.searchParams.has("full_model"));
   assert.equal(compact.props.tabIndex, -1);
   assert(h.observers[0].disconnected);
   assert.equal(compact.props.onLoad, undefined);
@@ -430,6 +436,10 @@ test("near-visible preview is deferred, lightweight and opens a separate fullscr
   assert.equal(fullUrl.searchParams.get("physics"), model.physics.url);
   assert.equal(fullUrl.searchParams.get("animations"), model.animations.url);
   assert.equal(fullUrl.searchParams.get("animation_bytes"), String(model.animations.size_bytes));
+  assert.equal(fullUrl.searchParams.get("full_model"), model.download.url);
+  assert.equal(fullUrl.searchParams.get("model_bytes"), String(model.download.size_bytes));
+  assert.equal(fullUrl.searchParams.get("facial"), model.facial.url);
+  assert.equal(fullUrl.searchParams.get("facial_bytes"), String(model.facial.size_bytes));
   assert.equal(fullUrl.searchParams.get("name"), h.props.name);
   const modal = nodes(tree).find((n) => n.type === "dialog");
   assert(modal.props.ref.current.open);
