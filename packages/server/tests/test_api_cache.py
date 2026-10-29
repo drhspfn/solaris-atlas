@@ -187,6 +187,55 @@ async def test_concurrent_cold_reads_share_one_response(origin_delay):
 
 
 @pytest.mark.asyncio
+async def test_slow_story_map_is_built_once_for_concurrent_readers():
+    async def delay():
+        await asyncio.sleep(3.2)
+    app, state, _ = setup_cache(block=delay)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        results = await asyncio.gather(*(client.get("/story-map") for _ in range(4)))
+    assert state["calls"] == 1
+    assert all(result.status_code == 200 for result in results)
+
+
+@pytest.mark.asyncio
+async def test_story_map_waiter_retries_when_builder_fails():
+    calls = 0
+
+    async def fail_once():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await asyncio.sleep(0.3)
+            raise RuntimeError("builder failed")
+
+    app, _, _ = setup_cache(block=fail_once)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        first, second = await asyncio.gather(
+            client.get("/story-map"), client.get("/story-map"), return_exceptions=True,
+        )
+    assert isinstance(first, RuntimeError)
+    assert second.status_code == 200
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_cache_rechecks_after_acquiring_lock():
+    class BuilderFinished(MemoryRedis):
+        async def set(self, key, value, nx=False, ex=None):
+            if nx:
+                self.values[key.removesuffix(":lock")] = b'{"data":"ready"}'
+            return await super().set(key, value, nx=nx, ex=ex)
+
+    redis = BuilderFinished()
+    app, state, _ = setup_cache(redis)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        response = await client.get("/story-map")
+    assert response.json() == {"data": "ready"}
+    assert state["calls"] == 0
+    assert not any(key.endswith(":lock") for key in redis.values)
+
+
+@pytest.mark.asyncio
 async def test_inflight_old_response_cannot_fill_new_generation():
     started, finish = asyncio.Event(), asyncio.Event()
     async def delay():

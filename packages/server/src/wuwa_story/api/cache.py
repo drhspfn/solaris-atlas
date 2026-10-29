@@ -189,17 +189,35 @@ class PublicResponseCache:
                                    else self.revision_reader)
                 key = cache_key(scope, await revision_reader(), self.namespace)
                 cached_body = await self.command(self.redis.get(key))
+                story_map = scope["path"] == "/story-map"
+                lock_ttl = 60 if story_map else 30
                 if cached_body is None:
                     owns_lock = bool(await self.command(self.redis.set(
-                        key + ":lock", lock_token, nx=True, ex=30)))
+                        key + ":lock", lock_token, nx=True, ex=lock_ttl)))
                 if cached_body is None and not owns_lock:
                     # Let the first reader populate a cold key. Slow queries
                     # eventually fall back to origin rather than blocking users.
-                    for _ in range(30):
-                        await asyncio.sleep(0.1)
+                    for _ in range(150 if story_map else 30):
+                        await asyncio.sleep(0.2 if story_map else 0.1)
                         cached_body = await self.command(self.redis.get(key))
                         if cached_body is not None:
                             break
+                        if story_map and not await self.command(self.redis.get(key + ":lock")):
+                            # The builder failed or returned an uncacheable response.
+                            # Let one waiter retry rather than making everyone wait.
+                            owns_lock = bool(await self.command(self.redis.set(
+                                key + ":lock", lock_token, nx=True, ex=lock_ttl)))
+                            if owns_lock:
+                                break
+                if owns_lock:
+                    # The previous builder can finish between our GET and SET NX.
+                    cached_body = await self.command(self.redis.get(key))
+                    if cached_body is not None:
+                        await self.command(cast(Awaitable[Any], self.redis.eval(
+                            "if redis.call('get', KEYS[1]) == ARGV[1] then "
+                            "return redis.call('del', KEYS[1]) else return 0 end",
+                            1, key + ":lock", lock_token)))
+                        owns_lock = False
             except (RedisError, TimeoutError, SQLAlchemyError, RuntimeError, UnicodeError):
                 # Revision lookup failures also fail open (e.g. rolling migration).
                 # Do not log exceptions containing DB/Redis connection credentials.
