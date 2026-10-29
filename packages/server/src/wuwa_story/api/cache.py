@@ -31,8 +31,32 @@ REVISION_SQL = text("""
     FROM ops.public_cache_revision
 """)
 
+# The story-map handler reads raw snapshots, release/import state, localized
+# titles and quest revisions; public_addresses also reads quest node slugs.
+# Keep this list in sync when either response projection gains a dependency.
+STORY_MAP_TABLES = (
+    "core.quest", "graph.node", "graph.node_revision", "i18n.locale",
+    "i18n.localization_content", "i18n.localization_key", "i18n.localization_value",
+    "ops.game_release", "ops.import_run", "raw.source_file", "raw.source_record",
+)
+STORY_MAP_REVISION_SQL = text("""
+    SELECT CASE WHEN count(*) = :expected_count AND count(t.oid) = :expected_count
+           THEN md5(string_agg(r.table_name || ':' || r.transaction_id::text, ','
+                               ORDER BY r.table_name)) END
+    FROM ops.public_cache_revision r
+    LEFT JOIN pg_namespace n ON n.nspname = split_part(r.table_name, '.', 1)
+    LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = split_part(r.table_name, '.', 2)
+    LEFT JOIN pg_trigger t ON t.tgrelid = c.oid AND t.tgname = 'public_cache_changed'
+        AND NOT t.tgisinternal AND t.tgenabled IN ('O', 'A') AND t.tgtype = 60
+        AND t.tgfoid = to_regprocedure('ops.bump_public_cache_revision()')
+    WHERE r.table_name = ANY(:tables)
+""")
+
 _REVISION_CACHE = {"value": "", "expires": 0.0}
 _REVISION_LOCK = asyncio.Lock()
+_STORY_MAP_REVISION_CACHE = {"value": "", "expires": 0.0}
+_STORY_MAP_REVISION_LOCK = asyncio.Lock()
+
 
 async def content_revision() -> str:
     # One tiny metadata read on a hit, never the multimillion-row content tables.
@@ -55,6 +79,26 @@ async def content_revision() -> str:
         # Completed media imports must invalidate cached empty audio links promptly.
         _REVISION_CACHE["expires"] = time.monotonic() + 5.0
         return _REVISION_CACHE["value"]
+
+
+async def story_map_revision() -> str:
+    now = time.monotonic()
+    if _STORY_MAP_REVISION_CACHE["value"] and now < _STORY_MAP_REVISION_CACHE["expires"]:
+        return _STORY_MAP_REVISION_CACHE["value"]
+    async with asyncio.timeout(1), _STORY_MAP_REVISION_LOCK:
+        now = time.monotonic()
+        if _STORY_MAP_REVISION_CACHE["value"] and now < _STORY_MAP_REVISION_CACHE["expires"]:
+            return _STORY_MAP_REVISION_CACHE["value"]
+        async with engine.connect() as connection:
+            revision = await connection.scalar(STORY_MAP_REVISION_SQL, {
+                "expected_count": len(STORY_MAP_TABLES), "tables": list(STORY_MAP_TABLES),
+            })
+        if not revision:
+            # Never cache a map when a dependency lacks its revision or trigger.
+            raise RuntimeError("Story-map cache revision coverage is incomplete")
+        _STORY_MAP_REVISION_CACHE["value"] = str(revision)
+        _STORY_MAP_REVISION_CACHE["expires"] = time.monotonic() + 5.0
+        return _STORY_MAP_REVISION_CACHE["value"]
 
 
 def cache_key(scope: Scope, revision: str, namespace: str) -> str:
@@ -85,11 +129,13 @@ class PublicResponseCache:
     def __init__(
         self, app: ASGIApp, settings: Settings, redis: Redis | None,
         revision_reader: Callable[[], Awaitable[str]] = content_revision,
+        story_map_revision_reader: Callable[[], Awaitable[str]] = story_map_revision,
     ) -> None:
         self.app = app
         self.redis = redis
         self.settings = settings
         self.revision_reader = revision_reader
+        self.story_map_revision_reader = story_map_revision_reader
         # Configuration changes must not serve links to a previous media host.
         config = [settings.api_cache_namespace, settings.media_public_base_url,
                   settings.s3_endpoint_url, settings.s3_bucket,
@@ -139,19 +185,39 @@ class PublicResponseCache:
         cached_body = None
         if self.redis is not None and public_request(scope):
             try:
-                key = cache_key(scope, await self.revision_reader(), self.namespace)
+                revision_reader = (self.story_map_revision_reader if scope["path"] == "/story-map"
+                                   else self.revision_reader)
+                key = cache_key(scope, await revision_reader(), self.namespace)
                 cached_body = await self.command(self.redis.get(key))
+                story_map = scope["path"] == "/story-map"
+                lock_ttl = 60 if story_map else 30
                 if cached_body is None:
                     owns_lock = bool(await self.command(self.redis.set(
-                        key + ":lock", lock_token, nx=True, ex=30)))
+                        key + ":lock", lock_token, nx=True, ex=lock_ttl)))
                 if cached_body is None and not owns_lock:
                     # Let the first reader populate a cold key. Slow queries
                     # eventually fall back to origin rather than blocking users.
-                    for _ in range(30):
-                        await asyncio.sleep(0.1)
+                    for _ in range(150 if story_map else 30):
+                        await asyncio.sleep(0.2 if story_map else 0.1)
                         cached_body = await self.command(self.redis.get(key))
                         if cached_body is not None:
                             break
+                        if story_map and not await self.command(self.redis.get(key + ":lock")):
+                            # The builder failed or returned an uncacheable response.
+                            # Let one waiter retry rather than making everyone wait.
+                            owns_lock = bool(await self.command(self.redis.set(
+                                key + ":lock", lock_token, nx=True, ex=lock_ttl)))
+                            if owns_lock:
+                                break
+                if owns_lock:
+                    # The previous builder can finish between our GET and SET NX.
+                    cached_body = await self.command(self.redis.get(key))
+                    if cached_body is not None:
+                        await self.command(cast(Awaitable[Any], self.redis.eval(
+                            "if redis.call('get', KEYS[1]) == ARGV[1] then "
+                            "return redis.call('del', KEYS[1]) else return 0 end",
+                            1, key + ":lock", lock_token)))
+                        owns_lock = False
             except (RedisError, TimeoutError, SQLAlchemyError, RuntimeError, UnicodeError):
                 # Revision lookup failures also fail open (e.g. rolling migration).
                 # Do not log exceptions containing DB/Redis connection credentials.

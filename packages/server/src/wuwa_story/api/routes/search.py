@@ -130,10 +130,11 @@ async def search(
             for node_type in aliases.get(value, [value])
         )
     )
-    known = set(await session.scalars(select(NodeType.key)))
-    unknown = set(categories) - known
-    if unknown:
-        raise HTTPException(status_code=422, detail=f"Unknown categories: {sorted(unknown)}")
+    if categories:
+        known = set(await session.scalars(select(NodeType.key)))
+        unknown = set(categories) - known
+        if unknown:
+            raise HTTPException(status_code=422, detail=f"Unknown categories: {sorted(unknown)}")
     if locale_id is None:
         locale_id = await session.scalar(select(Locale.id).where(Locale.code == locale))
         if locale_id is None:
@@ -152,8 +153,10 @@ async def search(
     # name. Keep the matched alias for traceability, but always give catalog
     # cards a canonical localized title.
     from wuwa_story.api.routes.story import _node_label
+    from wuwa_story.story.service import prefetch_node_labels
 
     images = await entity_image_urls(session, [result["id"] for result in results])
+    await prefetch_node_labels(session, [result["id"] for result in results], locale)
     for result in results:
         result["image_url"] = images.get(result["id"])
         label = await _node_label(session, result["id"], locale)

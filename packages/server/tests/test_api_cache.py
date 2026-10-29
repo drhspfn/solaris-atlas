@@ -69,7 +69,8 @@ class MemoryRedis:
 
 
 def setup_cache(redis=None, max_bytes=1024, block=None):
-    state = {"calls": 0, "revision": "initial", "response": {"data": "first"}}
+    state = {"calls": 0, "revision": "initial", "story_revision": "initial",
+             "response": {"data": "first"}}
     app = FastAPI()
 
     @app.get("/{path:path}")
@@ -88,10 +89,13 @@ def setup_cache(redis=None, max_bytes=1024, block=None):
     async def revision():
         return state["revision"]
 
+    async def story_revision():
+        return state["story_revision"]
+
     backend = redis if redis is not None else MemoryRedis()
     app.add_middleware(PublicResponseCache, settings=Settings(
         _env_file=None, api_cache_max_body_bytes=max_bytes), redis=backend,
-        revision_reader=revision)
+        revision_reader=revision, story_map_revision_reader=story_revision)
     return app, state, backend
 
 
@@ -132,6 +136,8 @@ async def test_hits_queries_invalidation_etags_and_ttl():
     ("/catalog", {"Cookie": "session=one"}),
     ("/catalog", {"Authorization": "Bearer one"}),
     ("/catalog", {"Range": "bytes=0-1"}),
+    ("/story-map", {"Cookie": "session=one"}),
+    ("/story-map", {"Authorization": "Bearer one"}),
 ])
 @pytest.mark.asyncio
 async def test_users_and_non_public_routes_bypass(path, headers):
@@ -181,6 +187,55 @@ async def test_concurrent_cold_reads_share_one_response(origin_delay):
 
 
 @pytest.mark.asyncio
+async def test_slow_story_map_is_built_once_for_concurrent_readers():
+    async def delay():
+        await asyncio.sleep(4.5)
+    app, state, _ = setup_cache(block=delay)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        results = await asyncio.gather(*(client.get("/story-map") for _ in range(4)))
+    assert state["calls"] == 1
+    assert all(result.status_code == 200 for result in results)
+
+
+@pytest.mark.asyncio
+async def test_story_map_waiter_retries_when_builder_fails():
+    calls = 0
+
+    async def fail_once():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await asyncio.sleep(0.3)
+            raise RuntimeError("builder failed")
+
+    app, _, _ = setup_cache(block=fail_once)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        first, second = await asyncio.gather(
+            client.get("/story-map"), client.get("/story-map"), return_exceptions=True,
+        )
+    assert isinstance(first, RuntimeError)
+    assert second.status_code == 200
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_cache_rechecks_after_acquiring_lock():
+    class BuilderFinished(MemoryRedis):
+        async def set(self, key, value, nx=False, ex=None):
+            if nx:
+                self.values[key.removesuffix(":lock")] = b'{"data":"ready"}'
+            return await super().set(key, value, nx=nx, ex=ex)
+
+    redis = BuilderFinished()
+    app, state, _ = setup_cache(redis)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        response = await client.get("/story-map")
+    assert response.json() == {"data": "ready"}
+    assert state["calls"] == 0
+    assert not any(key.endswith(":lock") for key in redis.values)
+
+
+@pytest.mark.asyncio
 async def test_inflight_old_response_cannot_fill_new_generation():
     started, finish = asyncio.Event(), asyncio.Event()
     async def delay():
@@ -195,3 +250,52 @@ async def test_inflight_old_response_cannot_fill_new_generation():
         await old
         assert (await client.get("/catalog")).headers["x-api-cache"] == "MISS"
     assert state["calls"] == 2
+
+
+@pytest.mark.asyncio
+async def test_story_map_uses_its_revision_without_affecting_other_routes():
+    app, state, _ = setup_cache()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        assert (await client.get("/story-map")).headers["x-api-cache"] == "MISS"
+        assert (await client.get("/catalog")).headers["x-api-cache"] == "MISS"
+        state["revision"] = "media-change"
+        assert (await client.get("/story-map")).headers["x-api-cache"] == "HIT"
+        assert (await client.get("/catalog")).headers["x-api-cache"] == "MISS"
+        state["story_revision"] = "quest-change"
+        assert (await client.get("/story-map")).headers["x-api-cache"] == "MISS"
+        assert (await client.get("/catalog")).headers["x-api-cache"] == "HIT"
+        # Only the exact story-map endpoint uses the narrower revision.
+        assert (await client.get("/story-map/other")).headers["x-api-cache"] == "MISS"
+        state["revision"] = "another-change"
+        assert (await client.get("/story-map/other")).headers["x-api-cache"] == "MISS"
+
+
+@pytest.mark.asyncio
+async def test_story_map_revision_single_flight_and_missing_coverage(monkeypatch):
+    from wuwa_story.api import cache
+
+    monkeypatch.setattr(cache, "_STORY_MAP_REVISION_CACHE", {"value": "", "expires": 0.0})
+    monkeypatch.setattr(cache, "_STORY_MAP_REVISION_LOCK", asyncio.Lock())
+    connection = AsyncMock()
+    connection.__aenter__.return_value = connection
+    connection.scalar.return_value = "story-revision"
+    monkeypatch.setattr(cache, "engine", SimpleNamespace(connect=lambda: connection))
+    assert await asyncio.gather(*(cache.story_map_revision() for _ in range(10))) == ["story-revision"] * 10
+    assert connection.scalar.await_count == 1
+    assert connection.scalar.await_args.args[1] == {
+        "expected_count": len(cache.STORY_MAP_TABLES), "tables": list(cache.STORY_MAP_TABLES)}
+    cache._STORY_MAP_REVISION_CACHE["expires"] = 0
+    connection.scalar.return_value = None
+    with pytest.raises(RuntimeError, match="coverage is incomplete"):
+        await cache.story_map_revision()
+
+
+@pytest.mark.asyncio
+async def test_story_map_revision_failure_bypasses_cache():
+    app, state, _ = setup_cache()
+    app.user_middleware[0].kwargs["story_map_revision_reader"] = AsyncMock(side_effect=RuntimeError())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        assert (await client.get("/story-map")).headers["x-api-cache"] == "BYPASS"
+        assert (await client.get("/story-map")).headers["x-api-cache"] == "BYPASS"
+        assert (await client.get("/catalog")).headers["x-api-cache"] == "MISS"
+    assert state["calls"] == 3

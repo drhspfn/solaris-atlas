@@ -62,6 +62,12 @@ class SearchDocument(Base):
             postgresql_using="gin",
             postgresql_ops={"title": "gin_trgm_ops"},
         ),
+        Index(
+            "ix_search_document_body_trgm",
+            "body",
+            postgresql_using="gin",
+            postgresql_ops={"body": "gin_trgm_ops"},
+        ),
         {"schema": "search"},
     )
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)

@@ -49,11 +49,19 @@ export function NodeExplorerPage({
   const playerDisplay = usePlayerDisplay();
   const [node, setNode] = useState<NodeDetail | null>(initialDetail ?? null);
   const [related, setRelated] = useState<Related[]>(initialRelated ?? []);
-  const [narrative, setNarrative] = useState<any>(initialNarrative ?? null);
+  const [narrative, setNarrative] = useState<any>(initialNarrative?.available ? initialNarrative : null);
   const [loading, setLoading] = useState(!initialDetail);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (locale === 'en' && !gameVersion && initialDetail && initialRelated && initialNarrative) {
+      setNode(initialDetail ?? null);
+      setRelated(initialRelated ?? []);
+      setNarrative(initialNarrative?.available ? initialNarrative : null);
+      setError('');
+      setLoading(false);
+      return;
+    }
     let active = true;
     setLoading(true);
     setError('');
@@ -84,7 +92,7 @@ export function NodeExplorerPage({
     return () => {
       active = false;
     };
-  }, [key, locale, gameVersion]);
+  }, [key, locale, gameVersion, initialDetail, initialRelated, initialNarrative]);
 
   if (loading) return <PageLoader />;
   if (error || !node)

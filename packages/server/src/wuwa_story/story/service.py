@@ -15,7 +15,6 @@ from wuwa_story.db.models.core import (
 )
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.repositories import story_browsing as repository
-from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.story.domain import choice_branch as _choice_branch
 from wuwa_story.story.domain import localization_payload, version_key
 from wuwa_story.urls import node_address
@@ -324,6 +323,10 @@ async def _quest_state_ids(session: AsyncSession, quest_node_id: int, release_id
     return await repository.quest_state_ids(session, quest_node_id, release_id)
 
 
+async def _quest_page_state_ids(session: AsyncSession, quest_node_id: int, release_id: int | None = None) -> list[int]:
+    return await repository.quest_page_state_ids(session, quest_node_id, release_id)
+
+
 async def _quest_info(
     session: AsyncSession,
     quest: Quest,
@@ -399,7 +402,7 @@ async def quest_profile_payload(session, quest, locale="en", game_version=None) 
                 }
             )
     hierarchy_rows = await repository.quest_hierarchy_rows(session, qnode_ids)
-    states = await repository.quest_states(session, await _quest_state_ids(session, quest.node_id, release_id))
+    states = await repository.quest_states(session, await _quest_page_state_ids(session, quest.node_id, release_id))
     actions_by_state = {}
     for action, key in await repository.quest_actions(session, [state.node_id for state in states]):
         actions_by_state.setdefault(action.quest_state_node_id, []).append((action, key))
@@ -433,21 +436,28 @@ async def quest_profile_payload(session, quest, locale="en", game_version=None) 
         [f"{game_quest_id}_{row[0].game_node_id}" for row in qnode_rows],
         QUEST_NODES,
     )
+    raw_requirements = [
+        (record, requirement)
+        for record in requirement_rows
+        for requirement in quest_item_requirements(record.data.get("Data") or {})
+    ]
+    item_keys = sorted({f"item:{requirement['item_id']}" for _, requirement in raw_requirements})
+    items = await repository.quest_requirement_items(session, item_keys) if item_keys else {}
+    await prefetch_node_labels(session, [item.id for item in items.values()], locale)
     requirements = []
-    for record in requirement_rows:
-        for requirement in quest_item_requirements(record.data.get("Data") or {}):
-            item_node = await get_node(session, f"item:{requirement['item_id']}", ("item",))
-            requirements.append(
-                {
-                    **requirement,
-                    "item": await _node_label(session, item_node.id, locale) if item_node else None,
-                    "source": {
-                        "file": QUEST_NODES,
-                        "row": record.row_index,
-                        "release_id": release_id,
-                    },
-                }
-            )
+    for record, requirement in raw_requirements:
+        item_node = items.get(f"item:{requirement['item_id']}")
+        requirements.append(
+            {
+                **requirement,
+                "item": await _node_label(session, item_node.id, locale) if item_node else None,
+                "source": {
+                    "file": QUEST_NODES,
+                    "row": record.row_index,
+                    "release_id": release_id,
+                },
+            }
+        )
     nodes_by_id = {node.id: node for _, node, _, _ in qnode_rows}
     return {
         "quest": await _quest_info(session, quest, locale, game_version),

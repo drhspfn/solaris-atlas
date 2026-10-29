@@ -83,6 +83,11 @@ const backend = createServer(async (request, response) => {
   timing.end = performance.now();
   response.setHeader('Content-Type', 'application/json');
   const questRequest = new URL(request.url, 'http://backend.test');
+  if (questRequest.pathname.startsWith('/nodes/dialogue%3A123')) {
+    if (questRequest.pathname.endsWith('/related')) return response.end(JSON.stringify({ results: [] }));
+    if (questRequest.pathname.endsWith('/narrative-context')) return response.end(JSON.stringify({ available: false }));
+    return response.end(JSON.stringify({ canonical_key: 'dialogue:123', slug: null, status: 'active', type_id: 1 }));
+  }
   if (questRequest.pathname === '/story-map') {
     const version = questRequest.searchParams.get('game_version') || null;
     const questType = Number(questRequest.searchParams.get('quest_type_id'));
@@ -364,6 +369,14 @@ test('item details are visible without JavaScript', async () => {
   assert.match(main, /<h1>Astrite/);
   assert.ok(main.includes('A bright crystal.'));
   assert.doesNotMatch(html, /Opening archive record|id="S:\d+"/);
+});
+
+test('node with unavailable narrative renders its source details without a dialogue section', async () => {
+  const response = await fetch(`${site}/nodes/dialogue%3A123`);
+  assert.equal(response.status, 200);
+  const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.match(html, /dialogue:123/);
+  assert.doesNotMatch(html, /Where this line appears|DIALOGUE ENTRY|Opening archive record/);
 });
 
 test('item progression renders five real stages and their total compactly', async () => {

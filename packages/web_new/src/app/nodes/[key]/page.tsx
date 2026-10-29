@@ -52,7 +52,7 @@ export default async function NodePage({ params, searchParams }: Props) {
     <NodeExplorerClient
       nodeKey={key}
       initialDetail={detail}
-      initialRelated={related?.results ?? []}
+      initialRelated={related?.results}
       initialNarrative={narrative}
     />
   );

@@ -204,6 +204,16 @@ Compose updates install the selected images. This introduces a maintenance windo
 during migration. Queued messages and persistent exports are retained. A failed
 migration stops the rollout without replacing the running application images.
 
+The sole exception is `0023_search_body_trgm`: deployment first applies any
+earlier revisions with clients stopped, restarts those clients, and builds this
+index concurrently with clients running. Any later revisions still run with
+clients stopped. A host-local deployment lock prevents overlapping deployments
+that use this script; do not run separate Alembic commands during
+deployment. An interrupted concurrent build can leave an invalid index; rerun
+the deployment to drop it concurrently and retry. PostgreSQL can wait for long
+transactions or snapshots during the build, so allow time and monitor it. API
+replacement and PgBouncer recreation still cause their normal brief disruption.
+
 Production uses independent worker pools. `snapshot-worker` deployments update all
 six worker services; `WORKER_IMAGE` pins their shared image. Existing public v1
 queue names and payloads remain unchanged. `media-worker --pool coordinator`

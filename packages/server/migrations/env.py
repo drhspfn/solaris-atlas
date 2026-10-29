@@ -1,13 +1,16 @@
 import asyncio
+import os
 from logging.config import fileConfig
 
 from alembic import context
+from alembic.migration import MigrationContext
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 import wuwa_story.db.models  # noqa: F401 - register all mapped tables with metadata
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.base import SCHEMAS, Base
+from wuwa_story.db.migration_safety import validate_online_search_index
 
 config = context.config
 if config.config_file_name:
@@ -43,6 +46,11 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection) -> None:
+    if os.getenv("WUWA_ONLINE_SEARCH_INDEX_ONLY") == "1":
+        target = context.get_revision_argument()
+        current = MigrationContext.configure(connection).get_current_heads()
+        connection.rollback()
+        validate_online_search_index(target, current)
     context.configure(
         connection=connection,
         target_metadata=target_metadata,

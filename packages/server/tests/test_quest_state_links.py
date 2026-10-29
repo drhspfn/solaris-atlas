@@ -6,7 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.dialects import sqlite
 
 from wuwa_story.api.routes.story.shared import _quest_state_links
-from wuwa_story.db.repositories.quest_scope import quest_state_links, quests_for_state
+from wuwa_story.db.repositories.quest_scope import (
+    quest_state_links,
+    quest_states_query,
+    quests_for_state,
+)
 
 
 @pytest.mark.asyncio
@@ -68,6 +72,7 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
             (10, 109, 8, "source"), (109, 71, 5, "source"),
             (71, 81, 6, "source"), (81, 110, 7, "source"),
             (10, 111, 8, "semantic"),
+            (107, 72, 5, "source"), (72, 82, 6, "source"), (82, 112, 7, "source"),
         ])
         links = _quest_state_links()
 
@@ -80,14 +85,25 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
         assert rows(select(links.c.quest_id).where(links.c.state_id == 110)) == {(1,)}
         assert rows(select(links.c.quest_id).where(links.c.state_id == 107)) == {(1,)}
         assert rows(select(links.c.quest_id).where(links.c.state_id == 103)) == {(1,), (2,)}
-        for orphan in (104, 105, 106, 108, 111):
+        bounded = quest_state_links(quest_node_id=1)
+        assert rows(select(bounded.c.quest_id, bounded.c.state_id)) == {(1, value[0]) for value in expected}
+        assert rows(select(quest_state_links(quest_node_id=2))) == {(2, 103)}
+        assert rows(quest_states_query(1, None)) == expected
+        assert rows(quest_states_query(2, None)) == {(103,)}
+        assert rows(quest_states_query(999, None)) == set()
+        for orphan in (104, 105, 106, 108, 111, 112):
             assert rows(select(links.c.quest_id).where(links.c.state_id == orphan)) == set()
 
         db.execute("INSERT INTO graph.edge_evidence (edge_id, release_id) SELECT id, 1 FROM graph.edge")
         pinned = _quest_state_links(1)
         assert rows(select(pinned.c.state_id).where(pinned.c.quest_id == 1)) == expected
+        assert rows(quest_states_query(1, 1)) == expected
         # Every hop must exist in the pinned snapshot, not just the final state.
         db.execute("UPDATE graph.edge_evidence SET release_id=2 WHERE edge_id IN (SELECT id FROM graph.edge WHERE (from_node_id=20 AND to_node_id=30) OR (from_node_id=80 AND to_node_id=107))")
         assert rows(select(pinned.c.state_id).where(pinned.c.quest_id == 1)) == {(101,), (102,), (109,), (110,)}
+        bounded_pinned = quest_state_links(1, quest_node_id=1)
+        assert rows(select(bounded_pinned.c.state_id)) == {(101,), (102,), (109,), (110,)}
+        assert rows(quest_states_query(1, 1)) == {(101,), (102,), (109,), (110,)}
+        assert rows(quest_states_query(1, 2)) == set()
         another = quest_state_links(2)
         assert rows(select(another.c.state_id).where(another.c.quest_id == 1)) == set()

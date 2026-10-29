@@ -88,8 +88,18 @@ Writes to auth/session/job bookkeeping do not invalidate public game data.
 Each API process refreshes the PostgreSQL revision at most once per five seconds
 (~one row per content table), coalescing concurrent refreshes behind a one-second
 deadline. Hits avoid expensive content queries, but do not eliminate all DB access.
-The global revision conservatively invalidates all public responses on any content
-commit. Old generations expire naturally; no blocking Redis key scan is required.
+The global revision conservatively invalidates public responses on any content
+commit, except `/story-map`. That exact route uses the existing per-table revisions
+for its raw source records, releases and imports, quest/node revisions and addresses,
+and localization tables. Changes limited to media storage do not invalidate it.
+This is table-level tracking: any write to `raw.source_record` or another watched
+table invalidates the map, even if that particular row is unrelated. Active
+snapshot imports can therefore continue to cause repeated story-map misses.
+The map revision checks that every required registry row and enabled statement
+trigger exists; incomplete coverage bypasses caching. When the map or its address
+projection starts reading another table, update `STORY_MAP_TABLES` and its tests.
+Both revisions use the same five-second refresh interval. Old generations expire
+naturally; no blocking Redis key scan is required.
 An in-flight old response can only fill its old generation. Redis downtime during
 an import cannot leave stale responses after recovery.
 

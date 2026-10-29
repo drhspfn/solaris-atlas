@@ -11,7 +11,7 @@ from wuwa_story.agents.cutscene_vision import visual_reference
 from wuwa_story.agents.evidence import quest_fingerprint
 from wuwa_story.api.routes.story.captions import caption_texts, caption_tracks
 from wuwa_story.api.routes.story.cutscene_audio import audio_bundles
-from wuwa_story.api.routes.story.shared import _quest_state_ids, _release_id
+from wuwa_story.api.routes.story.shared import _release_id
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.content import Document, DocumentHead
 from wuwa_story.db.models.core import QuestAction, QuestState
@@ -26,6 +26,7 @@ from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.cutscenes import Clip, PlaybackFlow
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.story import media as story_media
+from wuwa_story.story.service import _quest_page_state_ids
 from wuwa_story.story.tree_order import authored_order
 
 router = APIRouter(tags=["story browsing"])
@@ -187,7 +188,7 @@ async def quest_media(
     if release_id is None:
         raise HTTPException(status_code=404, detail="game version not imported")
     tree_order = await authored_order(session, game_quest_id, release_id)
-    state_ids = await _quest_state_ids(session, quest.node_id, release_id)
+    state_ids = await _quest_page_state_ids(session, quest.node_id, release_id)
     contextual_state_ids = set(await session.scalars(
         select(Edge.to_node_id)
         .join(RelationType, RelationType.id == Edge.relation_type_id)

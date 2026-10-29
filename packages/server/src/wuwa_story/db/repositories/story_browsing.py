@@ -29,7 +29,7 @@ from wuwa_story.db.models.ops import GameRelease, ImportRun
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.search import EntityAlias, SearchDocument
 from wuwa_story.db.models.story import Scene
-from wuwa_story.db.repositories.quest_scope import quest_state_links
+from wuwa_story.db.repositories.quest_scope import quest_state_links, quest_states_query
 
 
 async def fetch_releases(session):
@@ -211,10 +211,14 @@ async def entity_links(session, node_id, limit=200):
 
 
 async def quest_state_ids(session, quest_node_id, release_id=None):
-    links = quest_state_links(release_id)
+    links = quest_state_links(release_id, quest_node_id=quest_node_id)
     return list(
         await session.scalars(select(links.c.state_id).where(links.c.quest_id == quest_node_id))
     )
+
+
+async def quest_page_state_ids(session, quest_node_id, release_id=None):
+    return list(await session.scalars(quest_states_query(quest_node_id, release_id)))
 
 
 async def quest_area_rows(session, quest_node_id):
@@ -337,6 +341,23 @@ async def quest_requirement_records(session, release_id, keys, source_path):
         )
     )
     return list(requirement_rows.scalars())
+
+
+async def quest_requirement_items(session, keys):
+    items = {}
+    for offset in range(0, len(keys), 500):
+        batch = keys[offset : offset + 500]
+        rows = await session.scalars(
+            select(Node).join(NodeType).where(
+                NodeType.key == "item", or_(Node.canonical_key.in_(batch), Node.slug.in_(batch))
+            )
+        )
+        for node in rows:
+            if node.slug in batch:
+                items.setdefault(node.slug, node)
+            if node.canonical_key in batch:
+                items[node.canonical_key] = node
+    return items
 
 
 async def search_dialogue_rows(

@@ -17,6 +17,13 @@ if [[ ! -f "$COMPOSE_FILE" ]]; then
   exit 1
 fi
 
+# Serialize deployments before writing their shared runtime configuration.
+exec {migration_lock}>"$APP_DIR/.migration-deploy.lock"
+if ! flock -n "$migration_lock"; then
+  echo "Another deployment is running" >&2
+  exit 1
+fi
+
 umask 077
 mkdir -p "$ENV_DIR"
 chmod 700 "$ENV_DIR"
@@ -172,16 +179,38 @@ if [[ "$DEPLOY_COMPONENT" == api || "$DEPLOY_COMPONENT" == all ]]; then
   "${compose[@]}" pull api
   # Imports can hold read locks while exporting files. Release those connections
   # before DDL, and restore exactly the running containers even if migration fails.
-  (
-    mapfile -t migration_clients < <("${compose[@]}" ps -q --status running \
-      api snapshot-worker asset-worker media-worker image-worker audio-worker video-worker model-worker story-agent cutscene-vision)
-    if (( ${#migration_clients[@]} )); then
-      trap 'docker start "${migration_clients[@]}" >/dev/null' EXIT
-      docker stop --time 120 "${migration_clients[@]}"
-    fi
-    "${compose[@]}" run --rm --no-deps api sh -ec \
-      'export DATABASE_URL="$MIGRATION_DATABASE_URL"; unset WUWA_DB_TRANSACTION_POOLING; exec alembic upgrade head'
+  migrate_stopped() (
+      running_clients=$("${compose[@]}" ps -q --status running \
+        api snapshot-worker asset-worker media-worker image-worker audio-worker video-worker model-worker story-agent cutscene-vision)
+      migration_clients=()
+      if [[ -n "$running_clients" ]]; then
+        mapfile -t migration_clients <<< "$running_clients"
+      fi
+      if (( ${#migration_clients[@]} )); then
+        trap 'docker start "${migration_clients[@]}" >/dev/null' EXIT
+        docker stop --time 120 "${migration_clients[@]}"
+      fi
+      "${compose[@]}" run --rm --no-deps api sh -ec \
+        'export DATABASE_URL="$MIGRATION_DATABASE_URL"; unset WUWA_DB_TRANSACTION_POOLING; exec alembic upgrade "$1"' sh "$1"
   )
+  migration_plan=$("${compose[@]}" run --rm --no-deps api sh -ec \
+    'export DATABASE_URL="$MIGRATION_DATABASE_URL"; unset WUWA_DB_TRANSACTION_POOLING; if [ -f scripts/search_index_deploy_plan.py ]; then exec python scripts/search_index_deploy_plan.py; elif [ -f migrations/versions/0023_search_body_trgm.py ]; then echo "Missing online migration planner" >&2; exit 1; else echo legacy; fi')
+  case "$migration_plan" in
+    before:last|before:more)
+      migrate_stopped 0022_tree_index_schema_version
+      ;;
+    ready:last|ready:more|done:last|done:more|legacy) ;;
+    *) echo "Cannot safely determine migration plan: $migration_plan" >&2; exit 1 ;;
+  esac
+  case "$migration_plan" in
+    before:*|ready:*)
+      "${compose[@]}" run --rm --no-deps api sh -ec \
+        'export DATABASE_URL="$MIGRATION_DATABASE_URL" WUWA_ONLINE_SEARCH_INDEX_ONLY=1; unset WUWA_DB_TRANSACTION_POOLING; exec alembic upgrade 0023_search_body_trgm'
+      ;;
+  esac
+  case "$migration_plan" in
+    before:more|ready:more|done:*|legacy) migrate_stopped head ;;
+  esac
 fi
 if [[ "$DEPLOY_COMPONENT" != infrastructure ]]; then
   pull_services=()
