@@ -115,6 +115,25 @@ class MediaCompilerTest(unittest.TestCase):
         audio = self.nodes["audio_event:videosound:0"]
         self.assertEqual(audio["raw_cg_name"], " M0341A")
 
+    def test_quest_video_packages_resolve_unique_cg_ids_without_claiming_playback_order(self) -> None:
+        self.write("QuestRefVideo/questrefvideoconfig.json", [
+            {"QuestId": 123, "PakName": "410_0"},
+            {"QuestId": 123, "PakName": "411_1"},
+            {"QuestId": 123, "PakName": "999_1"},
+            {"QuestId": 123, "PakName": "../410_0"},
+        ])
+        self.write("cgVedio/videodata.json", [
+            {"CgId": 410, "CgName": "C0028", "CgFile": "/Game/Movie/F"},
+            {"CgId": 411, "CgName": "C0028", "CgFile": "/Game/Movie/M"},
+            {"CgId": 999, "CgName": "A", "CgFile": "/Game/Movie/A"},
+            {"CgId": 999, "CgName": "B", "CgFile": "/Game/Movie/B"},
+        ])
+        self.compile()
+        links = [edge for edge in self.edges if edge["type"] == "references_packaged_cutscene"]
+        self.assertEqual(len(links), 2)
+        self.assertEqual({edge["to"] for edge in links}, {"cutscene:C0028"})
+        self.assertTrue(all(edge["extra"]["relation"] == "inference" for edge in links))
+
     def test_video_qte_joins_cutscene_by_exact_cg_name(self) -> None:
         self.write("cgVedio/videodata.json", [
             {"CgId": 3, "CgName": "M0266", "CgFile": "/Game/Movie/M0266"},

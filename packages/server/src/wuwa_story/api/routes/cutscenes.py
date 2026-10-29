@@ -81,14 +81,20 @@ async def detail(name: str, game_version: str | None = None, locale: str = "en",
     passages = []
     for quest in item["quests"]:
         manifest = await quest_media(quest["game_quest_id"], snapshot.game_version, locale, session)
+        found = False
         for candidate in manifest["events"]:
             if candidate["kind"] == "cutscene" and candidate["reference"] == f"cutscene:{name}":
+                found = True
                 event = event or candidate
                 passages.append({**quest, "flow_state": candidate["flow_state"],
                                  "action_index": candidate["action_index"],
                                  "reference": candidate["reference"],
                                  "focus_line": None if quest.get("context_inferred") else await repository.first_line(
                                      session, candidate.get("transcript_states") or [candidate["flow_state"]], snapshot.id)})
+        if not found and any(scene["name"] == name for scene in manifest.get("related_cutscenes", [])):
+            passages.append({**quest, "flow_state": "", "action_index": 0,
+                             "reference": f"cutscene:{name}", "focus_line": None,
+                             "package_related": True})
     if event is None:
         flows = await cutscene_flows(session, [row.node_id])
         playback = flows.get(row.node_id)

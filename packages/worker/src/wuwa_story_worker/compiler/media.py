@@ -7,9 +7,9 @@ PlotAudio, Wwise event paths, and CgFile remain references to game resources.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
-
+from typing import Any
 
 Emit = Callable[[str, dict[str, Any]], None]
 Edge = Callable[[str, str, str, str, str, str, dict[str, Any] | None], None]
@@ -226,7 +226,8 @@ def compile_media(
             edge(identity, ref, "references_asset", "Path", src["file"], f"$[{row}].Path", None)
 
     relative = "QuestRefVideo/questrefvideoconfig.json"
-    for row, raw in enumerate(_rows(root, relative, diagnostic)):
+    package_rows = _rows(root, relative, diagnostic)
+    for row, raw in enumerate(package_rows):
         src = _source(relative, row)
         identity = f"quest_video_package_ref:{row}"
         emit("asset_reference", {"id": identity, "source": src, "raw": raw,
@@ -251,3 +252,9 @@ def compile_media(
                 assets.add(ref)
             edge(identity, ref, "references_asset", "PakName + OnlineBranch", src["file"],
                  f"$[{row}].PakName", {"package_name": package, "online_branch": branch})
+
+    from wuwa_story.ingestion.video_package_context import package_cutscene_links
+
+    for link in package_cutscene_links(enumerate(package_rows), enumerate(video_rows)):
+        edge(link["from"], link["to"], link["type"], link["basis"],
+             link["source"], link["raw_path"], {"relation": "inference"})

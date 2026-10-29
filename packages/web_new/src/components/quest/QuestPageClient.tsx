@@ -181,7 +181,7 @@ export function QuestPageClient({
   const scenes = transcript?.scenes || profile?.scenes || [];
   const classification = quest.classification;
   const storyGalleryRecord = classification?.kind === 'story_gallery';
-  const hasMediaReferences = Boolean(media?.events?.length || media?.video_packages?.length);
+  const hasMediaReferences = Boolean(media?.events?.length || media?.video_packages?.length || media?.related_cutscenes?.length);
   const explicitLinks = profile?.explicit_links || [];
   const questConnections = explicitLinks.filter(
     (link: any) =>

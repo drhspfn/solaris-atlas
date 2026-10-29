@@ -26,6 +26,11 @@ from wuwa_story.ingestion.dungeon_context import (
     requirements,
 )
 from wuwa_story.ingestion.scenario_context import scenario_links
+from wuwa_story.ingestion.video_package_context import (
+    QUEST_VIDEO,
+    VIDEO_DATA,
+    package_cutscene_links,
+)
 
 
 async def backfill(session, release_id, dry_run=False):
@@ -68,6 +73,15 @@ async def backfill(session, release_id, dry_run=False):
                  "version": release.game_version, "source_repository": release.upstream_name,
                  "source_commit": release.upstream_commit}
                 for link in scenario if link["from"] in scenario_quests]
+    packages = list(package_cutscene_links(await rows(QUEST_VIDEO), await rows(VIDEO_DATA)))
+    package_nodes = set(await session.scalars(
+        select(Node.canonical_key).join(NodeRevision, NodeRevision.node_id == Node.id)
+        .where(NodeRevision.release_id == release_id,
+               Node.canonical_key.in_({link[key] for link in packages for key in ("from", "to")}))
+    )) if packages else set()
+    records += [{**link, "version": release.game_version, "source_repository": release.upstream_name,
+                 "source_commit": release.upstream_commit}
+                for link in packages if link["from"] in package_nodes and link["to"] in package_nodes]
     records = list({(row["type"], row["from"], row["to"],
                    row["raw_path"]): row for row in records}.values())
     source, target = Node.__table__.alias(
@@ -78,7 +92,7 @@ async def backfill(session, release_id, dry_run=False):
         .select_from(Edge).join(RelationType, RelationType.id == Edge.relation_type_id)
         .join(source, source.c.id == Edge.from_node_id).join(target, target.c.id == Edge.to_node_id)
         .join(EdgeEvidence, EdgeEvidence.edge_id == Edge.id)
-        .where(RelationType.key.in_((RELATION, "references_scenario_flow_state")), Edge.layer == "source",
+        .where(RelationType.key.in_((RELATION, "references_scenario_flow_state", "references_packaged_cutscene")), Edge.layer == "source",
                EdgeEvidence.release_id == release_id)
     ))
     missing = [row for row in records if (

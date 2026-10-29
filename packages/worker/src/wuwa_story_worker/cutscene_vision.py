@@ -17,7 +17,12 @@ import httpx
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from wuwa_story.agents.budget import BudgetExceeded, reserve, settle
-from wuwa_story.agents.cutscene_vision import VISION_VERSION, sample_times, validate_batch
+from wuwa_story.agents.cutscene_vision import (
+    MIN_VISUAL_SECONDS,
+    VISION_VERSION,
+    sample_times,
+    validate_batch,
+)
 from wuwa_story.agents.providers import Provider, ProviderRejected, token_usage
 from wuwa_story.agents.settings import AgentSettings, get_agent_settings
 from wuwa_story.config.settings import get_settings
@@ -30,6 +35,7 @@ from wuwa_story.storage.service import FileRegistrationService
 
 from wuwa_story_worker.broker import publish_job
 from wuwa_story_worker.cutscene_import import run_tool, video_duration
+from wuwa_story_worker.cutscene_title import analyze_title_only
 from wuwa_story_worker.video_atlas import write_atlas
 
 logger = logging.getLogger(__name__)
@@ -57,16 +63,23 @@ timestamps) and score (0..100, thumbnail quality). Choose only visually clear,
 representative frames; avoid black screens, text, transition frames and duplicates.
 If no frame is suitable, return an empty preview_candidates array. Never invent one.
 """
-MIN_ANALYSIS_SECONDS = 5.0
+TITLE_PROMPT = """
+Also provide title: a concise, single-line English title describing the visible scene,
+not a resource code or the full quest title. Base it only on the sampled frames and
+supplied context, do not invent names or events. If the images are not informative
+enough for a meaningful title, return null.
+"""
 MAX_PREVIEWS = 5
 
 
 def vision_request(provider: Provider, times: list[float], images: list[bytes], *,
                    atlases: list[dict] | None = None, context: dict | None = None,
-                   choose_preview: bool = False):
+                   choose_preview: bool = False, choose_title: bool = False):
     labels = ATLAS_PROMPT if atlases is not None else PROMPT
     if choose_preview:
         labels += PREVIEW_PROMPT
+    if choose_title:
+        labels += TITLE_PROMPT
     if context:
         labels += "\nSource text context (reference data): " + json.dumps(context, ensure_ascii=False)
     if atlases is not None:
@@ -310,6 +323,9 @@ async def process_cutscene_vision(payload: dict) -> None:
 
 
 async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSettings) -> None:
+    if run.metadata_json.get("title_only_report_id"):
+        await analyze_title_only(db, run, settings)
+        return
     config = get_settings()
     storage = S3Storage(config)
     location = await db.scalar(
@@ -330,7 +346,7 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
     ffmpeg = Path(ffmpeg_name).resolve()
     checkpoint = dict(run.raw_output or {"batches": [], "step": 0})
     protocol = getattr(run, "prompt_version", None) or VISION_VERSION
-    use_atlases = protocol in ("cutscene-visual-v2", VISION_VERSION)
+    use_atlases = protocol in ("cutscene-visual-v2", "cutscene-visual-v3", VISION_VERSION)
     context = run.metadata_json.get("text_context") if use_atlases else None
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -343,7 +359,7 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
         if digest.hexdigest() != run.metadata_json["source_sha256"]:
             raise ValueError("Source content changed")
         duration, _ = await asyncio.to_thread(video_duration, ffmpeg, movie)
-        if protocol == VISION_VERSION and duration < MIN_ANALYSIS_SECONDS:
+        if protocol in ("cutscene-visual-v3", VISION_VERSION) and duration < MIN_VISUAL_SECONDS:
             run.status, run.error, run.finished_at = "skipped", "Video is shorter than 5 seconds", datetime.now(UTC)
             run.raw_output = {**checkpoint, "skip_reason": "short_video", "duration": duration}
             await db.commit()
@@ -385,13 +401,14 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
                         manifests = None
                     route, request = vision_request(provider, batch_times, images,
                                                     atlases=manifests, context=context,
-                                                    choose_preview=protocol == VISION_VERSION)
+                                                    choose_preview=protocol in ("cutscene-visual-v3", VISION_VERSION),
+                                                    choose_title=protocol == VISION_VERSION)
                     # A deliberately conservative image bound, independent of base64 byte size.
                     image_bound = (sum(max(8192, math.ceil(m["width"] / 16)
                                            * math.ceil(m["height"] / 16) * 2) for m in manifests)
                                    if manifests is not None else len(images) * 8192)
                     bound = image_bound + len(json.dumps(
-                        {"prompt": ATLAS_PROMPT + (PREVIEW_PROMPT if protocol == VISION_VERSION else ""), "times": batch_times,
+                        {"prompt": ATLAS_PROMPT + (PREVIEW_PROMPT if protocol in ("cutscene-visual-v3", VISION_VERSION) else "") + (TITLE_PROMPT if protocol == VISION_VERSION else ""), "times": batch_times,
                          "atlases": manifests, "context": context}, ensure_ascii=False).encode()) + 1024
                     if bound > settings.max_input_tokens and len(batch_times) > 1:
                         middle = len(batch_times) // 2
@@ -471,6 +488,9 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
                     preview_file_ids = await publish_preview(db, run, storage, ffmpeg, movie, root, checkpoint["batches"])
             except Exception as error:
                 logger.warning("cutscene.preview_failed run_id=%s error_type=%s", run.id, type(error).__name__)
+        titled = [batch for batch in checkpoint["batches"] if batch.get("title")]
+        chosen = max(titled, key=lambda batch: max(
+            (candidate["score"] for candidate in batch.get("preview_candidates", [])), default=-1), default=None)
         report = {
             "protocol": protocol,
             "complete": True,
@@ -485,6 +505,8 @@ async def analyze_run(db: AsyncSession, run: ProcessingRun, settings: AgentSetti
             "atlases": checkpoint.get("atlases", []),
             "preview_file_id": preview_file_ids[0] if preview_file_ids else None,
             "preview_file_ids": preview_file_ids,
+            "title": chosen["title"].strip() if chosen else None,
+            "title_language": "en" if chosen else None,
             "text_context": context,
         }
         # Report metadata is kept beside the exact source file; no schema migration required.

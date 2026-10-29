@@ -65,6 +65,29 @@ def test_preview_candidates_must_reference_real_sampled_frames():
         validate_batch(json.dumps(raw), [1, 2])
 
 
+def test_visual_title_is_optional_but_must_be_readable():
+    event = {"time": 1, "observation": "A scene", "confidence": "observed"}
+    raw = {"summary": "A scene", "events": [event], "title": "  A Last Stand  "}
+    assert validate_batch(json.dumps(raw), [1])["title"] == "A Last Stand"
+    for title in ("C3jiyanfight", "M0311", " \n "):
+        raw["title"] = title
+        assert validate_batch(json.dumps(raw), [1])["title"] is None
+
+
+@pytest.mark.asyncio
+async def test_enqueue_reuses_existing_visual_report_for_title(monkeypatch):
+    monkeypatch.setattr(vision, "video_context_snapshot", AsyncMock(return_value={}))
+    report = SimpleNamespace(id=25, file_id=2, metadata_json={"events": [{"time": 1}]})
+    monkeypatch.setattr(vision, "visual_reference", AsyncMock(return_value=report))
+    db = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id=2, sha256=b"source")),
+                         execute=AsyncMock(), scalar=AsyncMock(side_effect=[3, None]),
+                         add=Mock(), flush=AsyncMock())
+    reference = SimpleNamespace(id=1, file_id=2, owner_node_id=5, reference_type="cutscene_video",
+                                metadata_json={"asset_version": "3.7.0"})
+    run = await enqueue_visual_job(db, reference, AgentSettings(_env_file=None, vision_enabled=True))
+    assert run.metadata_json["title_only_report_id"] == 25
+
+
 def description(**changes):
     return CutsceneDescription.model_validate(
         {

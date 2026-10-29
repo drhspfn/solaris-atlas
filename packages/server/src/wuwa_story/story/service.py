@@ -201,6 +201,9 @@ async def _release_id(session: AsyncSession, game_version: str | None) -> int | 
             if any(row.game_version == game_version for row in available)
             else None
         )
+    if "story_completed_release_ids" not in session.info:
+        session.info["story_completed_release_ids"] = await repository.completed_release_ids(session)
+    available = [row for row in available if row.id in session.info["story_completed_release_ids"]]
     latest = max(
         available, key=lambda row: (version_key(row.game_version), row.sequence), default=None
     )

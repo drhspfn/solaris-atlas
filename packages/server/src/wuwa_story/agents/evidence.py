@@ -120,37 +120,52 @@ async def scope_for_request(
 
 
 async def quest_cutscene_assets(session: AsyncSession, quest_id: int, release_id: int):
-    states = await quest_states(session, quest_id, release_id)
-    actions = select(QuestAction.node_id).where(QuestAction.quest_state_node_id.in_(states))
-    cutscenes = (
-        select(Edge.to_node_id)
-        .join(RelationType)
-        .where(
-            Edge.from_node_id.in_(actions),
-            RelationType.key == "plays_cutscene",
+    direct = set(await quest_states(session, quest_id, release_id))
+    inferred = set(await session.scalars(
+        select(Edge.to_node_id).join(RelationType).where(
+            Edge.from_node_id == quest_id,
+            RelationType.key == "references_scenario_flow_state",
             Edge.id.in_(source_edges(release_id)),
         )
-    )
-    variants = (
-        select(Edge.to_node_id)
-        .join(RelationType)
-        .where(
-            Edge.from_node_id.in_(cutscenes),
-            RelationType.key == "has_variant",
+    )) - direct
+    package_scenes = set(await session.scalars(
+        select(Edge.to_node_id).join(RelationType).where(
+            Edge.from_node_id == quest_id, RelationType.key == "references_packaged_cutscene",
             Edge.id.in_(source_edges(release_id)),
         )
-    )
-    return await session.execute(
-        select(Edge.from_node_id, Node.id, Node.canonical_key)
-        .join(RelationType)
-        .join(Node, Node.id == Edge.to_node_id)
-        .where(
-            Edge.from_node_id.in_(variants),
-            RelationType.key == "references_asset",
-            Edge.id.in_(source_edges(release_id)),
+    ))
+
+    async def assets_for(states, scene_ids=()):
+        if not states and not scene_ids:
+            return []
+        actions = select(QuestAction.node_id).where(QuestAction.quest_state_node_id.in_(states))
+        cutscenes = (
+            select(Edge.to_node_id).join(RelationType).where(
+                Edge.from_node_id.in_(actions), RelationType.key == "plays_cutscene",
+                Edge.id.in_(source_edges(release_id)),
+            )
         )
-        .order_by(Node.id)
-    )
+        variants = (
+            select(Edge.to_node_id).join(RelationType).where(
+                or_(Edge.from_node_id.in_(cutscenes), Edge.from_node_id.in_(scene_ids)),
+                RelationType.key == "has_variant",
+                Edge.id.in_(source_edges(release_id)),
+            )
+        )
+        return list(await session.execute(
+            select(Edge.from_node_id, Node.id, Node.canonical_key)
+            .join(RelationType).join(Node, Node.id == Edge.to_node_id)
+            .where(Edge.from_node_id.in_(variants), RelationType.key == "references_asset",
+                   Edge.id.in_(source_edges(release_id)))
+            .order_by(Node.id)
+        ))
+
+    # Explicit links take precedence if both routes reach the same variant.
+    result = {tuple(row): False for row in await assets_for(direct)}
+    for row in await assets_for(inferred, package_scenes):
+        result.setdefault(tuple(row), True)
+    return [(*row, is_inferred) for row, is_inferred in sorted(
+        result.items(), key=lambda item: (item[0][1], item[0][0], item[0][2]))]
 
 
 async def quest_fingerprint(
@@ -247,14 +262,19 @@ async def quest_fingerprint(
     }
     if include_visual:
         visual = []
-        for _, asset_id, _ in await quest_cutscene_assets(session, quest.node_id, release_id):
+        inferred_assets = []
+        for _, asset_id, _, inferred in await quest_cutscene_assets(session, quest.node_id, release_id):
             report = await visual_reference(session, asset_id)
             if report:
                 visual.append(
                     (asset_id, report.id, hash_value(report.metadata_json).hex())
                 )
+                if inferred:
+                    inferred_assets.append(asset_id)
         if visual:
             payload["visual"] = visual
+        if inferred_assets:
+            payload["inferred_visual"] = inferred_assets
     return hash_value(payload)
 
 
@@ -316,13 +336,14 @@ class EvidenceTools:
     async def cutscene_inventory(self, quest: Quest) -> list[dict[str, Any]]:
         rows = await quest_cutscene_assets(self.session, quest.node_id, self.release_id)
         result = []
-        for variant, asset_id, key in rows:
+        for variant, asset_id, key, inferred in rows:
             report = await visual_reference(self.session, asset_id)
             result.append(
                 {
                     "variant_node_id": variant,
                     "asset_node_id": asset_id,
                     "canonical_key": key,
+                    "context_inferred": inferred,
                     "visual_reference_id": report.id if report else None,
                     "recording_version": report.metadata_json["asset_version"] if report else None,
                     "visual_status": "available" if report else "not_analyzed",
@@ -355,11 +376,11 @@ class EvidenceTools:
         if offset < 0 or not 1 <= limit <= 20:
             raise ValueError("Invalid visual pagination: offset >= 0, limit 1..20 (default 12)")
         await self.remember_node(asset_node_id)
-        # Restrict to an authored cutscene asset linked to the target quest.
-        if asset_node_id not in {
-            item["asset_node_id"] for item in await self.cutscene_inventory(self.quest)
-        }:
-            raise ValueError("Asset is not a cutscene variant in this quest")
+        # Only explicitly linked or conservatively inferred scenario assets are allowed.
+        asset = next((item for item in await self.cutscene_inventory(self.quest)
+                      if item["asset_node_id"] == asset_node_id), None)
+        if asset is None:
+            raise ValueError("Asset is not a linked cutscene variant in this quest")
         report = await visual_reference(self.session, asset_node_id)
         if report is None:
             return {"asset_node_id": asset_node_id, "status": "not_analyzed"}
@@ -375,6 +396,7 @@ class EvidenceTools:
         self.visual_evidence[str(report.id)] = receipt
         return {
             "asset_node_id": asset_node_id,
+            "context_inferred": asset["context_inferred"],
             "visual_reference_id": report.id,
             "snapshot_id": self.release_id,
             "asset_version": metadata["asset_version"],
@@ -868,8 +890,8 @@ class EvidenceTools:
             return await self.search(**args)
         if call.name == "search_lore":
             query = args.get("query", "")
-            from wuwa_story.search.lore import LoreSearchService
             from wuwa_story.search.embedding import generate_query_embedding
+            from wuwa_story.search.lore import LoreSearchService
             try:
                 query_embedding = await generate_query_embedding(self.session, query)
                 service = LoreSearchService(self.session)

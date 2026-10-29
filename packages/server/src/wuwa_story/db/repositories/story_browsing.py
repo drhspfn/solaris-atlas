@@ -25,7 +25,7 @@ from wuwa_story.db.models.i18n import (
     LocalizationValue,
 )
 from wuwa_story.db.models.ontology import RelationType
-from wuwa_story.db.models.ops import GameRelease
+from wuwa_story.db.models.ops import GameRelease, ImportRun
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.search import EntityAlias, SearchDocument
 from wuwa_story.db.models.story import Scene
@@ -34,6 +34,10 @@ from wuwa_story.db.repositories.quest_scope import quest_state_links
 
 async def fetch_releases(session):
     return list(await session.scalars(select(GameRelease)))
+
+
+async def completed_release_ids(session):
+    return set(await session.scalars(select(ImportRun.release_id).where(ImportRun.status == "succeeded")))
 
 
 async def locale_id(session, code):
