@@ -21,8 +21,8 @@ from wuwa_story.db.models.ops import ProcessingRun, Processor
 from wuwa_story.db.repositories.character_models import (
     REFERENCE_TYPES,
     model_release,
-    previous_model_releases,
     published_model_files,
+    published_model_releases,
 )
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.ingestion.client_assets import inspect_installed_clients
@@ -136,7 +136,15 @@ async def enqueue_character_model(session, request: CharacterModelRequest):
     return run
 
 
-async def public_character_model(session, owner_node_id, release, *, allow_fallback=True):
+async def latest_public_character_model(session, owner_node_id):
+    for release in await published_model_releases(session, owner_node_id):
+        result = await public_character_model(session, owner_node_id, release)
+        if result["status"] == "ready":
+            return result
+    return await public_character_model(session, owner_node_id, None)
+
+
+async def public_character_model(session, owner_node_id, release):
     result = {
         "status": "missing",
         "game_version": release.game_version if release else None,
@@ -224,11 +232,4 @@ async def public_character_model(session, owner_node_id, release, *, allow_fallb
             result["forms"].append(public_form)
         for kind in (*REFERENCE_TYPES.values(), "viewer_url"):
             result[kind] = result["forms"][0][kind]
-    elif allow_fallback:
-        for previous in await previous_model_releases(session, owner_node_id, release):
-            fallback = await public_character_model(session, owner_node_id, previous, allow_fallback=False)
-            if fallback["status"] == "ready":
-                fallback["source_game_version"] = previous.game_version
-                fallback["game_version"] = release.game_version
-                return fallback
     return result

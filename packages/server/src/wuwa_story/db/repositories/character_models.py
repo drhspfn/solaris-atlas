@@ -1,6 +1,6 @@
 """Published model bundles; never project private source metadata into public responses."""
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
@@ -25,19 +25,19 @@ async def model_release(session, game_version=None):
     )
 
 
-async def previous_model_releases(session, owner_node_id, release):
-    """Find earlier snapshots with model references, newest first."""
-    releases = await session.scalars(
+async def published_model_releases(session, owner_node_id):
+    """Find snapshots with model publications in publication order."""
+    bundle = FileReference.metadata_json["model_bundle_id"].astext
+    return list(await session.scalars(
         select(GameRelease).join(FileReference, FileReference.release_id == GameRelease.id)
         .where(FileReference.owner_node_id == owner_node_id,
-               FileReference.reference_type == "character_model_preview",
-               GameRelease.id != release.id).distinct()
-    )
-    target = version_key(release.game_version)
-    return sorted((candidate for candidate in releases
-                   if version_key(candidate.game_version) <= target),
-                  key=lambda candidate: (version_key(candidate.game_version), candidate.sequence),
-                  reverse=True)
+               FileReference.reference_type.in_(("character_model_preview", "character_model_download")),
+               bundle.is_not(None))
+        .group_by(GameRelease.id, bundle)
+        .having(func.bool_or(FileReference.reference_type == "character_model_preview"),
+                func.bool_or(FileReference.reference_type == "character_model_download"))
+        .order_by(func.max(FileReference.id).desc())
+    ))
 
 
 async def published_model_files(session, owner_node_id, release_id, bucket):

@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-test('character page sends its selected version to the model and import actions', () => {
+test('character page loads its model independently of the selected game version', () => {
   const components = new Proxy({}, { get: (_, name) => name });
   const mocks = {
     react: { useState: (value) => [value, () => {}], useEffect: () => {} },
@@ -31,6 +31,6 @@ test('character page sends its selected version to the model and import actions'
   } });
   const collect = (node) => !node || typeof node !== 'object' ? [] : [node, ...[node.props?.children].flat(Infinity).flatMap(collect)];
   const nodes = collect(root);
-  assert.equal(nodes.find((node) => node.type === 'CharacterModel').props.gameVersion, '3.5.0');
-  assert.equal(nodes.find((node) => node.type === 'CharacterModelImport').props.initialGameVersion, '3.5.0');
+  assert.equal(nodes.find((node) => node.type === 'CharacterModel').props.gameVersion, undefined);
+  assert.equal(nodes.find((node) => node.type === 'CharacterModelImport').props.initialGameVersion, undefined);
 });

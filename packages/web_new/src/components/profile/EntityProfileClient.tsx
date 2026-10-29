@@ -19,7 +19,7 @@ import { categoryTitle, type Entity, entityPath } from '@/data/entities';
 import { localizedText } from '@/data/localized';
 import { useLocale } from '@/hooks/useLocale';
 import { usePlayerDisplay } from '@/hooks/usePlayerDisplay';
-import { Link, useSearchParams } from '@/lib/router';
+import { Link } from '@/lib/router';
 import { questPath } from '@/lib/routeKey';
 
 export function EntityProfileClient({
@@ -34,7 +34,6 @@ export function EntityProfileClient({
   initialArchive?: CharacterArchiveData | null;
 }) {
   const locale = useLocale();
-  const gameVersion = useSearchParams().get('game_version') || undefined;
   const playerDisplay = usePlayerDisplay();
   const [data, setData] = useState<any>(initialData || null);
   const [loading, setLoading] = useState(!initialData);
@@ -188,7 +187,6 @@ export function EntityProfileClient({
             <h1>{name}<span className="heading-period">.</span></h1>
             {kind === 'character' && entity?.canonical_key && (
               <CharacterModelImport characterKey={entity.canonical_key} variant="actions"
-                initialGameVersion={gameVersion}
                 onComplete={() => setModelRevision((value) => value + 1)} />
             )}
           </div>
@@ -233,7 +231,7 @@ export function EntityProfileClient({
           <div className="character-archive-loading">Loading character details…</div>
         ))}
       {kind === 'character' && entity?.canonical_key && (
-        <CharacterModel key={entity.canonical_key} characterKey={entity.canonical_key} name={name} gameVersion={gameVersion} refreshKey={modelRevision} />
+        <CharacterModel key={entity.canonical_key} characterKey={entity.canonical_key} name={name} refreshKey={modelRevision} />
       )}
       <div className="profile-columns">
         <section className="content-panel">
