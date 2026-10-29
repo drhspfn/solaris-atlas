@@ -30,3 +30,13 @@ def test_quest_and_levelplay_sequences_place_movies_after_preceding_story():
     assert [key for key, _ in ordered] == ['Story_1_22', 'Cave_1_14', 'Cave_1_39']
     level[138]['FinishActions'] = []
     assert [key for key, _ in flow_positions(qtree, quest, {183: (ltree, level)}, valid)] == ['Story_1_22']
+
+
+def test_parent_finish_actions_follow_children():
+    quest = {
+        1: {'EnterActions': [flow(1)], 'FinishActions': [flow(3)]},
+        2: {'EnterActions': [flow(2)]},
+    }
+    order = flow_positions(nodes(quest, [(1, []), (2, [0])]), quest, {},
+                           {'Cave_1_1', 'Cave_1_2', 'Cave_1_3'})
+    assert [key for key, _ in order] == ['Cave_1_1', 'Cave_1_2', 'Cave_1_3']

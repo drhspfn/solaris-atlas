@@ -41,14 +41,16 @@ def flow_positions(quest_nodes: list[dict], quest_records: dict[int, dict],
                 if not isinstance(name, str) or type(flow) is not int or type(state) is not int:
                     continue
                 state_key = f'{name}_{flow}_{state}'
-                order = (*path, phase, index)
+                # Children use positive path components; finish actions follow
+                # the entire subtree rather than preceding the first child.
+                order = (*path, 100_001 if field == 'FinishActions' else 0, phase, index)
                 if state_key in valid_states and (state_key not in found or order < found[state_key]):
                     found[state_key] = order
 
     for node in quest_nodes:
         raw = quest_records[node['id']]
-        path = tuple(node['path'])
-        add_flows(raw, (*path, 0))
+        path = tuple(index + 1 for index in node['path'])
+        add_flows(raw, path)
         condition = raw.get('Condition')
         ids = condition.get('LevelPlayIds') if isinstance(condition, dict) else None
         if (not isinstance(ids, list) or len(ids) != 1 or type(ids[0]) is not int
@@ -59,7 +61,8 @@ def flow_positions(quest_nodes: list[dict], quest_records: dict[int, dict],
             continue
         level_nodes, level_records = tree
         for level_node in level_nodes:
-            add_flows(level_records[level_node['id']], (*path, 1, *level_node['path']))
+            add_flows(level_records[level_node['id']],
+                      (*path, 1, *(index + 1 for index in level_node['path'])))
     return sorted(found.items(), key=lambda item: (item[1], item[0]))
 
 
