@@ -26,6 +26,7 @@ from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.cutscenes import Clip, PlaybackFlow
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.story import media as story_media
+from wuwa_story.story.tree_order import authored_order
 
 router = APIRouter(tags=["story browsing"])
 
@@ -185,6 +186,7 @@ async def quest_media(
     release_id = await _release_id(session, game_version)
     if release_id is None:
         raise HTTPException(status_code=404, detail="game version not imported")
+    tree_order = await authored_order(session, game_quest_id, release_id)
     state_ids = await _quest_state_ids(session, quest.node_id, release_id)
     contextual_state_ids = set(await session.scalars(
         select(Edge.to_node_id)
@@ -269,6 +271,7 @@ async def quest_media(
                 "action": action_key, "flow_state": state.state_key,
                 "action_index": action.action_index, "reference": link["canonical_key"],
                 "context_inferred": state.node_id in contextual_state_ids,
+                "story_order_mapped": bool(tree_order and state.state_key in tree_order['mapped_flow_states']),
                 "basis": link["basis"], "source": link["source"],
                 "engine_path": link["canonical_key"].removeprefix("asset:ue:")
                 if link["canonical_key"].startswith("asset:ue:") else None,

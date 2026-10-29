@@ -15,6 +15,7 @@ from wuwa_story.story.service import (
     quest_profile_payload,
     scene_payloads,
 )
+from wuwa_story.story.tree_order import authored_order
 
 
 async def quest_profile(session, game_quest_id, locale="en", game_version=None) -> dict[str, Any]:
@@ -94,6 +95,9 @@ async def quest_transcript(
     game_quest_id = quest.game_quest_id
     release_id = await _release_id(session, game_version)
     states = await _quest_state_ids(session, quest.node_id, release_id)
+    tree_order = await authored_order(session, quest.game_quest_id, release_id)
+    if tree_order:
+        states = list(set(states) | set(tree_order['state_ids']))
     character_node = None
     if character:
         character_node = await node_lookup(session, character, ("character",))
@@ -110,21 +114,31 @@ async def quest_transcript(
         focus_line,
         limit,
         offset,
+        ordered_states=tree_order['state_ids'] if tree_order else None,
     )
     if rows is None:
         raise StoryBrowsingError(status_code=404, detail="Cited passage not found in this quest")
     scene_rows = await repository.quest_scenes(session, quest.node_id)
     await prefetch_dialogue(session, rows, locale, release_id, include_raw=include_raw)
     media_by_line = await dialogue_media(session, [row[0].node_id for row in rows], release_id)
+    lines = await dialogue_lines(session, rows, locale, release_id, media_by_line, include_raw=include_raw)
+    if tree_order:
+        ordered_ids = set(tree_order['state_ids'])
+        for row, line in zip(rows, lines, strict=True):
+            line['story_order_mapped'] = row[2].node_id in ordered_ids
     return {
         "quest": await _quest_info(session, quest, locale, game_version),
-        "ordering_semantics": "Authored state/action/talk ordering; branches and runtime conditions are not flattened into a guaranteed playthrough.",
+        "ordering_semantics": (
+            f"Authored tree order from game client {tree_order['asset_version']}; "
+            "parallel and conditional branches do not establish a guaranteed playthrough."
+            if tree_order else
+            "Authored state/action/talk ordering; branches and runtime conditions are not flattened into a guaranteed playthrough."
+        ),
+        "tree_order_asset_version": tree_order['asset_version'] if tree_order else None,
         "scenes": scene_payloads(scene_rows),
         "filters": {"character": character, "text": q, "locale": locale},
         "offset": offset,
         "limit": limit,
         "lines_returned": len(rows),
-        "lines": await dialogue_lines(
-            session, rows, locale, release_id, media_by_line, include_raw=include_raw
-        ),
+        "lines": lines,
     }

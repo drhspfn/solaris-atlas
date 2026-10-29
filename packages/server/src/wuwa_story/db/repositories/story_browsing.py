@@ -397,7 +397,8 @@ async def search_dialogue_rows(
 
 
 async def quest_transcript_rows(
-    session, states, release_id, character_node_id, q, locale_row, focus_line, limit, offset
+    session, states, release_id, character_node_id, q, locale_row, focus_line, limit, offset,
+    ordered_states=None,
 ):
     statement = (
         select(DialogueLine, QuestAction, QuestState, Node, SourceRecord, SourceFile)
@@ -445,6 +446,9 @@ async def quest_transcript_rows(
         DialogueLine.source_index,
         DialogueLine.node_id,
     )
+    if ordered_states:
+        rank = {identity: index for index, identity in enumerate(ordered_states)}
+        ordering = (case(rank, value=QuestState.node_id, else_=len(rank)), *ordering)
     if focus_line:
         ranked = statement.with_only_columns(
             Node.canonical_key.label("key"),
