@@ -71,8 +71,7 @@ def test_visual_title_is_optional_but_must_be_readable():
     assert validate_batch(json.dumps(raw), [1])["title"] == "A Last Stand"
     for title in ("C3jiyanfight", "M0311", " \n "):
         raw["title"] = title
-        with pytest.raises(ValueError):
-            validate_batch(json.dumps(raw), [1])
+        assert validate_batch(json.dumps(raw), [1])["title"] is None
 
 
 @pytest.mark.asyncio

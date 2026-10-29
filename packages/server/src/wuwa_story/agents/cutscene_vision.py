@@ -42,14 +42,15 @@ class VisualBatch(BaseModel):
     preview_candidates: list[PreviewCandidate] = Field(default_factory=list, max_length=3)
     title: str | None = Field(default=None, min_length=1, max_length=120, pattern=r"^[^\r\n]+$")
 
-    @field_validator("title")
+    @field_validator("title", mode="before")
     @classmethod
     def readable_title(cls, value):
-        if value is None:
+        if not isinstance(value, str):
             return None
         value = value.strip()
-        if not value or re.fullmatch(r"(?:cutscene\s*:?[ ]*)?[A-Za-z_]*\d[A-Za-z0-9_-]*", value, re.I):
-            raise ValueError("Visual title must describe the scene, not a resource code")
+        if (not value or len(value) > 120 or "\n" in value or "\r" in value
+                or re.fullmatch(r"(?:cutscene\s*:?[ ]*)?[A-Za-z_]*\d[A-Za-z0-9_-]*", value, re.I)):
+            return None
         return value
 
     @model_validator(mode="after")
