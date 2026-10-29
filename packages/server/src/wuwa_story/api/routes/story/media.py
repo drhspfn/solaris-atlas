@@ -326,6 +326,7 @@ async def quest_media(
         "events": events,
         "related_cutscenes": [{"name": link["canonical_key"].removeprefix("cutscene:"),
                                "playable": node_id in package_flows,
+                               "playback": package_flows.get(node_id),
                                "context_inferred": True}
                               for node_id, link in related.items()],
         "video_packages": [
