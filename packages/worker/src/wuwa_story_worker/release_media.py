@@ -169,14 +169,18 @@ async def import_tree_orders(parent, session):
     key = int.from_bytes(hashlib.sha256(parent["download_id"].encode()).digest()[:4], "big", signed=True)
     async with engine.connect() as lock_connection, job_lock(lock_connection, 704, key):
         existing = await session.get(AuthoredTreeImport, (parent["asset_version"], parent["download_id"]))
-        if existing:
+        if existing and existing.schema_version == 2:
             return {"asset_version": parent["asset_version"], "trees": existing.tree_count,
                     "unresolved": 0, "reused": True}, "completed"
         await session.commit()
         result, status = await _import_tree_orders(parent, session)
         if status == "completed":
-            session.add(AuthoredTreeImport(asset_version=parent["asset_version"],
-                                           download_id=parent["download_id"], tree_count=result["trees"]))
+            if existing:
+                existing.tree_count, existing.schema_version = result["trees"], 2
+            else:
+                session.add(AuthoredTreeImport(asset_version=parent["asset_version"],
+                                               download_id=parent["download_id"], tree_count=result["trees"],
+                                               schema_version=2))
             await session.commit()
         return result, status
 
