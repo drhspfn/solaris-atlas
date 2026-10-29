@@ -11,6 +11,14 @@ depends_on = None
 
 def upgrade():
     op.execute("SET LOCAL lock_timeout = '10s'")
+    if not sa.inspect(op.get_bind()).has_table("authored_tree_import", schema="core"):
+        op.create_table(
+            "authored_tree_import",
+            sa.Column("asset_version", sa.String(32), primary_key=True),
+            sa.Column("download_id", sa.String(128), primary_key=True),
+            sa.Column("tree_count", sa.Integer(), nullable=False),
+            schema="core",
+        )
     if not sa.inspect(op.get_bind()).has_table("authored_tree_order", schema="core"):
         op.create_table(
             "authored_tree_order",
@@ -31,3 +39,4 @@ def upgrade():
 
 def downgrade():
     op.drop_table("authored_tree_order", schema="core")
+    op.drop_table("authored_tree_import", schema="core")

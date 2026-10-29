@@ -182,6 +182,16 @@ class QuestNode(MetadataMixin, Base):
     )
 
 
+class AuthoredTreeImport(Base):
+    """Completion marker for an indexed client download."""
+
+    __tablename__ = "authored_tree_import"
+    __table_args__ = {"schema": "core"}
+    asset_version: Mapped[str] = mapped_column(String(32), primary_key=True)
+    download_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    tree_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class AuthoredTreeOrder(Base):
     """Authored child paths from one identifiable game-client resource."""
 

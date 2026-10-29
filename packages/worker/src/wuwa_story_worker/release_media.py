@@ -12,6 +12,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 from wuwa_story.config.settings import get_settings
+from wuwa_story.db.models.core import AuthoredTreeImport
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.models.storage import FileReference
@@ -164,6 +165,23 @@ async def image_batch(payload, parent, run, session):
 
 
 async def import_tree_orders(parent, session):
+    # Different patch imports may all use the same current client. Index it once.
+    key = int.from_bytes(hashlib.sha256(parent["download_id"].encode()).digest()[:4], "big", signed=True)
+    async with engine.connect() as lock_connection, job_lock(lock_connection, 704, key):
+        existing = await session.get(AuthoredTreeImport, (parent["asset_version"], parent["download_id"]))
+        if existing:
+            return {"asset_version": parent["asset_version"], "trees": existing.tree_count,
+                    "unresolved": 0, "reused": True}, "completed"
+        await session.commit()
+        result, status = await _import_tree_orders(parent, session)
+        if status == "completed":
+            session.add(AuthoredTreeImport(asset_version=parent["asset_version"],
+                                           download_id=parent["download_id"], tree_count=result["trees"]))
+            await session.commit()
+        return result, status
+
+
+async def _import_tree_orders(parent, session):
     root = client_root(parent)
     extractor = tool_path("WUWA_FMODEL_PATH")
     config = await export_assets(root, extractor, "ConfigDB")
