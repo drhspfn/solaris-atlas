@@ -14,6 +14,7 @@ from wuwa_story_worker.model_bundle import (
     animation_sources,
     base_color_texture,
     build_animation_plan,
+    effect_space_only,
     file_sha256,
     indexed_gltf_references,
     inherited_base_color_texture,
@@ -26,6 +27,7 @@ from wuwa_story_worker.model_bundle import (
     preview_meshes,
     retime_tracks,
     rig_glb_stats,
+    same_rest_skeleton,
 )
 
 
@@ -211,6 +213,24 @@ def test_mask_cutoff_uses_cooked_value_and_rejects_invalid_values():
     assert opacity_mask_cutoff({"Properties": {"BasePropertyOverrides": {"OpacityMaskClipValue": 0.2}}}) == 0.2
     with pytest.raises(ValueError, match="Invalid opacity mask cutoff"):
         opacity_mask_cutoff({"Properties": {"BasePropertyOverrides": {"OpacityMaskClipValue": 2}}})
+
+
+def test_effect_space_pass_is_not_treated_as_color_geometry():
+    metadata = {"Textures": {"MaskTex": {}}, "Properties": {"BasePropertyOverrides": {"bEffectSpaceWrite": True}}}
+    assert effect_space_only(metadata)
+    assert not effect_space_only({"Textures": {"MaskTex": {}}})
+    assert not effect_space_only({"Properties": metadata["Properties"]})
+
+
+def test_composite_rig_requires_matching_bones_hierarchy_and_rest_transforms():
+    def rig(parent="root", offset=0):
+        root = SimpleNamespace(name="root", parent=None, matrix_local=[[1, 0], [0, 1]])
+        child = SimpleNamespace(name="child", parent=root if parent else None, matrix_local=[[1, offset], [0, 1]])
+        return SimpleNamespace(data=SimpleNamespace(bones=[root, child]))
+    assert same_rest_skeleton(rig(), rig())
+    assert not same_rest_skeleton(rig(), rig(parent=None))
+    assert not same_rest_skeleton(rig(), rig(offset=0.1))
+    assert not same_rest_skeleton(rig(), SimpleNamespace(data=SimpleNamespace(bones=[])))
 
 
 def test_preview_resizes_copies_preserves_aspect_alpha_and_restores_slots_on_failure():

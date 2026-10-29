@@ -180,7 +180,7 @@ async def public_character_model(session, owner_node_id, release):
         form_order = 0 if form_order is None else form_order
         if (
             not isinstance(form_id, str)
-            or re.fullmatch(r"default|mesh-[1-9][0-9]*", form_id) is None
+            or re.fullmatch(r"default|mesh-[1-9][0-9]*(?:-form-[1-9][0-9]*)?", form_id) is None
             or not isinstance(form_label, str)
             or not form_label.strip()
             or type(form_order) is not int

@@ -531,6 +531,16 @@ async def test_public_forms_keep_files_and_viewers_in_their_form(public_forms):
     assert "model_bundle_id" not in str(result) and "form_order" not in str(result)
 
 
+async def test_public_forms_accept_multiple_compositions_of_one_mesh(public_forms):
+    public_forms.extend(form_rows("new", "mesh-100062", "Stagecraft", 0))
+    public_forms.extend(form_rows("new", "mesh-100062-form-2", "Breakdown", 1))
+    result = await service.public_character_model(
+        AsyncMock(), 15, SimpleNamespace(id=8, game_version="3.7.0")
+    )
+    assert result["status"] == "ready"
+    assert [form["id"] for form in result["forms"]] == ["mesh-100062", "mesh-100062-form-2"]
+
+
 @pytest.mark.parametrize("missing_kind", ["preview", "download"])
 async def test_public_forms_skip_whole_incomplete_publication(public_forms, missing_kind):
     public_forms.extend(form_rows("new"))

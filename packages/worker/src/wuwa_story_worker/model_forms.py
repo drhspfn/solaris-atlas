@@ -68,4 +68,24 @@ def resolve_model_forms(role, preloads, morphs):
         add(
             row.get("MeshId"), label, {"table": "rolemorph", "id": row["Id"], "role_id": role["Id"]}
         )
+    # Denia's two appearances share a gameplay preload, unlike RoleMorph forms.
+    # The complete light mesh and the dark Body + Up2 composition were checked
+    # against the cooked assets, Blueprint and in-game appearance.
+    body = "Aki/Character/Role/FemaleMS/Daniya/R2T1DaniyaMd10011/Model/R2T1DaniyaMd10011_Body"
+    if role["Id"] == 1211 and len(forms) == 1 and forms[0]["model"] == body:
+        light = {
+            **forms[0],
+            "label": "Stagecraft",
+            "model": body.removesuffix("_Body"),
+            "source": {**forms[0]["source"], "composition": "denia-stagecraft-v1"},
+        }
+        dark = {
+            **forms[0],
+            "id": f"{forms[0]['id']}-form-2",
+            "label": "Breakdown",
+            "order": 1,
+            "extra_models": [body.removesuffix("_Body") + "_Up2"],
+            "source": {**forms[0]["source"], "composition": "denia-breakdown-v1"},
+        }
+        return [light, dark]
     return forms
