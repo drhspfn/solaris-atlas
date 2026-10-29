@@ -182,6 +182,65 @@ async def test_deferred_child_is_waited_for_instead_of_failed():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("voice_status,voice_download,expected", [
+    ("completed", "client", "completed"),
+    ("running", "client", "waiting_dependency"),
+    ("failed", "client", "blocked"),
+    ("completed", "different", "failed"),
+])
+async def test_cutscene_dependency_read_finishes_before_io_without_releasing_job_lock(
+    monkeypatch, voice_status, voice_download, expected
+):
+    from contextlib import asynccontextmanager
+
+    payload = {"schema_version": 1, "job_type": "media.release", "run_id": 90,
+               "parent_id": 80, "release_id": 9, "kind": "cutscene"}
+    run = SimpleNamespace(id=90, processor_id=1, status="running", metadata_json={"payload": payload})
+    parent = SimpleNamespace(id=80, status="completed", metadata_json={"request": {"release_id": 9}},
+                             raw_output={"workspace_id": 70, "download_id": "client"})
+    voice = SimpleNamespace(id=81, status=voice_status,
+                            raw_output={"download_id": voice_download, "voice_plan_id": "plan"})
+    session, connection = AsyncMock(), AsyncMock()
+    session.get.side_effect = [run, parent]
+    session.scalar.return_value = voice
+    connection.scalar.return_value = True
+
+    @asynccontextmanager
+    async def connect():
+        yield connection
+
+    @asynccontextmanager
+    async def factory(**kwargs):
+        assert kwargs["bind"] is connection
+        yield session
+
+    async def convert(actual_payload, actual_parent):
+        assert actual_payload == payload
+        assert actual_parent == {**parent.raw_output, "voice_plan_id": "plan"}
+        assert session.commit.await_count == 3  # Run, parent, and voice dependency reads.
+        connection.invalidate.assert_not_awaited()  # Advisory lock is still held.
+        return {"videos": 1}, "completed"
+
+    monkeypatch.setattr(release_media, "engine", SimpleNamespace(connect=connect))
+    monkeypatch.setattr(release_media, "SessionFactory", factory)
+    monkeypatch.setattr(release_media, "cutscene", AsyncMock(side_effect=convert))
+    update = AsyncMock()
+    monkeypatch.setattr(release_media, "update_admin_run", update)
+    if expected == "waiting_dependency":
+        with pytest.raises(release_media.JobDeferred):
+            await release_media._process_release_media(payload)
+    elif expected == "failed":
+        with pytest.raises(ValueError, match="different clients"):
+            await release_media._process_release_media(payload)
+    else:
+        await release_media._process_release_media(payload)
+    assert update.await_args.args[2] == expected
+    assert release_media.cutscene.await_count == (expected == "completed")
+    assert session.commit.await_count == (3 if expected == "completed" else 2)
+    connection.invalidate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_event_artwork_reports_unresolved_client_texture(monkeypatch, tmp_path):
     monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
     monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")

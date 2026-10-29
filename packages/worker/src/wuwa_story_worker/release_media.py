@@ -914,8 +914,12 @@ async def _process_release_media(payload):
                             raise JobDeferred("Waiting for multilingual cutscene audio packages")
                         if voice_job.raw_output["download_id"] != parent.raw_output["download_id"]:
                             raise ValueError("Cutscene and voice packages belong to different clients")
-                        result, status = await cutscene(payload, {**parent.raw_output,
-                                                               "voice_plan_id": voice_job.raw_output["voice_plan_id"]})
+                        cutscene_parent = {**parent.raw_output,
+                                           "voice_plan_id": voice_job.raw_output["voice_plan_id"]}
+                        # The session-level job lock survives COMMIT; the dependency
+                        # read must not hold a transaction during extraction/ffmpeg.
+                        await session.commit()
+                        result, status = await cutscene(payload, cutscene_parent)
                     elif payload["kind"] == "voices":
                         result, status = await voices(payload, parent.raw_output)
                     else:
