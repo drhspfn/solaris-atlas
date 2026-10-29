@@ -1,6 +1,7 @@
 """Source-backed QuestTree browse map for the story reader."""
 
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -23,6 +24,26 @@ TREE_NODE_PATH = "BinData/QuestTree/questtreenode.json"
 TREE_CHAPTER_PATH = "BinData/QuestTree/questtreechapter.json"
 QUEST_PATH = "BinData/QuestData/questdata.json"
 QUEST_CHAPTER_PATH = "BinData/quest_chapter/questchapter.json"
+
+
+@dataclass
+class _SnapshotBatch:
+    records: dict[tuple[int, str], list[SourceRecord]]
+    first_seen: dict[int, str]
+    titles: dict[str, list[tuple[tuple[int, ...], int, str]]]
+
+    def titles_for(self, release: GameRelease) -> dict[str, str]:
+        target = _version_key(release.game_version)
+        return {
+            key: max(candidates, key=lambda row: row[:2])[2]
+            for key, history in self.titles.items()
+            if (candidates := [row for row in history if row[0] <= target])
+        }
+
+    def first_for(self, release: GameRelease) -> dict[int, str]:
+        target = _version_key(release.game_version)
+        return {key: version for key, version in self.first_seen.items()
+                if _version_key(version) <= target}
 
 
 async def _records(session: AsyncSession, release_id: int, path: str) -> list[SourceRecord]:
@@ -82,6 +103,55 @@ async def _first_observed(
     return first_seen
 
 
+async def _snapshot_batch(
+    session: AsyncSession, releases: list[GameRelease], locale: str,
+) -> _SnapshotBatch:
+    """Load shared source, localization and first-observation data once for all patches."""
+    paths = (TREE_NODE_PATH, TREE_CHAPTER_PATH, QUEST_PATH, QUEST_CHAPTER_PATH)
+    rows = await session.execute(
+        select(SourceFile.release_id, SourceFile.logical_source_path, SourceRecord)
+        .join(SourceRecord, SourceFile.id == SourceRecord.source_file_id)
+        .where(SourceFile.release_id.in_([release.id for release in releases]),
+               SourceFile.logical_source_path.in_(paths))
+        .order_by(SourceRecord.row_index)
+    )
+    records: dict[tuple[int, str], list[SourceRecord]] = defaultdict(list)
+    quest_ids: set[int] = set()
+    keys: set[str] = set()
+    for release_id, path, record in rows:
+        records[(release_id, path)].append(record)
+        data = record.data
+        for field in ("Name", "QuestChapterName", "ChapterName", "ActName", "ChapterNum", "SectionNum"):
+            if isinstance(data.get(field), str) and data[field]:
+                keys.add(data[field])
+        quest = data.get("QuestId")
+        if isinstance(quest, int):
+            quest_ids.add(quest)
+        quest_array = data.get("QuestArray")
+        if isinstance(quest_array, list):
+            quest_ids.update(value for value in quest_array if isinstance(value, int))
+        details = _quest_data(record)
+        if isinstance(details.get("TidName"), str) and details["TidName"]:
+            keys.add(details["TidName"])
+    first_seen = await _first_observed(session, releases[-1], quest_ids)
+    titles: dict[str, list[tuple[tuple[int, ...], int, str]]] = defaultdict(list)
+    if keys:
+        title_rows = await session.execute(
+            select(LocalizationKey.key, LocalizationValue.content, GameRelease.game_version,
+                   GameRelease.sequence)
+            .join(LocalizationValue, LocalizationValue.key_id == LocalizationKey.id)
+            .join(Locale, Locale.id == LocalizationValue.locale_id)
+            .join(GameRelease, GameRelease.id == LocalizationValue.release_id)
+            .where(LocalizationKey.key.in_(keys), Locale.code == locale,
+                   LocalizationValue.status == "resolved_nonempty")
+        )
+        for key, content, version, sequence in title_rows:
+            title = _display_label(content)
+            if title:
+                titles[key].append((_version_key(version), sequence, title))
+    return _SnapshotBatch(records, first_seen, titles)
+
+
 def _quest_data(record: SourceRecord) -> dict[str, Any]:
     data = record.data.get("Data", {})
     return data if isinstance(data, dict) else {}
@@ -90,22 +160,24 @@ def _quest_data(record: SourceRecord) -> dict[str, Any]:
 async def _prerequisite_map(
     session: AsyncSession, release: GameRelease, locale: str,
     quest_type_id: int, versions: list[str], quest_records: list[SourceRecord],
+    batch: _SnapshotBatch | None = None,
 ) -> dict[str, Any]:
     """For early patches without QuestTree, show QuestData and its explicit links."""
     selected = [record for record in quest_records
                 if isinstance(record.data.get("QuestId"), int)
                 and (quest_type_id == 0 or _quest_data(record).get("Type") == quest_type_id)]
-    chapter_records = await _records(session, release.id, QUEST_CHAPTER_PATH)
+    chapter_records = (batch.records.get((release.id, QUEST_CHAPTER_PATH), []) if batch
+                       else await _records(session, release.id, QUEST_CHAPTER_PATH))
     chapter_by_id = {record.data.get("Id"): record for record in chapter_records}
     quest_ids = {record.data["QuestId"] for record in selected}
-    first_seen = await _first_observed(session, release, quest_ids)
+    first_seen = batch.first_for(release) if batch else await _first_observed(session, release, quest_ids)
     keys = {value for record in selected for value in (_quest_data(record).get("TidName"),)
             if isinstance(value, str) and value}
     keys.update(value for record in chapter_records
                 for value in (record.data.get("ChapterName"), record.data.get("ActName"),
                               record.data.get("ChapterNum"), record.data.get("SectionNum"))
                 if isinstance(value, str) and value)
-    titles = await _localized_titles(session, release, locale, keys)
+    titles = batch.titles_for(release) if batch else await _localized_titles(session, release, locale, keys)
     grouped: dict[int, list[SourceRecord]] = defaultdict(list)
     for record in selected:
         chapter_id = _quest_data(record).get("ChapterId")
@@ -163,21 +235,26 @@ async def _prerequisite_map(
 
 async def _snapshot_map(
     session: AsyncSession, release: GameRelease, locale: str,
-    quest_type_id: int, versions: list[str],
+    quest_type_id: int, versions: list[str], batch: _SnapshotBatch | None = None,
 ) -> dict[str, Any]:
     """Build one source-backed snapshot without applying a patch filter."""
     release_id = release.id
-    tree_records = await _records(session, release_id, TREE_NODE_PATH)
-    chapter_records = await _records(session, release_id, TREE_CHAPTER_PATH)
-    quest_records = await _records(session, release_id, QUEST_PATH)
+    if batch:
+        tree_records = batch.records.get((release_id, TREE_NODE_PATH), [])
+        chapter_records = batch.records.get((release_id, TREE_CHAPTER_PATH), [])
+        quest_records = batch.records.get((release_id, QUEST_PATH), [])
+    else:
+        tree_records = await _records(session, release_id, TREE_NODE_PATH)
+        chapter_records = await _records(session, release_id, TREE_CHAPTER_PATH)
+        quest_records = await _records(session, release_id, QUEST_PATH)
     if not tree_records:
-        return await _prerequisite_map(session, release, locale, quest_type_id, versions, quest_records)
+        return await _prerequisite_map(session, release, locale, quest_type_id, versions, quest_records, batch)
     tree = [record for record in tree_records if isinstance(record.data.get("Id"), int)
             and (quest_type_id == 0 or record.data.get("QuestType") == quest_type_id)]
     quest_rows = {row.data.get("QuestId"): row for row in quest_records}
     quest_ids = {identifier for row in tree for identifier in row.data.get("QuestArray", [])
                  if isinstance(identifier, int)}
-    first_seen = await _first_observed(session, release, quest_ids)
+    first_seen = batch.first_for(release) if batch else await _first_observed(session, release, quest_ids)
     keys = {key for record in [*tree_records, *chapter_records]
             for key in (record.data.get("Name"), record.data.get("QuestChapterName"))
             if isinstance(key, str) and key}
@@ -186,7 +263,7 @@ async def _snapshot_map(
         data = record.data.get("Data", {}) if record else {}
         if isinstance(data, dict) and isinstance(data.get("TidName"), str):
             keys.add(data["TidName"])
-    titles = await _localized_titles(session, release, locale, keys)
+    titles = batch.titles_for(release) if batch else await _localized_titles(session, release, locale, keys)
     chapters_by_id = {row.data.get("Id"): row for row in chapter_records}
     grouped: dict[int, list[SourceRecord]] = defaultdict(list)
     for record in tree:
@@ -291,8 +368,9 @@ async def story_map(
         return {**snapshot, "chapters": _first_seen_chapters(snapshot, game_version)}
 
     chapters = []
+    batch = await _snapshot_batch(session, ordered, locale)
     for release in ordered:
-        snapshot = await _snapshot_map(session, release, locale, quest_type_id, versions)
+        snapshot = await _snapshot_map(session, release, locale, quest_type_id, versions, batch)
         chapters.extend(_first_seen_chapters(snapshot, release.game_version))
     return {
         "selected_game_version": None,

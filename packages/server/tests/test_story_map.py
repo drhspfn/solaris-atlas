@@ -95,3 +95,78 @@ async def test_patch_filter_excludes_earlier_quests_and_all_patches_follow_order
     with pytest.raises(HTTPException) as error:
         await story_map.story_map("en", "2.0.0", 1, session)
     assert error.value.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("has_tree", [False, True])
+async def test_batched_snapshot_matches_existing_snapshot_semantics(monkeypatch, has_tree):
+    release = SimpleNamespace(id=2, game_version="2.1.0", sequence=2)
+    quests = [SimpleNamespace(row_index=3, data={"QuestId": 10, "Data": {
+        "Type": 1, "TidName": "quest-title", "ChapterId": 5,
+    }})]
+    tree = [SimpleNamespace(row_index=4, data={"Id": 7, "QuestType": 1,
+        "ChapterId": 5, "Name": "node-title", "QuestArray": [10], "PreNode": []})] if has_tree else []
+    chapters = [SimpleNamespace(row_index=2, data={"Id": 5, "Name": "chapter-title",
+        "ChapterName": "chapter-title"})]
+    records = {
+        (2, story_map.QUEST_PATH): quests,
+        (2, story_map.TREE_NODE_PATH): tree,
+        (2, story_map.TREE_CHAPTER_PATH): chapters,
+        (2, story_map.QUEST_CHAPTER_PATH): chapters,
+    }
+    titles = {"quest-title": "Quest", "node-title": "Node", "chapter-title": "Chapter"}
+
+    async def load_records(_session, release_id, path):
+        return records.get((release_id, path), [])
+
+    async def load_titles(_session, _release, _locale, _keys):
+        return titles
+
+    async def load_first(_session, _release, _ids):
+        return {10: "2.1.0"}
+
+    monkeypatch.setattr(story_map, "_records", load_records)
+    monkeypatch.setattr(story_map, "_localized_titles", load_titles)
+    monkeypatch.setattr(story_map, "_first_observed", load_first)
+    batch = story_map._SnapshotBatch(records, {10: "2.1.0"}, {
+        key: [((2, 0, 0), 1, "old"), ((2, 1, 0), 2, value), ((3, 0, 0), 3, "future")]
+        for key, value in titles.items()
+    })
+    ordinary = await story_map._snapshot_map(None, release, "en", 1, ["2.1.0"])
+    batched = await story_map._snapshot_map(None, release, "en", 1, ["2.1.0"], batch)
+    assert batched == ordinary
+    assert batch.first_for(SimpleNamespace(game_version="2.0.0")) == {}
+
+
+@pytest.mark.asyncio
+async def test_batch_loads_all_versions_once_and_filters_future_titles(monkeypatch):
+    releases = [SimpleNamespace(id=1, game_version="1.0.0", sequence=1),
+                SimpleNamespace(id=2, game_version="2.0.0", sequence=2)]
+    records = [
+        (1, story_map.QUEST_PATH, SimpleNamespace(data={"QuestId": 10, "Data": {"TidName": "shared"}})),
+        (2, story_map.TREE_NODE_PATH, SimpleNamespace(data={"Name": "node", "QuestArray": [10, 11]})),
+    ]
+    title_rows = [("shared", "Old title", "1.0.0", 1),
+                  ("shared", "New title", "2.0.0", 2),
+                  ("node", "Node", "2.0.0", 2)]
+
+    class Session:
+        calls = 0
+
+        async def execute(self, _query):
+            self.calls += 1
+            return records if self.calls == 1 else title_rows
+
+    async def first(_session, release, ids):
+        assert release is releases[-1]
+        assert ids == {10, 11}
+        return {10: "1.0.0", 11: "2.0.0"}
+
+    monkeypatch.setattr(story_map, "_first_observed", first)
+    session = Session()
+    batch = await story_map._snapshot_batch(session, releases, "en")
+    assert session.calls == 2
+    assert batch.titles_for(releases[0]) == {"shared": "Old title"}
+    assert batch.titles_for(releases[1]) == {"shared": "New title", "node": "Node"}
+    assert batch.first_for(releases[0]) == {10: "1.0.0"}
+    assert batch.first_for(releases[1]) == {10: "1.0.0", 11: "2.0.0"}
