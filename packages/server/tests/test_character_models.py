@@ -17,6 +17,46 @@ from wuwa_story.db.session import get_session
 from wuwa_story.ingestion import character_models as service
 
 
+@pytest.fixture(autouse=True)
+def no_previous_models_by_default(monkeypatch):
+    monkeypatch.setattr(service, "previous_model_releases", AsyncMock(return_value=[]))
+
+
+async def test_previous_model_releases_never_return_future_patches():
+    db = AsyncMock()
+    db.scalars.return_value = [
+        SimpleNamespace(id=10, game_version="3.7.0", sequence=10),
+        SimpleNamespace(id=8, game_version="3.5.0", sequence=8),
+        SimpleNamespace(id=3, game_version="3.3.0", sequence=3),
+    ]
+    releases = await repository.previous_model_releases(
+        db, 15, SimpleNamespace(id=9, game_version="3.6.0")
+    )
+    assert [release.game_version for release in releases] == ["3.5.0", "3.3.0"]
+
+
+async def test_missing_snapshot_reuses_only_a_complete_earlier_bundle(monkeypatch):
+    current = SimpleNamespace(id=9, game_version="3.6.0")
+    newer_incomplete = SimpleNamespace(id=8, game_version="3.5.0")
+    older_complete = SimpleNamespace(id=7, game_version="3.4.0")
+    monkeypatch.setattr(service, "previous_model_releases", AsyncMock(
+        return_value=[newer_incomplete, older_complete]))
+    async def rows(session, owner, release_id, bucket):
+        if release_id == 8:
+            return [("character_model_preview", "new", "objects/new", 1, None, None, None, None)]
+        if release_id == 7:
+            return [("character_model_preview", "old", "objects/preview", 1, None, None, None, None),
+                    ("character_model_download", "old", "objects/download", 2, None, None, None, None)]
+        return []
+    monkeypatch.setattr(service, "published_model_files", rows)
+    monkeypatch.setattr(service, "S3Storage", lambda _: SimpleNamespace(public_url=lambda key: key))
+    result = await service.public_character_model(AsyncMock(), 15, current)
+    assert result["status"] == "ready"
+    assert result["game_version"] == "3.6.0"
+    assert result["source_game_version"] == "3.4.0"
+    assert result["download"]["url"] == "objects/download"
+
+
 def test_admin_auth_and_csrf_are_enforced(monkeypatch):
     app = FastAPI()
     app.include_router(routes.router)

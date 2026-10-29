@@ -25,6 +25,21 @@ async def model_release(session, game_version=None):
     )
 
 
+async def previous_model_releases(session, owner_node_id, release):
+    """Find earlier snapshots with model references, newest first."""
+    releases = await session.scalars(
+        select(GameRelease).join(FileReference, FileReference.release_id == GameRelease.id)
+        .where(FileReference.owner_node_id == owner_node_id,
+               FileReference.reference_type == "character_model_preview",
+               GameRelease.id != release.id).distinct()
+    )
+    target = version_key(release.game_version)
+    return sorted((candidate for candidate in releases
+                   if version_key(candidate.game_version) <= target),
+                  key=lambda candidate: (version_key(candidate.game_version), candidate.sequence),
+                  reverse=True)
+
+
 async def published_model_files(session, owner_node_id, release_id, bucket):
     return list(
         await session.execute(
