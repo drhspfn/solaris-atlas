@@ -4,6 +4,7 @@ import { Film, Info, Pause, Play, VolumeX } from 'lucide-react';
 import { type ReactNode, useRef, useState } from 'react';
 
 import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
+import { Link } from '@/lib/router';
 import { cutsceneAnchor } from './cutsceneAnchor';
 
 export interface MediaSource {
@@ -104,8 +105,10 @@ export interface QuestMediaEvent {
 
 export interface QuestMediaManifest {
   availability: 'references_only' | 'partial';
+  game_version?: string;
   events: QuestMediaEvent[];
   video_packages: Array<{ reference: string; packages: Array<{ reference: string }> }>;
+  related_cutscenes?: Array<{ name: string; playable: boolean; context_inferred: boolean }>;
 }
 
 function SourcePath({ source }: { source: MediaSource }) {
@@ -142,11 +145,12 @@ export function QuestMediaReferences({
     if (!anchor || event.kind === 'audio_event') return [];
     return [{ event, anchor }];
   });
-  if (!links.length) return null;
+  const related = manifest.related_cutscenes || [];
+  if (!links.length && !related.length) return null;
   return (
     <nav className="quest-media-panel" aria-label="Quest scenes">
       <h4>
-        Scenes <span>{links.length}</span>
+        Scenes <span>{links.length + related.length}</span>
       </h4>
       {links.map(({ event, anchor }) => (
         <a
@@ -161,6 +165,14 @@ export function QuestMediaReferences({
               : 'Story scene'}
           </span>
         </a>
+      ))}
+      {related.length > 0 && <p>Related video packages · exact story position is unknown</p>}
+      {related.map((scene) => (
+        <Link className="quest-media-jump quest-media-event" key={scene.name}
+          to={`/cutscenes/${encodeURIComponent(scene.name)}${manifest.game_version ? `?game_version=${encodeURIComponent(manifest.game_version)}` : ''}`}>
+          <Film size={13} />
+          <span>{scene.name} · {scene.playable ? 'Watch' : 'Video not available yet'}</span>
+        </Link>
       ))}
     </nav>
   );

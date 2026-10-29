@@ -56,6 +56,8 @@ read_cutscene_visual until next_offset is null. Visual observations are AI-gener
 sampled evidence, not dialogue or certain character identity. Combine them with exact
 dialogue, retaining variant identity. Write cutscene_descriptions with the exact
 visual_reference_id and observation_indices; use timed chapters only for longer scenes.
+When context_inferred is true, the quest association is inferred and does not prove
+that the scene plays during this quest or on a particular runtime branch.
 Give each cutscene a concise, single-line title describing its subject or action in
 the output language. Use the same scene title for Rover variants. Never use an
 asset code such as M0311 as the title, and do not copy the whole quest title.

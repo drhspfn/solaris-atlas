@@ -42,7 +42,7 @@ export type CutscenePage = {
 export type CutsceneDetail = Scene & {
   game_version: string;
   event: QuestMediaEvent;
-  passages: (Quest & { focus_line?: string | null } & Pick<
+  passages: (Quest & { focus_line?: string | null; package_related?: boolean } & Pick<
       QuestMediaEvent,
       "flow_state" | "action_index" | "reference"
     >)[];
@@ -368,12 +368,14 @@ export function CutsceneRecord({
             <Link
               className="cutscene-context-link"
               key={`${passage.game_quest_id}:${passage.flow_state}:${passage.action_index}`}
-              to={`${questPath(passage)}?game_version=${data.game_version}&locale=${locale}${passage.focus_line ? `&line=${encodeURIComponent(passage.focus_line)}` : ""}#${cutsceneAnchor(passage)}`}
+              to={`${questPath(passage)}?game_version=${data.game_version}&locale=${locale}${passage.focus_line ? `&line=${encodeURIComponent(passage.focus_line)}` : ""}${passage.package_related ? "" : `#${cutsceneAnchor(passage)}`}`}
             >
               <span>
                 {passage.name}
                 <small>
-                  {passage.context_inferred
+                  {passage.package_related
+                    ? "Related video package · exact story position is unknown"
+                    : passage.context_inferred
                     ? "Scenario context inferred from game progress; exact playthrough order is unconfirmed"
                     : "Open at this scene in the quest"}
                 </small>

@@ -316,11 +316,18 @@ async def quest_media(
         session, [link["node_id"] for link in package_links.get(quest.node_id, [])],
         ("references_asset",), release_id,
     )
+    package_scenes = await _links(session, [quest.node_id], ("references_packaged_cutscene",), release_id)
+    related = {link["node_id"]: link for link in package_scenes.get(quest.node_id, [])}
+    package_flows = await cutscene_flows(session, list(related)) if related else {}
     return {
         "quest": f"quest:{game_quest_id}",
         "game_version": (await session.get(GameRelease, release_id)).game_version,
         "availability": "partial" if playable else "references_only",
         "events": events,
+        "related_cutscenes": [{"name": link["canonical_key"].removeprefix("cutscene:"),
+                               "playable": node_id in package_flows,
+                               "context_inferred": True}
+                              for node_id, link in related.items()],
         "video_packages": [
             {"reference": link["canonical_key"], "basis": link["basis"],
              "source": link["source"],

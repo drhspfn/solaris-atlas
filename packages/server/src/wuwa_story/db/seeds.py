@@ -126,6 +126,7 @@ RELATION_TYPES = [
     "references_quest",
     "references_quest_node",
     "references_video_package",
+    "references_packaged_cutscene",
     "requires_quest",
     "review_successor",
     "sequence_transition",
