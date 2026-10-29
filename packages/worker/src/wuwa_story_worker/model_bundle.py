@@ -270,6 +270,40 @@ def base_color_texture(metadata: dict, converted: Path) -> tuple[str | None, Pat
     return reference, None
 
 
+def inherited_base_color_texture(metadata: dict, path: Path | None, converted: Path, source_json: Path):
+    """Follow explicit material-instance parents when a child has no color texture."""
+    visited = set()
+    while True:
+        reference, texture = base_color_texture(metadata, converted)
+        if reference or path is None:
+            return reference, texture
+        relative = path.relative_to(converted)
+        if relative in visited:
+            raise ValueError("Cyclic material parent chain")
+        visited.add(relative)
+        source = source_json / relative
+        if not source.is_file():
+            return None, None
+        rows = json.loads(source.read_text(encoding="utf-8-sig"))
+        parents = [
+            row.get("Properties", {}).get("Parent", {}).get("ObjectPath")
+            for row in rows
+            if row.get("Type") == "MaterialInstanceConstant" and row.get("Name") == path.stem
+        ]
+        if len(parents) != 1 or not parents[0]:
+            return None, None
+        parent = parents[0].replace("\\", "/").split(".", 1)[0]
+        if parent.startswith("/Game/"):
+            parent = "Client/Content/" + parent[6:]
+        if not parent.startswith("Client/Content/"):
+            return None, None
+        candidate = converted / (parent + ".json")
+        if not candidate.resolve().is_relative_to(converted.resolve()) or not candidate.is_file():
+            return None, None
+        path = candidate
+        metadata = json.loads(path.read_text(encoding="utf-8-sig"))
+
+
 @contextmanager
 def preview_meshes(meshes):
     """The generated base-color shaders use only the render UV and no colors."""
@@ -570,7 +604,7 @@ def main():
             else material_files.get(material.name)
         )
         metadata = json.loads(path.read_text(encoding="utf-8-sig")) if path else {}
-        reference, texture = base_color_texture(metadata, args.converted)
+        reference, texture = inherited_base_color_texture(metadata, path, args.converted, args.source_json)
         if texture is None:
             report["missing_textures"].append({"material": material.name, "reference": reference})
         material.use_nodes = True

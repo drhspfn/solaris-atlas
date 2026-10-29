@@ -16,6 +16,7 @@ from wuwa_story_worker.model_bundle import (
     build_animation_plan,
     file_sha256,
     indexed_gltf_references,
+    inherited_base_color_texture,
     main,
     material_metadata_path,
     missing_animation_sources,
@@ -179,6 +180,29 @@ def test_base_color_uses_exact_maintex_then_basecolor_without_fuzzy_fallback(tmp
         )[1]
         is None
     )
+
+
+def test_material_color_inherits_from_explicit_parent_and_rejects_cycles(tmp_path):
+    converted, sources = tmp_path / "converted", tmp_path / "source"
+    relative = Path("Client/Content/Aki/Model")
+    for root in (converted, sources):
+        (root / relative).mkdir(parents=True)
+    child, parent = converted / relative / "Fur.json", converted / relative / "Cloth.json"
+    child.write_text('{"Textures": {}}')
+    parent.write_text(json.dumps({"Textures": {"MainTex": {"ObjectPath": "/Game/Aki/Model/Cloth.Cloth"}}}))
+    texture = parent.with_suffix(".png")
+    texture.touch()
+    def source(name, target):
+        (sources / relative / f"{name}.json").write_text(json.dumps([{
+            "Type": "MaterialInstanceConstant", "Name": name,
+            "Properties": {"Parent": {"ObjectPath": f"Client/Content/Aki/Model/{target}.0"}},
+        }]))
+    source("Fur", "Cloth")
+    assert inherited_base_color_texture({"Textures": {}}, child, converted, sources)[1] == texture
+    parent.write_text('{"Textures": {}}')
+    source("Cloth", "Fur")
+    with pytest.raises(ValueError, match="Cyclic material parent"):
+        inherited_base_color_texture({"Textures": {}}, child, converted, sources)
 
 
 def test_preview_resizes_copies_preserves_aspect_alpha_and_restores_slots_on_failure():
