@@ -7,7 +7,8 @@ type Line = { id: string; flow_state: string; action?: { index: number } | null 
 export function cutsceneSlots(lines: Line[], events: QuestMediaEvent[], partial = false) {
   const slots = new Map<number, QuestMediaEvent[]>();
   for (const event of events.filter((entry) => entry.kind === 'cutscene')) {
-    if (event.context_inferred) {
+    if (event.context_inferred && (!event.story_order_mapped ||
+        !lines.some((line) => event.transcript_states?.includes(line.flow_state)))) {
       if (!partial) slots.set(lines.length, [...(slots.get(lines.length) || []), event]);
       continue;
     }
