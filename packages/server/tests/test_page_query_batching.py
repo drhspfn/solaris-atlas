@@ -90,7 +90,7 @@ async def test_quest_requirements_batch_items_and_keep_order_and_missing_entries
                Row(data={"Data": {"items": [1]}}, row_index=5)]
     monkeypatch.setattr(service, "quest_item_requirements", lambda data: [{"item_id": i} for i in data["items"]])
     monkeypatch.setattr(service, "_release_id", AsyncMock(return_value=5))
-    monkeypatch.setattr(service, "_quest_state_ids", AsyncMock(return_value=[]))
+    monkeypatch.setattr(service, "_quest_page_state_ids", AsyncMock(return_value=[]))
     monkeypatch.setattr(service, "_explicit_entity_links", AsyncMock(return_value=[]))
     monkeypatch.setattr(service, "_quest_info", AsyncMock(return_value={}))
     monkeypatch.setattr(service, "_latest_source_record", AsyncMock(return_value=None))
