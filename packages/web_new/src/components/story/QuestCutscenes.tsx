@@ -2,13 +2,14 @@
 
 import { Film } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from '@/lib/router';
 
 import { APP_SETTINGS } from '../../config/settings';
 import { usePlayerDisplay } from '../../hooks/usePlayerDisplay';
 import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
 import { PlayerText } from '../dialogue/PlayerText';
 import { AnalysisActions } from './AnalysisActions';
-import { cutsceneAnchor } from './cutsceneAnchor';
+import { cutsceneAnchor, packageCutsceneAnchor } from './cutsceneAnchor';
 import { CutsceneControls } from './CutsceneControls';
 import { CutsceneSound } from './CutsceneSound';
 import { chapterPosition, cutsceneTimeline, timelineTarget } from './cutsceneTimeline';
@@ -542,9 +543,10 @@ export function FlowPlayer({
 
 export function Cutscene({ event, anchor }: { event: QuestMediaEvent; anchor?: string }) {
   const flow = useMemo(() => event.playback || fallbackFlow(event), [event]);
-  return flow ? (
+  return (
     <div id={cutsceneAnchor(event)} className="quest-cutscene-anchor">
       {event.context_inferred && <p>Related scenario; its exact position in the quest is unconfirmed.</p>}
+      {flow ? (
       <FlowPlayer
         key={`${flow.asset_version}-${flow.entry}`}
         flow={flow}
@@ -552,8 +554,31 @@ export function Cutscene({ event, anchor }: { event: QuestMediaEvent; anchor?: s
         anchor={anchor}
         captions={event.captions}
       />
+      ) : <p>Cutscene {event.reference.replace('cutscene:', '')} · Video not available yet</p>}
     </div>
-  ) : null;
+  );
+}
+
+export function RelatedQuestCutscenes({ manifest }: { manifest: QuestMediaManifest | null }) {
+  if (!manifest) return null;
+  const eventScenes = new Set(manifest.events.filter((event) => event.kind === 'cutscene').map((event) => event.reference));
+  const scenes = (manifest.related_cutscenes || []).filter((scene) => !eventScenes.has(`cutscene:${scene.name}`));
+  if (!scenes.length) return null;
+  return (
+    <section className="quest-cutscene-anchor" aria-label="Related scenes">
+      <h3>Related scenes</h3>
+      <p>These scenes are associated with this quest, but their position in the transcript is not yet mapped.</p>
+      {scenes.map((scene) => (
+        <div id={packageCutsceneAnchor(scene.name)} className="quest-cutscene-anchor" key={scene.name}>
+          {scene.playback ? <FlowPlayer flow={scene.playback} title={scene.name} /> :
+            <p>{scene.name} · {scene.playable ? 'Video available' : 'Video not available yet'}</p>}
+          <Link to={`/cutscenes/${encodeURIComponent(scene.name)}${manifest.game_version ? `?game_version=${encodeURIComponent(manifest.game_version)}` : ''}`}>
+            Scene details ↗
+          </Link>
+        </div>
+      ))}
+    </section>
+  );
 }
 
 export function QuestCutscenes({

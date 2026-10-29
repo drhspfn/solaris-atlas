@@ -10,7 +10,7 @@ import { Select } from "@/components/ui/Select";
 import { ErrorPanel, PageLoader } from "@/components/ui/Feedback";
 import { InfiniteScroll } from "@/components/ui/InfiniteScroll";
 import { Cutscene } from "./QuestCutscenes";
-import { cutsceneAnchor } from "./cutsceneAnchor";
+import { cutsceneAnchor, packageCutsceneAnchor } from "./cutsceneAnchor";
 import type { QuestMediaEvent } from "./QuestMediaReferences";
 
 type Quest = {
@@ -368,7 +368,7 @@ export function CutsceneRecord({
             <Link
               className="cutscene-context-link"
               key={`${passage.game_quest_id}:${passage.flow_state}:${passage.action_index}`}
-              to={`${questPath(passage)}?game_version=${data.game_version}&locale=${locale}${passage.focus_line ? `&line=${encodeURIComponent(passage.focus_line)}` : ""}${passage.package_related ? "" : `#${cutsceneAnchor(passage)}`}`}
+              to={`${questPath(passage)}?game_version=${data.game_version}&locale=${locale}${passage.focus_line ? `&line=${encodeURIComponent(passage.focus_line)}` : ""}#${passage.package_related ? packageCutsceneAnchor(data.name) : cutsceneAnchor(passage)}`}
             >
               <span>
                 {passage.name}

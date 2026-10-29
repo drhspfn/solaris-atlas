@@ -4,8 +4,7 @@ import { Film, Info, Pause, Play, VolumeX } from 'lucide-react';
 import { type ReactNode, useRef, useState } from 'react';
 
 import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
-import { Link } from '@/lib/router';
-import { cutsceneAnchor } from './cutsceneAnchor';
+import { cutsceneAnchor, packageCutsceneAnchor } from './cutsceneAnchor';
 
 export interface MediaSource {
   file: string | null;
@@ -108,7 +107,7 @@ export interface QuestMediaManifest {
   game_version?: string;
   events: QuestMediaEvent[];
   video_packages: Array<{ reference: string; packages: Array<{ reference: string }> }>;
-  related_cutscenes?: Array<{ name: string; playable: boolean; context_inferred: boolean }>;
+  related_cutscenes?: Array<{ name: string; playable: boolean; context_inferred: boolean; playback?: CutsceneFlow | null }>;
 }
 
 function SourcePath({ source }: { source: MediaSource }) {
@@ -131,21 +130,15 @@ export function QuestMediaReferences({
   if (!manifest) return null;
   const visible = new Set(visibleCutscenes.map(cutsceneAnchor));
   const links = manifest.events.flatMap((event) => {
-    const playable =
-      event.kind === 'cutscene' &&
-      (event.playback ||
-        event.resources?.some(
-          (resource) =>
-            resource.kind === 'has_variant' && resource.assets.some((asset) => asset.video),
-        ));
     const anchor =
-      playable && visible.has(cutsceneAnchor(event))
+      event.kind === 'cutscene' && visible.has(cutsceneAnchor(event))
         ? cutsceneAnchor(event)
         : stateAnchors.get(event.flow_state);
     if (!anchor || event.kind === 'audio_event') return [];
     return [{ event, anchor }];
   });
-  const related = manifest.related_cutscenes || [];
+  const eventScenes = new Set(manifest.events.filter((event) => event.kind === 'cutscene').map((event) => event.reference));
+  const related = (manifest.related_cutscenes || []).filter((scene) => !eventScenes.has(`cutscene:${scene.name}`));
   if (!links.length && !related.length) return null;
   return (
     <nav className="quest-media-panel" aria-label="Quest scenes">
@@ -161,18 +154,18 @@ export function QuestMediaReferences({
           <Film size={13} />
           <span>
             {event.kind === 'cutscene'
-              ? `Cutscene � ${event.reference.replace('cutscene:', '')}`
+              ? `Cutscene · ${event.reference.replace('cutscene:', '')}`
               : 'Story scene'}
           </span>
         </a>
       ))}
-      {related.length > 0 && <p>Related video packages · exact story position is unknown</p>}
+      {related.length > 0 && <p>Related scenes · story position is not yet mapped</p>}
       {related.map((scene) => (
-        <Link className="quest-media-jump quest-media-event" key={scene.name}
-          to={`/cutscenes/${encodeURIComponent(scene.name)}${manifest.game_version ? `?game_version=${encodeURIComponent(manifest.game_version)}` : ''}`}>
+        <a className="quest-media-jump quest-media-event" key={scene.name}
+          href={`#${packageCutsceneAnchor(scene.name)}`}>
           <Film size={13} />
           <span>{scene.name} · {scene.playable ? 'Watch' : 'Video not available yet'}</span>
-        </Link>
+        </a>
       ))}
     </nav>
   );

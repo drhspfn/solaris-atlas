@@ -6,6 +6,7 @@ import { Link, useSearchParams } from '@/lib/router';
 
 import { api } from '@/api/client';
 import { PlayerText } from '@/components/dialogue/PlayerText';
+import { cutsceneAnchor } from '@/components/story/cutsceneAnchor';
 import { EmptyInline, ErrorPanel, PageLoader } from '@/components/ui/Feedback';
 import { APP_SETTINGS } from '@/config/settings';
 import { type Entity, entityPath } from '@/data/entities';
@@ -196,7 +197,11 @@ export function NodeExplorerPage({
                 return (
                   <Link
                     className="node-quest-card"
-                    to={questPassagePath(
+                    to={quest.context_inferred && quest.scene
+                      ? `/quests/${encodeURIComponent(quest.slug || id)}?${new URLSearchParams({
+                          locale, ...(narrative.game_version || gameVersion ? { game_version: narrative.game_version || gameVersion } : {}),
+                        })}#${cutsceneAnchor(quest.scene)}`
+                      : questPassagePath(
                       quest.slug || id,
                       narrative.dialogue.id,
                       locale,
@@ -206,7 +211,7 @@ export function NodeExplorerPage({
                   >
                     <span>
                       <strong>{localizedText(quest.name, `Quest ${id}`)}</strong>
-                      <small>Open quest at this line →</small>
+                      <small>{quest.context_inferred ? 'Open related scene in quest →' : 'Open quest at this line →'}</small>
                     </span>
                     <ArrowRight size={15} />
                   </Link>

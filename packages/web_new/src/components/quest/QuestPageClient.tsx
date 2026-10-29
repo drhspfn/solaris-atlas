@@ -8,7 +8,7 @@ import { AnalysisActions } from '@/components/story/AnalysisActions';
 import { cutsceneSlots } from '@/components/story/cutscenePlacement';
 import { QuestClassification } from '@/components/story/QuestClassification';
 import { QuestContinuity } from '@/components/story/QuestContinuity';
-import { Cutscene, QuestCutscenes } from '@/components/story/QuestCutscenes';
+import { Cutscene, QuestCutscenes, RelatedQuestCutscenes } from '@/components/story/QuestCutscenes';
 import { QuestExplanation } from '@/components/story/QuestExplanation';
 import {
   DialogueAudioReference,
@@ -250,9 +250,10 @@ export function QuestPageClient({
     anchor: `flow-state-${index}`,
   }));
   const stateAnchors = new Map(stateIndex.map((state) => [state.key, state.anchor]));
+  const contextualCutscenes = (media?.events || []).filter((event) => event.kind === 'cutscene' && event.context_inferred);
   const videoSlots = cutsceneSlots(
     shown,
-    onlyLines || onlyChoices ? [] : media?.events || [],
+    onlyLines || onlyChoices ? [] : (media?.events || []).filter((event) => !event.context_inferred),
     Boolean(transcript?.offset || lines.length >= (transcript?.limit || 0)),
   );
   const lineAnchors = new Map<string, string>();
@@ -361,6 +362,7 @@ export function QuestPageClient({
             : 'Its place in the story and source links are still shown on this page.'}</p>
           {hasMediaReferences && <QuestMediaReferences manifest={media} stateAnchors={new Map()} />}
           <QuestCutscenes manifest={media} stateAnchors={new Map()} />
+          <RelatedQuestCutscenes manifest={media} />
         </section>
       ) : (
         <>
@@ -435,7 +437,7 @@ export function QuestPageClient({
               <QuestMediaReferences
                 manifest={media}
                 stateAnchors={stateAnchors}
-                visibleCutscenes={[...videoSlots.values()].flat()}
+                visibleCutscenes={[...Array.from(videoSlots.values()).flat(), ...contextualCutscenes]}
               />
             </aside>
             <div className="transcript">
@@ -615,6 +617,10 @@ export function QuestPageClient({
               {videoSlots.get(shown.length)?.map((event) => (
                 <Cutscene key={`${event.action}-${event.reference}`} event={event} />
               ))}
+              {contextualCutscenes.map((event) => (
+                <Cutscene key={`${event.action}-${event.reference}`} event={event} />
+              ))}
+              <RelatedQuestCutscenes manifest={media} />
             </div>
           </div>
         </>
