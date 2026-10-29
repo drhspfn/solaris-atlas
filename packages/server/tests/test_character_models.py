@@ -17,6 +17,49 @@ from wuwa_story.db.session import get_session
 from wuwa_story.ingestion import character_models as service
 
 
+async def test_latest_model_skips_incomplete_publications(monkeypatch):
+    newer_incomplete = SimpleNamespace(id=8, game_version="3.5.0")
+    older_complete = SimpleNamespace(id=7, game_version="3.4.0")
+    monkeypatch.setattr(service, "published_model_releases", AsyncMock(
+        return_value=[newer_incomplete, older_complete]))
+    async def rows(session, owner, release_id, bucket):
+        if release_id == 8:
+            return [("character_model_preview", "new", "objects/new", 1, None, None, None, None)]
+        if release_id == 7:
+            return [("character_model_preview", "old", "objects/preview", 1, None, None, None, None),
+                    ("character_model_download", "old", "objects/download", 2, None, None, None, None)]
+        return []
+    monkeypatch.setattr(service, "published_model_files", rows)
+    monkeypatch.setattr(service, "S3Storage", lambda _: SimpleNamespace(public_url=lambda key: key))
+    result = await service.latest_public_character_model(AsyncMock(), 15)
+    assert result["status"] == "ready"
+    assert result["game_version"] == "3.4.0"
+    assert result["download"]["url"] == "objects/download"
+
+
+async def test_default_model_route_uses_publications_not_latest_snapshot(monkeypatch):
+    monkeypatch.setattr(routes, "get_node", AsyncMock(return_value=SimpleNamespace(id=15)))
+    latest = AsyncMock(return_value={"status": "ready"})
+    monkeypatch.setattr(routes, "latest_public_character_model", latest)
+    release = AsyncMock()
+    monkeypatch.setattr(routes, "model_release", release)
+    db = AsyncMock()
+    assert await routes.character_model("denia", None, db) == {"status": "ready"}
+    latest.assert_awaited_once_with(db, 15)
+    release.assert_not_awaited()
+
+
+async def test_publication_query_requires_both_files_in_same_bundle():
+    db = AsyncMock()
+    db.scalars.return_value = []
+    await repository.published_model_releases(db, 15)
+    sql = str(db.scalars.await_args.args[0].compile(
+        dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert "GROUP BY" in sql and "model_bundle_id" in sql
+    assert "bool_or" in sql and "character_model_preview" in sql and "character_model_download" in sql
+    assert "max(storage.file_reference.id) DESC" in sql
+
+
 def test_admin_auth_and_csrf_are_enforced(monkeypatch):
     app = FastAPI()
     app.include_router(routes.router)

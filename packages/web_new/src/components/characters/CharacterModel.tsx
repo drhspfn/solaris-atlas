@@ -195,9 +195,6 @@ export function CharacterModel({
               </button>
             </div>
           )}
-          {model.game_version && (
-            <p className="character-model-version">{model.game_version}</p>
-          )}
           <div className="character-model-actions">
             {assets?.download && (
               <a href={assetUrl(assets.download.url)} download>

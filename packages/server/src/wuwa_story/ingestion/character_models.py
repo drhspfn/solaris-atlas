@@ -22,6 +22,7 @@ from wuwa_story.db.repositories.character_models import (
     REFERENCE_TYPES,
     model_release,
     published_model_files,
+    published_model_releases,
 )
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.ingestion.client_assets import inspect_installed_clients
@@ -133,6 +134,14 @@ async def enqueue_character_model(session, request: CharacterModelRequest):
         await session.commit()
         raise
     return run
+
+
+async def latest_public_character_model(session, owner_node_id):
+    for release in await published_model_releases(session, owner_node_id):
+        result = await public_character_model(session, owner_node_id, release)
+        if result["status"] == "ready":
+            return result
+    return await public_character_model(session, owner_node_id, None)
 
 
 async def public_character_model(session, owner_node_id, release):

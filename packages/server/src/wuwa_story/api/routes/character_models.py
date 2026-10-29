@@ -10,6 +10,7 @@ from wuwa_story.ingestion.character_models import (
     PROCESSOR,
     CharacterModelRequest,
     enqueue_character_model,
+    latest_public_character_model,
     public_character_model,
 )
 
@@ -49,6 +50,8 @@ async def character_model(
     node = await get_node(session, key, ("character",))
     if node is None:
         raise HTTPException(404, "Character not found")
+    if game_version is None:
+        return await latest_public_character_model(session, node.id)
     release = await model_release(session, game_version)
     result = await public_character_model(session, node.id, release)
     if release is None:
