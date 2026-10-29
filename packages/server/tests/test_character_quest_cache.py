@@ -17,14 +17,15 @@ async def test_character_quest_info_is_reused_across_scenes_and_quest_list(monke
         get=AsyncMock(return_value=character),
         execute=AsyncMock(side_effect=[
             [(link, speaker, Row(canonical_key="speaker:40"))], [], [(2, 9), (3, 9)],
-            Row(all=lambda: []), Row(first=lambda: None),
             Row(all=lambda: []), Row(first=lambda: None), [],
         ]),
-        scalars=AsyncMock(side_effect=[[9], [state], [quest], [state], [quest], [7], [], [quest], []]),
+        scalars=AsyncMock(side_effect=[[9], [state], [quest], [state], [7], [], [quest], []]),
         scalar=AsyncMock(return_value=None),
     )
     monkeypatch.setattr(profiles, "get_node", AsyncMock(return_value=Row(id=1, canonical_key="character:1", slug=None)))
     monkeypatch.setattr(profiles, "_release_id", AsyncMock(return_value=5))
+    monkeypatch.setattr(profiles, "prefetch_node_labels", AsyncMock())
+    monkeypatch.setattr(profiles, "prefetch_dialogue", AsyncMock())
     monkeypatch.setattr(profiles, "_node_label", AsyncMock(side_effect=lambda _s, identity, _l: {"id": identity}))
     monkeypatch.setattr(profiles, "_localized", AsyncMock(return_value=None))
     monkeypatch.setattr(profiles, "_latest_source_record", AsyncMock(return_value=None))
