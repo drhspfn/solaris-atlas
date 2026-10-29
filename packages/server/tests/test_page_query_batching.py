@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from wuwa_story.api.routes import nodes, story
+from wuwa_story.api.routes.story import profiles
 from wuwa_story.story import service
 
 
@@ -31,3 +32,39 @@ async def test_node_context_prefetches_target_and_neighbors_before_rendering(mon
     assert [line["id"] for line in result["context"]] == [1, 2]
     assert "params" not in result["dialogue"]["action"]
     assert "raw_record" not in result["context"][1]["provenance"]
+
+
+@pytest.mark.asyncio
+async def test_character_reuses_shared_scene_and_batches_transcript(monkeypatch):
+    state = Row(node_id=9, state_key="flow", source_record_id=None)
+    transcript = [(Row(node_id=1),), (Row(node_id=2),)]
+    speaker = Row(node_id=4, game_speaker_id=40)
+    link = Row(resolution_type="exact", source_record_id=3)
+    character = Row(canonical_name="Name", name_key_id=None, description=None, playable=True)
+    session = Row(
+        get=AsyncMock(return_value=character),
+        execute=AsyncMock(side_effect=[
+            [(link, speaker, Row(canonical_key="speaker:40"))],
+            [], [(2, 9), (3, 9)], Row(all=lambda: transcript), Row(first=lambda: None), [],
+        ]),
+        scalars=AsyncMock(side_effect=[[9], [state], [], [state], [], [], []]),
+        scalar=AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(profiles, "get_node", AsyncMock(return_value=Row(id=1, canonical_key="character:1", slug=None)))
+    monkeypatch.setattr(profiles, "_release_id", AsyncMock(return_value=5))
+    prefetch = AsyncMock()
+    monkeypatch.setattr(profiles, "prefetch_dialogue", prefetch)
+    monkeypatch.setattr(profiles, "prefetch_node_labels", AsyncMock())
+    monkeypatch.setattr(profiles, "_dialogue_payload", AsyncMock(side_effect=lambda _s, row, **_k: {"id": row[0].node_id}))
+    monkeypatch.setattr(profiles, "_node_label", AsyncMock(side_effect=lambda _s, identity, _l: {"id": identity}))
+    monkeypatch.setattr(profiles, "_localized", AsyncMock(return_value=None))
+    monkeypatch.setattr(profiles, "_latest_source_record", AsyncMock(return_value=None))
+    monkeypatch.setattr(profiles, "_character_progression_materials", AsyncMock(return_value=[]))
+
+    result = await profiles.character_profile.__wrapped__("character:1", session=session)
+    scenes = [entry["shared_scenes"][0] for entry in result["co_present_characters"]]
+    assert scenes[0] == scenes[1]
+    assert scenes[0]["dialogue"] == [{"id": 1}, {"id": 2}]
+    assert not scenes[0]["dialogue_truncated"]
+    prefetch.assert_awaited_once_with(session, transcript, "en", 5)
+    assert session.execute.await_count == 6

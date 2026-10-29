@@ -45,6 +45,7 @@ from wuwa_story.db.session import get_session
 from wuwa_story.storage.entity_media import entity_image_urls
 from wuwa_story.story import usecases
 from wuwa_story.story.domain import StoryBrowsingError
+from wuwa_story.story.service import prefetch_dialogue, prefetch_node_labels
 from wuwa_story.urls import node_address
 
 router = APIRouter(tags=["story browsing"])
@@ -917,6 +918,8 @@ async def character_profile(
         for entity_node_id, state_node_id in co_rows:
             co_present.setdefault(entity_node_id, set()).add(state_node_id)
     co_present_characters = []
+    shared_scene_cache: dict[int, dict[str, Any]] = {}
+    await prefetch_node_labels(session, co_present.keys(), locale)
     for entity_node_id, co_states in sorted(co_present.items()):
         state_rows = list(
             await session.scalars(
@@ -930,56 +933,57 @@ async def character_profile(
         # flow state is evidence of co-presence only, so return its transcript
         # with the state and quest references rather than asserting a relation.
         for shared_state in state_rows[:8]:
-            dialogue_statement = (
-                select(DialogueLine, QuestAction, QuestState, Node, SourceRecord, SourceFile)
-                .join(Node, Node.id == DialogueLine.node_id)
-                .join(QuestAction, QuestAction.node_id == DialogueLine.action_node_id)
-                .join(QuestState, QuestState.node_id == QuestAction.quest_state_node_id)
-                .outerjoin(SourceRecord, SourceRecord.id == DialogueLine.source_record_id)
-                .outerjoin(SourceFile, SourceFile.id == SourceRecord.source_file_id)
-                .where(QuestState.node_id == shared_state.node_id)
-                .order_by(QuestAction.action_index, DialogueLine.source_index, DialogueLine.node_id)
-                .limit(80)
-            )
-            transcript_rows = list((await session.execute(dialogue_statement)).all())
-            transcript = [
-                await _dialogue_payload(
-                    session, row, locale_code=locale, release_id=release_id
+            if shared_state.node_id not in shared_scene_cache:
+                dialogue_statement = (
+                    select(DialogueLine, QuestAction, QuestState, Node, SourceRecord, SourceFile)
+                    .join(Node, Node.id == DialogueLine.node_id)
+                    .join(QuestAction, QuestAction.node_id == DialogueLine.action_node_id)
+                    .join(QuestState, QuestState.node_id == QuestAction.quest_state_node_id)
+                    .outerjoin(SourceRecord, SourceRecord.id == DialogueLine.source_record_id)
+                    .outerjoin(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+                    .where(QuestState.node_id == shared_state.node_id)
+                    .order_by(QuestAction.action_index, DialogueLine.source_index, DialogueLine.node_id)
+                    .limit(80)
                 )
-                for row in transcript_rows
-            ]
-            owner_nodes = select(Edge.from_node_id).join(
-                RelationType, Edge.relation_type_id == RelationType.id
-            ).where(
-                Edge.to_node_id == shared_state.node_id,
-                RelationType.key == "references_flow_state",
-                Edge.layer == "source",
-            )
-            quest_rows = await session.scalars(
-                select(Quest)
-                .where(
-                    or_(
-                        Quest.node_id.in_(owner_nodes),
-                        Quest.game_quest_id.in_(
-                            select(QuestNode.game_quest_id).where(
-                                QuestNode.node_id.in_(owner_nodes),
-                                QuestNode.game_quest_id.is_not(None),
-                            )
-                        ),
+                transcript_rows = list((await session.execute(dialogue_statement)).all())
+                await prefetch_dialogue(session, transcript_rows, locale, release_id)
+                transcript = [
+                    await _dialogue_payload(
+                        session, row, locale_code=locale, release_id=release_id
                     )
+                    for row in transcript_rows
+                ]
+                owner_nodes = select(Edge.from_node_id).join(
+                    RelationType, Edge.relation_type_id == RelationType.id
+                ).where(
+                    Edge.to_node_id == shared_state.node_id,
+                    RelationType.key == "references_flow_state",
+                    Edge.layer == "source",
                 )
-                .order_by(Quest.game_quest_id)
-                .limit(5)
-            )
-            state_source = (
-                await session.execute(
-                    select(SourceRecord, SourceFile)
-                    .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
-                    .where(SourceRecord.id == shared_state.source_record_id)
+                quest_rows = await session.scalars(
+                    select(Quest)
+                    .where(
+                        or_(
+                            Quest.node_id.in_(owner_nodes),
+                            Quest.game_quest_id.in_(
+                                select(QuestNode.game_quest_id).where(
+                                    QuestNode.node_id.in_(owner_nodes),
+                                    QuestNode.game_quest_id.is_not(None),
+                                )
+                            ),
+                        )
+                    )
+                    .order_by(Quest.game_quest_id)
+                    .limit(5)
                 )
-            ).first()
-            shared_scenes.append(
-                {
+                state_source = (
+                    await session.execute(
+                        select(SourceRecord, SourceFile)
+                        .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+                        .where(SourceRecord.id == shared_state.source_record_id)
+                    )
+                ).first()
+                shared_scene_cache[shared_state.node_id] = {
                     "flow_state": shared_state.state_key,
                     "quest_refs": [
                         await _quest_info(session, quest, locale, game_version)
@@ -994,7 +998,7 @@ async def character_profile(
                         "record_id": shared_state.source_record_id,
                     },
                 }
-            )
+            shared_scenes.append(shared_scene_cache[shared_state.node_id])
         co_present_characters.append(
             {
                 "character": await _node_label(session, entity_node_id, locale),
@@ -1104,6 +1108,8 @@ async def character_profile(
         .order_by(RelationType.key, Edge.id)
         .limit(300)
     )
+    edge_rows = list(edge_rows)
+    await prefetch_node_labels(session, [target.id for _, _, target, _ in edge_rows], locale)
     links = []
     for edge, relation, target, _target_type in edge_rows:
         links.append(
