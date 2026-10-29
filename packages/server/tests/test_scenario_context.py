@@ -1,6 +1,19 @@
 from wuwa_story.ingestion.scenario_context import scenario_links
 
 
+def test_quest_level_play_condition_finds_triggered_movie_state():
+    quests = [(10, {"Key": "119_120", "Data": {"Condition": {
+        "Type": "CheckLevelPlay", "LevelPlayIds": [183], "CompleteNumber": 1}}})]
+    levels = [(11, {"Key": "183_138", "Data": {"Id": 138, "Condition": {
+        "Type": "ReachArea"}, "FinishActions": [{"Name": "PlayFlow", "Params": {
+            "FlowListName": "Cave", "FlowId": 1, "StateId": 39}}]}})]
+    links = list(scenario_links(quests, levels, {"Cave_1_39"}))
+    assert [(link["from"], link["to"]) for link in links] == [("quest:119", "flow_state:Cave_1_39")]
+    assert "transcript position are not established" in links[0]["basis"]
+    quests[0][1]["Data"]["Condition"]["LevelPlayIds"] = [183, 184]
+    assert list(scenario_links(quests, levels, {"Cave_1_39"})) == []
+
+
 def test_unique_scenario_progress_and_flow_list_gives_context_not_traversal():
     quests = [(1, {"Key": "42_3", "Data": {"FinishActions": [
         {"Name": "SetVar", "Params": {"VarLeft": {
