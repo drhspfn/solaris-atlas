@@ -1,10 +1,42 @@
 import sqlite3
+from unittest.mock import AsyncMock
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.dialects import sqlite
 
 from wuwa_story.api.routes.story.shared import _quest_state_links
-from wuwa_story.db.repositories.quest_scope import quest_state_links
+from wuwa_story.db.repositories.quest_scope import quest_state_links, quests_for_state
+
+
+@pytest.mark.asyncio
+async def test_reverse_state_lookup_is_bounded_and_follows_caption_and_quest_paths(monkeypatch):
+    async def parents(session, ids, relations, release):
+        assert release == 9
+        ids = set(ids)
+        if relations == ("has_transcript_state",):
+            assert ids == {100}
+            return [(100, 5)]
+        if relations == ("plays_cutscene",):
+            assert ids == {5}
+            return [(5, 7)]
+        if relations == ("contains_action",):
+            assert ids == {7}
+            return [(7, 201)]
+        if relations == ("references_flow_state", "references_dungeon_flow_state"):
+            assert ids == {100, 201}
+            return [(100, 1), (201, 10), (201, 20)]
+        if relations == ("has_quest_node",):
+            return [(10, 1)]
+        if relations == ("presents_scene",):
+            return [(20, 30)]
+        if relations == ("has_plot_step",):
+            return [(30, 2)]
+        raise AssertionError(relations)
+
+    monkeypatch.setattr("wuwa_story.db.repositories.cutscenes.source_parents", parents)
+    session = type("Session", (), {"scalars": AsyncMock(return_value=[1, 2])})()
+    assert await quests_for_state(session, 100, 9) == [1, 2]
 
 
 def test_forward_and_reverse_ownership_use_only_complete_source_paths():

@@ -7,6 +7,24 @@ from wuwa_story.db.models.graph import Edge, EdgeEvidence
 from wuwa_story.db.models.ontology import RelationType
 
 
+async def quests_for_state(session, state_id: int, release_id: int) -> list[int]:
+    """Resolve one state's owners without constructing the graph for every quest."""
+    from wuwa_story.db.repositories.cutscenes import source_parents
+
+    transcripts = await source_parents(session, [state_id], ("has_transcript_state",), release_id)
+    movies = await source_parents(session, {scene for _, scene in transcripts}, ("plays_cutscene",), release_id)
+    actions = await source_parents(session, {action for _, action in movies}, ("contains_action",), release_id)
+    movie_states = {state for _, state in actions}
+    refs = await source_parents(session, {state_id} | movie_states,
+                                ("references_flow_state", "references_dungeon_flow_state"), release_id)
+    owners = {owner for _, owner in refs}
+    children = await source_parents(session, owners, ("has_quest_node",), release_id)
+    scenes = await source_parents(session, owners, ("presents_scene",), release_id)
+    steps = await source_parents(session, {step for _, step in scenes}, ("has_plot_step",), release_id)
+    candidates = owners | {quest for _, quest in children} | {quest for _, quest in steps}
+    return list(await session.scalars(select(Quest.node_id).where(Quest.node_id.in_(candidates)))) if candidates else []
+
+
 def quest_state_links(release_id: int | None = None):
     def source_edges(relation):
         query = (
