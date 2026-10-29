@@ -8,6 +8,7 @@ from wuwa_story.story.domain import StoryBrowsingError
 from wuwa_story.story.media import dialogue_media
 from wuwa_story.story.service import (
     _quest_info,
+    _quest_page_state_ids,
     _quest_state_ids,
     _release_id,
     dialogue_lines,
@@ -94,7 +95,7 @@ async def quest_transcript(
         raise StoryBrowsingError(status_code=404, detail="quest not found")
     game_quest_id = quest.game_quest_id
     release_id = await _release_id(session, game_version)
-    states = await _quest_state_ids(session, quest.node_id, release_id)
+    states = await _quest_page_state_ids(session, quest.node_id, release_id)
     tree_order = await authored_order(session, quest.game_quest_id, release_id)
     if tree_order:
         states = list(set(states) | set(tree_order['state_ids']))

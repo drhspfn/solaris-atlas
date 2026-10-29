@@ -29,7 +29,7 @@ from wuwa_story.db.models.ops import GameRelease, ImportRun
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.search import EntityAlias, SearchDocument
 from wuwa_story.db.models.story import Scene
-from wuwa_story.db.repositories.quest_scope import quest_state_links
+from wuwa_story.db.repositories.quest_scope import quest_state_links, quest_states_query
 
 
 async def fetch_releases(session):
@@ -215,6 +215,10 @@ async def quest_state_ids(session, quest_node_id, release_id=None):
     return list(
         await session.scalars(select(links.c.state_id).where(links.c.quest_id == quest_node_id))
     )
+
+
+async def quest_page_state_ids(session, quest_node_id, release_id=None):
+    return list(await session.scalars(quest_states_query(quest_node_id, release_id)))
 
 
 async def quest_area_rows(session, quest_node_id):

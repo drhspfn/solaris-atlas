@@ -323,6 +323,10 @@ async def _quest_state_ids(session: AsyncSession, quest_node_id: int, release_id
     return await repository.quest_state_ids(session, quest_node_id, release_id)
 
 
+async def _quest_page_state_ids(session: AsyncSession, quest_node_id: int, release_id: int | None = None) -> list[int]:
+    return await repository.quest_page_state_ids(session, quest_node_id, release_id)
+
+
 async def _quest_info(
     session: AsyncSession,
     quest: Quest,
@@ -398,7 +402,7 @@ async def quest_profile_payload(session, quest, locale="en", game_version=None) 
                 }
             )
     hierarchy_rows = await repository.quest_hierarchy_rows(session, qnode_ids)
-    states = await repository.quest_states(session, await _quest_state_ids(session, quest.node_id, release_id))
+    states = await repository.quest_states(session, await _quest_page_state_ids(session, quest.node_id, release_id))
     actions_by_state = {}
     for action, key in await repository.quest_actions(session, [state.node_id for state in states]):
         actions_by_state.setdefault(action.quest_state_node_id, []).append((action, key))

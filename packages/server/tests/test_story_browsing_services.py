@@ -187,7 +187,7 @@ async def test_transcript_default_is_raw_and_compact_preserves_authored_choice_b
         usecases, "get_quest", AsyncMock(return_value=Row(node_id=7, game_quest_id=70))
     )
     monkeypatch.setattr(usecases, "_release_id", AsyncMock(return_value=2))
-    monkeypatch.setattr(usecases, "_quest_state_ids", AsyncMock(return_value=[3]))
+    monkeypatch.setattr(usecases, "_quest_page_state_ids", AsyncMock(return_value=[3]))
     monkeypatch.setattr(usecases, "authored_order", AsyncMock(return_value=None))
     monkeypatch.setattr(usecases, "_quest_info", AsyncMock(return_value={"game_quest_id": 70}))
     monkeypatch.setattr(usecases, "dialogue_media", AsyncMock(return_value={}))
@@ -259,7 +259,7 @@ async def test_quest_profile_resolves_snapshot_before_loading_owned_states(monke
         assert (quest_id, release_id) == (7, 13)
         return []
 
-    monkeypatch.setattr(service, "_quest_state_ids", states)
+    monkeypatch.setattr(service, "_quest_page_state_ids", states)
     monkeypatch.setattr(service, "_explicit_entity_links", AsyncMock(return_value=[]))
     monkeypatch.setattr(service, "_quest_info", AsyncMock(return_value={"game_quest_id": 70}))
     monkeypatch.setattr(service, "_latest_source_record", AsyncMock(return_value=None))
