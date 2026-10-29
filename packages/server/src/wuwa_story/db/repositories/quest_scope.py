@@ -25,7 +25,7 @@ async def quests_for_state(session, state_id: int, release_id: int) -> list[int]
     return list(await session.scalars(select(Quest.node_id).where(Quest.node_id.in_(candidates)))) if candidates else []
 
 
-def quest_state_links(release_id: int | None = None):
+def quest_state_links(release_id: int | None = None, *, quest_node_id: int | None = None):
     def source_edges(relation):
         query = (
             select(Edge.from_node_id.label("parent"), Edge.to_node_id.label("child"))
@@ -43,18 +43,18 @@ def quest_state_links(release_id: int | None = None):
     children = source_edges("has_quest_node")
     steps = source_edges("has_plot_step")
     scenes = source_edges("presents_scene")
-    owners = (
-        select(Quest.node_id.label("quest_id"), Quest.node_id.label("owner_id"))
-        .union(
-            select(Quest.node_id, children.c.child).join(
-                children, children.c.parent == Quest.node_id
-            ),
-            select(Quest.node_id, scenes.c.child)
-            .join(steps, steps.c.parent == Quest.node_id)
-            .join(scenes, scenes.c.parent == steps.c.child),
-        )
-        .subquery()
+    direct_owner = select(Quest.node_id.label("quest_id"), Quest.node_id.label("owner_id"))
+    child_owner = select(Quest.node_id, children.c.child).join(
+        children, children.c.parent == Quest.node_id
     )
+    scene_owner = (select(Quest.node_id, scenes.c.child)
+                   .join(steps, steps.c.parent == Quest.node_id)
+                   .join(scenes, scenes.c.parent == steps.c.child))
+    if quest_node_id is not None:
+        direct_owner = direct_owner.where(Quest.node_id == quest_node_id)
+        child_owner = child_owner.where(Quest.node_id == quest_node_id)
+        scene_owner = scene_owner.where(Quest.node_id == quest_node_id)
+    owners = direct_owner.union(child_owner, scene_owner).subquery()
     references = (
         select(source_edges("references_flow_state"))
         .union(select(source_edges("references_dungeon_flow_state")))

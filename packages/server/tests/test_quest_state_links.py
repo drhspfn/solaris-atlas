@@ -80,6 +80,9 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
         assert rows(select(links.c.quest_id).where(links.c.state_id == 110)) == {(1,)}
         assert rows(select(links.c.quest_id).where(links.c.state_id == 107)) == {(1,)}
         assert rows(select(links.c.quest_id).where(links.c.state_id == 103)) == {(1,), (2,)}
+        bounded = quest_state_links(quest_node_id=1)
+        assert rows(select(bounded.c.quest_id, bounded.c.state_id)) == {(1, value[0]) for value in expected}
+        assert rows(select(quest_state_links(quest_node_id=2))) == {(2, 103)}
         for orphan in (104, 105, 106, 108, 111):
             assert rows(select(links.c.quest_id).where(links.c.state_id == orphan)) == set()
 
@@ -89,5 +92,7 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
         # Every hop must exist in the pinned snapshot, not just the final state.
         db.execute("UPDATE graph.edge_evidence SET release_id=2 WHERE edge_id IN (SELECT id FROM graph.edge WHERE (from_node_id=20 AND to_node_id=30) OR (from_node_id=80 AND to_node_id=107))")
         assert rows(select(pinned.c.state_id).where(pinned.c.quest_id == 1)) == {(101,), (102,), (109,), (110,)}
+        bounded_pinned = quest_state_links(1, quest_node_id=1)
+        assert rows(select(bounded_pinned.c.state_id)) == {(101,), (102,), (109,), (110,)}
         another = quest_state_links(2)
         assert rows(select(another.c.state_id).where(another.c.quest_id == 1)) == set()
