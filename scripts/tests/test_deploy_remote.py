@@ -296,9 +296,13 @@ compose=(record_compose)
     def test_full_deployment_pulls_and_starts_model_worker(self):
         result = self.deploy("all")
         self.assertEqual(result.returncode, 0, result.stderr)
-        for command in ("pull ", "up -d api "):
+        for command in ("pull ", "up -d snapshot-worker "):
             line = next(line for line in result.stdout.splitlines() if line.startswith(command) and "model-worker" in line)
             self.assertIn("model-worker", line)
+        public = result.stdout.index("up -d api web caddy")
+        workers = result.stdout.index("up -d snapshot-worker ")
+        self.assertLess(public, workers)
+        self.assertNotIn("up -d api web caddy snapshot-worker", result.stdout)
 
 
 class ModelWorkerConfigurationTests(unittest.TestCase):

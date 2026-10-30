@@ -32,7 +32,10 @@ def plan(scripts, current_heads, document_exists=False):
     current = ids.index(current_heads[0]) if current_heads else len(ids)
     target = ids.index(ONLINE)
     state = "before" if current > target + 1 else "ready" if current == target + 1 else "done"
-    return f"{state}:{'last' if target == 0 else 'more'}"
+    # A later migration may already be installed. Do not stop live clients for
+    # a no-op upgrade when an ordinary API configuration deployment follows it.
+    complete = target == 0 or state == "done" and current == 0
+    return f"{state}:{'last' if complete else 'more'}"
 
 
 async def main():
