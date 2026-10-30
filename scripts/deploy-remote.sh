@@ -260,7 +260,14 @@ case "$DEPLOY_COMPONENT" in
     "${compose[@]}" up -d --force-recreate --wait pgbouncer
     ;;
 esac
-if [[ "$DEPLOY_COMPONENT" != caddy && "$DEPLOY_COMPONENT" != infrastructure ]]; then
+if [[ "$DEPLOY_COMPONENT" == all ]]; then
+  # Compose reconciles every container before starting an entire requested group.
+  # Restore public serving first; long media-worker shutdown must not leave the
+  # replacement API merely "Created" for their full grace period.
+  "${compose[@]}" up -d api web caddy
+  worker_services=("${services[@]:3}")
+  "${compose[@]}" up -d "${worker_services[@]}"
+elif [[ "$DEPLOY_COMPONENT" != caddy && "$DEPLOY_COMPONENT" != infrastructure ]]; then
   "${compose[@]}" up -d "${services[@]}"
 fi
 if [[ "$DEPLOY_COMPONENT" == infrastructure ]]; then
