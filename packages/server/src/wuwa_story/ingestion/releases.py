@@ -4,6 +4,11 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.db.models.ops import GameRelease, ImportRun
+from wuwa_story.story.domain import version_key
+
+
+def release_order(release: GameRelease) -> tuple:
+    return version_key(release.game_version), release.sequence
 
 
 async def register_release(

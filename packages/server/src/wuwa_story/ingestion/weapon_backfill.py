@@ -60,7 +60,7 @@ async def backfill(release_id: int, dry_run: bool = False):
             adapter = SimpleNamespace(root=root, entity_files=lambda: [path],
                                       iter_entities=lambda kind: iter(records) if kind == "item" else iter(()))
             count = await import_canonical_entities(adapter, session, release_id, release.sequence, batch_size=100)
-        await build_lexical_index(session, release.game_version, batch_size=100, categories={"item"})
+        await build_lexical_index(session, release.game_version, batch_size=100, categories={"item"}, release_id=release.id)
         await session.commit()
         return {"release_id": release_id, "missing_weapons": len(rows), "imported": count}
 

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.api.source_labels import source_family_label
 from wuwa_story.db.models.core import DialogueLine, Quest, QuestAction, QuestState
-from wuwa_story.db.models.graph import Edge, Node, NodeRevision, NodeType
+from wuwa_story.db.models.graph import Edge, Node, NodeType
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease
@@ -15,6 +15,7 @@ from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.search import SearchDocument
 from wuwa_story.db.repositories.edges import get_edges
 from wuwa_story.db.repositories.nodes import get_node
+from wuwa_story.db.repositories.story_browsing import latest_source_row
 from wuwa_story.db.session import get_session
 from wuwa_story.urls import node_address
 
@@ -212,16 +213,7 @@ async def node_source_record(
     if node is None:
         raise HTTPException(status_code=404, detail="node not found")
     node_type = await session.get(NodeType, node.type_id)
-    row = await session.execute(
-        select(NodeRevision, SourceRecord, SourceFile, GameRelease)
-        .join(SourceRecord, SourceRecord.id == NodeRevision.source_record_id)
-        .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
-        .outerjoin(GameRelease, GameRelease.id == NodeRevision.release_id)
-        .where(NodeRevision.node_id == node.id)
-        .order_by(NodeRevision.revision.desc(), NodeRevision.id.desc())
-        .limit(1)
-    )
-    result = row.first()
+    result = await latest_source_row(session, node.id)
     if result is None:
         return {
             "canonical_key": node.canonical_key,
