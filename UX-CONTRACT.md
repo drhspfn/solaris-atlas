@@ -64,6 +64,20 @@ then a linked quest name is shown with the scene code. Search is explicitly by c
 
 ## Story map patches
 
+Story-map URL pages render at most 60 source nodes, retaining their chapter and
+act context. Previous/Next links carry the selected path, patch and search text;
+invalid pages clamp to the available range. The URL is the only page/query state;
+typing or clearing search replaces
+the URL with page one without a new map or RSC request. Explicit paging and hash
+navigation therefore cannot be overridden by a lingering local page reset.
+Search scans the full fetched map before pagination, including every available
+version when All patches is selected.
+Chapter IDs and numbers come from the complete ordered selection, before search
+or slicing. Existing chapter hashes reveal the owning page before scrolling and
+focus, clearing only a conflicting text search. Quest links retain the owning
+snapshot version. This bounds rendered content; the API response and serialized
+initial map still contain the complete selection.
+
 Selecting a patch shows its additions for the selected story path, excluding quests
 already present in earlier imported patches. All patches presents these additions
 from 1.0 onward in version order, without repeats. Assignment is based on the first

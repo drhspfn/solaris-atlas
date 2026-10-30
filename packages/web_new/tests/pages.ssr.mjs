@@ -320,6 +320,20 @@ const backend = createServer(async (request, response) => {
   if (questRequest.pathname === '/story-map') {
     const version = questRequest.searchParams.get('game_version') || null;
     const questType = Number(questRequest.searchParams.get('quest_type_id'));
+    if (questType === 3) {
+      response.end(JSON.stringify({ selected_game_version: version, quest_type_id: questType,
+        imported_game_versions: ['1.0.0', '2.0.0'], tree_available: false,
+        chapters: [344, 5].map((count, index) => ({ id: index + 1, title: `Large chapter ${index + 1}`,
+          act_title: `Act ${index + 1}`, snapshot_game_version: index ? '2.0.0' : '1.0.0',
+          tree_available: false, nodes: Array.from({ length: count }, (_, n) => ({
+            id: index * 1000 + n, title: index && n === 4 ? 'Out-of-page target' : `Source ${index}-${n}`,
+            source_kind: 'quest_prerequisite', previous_node_ids: [], quests: [{
+              game_quest_id: index * 1000 + n, title: index && n === 4 ? 'Out-of-page target' : `Quest ${index}-${n}`,
+            }],
+          })) })),
+      }));
+      return;
+    }
     const additions = version === '2.1.0' && questType !== 1;
     const title = additions ? 'Silent as a Falling Leaf' : 'First Resonance';
     const owningPatch = version || '1.0.0';
@@ -719,6 +733,42 @@ for (const storyType of ['', '&quest_type=9', '&quest_type=1']) {
     }
   });
 }
+
+test('story-map SSR reads URL pages and searches the full map without forwarding paging to the API', async () => {
+  const start = requests.length;
+  const read = async (query) => {
+    const response = await fetch(`${site}/story-map?quest_type=3&${query}`);
+    assert.equal(response.status, 200);
+    return (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '')
+      .replace(/<!--[\s\S]*?-->/g, '');
+  };
+  const second = await read('page=2&locale=en');
+  assert.equal([...second.matchAll(/class="story-step"/g)].length, 60);
+  assert.ok(second.includes('Quest 0-60'));
+  assert.ok(!second.includes('Quest 0-59'));
+  assert.ok(second.includes('id="story-chapter-group-0"'));
+  assert.ok(second.includes('Act 1'));
+  assert.ok(second.includes('Page 2 of 6'));
+  assert.ok(second.includes('href="/story-map?quest_type=3&amp;page=3&amp;locale=en#story-map-results"'));
+  const searchedPage = await read('q=Quest&page=2');
+  assert.ok(searchedPage.includes('href="/story-map?quest_type=3&amp;q=Quest&amp;page=3#story-map-results"'));
+  const last = await read('page=999');
+  assert.equal([...last.matchAll(/class="story-step"/g)].length, 49);
+  assert.ok(last.includes('Page 6 of 6'));
+  assert.ok(last.includes('id="story-chapter-group-1"'));
+  assert.ok(last.includes('href="/quests/1004?game_version=2.0.0"'));
+  const search = await read('page=999&q=Out-of-page+target');
+  assert.equal([...search.matchAll(/class="story-step"/g)].length, 1);
+  assert.ok(search.includes('id="story-chapter-group-1"'));
+  assert.ok(search.includes('Out-of-page target'));
+  assert.ok(search.includes('Page 1 of 1'));
+  const invalid = await read('page=-2');
+  assert.ok(invalid.includes('Quest 0-0'));
+  assert.ok(invalid.includes('Page 1 of 6'));
+  const calls = requests.slice(start).filter((path) => path.startsWith('/story-map?'));
+  assert.ok(calls.length > 0);
+  assert.ok(calls.every((path) => !/[?&](page|q)=/.test(path)), 'API payload stays the full selection');
+});
 
 test('item details are visible without JavaScript', async () => {
   const response = await fetch(`${site}/items/item%3A1`);

@@ -20,6 +20,7 @@ function compile(path, mocks, globals = {}) {
 }
 const settings = compile('../src/config/settings.ts', {});
 const calendar = compile('../src/components/events/calendar.ts', {});
+const storyPaging = compile('../src/components/story/storyMapPaging.ts', {});
 
 test('projection-pending feedback names archive preparation and keeps a retry action', () => {
   const { ErrorPanel } = compile('../src/components/ui/Feedback.tsx', {});
@@ -38,11 +39,24 @@ function nodes(tree) {
 
 // Match the repository's hook harness approach, including a transport that can
 // deliver late results despite an aborted signal.
-function harness(path, name, props, initialQuery = '') {
+function harness(path, name, props, initialQuery = '', hash = '') {
   let cursor = 0, locale = 'en', query = new URLSearchParams(initialQuery);
   const slots = [], effects = [], calls = [];
+  const frames = [], focused = [], scrolled = [], listeners = new Map();
+  const navigations = [];
+  const location = { hash };
+  const replaceUrl = (href) => {
+    const next = new URL(href, 'http://fixture');
+    query = next.searchParams;
+    location.hash = next.hash;
+  };
+  let renderedTree;
   const router = {
     Link: 'a',
+    useNavigate: () => (href) => {
+      navigations.push(href);
+      replaceUrl(href);
+    },
     useSearchParams: () => Object.assign([query, (update) => {
       query = typeof update === 'function' ? update(query) : new URLSearchParams(update);
     }], { get: (key) => query.get(key), has: (key) => query.has(key), toString: () => query.toString() }),
@@ -73,6 +87,7 @@ function harness(path, name, props, initialQuery = '') {
     '@/components/ui/Select': { Select: 'atlas-select' },
     '../ui/Select': { Select: 'atlas-select' },
     './calendar': calendar,
+    './storyMapPaging': storyPaging,
     '@/data/mapSnapshots': { latestMapRoots: (maps) => maps },
     '@/data/mapAcquisition': { acquisitionMarkers: () => [] },
     '@/state/mapPreferences': { compactMapLink: (value) => value },
@@ -80,17 +95,26 @@ function harness(path, name, props, initialQuery = '') {
     '@/hooks/useMapProgress': { useMapProgress: () => ({ found: new Set(), showFound: true }) },
   };
   const Component = compile(`../src/components/${path}.tsx`, mocks, {
-    window: { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+    window: { location, history: { replaceState: (_state, _title, href) => replaceUrl(href) },
+      addEventListener: (name, fn) => listeners.set(name, fn),
+      removeEventListener: (name) => listeners.delete(name),
+      matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
       setInterval: () => 1, clearInterval() {} },
-    document: { title: '', body: { style: {} } }, setInterval: () => 1, clearInterval() {},
+    document: { title: '', body: { style: {} }, getElementById: (id) =>
+      nodes(renderedTree).some((node) => node.props?.id === id)
+        ? { scrollIntoView: () => scrolled.push(id), focus: () => focused.push(id) } : null },
+    requestAnimationFrame: (fn) => { frames.push(fn); return frames.length; }, cancelAnimationFrame() {},
+    setInterval: () => 1, clearInterval() {},
   })[name];
-  return { calls,
+  return { calls, focused, scrolled, navigations,
+    hash(value) { location.hash = value; listeners.get('hashchange')?.(); },
     queryString: () => query.toString(),
     locale(value) { locale = value; },
     query(value) { query = new URLSearchParams(value); },
     render() {
-      cursor = 0; const tree = Component(props);
+      cursor = 0; const tree = Component(props); renderedTree = tree;
       for (const effect of effects.splice(0)) effect.cleanup = effect.run();
+      for (const frame of frames.splice(0)) frame();
       return tree;
     },
   };
@@ -121,6 +145,85 @@ test('story path and patch use shared selectors while retaining URL context and 
   assert.equal(query.get('locale'), 'ru');
   assert.equal(query.get('line'), 'dialogue:7');
   assert.equal(h.calls[0].options.signal.aborted, true);
+});
+
+function largeStoryMap() {
+  return { selected_game_version: null, quest_type_id: 0, imported_game_versions: ['1.0.0', '2.0.0'],
+    chapters: [0, 1, 2].map((index) => ({ id: index, title: `Chapter ${index}`,
+      act_title: `Act ${index}`, snapshot_game_version: index === 2 ? '2.0.0' : '1.0.0',
+      tree_available: false, nodes: Array.from({ length: index === 0 ? 344 : 5 }, (_, n) => ({
+        id: index * 1000 + n, title: `Source ${index}-${n}`, source_kind: 'quest_prerequisite',
+        previous_node_ids: [], quests: [{ game_quest_id: index * 1000 + n, title: `Quest ${index}-${n}` }],
+      })) })) };
+}
+
+test('story pager preserves query and filters, searches outside its page and resets changed filters', () => {
+  const h = harness('story/StoryMapClient', 'StoryMapClient', { initialMap: largeStoryMap() }, 'page=2&locale=en');
+  h.render();
+  assert.equal(nodes(h.render()).filter((node) => node.props?.node).length, 60);
+  const next = nodes(h.render()).find((node) => node.type === 'a' && node.props.children === 'Next');
+  assert.ok(next.props.to.includes('page=3'));
+  assert.ok(next.props.to.includes('locale=en'));
+  nodes(h.render()).find((node) => node.type === 'input').props.onChange({ target: { value: 'Quest 2-4' } });
+  const filtered = h.render();
+  assert.equal(nodes(filtered).filter((node) => node.props?.node).length, 1);
+  assert.equal(nodes(filtered).find((node) => node.type === 'h2').props.id, 'story-chapter-group-2');
+  nodes(filtered).find((node) => node.props?.label === 'Patch').props.onChange('2.0.0');
+  assert.equal(new URLSearchParams(h.queryString()).get('page'), null);
+  assert.equal(new URLSearchParams(h.queryString()).get('q'), 'Quest 2-4');
+});
+
+test('existing chapter hashes mount the owning page before scrolling and focusing', () => {
+  const h = harness('story/StoryMapClient', 'StoryMapClient', { initialMap: largeStoryMap() }, '', '#story-chapter-group-2');
+  h.render();
+  assert.equal(new URLSearchParams(h.queryString()).get('page'), '6');
+  assert.deepEqual(h.scrolled, [], 'the off-page heading must not be scrolled before mounting');
+  h.render();
+  assert.deepEqual(h.scrolled, ['story-chapter-group-2']);
+  assert.deepEqual(h.focused, ['story-chapter-group-2']);
+  h.render(); h.render();
+  assert.equal(h.navigations.length, 1, 'resolved hashes must not start a navigation/render loop');
+  assert.deepEqual(h.focused, ['story-chapter-group-2'], 'ordinary rerenders must not steal focus');
+  assert.equal(nodes(h.render()).find((node) => node.type === 'h2' && node.props.id === 'story-chapter-group-2').props.children, 'Chapter 2');
+  h.hash('#story-chapter-group-1');
+  assert.equal(h.focused.at(-1), 'story-chapter-group-1', 'same-page hashes focus without a new render');
+});
+
+test('a chapter hash can clear a conflicting search while retaining the requested selection', () => {
+  const h = harness('story/StoryMapClient', 'StoryMapClient', { initialMap: largeStoryMap() },
+    'q=Quest+0-0&locale=en', '#story-chapter-group-2');
+  h.render(); h.render();
+  assert.equal(new URLSearchParams(h.queryString()).get('q'), null);
+  assert.equal(new URLSearchParams(h.queryString()).get('locale'), 'en');
+  assert.equal(h.focused.at(-1), 'story-chapter-group-2');
+});
+
+test('search then clear from URL page two does not trap a same-URL Next navigation on page one', () => {
+  const h = harness('story/StoryMapClient', 'StoryMapClient', { initialMap: largeStoryMap() }, 'page=2&locale=en');
+  h.render();
+  nodes(h.render()).find((node) => node.type === 'input').props.onChange({ target: { value: 'Quest 2-4' } });
+  h.render();
+  nodes(h.render()).find((node) => node.props?.['aria-label'] === 'Clear quest search').props.onClick();
+  const cleared = h.render();
+  const next = nodes(cleared).find((node) => node.type === 'a' && node.props.children === 'Next');
+  h.query(new URL(next.props.to, 'http://fixture').search.slice(1));
+  const nextPage = h.render();
+  assert.equal(nodes(nextPage).find((node) => node.props?.node)?.props.node.id, 60);
+  assert.equal(new URLSearchParams(h.queryString()).get('page'), '2');
+  assert.equal(h.calls.length, 0, 'local search/reset must not start another map read');
+});
+
+test('conflicting local search on page six cannot prevent its own-page chapter hash from mounting', () => {
+  const h = harness('story/StoryMapClient', 'StoryMapClient', { initialMap: largeStoryMap() }, 'page=6&locale=en');
+  h.render();
+  nodes(h.render()).find((node) => node.type === 'input').props.onChange({ target: { value: 'Quest 0-0' } });
+  h.render();
+  h.hash('#story-chapter-group-2');
+  h.render(); h.render();
+  assert.equal(new URLSearchParams(h.queryString()).get('page'), '6');
+  assert.ok(nodes(h.render()).some((node) => node.props?.id === 'story-chapter-group-2'));
+  assert.equal(h.focused.at(-1), 'story-chapter-group-2');
+  assert.equal(h.navigations.length, 1);
 });
 
 test('dialogue quest scope uses the shared selector and changing scope cancels stale results', async () => {

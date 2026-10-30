@@ -1132,7 +1132,8 @@ button {
   color: #9ba79e;
   font-size: 10px;
 }
-.pagination button {
+.pagination button,
+.pagination a {
   background: #1a241f;
   border: 1px solid #3a483f;
   color: #c0d1c4;
