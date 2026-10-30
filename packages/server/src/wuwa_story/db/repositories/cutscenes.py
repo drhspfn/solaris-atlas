@@ -118,7 +118,8 @@ async def owners(session, scene_ids, release_id):
                                          ("references_scenario_flow_state",), release_id)
     package_refs = await source_parents(session, scene_ids, ("references_packaged_cutscene",), release_id)
     all_refs = refs + scenario_refs
-    owner_ids = {owner for _, owner in all_refs}
+    direct_movies = [(movie, owner) for movie, owner in movies if owner not in actions]
+    owner_ids = {owner for _, owner in all_refs} | {owner for _, owner in direct_movies}
     children = await source_parents(session, owner_ids, ("has_quest_node",), release_id)
     scenes = await source_parents(session, owner_ids, ("presents_scene",), release_id)
     steps = await source_parents(session, {step for _, step in scenes}, ("has_plot_step",), release_id)
@@ -137,6 +138,10 @@ async def owners(session, scene_ids, release_id):
     for movie, quest in package_refs:
         if quest in quests:
             matches[(movie, quest)] = True
+    for movie, owner in direct_movies:
+        for quest in candidates[owner]:
+            if quest in quests:
+                matches[(movie, quest)] = False
     for movie, action in movies:
         for state, owner in all_refs:
             if actions.get(action) == state:

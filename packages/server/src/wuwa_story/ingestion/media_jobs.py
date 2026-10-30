@@ -60,9 +60,11 @@ async def enqueue_entity_media(session, request: MediaRequest, *, retry_partial:
         "request": request.model_dump(),
         "targets": targets,
     }
-    digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).digest()
+    digest = hashlib.sha256(json.dumps(
+        payload, sort_keys=True).encode()).digest()
     await session.execute(
-        text("SELECT pg_advisory_xact_lock(:id)"), {"id": int.from_bytes(digest[:7], "big")}
+        text("SELECT pg_advisory_xact_lock(:id)"), {
+            "id": int.from_bytes(digest[:7], "big")}
     )
     await session.execute(
         insert(Processor)
@@ -85,8 +87,10 @@ async def enqueue_entity_media(session, request: MediaRequest, *, retry_partial:
     run.status = "queued"
     run.error = None
     payload["run_id"] = run.id
-    queue_name = "wuwa.entity-images.v1" if all(t["kind"] == "image" for t in targets) else MEDIA_QUEUE
-    run.metadata_json = {"payload": payload, "request": request.model_dump(), "queue": queue_name}
+    queue_name = "wuwa.entity-images.v1" if all(
+        t['kind'] in {'image', 'spine'} for t in targets) else MEDIA_QUEUE
+    run.metadata_json = {"payload": payload,
+                         "request": request.model_dump(), "queue": queue_name}
     await session.commit()
     try:
         await publish_media_job(payload, digest.hex(), queue_name)

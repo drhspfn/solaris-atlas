@@ -23,6 +23,8 @@ class FlowCompilerTests(unittest.TestCase):
                 {"Name": "ShowTalk", "Params": {
                     "TalkItems": [
                         {"Id": 7, "Type": "Talk", "WhoId": 200144, "TidTalk": "line.one",
+                         "BackgroundConfig": {"Type": "ImageByMcGender", "ImageAssetMale": "/Game/Story/M.M",
+                                              "ImageAssetFemale": "/Game/Story/F.F"},
                          "Options": [{"TidTalkOption": "choice.one", "Actions": [
                              {"Name": "JumpTalk", "Params": {"TalkId": 9}}]}]},
                         {"Id": 9, "Type": "PhoneMessage", "TidTalk": "line.two"},
@@ -59,6 +61,10 @@ class FlowCompilerTests(unittest.TestCase):
                                 e.get("resolution") == "unique_whitespace_normalization" and
                                 e.get("raw_value") == " C1" for e in edges))
             self.assertTrue(any(e["type"] == "presents_choice" for e in edges))
+            backgrounds = [edge for edge in edges if edge['type'] == 'references_asset'
+                           and 'BackgroundConfig' in edge['raw_path']]
+            self.assertEqual(len(backgrounds), 2)
+            self.assertTrue(all(edge['from'] == 'talk_item:story_1_1:0:0' for edge in backgrounds))
 
 
 if __name__ == "__main__":

@@ -10,6 +10,27 @@ from wuwa_story_worker import release_media
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('status', ['completed', 'partial'])
+async def test_complete_story_repair_waits_for_structure_before_media(monkeypatch, status):
+    from wuwa_story.ingestion import dungeon_backfill
+    order = []
+    async def repair(*args, **kwargs):
+        order.append('graph')
+        return {'written': 2}
+    async def media(*args, **kwargs):
+        order.append('media')
+        assert kwargs == {'story_media_only': True}
+        return {'queued': 3}
+    monkeypatch.setattr(dungeon_backfill, 'backfill', repair)
+    monkeypatch.setattr(release_media, 'enqueue_release_media', media)
+    result = await release_media.repair_indexed_story({'release_id': 7, 'repair_story': 1}, {}, status, object())
+    assert order == (['graph', 'media'] if status == 'completed' else ['graph'])
+    assert result['graph_repair'] == {'written': 2}
+    if status == 'partial':
+        assert result['story_media']['deferred'] is True
+
+
+@pytest.mark.asyncio
 async def test_cutscene_preparation_batches_only_available_movie_wrappers(monkeypatch, tmp_path):
     # A preparation-only donor match cannot skip wrappers needed by final-identity leaves.
     monkeypatch.setattr(release_media, "missing_cutscene_identities", AsyncMock(return_value=set()))
@@ -380,16 +401,17 @@ async def test_successful_assets_continue_when_other_event_assets_are_missing(mo
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind,artwork,notices", [
-    ("voice_packages", False, False), ("images", False, False), ("cutscene", False, False),
-    ("event_catalog", True, False), ("event_images", True, False),
-    ("event_resources", True, False), ("event_notices", False, True)])
+@pytest.mark.parametrize("kind,artwork,notices,targets", [
+    ("voice_packages", False, False, []), ("images", False, False, []), ("cutscene", False, False, []),
+    ("event_catalog", True, False, []), ("event_images", True, False, []),
+    ("event_resources", True, False, []), ("event_notices", False, True, []),
+    ('tree_order', False, False, []), ('images', False, False, ['flow_state:Story_1_29'])])
 async def test_queued_legacy_dependency_renews_scoped_pipeline_before_export(
-        monkeypatch, kind, artwork, notices):
+        monkeypatch, kind, artwork, notices, targets):
     from contextlib import asynccontextmanager
 
     payload = {"schema_version": 1, "job_type": "media.release", "run_id": 90,
-               "parent_id": 80, "release_id": 9, "kind": kind}
+               "parent_id": 80, "release_id": 9, "kind": kind, 'targets': targets}
     run = SimpleNamespace(id=90, status="running", raw_output={"entity_run_id": 50},
                           metadata_json={"payload": payload})
     parent = SimpleNamespace(id=80, status="completed", raw_output={"asset_version": "3.7.0"},
@@ -411,7 +433,12 @@ async def test_queued_legacy_dependency_renews_scoped_pipeline_before_export(
 
     async def renew(*args, **kwargs):
         assert args == (session, 9)
-        assert kwargs == {"event_artwork_only": artwork, "notices_only": notices}
+        expected = {"event_artwork_only": artwork, "notices_only": notices}
+        if kind == 'tree_order':
+            expected['story_structure_only'] = True
+        elif targets:
+            expected['illustrations_only'] = True
+        assert kwargs == expected
         assert run.raw_output is None
         return {"queued": 3}
 

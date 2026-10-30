@@ -31,7 +31,9 @@ def matches_source(metadata: dict, source: dict, target: dict) -> bool:
     tools = {key: value for key, value in source.get("tools", {}).items()
              if key != "WUWA_VGMSTREAM_PATH" or target.get("kind") != "image"}
     return (
-        provenance.get("schema_version") == 1
+        (target.get('kind') != 'spine' or provenance.get(
+            'spine_recipe') == target.get('spine_recipe'))
+        and provenance.get("schema_version") == 1
         and provenance.get("package_path") == authored_package_path(target)
         and bool(files)
         and all(isinstance(file, dict) and file.get("package_path")
@@ -43,7 +45,7 @@ def matches_source(metadata: dict, source: dict, target: dict) -> bool:
 
 
 async def missing_media_targets(session, targets: list[dict], *, source: dict, storage,
-                                reference_type: str | None = None) -> list[dict]:
+                                reference_type: str | None = None, require_spine_playback: bool = False) -> list[dict]:
     """One database query, one HEAD per unique candidate blob, bounded concurrency.
 
     Missing/legacy provenance, other versions, and stale locations remain retryable.
@@ -68,7 +70,8 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
         )
     )
     expected = {target_identity(t, reference_type): t for t in targets}
-    by_source = {(key[0], *key[2:]): target for key, target in expected.items()}
+    by_source = {(key[0], *key[2:]): target for key,
+                 target in expected.items()}
     candidates = []
     references = {}
     for reference, file, location in rows:
@@ -76,7 +79,9 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
                     reference.source_name, reference.reference_type)
         references.setdefault(identity, []).append(reference)
         target = by_source.get((identity[0], *identity[2:]))
-        if target is not None and matches_source(reference.metadata_json or {}, source, target):
+        metadata = reference.metadata_json or {}
+        playable = not require_spine_playback or target is None or target.get('kind') != 'spine' or ((metadata.get('playback') or {}).get('variants') and (metadata.get('playback') or {}).get('components') and not (metadata.get('playback') or {}).get('unsupported'))
+        if target is not None and playable and matches_source(metadata, source, target):
             candidates.append((target_identity(target, reference_type), file.size_bytes,
                                location.object_key, reference, location))
     semaphore = asyncio.Semaphore(16)
@@ -85,7 +90,11 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
         async with semaphore:
             return key, await storage.stat(key)
 
-    objects = dict(await asyncio.gather(*(stat(key) for key in {c[2] for c in candidates})))
+    components = {key: (reference.metadata_json or {}).get('playback', {}).get('components', [])
+                  for _identity, _size, key, reference, _location in candidates
+                  if require_spine_playback and expected[_identity].get('kind') == 'spine'}
+    keys = {c[2] for c in candidates} | {part['object_key'] for parts in components.values() for part in parts}
+    objects = dict(await asyncio.gather(*(stat(key) for key in keys)))
     present = set()
     for identity, size, key, reference, location in candidates:
         location.verified_at = datetime.now(UTC)
@@ -93,6 +102,9 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
             location.available = False
             continue
         location.available = True
+        if any(objects[part['object_key']] is None or objects[part['object_key']].size_bytes != part['size_bytes']
+               for part in components.get(key, [])):
+            continue
         present.add(identity)
         current = next((ref for ref in references.get(identity, [])
                         if matches_source(ref.metadata_json or {}, source, expected[identity])), None)

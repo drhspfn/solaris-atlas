@@ -1,8 +1,6 @@
 """Project source-authored tree positions onto quest and LevelPlay flow states."""
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any
 
 from sqlalchemy import select
@@ -12,20 +10,10 @@ from wuwa_story.db.models.graph import NodeRevision
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.repositories.cutscenes import source_parents
 from wuwa_story.ingestion.dungeon_context import walk
-from wuwa_story.ingestion.quest_tree_order import tree_node_order_hash
+from wuwa_story.ingestion.level_interactions import verified_interactions
+from wuwa_story.ingestion.quest_tree_order import records_match
 from wuwa_story.story.media import media_links
-
-
-def records_match(nodes: list[dict], records: dict[int, dict]) -> bool:
-    if {node['id'] for node in nodes} != set(records):
-        return False
-    for node in nodes:
-        raw = json.dumps(records[node['id']], sort_keys=True, separators=(',', ':'),
-                         ensure_ascii=False).encode('utf-8')
-        if (hashlib.sha256(raw).hexdigest() != node.get('record_sha256')
-                and tree_node_order_hash(records[node['id']]) != node.get('order_sha256')):
-            return False
-    return True
+from wuwa_story.story.runtime_blocks import project_blocks
 
 
 def flow_positions(quest_nodes: list[dict], quest_records: dict[int, dict],
@@ -104,7 +92,17 @@ async def authored_order(session, quest_id: int, release_id: int | None):
         AuthoredTreeOrder.tree_kind == 'level_play', AuthoredTreeOrder.tree_id.in_(level_ids)))) if level_ids else []
     level_trees = {tree.tree_id: (tree.nodes, await rows(
         'BinData/LevelPlayNodeData/levelplaynodedata.json', tree.tree_id)) for tree in trees}
+    level_trees = {identity: tree for identity, tree in level_trees.items() if records_match(*tree)}
+    level_rows = list(await session.scalars(select(SourceRecord.data).join(SourceFile).where(
+        SourceRecord.release_id == release_id,
+        SourceFile.logical_source_path == 'BinData/LevelPlayData/levelplaydata.json',
+        SourceRecord.data['LevelPlayId'].as_integer().in_(level_trees)))) if level_trees else []
+    interactions = {row['LevelPlayId']: verified_interactions(level_trees[row['LevelPlayId']][0], row['Data'])
+                    for row in level_rows if isinstance(row.get('Data'), dict)}
+    blocks = project_blocks(quest_id, quest_tree.nodes, qrecords, level_trees, interactions)
     possible = set()
+    optional_states = {flow['state'] for items in interactions.values() for item in items for flow in item['flow_states']}
+    possible.update(optional_states)
     for record in list(qrecords.values()) + [row for _, records in level_trees.values() for row in records.values()]:
         for _, value in walk(record):
             name, flow, state = (value.get(k) for k in ('FlowListName', 'FlowId', 'StateId'))
@@ -114,26 +112,38 @@ async def authored_order(session, quest_id: int, release_id: int | None):
         .join(NodeRevision, NodeRevision.node_id == QuestState.node_id)
         .where(NodeRevision.release_id == release_id, QuestState.state_key.in_(possible)).distinct())).all())
     positions = flow_positions(quest_tree.nodes, qrecords, level_trees, set(states))
-    if not positions:
+    if not positions and not blocks:
         return None
     ids = [states[key] for key, _ in positions]
-    actions = list(await session.execute(select(QuestAction.node_id, QuestAction.quest_state_node_id)
+    actions = list(await session.execute(select(QuestAction.node_id, QuestAction.quest_state_node_id, QuestAction.action_index)
                                         .where(QuestAction.quest_state_node_id.in_(ids))))
-    memberships = set(await source_parents(session, {a for a, _ in actions}, ('contains_action',), release_id))
-    movies = await media_links(session, [a for a, s in actions if (a, s) in memberships], ('plays_cutscene',), release_id)
+    memberships = set(await source_parents(session, {a for a, _, _ in actions}, ('contains_action',), release_id))
+    movies = await media_links(session, [a for a, s, _ in actions if (a, s) in memberships], ('plays_cutscene',), release_id)
     cutscene_ids = {link['node_id'] for values in movies.values() for link in values}
     subtitles = await media_links(session, list(cutscene_ids), ('has_transcript_state',), release_id)
     captions_by_state: dict[int, list[int]] = {}
-    for action, state in actions:
+    caption_positions = {}
+    positions_by_id = {states[key]: position for key, position in positions}
+    for action, state, action_index in actions:
         if (action, state) not in memberships:
             continue
         for scene in movies.get(action, []):
-            captions_by_state.setdefault(state, []).extend(
-                link['node_id'] for link in subtitles.get(scene['node_id'], []))
+            for link in subtitles.get(scene['node_id'], []):
+                captions_by_state.setdefault(state, []).append(link['node_id'])
+                position = (*positions_by_id[state], action_index, 0)
+                caption_positions[link['node_id']] = min(caption_positions.get(link['node_id'], position), position)
     ordered: list[int] = []
     for state in ids:
         for identity in (state, *captions_by_state.get(state, [])):
             if identity not in ordered:
                 ordered.append(identity)
+    for key in sorted(optional_states):
+        if key in states and states[key] not in ordered:
+            ordered.append(states[key])
+    caption_keys = dict(await session.execute(select(QuestState.node_id, QuestState.state_key).where(
+        QuestState.node_id.in_(caption_positions)))) if caption_positions else {}
+    all_positions = {**dict(positions), **{caption_keys[identity]: position for identity, position in caption_positions.items()
+                                         if identity in caption_keys}}
     return {'state_ids': ordered, 'asset_version': quest_tree.asset_version,
-            'mapped_flow_states': [key for key, _ in positions]}
+            'mapped_flow_states': [key for key, _ in positions],
+            'positions': all_positions, 'blocks': blocks}

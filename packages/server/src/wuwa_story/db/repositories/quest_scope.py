@@ -17,7 +17,7 @@ async def quests_for_state(session, state_id: int, release_id: int) -> list[int]
     movie_states = {state for _, state in actions}
     refs = await source_parents(session, {state_id} | movie_states,
                                 ("references_flow_state", "references_dungeon_flow_state"), release_id)
-    owners = {owner for _, owner in refs}
+    owners = {owner for _, owner in refs} | {owner for _, owner in movies}
     children = await source_parents(session, owners, ("has_quest_node",), release_id)
     scenes = await source_parents(session, owners, ("presents_scene",), release_id)
     steps = await source_parents(session, {step for _, step in scenes}, ("has_plot_step",), release_id)
@@ -36,6 +36,7 @@ def quest_states_query(quest_node_id: int, release_id: int | None):
         and_(walk.c.phase == 0, RelationType.key.in_(("has_quest_node", "has_plot_step", *references))),
         and_(walk.c.phase == 1, RelationType.key == "presents_scene"),
         and_(walk.c.phase == 2, RelationType.key.in_(references)),
+        and_(walk.c.phase.in_((0, 2)), RelationType.key == 'plays_cutscene'),
         and_(walk.c.phase == 3, RelationType.key == "contains_action"),
         and_(walk.c.phase == 4, RelationType.key == "plays_cutscene"),
         and_(walk.c.phase == 5, RelationType.key == "has_transcript_state"),
@@ -110,6 +111,9 @@ def quest_state_links(release_id: int | None = None, *, quest_node_id: int | Non
     return (
         select(direct.c.quest_id, direct.c.state_id)
         .union(
+            select(owners.c.quest_id, transcripts.c.child)
+            .join(movies, movies.c.parent == owners.c.owner_id)
+            .join(transcripts, transcripts.c.parent == movies.c.child),
             select(direct.c.quest_id, transcripts.c.child)
             .join(actions, actions.c.parent == direct.c.state_id)
             .join(movies, movies.c.parent == actions.c.child)

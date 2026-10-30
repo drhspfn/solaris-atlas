@@ -87,6 +87,9 @@ async def detail(name: str, game_version: str | None = None, locale: str = "en",
                 found = True
                 event = event or candidate
                 passages.append({**quest, "flow_state": candidate["flow_state"],
+                                 "context_inferred": candidate.get('context_inferred', False),
+                                 "story_block_id": candidate.get('story_block_id'),
+                                 "story_order_mapped": candidate.get('story_order_mapped', False),
                                  "action_index": candidate["action_index"],
                                  "reference": candidate["reference"],
                                  "focus_line": None if quest.get("context_inferred") else await repository.first_line(

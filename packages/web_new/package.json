@@ -26,6 +26,7 @@
     "@types/node": "^22.13.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/three": "0.183.1",
     "typescript": "^5.8.0"
   }
 }

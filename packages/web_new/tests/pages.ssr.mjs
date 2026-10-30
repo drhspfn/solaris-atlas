@@ -27,7 +27,10 @@ const notice = {
   revisions: ['a'.repeat(64)],
   blocks: [
     { type: 'text', text: 'Complete the event to obtain Astrite.' },
-    { type: 'image', url: 'https://cdn.solarisatlas.fun/objects/notice-banner' },
+    {
+      type: 'image',
+      url: 'https://cdn.solarisatlas.fun/objects/notice-banner',
+    },
   ],
   links: ['https://www.youtube.com/watch?v=official'],
   events: [{ id: 1, title: "Artisan's Search" }],
@@ -37,23 +40,50 @@ const profile = {
   source: { version: '1.0' },
 };
 const testQuest = {
-  game_quest_id: 139000037, canonical_key: 'quest:139000037', name: { content: '' },
+  game_quest_id: 139000037,
+  canonical_key: 'quest:139000037',
+  name: { content: '' },
   classification: {
-    kind: 'test', label: 'Test quest',
+    kind: 'test',
+    label: 'Test quest',
     explanation: "The game's quest type assigns this record to its test category.",
     internal_name: '测试21020015武器',
     evidence: [{ field: 'QuestType.IsShowInQuestPanel', value: false }],
-    source: { file: 'BinData/QuestData/questdata.json', row: 253, release_id: 5 },
+    source: {
+      file: 'BinData/QuestData/questdata.json',
+      row: 253,
+      release_id: 5,
+    },
   },
 };
 const archive = {
   biography: `<color=white>${biography}</color>`,
   profile: { birthday: 'January 20', affiliation: 'Jinzhou', voice_actors: {} },
   artwork: [
-    { kind: 'RoleHeadIconLarge', engine_path: 'test', url: portrait, scope: 'character' },
-    { kind: 'RoleStand', engine_path: '/Game/UiQuest/ChuanShuo1', url: sharedQuestArtwork, scope: 'shared_resource' },
-    { kind: 'Icon', engine_path: '/Game/IconRup/1503', url: null, scope: 'shared_resource' },
-    { kind: 'RolePortrait', engine_path: '/Game/PixActivity/T_ActivityRoleYangyang', url: 'https://cdn.solarisatlas.fun/objects/foreign-yangyang', scope: 'shared_resource' },
+    {
+      kind: 'RoleHeadIconLarge',
+      engine_path: 'test',
+      url: portrait,
+      scope: 'character',
+    },
+    {
+      kind: 'RoleStand',
+      engine_path: '/Game/UiQuest/ChuanShuo1',
+      url: sharedQuestArtwork,
+      scope: 'shared_resource',
+    },
+    {
+      kind: 'Icon',
+      engine_path: '/Game/IconRup/1503',
+      url: null,
+      scope: 'shared_resource',
+    },
+    {
+      kind: 'RolePortrait',
+      engine_path: '/Game/PixActivity/T_ActivityRoleYangyang',
+      url: 'https://cdn.solarisatlas.fun/objects/foreign-yangyang',
+      scope: 'shared_resource',
+    },
   ],
   skills: [
     {
@@ -68,10 +98,20 @@ const archive = {
   ],
   skill_tree: [],
   resonance_chain: [],
-  voice_lines: [{ id: 1, order: 1, title: 'English voice title', text: 'English text stays independent of the audio track.',
-    audio_url: 'https://cdn.solarisatlas.fun/objects/english-voice',
-    audio_tracks: { en: 'https://cdn.solarisatlas.fun/objects/english-voice', ja: 'https://cdn.solarisatlas.fun/objects/japanese-voice' },
-    audio_event_path: '/Game/Voice/Test' }],
+  voice_lines: [
+    {
+      id: 1,
+      order: 1,
+      title: 'English voice title',
+      text: 'English text stays independent of the audio track.',
+      audio_url: 'https://cdn.solarisatlas.fun/objects/english-voice',
+      audio_tracks: {
+        en: 'https://cdn.solarisatlas.fun/objects/english-voice',
+        ja: 'https://cdn.solarisatlas.fun/objects/japanese-voice',
+      },
+      audio_event_path: '/Game/Voice/Test',
+    },
+  ],
   other_voice_events: [],
 };
 const backend = createServer(async (request, response) => {
@@ -83,10 +123,199 @@ const backend = createServer(async (request, response) => {
   timing.end = performance.now();
   response.setHeader('Content-Type', 'application/json');
   const questRequest = new URL(request.url, 'http://backend.test');
+  if (questRequest.pathname.startsWith('/quests/119000001/')) {
+    const quest = { name: { content: 'A room full of memories' } };
+    const choices = ['Ask about the drawing', 'Ask about the cake', 'Stay a little longer'].map(
+      (text, index) => ({
+        id: `option-${index}`,
+        text: { content: text },
+        target_line_id: `reply-${index}`,
+        branch: {
+          line_ids: [`reply-${index}`],
+          continuation_line_id: 'shared-return',
+        },
+      }),
+    );
+    if (questRequest.pathname.endsWith('/profile')) response.end(JSON.stringify({ quest }));
+    else if (questRequest.pathname.endsWith('/transcript'))
+      response.end(
+        JSON.stringify({
+          quest,
+          limit: 500,
+          lines: [
+            {
+              id: 'choice-prompt',
+              flow_state: 'Room',
+              speaker: { label: 'Rover' },
+              text: { content: 'There is still so much I want to ask.' },
+              player_choices: choices,
+            },
+            ...[
+              'I drew it before I learned what the stars were.',
+              'There should be enough for both of us.',
+              'Then let us stay here, just for a moment.',
+            ].map((text, index) => ({
+              id: `reply-${index}`,
+              provenance: {source_file: 'BinData/flowState/flowstate.json', source_row: index},
+              flow_state: 'Room',
+              speaker: { label: 'Denia' },
+              text: { content: text },
+            })),
+            {
+              id: 'shared-return',
+              flow_state: 'Room',
+              speaker: { label: 'Denia' },
+              text: { content: 'Shall we see what is outside?' },
+            },
+            ...[
+              'The water remembers everything.',
+              'Even the light that never reached the surface.',
+              'Some memories move like a dream.',
+            ].map((text, index) => ({
+              id: `scene-${index}`,
+              media: {
+                voice_references: [
+                  {
+                    source: { file: 'PlotAudio fixture' },
+                    tracks:
+                      index === 1
+                        ? [
+                            { language: 'en', rover: 'male', url: 'https://cdn.test/male.wav' },
+                            { language: 'en', rover: 'female', url: 'https://cdn.test/female.wav' },
+                          ]
+                        : [{ language: 'en', rover: null, url: 'https://cdn.test/voice.wav' }],
+                  },
+                ],
+              },
+              flow_state: 'Memory',
+              speaker: { label: 'Denia' },
+              text: { content: text },
+              illustration:
+                index < 2
+                  ? {
+                      id: 'water-bg',
+                      kind: 'image',
+                      images: [
+                        {
+                          rover: null,
+                          engine_path: '/Game/Water.Water',
+                          url: 'https://cdn.test/water.png',
+                        },
+                      ],
+                    }
+                  : {
+                      id: 'spine-bg',
+                      kind: 'spine',
+                      loop: true,
+                      resource_id: 850007,
+                      images: [],
+                      bundle: {
+                        url: 'https://cdn.test/scene.zip',
+                        size_bytes: 12345678,
+                        asset_version: '3.7.0',
+                        playback: {format: 'solaris.skeletal-scene.v1', variants: [{rover: null, animation: 'idle', scene_url: 'https://cdn.test/animated-scene.json', textures: {'shuizhong.png':'https://cdn.test/atlas.png'}}], unsupported: []},
+                      },
+                    },
+            })),
+          ],
+          story_blocks: [],
+        }),
+      );
+    else response.end('null');
+    return;
+  }
+  if (questRequest.pathname.startsWith('/quests/119000000/')) {
+    const quest = { name: { content: 'Source-backed interaction fixture' } };
+    const state = 'Cave_1_41';
+    if (questRequest.pathname.endsWith('/profile')) response.end(JSON.stringify({ quest }));
+    else if (questRequest.pathname.endsWith('/transcript'))
+      response.end(
+        JSON.stringify({
+          quest,
+          limit: 500,
+          lines: [
+            {
+              id: 'main-line',
+              flow_state: 'Main_1_1',
+              story_position: [1],
+              text: { content: 'Mandatory dialogue' },
+            },
+            {
+              id: 'optional-line',
+              flow_state: state,
+              action: { index: 1 },
+              text: { content: 'Optional fridge dialogue' },
+              illustration: {
+                id: 'image-1',
+                kind: 'image',
+                images: [
+                  {
+                    rover: null,
+                    engine_path: '/Game/A.A',
+                    url: 'https://cdn.test/story.png',
+                  },
+                ],
+              },
+              player_choices: [{ id: 'choice-1', text: { content: 'Leave it here' } }],
+            },
+          ],
+          story_blocks: [
+            {
+              id: 'explore-room',
+              title: 'Explore the room',
+              position: [2],
+              branches: [],
+              flow_states: [],
+              source: { file: 'quest.json', key: '119000000_120' },
+              interactions: [
+                {
+                  id: 'e_909_179:0',
+                  title: 'Inspect the fridge',
+                  flow_states: [{ state }],
+                  source: {
+                    file: 'client.db',
+                    key: '179',
+                    raw_path: '$.Options[0]',
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      );
+    else if (questRequest.pathname.endsWith('/media'))
+      response.end(
+        JSON.stringify({
+          events: [
+            {
+              kind: 'sequence',
+              action: 'action:optional',
+              reference: 'asset:ue:/Game/Scene.Scene',
+              flow_state: state,
+              action_index: 2,
+              engine_path: '/Game/Scene.Scene',
+              source: { file: 'flowstate.json', raw_path: '$.Actions[2]' },
+            },
+          ],
+          video_packages: [],
+        }),
+      );
+    else response.end('null');
+    return;
+  }
   if (questRequest.pathname.startsWith('/nodes/dialogue%3A123')) {
-    if (questRequest.pathname.endsWith('/related')) return response.end(JSON.stringify({ results: [] }));
-    if (questRequest.pathname.endsWith('/narrative-context')) return response.end(JSON.stringify({ available: false }));
-    return response.end(JSON.stringify({ canonical_key: 'dialogue:123', slug: null, status: 'active', type_id: 1 }));
+    if (questRequest.pathname.endsWith('/related'))
+      return response.end(JSON.stringify({ results: [] }));
+    if (questRequest.pathname.endsWith('/narrative-context'))
+      return response.end(JSON.stringify({ available: false }));
+    return response.end(
+      JSON.stringify({
+        canonical_key: 'dialogue:123',
+        slug: null,
+        status: 'active',
+        type_id: 1,
+      }),
+    );
   }
   if (questRequest.pathname === '/story-map') {
     const version = questRequest.searchParams.get('game_version') || null;
@@ -94,50 +323,137 @@ const backend = createServer(async (request, response) => {
     const additions = version === '2.1.0' && questType !== 1;
     const title = additions ? 'Silent as a Falling Leaf' : 'First Resonance';
     const owningPatch = version || '1.0.0';
-    response.end(JSON.stringify({ selected_game_version: version, quest_type_id: questType,
-      imported_game_versions: ['1.0.0', '2.1.0'], tree_available: false,
-      chapters: version === '2.1.0' && questType === 1 ? [] : [{
-        id: 1, title, snapshot_game_version: owningPatch, tree_available: false,
-        nodes: [{ id: 10, title, source_kind: 'quest_prerequisite', previous_node_ids: [],
-          quests: [{ game_quest_id: 10, title, first_observed_game_version: owningPatch }] }],
-      }] }));
+    response.end(
+      JSON.stringify({
+        selected_game_version: version,
+        quest_type_id: questType,
+        imported_game_versions: ['1.0.0', '2.1.0'],
+        tree_available: false,
+        chapters:
+          version === '2.1.0' && questType === 1
+            ? []
+            : [
+                {
+                  id: 1,
+                  title,
+                  snapshot_game_version: owningPatch,
+                  tree_available: false,
+                  nodes: [
+                    {
+                      id: 10,
+                      title,
+                      source_kind: 'quest_prerequisite',
+                      previous_node_ids: [],
+                      quests: [
+                        {
+                          game_quest_id: 10,
+                          title,
+                          first_observed_game_version: owningPatch,
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+      }),
+    );
     return;
   }
-  if (/^\/quests\/(662686-the-sacred-breeze-so-often-breathes|464283-when-the-night-knocks)\//.test(questRequest.pathname)) {
+  if (
+    /^\/quests\/(662686-the-sacred-breeze-so-often-breathes|464283-when-the-night-knocks)\//.test(
+      questRequest.pathname,
+    )
+  ) {
     const title = `Selected quest ${questRequest.searchParams.get('locale')} ${questRequest.searchParams.get('game_version')}`;
     const quest = { name: { content: title } };
     if (questRequest.pathname.endsWith('/profile')) response.end(JSON.stringify({ quest }));
-    else if (questRequest.pathname.endsWith('/transcript')) response.end(JSON.stringify({
-      quest, lines: [{ id: questRequest.searchParams.get('focus_line') || 'dialogue:1',
-        text: { content: `Selected dialogue ${title}` } }], scenes: [],
-    }));
+    else if (questRequest.pathname.endsWith('/transcript'))
+      response.end(
+        JSON.stringify({
+          quest,
+          lines: [
+            {
+              id: questRequest.searchParams.get('focus_line') || 'dialogue:1',
+              text: { content: `Selected dialogue ${title}` },
+            },
+          ],
+          scenes: [],
+        }),
+      );
     else response.end('null');
   } else if (request.url === '/characters/character%3A1102/profile?locale=en') {
     response.end(JSON.stringify(profile));
   } else if (request.url === '/characters/character%3A1102/archive?locale=en') {
     response.end(JSON.stringify(archive));
   } else if (request.url === '/items/19875-coriolus/profile?locale=en') {
-    response.end(JSON.stringify({
-      item: { canonical_key: 'item:42300080', name: { content: 'Coriolus' } },
-      progression_uses: [4, 8, 12, 16, 20].map((count, index) => ({
-        kind: 'character_ascension', level_cap: 50 + index * 10, required_count: count,
-        character: { canonical_key: 'character:1203', label: 'Lingyang', href: '/characters/15511-lingyang' },
-        source: { file: 'BinData/role_level/rolebreach.json', row: index },
-      })),
-    }));
+    response.end(
+      JSON.stringify({
+        item: { canonical_key: 'item:42300080', name: { content: 'Coriolus' } },
+        progression_uses: [4, 8, 12, 16, 20].map((count, index) => ({
+          kind: 'character_ascension',
+          level_cap: 50 + index * 10,
+          required_count: count,
+          character: {
+            canonical_key: 'character:1203',
+            label: 'Lingyang',
+            href: '/characters/15511-lingyang',
+          },
+          source: { file: 'BinData/role_level/rolebreach.json', row: index },
+        })),
+      }),
+    );
   } else if (request.url === '/items/595988-emerald-of-genesis/profile?locale=en') {
-    response.end(JSON.stringify({
-      item: { canonical_key: 'item:21020015', slug: '595988-emerald-of-genesis',
-        name: { content: 'Emerald of Genesis' } },
-      banner_sources: [{ view_id: 32, banner_type: 'permanent_weapon', roles: ['preview', 'display'],
-        source: { file: 'BinData/gacha/gachaviewinfo.json', row: 2, game_version: '2.0.0' } }],
-      quest_references: [{ quest: testQuest, references: [{ interpretation: {
-        label: 'Requires obtaining this item', is_reward: false } }] }],
-    }));
+    response.end(
+      JSON.stringify({
+        item: {
+          canonical_key: 'item:21020015',
+          slug: '595988-emerald-of-genesis',
+          name: { content: 'Emerald of Genesis' },
+        },
+        banner_sources: [
+          {
+            view_id: 32,
+            banner_type: 'permanent_weapon',
+            roles: ['preview', 'display'],
+            source: {
+              file: 'BinData/gacha/gachaviewinfo.json',
+              row: 2,
+              game_version: '2.0.0',
+            },
+          },
+        ],
+        quest_references: [
+          {
+            quest: testQuest,
+            references: [
+              {
+                interpretation: {
+                  label: 'Requires obtaining this item',
+                  is_reward: false,
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    );
   } else if (request.url === '/quests/139000037/profile?locale=en') {
-    response.end(JSON.stringify({ quest: testQuest, item_requirements: [{ item_id: 21020015,
-      label: 'Requires obtaining this item', count: 1,
-      item: { href: '/items/595988-emerald-of-genesis', label: 'Emerald of Genesis' } }] }));
+    response.end(
+      JSON.stringify({
+        quest: testQuest,
+        item_requirements: [
+          {
+            item_id: 21020015,
+            label: 'Requires obtaining this item',
+            count: 1,
+            item: {
+              href: '/items/595988-emerald-of-genesis',
+              label: 'Emerald of Genesis',
+            },
+          },
+        ],
+      }),
+    );
   } else if (request.url.startsWith('/quests/139000037/transcript?')) {
     response.end(JSON.stringify({ quest: testQuest, lines: [], scenes: [] }));
   } else if (request.url === '/items/item%3A1/profile?locale=en') {
@@ -162,7 +478,9 @@ const backend = createServer(async (request, response) => {
           slug: '103-astrite',
           href: '/items/103-astrite',
           name: { content: 'Astrite' },
-          description: { content: 'A bright crystal with a stable public address.' },
+          description: {
+            content: 'A bright crystal with a stable public address.',
+          },
         },
       }),
     );
@@ -271,14 +589,26 @@ test('weapon sources and test quest semantics are visible in server HTML', async
   const item = await fetch(`${site}/items/595988-emerald-of-genesis`);
   assert.equal(item.status, 200);
   const html = (await item.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
-  for (const value of ['Permanent weapon Convene', 'Listed in banner preview', 'Test quest',
-    'Requires obtaining this item', 'not a reward']) assert.ok(html.includes(value), value);
+  for (const value of [
+    'Permanent weapon Convene',
+    'Listed in banner preview',
+    'Test quest',
+    'Requires obtaining this item',
+    'not a reward',
+  ])
+    assert.ok(html.includes(value), value);
   assert.ok(!html.includes('No confirmed acquisition sources recorded yet.'));
   const quest = await fetch(`${site}/quests/139000037`);
   assert.equal(quest.status, 200);
   const questHtml = (await quest.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
-  for (const value of ['Test quest', 'Classification evidence', '测试21020015武器',
-    'Requires obtaining this item', 'Emerald of Genesis']) assert.ok(questHtml.includes(value), value);
+  for (const value of [
+    'Test quest',
+    'Classification evidence',
+    '测试21020015武器',
+    'Requires obtaining this item',
+    'Emerald of Genesis',
+  ])
+    assert.ok(questHtml.includes(value), value);
 });
 
 for (const [slug, version, locale] of [
@@ -288,7 +618,9 @@ for (const [slug, version, locale] of [
 ]) {
   test(`quest SSR and metadata use the requested snapshot for ${slug}`, async () => {
     const start = requests.length;
-    const response = await fetch(`${site}/quests/${slug}?game_version=${version}&locale=${locale}&line=dialogue%3A999`);
+    const response = await fetch(
+      `${site}/quests/${slug}?game_version=${version}&locale=${locale}&line=dialogue%3A999`,
+    );
     assert.equal(response.status, 200);
     const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
     assert.ok(html.includes(`<title>Selected quest ${locale} ${version}`));
@@ -296,9 +628,14 @@ for (const [slug, version, locale] of [
     assert.ok(html.includes('data-dialogue-key="dialogue:999"'));
     const calls = requests.slice(start).filter((path) => path.startsWith(`/quests/${slug}/`));
     assert.equal(calls.length, 4, 'metadata and SSR must share the profile request');
-    const timings = requestTimes.slice(start).filter((entry) => entry.path.startsWith(`/quests/${slug}/`));
-    assert.ok(Math.max(...timings.map((entry) => entry.start)) < Math.min(...timings.map((entry) => entry.end)),
-      'all four requests must overlap rather than form an SSR waterfall');
+    const timings = requestTimes
+      .slice(start)
+      .filter((entry) => entry.path.startsWith(`/quests/${slug}/`));
+    assert.ok(
+      Math.max(...timings.map((entry) => entry.start)) <
+        Math.min(...timings.map((entry) => entry.end)),
+      'all four requests must overlap rather than form an SSR waterfall',
+    );
     for (const endpoint of ['profile', 'transcript', 'continuity', 'media']) {
       const call = calls.find((path) => path.startsWith(`/quests/${slug}/${endpoint}?`));
       assert.ok(call, endpoint);
@@ -333,7 +670,8 @@ for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
     assert.doesNotMatch(html, /Opening archive record|Loading character details|id="S:\d+"/);
     assert.ok(requests.includes('/characters/character%3A1102/archive?locale=en'));
     assert.ok(!requests.some((path) => path.includes('%253A')));
-    const gallery = main.match(/<div class="character-artwork-gallery">([\s\S]*?)<\/figure><\/div>/)?.[1] ?? '';
+    const gallery =
+      main.match(/<div class="character-artwork-gallery">([\s\S]*?)<\/figure><\/div>/)?.[1] ?? '';
     assert.ok(gallery.includes(`src="${portrait}"`));
     assert.ok(!gallery.includes(sharedQuestArtwork));
     assert.ok(!gallery.includes('foreign-yangyang'));
@@ -356,7 +694,11 @@ for (const storyType of ['', '&quest_type=9', '&quest_type=1']) {
     } else {
       assert.ok(html.includes('Silent as a Falling Leaf'));
       assert.ok(html.includes('game_version=2.1.0'));
-      assert.ok(requests.includes(`/story-map?locale=en&quest_type_id=${storyType ? 9 : 0}&game_version=2.1.0`));
+      assert.ok(
+        requests.includes(
+          `/story-map?locale=en&quest_type_id=${storyType ? 9 : 0}&game_version=2.1.0`,
+        ),
+      );
     }
   });
 }
@@ -377,6 +719,39 @@ test('node with unavailable narrative renders its source details without a dialo
   const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
   assert.match(html, /dialogue:123/);
   assert.doesNotMatch(html, /Where this line appears|DIALOGUE ENTRY|Opening archive record/);
+});
+
+test('optional interaction contains dialogue, choices, pictures and engine scene exactly once', async () => {
+  const response = await fetch(`${site}/quests/119000000`);
+  assert.equal(response.status, 200);
+  const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  const interaction =
+    html.match(/<details><summary>Inspect the fridge<\/summary>([\s\S]*?)client\.db/)?.[1] || '';
+  assert.match(interaction, /Optional fridge dialogue/);
+  assert.match(interaction, /Leave it here/);
+  assert.match(interaction, /src="https:\/\/cdn.test\/story.png"/);
+  assert.match(interaction, /rendered by the game engine/);
+  assert.equal((html.match(/data-dialogue-key="optional-line"/g) || []).length, 1);
+  assert.equal((html.match(/Optional fridge dialogue/g) || []).length, 1);
+  assert.match(html, /Mandatory dialogue/);
+});
+
+test('quest reader renders alternative paths beside one shared return and one illustrated stage', async () => {
+  const response = await fetch(`${site}/quests/119000001`);
+  assert.equal(response.status, 200);
+  const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.equal((html.match(/class="quest-fork-path"/g) || []).length, 3);
+  assert.equal((html.match(/data-dialogue-key="shared-return"/g) || []).length, 1);
+  for (let index = 0; index < 3; index++)
+    assert.equal(
+      (html.match(new RegExp(`data-dialogue-key="reply-${index}"`, 'g')) || []).length,
+      1,
+    );
+  assert.match(html, /Paths rejoin/);
+  assert.equal((html.match(/aria-label="Illustrated dialogue"/g) || []).length, 1);
+  assert.match(html, /The water remembers everything/);
+  assert.match(html, /Read transcript/);
+  assert.match(html, /aria-label="Next dialogue line"/);
 });
 
 test('item progression renders five real stages and their total compactly', async () => {
@@ -476,7 +851,9 @@ test('legacy item URL redirects to its stored slug without losing selection para
 });
 
 test('slug item page returns details and canonical social URL in initial HTML', async () => {
-  const response = await fetch(`${site}/items/103-astrite`, { redirect: 'manual' });
+  const response = await fetch(`${site}/items/103-astrite`, {
+    redirect: 'manual',
+  });
   assert.equal(response.status, 200);
   const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
   assert.ok(html.includes('A bright crystal with a stable public address.'));

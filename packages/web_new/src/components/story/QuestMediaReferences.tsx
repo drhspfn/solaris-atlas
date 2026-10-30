@@ -2,6 +2,7 @@
 
 import { Film, Info, Pause, Play, VolumeX } from 'lucide-react';
 import { type ReactNode, useRef, useState } from 'react';
+import { Select } from '../ui/Select';
 
 import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
 import { cutsceneAnchor, packageCutsceneAnchor } from './cutsceneAnchor';
@@ -59,7 +60,11 @@ export type CutsceneNode =
       id: string;
       kind: 'choice';
       prompt: string;
-      options: Array<{ label: string; next: string; rover?: 'male' | 'female' | null }>;
+      options: Array<{
+        label: string;
+        next: string;
+        rover?: 'male' | 'female' | null;
+      }>;
     };
 export interface CutsceneFlow {
   version: 1;
@@ -73,6 +78,11 @@ export interface CutsceneFlow {
 export interface QuestMediaEvent {
   context_inferred?: boolean;
   story_order_mapped?: boolean;
+  story_position?: number[];
+  story_block_id?: string;
+  interaction_id?: string;
+  branches?: Array<{ id: string; type: string }>;
+  transition?: boolean;
   title?: string;
   kind: 'cutscene' | 'sequence' | 'audio_event';
   playback?: CutsceneFlow | null;
@@ -107,8 +117,16 @@ export interface QuestMediaManifest {
   availability: 'references_only' | 'partial';
   game_version?: string;
   events: QuestMediaEvent[];
-  video_packages: Array<{ reference: string; packages: Array<{ reference: string }> }>;
-  related_cutscenes?: Array<{ name: string; playable: boolean; context_inferred: boolean; playback?: CutsceneFlow | null }>;
+  video_packages: Array<{
+    reference: string;
+    packages: Array<{ reference: string }>;
+  }>;
+  related_cutscenes?: Array<{
+    name: string;
+    playable: boolean;
+    context_inferred: boolean;
+    playback?: CutsceneFlow | null;
+  }>;
 }
 
 function SourcePath({ source }: { source: MediaSource }) {
@@ -132,14 +150,18 @@ export function QuestMediaReferences({
   const visible = new Set(visibleCutscenes.map(cutsceneAnchor));
   const links = manifest.events.flatMap((event) => {
     const anchor =
-      event.kind === 'cutscene' && visible.has(cutsceneAnchor(event))
+      event.kind !== 'audio_event' && visible.has(cutsceneAnchor(event))
         ? cutsceneAnchor(event)
         : stateAnchors.get(event.flow_state);
     if (!anchor || event.kind === 'audio_event') return [];
     return [{ event, anchor }];
   });
-  const eventScenes = new Set(manifest.events.filter((event) => event.kind === 'cutscene').map((event) => event.reference));
-  const related = (manifest.related_cutscenes || []).filter((scene) => !eventScenes.has(`cutscene:${scene.name}`));
+  const eventScenes = new Set(
+    manifest.events.filter((event) => event.kind === 'cutscene').map((event) => event.reference),
+  );
+  const related = (manifest.related_cutscenes || []).filter(
+    (scene) => !eventScenes.has(`cutscene:${scene.name}`),
+  );
   if (!links.length && !related.length) return null;
   return (
     <nav className="quest-media-panel" aria-label="Quest scenes">
@@ -162,10 +184,15 @@ export function QuestMediaReferences({
       ))}
       {related.length > 0 && <p>Related scenes · story position is not yet mapped</p>}
       {related.map((scene) => (
-        <a className="quest-media-jump quest-media-event" key={scene.name}
-          href={`#${packageCutsceneAnchor(scene.name)}`}>
+        <a
+          className="quest-media-jump quest-media-event"
+          key={scene.name}
+          href={`#${packageCutsceneAnchor(scene.name)}`}
+        >
           <Film size={13} />
-          <span>{scene.name} · {scene.playable ? 'Watch' : 'Video not available yet'}</span>
+          <span>
+            {scene.name} · {scene.playable ? 'Watch' : 'Video not available yet'}
+          </span>
         </a>
       ))}
     </nav>
@@ -226,23 +253,20 @@ export function DialogueAudioReference({
   return (
     <div className="dialogue-voice">
       {preferredRover === 'ask' && roverChoices.length > 0 && (
-        <label className="voice-language">
-          Rover voice
-          <select
-            aria-label="Rover voice"
-            value={voiceRover}
-            onChange={(event) => setVoiceRover(event.target.value as typeof voiceRover)}
-          >
-            <option value="ask">Choose Rover</option>
-            {['female', 'male']
+        <Select
+          label="Rover voice"
+          value={voiceRover}
+          onChange={(value) => setVoiceRover(value as typeof voiceRover)}
+          options={[
+            { value: 'ask', label: 'Choose Rover' },
+            ...['female', 'male']
               .filter((value) => roverChoices.some((entry) => entry.rover === value))
-              .map((value) => (
-                <option key={value} value={value}>
-                  {value === 'female' ? 'Female Rover' : 'Male Rover'}
-                </option>
-              ))}
-          </select>
-        </label>
+              .map((value) => ({
+                value,
+                label: value === 'female' ? 'Female Rover' : 'Male Rover',
+              })),
+          ]}
+        />
       )}
       <div className="dialogue-spoken-text">
         {track && (
@@ -262,7 +286,10 @@ export function DialogueAudioReference({
                 document.querySelectorAll<HTMLMediaElement>('audio, video').forEach((other) => {
                   if (other !== audio) other.pause();
                 });
-                void audio.play().catch(() => setFailedUrl(track.url));
+                void audio.play().catch((error: DOMException) => {
+                  // Moving to another scene intentionally interrupts pending playback.
+                  if (error.name !== 'AbortError') setFailedUrl(track.url);
+                });
               }}
             >
               {playingUrl === track.url ? <Pause size={16} /> : <Play size={16} />}

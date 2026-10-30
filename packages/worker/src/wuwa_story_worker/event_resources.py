@@ -23,7 +23,8 @@ DEPENDENCY_TYPES = {"PrefabAsset", "Material", "MaterialInstanceConstant", "Spin
 
 
 async def annotate_image_packages(root: Path, records: dict) -> list[dict]:
-    expected = {image["path"][6:] for record in records.values() for image in record.get("artwork", [])}
+    expected = {image["path"][6:] for record in records.values()
+                for image in record.get("artwork", [])}
     if not expected:
         return []
     index = await ensure_archive_index(root, tool_path("WUWA_FMODEL_PATH"), root)
@@ -35,7 +36,8 @@ async def annotate_image_packages(root: Path, records: dict) -> list[dict]:
             present = path[6:] in packages
             image["package_status"] = "present" if present else "not_in_client"
             if not present:
-                missing[path] = {"expected": path, "status": "not_in_client", "matches": []}
+                missing[path] = {"expected": path,
+                                 "status": "not_in_client", "matches": []}
     return list(missing.values())
 
 
@@ -43,6 +45,8 @@ def ui_references(value):
     """Yield typed references, excluding script classes, audio and gameplay assets."""
     if isinstance(value, dict):
         raw = value.get("ObjectPath") or value.get("AssetPathName")
+        if isinstance(raw, str) and raw.startswith('Client/Content/'):
+            raw = '/Game/' + raw.removeprefix('Client/Content/')
         kind = value.get("ObjectName", "").partition("'")[0]
         path = texture_path(raw) if isinstance(raw, str) else None
         if path:
@@ -57,7 +61,7 @@ def ui_references(value):
             yield from ui_references(child)
 
 
-async def prefab_images(root: Path, paths: list[str]):
+async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = None):
     pending = set(paths)
     seen = set()
     images = {}
@@ -77,12 +81,14 @@ async def prefab_images(root: Path, paths: list[str]):
         try:
             available = await asyncio.to_thread(indexed_package_paths, index, [source[6:]])
             if source[6:] not in available:
-                missing.append({"expected": source, "status": "not_in_client", "matches": []})
+                missing.append(
+                    {"expected": source, "status": "not_in_client", "matches": []})
                 continue
             package = available[source[6:]]
             receipt = await export_assets(root, fmodel, package.rsplit(".", 1)[0])
             raw = receipt.parent / "files"
-            output = receipt.parent / ("event-json-exact-" + _sha256(converter)[:16])
+            output = receipt.parent / \
+                ("ui-json-references-v2-" + _sha256(converter)[:16])
             output.mkdir(exist_ok=True)
             complete = output / "references.json"
 
@@ -93,7 +99,8 @@ async def prefab_images(root: Path, paths: list[str]):
                     packages = output / "packages.txt"
                     paths = [raw / package]
                     if not paths[0].is_file():
-                        raise ValueError("Indexed prefab package was not exported")
+                        raise ValueError(
+                            "Indexed prefab package was not exported")
                     with (output / "converter.log").open("w", encoding="utf-8") as log:
                         for offset in range(0, len(paths), 8):
                             packages.write_text("\n".join(raw.name + "/" + p.relative_to(raw).as_posix()
@@ -112,6 +119,9 @@ async def prefab_images(root: Path, paths: list[str]):
                     temporary.replace(complete)
                     return references
             references = await asyncio.to_thread(decode)
+            if assets is not None:
+                assets[source] = {'raw': raw,
+                                  'decoded': output, 'package': package}
             for kind, path in references:
                 if kind == "image":
                     images.setdefault(
@@ -155,7 +165,8 @@ async def event_resources(payload, parent, session, root: Path):
         entries.extend(missing)
     await session.commit()
     jobs = await enqueue_event_images(session, payload, sorted(paths))
-    client = {key: parent[key] for key in ("asset_version", "download_id", "tier")}
+    client = {key: parent[key]
+              for key in ("asset_version", "download_id", "tier")}
     return {**client, "stage": "event_resources_ready", "events": len(events),
             "images": len(paths), "image_tasks": jobs, "media_report": {"entries": entries},
             "missing": len(entries)}, "partial" if entries else "completed"

@@ -30,9 +30,10 @@ async def test_quest_cte_matches_graph_and_uses_one_snapshot_during_write():
                 f"CREATE TABLE {ontology}.relation_type (id int PRIMARY KEY, key text)",
                 f"CREATE TABLE {graph}.edge (id int PRIMARY KEY, from_node_id bigint, to_node_id bigint, relation_type_id int, layer text)",
                 f"CREATE TABLE {graph}.edge_evidence (id int PRIMARY KEY, edge_id int, release_id int)",
-                f"INSERT INTO {core}.quest VALUES (1)",
+                f"INSERT INTO {core}.quest VALUES (1),(2)",
                 f"INSERT INTO {ontology}.relation_type VALUES (1,'has_quest_node'),(2,'references_flow_state'),(3,'contains_action'),(4,'plays_cutscene'),(5,'has_transcript_state'),(6,'has_plot_step'),(7,'presents_scene')",
                 f"INSERT INTO {graph}.edge VALUES (1,1,10,1,'source'),(2,10,100,2,'source'),(3,100,70,3,'source'),(4,70,80,4,'source'),(5,80,200,5,'source'),(6,1,20,6,'source'),(7,20,30,7,'source'),(8,30,100,2,'source'),(9,1,300,2,'semantic')",
+                f"INSERT INTO {graph}.edge VALUES (10,2,11,1,'source'),(11,11,81,4,'source'),(12,81,201,5,'source')",
                 f"INSERT INTO {graph}.edge_evidence SELECT id,id,9 FROM {graph}.edge WHERE id <> 5",
             ):
                 await connection.execute(text(sql))
@@ -54,6 +55,9 @@ async def test_quest_cte_matches_graph_and_uses_one_snapshot_during_write():
             assert set(await reader.scalars(query)) == set(await reader.scalars(old)) == {100}
             assert set(await reader.scalars(quest_states_query(1, None))) == {100, 200}
             assert set(await reader.scalars(quest_states_query(999, 9))) == set()
+            direct = quest_state_links(9, quest_node_id=2)
+            assert set(await reader.scalars(quest_states_query(2, 9))) == {201}
+            assert set(await reader.scalars(select(direct.c.state_id))) == {201}
 
             pid = await reader.scalar(text("SELECT pg_backend_pid()"))
             delayed = text(

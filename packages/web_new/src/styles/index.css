@@ -6576,3 +6576,18 @@ button.search-clear:focus-visible {
   50% { opacity: 0.2; }
   100% { opacity: 0.2; }
 }
+.quest-runtime-block { margin: 16px 0; padding: 16px 20px; border-inline-start: 2px solid var(--accent-mint); background: var(--surface-1); border-radius: var(--radius-sm); scroll-margin-top: 100px; min-width: 0; }
+.quest-runtime-block h3 { margin: 8px 0; font-size: 17px; }
+.quest-runtime-block p, .quest-runtime-block details { font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
+.quest-runtime-block nav { display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0; }
+.quest-runtime-block details small, .quest-illustration details small { display: block; overflow-wrap: anywhere; padding-top: 6px; }
+.quest-activity-nav { margin-top: 20px; }
+.quest-activity-nav nav { display: grid; gap: 12px; padding: 12px 0; font-size: 13px; }
+.quest-illustration { margin: 20px 0; background: var(--surface-1); border: 1px solid var(--border-default); border-radius: var(--radius-md); overflow: hidden; min-width: 0; }
+.quest-illustration > img { display: block; width: 100%; max-height: 34rem; object-fit: contain; }
+.quest-illustration > p, .quest-illustration > figcaption { padding: 12px 16px; margin: 0; }
+.quest-illustration figcaption { display: grid; gap: 10px; font-size: 12px; color: var(--text-secondary); }
+
+.quest-runtime-interactions > details { margin-top: .75rem; border-top: 1px solid var(--border-default); padding-top: .75rem; }
+.quest-runtime-interactions > details > summary { cursor: pointer; color: var(--accent-mint); }
+.quest-runtime-interactions .transcript-line { min-width: 0; }

@@ -42,7 +42,7 @@ async def test_unconfirmed_broker_publish_is_not_success(monkeypatch):
     assert error.value.status_code == 503
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('kind,queue',[('image','wuwa.entity-images.v1'),('voice','wuwa.entity-media.v1')])
+@pytest.mark.parametrize('kind,queue',[('image','wuwa.entity-images.v1'),('spine','wuwa.entity-images.v1'),('voice','wuwa.entity-media.v1')])
 async def test_images_have_slots_independent_of_long_audio_jobs(monkeypatch, kind, queue):
     from unittest.mock import Mock
 

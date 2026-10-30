@@ -189,6 +189,8 @@ async def quest_media(
         raise HTTPException(status_code=404, detail="game version not imported")
     tree_order = await authored_order(session, game_quest_id, release_id)
     state_ids = await _quest_page_state_ids(session, quest.node_id, release_id)
+    if tree_order:
+        state_ids = list(set(state_ids) | set(tree_order['state_ids']))
     contextual_state_ids = set(await session.scalars(
         select(Edge.to_node_id)
         .join(RelationType, RelationType.id == Edge.relation_type_id)
@@ -209,8 +211,20 @@ async def quest_media(
         session, [action.node_id for action, _, _ in action_rows],
         ("plays_cutscene", "plays_sequence_asset", "posts_audio_event"), release_id,
     )
+    runtime_refs = [(block, ref) for block in (tree_order or {}).get('blocks', [])
+                    for ref in block['media']]
+    runtime_refs.extend(({**block, 'source': item['source'],
+                          'interaction_id': block['id'] + ':' + item['id']}, ref)
+                        for block in (tree_order or {}).get('blocks', [])
+                        for item in block.get('interactions', []) for ref in item.get('media', []))
+    runtime_nodes = dict(await session.execute(select(Node.canonical_key, Node.id).where(
+        Node.canonical_key.in_({ref['reference'] for _, ref in runtime_refs}),
+        select(NodeRevision.id).where(NodeRevision.node_id == Node.id,
+                                      NodeRevision.release_id == release_id).exists()))) if runtime_refs else {}
     cutscene_ids = [link["node_id"] for entries in action_links.values() for link in entries
                     if link["relation"] == "plays_cutscene"]
+    cutscene_ids = list(set(cutscene_ids) | {runtime_nodes[ref['reference']] for _, ref in runtime_refs
+                                          if ref['kind'] == 'cutscene' and ref['reference'] in runtime_nodes})
     flows = await cutscene_flows(session, cutscene_ids)
     explanation = await session.scalar(
         select(Document)
@@ -261,10 +275,10 @@ async def quest_media(
                    Edge.layer == "source", EdgeEvidence.release_id == release_id)
         ):
             transcript_states[cutscene_id].append(state_key)
-    events = []
+    sources = []
     for action, state, action_key in action_rows:
         for link in action_links.get(action.node_id, []):
-            if state.node_id in contextual_state_ids and link["relation"] != "plays_cutscene":
+            if state.node_id in contextual_state_ids and link["relation"] not in ("plays_cutscene", "plays_sequence_asset"):
                 continue
             entry = {
                 "kind": {"plays_cutscene": "cutscene", "plays_sequence_asset": "sequence",
@@ -279,40 +293,64 @@ async def quest_media(
                 "reference_kind": "unreal_asset_path"
                 if link["canonical_key"].startswith("asset:ue:") else "cg_name",
             }
-            if link["relation"] == "plays_cutscene":
-                entry["playback"] = flows.get(link["node_id"])
-                entry["transcript_states"] = sorted(set(transcript_states[link["node_id"]]))
-                # Timing schema is verified against the current client, not assumed for old builds.
-                entry["captions"] = caption_tracks([
-                    resource_raw[child["node_id"]]
-                    for child in variants.get(link["node_id"], [])
-                    if child["relation"] == "uses_caption" and child["node_id"] in resource_raw
-                ], texts) if entry["playback"] and entry["playback"]["asset_version"] == "3.7.0" else {}
-                entry["resources"] = [
-                    {"kind": child["relation"], "reference": child["canonical_key"],
-                     "basis": child["basis"], "source": child["source"],
-                     "variant": {
-                         "cg_id": resource_raw[child["node_id"]].get("CgId"),
-                         "girl_or_boy": resource_raw[child["node_id"]].get("GirlOrBoy"),
-                         "belong_branch": resource_raw[child["node_id"]].get("BelongBranch"),
-                     } if child["relation"] == "has_variant" and child["node_id"] in resource_raw else None,
-                     "caption": {
-                         "localization_key": resource_raw[child["node_id"]].get("CaptionText"),
-                         "show_moment": resource_raw[child["node_id"]].get("ShowMoment"),
-                         "duration": resource_raw[child["node_id"]].get("Duration"),
-                         "timing_unit": "unverified",
-                     } if child["relation"] == "uses_caption" and child["node_id"] in resource_raw else None,
-                     "assets": [
-                         {"reference": asset["canonical_key"],
-                          "engine_path": asset["canonical_key"].removeprefix("asset:ue:")
-                          if asset["canonical_key"].startswith("asset:ue:") else None,
-                          "reference_kind": "unreal_asset_path", "basis": asset["basis"],
-                          "source": asset["source"], "video": playable.get(asset["node_id"])}
-                         for asset in assets.get(child["node_id"], [])
-                     ]}
-                    for child in variants.get(link["node_id"], [])
-                ]
-            events.append(entry)
+            position = (tree_order or {}).get('positions', {}).get(state.state_key)
+            if position:
+                entry['story_position'] = [*position, action.action_index, -1]
+            sources.append((entry, link['node_id']))
+    for block, ref in runtime_refs:
+        entry = {
+            'kind': ref['kind'], 'action': block['id'] + ref['raw_path'],
+            'flow_state': block['owner'], 'action_index': ref.get('position', [0])[-1],
+            'reference': ref['reference'], 'story_block_id': block['id'],
+            'story_order_mapped': 'position' in ref,
+            'context_inferred': False, 'branches': block['branches'],
+            'transition': ref.get('transition', False), 'basis': ref['basis'],
+            'source': {**block['source'], 'raw_path': ref['raw_path']},
+            'engine_path': ref['reference'].removeprefix('asset:ue:') if ref['kind'] == 'sequence' else None,
+            'reference_kind': 'unreal_asset_path' if ref['kind'] == 'sequence' else 'cg_name',
+        }
+        if 'position' in ref:
+            entry['story_position'] = ref['position']
+        if block.get('interaction_id'):
+            entry['interaction_id'] = block['interaction_id']
+            entry['action'] += ':' + block['interaction_id']
+        sources.append((entry, runtime_nodes.get(ref['reference'])))
+    events = []
+    for entry, target_id in sources:
+        if entry["kind"] == "cutscene":
+            entry["playback"] = flows.get(target_id)
+            entry["transcript_states"] = sorted(set(transcript_states[target_id]))
+            # Timing schema is verified against the current client, not assumed for old builds.
+            entry["captions"] = caption_tracks([
+                resource_raw[child["node_id"]]
+                for child in variants.get(target_id, [])
+                if child["relation"] == "uses_caption" and child["node_id"] in resource_raw
+            ], texts) if entry["playback"] and entry["playback"]["asset_version"] == "3.7.0" else {}
+            entry["resources"] = [
+                {"kind": child["relation"], "reference": child["canonical_key"],
+                 "basis": child["basis"], "source": child["source"],
+                 "variant": {
+                     "cg_id": resource_raw[child["node_id"]].get("CgId"),
+                     "girl_or_boy": resource_raw[child["node_id"]].get("GirlOrBoy"),
+                     "belong_branch": resource_raw[child["node_id"]].get("BelongBranch"),
+                 } if child["relation"] == "has_variant" and child["node_id"] in resource_raw else None,
+                 "caption": {
+                     "localization_key": resource_raw[child["node_id"]].get("CaptionText"),
+                     "show_moment": resource_raw[child["node_id"]].get("ShowMoment"),
+                     "duration": resource_raw[child["node_id"]].get("Duration"),
+                     "timing_unit": "unverified",
+                 } if child["relation"] == "uses_caption" and child["node_id"] in resource_raw else None,
+                 "assets": [
+                     {"reference": asset["canonical_key"],
+                      "engine_path": asset["canonical_key"].removeprefix("asset:ue:")
+                      if asset["canonical_key"].startswith("asset:ue:") else None,
+                      "reference_kind": "unreal_asset_path", "basis": asset["basis"],
+                      "source": asset["source"], "video": playable.get(asset["node_id"])}
+                     for asset in assets.get(child["node_id"], [])
+                 ]}
+                for child in variants.get(target_id, [])
+            ]
+        events.append(entry)
     package_links = await _links(
         session, [quest.node_id], ("references_video_package",), release_id
     )
@@ -332,7 +370,8 @@ async def quest_media(
                                "playable": node_id in package_flows,
                                "playback": package_flows.get(node_id),
                                "context_inferred": True}
-                              for node_id, link in related.items()],
+                              for node_id, link in related.items()
+                              if not any(event['reference'] == link['canonical_key'] for event in events)],
         "video_packages": [
             {"reference": link["canonical_key"], "basis": link["basis"],
              "source": link["source"],

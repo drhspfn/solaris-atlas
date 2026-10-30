@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from wuwa_story.ingestion.runtime_media import quest_runtime_links
 from wuwa_story.ingestion.scenario_context import scenario_links
 
 from .core import Writer, read_json
@@ -68,6 +69,11 @@ def compile_reference_tables(root: Path, writer: Writer,
 
     quest_nodes = root / "BinData/QuestNodeData/questnodedata.json"
     level_nodes = root / "BinData/LevelPlayNodeData/levelplaynodedata.json"
+    if quest_nodes.is_file():
+        for link in quest_runtime_links(enumerate(read_json(quest_nodes)), writer.ids):
+            if link['from'] in writer.ids:
+                writer.edge(link['from'], link['to'], link['type'], link['basis'],
+                            link['source'], link['raw_path'])
     if quest_nodes.is_file() and level_nodes.is_file():
         for link in scenario_links(enumerate(read_json(quest_nodes)),
                                    enumerate(read_json(level_nodes)), state_keys):

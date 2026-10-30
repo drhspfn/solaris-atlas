@@ -450,3 +450,26 @@ job, prevents duplicate clicks and monitors its recorded state. Closing does not
 cancel server work. Monitoring resumes when reopened and links to the existing
 admin task page. Public users receive no import controls, and API authorization
 remains authoritative. These rules follow character_models API/use-case contracts.
+
+
+## Quest branches and illustrated dialogue
+
+Complete, disjoint authored response paths render as alternatives. Shared dialogue
+is not copied into each path, and missing or overlapping branch evidence never
+creates a guessed fork. Child lines keep their original addresses. The mobile
+path rail owns horizontal scrolling and never widens the page.
+
+Illustrated passages group consecutive picture-backed lines within the same flow;
+choices, clearing, runtime activities and inserted movies are boundaries. Only the
+current backdrop loads. Line navigation stops existing passage audio, never starts
+playback automatically and retains independent text/voice languages. Existing
+DialogueAudioReference owns playback and shared Select owns voice/Rover choices.
+Rover Ask never silently selects a gender-specific illustration.
+
+Read transcript exposes all lines without duplicating their IDs. Hash and cited
+line navigation reveal the requested frame and open enclosing interaction details.
+Image failures preserve the stage and offer Retry illustration. Missing exports
+remain explicit. Published Spine bundles expose a source download containing
+skeletons, atlases, textures and original packages; a texture atlas is never shown
+as though it were a composed story picture. Browser Spine animation is separate
+from archival availability and is not claimed by the download action.

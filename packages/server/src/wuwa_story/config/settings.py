@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     s3_use_ssl: bool = False
     local_storage_root: str = "./var/objects"
     log_level: str = "INFO"
+    story_spine_playback_enabled: bool = False
     rabbitmq_url: SecretStr = Field(default=SecretStr("amqp://wuwa:wuwa@localhost:5672/"))
     auth_session_ttl_days: int = 30
     auth_pending_registration_ttl_minutes: int = 15

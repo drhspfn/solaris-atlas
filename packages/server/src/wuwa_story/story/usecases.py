@@ -5,7 +5,9 @@ from typing import Any
 from wuwa_story.db.repositories import story_browsing as repository
 from wuwa_story.db.repositories.nodes import get_node, get_quest
 from wuwa_story.story.domain import StoryBrowsingError
+from wuwa_story.story.illustrations import illustration_payloads
 from wuwa_story.story.media import dialogue_media
+from wuwa_story.story.runtime_service import present_blocks
 from wuwa_story.story.service import (
     _quest_info,
     _quest_page_state_ids,
@@ -123,10 +125,15 @@ async def quest_transcript(
     await prefetch_dialogue(session, rows, locale, release_id, include_raw=include_raw)
     media_by_line = await dialogue_media(session, [row[0].node_id for row in rows], release_id)
     lines = await dialogue_lines(session, rows, locale, release_id, media_by_line, include_raw=include_raw)
+    illustrations = await illustration_payloads(session, rows)
+    for row, line in zip(rows, lines, strict=True):
+        if row[0].node_id in illustrations:
+            line['illustration'] = illustrations[row[0].node_id]
     if tree_order:
-        ordered_ids = set(tree_order['state_ids'])
         for row, line in zip(rows, lines, strict=True):
-            line['story_order_mapped'] = row[2].node_id in ordered_ids
+            line['story_order_mapped'] = row[2].state_key in tree_order.get('positions', {})
+            if position := tree_order.get('positions', {}).get(row[2].state_key):
+                line['story_position'] = [*position, row[1].action_index, row[0].source_index]
     return {
         "quest": await _quest_info(session, quest, locale, game_version),
         "ordering_semantics": (
@@ -137,6 +144,7 @@ async def quest_transcript(
         ),
         "tree_order_asset_version": tree_order['asset_version'] if tree_order else None,
         "scenes": scene_payloads(scene_rows),
+        "story_blocks": await present_blocks(session, tree_order, locale, release_id),
         "filters": {"character": character, "text": q, "locale": locale},
         "offset": offset,
         "limit": limit,

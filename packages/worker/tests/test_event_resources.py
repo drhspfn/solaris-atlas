@@ -33,7 +33,8 @@ async def test_prefab_export_does_not_hold_catalog_transaction(tmp_path, monkeyp
         return [], []
 
     monkeypatch.setattr(event_resources, "prefab_images", extract)
-    monkeypatch.setattr(event_resources, "enqueue_event_images", AsyncMock(return_value={"tasks": 0}))
+    monkeypatch.setattr(event_resources, "enqueue_event_images",
+                        AsyncMock(return_value={"tasks": 0}))
     _, status = await event_resources.event_resources(
         {"targets": ["activity:1"]},
         {"download_id": "pinned", "asset_version": "3.7.0", "tier": "hd"},
@@ -74,7 +75,7 @@ async def test_dependency_walk_caches_decodes_handles_cycles_and_keeps_partial_r
         (group / "files").mkdir(parents=True)
         converter = tmp_path / "converter"
         converter.write_bytes(b"tool")
-        output = group / ("event-json-exact-" +
+        output = group / ("ui-json-references-v2-" +
                           event_resources._sha256(converter)[:16])
         output.mkdir()
         (output / "references.json").write_text(json.dumps(
@@ -88,12 +89,14 @@ async def test_dependency_walk_caches_decodes_handles_cycles_and_keeps_partial_r
     exporter = AsyncMock(side_effect=export)
     monkeypatch.setattr(event_resources, "export_assets", exporter)
     monkeypatch.setattr(event_resources, "tool_path", lambda _: converter)
-    package_index(tmp_path, ["/Game/UI/Prefabs/Root", "/Game/UI/Prefabs/Child"])
+    package_index(tmp_path, ["/Game/UI/Prefabs/Root",
+                  "/Game/UI/Prefabs/Child"])
     artwork, missing = await event_resources.prefab_images(tmp_path, ["/Game/UI/Prefabs/Root"])
     assert [entry["path"] for entry in artwork] == [image]
     assert missing[0]["expected"] == "/Game/UI/Prefabs/Missing"
     assert missing[0]["status"] == "not_in_client"
     assert exporter.await_count == 2
+
 
 @pytest.mark.asyncio
 async def test_package_inventory_distinguishes_absent_files_and_reuses_completed_scan(tmp_path, monkeypatch):
@@ -101,14 +104,17 @@ async def test_package_inventory_distinguishes_absent_files_and_reuses_completed
     converter = tmp_path / "tool"
     converter.write_bytes(b"tool")
     monkeypatch.setattr(event_resources, "tool_path", lambda _: converter)
+
     async def scan(command, log, timeout):
         log.write_text("[File] Client/Content/UI/Image/Actual.uasset\n"
                        "[File] Client/Content/UI/Image/Actual.uexp\n[Done] Listed 2 files\n", encoding="utf-8")
     scan_mock = AsyncMock(side_effect=scan)
     monkeypatch.setattr(entity_media, "tool", scan_mock)
-    records = {"1": {"artwork": [{"path": "/Game/UI/Image/Actual"}, {"path": "/Game/UI/Image/Removed"}]}}
+    records = {"1": {"artwork": [
+        {"path": "/Game/UI/Image/Actual"}, {"path": "/Game/UI/Image/Removed"}]}}
     missing = await event_resources.annotate_image_packages(tmp_path, records)
-    assert missing == [{"expected": "/Game/UI/Image/Removed", "status": "not_in_client", "matches": []}]
+    assert missing == [{"expected": "/Game/UI/Image/Removed",
+                        "status": "not_in_client", "matches": []}]
     assert records["1"]["artwork"][0]["package_status"] == "present"
     await event_resources.annotate_image_packages(tmp_path, records)
     assert scan_mock.await_count == 1
@@ -119,12 +125,15 @@ async def test_event_catalog_reuses_shared_index_without_listing_or_log_scan(tmp
     from wuwa_story_worker import entity_media, event_resources
 
     package_index(tmp_path, ["/Game/Aki/UI/Image/Actual"])
-    scan = AsyncMock(side_effect=AssertionError("must reuse completed SQLite index"))
+    scan = AsyncMock(side_effect=AssertionError(
+        "must reuse completed SQLite index"))
     monkeypatch.setattr(entity_media, "tool", scan)
-    monkeypatch.setattr(event_resources, "tool_path", lambda _: tmp_path / "fmodel")
+    monkeypatch.setattr(event_resources, "tool_path",
+                        lambda _: tmp_path / "fmodel")
     (tmp_path / "archive-index.log").unlink()
     records = {"1": {"artwork": [{"path": "/Game/Aki/UI/Image/Actual"},
-                                  {"path": "/Game/Aki/UI/Image/Removed"}]}}
+                                 {"path": "/Game/Aki/UI/Image/Removed"}]}}
     missing = await event_resources.annotate_image_packages(tmp_path, records)
-    assert [entry["expected"] for entry in missing] == ["/Game/Aki/UI/Image/Removed"]
+    assert [entry["expected"]
+            for entry in missing] == ["/Game/Aki/UI/Image/Removed"]
     scan.assert_not_awaited()
