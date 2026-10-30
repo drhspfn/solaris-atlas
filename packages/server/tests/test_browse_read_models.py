@@ -24,6 +24,7 @@ KINDS = (
     "speaker",
     "dialogue",
     "cutscene",
+    "story_map",
 )
 
 
@@ -47,9 +48,14 @@ def test_entity_projection_schema(kind):
         "payload",
         "generation",
         "updated_at",
+        "card",
+        "role_type",
+        "quest_type",
+        "searchable_text",
+        "search_vector",
     }
     assert not table.foreign_keys
-    for name in ("title", "sort_title", "payload", "generation", "updated_at", "artwork"):
+    for name in ("title", "sort_title", "payload", "generation", "updated_at", "artwork", "card"):
         assert not table.c[name].nullable
     assert isinstance(table.c.generation.type, BigInteger)
     assert table.c.generation.default is table.c.generation.server_default is None
@@ -92,7 +98,7 @@ def database():
                 CREATE TABLE core.{kind}_read (
                     entity_id INTEGER NOT NULL, locale_id INTEGER NOT NULL,
                     snapshot_key TEXT NOT NULL DEFAULT 'current', title TEXT NOT NULL,
-                    sort_title TEXT NOT NULL, canonical_key TEXT, slug TEXT,
+                    sort_title TEXT NOT NULL, canonical_key TEXT, slug TEXT, card JSON NOT NULL, role_type INTEGER, quest_type TEXT, searchable_text TEXT NOT NULL DEFAULT '', search_vector TEXT,
                     primary_image_file_id INTEGER, primary_image_url TEXT,
                     artwork JSON NOT NULL DEFAULT '[]', payload JSON NOT NULL,
                     generation BIGINT NOT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -120,6 +126,10 @@ def database():
                     self.statements.append(statement)
                     return sync.scalars(statement)
 
+                async def execute(self, statement):
+                    self.statements.append(statement)
+                    return sync.execute(statement)
+
                 def entry(
                     self,
                     kind,
@@ -130,9 +140,29 @@ def database():
                     payload=None,
                     canonical_key=None,
                     slug=None,
+                    card=None,
+                    role_type=None,
+                    quest_type=None,
                 ):
+                    stored_card = {
+                        "status": "active",
+                        **(
+                            card
+                            if card is not None
+                            else (payload or {}).get(
+                                "card",
+                                {"node_type": kind, "aliases": [], "href": "/nodes/example"},
+                            )
+                        ),
+                    }
+                    if (
+                        kind == "game_event"
+                        and payload is not None
+                        and "calendar" not in stored_card
+                    ):
+                        stored_card["calendar"] = payload
                     connection.exec_driver_sql(
-                        f"INSERT INTO core.{kind}_read (entity_id, locale_id, snapshot_key, title, sort_title, payload, generation, canonical_key, slug) VALUES (?, ?, ?, ?, ?, ?, 7, ?, ?)",
+                        f"INSERT INTO core.{kind}_read (entity_id, locale_id, snapshot_key, title, sort_title, payload, generation, canonical_key, slug, card, role_type, quest_type) VALUES (?, ?, ?, ?, ?, ?, 7, ?, ?, ?, ?, ?)",
                         (
                             entity_id,
                             locale_id,
@@ -144,6 +174,21 @@ def database():
                             ),
                             canonical_key,
                             slug,
+                            json.dumps(stored_card),
+                            role_type
+                            if role_type is not None
+                            else (payload or {}).get("card", {}).get("role_type"),
+                            quest_type
+                            if quest_type is not None
+                            else (payload or {})
+                            .get("card", {})
+                            .get(
+                                "quest_type",
+                                (payload or {})
+                                .get("profile", {})
+                                .get("quest", {})
+                                .get("quest_type"),
+                            ),
                         ),
                     )
 
@@ -256,3 +301,23 @@ async def test_invalid_kind_and_pagination_do_not_query_sources():
             await operation
     session.scalar.assert_not_awaited()
     session.scalars.assert_not_awaited()
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_search_access_paths_are_on_new_read_tables_only(kind):
+    table = read_models.ENTITY_READ_MODELS[kind].__table__
+    assert table.c.search_vector.computed.persisted
+    assert not table.c.searchable_text.nullable
+    assert "to_tsvector" in str(table.c.search_vector.computed.sqltext)
+    expected = {
+        f"ix_{kind}_read_search_vector",
+        f"ix_{kind}_read_title_trgm",
+        f"ix_{kind}_read_searchable_text_trgm",
+    }
+    indexes = {index.name for index in table.indexes}
+    assert indexes.isdisjoint(expected) if kind == "story_map" else expected <= indexes
+    assert {f"ix_{kind}_read_{suffix}" for suffix in ("catalog", "canonical", "slug")} <= indexes
+    if kind == "character":
+        assert "ix_character_read_role_catalog" in indexes
+    if kind == "quest":
+        assert "ix_quest_read_type_catalog" in indexes

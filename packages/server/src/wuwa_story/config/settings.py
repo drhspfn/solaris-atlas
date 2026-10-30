@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     api_cache_ttl_seconds: int = Field(default=3600, ge=1)
     api_cache_max_body_bytes: int = Field(default=8 * 1024 * 1024, ge=1)
     api_cache_timeout_seconds: float = Field(default=0.3, gt=0)
+    # Enable readers only after durable projections have been backfilled and verified.
+    read_projections_enabled: bool = False
+    read_projection_min_free_gib: int = Field(default=20, ge=1)
+    read_projection_max_rows: int = Field(default=250_000, ge=1)
+    read_projection_max_bytes: int = Field(default=2 * 1024**3, ge=1)
     api_max_concurrent_requests: int = Field(default=8, ge=1)
     api_db_statement_timeout_ms: int = Field(default=20000, ge=1)
     s3_access_key_id: str = "minio"

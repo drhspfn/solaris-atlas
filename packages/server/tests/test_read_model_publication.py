@@ -19,6 +19,8 @@ def entry(**changes):
         "title": "Projected title",
         "sort_title": "projected title",
         "payload": {"complete": True},
+        "card": {"node_type": "character", "href": "/characters/7", "aliases": []},
+        "searchable_text": "Projected title",
         **changes,
     }
 
@@ -92,6 +94,8 @@ async def test_accepted_empty_relation_set_clears_previous_relations():
         "title",
         "sort_title",
         "payload",
+        "card",
+        "searchable_text",
     ],
 )
 async def test_missing_entry_fields_are_rejected_before_any_write(field):

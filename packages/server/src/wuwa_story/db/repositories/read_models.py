@@ -1,5 +1,7 @@
 """Projection-only public reads; missing snapshots never fall back to source data."""
 
+from types import SimpleNamespace
+
 from sqlalchemy import func, select
 
 from wuwa_story.db.models.browse import (
@@ -13,6 +15,7 @@ from wuwa_story.db.models.browse import (
     LocationRead,
     QuestRead,
     SpeakerRead,
+    StoryMapRead,
 )
 
 ENTITY_READ_MODELS = {
@@ -25,6 +28,7 @@ ENTITY_READ_MODELS = {
     "speaker": SpeakerRead,
     "dialogue": DialogueRead,
     "cutscene": CutsceneRead,
+    "story_map": StoryMapRead,
 }
 
 
@@ -54,16 +58,39 @@ async def browse_entries(session, kind, locale_id, snapshot_key="current", *, li
         raise ValueError("limit must be between 1 and 100 and offset must be nonnegative")
     filters = (model.locale_id == locale_id, model.snapshot_key == snapshot_key)
     total = await session.scalar(select(func.count()).select_from(model).where(*filters)) or 0
-    entries = list(
-        await session.scalars(
-            select(model)
-            .where(*filters)
-            .order_by(model.sort_title, model.entity_id)
-            .offset(offset)
-            .limit(limit)
-        )
+    entries = await card_rows(
+        session,
+        select(*card_columns(model))
+        .where(*filters)
+        .order_by(model.sort_title, model.entity_id)
+        .offset(offset)
+        .limit(limit),
     )
     return total, entries
+
+
+def card_columns(model):
+    """No full payload/artwork: a card must never fetch archives or transcripts."""
+    return (
+        model.entity_id,
+        model.locale_id,
+        model.snapshot_key,
+        model.title,
+        model.sort_title,
+        model.canonical_key,
+        model.slug,
+        model.primary_image_file_id,
+        model.primary_image_url,
+        model.generation,
+        model.card,
+        model.role_type,
+        model.quest_type,
+    )
+
+
+async def card_rows(session, statement):
+    rows = (await session.execute(statement)).mappings().all()
+    return [SimpleNamespace(**row) for row in rows]
 
 
 async def read_relations(

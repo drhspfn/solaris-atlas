@@ -7,15 +7,86 @@ is either ``current`` or an explicitly published version; readers never infer it
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, SmallInteger, String, Text, func, text
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import (
+    BigInteger,
+    Computed,
+    DateTime,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    func,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
+from sqlalchemy.orm import Mapped, declared_attr, mapped_column
 
 from wuwa_story.db.base import Base
 
 
 class _EntityReadMixin:
-    __table_args__ = {"schema": "core"}
+    @declared_attr.directive
+    def __table_args__(cls):
+        name = cls.__tablename__
+        indexes = [
+            Index(f"ix_{name}_catalog", "locale_id", "snapshot_key", "sort_title", "entity_id"),
+            Index(
+                f"ix_{name}_canonical",
+                "locale_id",
+                "snapshot_key",
+                "canonical_key",
+                postgresql_where=text("canonical_key IS NOT NULL"),
+            ),
+            Index(
+                f"ix_{name}_slug",
+                "locale_id",
+                "snapshot_key",
+                "slug",
+                postgresql_where=text("slug IS NOT NULL"),
+            ),
+        ]
+        if name == "character_read":
+            indexes.append(
+                Index(
+                    f"ix_{name}_role_catalog",
+                    "locale_id",
+                    "snapshot_key",
+                    "role_type",
+                    "sort_title",
+                    "entity_id",
+                )
+            )
+        if name == "quest_read":
+            indexes.append(
+                Index(
+                    f"ix_{name}_type_catalog",
+                    "locale_id",
+                    "snapshot_key",
+                    "quest_type",
+                    "sort_title",
+                    "entity_id",
+                )
+            )
+        if name == "story_map_read":
+            return (*indexes, {"schema": "core"})
+        return (
+            *indexes,
+            Index(f"ix_{name}_search_vector", "search_vector", postgresql_using="gin"),
+            Index(
+                f"ix_{name}_title_trgm",
+                "title",
+                postgresql_using="gin",
+                postgresql_ops={"title": "gin_trgm_ops"},
+            ),
+            Index(
+                f"ix_{name}_searchable_text_trgm",
+                "searchable_text",
+                postgresql_using="gin",
+                postgresql_ops={"searchable_text": "gin_trgm_ops"},
+            ),
+            {"schema": "core"},
+        )
 
     entity_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     locale_id: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
@@ -24,6 +95,20 @@ class _EntityReadMixin:
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
     sort_title: Mapped[str] = mapped_column(Text, nullable=False)
+    # Physically separate from large page payloads: catalog sorting/filtering must
+    # never decompress archives, transcripts or galleries just to read a card.
+    card: Mapped[dict[str, Any]] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    role_type: Mapped[int | None] = mapped_column(Integer)
+    quest_type: Mapped[str | None] = mapped_column(String(64))
+    searchable_text: Mapped[str] = mapped_column(Text, nullable=False)
+    search_vector: Mapped[str] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "to_tsvector('simple'::regconfig, coalesce(title, '') || ' ' || coalesce(searchable_text, ''))",
+            persisted=True,
+        ),
+        nullable=False,
+    )
     # Events/notices can have public addresses without a graph identity.
     canonical_key: Mapped[str | None] = mapped_column(String(512))
     slug: Mapped[str | None] = mapped_column(String(512))
@@ -74,6 +159,12 @@ class DialogueRead(_EntityReadMixin, Base):
 
 class CutsceneRead(_EntityReadMixin, Base):
     __tablename__ = "cutscene_read"
+
+
+class StoryMapRead(_EntityReadMixin, Base):
+    """Authored map aggregate; entity_id is quest_type_id + 1 (zero is bulk)."""
+
+    __tablename__ = "story_map_read"
 
 
 class EntityReadRelation(Base):

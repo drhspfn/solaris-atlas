@@ -12,13 +12,13 @@ async def publish_entry(session, kind, entry, relations=()):
     if kind not in ENTITY_READ_MODELS:
         raise ValueError("Unknown owner entity kind")
     model = ENTITY_READ_MODELS[kind]
-    required = {"entity_id", "locale_id", "snapshot_key", "generation", "title", "sort_title", "payload"}
+    required = {"entity_id", "locale_id", "snapshot_key", "generation", "title", "sort_title", "card", "searchable_text", "payload"}
     if not required <= entry.keys():
         raise ValueError("Incomplete public read projection")
     if entry["generation"] < 1:
         raise ValueError("Projection generation must be positive")
     merged = {}
-    for relation in relations:
+    for relation in relations or ():
         if not {"related_kind", "related_id", "relation_type"} <= relation.keys():
             raise ValueError("Incomplete projected relationship")
         if relation["related_kind"] not in ENTITY_READ_MODELS:
@@ -38,6 +38,8 @@ async def publish_entry(session, kind, entry, relations=()):
     accepted = await session.scalar(statement)
     if accepted is None:
         return False
+    if relations is None:
+        return True
     owner = {"owner_kind": kind, "owner_id": entry["entity_id"], "snapshot_key": entry["snapshot_key"]}
     await session.execute(delete(EntityReadRelation).where(
         EntityReadRelation.owner_kind == kind,
