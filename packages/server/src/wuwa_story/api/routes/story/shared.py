@@ -26,6 +26,7 @@ from wuwa_story.story.service import (
     _quest_info,
     _quest_state_ids,
     _release_id,
+    prefetch_node_labels,
 )
 
 __all__ = ['_choice_branch', '_version_key', '_dialogue_payload', '_explicit_entity_links', '_latest_source_record', '_localized', '_node_label', '_provenance', '_quest_info', '_quest_state_ids', '_release_id']
@@ -107,7 +108,7 @@ async def _character_progression_materials(
         .order_by(SourceRecord.row_index)
     )
     rows = list(item_rows)
-    breach_rows = await session.execute(
+    breach_rows = list(await session.execute(
         select(SourceRecord, SourceFile)
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
         .where(
@@ -116,7 +117,26 @@ async def _character_progression_materials(
             SourceRecord.data["BreachGroupId"].as_integer() == breach_id,
         )
         .order_by(SourceRecord.data["MaxLevel"].as_integer(), SourceRecord.row_index)
+    ))
+    item_ids = {
+        entry.get("Key")
+        for record, _ in breach_rows
+        for entry in record.data.get("BreachConsume") or []
+        if isinstance(entry.get("Key"), int)
+    }
+    item_ids.update(
+        entry["Item1"]
+        for record, _ in rows
+        for entry in record.data.get("ItemGroup") or []
+        if isinstance(entry.get("Item1"), int)
     )
+    item_nodes = {
+        item.canonical_key: item
+        for item in await session.scalars(
+            select(Node).where(Node.canonical_key.in_([f"item:{identity}" for identity in item_ids]))
+        )
+    } if item_ids else {}
+    await prefetch_node_labels(session, [item.id for item in item_nodes.values()], locale_code)
     materials: list[dict[str, Any]] = []
 
     async def append_material(
@@ -134,9 +154,7 @@ async def _character_progression_materials(
     ) -> None:
         if not isinstance(item_id, int):
             return
-        item_node = await session.scalar(
-            select(Node).where(Node.canonical_key == f"item:{item_id}")
-        )
+        item_node = item_nodes.get(f"item:{item_id}")
         materials.append(
             {
                 "kind": kind,

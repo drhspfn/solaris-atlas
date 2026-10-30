@@ -12,7 +12,7 @@ async def test_catalog_prefers_large_character_portrait_and_keeps_latest_item_ic
     monkeypatch.setattr(entity_media, "S3Storage", lambda _: SimpleNamespace(
         public_url=lambda key: "https://media.example/" + key))
     def row(owner, path, file_id):
-        return (SimpleNamespace(owner_node_id=owner, source_path=path), SimpleNamespace(id=file_id),
+        return (owner, path,
                 f"objects/{file_id}", f"{'character' if owner == 1 else 'item'}:{owner}")
     session = AsyncMock()
     session.execute.return_value = [
@@ -36,9 +36,9 @@ async def test_shared_resource_cannot_become_character_avatar_but_remains_valid_
     monkeypatch.setattr(entity_media, "S3Storage", lambda _: SimpleNamespace(public_url=lambda key: key))
     session = AsyncMock()
     session.execute.return_value = [
-        (SimpleNamespace(owner_node_id=1, source_path="/Game/UiQuest/Image/ChuanShuo/Default"), None, "wrong", "character:1"),
-        (SimpleNamespace(owner_node_id=2, source_path="/Game/Common/IconRup/Material"), None, "item", "item:2"),
-        (SimpleNamespace(owner_node_id=3, source_path="/Game/Common/T_ActivityRoleYangyang"), None, "foreign", "character:1409"),
-        (SimpleNamespace(owner_node_id=4, source_path="/Game/Common/T_ActivityRoleYangyang"), None, "own", "character:1402"),
+        (1, "/Game/UiQuest/Image/ChuanShuo/Default", "wrong", "character:1"),
+        (2, "/Game/Common/IconRup/Material", "item", "item:2"),
+        (3, "/Game/Common/T_ActivityRoleYangyang", "foreign", "character:1409"),
+        (4, "/Game/Common/T_ActivityRoleYangyang", "own", "character:1402"),
     ]
     assert await entity_image_urls(session, [1, 2, 3, 4]) == {2: "item", 4: "own"}

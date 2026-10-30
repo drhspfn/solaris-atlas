@@ -106,30 +106,63 @@ def _summary_source(source, locale):
     )
 
 
-async def read_event_media(session: AsyncSession, banner_paths: set[str], bucket: str):
-    source_path_matches = [FileReference.source_path.in_(banner_paths)]
-    source_path_matches.extend(
-        FileReference.source_path.endswith("/" + path) for path in banner_paths if not path.startswith("/Game/")
-    )
-    return await session.execute(
-        select(FileReference.source_path, FileLocation.object_key, FileReference.metadata_json)
-        .join(FileObject, FileObject.id == FileReference.file_id)
-        .join(FileLocation, FileLocation.file_id == FileObject.id)
-        .where(
-            or_(*source_path_matches),
-            FileLocation.available.is_(True),
-            FileLocation.is_primary.is_(True),
-            FileLocation.backend == "s3",
-            FileLocation.bucket == bucket,
-            FileObject.mime_type.in_(
-                ["image/png", "image/jpeg", "image/webp", "image/avif"]
-            ),
+async def read_event_media(
+    session: AsyncSession, banner_paths: set[str], bucket: str, *,
+    captures: set[tuple[str, str]] | None = None,
+):
+    if not banner_paths:
+        return []
+    def media_query(path_filter):
+        # Fence the path lookup so the large media joins see only candidate refs.
+        candidates = (
+            select(FileReference.file_id, FileReference.source_path,
+                   FileReference.metadata_json.label("metadata_json"))
+            .where(path_filter)
+            .cte("event_media_candidates")
+            .prefix_with("MATERIALIZED", dialect="postgresql")
         )
+        return (
+            select(candidates.c.source_path, FileLocation.object_key, candidates.c.metadata_json)
+            .select_from(candidates)
+            .join(FileObject, FileObject.id == candidates.c.file_id)
+            .join(FileLocation, FileLocation.file_id == FileObject.id)
+            .where(
+                FileLocation.available.is_(True),
+                FileLocation.is_primary.is_(True),
+                FileLocation.backend == "s3",
+                FileLocation.bucket == bucket,
+                FileObject.mime_type.in_(
+                    ["image/png", "image/jpeg", "image/webp", "image/avif"]
+                ),
+            )
+        )
+    rows = list(await session.execute(media_query(FileReference.source_path.in_(banner_paths))))
+    resolved = {((metadata or {}).get("download_id", ""), path) for path, _, metadata in rows}
+    # An exact hit from another capture must not hide an older run's suffix asset.
+    unresolved = (
+        {path for download, path in captures if (download, path) not in resolved}
+        if captures is not None else banner_paths - {path for path, _, _ in rows}
     )
+    relative_paths = sorted(path for path in unresolved if not path.startswith("/Game/"))
+    if relative_paths:
+        rows.extend(await session.execute(media_query(or_(
+            *(FileReference.source_path.endswith("/" + path, autoescape=True)
+              for path in relative_paths)
+        ))))
+    return rows
 
 
-async def read_event_announcements(session: AsyncSession) -> list[GameNotice]:
-    return list(await session.scalars(select(GameNotice).where(GameNotice.locale == "en")))
+async def read_event_announcements(
+    session: AsyncSession, *, event_id: int | None = None, notice_ids: set[int] | None = None,
+) -> list[GameNotice]:
+    statement = select(GameNotice).where(GameNotice.locale == "en")
+    if event_id is not None:
+        statement = statement.where(or_(
+            GameNotice.related_event_ids.contains([event_id]),
+            GameNotice.related_event_ids == [],
+            GameNotice.id.in_(notice_ids or set()),
+        ))
+    return list(await session.scalars(statement))
 
 
 async def read_event_notice_snapshots(

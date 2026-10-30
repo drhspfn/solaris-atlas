@@ -21,6 +21,11 @@ async def test_archive_exposes_independent_tracks_without_changing_text_locale(m
         return []
 
     monkeypatch.setattr(archive, "_records", records)
+    async def record_groups(session, release, requests):
+        return {file: await records(session, release, file, field, identity)
+                for file, (field, identity) in requests.items()}
+
+    monkeypatch.setattr(archive, "_record_groups", record_groups)
     monkeypatch.setattr(archive, "get_settings", lambda: SimpleNamespace(s3_bucket="test"))
     monkeypatch.setattr(archive, "S3Storage", lambda _: SimpleNamespace(public_url=lambda key: f"https://cdn.example/{key}"))
     rows = [(SimpleNamespace(source_path=path, source_name=language),

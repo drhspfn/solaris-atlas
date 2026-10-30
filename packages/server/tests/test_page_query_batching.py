@@ -2,6 +2,7 @@ from types import SimpleNamespace as Row
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 from wuwa_story.api.routes import nodes, story
 from wuwa_story.api.routes.story import profiles
@@ -46,9 +47,9 @@ async def test_character_reuses_shared_scene_and_batches_transcript(monkeypatch)
         get=AsyncMock(return_value=character),
         execute=AsyncMock(side_effect=[
             [(link, speaker, Row(canonical_key="speaker:40"))],
-            [], [(2, 9), (3, 9)], Row(all=lambda: transcript), Row(first=lambda: None), [],
+            [], [(2, 9), (3, 9)], Row(all=lambda: transcript), [],
         ]),
-        scalars=AsyncMock(side_effect=[[9], [state], [], [state], [], [], []]),
+        scalars=AsyncMock(side_effect=[[9], [state], [], [], [], []]),
         scalar=AsyncMock(return_value=None),
     )
     monkeypatch.setattr(profiles, "get_node", AsyncMock(return_value=Row(id=1, canonical_key="character:1", slug=None)))
@@ -68,7 +69,11 @@ async def test_character_reuses_shared_scene_and_batches_transcript(monkeypatch)
     assert scenes[0]["dialogue"] == [{"id": 1}, {"id": 2}]
     assert not scenes[0]["dialogue_truncated"]
     prefetch.assert_awaited_once_with(session, transcript, "en", 5)
-    assert session.execute.await_count == 6
+    assert session.execute.await_count == 5
+    statement = session.execute.await_args_list[3].args[0]
+    sql = str(statement.compile(dialect=postgresql.dialect()))
+    assert "core.quest_action.params" not in sql
+    assert "raw.source_record.data" not in sql
 
 
 @pytest.mark.asyncio

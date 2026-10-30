@@ -119,16 +119,116 @@ async def test_detail_query_constrains_event_server_and_exact_occurrence(occurre
 @pytest.mark.asyncio
 async def test_media_lookup_keeps_suffix_fallback_capture_metadata_and_published_image_filters():
     session = AsyncMock()
+    session.execute.return_value = []
     await read_event_media(session, {"/Game/Banner", "UI/a_b.png"}, "test")
-    statement = session.execute.call_args.args[0]
-    compiled = statement.compile(dialect=postgresql.dialect())
-    sql = str(compiled)
-    assert "LIKE" in sql
-    assert "metadata" in sql
-    assert "test" in compiled.params.values()
-    assert "file_location.is_primary IS true" in sql
-    assert "file_location.available IS true" in sql
-    assert "image/png" in str(compiled.params)
+    statements = [call.args[0].compile(dialect=postgresql.dialect())
+                  for call in session.execute.call_args_list]
+    assert len(statements) == 2
+    assert "source_path IN" in str(statements[0])
+    assert "LIKE" not in str(statements[0])
+    assert "source_path IN" not in str(statements[1])
+    assert "//UI//a/_b.png" in statements[1].params.values()
+    assert "/Game/Banner" not in statements[1].params.values()
+    for compiled in statements:
+        sql = str(compiled)
+        candidates, joins = sql.split(")\n SELECT", 1)
+        assert "event_media_candidates AS MATERIALIZED" in candidates
+        assert "storage.file_reference" in candidates
+        assert "JOIN" not in candidates
+        assert "JOIN storage.file_object" in joins
+        assert "JOIN storage.file_location" in joins
+        assert "metadata" in sql
+        assert "test" in compiled.params.values()
+        assert "file_location.is_primary IS true" in sql
+        assert "file_location.available IS true" in sql
+        assert "s3" in compiled.params.values()
+        assert ["image/png", "image/jpeg", "image/webp", "image/avif"] in compiled.params.values()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("captures", [None, {("current", "UI/banner.png")}])
+async def test_media_exact_hits_skip_suffix_query(captures):
+    rows = [("UI/banner.png", "current-image", {"download_id": "current"})]
+    session = AsyncMock()
+    session.execute.return_value = rows
+    assert await read_event_media(
+        session, {"UI/banner.png"}, "test", captures=captures,
+    ) == rows
+    session.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_media_fallback_only_queries_unresolved_relative_paths_and_keeps_captures():
+    exact = [("UI/banner.png", "current-image", {"download_id": "current"}),
+             ("UI/resolved.png", "resolved-image", {"download_id": "old"})]
+    historical = [("capture/UI/banner.png", "old-image", {"download_id": "old"})]
+    session = AsyncMock()
+    session.execute.side_effect = [exact, historical]
+    rows = await read_event_media(
+        session, {"UI/banner.png", "UI/resolved.png", "/Game/Missing"}, "test",
+        captures={("current", "UI/banner.png"), ("old", "UI/banner.png"),
+                  ("old", "UI/resolved.png"), ("old", "/Game/Missing")},
+    )
+    assert rows == exact + historical
+    fallback = session.execute.call_args.args[0].compile(dialect=postgresql.dialect())
+    assert "//UI//banner.png" in fallback.params.values()
+    assert "//UI//resolved.png" not in fallback.params.values()
+    assert "/Game/Missing" not in fallback.params.values()
+
+
+@pytest.mark.asyncio
+async def test_media_missing_game_paths_do_not_trigger_suffix_query():
+    session = AsyncMock()
+    session.execute.return_value = []
+    assert await read_event_media(session, {"/Game/Missing"}, "test") == []
+    session.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_detail_announcements_keep_linked_pinned_and_unlinked_candidates():
+    session = AsyncMock()
+    session.scalars.return_value = []
+    await event_service.repository.read_event_announcements(session, event_id=7, notice_ids={11})
+    compiled = session.scalars.call_args.args[0].compile(dialect=postgresql.dialect())
+    assert "en" in compiled.params.values()
+    assert [7] in compiled.params.values()
+    assert [11] in compiled.params.values()
+    assert [] in compiled.params.values()
+    assert "related_event_ids @>" in str(compiled)
+    assert "related_event_ids =" in str(compiled)
+    assert "game_notice.id IN" in str(compiled)
+
+
+@pytest.mark.asyncio
+async def test_service_preserves_historical_media_when_current_capture_has_exact_hit(monkeypatch):
+    record = event()
+    record.banner_path = "UI/banner.png"
+    record.source_data["client"].update({
+        "artwork": [{"path": record.banner_path, "role": "content"}], "prefab_artwork": [],
+    })
+    occurrence = SimpleNamespace(
+        id=42, game_version="3.6", starts_at=None, ends_at=None, season=None, banner_path=None,
+        source_data={"client": {
+            "download_id": "old", "artwork": [{"path": record.banner_path, "role": "content"}],
+        }},
+    )
+    monkeypatch.setattr(event_service.repository, "read_event_runs",
+                        AsyncMock(return_value=[(record, None), (record, occurrence)]))
+    monkeypatch.setattr(event_service, "get_settings", lambda: SimpleNamespace(s3_bucket="test"))
+    monkeypatch.setattr(event_service, "S3Storage", lambda _: SimpleNamespace(public_url=lambda k: k))
+    session = AsyncMock()
+    session.scalars.return_value = []
+    session.execute.side_effect = [
+        [(record.banner_path, "https://cdn.test/current", {"download_id": "current"})],
+        [("capture/UI/banner.png", "https://cdn.test/old", {"download_id": "old"})],
+    ]
+    result = await event_service.browse_events("europe", None, None, "en", session)
+    current, historical = result["events"]
+    assert current["preview_url"] == current["banner_url"] == "https://cdn.test/current"
+    assert historical["preview_url"] == historical["banner_url"] == "https://cdn.test/old"
+    assert historical["artwork"][0]["url"] == "https://cdn.test/old"
+    assert historical["preview_provenance"] == "game_client"
+    assert session.execute.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -158,7 +258,9 @@ async def test_service_joins_pinned_notice_presentation_and_reward_addresses(mon
     session = AsyncMock()
     session.scalars.side_effect = [[notice], [snapshot], [reward]]
     session.execute.return_value = []
-    result = await event_service.browse_events("europe", None, None, "ru", session, summary=True)
+    result = await event_service.browse_events(
+        "europe", None, None, "ru", session, summary=True, event_id=7, occurrence_id=42,
+    )
     payload = result["events"][0]
     assert payload["title"] == "Pinned title"
     assert payload["preview_url"] == "https://cdn.test/archived"
@@ -169,6 +271,8 @@ async def test_service_joins_pinned_notice_presentation_and_reward_addresses(mon
     statements = [call.args[0].compile(dialect=postgresql.dialect())
                   for call in session.scalars.call_args_list]
     assert "en" in statements[0].params.values()
+    assert [7] in statements[0].params.values()
+    assert [11] in statements[0].params.values()
     assert ["archived"] in statements[1].params.values()
     assert ["item:123"] in statements[2].params.values()
 
@@ -176,9 +280,11 @@ async def test_service_joins_pinned_notice_presentation_and_reward_addresses(mon
 @pytest.mark.asyncio
 async def test_optional_repository_reads_skip_empty_inputs():
     session = AsyncMock()
+    assert await read_event_media(session, set(), "test") == []
     assert await event_service.repository.read_event_notice_snapshots(session, set()) == []
     assert await event_service.repository.read_event_reward_nodes(session, set()) == []
     session.scalars.assert_not_awaited()
+    session.execute.assert_not_awaited()
 
 
 def test_route_helper_exports_remain_compatible():

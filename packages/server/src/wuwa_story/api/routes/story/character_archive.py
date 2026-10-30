@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.api.public_addresses import public_addresses
@@ -13,7 +13,12 @@ from wuwa_story.api.routes.story.shared import _release_id, _version_key
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.core import Character, Item
 from wuwa_story.db.models.graph import Node
-from wuwa_story.db.models.i18n import Locale, LocalizationKey, LocalizationValue
+from wuwa_story.db.models.i18n import (
+    Locale,
+    LocalizationContent,
+    LocalizationKey,
+    LocalizationValue,
+)
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
@@ -33,11 +38,37 @@ async def _records(
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
         .where(
             SourceRecord.release_id == release_id,
+            SourceFile.release_id == release_id,
             SourceFile.logical_source_path == path,
             SourceRecord.data[field].as_integer() == value,
         )
         .order_by(SourceRecord.row_index)
     ))
+
+
+async def _record_groups(
+    session: AsyncSession, release_id: int, requests: dict[str, tuple[str, int]]
+) -> dict[str, list[SourceRecord]]:
+    """Read the related dossier tables in one snapshot-scoped query."""
+    groups: dict[str, list[SourceRecord]] = {path: [] for path in requests}
+    if not requests:
+        return groups
+    rows = await session.execute(
+        select(SourceRecord, SourceFile.logical_source_path)
+        .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+        .where(
+            SourceRecord.release_id == release_id,
+            SourceFile.release_id == release_id,
+            SourceFile.logical_source_path.in_(requests),
+            or_(*(and_(SourceFile.logical_source_path == path,
+                       SourceRecord.data[field].as_integer() == value)
+                  for path, (field, value) in requests.items())),
+        )
+        .order_by(SourceRecord.row_index)
+    )
+    for record, path in rows:
+        groups[path].append(record)
+    return groups
 
 
 async def _localized_strings(
@@ -54,8 +85,9 @@ async def _localized_strings(
         return {}
     target_version = _version_key(requested_release.game_version)
     rows = await session.execute(
-        select(LocalizationKey.key, LocalizationValue.content, GameRelease.game_version, GameRelease.sequence)
+        select(LocalizationKey.key, LocalizationContent.content, GameRelease.game_version, GameRelease.sequence)
         .join(LocalizationValue, LocalizationValue.key_id == LocalizationKey.id)
+        .join(LocalizationContent, LocalizationContent.id == LocalizationValue.content_id)
         .join(GameRelease, GameRelease.id == LocalizationValue.release_id)
         .where(
             LocalizationKey.key.in_(requested),
@@ -113,16 +145,26 @@ async def character_archive(
         raise HTTPException(status_code=404, detail="character source record not found")
     role = role_rows[0].data
     element_id = role.get("ElementId")
-    element_rows = await _records(session, release_id, paths["element"], "Id", element_id if isinstance(element_id, int) else -1)
-    quality_rows = await _records(session, release_id, paths["quality"], "Id", role.get("QualityId") or -1)
+    groups = await _record_groups(session, release_id, {
+        paths["element"]: ("Id", element_id if isinstance(element_id, int) else -1),
+        paths["quality"]: ("Id", role.get("QualityId") or -1),
+        paths["favor"]: ("RoleId", role_id),
+        paths["skills"]: ("SkillGroupId", role.get("SkillId") or role_id),
+        paths["tree"]: ("NodeGroup", role.get("SkillTreeGroupId") or role_id),
+        paths["chain"]: ("GroupId", role.get("ResonantChainGroupId") or role_id),
+        paths["voices"]: ("RoleId", role_id),
+        paths["role_audio"]: ("Id", role_id),
+    })
+    element_rows = groups[paths["element"]]
+    quality_rows = groups[paths["quality"]]
     element = element_rows[0].data if element_rows else {}
     quality = quality_rows[0].data if quality_rows else {}
-    favor_rows = await _records(session, release_id, paths["favor"], "RoleId", role_id)
-    skill_rows = await _records(session, release_id, paths["skills"], "SkillGroupId", role.get("SkillId") or role_id)
-    tree_rows = await _records(session, release_id, paths["tree"], "NodeGroup", role.get("SkillTreeGroupId") or role_id)
-    chain_rows = await _records(session, release_id, paths["chain"], "GroupId", role.get("ResonantChainGroupId") or role_id)
-    voice_rows = await _records(session, release_id, paths["voices"], "RoleId", role_id)
-    role_audio_rows = await _records(session, release_id, paths["role_audio"], "Id", role_id)
+    favor_rows = groups[paths["favor"]]
+    skill_rows = groups[paths["skills"]]
+    tree_rows = groups[paths["tree"]]
+    chain_rows = groups[paths["chain"]]
+    voice_rows = groups[paths["voices"]]
+    role_audio_rows = groups[paths["role_audio"]]
     cost_ids = {
         cost.get("Key") for row in tree_rows for cost in (row.data.get("Consume") or [])
         if isinstance(cost, dict) and isinstance(cost.get("Key"), int)
