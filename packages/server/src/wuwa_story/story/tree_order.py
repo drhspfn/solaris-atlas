@@ -1,8 +1,6 @@
 """Project source-authored tree positions onto quest and LevelPlay flow states."""
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any
 
 from sqlalchemy import select
@@ -12,21 +10,10 @@ from wuwa_story.db.models.graph import NodeRevision
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.repositories.cutscenes import source_parents
 from wuwa_story.ingestion.dungeon_context import walk
-from wuwa_story.ingestion.quest_tree_order import tree_node_order_hash
+from wuwa_story.ingestion.level_interactions import verified_interactions
+from wuwa_story.ingestion.quest_tree_order import records_match
 from wuwa_story.story.media import media_links
 from wuwa_story.story.runtime_blocks import project_blocks
-
-
-def records_match(nodes: list[dict], records: dict[int, dict]) -> bool:
-    if {node['id'] for node in nodes} != set(records):
-        return False
-    for node in nodes:
-        raw = json.dumps(records[node['id']], sort_keys=True, separators=(',', ':'),
-                         ensure_ascii=False).encode('utf-8')
-        if (hashlib.sha256(raw).hexdigest() != node.get('record_sha256')
-                and tree_node_order_hash(records[node['id']]) != node.get('order_sha256')):
-            return False
-    return True
 
 
 def flow_positions(quest_nodes: list[dict], quest_records: dict[int, dict],
@@ -106,8 +93,16 @@ async def authored_order(session, quest_id: int, release_id: int | None):
     level_trees = {tree.tree_id: (tree.nodes, await rows(
         'BinData/LevelPlayNodeData/levelplaynodedata.json', tree.tree_id)) for tree in trees}
     level_trees = {identity: tree for identity, tree in level_trees.items() if records_match(*tree)}
-    blocks = project_blocks(quest_id, quest_tree.nodes, qrecords, level_trees)
+    level_rows = list(await session.scalars(select(SourceRecord.data).join(SourceFile).where(
+        SourceRecord.release_id == release_id,
+        SourceFile.logical_source_path == 'BinData/LevelPlayData/levelplaydata.json',
+        SourceRecord.data['LevelPlayId'].as_integer().in_(level_trees)))) if level_trees else []
+    interactions = {row['LevelPlayId']: verified_interactions(level_trees[row['LevelPlayId']][0], row['Data'])
+                    for row in level_rows if isinstance(row.get('Data'), dict)}
+    blocks = project_blocks(quest_id, quest_tree.nodes, qrecords, level_trees, interactions)
     possible = set()
+    optional_states = {flow['state'] for items in interactions.values() for item in items for flow in item['flow_states']}
+    possible.update(optional_states)
     for record in list(qrecords.values()) + [row for _, records in level_trees.values() for row in records.values()]:
         for _, value in walk(record):
             name, flow, state = (value.get(k) for k in ('FlowListName', 'FlowId', 'StateId'))
@@ -142,6 +137,9 @@ async def authored_order(session, quest_id: int, release_id: int | None):
         for identity in (state, *captions_by_state.get(state, [])):
             if identity not in ordered:
                 ordered.append(identity)
+    for key in sorted(optional_states):
+        if key in states and states[key] not in ordered:
+            ordered.append(states[key])
     caption_keys = dict(await session.execute(select(QuestState.node_id, QuestState.state_key).where(
         QuestState.node_id.in_(caption_positions)))) if caption_positions else {}
     all_positions = {**dict(positions), **{caption_keys[identity]: position for identity, position in caption_positions.items()

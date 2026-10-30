@@ -56,6 +56,7 @@ from wuwa_story_worker.media_workspace import (
     run_workspace_id,
     workspace_lease,
 )
+from wuwa_story_worker.quest_interactions import read_interactions
 from wuwa_story_worker.quest_tree_order import store_tree_order, tree_records
 from wuwa_story_worker.tooling import asset_workspace, tool_path
 from wuwa_story_worker.voice_import import (
@@ -169,18 +170,18 @@ async def import_tree_orders(parent, session):
     key = int.from_bytes(hashlib.sha256(parent["download_id"].encode()).digest()[:4], "big", signed=True)
     async with engine.connect() as lock_connection, job_lock(lock_connection, 704, key):
         existing = await session.get(AuthoredTreeImport, (parent["asset_version"], parent["download_id"]))
-        if existing and existing.schema_version == 2:
+        if existing and existing.schema_version == 3:
             return {"asset_version": parent["asset_version"], "trees": existing.tree_count,
                     "unresolved": 0, "reused": True}, "completed"
         await session.commit()
         result, status = await _import_tree_orders(parent, session)
         if status == "completed":
             if existing:
-                existing.tree_count, existing.schema_version = result["trees"], 2
+                existing.tree_count, existing.schema_version = result["trees"], 3
             else:
                 session.add(AuthoredTreeImport(asset_version=parent["asset_version"],
                                                download_id=parent["download_id"], tree_count=result["trees"],
-                                               schema_version=2))
+                                               schema_version=3))
             await session.commit()
         return result, status
 
@@ -189,8 +190,13 @@ async def _import_tree_orders(parent, session):
     root = client_root(parent)
     extractor = tool_path("WUWA_FMODEL_PATH")
     config = await export_assets(root, extractor, "ConfigDB")
+    config_dirs = list((config.parent / 'files').rglob('db_LevelPlayData.db'))
+    if len(config_dirs) != 1:
+        raise ValueError('Expected one pinned client LevelPlay database')
+    interactions = await asyncio.to_thread(read_interactions, config_dirs[0].parent)
     errors = []
     total = 0
+    interaction_count = 0
     for kind, folder, dbname in (
         ("quest", "Quests", "db_QuestNodeData.db"),
         ("level_play", "LevelPlays", "db_LevelPlayNodeData.db"),
@@ -203,12 +209,19 @@ async def _import_tree_orders(parent, session):
         records = await asyncio.to_thread(
             list, tree_records(databases[0], files, kind, parent["asset_version"], parent["download_id"], errors)
         )
+        if kind == 'level_play':
+            for record in records:
+                root_node = next((node for node in record['nodes'] if node['path'] == []), None)
+                if root_node is not None:
+                    root_node.update(interactions.get(record['tree_id'], {}))
+                    interaction_count += len(root_node.get('interactions', []))
         for start in range(0, len(records), 25):
             total += await store_tree_order(session, records[start:start + 25])
             await session.commit()
     logger.info("release_media.tree_order asset_version=%s stored=%s unresolved=%s",
                 parent["asset_version"], total, len(errors))
     return {"asset_version": parent["asset_version"], "trees": total,
+            "interactions": interaction_count,
             "unresolved": len(errors), "errors": errors[:100]}, "partial" if errors else "completed"
 
 
@@ -872,10 +885,16 @@ async def _process_release_media(payload):
                         # Replayed pre-workspace coordinators must never export
                         # into retained downloads or reuse their old entity child.
                         run.raw_output = None
+                        repair_scope = {}
+                        if payload['kind'] == 'tree_order':
+                            repair_scope['story_structure_only'] = True
+                        elif (payload['kind'] == 'images' and payload.get('targets')
+                              and all(key.startswith('flow_state:') for key in payload['targets'])):
+                            repair_scope['illustrations_only'] = True
                         renewed = await enqueue_release_media(
                             session, payload["release_id"],
                             event_artwork_only=payload["kind"] in {"event_catalog", "event_images", "event_resources"},
-                            notices_only=payload["kind"] == "event_notices")
+                            notices_only=payload["kind"] == "event_notices", **repair_scope)
                         logger.warning("release_media.legacy_workspace_renewed run=%s parent=%s release=%s queued=%s",
                                        run.id, parent.id, payload["release_id"], renewed["queued"])
                         raise JobDeferred("Legacy media dependency renewed; waiting for patch workspace preparation")
@@ -894,6 +913,8 @@ async def _process_release_media(payload):
                         result, status = await import_notices(client_root(parent.raw_output), session)
                     elif payload["kind"] == "tree_order":
                         result, status = await import_tree_orders(parent.raw_output, session)
+                        from wuwa_story.ingestion.dungeon_backfill import backfill
+                        result['graph_repair'] = await backfill(session, payload['release_id'])
                     elif payload["kind"] == "cutscene_assets":
                         result, status = await cutscene_assets(payload, parent.raw_output)
                     elif payload["kind"] == "voice_packages":

@@ -213,6 +213,10 @@ async def quest_media(
     )
     runtime_refs = [(block, ref) for block in (tree_order or {}).get('blocks', [])
                     for ref in block['media']]
+    runtime_refs.extend(({**block, 'source': item['source'],
+                          'interaction_id': block['id'] + ':' + item['id']}, ref)
+                        for block in (tree_order or {}).get('blocks', [])
+                        for item in block.get('interactions', []) for ref in item.get('media', []))
     runtime_nodes = dict(await session.execute(select(Node.canonical_key, Node.id).where(
         Node.canonical_key.in_({ref['reference'] for _, ref in runtime_refs}),
         select(NodeRevision.id).where(NodeRevision.node_id == Node.id,
@@ -294,19 +298,23 @@ async def quest_media(
                 entry['story_position'] = [*position, action.action_index, -1]
             sources.append((entry, link['node_id']))
     for block, ref in runtime_refs:
-        if ref['reference'] not in runtime_nodes:
-            continue
-        sources.append(({
+        entry = {
             'kind': ref['kind'], 'action': block['id'] + ref['raw_path'],
-            'flow_state': block['owner'], 'action_index': ref['position'][-1],
+            'flow_state': block['owner'], 'action_index': ref.get('position', [0])[-1],
             'reference': ref['reference'], 'story_block_id': block['id'],
-            'story_position': ref['position'], 'story_order_mapped': True,
+            'story_order_mapped': 'position' in ref,
             'context_inferred': False, 'branches': block['branches'],
             'transition': ref.get('transition', False), 'basis': ref['basis'],
             'source': {**block['source'], 'raw_path': ref['raw_path']},
             'engine_path': ref['reference'].removeprefix('asset:ue:') if ref['kind'] == 'sequence' else None,
             'reference_kind': 'unreal_asset_path' if ref['kind'] == 'sequence' else 'cg_name',
-        }, runtime_nodes[ref['reference']]))
+        }
+        if 'position' in ref:
+            entry['story_position'] = ref['position']
+        if block.get('interaction_id'):
+            entry['interaction_id'] = block['interaction_id']
+            entry['action'] += ':' + block['interaction_id']
+        sources.append((entry, runtime_nodes.get(ref['reference'])))
     events = []
     for entry, target_id in sources:
         if entry["kind"] == "cutscene":

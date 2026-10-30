@@ -335,7 +335,7 @@ def compile_flow(root: Path, writer: Writer, english: dict[str, dict[str, Any]],
                     writer.diagnostic("unsupported_talk_sequence", "error", source,
                                       f"{action_path}.Params.TalkSequence[{seq_index}]", sequence)
                     continue
-                for pos, (left, right) in enumerate(zip(sequence, sequence[1:])):
+                for pos, (left, right) in enumerate(zip(sequence, sequence[1:], strict=False)):
                     left_ids, right_ids = by_local_id.get(left, []), by_local_id.get(right, [])
                     seq_path = f"{action_path}.Params.TalkSequence[{seq_index}][{pos}]"
                     if len(left_ids) == len(right_ids) == 1:

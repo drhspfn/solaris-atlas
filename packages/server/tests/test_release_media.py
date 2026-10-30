@@ -7,6 +7,45 @@ from wuwa_story.ingestion import release_media
 
 
 @pytest.mark.asyncio
+async def test_story_repair_queues_only_index_and_reuses_normal_prepare(monkeypatch):
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version='3.7.0')
+    session.scalar.side_effect = [4, None, None]
+    runs = []
+    session.add = runs.append
+    async def flush():
+        runs[-1].id = len(runs)
+    session.flush.side_effect = flush
+    publish = AsyncMock()
+    monkeypatch.setattr(release_media, 'publish_media_job', publish)
+    await release_media.enqueue_release_media(session, 9, story_structure_only=True)
+    payloads = [call.args[0] for call in publish.await_args_list]
+    assert [payload['kind'] for payload in payloads] == ['prepare', 'tree_order']
+    assert payloads[1]['index_schema'] == 3
+    session.scalars.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_illustration_repair_does_not_even_scan_audio_or_movie_tables(monkeypatch):
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version='3.7.0')
+    session.scalar.side_effect = [4, None, None]
+    session.scalars.return_value = ['flow_state:Story_1_29']
+    runs = []
+    session.add = runs.append
+    async def flush():
+        runs[-1].id = len(runs)
+    session.flush.side_effect = flush
+    publish = AsyncMock()
+    monkeypatch.setattr(release_media, 'publish_media_job', publish)
+    await release_media.enqueue_release_media(session, 9, illustrations_only=True)
+    payloads = [call.args[0] for call in publish.await_args_list]
+    assert [payload['kind'] for payload in payloads] == ['prepare', 'images']
+    assert payloads[1]['targets'] == ['flow_state:Story_1_29']
+    session.scalars.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_notice_refresh_does_not_queue_unrelated_asset_work(monkeypatch):
     session = AsyncMock()
     session.get.return_value = SimpleNamespace(game_version="3.7.0")

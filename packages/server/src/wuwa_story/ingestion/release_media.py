@@ -24,6 +24,7 @@ def batches(values, size=100):
 async def enqueue_release_media(
     session, release_id: int, *, event_artwork_only: bool = False, notices_only: bool = False,
     illustrations_only: bool = False,
+    story_structure_only: bool = False,
 ) -> dict:
     release = await session.get(GameRelease, release_id)
     if release is None:
@@ -32,7 +33,7 @@ async def enqueue_release_media(
     await session.execute(insert(Processor).values(key=PROCESSOR, version="1")
                           .on_conflict_do_nothing(index_elements=[Processor.key]))
     processor = await session.scalar(select(Processor.id).where(Processor.key == PROCESSOR))
-    if event_artwork_only or notices_only:
+    if event_artwork_only or notices_only or story_structure_only:
         entities, cutscenes, voices = [], [], []
     else:
         present = select(NodeRevision.node_id).where(NodeRevision.release_id == release_id)
@@ -43,13 +44,15 @@ async def enqueue_release_media(
         catalog = ((Node.canonical_key.startswith("character:"))
                    | (Node.canonical_key.startswith("item:")) | (Node.canonical_key.startswith("skill:")))
         entities = list(await session.scalars(select(Node.canonical_key).where(
-            Node.id.in_(present), (catalog if not illustrations_only else False)
-            | Node.id.in_(illustrated)).order_by(Node.id)))
-        cutscenes = list(await session.scalars(select(Cutscene.cg_name).where(
-            Cutscene.node_id.in_(present), Cutscene.cg_name.is_not(None)).order_by(Cutscene.node_id)))
-        voices = list(await session.scalars(select(VoiceReference.file_name).where(
-            VoiceReference.node_id.in_(present), VoiceReference.file_name.is_not(None))
-            .distinct().order_by(VoiceReference.file_name)))
+            Node.id.in_(present), Node.id.in_(illustrated) if illustrations_only else
+            catalog | Node.id.in_(illustrated)).order_by(Node.id)))
+        cutscenes, voices = [], []
+        if not illustrations_only:
+            cutscenes = list(await session.scalars(select(Cutscene.cg_name).where(
+                Cutscene.node_id.in_(present), Cutscene.cg_name.is_not(None)).order_by(Cutscene.node_id)))
+            voices = list(await session.scalars(select(VoiceReference.file_name).where(
+                VoiceReference.node_id.in_(present), VoiceReference.file_name.is_not(None))
+                .distinct().order_by(VoiceReference.file_name)))
     characters = [key for key in entities if key.startswith("character:")]
     if illustrations_only:
         cutscenes, voices, characters = [], [], []
@@ -79,6 +82,8 @@ async def enqueue_release_media(
         dependency = dependencies.get("event_catalog" if kind == "event_images" else "cutscene_assets" if kind == "cutscene" else "voice_packages" if kind in {"voices", "character_voices"} else "prepare")
         request = {"release_id": release_id, "game_version": release.game_version,
                    "kind": kind, "targets": targets, "parent_id": dependency}
+        if kind == 'tree_order':
+            request['index_schema'] = 3
         digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).digest()
         run = await session.scalar(select(ProcessingRun).where(
             ProcessingRun.processor_id == processor, ProcessingRun.input_hash == digest)

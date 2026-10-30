@@ -146,3 +146,15 @@ def read_tree_order(data: bytes, kind: str, records: dict[int, dict[str, Any]],
     if seen != set(records):
         raise ValueError("Tree is incomplete or does not match the pinned client node table")
     return positions
+
+
+def records_match(nodes: list[dict], records: dict[int, dict]) -> bool:
+    if {node['id'] for node in nodes} != set(records):
+        return False
+    for node in nodes:
+        raw = json.dumps(records[node['id']], sort_keys=True, separators=(',', ':'),
+                         ensure_ascii=False).encode('utf-8')
+        if (hashlib.sha256(raw).hexdigest() != node.get('record_sha256')
+                and tree_node_order_hash(records[node['id']]) != node.get('order_sha256')):
+            return False
+    return True

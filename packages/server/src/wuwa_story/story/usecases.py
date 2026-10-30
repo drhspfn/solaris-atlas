@@ -130,9 +130,8 @@ async def quest_transcript(
         if row[0].node_id in illustrations:
             line['illustration'] = illustrations[row[0].node_id]
     if tree_order:
-        ordered_ids = set(tree_order['state_ids'])
         for row, line in zip(rows, lines, strict=True):
-            line['story_order_mapped'] = row[2].node_id in ordered_ids
+            line['story_order_mapped'] = row[2].state_key in tree_order.get('positions', {})
             if position := tree_order.get('positions', {}).get(row[2].state_key):
                 line['story_position'] = [*position, row[1].action_index, row[0].source_index]
     return {

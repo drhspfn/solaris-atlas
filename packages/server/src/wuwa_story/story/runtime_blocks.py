@@ -11,7 +11,7 @@ LABELS = {'ReachArea': 'Explore the marked area', 'DoInteract': 'Interact with t
           'WaitBattleCondition': 'Complete the encounter', 'PlayFlow': 'Continue the story'}
 
 
-def project_blocks(quest_id, quest_nodes, quest_records, level_trees):
+def project_blocks(quest_id, quest_nodes, quest_records, level_trees, level_interactions=None):
     """Called only after tree/record hashes match. Stable IDs include occurrence."""
     result = []
 
@@ -32,6 +32,10 @@ def project_blocks(quest_id, quest_nodes, quest_records, level_trees):
             occurrence = ':'.join(map(str, path))
             condition = decoded(raw.get('Condition'))
             condition = condition if isinstance(condition, dict) else {}
+            levels = condition.get('LevelPlayIds')
+            interactions = ((level_interactions or {}).get(levels[0], [])
+                            if condition.get('Type') == 'CheckLevelPlay' and isinstance(levels, list)
+                            and len(levels) == 1 and condition.get('CompleteNumber') == 1 else [])
             flows = []
             media = []
             for phase, field in enumerate(('EnterActions', 'Condition', 'FinishActions')):
@@ -42,17 +46,16 @@ def project_blocks(quest_id, quest_nodes, quest_records, level_trees):
                         flows.append({'state': f'{name}_{flow}_{state}', 'position': [*phase_path, index]})
                     for ref in runtime_media(obj, raw_path, recursive=False):
                         media.append({**ref, 'position': [*phase_path, index]})
-            if raw.get('TidTip') or media:
+            if raw.get('TidTip') or media or interactions:
                 result.append({'id': f'{owner}@{occurrence}', 'owner': owner,
                     'kind': 'objective', 'condition_type': condition.get('Type'),
                     'text_key': raw.get('TidTip'),
                     'title': LABELS.get(condition.get('Type'), 'Story activity'),
                     'position': [*path, 0, 1, -1], 'branches': branches,
-                    'flow_states': flows, 'media': media,
+                    'flow_states': flows, 'media': media, 'interactions': interactions,
                     'source': {'file': 'BinData/QuestNodeData/questnodedata.json' if kind == 'quest_node'
                                else 'BinData/LevelPlayNodeData/levelplaynodedata.json',
                                'key': f'{identity}_{node["id"]}', 'raw_path': '$.Data'}})
-            levels = condition.get('LevelPlayIds')
             if (condition.get('Type') == 'CheckLevelPlay' and isinstance(levels, list)
                     and len(levels) == 1 and type(levels[0]) is int and levels[0] not in active
                     and condition.get('CompleteNumber') == 1 and levels[0] in level_trees):

@@ -47,7 +47,7 @@ def flow_background_paths(raw: dict) -> set[str]:
     for action in actions if isinstance(actions, list) else []:
         if not isinstance(action, dict):
             continue
-        params = action.get('Params')
+        params = decoded(action.get('Params'))
         if not isinstance(params, dict):
             continue
         for _, background in background_changes(params.get('TalkItems')):

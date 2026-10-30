@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from sqlalchemy import select, text
 
-from wuwa_story.db.models.core import QuestState
+from wuwa_story.db.models.core import AuthoredTreeOrder, QuestState
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease
@@ -24,6 +24,11 @@ from wuwa_story.ingestion.dungeon_context import (
     dungeon_links,
     level_memberships,
     requirements,
+)
+from wuwa_story.ingestion.level_interactions import (
+    interaction_links,
+    membership_hash,
+    required_level_links,
 )
 from wuwa_story.ingestion.runtime_media import quest_runtime_links
 from wuwa_story.ingestion.scenario_context import scenario_links
@@ -53,13 +58,36 @@ async def backfill(session, release_id, dry_run=False):
     level_nodes = await rows(LEVEL_NODES)
     required = {key: value for key, value in requirements(quest_nodes).items()
                 if key in dungeons}
-    memberships = level_memberships(await rows(LEVELS), required)
+    level_rows = await rows(LEVELS)
+    memberships = level_memberships(level_rows, required)
     states = set(await session.scalars(
         select(QuestState.state_key).join(NodeRevision,
                                           NodeRevision.node_id == QuestState.node_id)
         .where(NodeRevision.release_id == release_id)
     ))
     links = list(dungeon_links(required, memberships, level_nodes, states))
+    # Newer clients may recover missing entity tables, but only with matching
+    # scenario membership and node records in this imported snapshot.
+    from wuwa_story.ingestion.quest_tree_order import records_match
+    level_records = {}
+    for _, row in level_nodes:
+        identity, _, node = row.get('Key', '').partition('_')
+        if identity.isdecimal() and node.isdecimal() and isinstance(row.get('Data'), dict):
+            level_records.setdefault(int(identity), {})[int(node)] = row['Data']
+    indexes = {}
+    verified_trees = set()
+    memberships_by_id = {row['LevelPlayId']: row['Data'] for _, row in level_rows if isinstance(row.get('Data'), dict)}
+    trees = list(await session.scalars(select(AuthoredTreeOrder).where(
+            AuthoredTreeOrder.tree_kind == 'level_play', AuthoredTreeOrder.tree_id.in_(level_records))))
+    for tree in sorted(trees, key=lambda tree: (tuple(map(int, tree.asset_version.split('.'))), tree.download_id)):
+        if records_match(tree.nodes, level_records[tree.tree_id]):
+            verified_trees.add(tree.tree_id)
+            root = next((node for node in tree.nodes if node.get('path') == []), {})
+            if (tree.tree_id in memberships_by_id and root.get('interaction_membership_sha256')
+                    == membership_hash(memberships_by_id[tree.tree_id])):
+                indexes[tree.tree_id] = tree.nodes
+    links.extend(interaction_links(quest_nodes, level_rows, indexes, states))
+    links.extend(required_level_links(quest_nodes, level_nodes, verified_trees, states))
     records = [{**link, "type": RELATION, "relation": "exact_join", "version": release.game_version,
                 "source_repository": release.upstream_name, "source_commit": release.upstream_commit}
                for link in links]

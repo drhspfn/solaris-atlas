@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from wuwa_story.ingestion.entity_media import flow_background_paths
 from wuwa_story.ingestion.talk_backgrounds import background_changes, background_config
 from wuwa_story.story import illustrations
 
@@ -14,6 +15,14 @@ def test_backgrounds_preserve_rover_variants_and_explicit_clear():
     assert background_config({'Type': 'Image', 'ImageAsset': 'https://untrusted.test'}) is None
     assert background_config({'Type': 'SpineImage', 'Id': 850007})['resource_id'] == 850007
     assert list(background_changes([{}, {'BackgroundConfig': {'Type': 'Clean'}}])) == [(1, {'kind': 'clear', 'images': []})]
+
+
+def test_existing_flow_sources_can_recover_only_authored_background_images():
+    import json
+    actions = [{'Params': {'TalkItems': [{'BackgroundConfig': {'Type': 'Image', 'ImageAsset': '/Game/A.A'}}]}},
+               {'Params': None}, {'Params': {'TalkItems': None}}]
+    assert flow_background_paths({'Actions': json.dumps(actions)}) == {'/Game/A.A'}
+    assert flow_background_paths({'Actions': None}) == set()
 
 
 @pytest.mark.asyncio
@@ -36,7 +45,8 @@ async def test_background_persists_across_talks_and_actions_but_not_other_states
 
 
 @pytest.mark.asyncio
-async def test_transition_movie_is_an_ordered_quest_event_without_flow_action(monkeypatch):
+@pytest.mark.parametrize('known_asset', [True, False])
+async def test_transition_movie_is_an_ordered_quest_event_without_flow_action(monkeypatch, known_asset):
     from wuwa_story.api.routes.story import media
     block = {'id': 'q119', 'owner': 'quest_node:121000040:119', 'branches': [],
              'source': {'file': 'quest.json', 'key': '121000040_119'},
@@ -50,7 +60,7 @@ async def test_transition_movie_is_an_ordered_quest_event_without_flow_action(mo
     for name in ['_links', 'cutscene_flows', 'cutscene_videos', 'caption_texts']:
         monkeypatch.setattr(media, name, AsyncMock(return_value={}))
     session = NS(scalars=AsyncMock(return_value=[]), scalar=AsyncMock(return_value=None),
-        execute=AsyncMock(side_effect=[NS(all=lambda: []), [('cutscene:M0355_Loading', 55)], []]),
+        execute=AsyncMock(side_effect=[NS(all=lambda: []), [('cutscene:M0355_Loading', 55)] if known_asset else [], []]),
         get=AsyncMock(return_value=NS(game_version='3.7.0')))
     result = await media.quest_media('121000040', '3.7.0', 'en', session)
     event, = result['events']
