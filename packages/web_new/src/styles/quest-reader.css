@@ -74,3 +74,10 @@
   .quest-scene-transport { padding: 10px; gap: 8px; }
   .quest-illustration.is-background > figcaption { padding: 10px; gap: 8px; }
 }
+
+.quest-illustration.has-animation { position: relative; min-height: 24rem; }
+.quest-animated-backdrop { position: absolute; inset: 0; }
+.quest-animated-backdrop canvas { display: block; width: 100%; height: 100%; }
+.quest-animation-message { position: absolute; top: 80px; left: 20px; right: 20px; text-align: center; font-size: 13px; color: var(--text-secondary); }
+.quest-animation-toggle { position: absolute; z-index: 1; top: 52px; left: 12px; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); background: var(--surface-1); font: inherit; font-size: 12px; }
+.quest-illustration.is-background > figcaption { z-index: 2; }

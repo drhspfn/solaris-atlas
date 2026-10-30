@@ -206,12 +206,14 @@ const backend = createServer(async (request, response) => {
                   : {
                       id: 'spine-bg',
                       kind: 'spine',
+                      loop: true,
                       resource_id: 850007,
                       images: [],
                       bundle: {
                         url: 'https://cdn.test/scene.zip',
                         size_bytes: 12345678,
                         asset_version: '3.7.0',
+                        playback: {format: 'solaris.skeletal-scene.v1', variants: [{rover: null, animation: 'idle', scene_url: 'https://cdn.test/animated-scene.json', textures: {'shuizhong.png':'https://cdn.test/atlas.png'}}], unsupported: []},
                       },
                     },
             })),
