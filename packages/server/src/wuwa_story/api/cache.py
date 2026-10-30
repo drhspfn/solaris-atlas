@@ -96,16 +96,19 @@ def projection_request(scope: Scope, settings: Settings) -> bool:
     pairs = parse_qsl(scope.get("query_string", b"").decode("utf-8"), keep_blank_values=True)
     query = dict(pairs)
     snapshot = query.get("game_version") or None
+    locale = query.get("locale") or "en"
     parts = scope["path"].strip("/").split("/")
     root = parts[0]
     if root == "dialogue":
         return reads.should_route_search_to_projection(
-            scope="dialogue", snapshot=snapshot, character=query.get("character"), settings=settings,
+            scope="dialogue", snapshot=snapshot, character=query.get("character"),
+            locale=locale, settings=settings,
         )
     if root == "search":
         return reads.should_route_search_to_projection(
             [value for key, value in pairs if key == "category"] or None,
-            query.get("scope", "entities"), snapshot, query.get("character"), settings=settings,
+            query.get("scope", "entities"), snapshot, query.get("character"),
+            locale=locale, locale_id=query.get("locale_id"), settings=settings,
         )
     if root == "nodes":
         identity = "/".join(parts[1:])
@@ -115,9 +118,12 @@ def projection_request(scope: Scope, settings: Settings) -> bool:
                 break
         # Only narrative-context accepts the historical selector.
         selected_snapshot = snapshot if parts[-1] == "narrative-context" else None
-        return reads.should_route_node_to_projection(identity, selected_snapshot, settings=settings)
+        selected_locale = locale if parts[-1] in {"narrative-context", "related"} else "en"
+        return reads.should_route_node_to_projection(
+            identity, selected_snapshot, locale=selected_locale, settings=settings,
+        )
     if root == "categories":
-        return reads.should_route_to_projection(reads.ENTITY_PROJECTION_KINDS, settings=settings)
+        return reads.should_route_to_projection(reads.ENTITY_PROJECTION_KINDS, locale="en", settings=settings)
     if root == "catalog":
         snapshot = None
         kind = query.get("category", "")
@@ -132,7 +138,9 @@ def projection_request(scope: Scope, settings: Settings) -> bool:
         snapshot = query.get("version") if len(parts) == 1 else None
     elif root in {"locations", "notices"}:
         snapshot = None
-    return bool(kind) and reads.should_route_to_projection(kind, snapshot, settings=settings)
+    if root == "notices":
+        locale = "en"
+    return bool(kind) and reads.should_route_to_projection(kind, snapshot, locale=locale, settings=settings)
 
 
 async def projection_revision() -> str:

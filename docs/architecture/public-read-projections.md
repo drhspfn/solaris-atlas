@@ -38,6 +38,8 @@ Once a scope has been published, its last coherent generation remains readable w
 
 For staged activation, set `READ_PROJECTION_KINDS=character,story_map` and `READ_PROJECTION_SNAPSHOTS=current`, then enable the reader flag only after those scopes are ready. Other kinds and historical selectors retain their source readers by configuration; selected projection misses still return explicit readiness errors. Empty allowlists mean unrestricted routing and should be used only after coverage is verified. A watcher without explicit `--kind` arguments consumes the configured kinds, allowing backfill while the reader flag remains disabled. Cache revision selection follows the same route decisions so source-backed slices continue invalidating when their source changes.
 
+`READ_PROJECTION_LOCALES=en` limits both the first backfill and reader activation to English. Other locales retain source readers by explicit configuration. Partial-language publication preserves existing rows for other locales; a complete rebuild still removes obsolete locale rows, and a proven entity deletion removes all its locale rows. Before adding another public locale, backfill it with the worker's locale selection overridden to include that locale, verify coverage, then expand the API allowlist. Legacy numeric `locale_id` search overrides retain source routing when a locale allowlist is configured.
+
 From the API image, queue all current scopes with:
 
 ```sh

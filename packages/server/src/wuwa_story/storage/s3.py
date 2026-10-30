@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
+from functools import cached_property
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -21,7 +22,13 @@ class S3Storage:
             f"{settings.s3_endpoint_url.rstrip('/')}/{quote(self.bucket, safe='')}"
         )
         self.cache_control = settings.media_cache_control
-        self.client = boto3.client(
+        self._settings = settings
+
+    @cached_property
+    def client(self) -> Any:
+        """Public CDN URLs do not need an S3 SDK client or its initialization."""
+        settings = self._settings
+        return boto3.client(
             "s3",
             endpoint_url=settings.s3_endpoint_url,
             aws_access_key_id=settings.s3_access_key_id,

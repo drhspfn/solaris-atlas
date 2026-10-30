@@ -294,7 +294,7 @@ async def fail_claim(factory, claim, error):
         ))
 
 
-async def publish_refresh(factory, claim, entries, relations=()):
+async def publish_refresh(factory, claim, entries, relations=(), *, complete_locales=True):
     """Fence all locales, deletion, relations and acknowledgement in one commit."""
     if claim.entity_id == 0:
         raise ValueError("Bulk scopes must expand to entity scopes before publication")
@@ -345,11 +345,12 @@ async def publish_refresh(factory, claim, entries, relations=()):
             )
             if not accepted:
                 raise ValueError("Projection publication rejected an older generation")
-        await session.execute(delete(model).where(
-            model.entity_id == claim.entity_id, model.snapshot_key == claim.snapshot_key,
-            model.locale_id.not_in(locales), model.generation <= claim.generation,
-        ))
-        if not entries:
+        if complete_locales:
+            await session.execute(delete(model).where(
+                model.entity_id == claim.entity_id, model.snapshot_key == claim.snapshot_key,
+                model.locale_id.not_in(locales), model.generation <= claim.generation,
+            ))
+        if not entries and complete_locales:
             await session.execute(delete(EntityReadRelation).where(
                 EntityReadRelation.owner_kind == claim.kind,
                 EntityReadRelation.owner_id == claim.entity_id,
@@ -445,7 +446,11 @@ async def _estimate_backfill(session, kind, snapshot_key):
         model.snapshot_key == snapshot_key,
     )).subquery()
     entities = await session.scalar(select(func.count()).select_from(identities))
-    locales = 1 if kind == "game_notice" else await session.scalar(select(func.count(Locale.id)))
+    selected_locales = getattr(get_settings(), "read_projection_locales", ())
+    locale_count = select(func.count(Locale.id))
+    if selected_locales:
+        locale_count = locale_count.where(Locale.code.in_(selected_locales))
+    locales = 1 if kind == "game_notice" else await session.scalar(locale_count)
     # Sample stored attributes without extracting/decompressing full JSON payloads.
     # Include tuple/key overhead, and reserve 2x for indexes, TOAST and replacement.
     size = 256 + sum(func.coalesce(func.pg_column_size(column), 0) for column in (
@@ -609,6 +614,7 @@ async def refresh_claim(
     if relation_builder is None:
         from wuwa_story.read_models.builders import build_relations
         relation_builder = build_relations
+    selected_locales = tuple(getattr(get_settings(), "read_projection_locales", ()))
 
     async def heartbeat():
         while True:
@@ -624,10 +630,13 @@ async def refresh_claim(
             )
         else:
             entries = []
+            deleted = False
             after = 0
             while True:
                 async with factory() as session:
                     statement = select(Locale).where(Locale.id > after).order_by(Locale.id).limit(locale_batch_size)
+                    if selected_locales:
+                        statement = statement.where(Locale.code.in_(selected_locales))
                     if claim.kind == "game_notice":
                         statement = statement.where(Locale.code == select(GameNotice.locale).where(
                             GameNotice.id == claim.entity_id,
@@ -651,15 +660,25 @@ async def refresh_claim(
                     after = locales[-1].id
             if not entries:
                 async with factory() as session:
-                    if not await _deletion_proven(session, claim):
-                        raise ValueError("Source entity exists or its snapshot is unavailable; empty build rejected")
+                    deleted = await _deletion_proven(session, claim)
+                    if not deleted:
+                        # A notice belongs to exactly one source locale. A staged
+                        # worker may acknowledge an unselected notice unchanged.
+                        notice_locale = await session.scalar(select(GameNotice.locale).where(
+                            GameNotice.id == claim.entity_id,
+                        )) if claim.kind == "game_notice" and selected_locales else None
+                        if notice_locale is None or notice_locale in selected_locales:
+                            raise ValueError("Source entity exists or its snapshot is unavailable; empty build rejected")
             relations = ()
-            if relation_builder is not None:
+            if relation_builder is not None and (entries or deleted):
                 async with factory() as session:
                     relations = await relation_builder(session, claim.kind, claim.entity_id, claim.snapshot_key)
             if pulse.done():
                 pulse.result()
-            accepted = await publish_refresh(factory, claim, entries, relations)
+            accepted = await publish_refresh(
+                factory, claim, entries, relations,
+                complete_locales=not selected_locales or deleted,
+            )
         if not accepted:
             await release_claim(factory, claim)
         return accepted

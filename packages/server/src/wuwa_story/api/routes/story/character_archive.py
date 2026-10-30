@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.api import read_projections
@@ -85,30 +85,69 @@ async def _localized_strings(
     if requested_release is None:
         return {}
     target_version = _version_key(requested_release.game_version)
-    rows = await session.execute(
-        select(LocalizationKey.key, LocalizationContent.content, GameRelease.game_version, GameRelease.sequence)
+    releases = await session.execute(select(GameRelease.id, GameRelease.game_version, GameRelease.sequence))
+    eligible = sorted(
+        ((identity, _version_key(version), sequence) for identity, version, sequence in releases
+         if _version_key(version) <= target_version),
+        key=lambda row: row[1:],
+    )
+    if not eligible:
+        return {}
+    release_rank = case({row[0]: rank for rank, row in enumerate(eligible)}, value=LocalizationValue.release_id)
+    ranked = (
+        select(LocalizationKey.key, LocalizationContent.content,
+               func.row_number().over(partition_by=LocalizationKey.key,
+                                      order_by=release_rank.desc()).label("rank"))
         .join(LocalizationValue, LocalizationValue.key_id == LocalizationKey.id)
         .join(LocalizationContent, LocalizationContent.id == LocalizationValue.content_id)
-        .join(GameRelease, GameRelease.id == LocalizationValue.release_id)
         .where(
             LocalizationKey.key.in_(requested),
             LocalizationValue.locale_id == locale_id,
             LocalizationValue.status == "resolved_nonempty",
+            LocalizationValue.release_id.in_([row[0] for row in eligible]),
+            LocalizationContent.content != "",
         )
+        .subquery()
     )
-    best: dict[str, tuple[tuple[int, ...], int, str]] = {}
-    for key, content, version, sequence in rows:
-        version_key = _version_key(version)
-        if not content or version_key > target_version:
-            continue
-        candidate = (version_key, sequence, content)
-        if key not in best or candidate[:2] > best[key][:2]:
-            best[key] = candidate
-    return {key: entry[2] for key, entry in best.items()}
+    rows = await session.execute(select(ranked.c.key, ranked.c.content).where(ranked.c.rank == 1))
+    return {key: content for key, content in rows}
 
 
 def _source(record: SourceRecord, path: str) -> dict[str, Any]:
     return {"file": path, "row": record.row_index, "raw_path": f"$[{record.row_index}]"}
+
+
+async def _reference_urls(session, owner_id, source_paths, settings):
+    """Resolve only archive media paths, without hydrating storage metadata JSON."""
+    paths = sorted({path for path in source_paths if isinstance(path, str) and path})
+    if not paths:
+        return {}
+    candidates = (
+        select(FileReference.id, FileReference.file_id,
+               FileReference.source_path, FileReference.source_name)
+        .where(FileReference.owner_node_id == owner_id,
+               FileReference.source_path.in_(paths))
+        .cte("character_archive_media_candidates")
+        .prefix_with("MATERIALIZED")
+    )
+    ranked = (
+        select(candidates.c.source_path, candidates.c.source_name,
+               FileObject.mime_type, FileLocation.object_key,
+               func.row_number().over(
+                   partition_by=(candidates.c.source_path, candidates.c.source_name),
+                   order_by=candidates.c.id.desc(),
+               ).label("rank"))
+        .select_from(candidates)
+        .join(FileObject, FileObject.id == candidates.c.file_id)
+        .join(FileLocation, FileLocation.file_id == FileObject.id)
+        .where(FileLocation.available.is_(True), FileLocation.is_primary.is_(True),
+               FileLocation.backend == "s3", FileLocation.bucket == settings.s3_bucket)
+        .subquery()
+    )
+    rows = await session.execute(select(ranked.c.source_path, ranked.c.source_name,
+                                        ranked.c.mime_type, ranked.c.object_key).where(ranked.c.rank == 1))
+    storage = S3Storage(settings)
+    return {(path, language): (storage.public_url(key), mime) for path, language, mime, key in rows}
 
 
 @router.get("/characters/{canonical_key:path}/archive")
@@ -119,7 +158,7 @@ async def character_archive(
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    if read_projections.should_route_to_projection("character", game_version):
+    if read_projections.should_route_to_projection("character", game_version, locale=locale):
         return await read_projections.archive_page(session, canonical_key, locale, game_version)
     node = await get_node(session, canonical_key, ('character',))
     if node is None or await session.get(Character, node.id) is None:
@@ -197,23 +236,12 @@ async def character_archive(
     localized = await _localized_strings(session, release_id, locale, text_keys)
 
     settings = get_settings()
-    storage = S3Storage(settings)
-    file_rows = await session.execute(
-        select(FileReference, FileObject, FileLocation)
-        .join(FileObject, FileObject.id == FileReference.file_id)
-        .join(FileLocation, FileLocation.file_id == FileObject.id)
-        .where(
-            FileReference.owner_node_id == node.id,
-            FileLocation.available.is_(True),
-            FileLocation.is_primary.is_(True),
-            FileLocation.backend == "s3",
-            FileLocation.bucket == settings.s3_bucket,
-        ).order_by(FileReference.id)
-    )
-    files: dict[tuple[str, str | None], tuple[str, str | None]] = {}
-    for reference, file, location in file_rows:
-        if reference.source_path:
-            files[(reference.source_path, reference.source_name)] = (storage.public_url(location.object_key), file.mime_type)
+    artwork_fields = ("RoleHeadIcon", "RoleHeadIconBig", "RoleHeadIconLarge", "RoleHeadIconCircle", "Card", "FormationRoleCard", "RolePortrait", "RoleStand", "Icon")
+    media_paths = [role.get(field) for field in artwork_fields]
+    media_paths.extend(row.data.get("Icon") for row in skill_rows)
+    media_paths.extend(row.data.get("NodeIcon") for row in chain_rows)
+    media_paths.extend(row.data.get("Voice") for row in voice_rows)
+    files = await _reference_urls(session, node.id, media_paths, settings)
 
     def media_url(path: str | None, mime_prefix: str, language: str | None = None) -> str | None:
         if not path:
@@ -228,7 +256,6 @@ async def character_archive(
         }
         return linked[0] if linked[1] in supported[mime_prefix] else None
 
-    artwork_fields = ("RoleHeadIcon", "RoleHeadIconBig", "RoleHeadIconLarge", "RoleHeadIconCircle", "Card", "FormationRoleCard", "RolePortrait", "RoleStand", "Icon")
     artwork = [
         {"kind": field, "engine_path": role[field], "url": media_url(role[field], "image/"),
          "scope": character_artwork_scope(field, role[field], role_id)}

@@ -18,7 +18,7 @@ def sql(statement):
 async def test_archive_batches_dependent_tables_and_keeps_configured_group_ids(monkeypatch):
     role = Row(row_index=4, data={
         "Id": 7, "ElementId": 2, "QualityId": 5, "SkillId": 70,
-        "SkillTreeGroupId": 71, "ResonantChainGroupId": 72,
+        "SkillTreeGroupId": 71, "ResonantChainGroupId": 72, "Icon": "/Game/Icon",
     })
     skill = Row(row_index=9, data={"Id": 100, "SkillName": "skill.name"})
     chain = Row(row_index=3, data={"Id": 200, "NodeName": "chain.name"})
@@ -74,20 +74,20 @@ async def test_archive_localization_joins_text_and_preserves_numeric_release_fal
     session = Row(
         scalar=AsyncMock(return_value=2),
         get=AsyncMock(return_value=Row(game_version="3.10")),
-        execute=AsyncMock(return_value=[
-            ("name", "older", "3.9", 99), ("name", "future", "3.11", 100),
-            ("name", "current", "3.10", 2), ("name", "reimported", "3.10", 3),
-            ("fallback", "previous", "3.9", 99), ("fallback", "future", "3.11", 100),
+        execute=AsyncMock(side_effect=[
+            [(1, "3.9", 99), (2, "3.11", 100), (3, "3.10", 2), (4, "3.10", 3)],
+            [("name", "reimported"), ("fallback", "previous")],
         ]),
     )
     result = await archive._localized_strings(session, 12, "ja", ["name", "fallback", "name", None])
     assert result == {"name": "reimported", "fallback": "previous"}
     query = sql(session.execute.await_args.args[0])
     assert "JOIN i18n.localization_content" in query
-    assert "(SELECT" not in query
+    assert "row_number() OVER" in query and "anon_1.rank = 1" in query
+    assert "localization_value.release_id IN (1, 3, 4)" in query
     assert "localization_value.status = 'resolved_nonempty'" in query
     assert await archive._localized_strings(session, 12, "ja", []) == {}
-    session.execute.assert_awaited_once()
+    assert session.execute.await_count == 2
 
 
 @pytest.mark.asyncio

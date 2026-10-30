@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # Empty selectors preserve unrestricted routing; CSV env values allow staged rollout.
     read_projection_kinds: Annotated[tuple[str, ...], NoDecode] = ()
     read_projection_snapshots: Annotated[tuple[str, ...], NoDecode] = ()
+    read_projection_locales: Annotated[tuple[str, ...], NoDecode] = ()
     read_projection_min_free_gib: int = Field(default=20, ge=1)
     read_projection_max_rows: int = Field(default=250_000, ge=1)
     read_projection_max_bytes: int = Field(default=2 * 1024**3, ge=1)
@@ -56,7 +57,12 @@ class Settings(BaseSettings):
     google_client_secret: SecretStr = Field(default=SecretStr(""))
     google_redirect_uri: str = "http://localhost:8000/auth/google/callback"
 
-    @field_validator("read_projection_kinds", "read_projection_snapshots", mode="before")
+    @field_validator(
+        "read_projection_kinds",
+        "read_projection_snapshots",
+        "read_projection_locales",
+        mode="before",
+    )
     @classmethod
     def parse_projection_selectors(cls, value):
         values = value.split(",") if isinstance(value, str) else value
