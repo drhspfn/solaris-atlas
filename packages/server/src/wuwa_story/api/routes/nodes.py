@@ -18,9 +18,31 @@ from wuwa_story.db.repositories.edges import get_edges
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.db.repositories.story_browsing import latest_source_row
 from wuwa_story.db.session import get_session
+from wuwa_story.read_models.context import SOURCE_BUILD
 from wuwa_story.urls import node_address
 
 router = APIRouter(prefix="/nodes", tags=["nodes"])
+
+
+def _incident_edges(node_id: int, direction: str):
+    """Resolve indexed endpoints before joining the potentially large node table."""
+    def branch(endpoint, neighbor):
+        return select(
+            Edge.id.label("edge_id"), Edge.relation_type_id,
+            neighbor.label("neighbor_id"),
+        ).where(endpoint == node_id, Edge.layer.in_(["source", "canonical"]))
+
+    outgoing = branch(Edge.from_node_id, Edge.to_node_id)
+    incoming = branch(Edge.to_node_id, Edge.from_node_id)
+    if direction == "out":
+        statement = outgoing
+    elif direction == "in":
+        statement = incoming
+    else:
+        # A self-loop belongs to both directions but occurs once in "both".
+        statement = outgoing.union_all(incoming.where(Edge.from_node_id != node_id))
+    return statement.cte("incident_edges").prefix_with("MATERIALIZED", dialect="postgresql")
+
 
 class NodeResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -83,23 +105,14 @@ async def node_related(
     node = await get_node(session, canonical_key)
     if node is None:
         raise HTTPException(status_code=404, detail="node not found")
-    neighbor_id = case((Edge.from_node_id == node.id, Edge.to_node_id), else_=Edge.from_node_id)
-    direction_clause = (
-        Edge.from_node_id == node.id
-        if direction == "out"
-        else Edge.to_node_id == node.id
-        if direction == "in"
-        else (Edge.from_node_id == node.id) | (Edge.to_node_id == node.id)
-    )
+    incident = _incident_edges(node.id, direction)
     statement = (
         select(Edge, RelationType.key, Node, NodeType.key)
-        .join(RelationType, RelationType.id == Edge.relation_type_id)
-        .join(Node, Node.id == neighbor_id)
+        .select_from(incident)
+        .join(Edge, Edge.id == incident.c.edge_id)
+        .join(RelationType, RelationType.id == incident.c.relation_type_id)
+        .join(Node, Node.id == incident.c.neighbor_id)
         .join(NodeType, NodeType.id == Node.type_id)
-        .where(
-            Edge.layer.in_(["source", "canonical"]),
-            direction_clause,
-        )
     )
     if relation:
         statement = statement.where(RelationType.key == relation)
@@ -136,37 +149,37 @@ async def node_related(
         .offset(offset)
         .limit(limit)
     )
-    source_file_value = Node.metadata_json["source_file"].as_string()
-    evidence_query = (
-        select(source_file_value, RelationType.key, func.count())
-        .select_from(Edge)
-        .join(RelationType, RelationType.id == Edge.relation_type_id)
-        .join(
-            Node,
-            Node.id
-            == case((Edge.from_node_id == node.id, Edge.to_node_id), else_=Edge.from_node_id),
+    # Evidence is independent of page, category, source-file filter and locale.
+    # Only source builders own a bounded request-cache lifetime on this session.
+    evidence_cache = session.info.setdefault("node_related_evidence", {}) if SOURCE_BUILD.get() else None
+    evidence_key = (node.id, direction, relation)
+    evidence_summary = evidence_cache.get(evidence_key) if evidence_cache is not None else None
+    if evidence_summary is None:
+        source_file_value = Node.metadata_json["source_file"].as_string()
+        evidence_query = (
+            select(source_file_value, RelationType.key, func.count())
+            .select_from(incident)
+            .join(RelationType, RelationType.id == incident.c.relation_type_id)
+            .join(Node, Node.id == incident.c.neighbor_id)
+            .join(NodeType, NodeType.id == Node.type_id)
+            .where(NodeType.key == "source_reference")
+            .group_by(source_file_value, RelationType.key)
+            .order_by(func.count().desc(), source_file_value, RelationType.key)
         )
-        .join(NodeType, NodeType.id == Node.type_id)
-        .where(
-            direction_clause,
-            Edge.layer.in_(["source", "canonical"]),
-            NodeType.key == "source_reference",
-        )
-        .group_by(source_file_value, RelationType.key)
-        .order_by(func.count().desc(), source_file_value, RelationType.key)
-    )
-    if relation:
-        evidence_query = evidence_query.where(RelationType.key == relation)
-    evidence_rows = await session.execute(evidence_query)
-    evidence_summary = [
-        {
-            "label": source_family_label(file),
-            "source_file": file,
-            "relation": relation_key,
-            "record_count": count,
-        }
-        for file, relation_key, count in evidence_rows
-    ]
+        if relation:
+            evidence_query = evidence_query.where(RelationType.key == relation)
+        evidence_rows = await session.execute(evidence_query)
+        evidence_summary = [
+            {
+                "label": source_family_label(file),
+                "source_file": file,
+                "relation": relation_key,
+                "record_count": count,
+            }
+            for file, relation_key, count in evidence_rows
+        ]
+        if evidence_cache is not None:
+            evidence_cache[evidence_key] = evidence_summary
     results = []
     for edge, relation_key, neighbor, node_type, localized_label in rows:
         fallback = None

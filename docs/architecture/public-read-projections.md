@@ -1,6 +1,6 @@
 # Public read projections
 
-Status: implementation under verification; not deployed or enabled in production.
+Status (2026-10-31): schema deployed; English/current character and story-map readers enabled in production after complete backfill and API canaries. Remaining kinds, locales and historical scopes are staged and retain source readers until explicitly verified.
 
 Public browsing must read durable entity projections, rather than rebuild relationships or resolve artwork from the source graph during HTTP requests. Redis is an optional acceleration layer, not the canonical read store.
 

@@ -50,3 +50,22 @@ The full server suite has two independently reproduced baseline MCP-test failure
 Final checks (2026-10-31): server plus deployment scripts **853 passed, 120 skipped, two baseline failures**; worker plus scripts **1,002 passed, five skipped**. The disposable PostgreSQL refresh suite passed **44 tests**, and the projection-only API/list-reader suite passed **five tests**, including executed cutscene keyset pagination and notice filtering without article bodies. Changed Python files passed Ruff; whitespace checks passed. Frontend results above were rerun after the final shared-selector changes.
 
 Before reader activation, record production endpoint cold/warm latency under ongoing import load, sampled payload storage, initial scope readiness and refresh lag. A successful local SQL benchmark is not evidence that the production site has already become faster.
+
+## Production activation, 2026-10-31
+
+PRs 98–100 deployed the additive schema, staged readers, refresh workers and deployment fixes. English/current character and story-map scopes completed with no failed work before activation: 157 character rows and 14 story-path rows. Their compressed stored payload sizes were approximately 5.4 MiB and 166 KiB respectively. These are payload-column sizes, not total database sizes.
+
+Public HTTPS requests during ongoing imports, with `X-API-Cache: MISS` after activation:
+
+| API | Before this rollout | After activation |
+| --- | ---: | ---: |
+| Character catalog | 503 after 23.013 s | 200, 1.489 s |
+| Denia profile | 200, 7.128 s | 200, 0.356 s |
+| Denia archive | 200, 10.920 s | 200, 0.898 s |
+| Story map | 200, 28.131 s | 200, 1.325 s |
+
+An earlier public story-map miss after activation took 0.916 s. These are individual observations under changing load, not percentile or controlled cold-database benchmarks. HTML responses subsequently measured 0.179 s for the character catalog, 0.478 s for Denia and 1.592 s for the story map; upstream caches may already have been warm. Browser inspection confirmed the live map and Denia page rendered without the archive error; model and voice-line sections remained present.
+
+The same probe still measured an 11.018 s location-catalog API miss and a 45 s client deadline for events, which remained source-backed. Those slices are not claimed as fixed by the first activation. New scopes and locales must finish backfill and pass canaries before expanding reader allowlists.
+
+A separate read-only production comparison of two 500-neighbor pages for location node 9906 returned identical serialized output (747,222 bytes; SHA-256 `1b809f9c490f96ef374efad6f69230e7c8d7c0f7d11fd868e03840e7e9e2d90d`): bounded incident-edge reads plus one builder evidence aggregation took 17.570 s; the original path took 65.777 s. The candidate ran first in the same repeatable-read transaction, so this is evidence of output parity and a useful observed improvement, not a general latency guarantee. Repeated evidence aggregation was removed from subsequent builder pages without capping incident edges.
