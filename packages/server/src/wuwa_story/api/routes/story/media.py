@@ -181,7 +181,7 @@ async def quest_media(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Authored media references with published playable files when available."""
-    if read_projections.should_route_to_projection():
+    if read_projections.should_route_to_projection("quest", game_version):
         return await read_projections.quest_section(session, game_quest_id, locale, game_version, "media")
     quest = await get_quest(session, game_quest_id)
     if quest is None:

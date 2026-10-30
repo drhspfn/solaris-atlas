@@ -41,7 +41,7 @@ async def list_notices(
     event_id: int | None = Query(None, gt=0),
     session: AsyncSession = Depends(get_session),
 ):
-    if read_projections.should_route_to_projection():
+    if read_projections.should_route_to_projection("game_notice", "current"):
         return await read_projections.notices_page(session, category, q, offset, limit, event_id)
     query = select(GameNotice).where(GameNotice.locale == "en")
     if category:
@@ -70,7 +70,7 @@ async def notice_detail(
     revision: str | None = Query(None, pattern=r"^[a-f0-9]{64}$"),
     session: AsyncSession = Depends(get_session),
 ):
-    if read_projections.should_route_to_projection():
+    if read_projections.should_route_to_projection("game_notice", "current"):
         return await read_projections.notice_detail_payload(session, notice_id, revision)
     identifier = numeric_id(notice_id)
     notice = (await session.get(GameNotice, identifier) if identifier is not None else

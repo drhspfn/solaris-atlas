@@ -65,7 +65,7 @@ _PROJECTION_REVISION_LOCK = asyncio.Lock()
 
 
 def projection_response(path: str) -> bool:
-    if path in {"/catalog", "/categories", "/events", "/notices", "/cutscenes", "/search", "/story-map"}:
+    if path in {"/catalog", "/categories", "/events", "/notices", "/cutscenes", "/search", "/dialogue/search", "/story-map"}:
         return True
     parts = path.strip("/").split("/")
     if parts[0] == "nodes" and len(parts) >= 2:
@@ -85,6 +85,54 @@ def projection_response(path: str) -> bool:
         if parts[0] == "quests":
             return parts[2] in {"profile", "transcript", "continuity", "media"}
     return len(parts) == 2 and parts[0] in {"notices", "cutscenes"}
+
+
+def projection_request(scope: Scope, settings: Settings) -> bool:
+    """Use the publication revision only for explicitly selected reader slices."""
+    if not settings.read_projections_enabled or not projection_response(scope["path"]):
+        return False
+    from wuwa_story.api import read_projections as reads
+
+    pairs = parse_qsl(scope.get("query_string", b"").decode("utf-8"), keep_blank_values=True)
+    query = dict(pairs)
+    snapshot = query.get("game_version") or None
+    parts = scope["path"].strip("/").split("/")
+    root = parts[0]
+    if root == "dialogue":
+        return reads.should_route_search_to_projection(
+            scope="dialogue", snapshot=snapshot, character=query.get("character"), settings=settings,
+        )
+    if root == "search":
+        return reads.should_route_search_to_projection(
+            [value for key, value in pairs if key == "category"] or None,
+            query.get("scope", "entities"), snapshot, query.get("character"), settings=settings,
+        )
+    if root == "nodes":
+        identity = "/".join(parts[1:])
+        for suffix in ("/edges", "/related", "/source-record", "/narrative-context"):
+            if identity.endswith(suffix):
+                identity = identity.removesuffix(suffix)
+                break
+        # Only narrative-context accepts the historical selector.
+        selected_snapshot = snapshot if parts[-1] == "narrative-context" else None
+        return reads.should_route_node_to_projection(identity, selected_snapshot, settings=settings)
+    if root == "categories":
+        return reads.should_route_to_projection(reads.ENTITY_PROJECTION_KINDS, settings=settings)
+    if root == "catalog":
+        snapshot = None
+        kind = query.get("category", "")
+        kind = reads._NODE_KIND_ALIASES.get(kind, reads.KIND_ALIASES.get(kind, kind))
+    else:
+        kind = {
+            "characters": "character", "items": "item", "locations": "location",
+            "quests": "quest", "cutscenes": "cutscene", "story-map": "story_map",
+            "events": "game_event", "notices": "game_notice",
+        }.get(root)
+    if root == "events":
+        snapshot = query.get("version") if len(parts) == 1 else None
+    elif root in {"locations", "notices"}:
+        snapshot = None
+    return bool(kind) and reads.should_route_to_projection(kind, snapshot, settings=settings)
 
 
 async def projection_revision() -> str:
@@ -236,7 +284,7 @@ class PublicResponseCache:
             try:
                 revision_reader = (self.story_map_revision_reader if scope["path"] == "/story-map"
                                    else self.revision_reader)
-                if self.settings.read_projections_enabled and projection_response(scope["path"]):
+                if projection_request(scope, self.settings):
                     revision_reader = self.projection_revision_reader
                 key = cache_key(scope, await revision_reader(), self.namespace)
                 cached_body = await self.command(self.redis.get(key))

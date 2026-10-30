@@ -119,7 +119,7 @@ async def character_archive(
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    if read_projections.should_route_to_projection():
+    if read_projections.should_route_to_projection("character", game_version):
         return await read_projections.archive_page(session, canonical_key, locale, game_version)
     node = await get_node(session, canonical_key, ('character',))
     if node is None or await session.get(Character, node.id) is None:

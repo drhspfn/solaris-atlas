@@ -4,12 +4,27 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 from wuwa_story.config.settings import get_settings
+from wuwa_story.db.models.read_refresh import READ_PROJECTION_KINDS
 
 SOURCE_BUILD = ContextVar("read_projection_source_build", default=False)
 
 
-def should_route_to_projection():
-    return get_settings().read_projections_enabled and not SOURCE_BUILD.get()
+def should_route_to_projection(kind=None, snapshot=None, *, settings=None):
+    """Choose configured slices before lookup; a selected miss never uses source data.
+
+    An iterable kind requires every contributing kind. Unspecified kind is the
+    conservative all-kinds decision, not permission to bypass rollout selectors.
+    """
+    settings = settings if settings is not None else get_settings()
+    if not settings.read_projections_enabled or SOURCE_BUILD.get():
+        return False
+    snapshots = getattr(settings, "read_projection_snapshots", ())
+    if snapshots and (snapshot or "current") not in snapshots:
+        return False
+    selected = getattr(settings, "read_projection_kinds", ())
+    required = (kind,) if isinstance(kind, str) else kind
+    required = READ_PROJECTION_KINDS if required is None else required
+    return not selected or bool(required) and set(required) <= set(selected)
 
 
 @contextmanager

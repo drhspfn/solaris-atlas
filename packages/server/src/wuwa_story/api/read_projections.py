@@ -4,6 +4,36 @@ from wuwa_story.read_models.context import should_route_to_projection as should_
 from wuwa_story.read_models.readers import catalog, cutscenes, entities, events, search
 
 supports_node_projection = entities.supports_node_projection
+ENTITY_PROJECTION_KINDS = tuple(kind for kind in entities.ENTITY_READ_MODELS if kind != "story_map")
+
+
+def should_route_node_to_projection(identity, snapshot=None, *, settings=None):
+    if not supports_node_projection(identity):
+        return False
+    prefix = str(identity).partition(":")[0]
+    return should_route_to_projection(
+        entities._NODE_KIND_ALIASES.get(prefix, prefix), snapshot, settings=settings
+    )
+
+
+def should_route_search_to_projection(
+    category=None, scope="entities", snapshot=None, character=None, *, settings=None
+):
+    kinds = (
+        ["dialogue"]
+        if scope == "dialogue" or category and set(category) == {"dialogue"}
+        else (category or [kind for kind in ENTITY_PROJECTION_KINDS if kind != "dialogue"])
+    )
+    if snapshot and snapshot != "current" and not category and scope != "dialogue":
+        kinds = [kind for kind in kinds if kind not in {"location", "speaker", "game_notice"}]
+    kinds = [
+        entities._NODE_KIND_ALIASES.get(kind, entities.KIND_ALIASES.get(kind, kind))
+        for kind in kinds
+    ]
+    if character:
+        kinds.append("character")
+    return should_route_to_projection(kinds, snapshot, settings=settings)
+
 
 catalog_entry = catalog.catalog_entry
 catalog_page = catalog.catalog_page

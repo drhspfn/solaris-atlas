@@ -1,8 +1,9 @@
+import re
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -23,6 +24,9 @@ class Settings(BaseSettings):
     api_cache_timeout_seconds: float = Field(default=0.3, gt=0)
     # Enable readers only after durable projections have been backfilled and verified.
     read_projections_enabled: bool = False
+    # Empty selectors preserve unrestricted routing; CSV env values allow staged rollout.
+    read_projection_kinds: Annotated[tuple[str, ...], NoDecode] = ()
+    read_projection_snapshots: Annotated[tuple[str, ...], NoDecode] = ()
     read_projection_min_free_gib: int = Field(default=20, ge=1)
     read_projection_max_rows: int = Field(default=250_000, ge=1)
     read_projection_max_bytes: int = Field(default=2 * 1024**3, ge=1)
@@ -51,6 +55,28 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: SecretStr = Field(default=SecretStr(""))
     google_redirect_uri: str = "http://localhost:8000/auth/google/callback"
+
+    @field_validator("read_projection_kinds", "read_projection_snapshots", mode="before")
+    @classmethod
+    def parse_projection_selectors(cls, value):
+        values = value.split(",") if isinstance(value, str) else value
+        return tuple(dict.fromkeys(item.strip() for item in values if item.strip()))
+
+    @field_validator("read_projection_kinds")
+    @classmethod
+    def validate_projection_kinds(cls, value):
+        from wuwa_story.db.models.read_refresh import READ_PROJECTION_KINDS
+
+        if not set(value) <= set(READ_PROJECTION_KINDS):
+            raise ValueError("Unknown public projection kind")
+        return value
+
+    @field_validator("read_projection_snapshots")
+    @classmethod
+    def validate_projection_snapshots(cls, value):
+        if any(not re.fullmatch(r"current|\d+\.\d+\.\d+", item) for item in value):
+            raise ValueError("Projection snapshots must be current or an exact game version")
+        return value
 
     @field_validator("auth_cookie_domain", mode="before")
     @classmethod

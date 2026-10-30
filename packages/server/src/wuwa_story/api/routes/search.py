@@ -53,7 +53,7 @@ async def search(
                 detail="Search one scope at a time; use scope=dialogue or entity categories.",
             )
         scope = "dialogue"
-    if read_projections.should_route_to_projection():
+    if read_projections.should_route_search_to_projection(category, scope, game_version, character):
         return await read_projections.search_page(
             session, q, category, scope, locale, game_version, locale_id, sort_by, sort_order, limit, offset, character, quest_id,
         )
@@ -357,7 +357,7 @@ async def public_chat(
                                 lines.append(f"[{speaker} in Quest {q_id}]: \"{text}\"")
                             result_data = {"results": "\n".join(lines) if lines else "No dialogue lines found"}
                         except Exception as e:
-                            if read_projections.should_route_to_projection() and isinstance(e, HTTPException):
+                            if read_projections.should_route_to_projection(("dialogue", "character") if character else "dialogue") and isinstance(e, HTTPException):
                                 raise
                             result_data = {"error": str(e)}
 
@@ -369,8 +369,9 @@ async def public_chat(
                         from wuwa_story.api.routes.story.shared import _node_label
                         from wuwa_story.db.models.i18n import Locale
                         from wuwa_story.db.repositories.search import lexical_search
+                        projected_search = read_projections.should_route_search_to_projection([category] if category else None)
                         try:
-                            if read_projections.should_route_to_projection():
+                            if projected_search:
                                 res = (await read_projections.search_page(
                                     session, query, category=[category] if category else None, limit=10,
                                 ))["results"]
@@ -385,11 +386,11 @@ async def public_chat(
                                 )
                             items = []
                             for r in res:
-                                label = r["title"] if read_projections.should_route_to_projection() else (await _node_label(session, r["id"], "en")).get("label") or r.get("alias")
+                                label = r["title"] if projected_search else (await _node_label(session, r["id"], "en")).get("label") or r.get("alias")
                                 items.append(f"[{r.get('node_type')}] {label} (key: {r.get('canonical_key')})")
                             result_data = {"results": "\n".join(items) if items else "No entities found"}
                         except Exception as e:
-                            if read_projections.should_route_to_projection() and isinstance(e, HTTPException):
+                            if projected_search and isinstance(e, HTTPException):
                                 raise
                             result_data = {"error": str(e)}
 

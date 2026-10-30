@@ -312,11 +312,11 @@ async def test_published_projection_cache_ignores_unpublished_source_changes():
     config["settings"].read_projections_enabled = True
     config["projection_revision_reader"] = published
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
-        assert (await client.get("/catalog")).headers["x-api-cache"] == "MISS"
+        assert (await client.get("/catalog?category=character")).headers["x-api-cache"] == "MISS"
         state["revision"] = "new-raw-data-and-voices"
-        assert (await client.get("/catalog")).headers["x-api-cache"] == "HIT"
+        assert (await client.get("/catalog?category=character")).headers["x-api-cache"] == "HIT"
         generation["value"] = "published-2"
-        assert (await client.get("/catalog")).headers["x-api-cache"] == "MISS"
+        assert (await client.get("/catalog?category=character")).headers["x-api-cache"] == "MISS"
         # Model availability is still read from the model service, not a profile projection.
         assert (await client.get("/characters/7/models")).headers["x-api-cache"] == "MISS"
         state["revision"] = "model-uploaded"
@@ -349,3 +349,24 @@ def test_node_cache_revision_matches_explicit_projection_routing():
     assert projection_response("/nodes/character:1211/source-record")
     assert not projection_response("/nodes/action:剧情_3_3:1")
     assert not projection_response("/nodes/5322879-denia")
+
+
+def test_partial_rollout_keeps_source_revision_for_unselected_slices():
+    from wuwa_story.api.cache import projection_request
+
+    settings = Settings(
+        read_projections_enabled=True,
+        read_projection_kinds="character,story_map",
+        read_projection_snapshots="current",
+    )
+    def selected(path, query=b""):
+        return projection_request({"path": path, "query_string": query}, settings)
+
+    assert selected("/catalog", b"category=character")
+    assert selected("/story-map")
+    assert selected("/characters/7/profile")
+    assert not selected("/characters/7/profile", b"game_version=3.3.0")
+    assert not selected("/catalog", b"category=location")
+    assert not selected("/search", b"q=Denia")
+    assert selected("/search", b"q=Denia&category=character")
+    assert not selected("/categories")

@@ -53,7 +53,7 @@ async def node_edges(
     limit: int = Query(100, ge=1, le=500),
     session: AsyncSession = Depends(get_session),
 ) -> list[EdgeResponse]:
-    if read_projections.should_route_to_projection() and read_projections.supports_node_projection(canonical_key):
+    if read_projections.should_route_node_to_projection(canonical_key):
         return await read_projections.node_section(session, canonical_key, "edges", direction=direction, limit=limit)
     node = await get_node(session, canonical_key)
     if node is None:
@@ -76,7 +76,7 @@ async def node_related(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Browse explicit graph neighbors with optional relation and node-type filters."""
-    if read_projections.should_route_to_projection() and read_projections.supports_node_projection(canonical_key):
+    if read_projections.should_route_node_to_projection(canonical_key):
         return await read_projections.node_related_page(
             session, canonical_key, direction, relation, category, source_file, include_evidence, locale, limit, offset,
         )
@@ -216,7 +216,7 @@ async def node_source_record(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Return the raw upstream record that backs a canonical node, when available."""
-    if read_projections.should_route_to_projection() and read_projections.supports_node_projection(canonical_key):
+    if read_projections.should_route_node_to_projection(canonical_key):
         return await read_projections.node_section(session, canonical_key, "source_record")
     node = await get_node(session, canonical_key)
     if node is None:
@@ -255,7 +255,7 @@ async def node_narrative_context(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Resolve authored context for a dialogue node using its canonical source joins."""
-    if read_projections.should_route_to_projection() and read_projections.supports_node_projection(canonical_key):
+    if read_projections.should_route_node_to_projection(canonical_key, game_version):
         return await read_projections.node_section(session, canonical_key, "narrative", locale, game_version)
     node = await get_node(session, canonical_key)
     if node is None:
@@ -425,7 +425,7 @@ async def node_narrative_context(
 async def node_detail(
     canonical_key: str, session: AsyncSession = Depends(get_session)
 ) -> NodeResponse:
-    if read_projections.should_route_to_projection() and read_projections.supports_node_projection(canonical_key):
+    if read_projections.should_route_node_to_projection(canonical_key):
         return NodeResponse.model_validate(await read_projections.node_section(session, canonical_key, "node"))
     node = await get_node(session, canonical_key)
     if node is None:

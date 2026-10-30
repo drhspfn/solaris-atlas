@@ -34,7 +34,7 @@ async def catalog(game_version: str | None = None, locale: str = "en",
                   limit: int = Query(24, ge=1, le=48), offset: int = Query(0, ge=0, le=10000),
                   cursor: str | None = Query(None, max_length=2048),
                   session: AsyncSession = Depends(get_session)):
-    if read_projections.should_route_to_projection():
+    if read_projections.should_route_to_projection("cutscene", game_version):
         return await read_projections.cutscene_catalog(session, game_version, locale, q, playable, limit, offset, cursor)
     snapshot = await release(session, game_version) if game_version else None
     scope = cursor_scope(
@@ -75,7 +75,7 @@ async def catalog(game_version: str | None = None, locale: str = "en",
 @router.get("/{name}")
 async def detail(name: str, game_version: str | None = None, locale: str = "en",
                  session: AsyncSession = Depends(get_session)):
-    if read_projections.should_route_to_projection():
+    if read_projections.should_route_to_projection("cutscene", game_version):
         return await read_projections.cutscene_detail(session, name, game_version, locale)
     snapshot = await release(session, game_version)
     row = await repository.scene(session, name, snapshot.id)

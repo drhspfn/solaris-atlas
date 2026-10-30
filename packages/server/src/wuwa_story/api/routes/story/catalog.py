@@ -29,7 +29,7 @@ async def browse_catalog(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Return a stable, localized catalog page for the frontend browse views."""
-    if read_projections.should_route_to_projection():
+    if read_projections.should_route_to_projection(category, "current"):
         return await read_projections.catalog_page(
             session, category, locale, quest_type_id=quest_type_id, limit=limit, offset=offset,
         )
@@ -106,7 +106,7 @@ async def browse_catalog(
 
 @router.get("/categories")
 async def browse_categories(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
-    if read_projections.should_route_to_projection():
+    if read_projections.should_route_to_projection(read_projections.ENTITY_PROJECTION_KINDS, "current"):
         return await read_projections.category_counts(session)
     rows = (
         await session.execute(

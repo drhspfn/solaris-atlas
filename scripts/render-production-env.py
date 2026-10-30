@@ -46,6 +46,8 @@ GROUPS = {
     },
     "shared.env": {
         "READ_PROJECTIONS_ENABLED": "false",
+        "READ_PROJECTION_KINDS": "",
+        "READ_PROJECTION_SNAPSHOTS": "",
         "READ_PROJECTION_MIN_FREE_GIB": "20",
         "READ_PROJECTION_MAX_ROWS": "250000",
         "READ_PROJECTION_MAX_BYTES": "2147483648",
