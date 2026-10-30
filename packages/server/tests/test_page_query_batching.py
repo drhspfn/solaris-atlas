@@ -57,7 +57,8 @@ async def test_character_reuses_shared_scene_and_batches_transcript(monkeypatch)
     prefetch = AsyncMock()
     monkeypatch.setattr(profiles, "prefetch_dialogue", prefetch)
     monkeypatch.setattr(profiles, "prefetch_node_labels", AsyncMock())
-    monkeypatch.setattr(profiles, "_dialogue_payload", AsyncMock(side_effect=lambda _s, row, **_k: {"id": row[0].node_id}))
+    render = AsyncMock(side_effect=lambda _s, row, **_k: {"id": row[0].node_id})
+    monkeypatch.setattr(profiles, "_dialogue_payload", render)
     monkeypatch.setattr(profiles, "_node_label", AsyncMock(side_effect=lambda _s, identity, _l: {"id": identity}))
     monkeypatch.setattr(profiles, "_localized", AsyncMock(return_value=None))
     monkeypatch.setattr(profiles, "_latest_source_record", AsyncMock(return_value=None))
@@ -68,7 +69,10 @@ async def test_character_reuses_shared_scene_and_batches_transcript(monkeypatch)
     assert scenes[0] == scenes[1]
     assert scenes[0]["dialogue"] == [{"id": 1}, {"id": 2}]
     assert not scenes[0]["dialogue_truncated"]
-    prefetch.assert_awaited_once_with(session, transcript, "en", 5)
+    prefetch.assert_awaited_once_with(session, transcript, "en", 5, include_raw=True)
+    assert render.await_count == len(transcript)
+    for row in transcript:
+        render.assert_any_await(session, row, locale_code="en", release_id=5, include_raw=True)
     assert session.execute.await_count == 5
     statement = session.execute.await_args_list[3].args[0]
     sql = str(statement.compile(dialect=postgresql.dialect()))
