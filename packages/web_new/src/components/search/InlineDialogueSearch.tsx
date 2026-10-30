@@ -10,6 +10,7 @@ import { APP_SETTINGS } from '../../config/settings';
 import { useLocale } from '../../hooks/useLocale';
 import { type PlayerDisplay, PlayerText } from '../dialogue/PlayerText';
 import { ErrorPanel } from '../ui/Feedback';
+import { Select } from '../ui/Select';
 
 export function InlineDialogueSearch({
   character,
@@ -95,21 +96,18 @@ export function InlineDialogueSearch({
           </button>
         )}
         {quests.length > 0 && (
-          <select
+          <Select
+            label="Limit dialogue search to a quest"
             value={questId}
-            onChange={(event) => setQuestId(event.target.value)}
-            aria-label="Limit dialogue search to a quest"
-          >
-            <option value="">All appearances</option>
-            {quests.map((entry: any) => {
-              const quest = entry.quest || entry;
-              return (
-                <option key={quest.game_quest_id} value={quest.game_quest_id}>
-                  {quest.name?.content || `Quest ${quest.game_quest_id}`}
-                </option>
-              );
-            })}
-          </select>
+            onChange={setQuestId}
+            options={[
+              { value: '', label: 'All appearances' },
+              ...quests.map((entry: any) => {
+                const quest = entry.quest || entry;
+                return { value: quest.game_quest_id, label: quest.name?.content || `Quest ${quest.game_quest_id}` };
+              }),
+            ]}
+          />
         )}
         <button>{busy ? 'Searching' : 'Find lines'}</button>
       </form>

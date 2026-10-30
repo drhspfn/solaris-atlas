@@ -116,7 +116,8 @@ is a bounded panel rather than a full-height resource list. Decorative collectio
 sequence numbers are omitted.
 
 `packages/web_new/src/components/ui/Select.tsx` owns authored single-select popups
-for archive language, interactive-map fields and event filters. Native popovers provide top-layer
+for archive language, interactive-map fields, event filters, story-path/patch
+filters and character-dialogue quest scope. Native popovers provide top-layer
 placement and dismissal, with listbox keyboard navigation and typeahead. Remaining
 native selects retain native behavior and use the shared dark palette. This is a
 deliberate change requested for the public shell and map; other controls migrate

@@ -70,6 +70,8 @@ function harness(path, name, props, initialQuery = '') {
     '@/lib/router': router, '@/hooks/useLocale': { useLocale: () => locale },
     '../../hooks/useLocale': { useLocale: () => locale },
     '@/config/settings': settings, '../../config/settings': settings,
+    '@/components/ui/Select': { Select: 'atlas-select' },
+    '../ui/Select': { Select: 'atlas-select' },
     './calendar': calendar,
     '@/data/mapSnapshots': { latestMapRoots: (maps) => maps },
     '@/data/mapAcquisition': { acquisitionMarkers: () => [] },
@@ -83,6 +85,7 @@ function harness(path, name, props, initialQuery = '') {
     document: { title: '', body: { style: {} } }, setInterval: () => 1, clearInterval() {},
   })[name];
   return { calls,
+    queryString: () => query.toString(),
     locale(value) { locale = value; },
     query(value) { query = new URLSearchParams(value); },
     render() {
@@ -92,6 +95,57 @@ function harness(path, name, props, initialQuery = '') {
     },
   };
 }
+
+test('story path and patch use shared selectors while retaining URL context and cancelling obsolete reads', () => {
+  const initialMap = { selected_game_version: '2.1.0', quest_type_id: 0,
+    imported_game_versions: ['2.1.0', '1.4.0'], chapters: [] };
+  const h = harness('story/StoryMapClient', 'StoryMapClient', { initialMap }, 'game_version=2.1.0&locale=ru&line=dialogue%3A7');
+  const tree = h.render();
+  const selectors = nodes(tree).filter((node) => node.type === 'atlas-select');
+  assert.equal(selectors.length, 2);
+  assert.equal(nodes(tree).some((node) => node.type === 'select'), false);
+  const path = selectors.find((node) => node.props.label === 'Story path');
+  const patch = selectors.find((node) => node.props.label === 'Patch');
+  assert.equal(path.props.options[0].label, 'All story paths');
+  assert.equal(patch.props.options[0].label, 'All patches');
+  assert.equal(patch.props.value, '2.1.0');
+  assert.equal(patch.props.options[2].value, '1.4.0');
+  path.props.onChange('9'); h.render();
+  assert.equal(new URLSearchParams(h.queryString()).get('quest_type'), '9');
+  assert.match(h.calls[0].path, /quest_type_id=9/);
+  nodes(h.render()).find((node) => node.type === 'atlas-select' && node.props.label === 'Patch').props.onChange('');
+  h.render();
+  const query = new URLSearchParams(h.queryString());
+  assert.equal(query.get('game_version'), null);
+  assert.equal(query.get('quest_type'), '9');
+  assert.equal(query.get('locale'), 'ru');
+  assert.equal(query.get('line'), 'dialogue:7');
+  assert.equal(h.calls[0].options.signal.aborted, true);
+});
+
+test('dialogue quest scope uses the shared selector and changing scope cancels stale results', async () => {
+  const h = harness('search/InlineDialogueSearch', 'InlineDialogueSearch', {
+    character: 'character:1', playerDisplay: {}, quests: [
+      { game_quest_id: 7, name: { content: 'First appearance' } },
+      { quest: { game_quest_id: 8, name: { content: 'Second appearance' } } },
+    ],
+  });
+  h.render();
+  const tree = h.render();
+  assert.equal(nodes(tree).some((node) => node.type === 'select'), false);
+  const selector = nodes(tree).find((node) => node.type === 'atlas-select');
+  assert.equal(selector.props.label, 'Limit dialogue search to a quest');
+  assert.equal(selector.props.options.map((option) => option.label).join(','),
+    'All appearances,First appearance,Second appearance');
+  nodes(tree).find((node) => node.type === 'input').props.onChange({ target: { value: 'Remember' } });
+  nodes(h.render()).find((node) => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  selector.props.onChange('8'); h.render();
+  assert.equal(h.calls[0].options.signal.aborted, true);
+  h.calls[0].resolve({ results: [{ text: 'Obsolete' }] }); await tick();
+  assert.equal(nodes(h.render()).some((node) => node.props?.className === 'quote-result'), false);
+  nodes(h.render()).find((node) => node.type === 'form').props.onSubmit({ preventDefault() {} });
+  assert.equal(new URL(h.calls[1].path, 'http://fixture').searchParams.get('quest_id'), '8');
+});
 
 test('cutscene list retains matching SSR and refetches only a changed selection or retry', async () => {
   const initial = { items: [], total: 0, imported_game_versions: [], next_cursor: null };
