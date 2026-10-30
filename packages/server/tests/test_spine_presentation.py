@@ -1,0 +1,55 @@
+import json
+
+from wuwa_story.ingestion.entity_media import flow_background_paths, flow_spine_ids
+from wuwa_story.ingestion.spine_presentation import flow_presentation
+
+
+def test_score_keeps_branches_audio_and_external_cues_without_inventing_timing():
+    talk = {'Id': 8, 'TidTalk': 'story.line', 'WhoId': 5, 'PlayVoice': True,
+            'AudioDelay': 0.3, 'GuardTime': 2,
+            'BackgroundConfig': {'Type': 'SpineImage', 'Id': 7, 'IsLoop': True},
+            'TalkAkEvent': {'AkEvent': '/Game/Music.Play'},
+            'Actions': [{'Name': 'PlaySpine', 'Params': {
+                'Config': {'Type': 'Play', 'Name': '1to2', 'IsLoop': False}}}]}
+    raw = {'StateKey': 'state', 'Actions': json.dumps([
+        {'Name': 'ShowTalk', 'Params': {'TalkItems': [talk],
+                                      'SequenceTransitions': {'0': [{'NextSequenceIndex': 2}]}}},
+        {'Name': 'PlaySequenceData', 'Params': {'Path': '/Game/Story.Sequence'}},
+        {'Name': 'PostAkEvent', 'Params': {'EventConfig': {'AkEvent': '/Game/Music.Event'}}}])}
+    result = flow_presentation(raw)
+    assert result['resource_ids'] == [7]
+    assert result['timing_status'] == 'unresolved'
+    assert result['ordering'] == 'authored_structure'
+    assert result['source']['Actions'][0]['Params']['SequenceTransitions']
+    dialogue, = [cue for cue in result['cues'] if cue['kind'] == 'dialogue']
+    assert dialogue['command'] == talk
+    animation, = [cue for cue in result['cues'] if cue['kind'] == 'play_animation']
+    assert animation['source_path'] == '$.Actions[0].Params.TalkItems[0].Actions[0].Params.Config'
+    assert animation['command']['Name'] == '1to2'
+    assert 'duration' not in animation and 'start_time' not in animation
+    assert any(cue['kind'] == 'audio_action' for cue in result['cues'])
+    assert result['unresolved'][0]['asset'] == '/Game/Story.Sequence'
+    assert result == flow_presentation(raw)
+    assert raw['Actions'].startswith('[')  # Source is not mutated.
+
+
+def test_nested_backgrounds_are_discovered_and_unrelated_numeric_ids_are_not():
+    raw = {'Actions': [{'Name': 'Branch', 'Params': {'SuccessActions': [
+        {'Name': 'ShowTalk', 'Params': {'TalkItems': [
+            {'BackgroundConfig': {'Type': 'SpineImage', 'Id': 7}},
+            {'BackgroundConfig': {'Type': 'Image', 'ImageAsset': '/Game/Still.Still'}}]}}],
+        'ActorMontageArray': [{'MontageId': 900005}], 'FaceExpressionId': 900005}}]}
+    assert flow_spine_ids(raw) == {7}
+    assert flow_background_paths(raw) == {'/Game/Still.Still'}
+    assert flow_presentation({'Actions': None})['cues'] == []
+    assert flow_presentation({'Actions': '[bad json'})['resource_ids'] == []
+
+
+def test_pose_and_frame_events_are_kept_for_the_external_clock():
+    result = flow_presentation({'FrameEvents': [{'EventKey': 'cue', 'EventActions': [
+        {'Name': 'PlaySpine', 'Params': {'Config': {'Type': 'Play', 'Name': '2', 'IsLoop': False}}}]}]})
+    assert result['unresolved'][0]['code'] == 'frame_event_clock_not_decoded'
+    assert len(result['cues']) == 2
+    assert result['cues'][1]['command']['Name'] == '2'
+    changed = flow_presentation({'FrameEvents': []})
+    assert result['sha256'] != changed['sha256']
