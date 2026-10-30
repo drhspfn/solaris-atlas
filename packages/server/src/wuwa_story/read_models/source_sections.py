@@ -115,7 +115,7 @@ def _request_caches(session):
     def owned(key):
         return (
             isinstance(key, str)
-            and (key.startswith("story_") or key == "wuwa_localized_cache")
+            and (key.startswith("story_") or key in {"wuwa_localized_cache", "node_related_evidence"})
             or isinstance(key, tuple)
             and key[:1] == ("quest_type_records",)
         )
