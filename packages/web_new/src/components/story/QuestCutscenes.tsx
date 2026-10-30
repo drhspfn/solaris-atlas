@@ -543,6 +543,15 @@ export function FlowPlayer({
 
 export function Cutscene({ event, anchor }: { event: QuestMediaEvent; anchor?: string }) {
   const flow = useMemo(() => event.playback || fallbackFlow(event), [event]);
+  if (event.kind === 'sequence') return (
+    <section id={cutsceneAnchor(event)} className="quest-runtime-block">
+      <span className="eyebrow left">IN-GAME SCENE</span>
+      <h3>{event.title || 'Scripted scene'}</h3>
+      <p>This scene is rendered by the game engine; no standalone video is available.</p>
+      <details><summary>Source reference</summary><small>{event.engine_path || event.reference}</small>
+        <small>{event.source.file} · {event.source.raw_path}</small></details>
+    </section>
+  );
   return (
     <div id={cutsceneAnchor(event)} className="quest-cutscene-anchor">
       {event.context_inferred && <p>{event.story_order_mapped

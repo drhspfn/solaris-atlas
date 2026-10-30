@@ -6587,3 +6587,7 @@ button.search-clear:focus-visible {
 .quest-illustration > img { display: block; width: 100%; max-height: 34rem; object-fit: contain; }
 .quest-illustration > p, .quest-illustration > figcaption { padding: 12px 16px; margin: 0; }
 .quest-illustration figcaption { display: grid; gap: 10px; font-size: 12px; color: var(--text-secondary); }
+
+.quest-runtime-interactions > details { margin-top: .75rem; border-top: 1px solid var(--border-default); padding-top: .75rem; }
+.quest-runtime-interactions > details > summary { cursor: pointer; color: var(--accent-mint); }
+.quest-runtime-interactions .transcript-line { min-width: 0; }

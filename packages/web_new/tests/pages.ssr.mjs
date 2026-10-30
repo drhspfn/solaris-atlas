@@ -83,6 +83,25 @@ const backend = createServer(async (request, response) => {
   timing.end = performance.now();
   response.setHeader('Content-Type', 'application/json');
   const questRequest = new URL(request.url, 'http://backend.test');
+  if (questRequest.pathname.startsWith('/quests/119000000/')) {
+    const quest = { name: { content: 'Source-backed interaction fixture' } };
+    const state = 'Cave_1_41';
+    if (questRequest.pathname.endsWith('/profile')) response.end(JSON.stringify({ quest }));
+    else if (questRequest.pathname.endsWith('/transcript')) response.end(JSON.stringify({ quest, limit: 500,
+      lines: [{ id: 'main-line', flow_state: 'Main_1_1', story_position: [1], text: { content: 'Mandatory dialogue' } },
+        { id: 'optional-line', flow_state: state, action: { index: 1 }, text: { content: 'Optional fridge dialogue' },
+          illustration: { id: 'image-1', kind: 'image', images: [{ rover: null, engine_path: '/Game/A.A', url: 'https://cdn.test/story.png' }] },
+          player_choices: [{ id: 'choice-1', text: { content: 'Leave it here' } }] }],
+      story_blocks: [{ id: 'explore-room', title: 'Explore the room', position: [2], branches: [], flow_states: [],
+        source: { file: 'quest.json', key: '119000000_120' }, interactions: [{ id: 'e_909_179:0', title: 'Inspect the fridge',
+          flow_states: [{ state }], source: { file: 'client.db', key: '179', raw_path: '$.Options[0]' } }] }],
+    }));
+    else if (questRequest.pathname.endsWith('/media')) response.end(JSON.stringify({ events: [{ kind: 'sequence',
+      action: 'action:optional', reference: 'asset:ue:/Game/Scene.Scene', flow_state: state, action_index: 2,
+      engine_path: '/Game/Scene.Scene', source: { file: 'flowstate.json', raw_path: '$.Actions[2]' } }], video_packages: [] }));
+    else response.end('null');
+    return;
+  }
   if (questRequest.pathname.startsWith('/nodes/dialogue%3A123')) {
     if (questRequest.pathname.endsWith('/related')) return response.end(JSON.stringify({ results: [] }));
     if (questRequest.pathname.endsWith('/narrative-context')) return response.end(JSON.stringify({ available: false }));
@@ -377,6 +396,20 @@ test('node with unavailable narrative renders its source details without a dialo
   const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
   assert.match(html, /dialogue:123/);
   assert.doesNotMatch(html, /Where this line appears|DIALOGUE ENTRY|Opening archive record/);
+});
+
+test('optional interaction contains dialogue, choices, pictures and engine scene exactly once', async () => {
+  const response = await fetch(`${site}/quests/119000000`);
+  assert.equal(response.status, 200);
+  const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  const interaction = html.match(/<details><summary>Inspect the fridge<\/summary>([\s\S]*?)client\.db/)?.[1] || '';
+  assert.match(interaction, /Optional fridge dialogue/);
+  assert.match(interaction, /Leave it here/);
+  assert.match(interaction, /src="https:\/\/cdn.test\/story.png"/);
+  assert.match(interaction, /rendered by the game engine/);
+  assert.equal((html.match(/data-dialogue-key="optional-line"/g) || []).length, 1);
+  assert.equal((html.match(/Optional fridge dialogue/g) || []).length, 1);
+  assert.match(html, /Mandatory dialogue/);
 });
 
 test('item progression renders five real stages and their total compactly', async () => {

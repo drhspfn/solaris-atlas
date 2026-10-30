@@ -75,6 +75,7 @@ export interface QuestMediaEvent {
   story_order_mapped?: boolean;
   story_position?: number[];
   story_block_id?: string;
+  interaction_id?: string;
   branches?: Array<{ id: string; type: string }>;
   transition?: boolean;
   title?: string;
@@ -136,7 +137,7 @@ export function QuestMediaReferences({
   const visible = new Set(visibleCutscenes.map(cutsceneAnchor));
   const links = manifest.events.flatMap((event) => {
     const anchor =
-      event.kind === 'cutscene' && visible.has(cutsceneAnchor(event))
+      event.kind !== 'audio_event' && visible.has(cutsceneAnchor(event))
         ? cutsceneAnchor(event)
         : stateAnchors.get(event.flow_state);
     if (!anchor || event.kind === 'audio_event') return [];

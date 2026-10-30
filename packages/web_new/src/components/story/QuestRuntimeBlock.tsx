@@ -1,4 +1,5 @@
 import { PlayerText, type PlayerDisplay } from '../dialogue/PlayerText';
+import type { ReactNode } from 'react';
 import { compareStoryPosition } from './cutscenePlacement';
 
 export type RuntimeBlock = {
@@ -8,6 +9,8 @@ export type RuntimeBlock = {
   position: number[];
   branches: Array<{ id: string; type: string }>;
   flow_states: Array<{ state: string; position: number[] }>;
+  interactions?: Array<{ id: string; title: string; flow_states: Array<{ state: string }>;
+    source: { file: string; key: string; raw_path: string } }>;
   source: { file: string; key: string; raw_path: string };
 };
 
@@ -27,10 +30,11 @@ export function runtimeBlockSlots(lines: Array<{ story_position?: number[] }>, b
   return slots;
 }
 
-export function QuestRuntimeBlock({ block, display, stateAnchors }: {
+export function QuestRuntimeBlock({ block, display, stateAnchors, renderInteraction }: {
   block: RuntimeBlock;
   display: PlayerDisplay;
   stateAnchors: Map<string, string>;
+  renderInteraction?: (states: string[], owner: string) => ReactNode[];
 }) {
   return (
     <section className="quest-runtime-block" id={runtimeBlockAnchor(block.id)}>
@@ -46,6 +50,21 @@ export function QuestRuntimeBlock({ block, display, stateAnchors }: {
           ))}
         </nav>
       )}
+      {!!block.interactions?.length && <div className="quest-runtime-interactions">
+        <p>Optional interactions in this area · explore in your own order.</p>
+        {block.interactions.map((item) => {
+          const content = renderInteraction?.(item.flow_states.map((flow) => flow.state), `${block.id}:${item.id}`) || [];
+          return <details key={item.id}>
+            <summary><PlayerText display={display} value={item.title} fallback="Inspect the surroundings" /></summary>
+            {content.length ? content : item.flow_states.filter((flow) => stateAnchors.has(flow.state)).map((flow) =>
+              <a key={flow.state} href={`#${stateAnchors.get(flow.state)}`}>Read this interaction ↗</a>)}
+            {!content.length && !item.flow_states.some((flow) => stateAnchors.has(flow.state)) &&
+              <p>{item.flow_states.length ? 'Dialogue is outside this transcript window.' :
+                'This interaction has no authored dialogue in the source.'}</p>}
+            <small>{item.source.file} · {item.source.key}</small>
+          </details>;
+        })}
+      </div>}
       <details><summary>Source &amp; conditions</summary>
         <p>{block.condition_type || 'Scripted activity'}</p>
         <small>{block.source.file} · {block.source.key}</small>
