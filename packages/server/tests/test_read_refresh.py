@@ -182,3 +182,16 @@ def test_approved_operational_budget_can_override_safe_defaults(monkeypatch):
     refresh.check_backfill_budget(estimate)
     with pytest.raises(refresh.BackfillBudgetExceeded):
         refresh.check_backfill_budget(estimate, max_rows=1000)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("filters", [
+    {"entity_ids": []}, {"entity_ids": [0]}, {"entity_ids": [-1]},
+    {"entity_ids": [2**63]}, {"entity_ids": [True]},
+    {"snapshot_key": ""}, {"snapshot_key": " "}, {"snapshot_key": "x" * 257},
+])
+async def test_exact_claim_filters_are_validated_before_database_access(filters):
+    create = Mock()
+    with pytest.raises(ValueError):
+        await refresh.claim_refreshes(create, **filters)
+    create.assert_not_called()

@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -111,10 +111,50 @@ async def test_pilot_requires_one_kind_and_valid_entity_id(monkeypatch):
     with pytest.raises(ValueError, match="positive"):
         await worker.main(
             SimpleNamespace(
-                kind=["character"],
-                snapshot="current",
-                estimate=False,
-                entity_id=[0],
-                backfill=True,
+                kind=["character"], snapshot="current", estimate=False,
+                entity_id=[0], backfill=True,
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_runtime_deadline_unwinds_build_before_recording_durable_failure(monkeypatch):
+    claim = SimpleNamespace(kind="item", entity_id=9)
+    monkeypatch.setattr(worker, "claim_refreshes", AsyncMock(return_value=[claim]))
+    unwound = asyncio.Event()
+
+    async def blocked(_factory, _claim):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            unwound.set()
+
+    async def fail(_factory, received, error):
+        assert unwound.is_set()
+        assert received is claim and isinstance(error, TimeoutError)
+
+    failure = AsyncMock(side_effect=fail)
+    monkeypatch.setattr(worker, "refresh_claim", blocked)
+    monkeypatch.setattr(worker, "fail_claim", failure)
+    assert await worker.refresh_batch(object(), claim_timeout_seconds=0.01) == 1
+    failure.assert_awaited_once()
+    assert not SOURCE_BUILD.get()
+
+
+@pytest.mark.asyncio
+async def test_one_shot_pilot_enqueues_without_debounce_and_claims_exact_scope(monkeypatch):
+    session = AsyncMock()
+    session.begin = Mock(return_value=AsyncMock())
+    context = AsyncMock()
+    context.__aenter__.return_value = session
+    monkeypatch.setattr(worker, "SessionFactory", Mock(return_value=context))
+    monkeypatch.setattr(worker, "engine", SimpleNamespace(dispose=AsyncMock()))
+    enqueue, run = AsyncMock(), AsyncMock(return_value=1)
+    monkeypatch.setattr(worker, "mark_dirty", enqueue)
+    monkeypatch.setattr(worker, "refresh_batch", run)
+    await worker.main(SimpleNamespace(
+        kind=["item"], snapshot="current", estimate=False,
+        entity_id=[9], backfill=True, watch=False,
+    ))
+    enqueue.assert_awaited_once_with(session, "item", [9], "current", debounce_seconds=0)
+    run.assert_awaited_once_with(kinds=["item"], entity_ids=[9], snapshot_key="current")

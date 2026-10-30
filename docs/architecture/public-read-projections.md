@@ -36,6 +36,8 @@ Once a scope has been published, its last coherent generation remains readable w
 
 `READ_PROJECTIONS_ENABLED=false` preserves the existing public readers during backfill. `WUWA_PROJECTION_REPLICAS=0` leaves refresh workers disabled until capacity is checked. Set replicas to a small positive count to process durable refresh work independently of media and import workers. No import replay is needed to populate these projections.
 
+For staged activation, set `READ_PROJECTION_KINDS=character,story_map` and `READ_PROJECTION_SNAPSHOTS=current`, then enable the reader flag only after those scopes are ready. Other kinds and historical selectors retain their source readers by configuration; selected projection misses still return explicit readiness errors. Empty allowlists mean unrestricted routing and should be used only after coverage is verified. A watcher without explicit `--kind` arguments consumes the configured kinds, allowing backfill while the reader flag remains disabled. Cache revision selection follows the same route decisions so source-backed slices continue invalidating when their source changes.
+
 From the API image, queue all current scopes with:
 
 ```sh
@@ -49,6 +51,8 @@ Before a large backfill, run `--estimate --kind dialogue`. Estimates use stored 
 Default per-scope budgets are `READ_PROJECTION_MAX_ROWS=250000` and `READ_PROJECTION_MAX_BYTES=2147483648`. A complete dialogue scope can exceed these defaults: approve a larger measured budget explicitly after checking database storage. When only the unsampled byte estimate exceeds its budget, bounded pilot sampling can populate at most three entities before a later re-estimate; it does not waive the row budget or publish incomplete coverage.
 
 `READ_PROJECTION_MIN_FREE_GIB=20` pauses the worker when its host filesystem lacks headroom. This protects the shared Compose host volume; deployments with an external database need separate database-volume monitoring. The dirty registry retains work during a pause.
+
+Projection CLI connections have local 60-second statement and one-second lock deadlines, and each claimed build has a ten-minute runtime deadline. They use a dedicated small connection pool, leaving importer/API sessions unchanged. A one-shot `--entity-id` pilot filters both queueing and claiming to the requested kind, entity and snapshot; it cannot accidentally start an earlier bulk scope. Normal watchers remain free to process explicitly queued historical scopes unless a historical snapshot or pilot filter is supplied.
 
 Rollback first disables `READ_PROJECTIONS_ENABLED`, then scales projection workers to zero. The additive tables can remain while investigating. Do not drop populated projections or roll back a migration while API instances still use them. Historical coverage and production cold/warm timings must be checked before enabling the reader flag.
 

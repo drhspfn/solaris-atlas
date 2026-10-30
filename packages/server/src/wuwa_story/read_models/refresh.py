@@ -2,7 +2,6 @@
 
 import asyncio
 import re
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
 from uuid import UUID, uuid4
@@ -211,12 +210,26 @@ def _active_snapshot_import():
     ))
 
 
-async def claim_refreshes(factory, *, limit=10, lease_seconds=60, kinds=None):
+async def claim_refreshes(
+    factory, *, limit=10, lease_seconds=60, kinds=None, entity_ids=None, snapshot_key=None,
+):
     """Expired leases are reclaimable; each successful claim is committed here."""
     if not 1 <= limit <= 100 or lease_seconds < 3:
         raise ValueError("Claims require limit 1..100 and lease_seconds >= 3")
     if kinds is not None and not set(kinds) <= set(READ_PROJECTION_KINDS):
         raise ValueError("Unknown projection kind")
+    if entity_ids is not None:
+        entity_ids = tuple(entity_ids)
+        if not 1 <= len(entity_ids) <= 100 or any(
+            not isinstance(identity, int) or isinstance(identity, bool)
+            or identity < 1 or identity > 9223372036854775807 for identity in entity_ids
+        ):
+            raise ValueError("Entity filters require 1..100 positive PostgreSQL bigint identities")
+        entity_ids = tuple(sorted(set(entity_ids)))
+    if snapshot_key is not None and (
+        not isinstance(snapshot_key, str) or not snapshot_key.strip() or len(snapshot_key) > 256
+    ):
+        raise ValueError("Snapshot filters require a nonempty key of at most 256 characters")
     async with factory() as session, session.begin():
         statement = select(ReadProjectionDirty).where(
             ReadProjectionDirty.requested_generation > ReadProjectionDirty.processed_generation,
@@ -228,6 +241,10 @@ async def claim_refreshes(factory, *, limit=10, lease_seconds=60, kinds=None):
                    ReadProjectionDirty.entity_id, ReadProjectionDirty.snapshot_key).limit(limit).with_for_update(skip_locked=True)
         if kinds is not None:
             statement = statement.where(ReadProjectionDirty.kind.in_(kinds))
+        if entity_ids is not None:
+            statement = statement.where(ReadProjectionDirty.entity_id.in_(entity_ids))
+        if snapshot_key is not None:
+            statement = statement.where(ReadProjectionDirty.snapshot_key == snapshot_key)
         rows = list(await session.scalars(statement))
         now = await session.scalar(select(func.clock_timestamp())) if rows else None
         claims = []
@@ -654,5 +671,6 @@ async def refresh_claim(
         raise
     finally:
         pulse.cancel()
-        with suppress(asyncio.CancelledError):
-            await pulse
+        # Heartbeat cleanup must not replace a runtime cancellation with a
+        # concurrent database error and hide the worker's TimeoutError handling.
+        await asyncio.gather(pulse, return_exceptions=True)

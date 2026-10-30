@@ -13,12 +13,14 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from fastapi import HTTPException
 from sqlalchemy import event, inspect, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from test_read_refresh import migration
 from wuwa_story.db.models.read_refresh import ReadProjectionDirty, ReadProjectionScope
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS
 from wuwa_story.read_models import refresh
+from wuwa_story.read_models import worker as refresh_worker
 
 URL = os.getenv("WUWA_READ_REFRESH_TEST_DATABASE_URL")
 pytestmark = [pytest.mark.asyncio, pytest.mark.skipif(not URL, reason="Disposable local PostgreSQL URL required")]
@@ -849,7 +851,7 @@ async def test_approved_budgets_bootstrap_bounded_sample_before_full_fanout(data
     await dirty(factory, (0,))
     bulk = (await refresh.claim_refreshes(factory))[0]
     # No worker arguments are required: approved operational budgets are read
-    # from the environment, but the unsampled estimate cannot fan out everything.
+    # from settings, but the unsampled estimate cannot fan out everything.
     assert not await refresh.refresh_claim(factory, bulk)
     async with factory() as session:
         jobs = list(await session.scalars(select(ReadProjectionDirty)))
@@ -870,3 +872,79 @@ async def test_approved_budgets_bootstrap_bounded_sample_before_full_fanout(data
         jobs = list(await session.scalars(select(ReadProjectionDirty)))
         assert len(jobs) == 1003
         assert (await session.get(ReadProjectionScope, ("character", "current"))).published_generation == 0
+
+
+async def test_exact_pilot_claim_skips_older_bulk_and_other_snapshots(database):
+    factory, _, _ = database
+    await dirty(factory, (0,), "item")
+    await dirty(factory, (9,), "item", "3.6.0")
+    await dirty(factory, (9,), "item")
+    claimed = await refresh.claim_refreshes(
+        factory, limit=10, kinds=["item"], entity_ids=[9], snapshot_key="current",
+    )
+    assert [(row.entity_id, row.snapshot_key) for row in claimed] == [(9, "current")]
+    async with factory() as session:
+        assert (await session.get(ReadProjectionDirty, ("item", 0, "current"))).lease_token is None
+        assert (await session.get(ReadProjectionDirty, ("item", 9, "3.6.0"))).lease_token is None
+
+
+async def test_worker_database_limits_are_local_and_cancel_long_queries_and_locks(database):
+    factory, engine, _ = database
+    limited_engine, limited = refresh_worker.create_worker_database(
+        engine.url, statement_timeout_ms=500, lock_timeout_ms=20,
+    )
+    default_engine, defaults = refresh_worker.create_worker_database(engine.url)
+    try:
+        async with factory() as session:
+            before = await session.scalar(text("SHOW statement_timeout"))
+        async with defaults() as session:
+            assert await session.scalar(text("SELECT setting::int FROM pg_settings WHERE name='statement_timeout'")) == 60000
+            assert await session.scalar(text("SELECT setting::int FROM pg_settings WHERE name='lock_timeout'")) == 1000
+        async with limited() as session:
+            with pytest.raises(DBAPIError) as cancelled:
+                await session.execute(text("SELECT pg_sleep(5)"))
+            assert cancelled.value.orig.sqlstate == "57014"
+        await dirty(factory)
+        async with factory() as blocker, blocker.begin():
+            await blocker.execute(text("SELECT * FROM ops.read_projection_dirty FOR UPDATE"))
+            async with limited() as session:
+                with pytest.raises(DBAPIError) as locked:
+                    await session.execute(text("SELECT * FROM ops.read_projection_dirty FOR UPDATE"))
+                assert locked.value.orig.sqlstate == "55P03"
+        async with factory() as session:
+            assert await session.scalar(text("SHOW statement_timeout")) == before
+    finally:
+        await limited_engine.dispose()
+        await default_engine.dispose()
+
+
+async def test_worker_runtime_timeout_persists_retry_and_stops_heartbeat(database, monkeypatch):
+    factory, _, _ = database
+    await dirty(factory)
+    first = (await refresh.claim_refreshes(factory))[0]
+    assert await refresh.publish_refresh(factory, first, [entry(title="previous good")])
+    await dirty(factory)
+    unwound = asyncio.Event()
+
+    async def blocked(*_args):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            unwound.set()
+
+    original = refresh.refresh_claim
+
+    async def build(create, claim):
+        return await original(create, claim, builder=blocked, relation_builder=AsyncMock(return_value=[]), lease_seconds=3)
+
+    monkeypatch.setattr(refresh_worker, "refresh_claim", build)
+    assert await refresh_worker.refresh_batch(factory, kinds=["character"], claim_timeout_seconds=0.05) == 1
+    assert unwound.is_set()
+    assert not any("refresh_claim.<locals>.heartbeat" in task.get_coro().__qualname__
+                   for task in asyncio.all_tasks() if not task.done())
+    async with factory() as session:
+        row = await session.get(ReadProjectionDirty, ("character", 7, "current"))
+        assert row.last_error == "TimeoutError"
+        assert row.lease_token is row.lease_until is None
+        assert row.processed_generation == first.generation < row.requested_generation
+        assert (await session.get(ENTITY_READ_MODELS["character"], (7, 1, "current"))).title == "previous good"
