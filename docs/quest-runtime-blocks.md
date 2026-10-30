@@ -37,10 +37,24 @@ subsequent talks in that state and clear explicitly. Both Rover variants retain
 their original paths. Image extraction uses existing entity-media jobs and immutable
 R2 objects. Unexported pictures remain visible as missing exports, not a guessed image.
 
-Spine backgrounds retain their resource ID and loop flag; browser playback of these
-animated prefabs is not implemented. `PlaySequenceData` remains a distinct engine
+Spine backgrounds resolve their resource ID through the pinned SpineBackground and
+UiResource ConfigDB tables. Existing image workers archive a deterministic ZIP with
+portable `.skel`/`.atlas` data, decoded atlas-page textures, original game packages,
+prefab/material JSON, hashes and client identity. FileReference `story_spine` binds
+the immutable R2 object to its authored background. Shared default UI sprites stay
+explicit references rather than forcing a huge common-atlas export. Successful
+static pictures survive a failed Spine dependency; missing bundles remain retryable.
+Browser playback of the animated skeleton is not implemented. `PlaySequenceData` remains a distinct engine
 scene with its source path. It is not relabelled as an MP4 or replaced with a nearby
 sequence asset's text. Static picture dialogue renders inline without an MP4.
+
+The quest reader groups consecutive illustrated lines into a scene with the actual
+line's speaker, text and existing voice track. Navigation pauses audio; a transcript
+view and direct line anchors preserve access to every recorded line. Complete,
+disjoint choice branches appear as parallel alternatives with a shared continuation
+shown once. Partial, overlapping and nested branches retain the source transcript
+rather than inventing a runtime path. On narrow screens, alternatives scroll within
+their own rail instead of widening the page.
 
 ## Scoped repair
 
@@ -60,6 +74,8 @@ This reuses normal client preparation and existing queue deduplication. It does 
 queue voice conversion, cutscene transcoding or full patch imports. Each structure
 job repairs graph links after indexing, including when its pinned client index is
 reused. Repeating the command adds missing evidence and reuses completed tasks.
+Illustration jobs use schema 2 so previously completed image-only jobs can acquire
+the newly supported Spine bundles without repeating unrelated media work.
 Workspace retention/cleanup follows the existing media workspace lifecycle.
 
 No schema migration is required. Rolling back the application leaves older readers

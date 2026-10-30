@@ -217,3 +217,19 @@ System keys remain the fallback for records without a resolved name. Canonical
 redirects preserve locale, version and dialogue selections; a slug must never
 replace an internal game/graph ID or become the displayed entity name. Social
 metadata and details are returned in the first server response at the slug URL.
+
+
+## Quest reader: paths and illustrated scenes
+
+The quest transcript uses parallel mint/cyan paths for complete authored dialogue
+alternatives. Shared continuations appear once after the fork. Narrow screens
+keep alternatives beside one another in a bounded horizontal rail, rather than
+implying that every answer was spoken sequentially. Partial or ambiguous branches
+retain their source order.
+
+Illustrated dialogue uses an image stage with a quiet, opaque reading panel at
+its foot. Previous/next controls change the current line; the existing dialogue
+voice control stays with that line. A transcript mode exposes the whole passage.
+Exploration and interaction objectives use compact map/conversation marks and
+expandable local content. These views reuse the existing palette, typography,
+Select, focus treatments and source disclosures; they introduce no global theme.

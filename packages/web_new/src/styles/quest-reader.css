@@ -1,0 +1,76 @@
+/* A quest is a path through scenes and choices, not a transcript with extra cards. */
+.quest-fork { min-width: 0; padding: 24px 18px; border-block: 1px solid var(--border-default); }
+.quest-fork-heading, .quest-fork-join { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 13px; color: var(--accent-mint); }
+.quest-fork-heading small { color: var(--text-muted); margin-inline-start: auto; }
+.quest-fork-paths { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: 14px; padding: 22px 0; min-width: 0; }
+.quest-fork-paths:focus-visible { outline: 2px solid var(--accent-mint); outline-offset: 3px; }
+.quest-fork-path { min-width: 0; padding: 24px; background: var(--bg-page); border: 1px solid var(--border-default); border-top: 2px solid var(--accent-cyan); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
+.quest-fork-path.is-selected { border-color: var(--accent-mint); background: var(--surface-2); }
+.quest-fork-path > header { display: flex; align-items: baseline; gap: 12px; padding-bottom: 22px; border-bottom: 1px solid var(--border-default); }
+.quest-fork-path h4 { margin: 0; font-size: 14px; font-weight: 500; line-height: 1.6; }
+.quest-path-number { color: var(--accent-cyan); font-size: 11px; font-variant-numeric: tabular-nums; }
+.quest-fork .transcript-line { grid-template-columns: minmax(0, 1fr); padding: 24px 0 4px; }
+.quest-fork .transcript-line.branch-line { border-left: 1px solid var(--border-default); background: transparent; margin-top: 20px; padding: 4px 0 4px 20px; }
+.quest-fork .transcript-line:is(:target, .cited-passage) { background: transparent; box-shadow: none; }
+.quest-fork-path:has(.transcript-line:target, .cited-passage) { border-color: var(--accent-mint); }
+.quest-fork .line-rail, .quest-fork .branch-marker, .quest-fork .branch-end { display: none; }
+.quest-fork .line-body { padding: 0; min-width: 0; }
+.quest-fork .speaker-row { gap: 10px; margin-bottom: 16px; }
+.quest-fork .speaker-row strong { font-size: 12px; }
+.quest-fork .speaker-dot { flex: 0 0 6px; }
+.quest-fork .line-state { display: none; }
+.quest-fork .dialogue-spoken-text { gap: 8px; }
+.quest-fork .dialogue-spoken-text p { font-size: 14px; line-height: 1.75; }
+.quest-line-source { margin: 18px 0 0 36px; font-size: 11px; color: var(--text-muted); }
+.quest-line-source > summary { cursor: pointer; padding-block: 4px; }
+.quest-line-source .line-foot { display: flex; margin-top: 8px; padding: 0; font-size: 10px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.quest-fork-join { justify-content: center; padding: 12px; border-top: 1px solid var(--border-default); }
+.choice-block.is-fork { display: flex; flex-wrap: wrap; gap: 10px; }
+.choice-block.is-fork .choice-heading { flex-basis: 100%; }
+.choice-block.is-fork .choice-option { min-width: 0; flex: 1 1 12rem; margin: 0; }
+.choice-block.is-fork .choice-branch-button { min-width: 0; }
+.quest-reading-notes { margin-top: 12px; font-size: 12px; color: var(--text-muted); }
+.quest-activity-kind { display: inline-flex; align-items: center; gap: 8px; color: var(--accent-cyan); font-size: 12px; }
+.quest-runtime-block > h3 { font-weight: 500; line-height: 1.6; }
+.quest-illustrated-scene { position: relative; isolation: isolate; min-width: 0; margin: 24px 0; padding-top: 1px; border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--bg-root); overflow: clip; }
+.quest-illustrated-scene .quest-illustration.is-background { position: absolute; inset: 0; z-index: 0; margin: 0; border: 0; border-radius: 0; }
+.quest-illustration.is-background > img { width: 100%; height: 100%; max-height: none; object-fit: contain; object-position: center top; }
+.quest-illustration-placeholder { display: grid; justify-items: center; align-content: center; min-height: 180px; padding: 24px; color: var(--text-secondary); gap: 10px; }
+.quest-illustration-placeholder p { margin: 0; text-align: center; }
+.quest-illustration.is-background .quest-illustration-placeholder { height: 100%; align-content: start; padding: 110px 24px; }
+.quest-illustration.is-background > figcaption { position: absolute; inset: 0 0 auto; padding: 12px 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; background: color-mix(in srgb, var(--bg-root) 90%, transparent); }
+.quest-illustration.is-background > figcaption > span { font-size: 10px; letter-spacing: .12em; }
+.quest-illustration.is-background > figcaption > details { margin-inline-start: auto; max-width: 100%; }
+.quest-illustration.is-background > figcaption > details[open] { flex-basis: 100%; max-height: 150px; overflow: auto; overflow-wrap: anywhere; }
+.quest-spine-download { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--accent-mint); }
+.quest-scene-dialogue { position: relative; margin: clamp(220px, 28vw, 360px) 18px 0; padding: 0 24px; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-1); }
+.quest-scene-dialogue .transcript-line { grid-template-columns: minmax(0, 1fr); border: 0; padding: 20px 0; }
+.quest-scene-dialogue .transcript-line:is(:target, .cited-passage, .branch-line) { border-left: 0; background: transparent; box-shadow: none; }
+.quest-scene-dialogue:has(.transcript-line:target, .cited-passage) { border-color: var(--accent-mint); }
+.quest-scene-dialogue .line-body { min-width: 0; padding: 0; }
+.quest-scene-dialogue .line-rail, .quest-scene-dialogue .line-state, .quest-scene-dialogue .action-tag, .quest-scene-dialogue .line-foot { display: none; }
+.quest-scene-dialogue .speaker-row { margin-bottom: 14px; }
+.quest-scene-dialogue .speaker-row strong { font-size: 12px; }
+.quest-scene-dialogue .dialogue-spoken-text p { font-size: 16px; line-height: 1.9; }
+.quest-scene-transport { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 12px 18px; background: var(--bg-root); }
+.quest-scene-transport > div { display: flex; align-items: center; gap: 12px; }
+.quest-scene-transport button { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px 12px; font: inherit; font-size: 12px; }
+.quest-scene-transport button:hover:not(:disabled) { border-color: var(--accent-mint); }
+.quest-scene-transport button:disabled { opacity: .4; cursor: default; }
+.quest-scene-transport span { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.quest-scene-dialogue, .quest-scene-transport { position: relative; z-index: 1; }
+.quest-illustrated-scene.is-transcript .quest-scene-dialogue { max-height: 30rem; overflow-y: auto; }
+.quest-illustrated-scene.is-transcript .transcript-line + .transcript-line { border-top: 1px solid var(--border-default); }
+.quest-fork .quest-scene-dialogue { margin: 180px 8px 0; padding: 0 10px; }
+.quest-fork .quest-scene-transport { padding: 10px; }
+.quest-fork .quest-scene-dialogue .dialogue-spoken-text p { font-size: 13px; }
+@media (max-width: 760px) {
+  .quest-fork { padding: 20px 12px; }
+  .quest-fork-paths { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 88%; overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: 18px; }
+  .quest-fork-path { scroll-snap-align: start; }
+  .quest-fork-heading small { margin-inline-start: 28px; }
+  .quest-scene-dialogue { margin: 230px 10px 0; padding: 0 12px; }
+  .quest-scene-dialogue .dialogue-spoken-text p { font-size: 15px; }
+  .quest-scene-transport { padding: 10px; gap: 8px; }
+  .quest-illustration.is-background > figcaption { padding: 10px; gap: 8px; }
+}

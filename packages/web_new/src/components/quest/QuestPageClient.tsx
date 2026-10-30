@@ -6,8 +6,16 @@ import { api } from '@/api/client';
 import { PlayerText } from '@/components/dialogue/PlayerText';
 import { AnalysisActions } from '@/components/story/AnalysisActions';
 import { cutsceneSlots } from '@/components/story/cutscenePlacement';
-import { QuestRuntimeBlock, runtimeBlockAnchor, runtimeBlockSlots } from '@/components/story/QuestRuntimeBlock';
+import {
+  QuestRuntimeBlock,
+  runtimeBlockAnchor,
+  runtimeBlockSlots,
+} from '@/components/story/QuestRuntimeBlock';
 import { QuestIllustration } from '@/components/story/QuestIllustration';
+import { QuestIllustratedScene } from '@/components/story/QuestIllustratedScene';
+import { QuestFork } from '@/components/story/QuestFork';
+import { illustratedRuns, questForks } from '@/components/story/questReading';
+import '@/styles/quest-reader.css';
 import { QuestClassification } from '@/components/story/QuestClassification';
 import { QuestContinuity } from '@/components/story/QuestContinuity';
 import { Cutscene, QuestCutscenes, RelatedQuestCutscenes } from '@/components/story/QuestCutscenes';
@@ -18,6 +26,7 @@ import {
   QuestMediaReferences,
 } from '@/components/story/QuestMediaReferences';
 import { EmptyInline, ErrorPanel, PageLoader } from '@/components/ui/Feedback';
+import { Select } from '@/components/ui/Select';
 import { APP_SETTINGS } from '@/config/settings';
 import { entityPath } from '@/data/entities';
 import type { QuestContinuity as QuestContinuityData } from '@/data/story';
@@ -60,7 +69,9 @@ export function QuestPageClient({
 
   const [profile, setProfile] = useState<any>(initialProfile || null);
   const [transcript, setTranscript] = useState<any>(initialTranscript || null);
-  const [continuity, setContinuity] = useState<QuestContinuityData | null>(initialContinuity ?? null);
+  const [continuity, setContinuity] = useState<QuestContinuityData | null>(
+    initialContinuity ?? null,
+  );
   const [media, setMedia] = useState<QuestMediaManifest | null>(initialMedia ?? null);
   const [continuityError, setContinuityError] = useState('');
   const [loading, setLoading] = useState(!initialProfile || !initialTranscript);
@@ -75,7 +86,11 @@ export function QuestPageClient({
       const hash = window.location?.hash;
       if (!hash) return;
       let id: string;
-      try { id = decodeURIComponent(hash.slice(1)); } catch { return; }
+      try {
+        id = decodeURIComponent(hash.slice(1));
+      } catch {
+        return;
+      }
       const target = document.getElementById(id);
       for (let parent = target?.parentElement; parent; parent = parent.parentElement)
         if (parent instanceof HTMLDetailsElement) parent.open = true;
@@ -83,7 +98,10 @@ export function QuestPageClient({
     };
     const frame = requestAnimationFrame(reveal);
     window.addEventListener('hashchange', reveal);
-    return () => { cancelAnimationFrame(frame); window.removeEventListener('hashchange', reveal); };
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('hashchange', reveal);
+    };
   }, [loading, transcript]);
 
   useEffect(() => {
@@ -163,7 +181,9 @@ export function QuestPageClient({
       api<QuestContinuityData>(`/quests/${encodeURIComponent(questKey)}/continuity?${selection}`)
         .then((result) => ({ result, failure: '' }))
         .catch((reason: Error) => ({ result: null, failure: reason.message })),
-      api<QuestMediaManifest>(`/quests/${encodeURIComponent(questKey)}/media?${selection}`).catch(() => null),
+      api<QuestMediaManifest>(`/quests/${encodeURIComponent(questKey)}/media?${selection}`).catch(
+        () => null,
+      ),
     ])
       .then(([p, t, c, m]) => {
         if (!active) return;
@@ -184,8 +204,15 @@ export function QuestPageClient({
       active = false;
     };
   }, [
-    questKey, locale, gameVersion, citedLine, initialSelection, initialProfile,
-    initialTranscript, initialContinuity, initialMedia,
+    questKey,
+    locale,
+    gameVersion,
+    citedLine,
+    initialSelection,
+    initialProfile,
+    initialTranscript,
+    initialContinuity,
+    initialMedia,
   ]);
 
   if (loading && (!profile || !transcript)) return <PageLoader />;
@@ -201,7 +228,9 @@ export function QuestPageClient({
   const scenes = transcript?.scenes || profile?.scenes || [];
   const classification = quest.classification;
   const storyGalleryRecord = classification?.kind === 'story_gallery';
-  const hasMediaReferences = Boolean(media?.events?.length || media?.video_packages?.length || media?.related_cutscenes?.length);
+  const hasMediaReferences = Boolean(
+    media?.events?.length || media?.video_packages?.length || media?.related_cutscenes?.length,
+  );
   const explicitLinks = profile?.explicit_links || [];
   const questConnections = explicitLinks.filter(
     (link: any) =>
@@ -270,16 +299,24 @@ export function QuestPageClient({
     anchor: `flow-state-${index}`,
   }));
   const stateAnchors = new Map(stateIndex.map((state) => [state.key, state.anchor]));
-  const contextualCutscenes = (media?.events || []).filter((event) => event.kind === 'cutscene' && event.context_inferred && !event.story_order_mapped);
+  const contextualCutscenes = (media?.events || []).filter(
+    (event) => event.kind === 'cutscene' && event.context_inferred && !event.story_order_mapped,
+  );
   const videoSlots = cutsceneSlots(
     shown,
-    onlyLines || onlyChoices ? [] : (media?.events || []).filter((event) => !event.interaction_id &&
-      (!event.context_inferred || event.story_order_mapped)),
+    onlyLines || onlyChoices
+      ? []
+      : (media?.events || []).filter(
+          (event) => !event.interaction_id && (!event.context_inferred || event.story_order_mapped),
+        ),
     Boolean(transcript?.offset || lines.length >= (transcript?.limit || 0)),
     ['cutscene', 'sequence'],
   );
-  const activitySlots = runtimeBlockSlots(shown, onlyLines || onlyChoices ? [] : (transcript?.story_blocks || []),
-    Boolean(transcript?.offset || lines.length >= (transcript?.limit || 0)));
+  const activitySlots = runtimeBlockSlots(
+    shown,
+    onlyLines || onlyChoices ? [] : transcript?.story_blocks || [],
+    Boolean(transcript?.offset || lines.length >= (transcript?.limit || 0)),
+  );
   const lineAnchors = new Map<string, string>();
   const firstLineInState = new Set<string>();
   shown.forEach((line: any, index: number) => {
@@ -293,46 +330,191 @@ export function QuestPageClient({
 
   const interactionOwners = new Map<string, string>();
   const activityBlocks = [...activitySlots.values()].flat();
-  const interactionIds = new Set(activityBlocks.flatMap((block) =>
-    (block.interactions || []).map((item) => `${block.id}:${item.id}`)));
+  const interactionIds = new Set(
+    activityBlocks.flatMap((block) =>
+      (block.interactions || []).map((item) => `${block.id}:${item.id}`),
+    ),
+  );
   for (const block of activityBlocks)
     for (const item of block.interactions || [])
       for (const flow of item.flow_states)
-        if (!interactionOwners.has(flow.state)) interactionOwners.set(flow.state, `${block.id}:${item.id}`);
-  const inlineStates = new Set(shown.filter((line: any) => !line.story_position && interactionOwners.has(line.flow_state))
-    .map((line: any) => line.flow_state));
+        if (!interactionOwners.has(flow.state))
+          interactionOwners.set(flow.state, `${block.id}:${item.id}`);
+  const inlineStates = new Set(
+    shown
+      .filter((line: any) => !line.story_position && interactionOwners.has(line.flow_state))
+      .map((line: any) => line.flow_state),
+  );
+  const indexedLines = new Map<string, { line: any; index: number }>(
+    shown.map((line: any, index: number) => [line.id, { line, index }]),
+  );
+  const forks = questForks(shown.filter((line: any) => !inlineStates.has(line.flow_state)));
+  const forksBySource = new Map(forks.map((fork) => [fork.source, fork]));
+  const forkOwners = new Map(
+    forks.flatMap((fork) =>
+      fork.paths.flatMap((path) => path.lineIds.map((id) => [id, path.id] as const)),
+    ),
+  );
+  const forkMediaOwners = new Map<string, string>();
+  for (const state of stateCounts.keys()) {
+    const owners = new Set<string | undefined>(
+      shown
+        .filter((line: any) => line.flow_state === state)
+        .map((line: any) => forkOwners.get(line.id)),
+    );
+    if (owners.size === 1 && !owners.has(undefined)) forkMediaOwners.set(state, [...owners][0]!);
+  }
+  const breaks = new Set<string>(
+    shown
+      .filter((line: any, index: number) => videoSlots.has(index) || activitySlots.has(index))
+      .map((line: any) => line.id),
+  );
+  const sceneRuns = illustratedRuns(
+    shown.filter((line: any) => !inlineStates.has(line.flow_state) && !forkOwners.has(line.id)),
+    breaks,
+  );
+  const sceneOwners = new Map(
+    sceneRuns.flatMap((run) => run.map((line) => [line.id, run] as const)),
+  );
+  const renderExcerpt = (selected: Array<{ line: any; index: number }>, events: any[]) => {
+    const scenes = cutsceneSlots(
+      selected.map(({ line }) => line),
+      events,
+      false,
+      ['cutscene', 'sequence'],
+    );
+    const runs = illustratedRuns(
+      selected.map(({ line }) => line),
+      new Set(selected.filter((_, index) => scenes.has(index)).map(({ line }) => line.id)),
+    );
+    const owners = new Map(runs.flatMap((run) => run.map((line) => [line.id, run] as const)));
+    return [
+      ...selected.map(({ line, index }, slot) => {
+        const run = owners.get(line.id);
+        return (
+          <Fragment key={line.id}>
+            {scenes.get(slot)?.map((event) => (
+              <Cutscene key={`${event.action}-${event.reference}`} event={event} />
+            ))}
+            {run
+              ? run[0].id === line.id && (
+                  <QuestIllustratedScene
+                    key={run[0].id}
+                    lines={run as any}
+                    anchors={lineAnchors}
+                    focusLine={citedLine}
+                    renderLine={(entry) =>
+                      renderTranscriptLine(entry, indexedLines.get(entry.id)!.index, true, true)
+                    }
+                  />
+                )
+              : renderTranscriptLine(line, index, true)}
+          </Fragment>
+        );
+      }),
+      ...(scenes.get(selected.length) || []).map((event) => (
+        <Cutscene key={`${event.action}-${event.reference}`} event={event} />
+      )),
+    ];
+  };
   const renderInteraction = (states: string[], owner: string) => {
-    const selected = shown.map((line: any, index: number) => ({ line, index })).filter(({ line }: any) =>
-      inlineStates.has(line.flow_state) && states.includes(line.flow_state) && interactionOwners.get(line.flow_state) === owner);
-    const scenes = cutsceneSlots(selected.map(({ line }: any) => line),
-      (media?.events || []).filter((event) => event.interaction_id === owner ||
-        selected.some(({ line }: any) => line.flow_state === event.flow_state)),
-      false, ['cutscene', 'sequence']);
-    return [...selected.map(({ line, index }: any, slot: number) => <Fragment key={line.id}>
-      {scenes.get(slot)?.map((event) => <Cutscene key={`${event.action}-${event.reference}`} event={event} />)}
-      {renderTranscriptLine(line, index, true)}
-    </Fragment>), ...((scenes.get(selected.length) || []).map((event) =>
-      <Cutscene key={`${event.action}-${event.reference}`} event={event} />))];
+    const selected = shown
+      .map((line: any, index: number) => ({ line, index }))
+      .filter(
+        ({ line }: any) =>
+          inlineStates.has(line.flow_state) &&
+          states.includes(line.flow_state) &&
+          interactionOwners.get(line.flow_state) === owner,
+      );
+    return renderExcerpt(
+      selected,
+      (media?.events || []).filter(
+        (event) =>
+          event.interaction_id === owner ||
+          selected.some(({ line }: any) => line.flow_state === event.flow_state),
+      ),
+    );
   };
 
-  const renderTranscriptLine = (line: any, i: number, embedded = false) => {
-    const activities = !embedded && activitySlots.get(i)?.map((block) => <QuestRuntimeBlock key={block.id}
-      block={block} display={playerDisplay} stateAnchors={stateAnchors} renderInteraction={renderInteraction} />);
-    const scenes = !embedded && videoSlots.get(i)?.filter((event) => !inlineStates.has(event.flow_state)).map((event) =>
-      <Cutscene key={`${event.action}-${event.reference}`} event={event} />);
-    if (!embedded && inlineStates.has(line.flow_state)) return <Fragment key={line.id}>{activities}{scenes}</Fragment>;
+  const renderTranscriptLine = (line: any, i: number, embedded = false, inScene = false) => {
+    const activities =
+      !embedded &&
+      activitySlots
+        .get(i)
+        ?.map((block) => (
+          <QuestRuntimeBlock
+            key={block.id}
+            block={block}
+            display={playerDisplay}
+            stateAnchors={stateAnchors}
+            renderInteraction={renderInteraction}
+          />
+        ));
+    const scenes =
+      !embedded &&
+      videoSlots
+        .get(i)
+        ?.filter(
+          (event) => !inlineStates.has(event.flow_state) && !forkMediaOwners.has(event.flow_state),
+        )
+        .map((event) => <Cutscene key={`${event.action}-${event.reference}`} event={event} />);
+    if (!embedded && (inlineStates.has(line.flow_state) || forkOwners.has(line.id)))
+      return (
+        <Fragment key={line.id}>
+          {activities}
+          {scenes}
+        </Fragment>
+      );
+    const run = !embedded && sceneOwners.get(line.id);
+    if (run)
+      return (
+        <Fragment key={line.id}>
+          {activities}
+          {scenes}
+          {run[0].id === line.id && (
+            <QuestIllustratedScene
+              key={run[0].id}
+              lines={run as any}
+              anchors={lineAnchors}
+              focusLine={citedLine}
+              renderLine={(entry) =>
+                renderTranscriptLine(entry, indexedLines.get(entry.id)!.index, true, true)
+              }
+            />
+          )}
+        </Fragment>
+      );
     const branch = branchByLine.get(line.id);
     const active = branch?.choice.id === activeChoiceId;
+    const lineSource = (
+      <div className="line-foot">
+        <span>
+          {line.source_type || 'dialogue'}
+          {line.game_ids?.talk_item_id ? ` · Talk ${line.game_ids.talk_item_id}` : ''}
+        </span>
+        {line.provenance?.source_file && (
+          <span title={line.provenance.source_file}>
+            {line.provenance.source_file.split('/').at(-1)}
+            {line.provenance.source_row != null ? ` · row ${line.provenance.source_row}` : ''}
+          </span>
+        )}
+      </div>
+    );
     return (
       <Fragment key={line.id || i}>
         {activities}
-        {!embedded && line.story_order_mapped === false && (i === 0 || shown[i - 1].story_order_mapped !== false) && (
-          <p>Additional dialogue · position in the story is not mapped</p>
-        )}
+        {!embedded &&
+          line.story_order_mapped === false &&
+          (i === 0 || shown[i - 1].story_order_mapped !== false) && (
+            <p>Additional dialogue · position in the story is not mapped</p>
+          )}
         {scenes}
-        {line.illustration && line.illustration.kind !== 'clear' &&
-          (i === 0 || shown[i - 1].illustration?.id !== line.illustration.id) &&
-          <QuestIllustration key={line.illustration.id} illustration={line.illustration} />}
+        {!inScene &&
+          line.illustration &&
+          line.illustration.kind !== 'clear' &&
+          (i === 0 || shown[i - 1].illustration?.id !== line.illustration.id) && (
+            <QuestIllustration key={line.illustration.id} illustration={line.illustration} />
+          )}
         <article
           className={`transcript-line${branch ? ' branch-line' : ''}${active ? ' branch-line-active' : ''}${line.id === citedLine ? ' cited-passage' : ''}`}
           data-dialogue-key={line.id}
@@ -345,14 +527,11 @@ export function QuestPageClient({
             <i />
           </div>
           <div className="line-body">
-            {(joins.get(line.id) || 0) > 1 && (
-              <div className="branch-join">Branches meet here</div>
-            )}
+            {(joins.get(line.id) || 0) > 1 && <div className="branch-join">Branches meet here</div>}
             {branch && branch.lineIds[0] === line.id && (
               <div className="branch-marker">
                 <span>
-                  CHOICE {String(branch.optionIndex + 1).padStart(2, '0')} ·{' '}
-                  {branch.lineIds.length}{' '}
+                  CHOICE {String(branch.optionIndex + 1).padStart(2, '0')} · {branch.lineIds.length}{' '}
                   {branch.lineIds.length === 1 ? 'LINE' : 'LINES'}
                 </span>
                 <strong>
@@ -379,9 +558,7 @@ export function QuestPageClient({
                 />
               </strong>
               <span className="line-state">{line.flow_state || 'Story'}</span>
-              {line.action?.name && (
-                <span className="action-tag">{line.action.name}</span>
-              )}
+              {line.action?.name && <span className="action-tag">{line.action.name}</span>}
             </div>
             <DialogueAudioReference media={line.media}>
               <p>
@@ -397,16 +574,14 @@ export function QuestPageClient({
               </p>
             </DialogueAudioReference>
             {line.player_choices?.length > 0 && (
-              <div className="choice-block">
+              <div className={`choice-block${forksBySource.has(line.id) ? ' is-fork' : ''}`}>
                 <div className="choice-heading">
                   <span /> PLAYER CHOICE
                   {line.player_choices.length > 1 ? 'S' : ''}
                 </div>
                 {line.player_choices.map((choice: any, j: number) => (
                   <div className="choice-option" key={j}>
-                    <span className="choice-diamond">
-                      {String(j + 1).padStart(2, '0')}
-                    </span>
+                    <span className="choice-diamond">{String(j + 1).padStart(2, '0')}</span>
                     {lineAnchors.has(choice.target_line_id) ? (
                       <button
                         type="button"
@@ -414,19 +589,21 @@ export function QuestPageClient({
                         aria-pressed={activeChoiceId === choice.id}
                         onClick={() => {
                           const next =
-                            activeChoiceId === choice.id ||
-                            !branchesByChoice.has(choice.id)
+                            activeChoiceId === choice.id || !branchesByChoice.has(choice.id)
                               ? null
                               : choice.id;
                           setActiveChoiceId(next);
+                          const anchor = lineAnchors.get(choice.target_line_id);
+                          if (anchor && activeChoiceId !== choice.id) window.location.hash = anchor;
                           if (activeChoiceId !== choice.id)
                             requestAnimationFrame(() =>
                               document
-                                .getElementById(
-                                  lineAnchors.get(choice.target_line_id)!,
-                                )
+                                .getElementById(lineAnchors.get(choice.target_line_id)!)
                                 ?.scrollIntoView({
-                                  behavior: 'smooth',
+                                  behavior: window.matchMedia('(prefers-reduced-motion: reduce)')
+                                    .matches
+                                    ? 'auto'
+                                    : 'smooth',
                                   block: 'start',
                                 }),
                             );
@@ -458,22 +635,14 @@ export function QuestPageClient({
                 ))}
               </div>
             )}
-            <div className="line-foot">
-              <span>
-                {line.source_type || 'dialogue'}
-                {line.game_ids?.talk_item_id
-                  ? ` · Talk ${line.game_ids.talk_item_id}`
-                  : ''}
-              </span>
-              {line.provenance?.source_file && (
-                <span title={line.provenance.source_file}>
-                  {line.provenance.source_file.split('/').at(-1)}
-                  {line.provenance.source_row != null
-                    ? ` · row ${line.provenance.source_row}`
-                    : ''}
-                </span>
-              )}
-            </div>
+            {embedded
+              ? (line.provenance?.source_file || line.game_ids?.talk_item_id) && (
+                  <details className="quest-line-source">
+                    <summary>Source reference</summary>
+                    {lineSource}
+                  </details>
+                )
+              : lineSource}
             {branch &&
               branch.lineIds.at(-1) === line.id &&
               branch.continuationLineId &&
@@ -484,13 +653,29 @@ export function QuestPageClient({
                       ? 'Returns to the choice'
                       : 'Continues after this branch'}
                   </span>
-                  <a href={`#${lineAnchors.get(branch.continuationLineId)}`}>
-                    Go there ↑
-                  </a>
+                  <a href={`#${lineAnchors.get(branch.continuationLineId)}`}>Go there ↑</a>
                 </div>
               )}
           </div>
         </article>
+        {forksBySource.has(line.id) && (
+          <QuestFork
+            fork={forksBySource.get(line.id)!}
+            display={playerDisplay}
+            anchors={lineAnchors}
+            selected={activeChoiceId}
+            renderPath={(ids) => {
+              const selected = ids.map((id) => indexedLines.get(id)!).filter(Boolean);
+              const owner = ids.length ? forkOwners.get(ids[0]) : null;
+              return renderExcerpt(
+                selected,
+                (media?.events || []).filter(
+                  (event) => owner && forkMediaOwners.get(event.flow_state) === owner,
+                ),
+              );
+            }}
+          />
+        )}
       </Fragment>
     );
   };
@@ -516,7 +701,12 @@ export function QuestPageClient({
               {quest.name?.content || `Quest ${questKey}`}
               <span className="heading-period">.</span>
             </h1>
-            <AnalysisActions target={{ kind: 'quest', questId: Number(quest.game_quest_id || questKey) }} />
+            <AnalysisActions
+              target={{
+                kind: 'quest',
+                questId: Number(quest.game_quest_id || questKey),
+              }}
+            />
           </div>
           <div className="quest-meta">
             <span>
@@ -547,7 +737,9 @@ export function QuestPageClient({
                 <small>
                   {requirement.item ? (
                     <Link to={requirement.item.href}>{requirement.item.label}</Link>
-                  ) : `Item ${requirement.item_id}`}
+                  ) : (
+                    `Item ${requirement.item_id}`
+                  )}
                   {requirement.count != null ? ` · ${requirement.count} required` : ''}
                 </small>
               </span>
@@ -557,7 +749,10 @@ export function QuestPageClient({
         </section>
       )}
       {continuity && (
-        <QuestContinuity continuity={continuity} title={quest.name?.content || `Quest ${questKey}`} />
+        <QuestContinuity
+          continuity={continuity}
+          title={quest.name?.content || `Quest ${questKey}`}
+        />
       )}
       {continuityError && (
         <div className="quest-continuity-warning" role="status">
@@ -573,23 +768,34 @@ export function QuestPageClient({
         <section className="quest-no-transcript" aria-labelledby="quest-no-transcript-title">
           <span className="eyebrow left">SOURCE RECORD · NO DIALOGUE TRANSCRIPT</span>
           <h2 id="quest-no-transcript-title">
-            {classification?.kind === 'test' ? 'Test quest — no dialogue recorded' :
-              storyGalleryRecord ? 'Story gallery record' : 'No dialogue recorded for this quest'}
+            {classification?.kind === 'test'
+              ? 'Test quest — no dialogue recorded'
+              : storyGalleryRecord
+                ? 'Story gallery record'
+                : 'No dialogue recorded for this quest'}
           </h2>
           <p>
             {classification?.kind === 'test'
               ? 'The source classifies this as a test quest. No dialogue is recorded for it in this snapshot.'
               : storyGalleryRecord
-              ? `The game data marks this as a story gallery record. This import has ${scenes.length} scene records, but no dialogue lines or playable video for it.`
-              : scenes.length > 0
-                ? `This import has ${scenes.length} scene records for this quest, but no dialogue lines. The source does not confirm what players see at this point.`
-                : 'The game data lists this quest, but this import has no dialogue or scene records for it.'}
+                ? `The game data marks this as a story gallery record. This import has ${scenes.length} scene records, but no dialogue lines or playable video for it.`
+                : scenes.length > 0
+                  ? `This import has ${scenes.length} scene records for this quest, but no dialogue lines. The source does not confirm what players see at this point.`
+                  : 'The game data lists this quest, but this import has no dialogue or scene records for it.'}
           </p>
-          <p>{classification?.kind === 'test'
-            ? 'Recorded requirements and source links are still shown on this page.'
-            : 'Its place in the story and source links are still shown on this page.'}</p>
-          {(transcript?.story_blocks || []).map((block: any) => <QuestRuntimeBlock key={block.id}
-            block={block} display={playerDisplay} stateAnchors={new Map()} />)}
+          <p>
+            {classification?.kind === 'test'
+              ? 'Recorded requirements and source links are still shown on this page.'
+              : 'Its place in the story and source links are still shown on this page.'}
+          </p>
+          {(transcript?.story_blocks || []).map((block: any) => (
+            <QuestRuntimeBlock
+              key={block.id}
+              block={block}
+              display={playerDisplay}
+              stateAnchors={new Map()}
+            />
+          ))}
           {hasMediaReferences && <QuestMediaReferences manifest={media} stateAnchors={new Map()} />}
           <QuestCutscenes manifest={media} stateAnchors={new Map()} />
           <RelatedQuestCutscenes manifest={media} />
@@ -599,27 +805,33 @@ export function QuestPageClient({
           <div className="transcript-toolbar">
             <div>
               <span className="eyebrow left">AUTHORED TRANSCRIPT</span>
-              <h2>Story, as recorded.</h2>
+              <h2>Inside the story.</h2>
               <p>
-                Choices with a recorded path show their own lines. Select an answer to highlight its
-                branch; this is not a single guaranteed playthrough.
+                Follow the dialogue, explore each answer, and open the interactions along the way.
               </p>
-              {transcript?.tree_order_asset_version && <p>Scene order uses game client {transcript.tree_order_asset_version}.</p>}
+              <details className="quest-reading-notes">
+                <summary>About this reading order</summary>
+                <p>
+                  Alternatives are separate paths, not consecutive events. Incomplete paths remain
+                  in the transcript with their source references.
+                  {transcript?.tree_order_asset_version && (
+                    <> Scene order uses game client {transcript.tree_order_asset_version}.</>
+                  )}
+                </p>
+              </details>
             </div>
             <div className="transcript-filters">
-              <label className="voice-language">
-                Voice
-                <select
-                  aria-label="Voice language"
-                  value={voiceLanguage}
-                  onChange={(event) => setVoiceLanguage(event.target.value as typeof voiceLanguage)}
-                >
-                  <option value="en">English</option>
-                  <option value="ja">Japanese</option>
-                  <option value="ko">Korean</option>
-                  <option value="zh">Chinese</option>
-                </select>
-              </label>
+              <Select
+                label="Voice language"
+                value={voiceLanguage}
+                onChange={(value) => setVoiceLanguage(value as typeof voiceLanguage)}
+                options={[
+                  { value: 'en', label: 'English' },
+                  { value: 'ja', label: 'Japanese' },
+                  { value: 'ko', label: 'Korean' },
+                  { value: 'zh', label: 'Chinese' },
+                ]}
+              />
               <button
                 onClick={() => {
                   setOnlyLines(!onlyLines);
@@ -668,17 +880,32 @@ export function QuestPageClient({
               <QuestMediaReferences
                 manifest={media}
                 stateAnchors={stateAnchors}
-                visibleCutscenes={[...Array.from(videoSlots.values()).flat(), ...contextualCutscenes,
-                  ...(media?.events || []).filter((event) => event.interaction_id && interactionIds.has(event.interaction_id))]}
+                visibleCutscenes={[
+                  ...Array.from(videoSlots.values()).flat(),
+                  ...contextualCutscenes,
+                  ...(media?.events || []).filter(
+                    (event) => event.interaction_id && interactionIds.has(event.interaction_id),
+                  ),
+                ]}
               />
-              {transcript?.story_blocks?.length > 0 && <details className="quest-activity-nav">
-                <summary>Exploration &amp; interactions · {transcript.story_blocks.length}</summary>
-                <nav aria-label="Quest activities">
-                  {transcript.story_blocks.map((block: any) => <a key={block.id} href={`#${runtimeBlockAnchor(block.id)}`}>
-                    <PlayerText display={playerDisplay} value={block.title} fallback="Story activity" />
-                  </a>)}
-                </nav>
-              </details>}
+              {transcript?.story_blocks?.length > 0 && (
+                <details className="quest-activity-nav">
+                  <summary>
+                    Exploration &amp; interactions · {transcript.story_blocks.length}
+                  </summary>
+                  <nav aria-label="Quest activities">
+                    {transcript.story_blocks.map((block: any) => (
+                      <a key={block.id} href={`#${runtimeBlockAnchor(block.id)}`}>
+                        <PlayerText
+                          display={playerDisplay}
+                          value={block.title}
+                          fallback="Story activity"
+                        />
+                      </a>
+                    ))}
+                  </nav>
+                </details>
+              )}
             </aside>
             <div className="transcript">
               {shown.length ? (
@@ -686,11 +913,24 @@ export function QuestPageClient({
               ) : (
                 <EmptyInline text="No dialogue lines matched this view." />
               )}
-              {videoSlots.get(shown.length)?.filter((event) => !inlineStates.has(event.flow_state)).map((event) => (
-                <Cutscene key={`${event.action}-${event.reference}`} event={event} />
+              {videoSlots
+                .get(shown.length)
+                ?.filter(
+                  (event) =>
+                    !inlineStates.has(event.flow_state) && !forkMediaOwners.has(event.flow_state),
+                )
+                .map((event) => (
+                  <Cutscene key={`${event.action}-${event.reference}`} event={event} />
+                ))}
+              {activitySlots.get(shown.length)?.map((block) => (
+                <QuestRuntimeBlock
+                  key={block.id}
+                  block={block}
+                  display={playerDisplay}
+                  stateAnchors={stateAnchors}
+                  renderInteraction={renderInteraction}
+                />
               ))}
-              {activitySlots.get(shown.length)?.map((block) => <QuestRuntimeBlock key={block.id}
-                block={block} display={playerDisplay} stateAnchors={stateAnchors} renderInteraction={renderInteraction} />)}
               {contextualCutscenes.map((event) => (
                 <Cutscene key={`${event.action}-${event.reference}`} event={event} />
               ))}
@@ -785,7 +1025,10 @@ export function QuestPageClient({
           type="button"
           onClick={() => {
             const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            window.scrollTo({ top: 0, behavior: reducedMotion ? 'auto' : 'smooth' });
+            window.scrollTo({
+              top: 0,
+              behavior: reducedMotion ? 'auto' : 'smooth',
+            });
           }}
         >
           <ArrowUp size={16} aria-hidden="true" />
