@@ -6,6 +6,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from wuwa_story.ingestion.talk_backgrounds import background_config
+
 from .core import Writer, read_json
 
 KNOWN_TALK_TYPES = {"Talk", "Option", "SystemOption", "CenterText", "AvgTalk",
@@ -104,7 +106,7 @@ def compile_flow(root: Path, writer: Writer, english: dict[str, dict[str, Any]],
         identifier = f"asset:ue:{path}"
         if identifier not in writer.ids:
             writer.emit("asset_reference", {"id": identifier, "namespace": "ue", "value": path,
-                                            "source": {"file": state_source, "raw_path": raw_path},
+                                            "source": {"file": state_source, "row": row_index, "raw_path": raw_path},
                                             "raw": {"path": path}})
         return identifier
 
@@ -249,6 +251,13 @@ def compile_flow(root: Path, writer: Writer, english: dict[str, dict[str, Any]],
                                      "array_index": talk_index}, "raw": talk}
                 writer.emit(kind, record)
                 writer.edge(action_id, talk_id, "presents_talk_item", "TalkItems array position", source, talk_path)
+                background = background_config(talk.get('BackgroundConfig'))
+                for image in (background or {}).get('images', []):
+                    field = 'ImageAsset' if image['rover'] is None else 'ImageAsset' + image['rover'].title()
+                    image_path = f'{talk_path}.BackgroundConfig.{field}'
+                    asset = ensure_asset(image['engine_path'], source, image_path)
+                    writer.edge(talk_id, asset, 'references_asset', 'BackgroundConfig.' + field,
+                                source, image_path)
                 counts[kind] += 1
                 if who is not None:
                     if who in speaker_ids:

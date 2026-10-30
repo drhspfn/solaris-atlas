@@ -68,6 +68,17 @@ async def localization_keys(session, identities):
     )
 
 
+async def named_localization_keys(session, keys):
+    return dict(await session.execute(select(LocalizationKey.key, LocalizationKey.id)
+                                     .where(LocalizationKey.key.in_(keys)))) if keys else {}
+
+
+async def illustration_actions(session, state_ids):
+    return list(await session.execute(select(QuestAction.node_id, QuestAction.quest_state_node_id,
+        QuestAction.params['TalkItems']).where(QuestAction.quest_state_node_id.in_(state_ids),
+        QuestAction.action_name == 'ShowTalk').order_by(QuestAction.quest_state_node_id, QuestAction.action_index)))
+
+
 async def localization_values(session, identities, locale_id):
     return await session.execute(
         select(

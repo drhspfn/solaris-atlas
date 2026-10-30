@@ -120,24 +120,32 @@ async def authored_order(session, quest_id: int, release_id: int | None):
     if not positions and not blocks:
         return None
     ids = [states[key] for key, _ in positions]
-    actions = list(await session.execute(select(QuestAction.node_id, QuestAction.quest_state_node_id)
+    actions = list(await session.execute(select(QuestAction.node_id, QuestAction.quest_state_node_id, QuestAction.action_index)
                                         .where(QuestAction.quest_state_node_id.in_(ids))))
-    memberships = set(await source_parents(session, {a for a, _ in actions}, ('contains_action',), release_id))
-    movies = await media_links(session, [a for a, s in actions if (a, s) in memberships], ('plays_cutscene',), release_id)
+    memberships = set(await source_parents(session, {a for a, _, _ in actions}, ('contains_action',), release_id))
+    movies = await media_links(session, [a for a, s, _ in actions if (a, s) in memberships], ('plays_cutscene',), release_id)
     cutscene_ids = {link['node_id'] for values in movies.values() for link in values}
     subtitles = await media_links(session, list(cutscene_ids), ('has_transcript_state',), release_id)
     captions_by_state: dict[int, list[int]] = {}
-    for action, state in actions:
+    caption_positions = {}
+    positions_by_id = {states[key]: position for key, position in positions}
+    for action, state, action_index in actions:
         if (action, state) not in memberships:
             continue
         for scene in movies.get(action, []):
-            captions_by_state.setdefault(state, []).extend(
-                link['node_id'] for link in subtitles.get(scene['node_id'], []))
+            for link in subtitles.get(scene['node_id'], []):
+                captions_by_state.setdefault(state, []).append(link['node_id'])
+                position = (*positions_by_id[state], action_index, 0)
+                caption_positions[link['node_id']] = min(caption_positions.get(link['node_id'], position), position)
     ordered: list[int] = []
     for state in ids:
         for identity in (state, *captions_by_state.get(state, [])):
             if identity not in ordered:
                 ordered.append(identity)
+    caption_keys = dict(await session.execute(select(QuestState.node_id, QuestState.state_key).where(
+        QuestState.node_id.in_(caption_positions)))) if caption_positions else {}
+    all_positions = {**dict(positions), **{caption_keys[identity]: position for identity, position in caption_positions.items()
+                                         if identity in caption_keys}}
     return {'state_ids': ordered, 'asset_version': quest_tree.asset_version,
             'mapped_flow_states': [key for key, _ in positions],
-            'positions': dict(positions), 'blocks': blocks}
+            'positions': all_positions, 'blocks': blocks}

@@ -6,7 +6,7 @@ import json
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 
-from wuwa_story.db.models.core import Cutscene, VoiceReference
+from wuwa_story.db.models.core import Cutscene, QuestAction, QuestState, VoiceReference
 from wuwa_story.db.models.graph import Node, NodeRevision
 from wuwa_story.db.models.ops import GameRelease, ProcessingRun, Processor
 from wuwa_story.ingestion.media_jobs import publish_media_job
@@ -22,7 +22,8 @@ def batches(values, size=100):
 
 
 async def enqueue_release_media(
-    session, release_id: int, *, event_artwork_only: bool = False, notices_only: bool = False
+    session, release_id: int, *, event_artwork_only: bool = False, notices_only: bool = False,
+    illustrations_only: bool = False,
 ) -> dict:
     release = await session.get(GameRelease, release_id)
     if release is None:
@@ -35,16 +36,23 @@ async def enqueue_release_media(
         entities, cutscenes, voices = [], [], []
     else:
         present = select(NodeRevision.node_id).where(NodeRevision.release_id == release_id)
+        illustrated = select(QuestState.node_id).join(QuestAction,
+            QuestAction.quest_state_node_id == QuestState.node_id).where(
+            QuestAction.action_name == 'ShowTalk',
+            QuestAction.params['TalkItems'].astext.contains('"BackgroundConfig"'))
+        catalog = ((Node.canonical_key.startswith("character:"))
+                   | (Node.canonical_key.startswith("item:")) | (Node.canonical_key.startswith("skill:")))
         entities = list(await session.scalars(select(Node.canonical_key).where(
-            Node.id.in_(present), (Node.canonical_key.startswith("character:"))
-            | (Node.canonical_key.startswith("item:"))
-            | (Node.canonical_key.startswith("skill:"))).order_by(Node.id)))
+            Node.id.in_(present), (catalog if not illustrations_only else False)
+            | Node.id.in_(illustrated)).order_by(Node.id)))
         cutscenes = list(await session.scalars(select(Cutscene.cg_name).where(
             Cutscene.node_id.in_(present), Cutscene.cg_name.is_not(None)).order_by(Cutscene.node_id)))
         voices = list(await session.scalars(select(VoiceReference.file_name).where(
             VoiceReference.node_id.in_(present), VoiceReference.file_name.is_not(None))
             .distinct().order_by(VoiceReference.file_name)))
     characters = [key for key in entities if key.startswith("character:")]
+    if illustrations_only:
+        cutscenes, voices, characters = [], [], []
     specs = [("prepare", [])]
     if notices_only:
         specs.append(("event_notices", ["en"]))
@@ -57,7 +65,8 @@ async def enqueue_release_media(
     if not (event_artwork_only or notices_only) and (voices or characters):
         specs.append(("voice_packages", []))
     if not (event_artwork_only or notices_only):
-        specs.append(("tree_order", []))
+        if not illustrations_only:
+            specs.append(("tree_order", []))
         specs.extend(("images", batch) for batch in batches(entities))
         specs.extend(("cutscene", [name]) for name in sorted(set(cutscenes)))
         specs.extend(("voices", batch) for batch in batches(voices))

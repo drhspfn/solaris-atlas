@@ -6,6 +6,8 @@ import { api } from '@/api/client';
 import { PlayerText } from '@/components/dialogue/PlayerText';
 import { AnalysisActions } from '@/components/story/AnalysisActions';
 import { cutsceneSlots } from '@/components/story/cutscenePlacement';
+import { QuestRuntimeBlock, runtimeBlockAnchor, runtimeBlockSlots } from '@/components/story/QuestRuntimeBlock';
+import { QuestIllustration } from '@/components/story/QuestIllustration';
 import { QuestClassification } from '@/components/story/QuestClassification';
 import { QuestContinuity } from '@/components/story/QuestContinuity';
 import { Cutscene, QuestCutscenes, RelatedQuestCutscenes } from '@/components/story/QuestCutscenes';
@@ -256,6 +258,8 @@ export function QuestPageClient({
     onlyLines || onlyChoices ? [] : (media?.events || []).filter((event) => !event.context_inferred || event.story_order_mapped),
     Boolean(transcript?.offset || lines.length >= (transcript?.limit || 0)),
   );
+  const activitySlots = runtimeBlockSlots(shown, onlyLines || onlyChoices ? [] : (transcript?.story_blocks || []),
+    Boolean(transcript?.offset || lines.length >= (transcript?.limit || 0)));
   const lineAnchors = new Map<string, string>();
   const firstLineInState = new Set<string>();
   shown.forEach((line: any, index: number) => {
@@ -360,6 +364,8 @@ export function QuestPageClient({
           <p>{classification?.kind === 'test'
             ? 'Recorded requirements and source links are still shown on this page.'
             : 'Its place in the story and source links are still shown on this page.'}</p>
+          {(transcript?.story_blocks || []).map((block: any) => <QuestRuntimeBlock key={block.id}
+            block={block} display={playerDisplay} stateAnchors={new Map()} />)}
           {hasMediaReferences && <QuestMediaReferences manifest={media} stateAnchors={new Map()} />}
           <QuestCutscenes manifest={media} stateAnchors={new Map()} />
           <RelatedQuestCutscenes manifest={media} />
@@ -440,6 +446,14 @@ export function QuestPageClient({
                 stateAnchors={stateAnchors}
                 visibleCutscenes={[...Array.from(videoSlots.values()).flat(), ...contextualCutscenes]}
               />
+              {transcript?.story_blocks?.length > 0 && <details className="quest-activity-nav">
+                <summary>Exploration &amp; interactions · {transcript.story_blocks.length}</summary>
+                <nav aria-label="Quest activities">
+                  {transcript.story_blocks.map((block: any) => <a key={block.id} href={`#${runtimeBlockAnchor(block.id)}`}>
+                    <PlayerText display={playerDisplay} value={block.title} fallback="Story activity" />
+                  </a>)}
+                </nav>
+              </details>}
             </aside>
             <div className="transcript">
               {shown.length ? (
@@ -448,12 +462,17 @@ export function QuestPageClient({
                   const active = branch?.choice.id === activeChoiceId;
                   return (
                     <Fragment key={line.id || i}>
+                      {activitySlots.get(i)?.map((block) => <QuestRuntimeBlock key={block.id}
+                        block={block} display={playerDisplay} stateAnchors={stateAnchors} />)}
                       {line.story_order_mapped === false && (i === 0 || shown[i - 1].story_order_mapped !== false) && (
                         <p>Additional dialogue · position in the story is not mapped</p>
                       )}
                       {videoSlots.get(i)?.map((event) => (
                         <Cutscene key={`${event.action}-${event.reference}`} event={event} />
                       ))}
+                      {line.illustration && line.illustration.kind !== 'clear' &&
+                        (i === 0 || shown[i - 1].illustration?.id !== line.illustration.id) &&
+                        <QuestIllustration key={line.illustration.id} illustration={line.illustration} />}
                       <article
                         className={`transcript-line${branch ? ' branch-line' : ''}${active ? ' branch-line-active' : ''}${line.id === citedLine ? ' cited-passage' : ''}`}
                         data-dialogue-key={line.id}
@@ -621,6 +640,8 @@ export function QuestPageClient({
               {videoSlots.get(shown.length)?.map((event) => (
                 <Cutscene key={`${event.action}-${event.reference}`} event={event} />
               ))}
+              {activitySlots.get(shown.length)?.map((block) => <QuestRuntimeBlock key={block.id}
+                block={block} display={playerDisplay} stateAnchors={stateAnchors} />)}
               {contextualCutscenes.map((event) => (
                 <Cutscene key={`${event.action}-${event.reference}`} event={event} />
               ))}

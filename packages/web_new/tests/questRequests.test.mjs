@@ -36,11 +36,13 @@ function questHarness({ missingTranscript = false } = {}) {
   const dummy = new Proxy({}, { get: () => () => null });
   const mocks = Object.fromEntries([
     'lucide-react', '@/components/dialogue/PlayerText', '@/components/story/AnalysisActions',
+    '@/components/story/QuestIllustration',
     '@/components/story/QuestClassification', '@/components/story/QuestContinuity',
     '@/components/story/QuestCutscenes', '@/components/story/QuestExplanation',
     '@/components/story/QuestMediaReferences', '@/components/ui/Feedback', '@/data/entities',
   ].map((id) => [id, dummy]));
   Object.assign(mocks, {
+    '@/components/story/QuestRuntimeBlock': { runtimeBlockSlots: () => new Map(), runtimeBlockAnchor: (id) => id },
     react: { useState(value) {
       const index = stateIndex++;
       if (!(index in states)) states[index] = value;

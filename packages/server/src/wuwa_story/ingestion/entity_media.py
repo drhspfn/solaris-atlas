@@ -9,6 +9,8 @@ from wuwa_story.db.models.graph import Node, NodeRevision
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.ingestion.character_artwork import character_artwork_scope
+from wuwa_story.ingestion.dungeon_context import decoded
+from wuwa_story.ingestion.talk_backgrounds import background_changes
 
 
 class MediaRequest(BaseModel):
@@ -37,6 +39,20 @@ def image_paths(value, field="") -> set[str]:
     ):
         return {value}
     return set()
+
+
+def flow_background_paths(raw: dict) -> set[str]:
+    actions = decoded(raw.get('Actions', []))
+    paths = set()
+    for action in actions if isinstance(actions, list) else []:
+        if not isinstance(action, dict):
+            continue
+        params = action.get('Params')
+        if not isinstance(params, dict):
+            continue
+        for _, background in background_changes(params.get('TalkItems')):
+            paths.update(image['engine_path'] for image in background['images'])
+    return paths
 
 
 async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
@@ -98,7 +114,10 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
                 ),
             ):
                 rows.extend(await records(path, field, value))
-        images = sorted(set().union(*(image_paths(row) for row in rows)))
+        if kind == 'flow_state':
+            images = sorted(flow_background_paths(raw))
+        else:
+            images = sorted(set().union(*(image_paths(row) for row in rows)))
         if "image" in request.kinds:
             targets.extend(
                 {
