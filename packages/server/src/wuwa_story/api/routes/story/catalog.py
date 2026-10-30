@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api import read_projections
 from wuwa_story.api.routes.story.shared import _display_label, _localized, _release_id
 from wuwa_story.db.models.core import DialogueLine
 from wuwa_story.db.models.graph import Node, NodeType
@@ -28,6 +29,10 @@ async def browse_catalog(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Return a stable, localized catalog page for the frontend browse views."""
+    if read_projections.should_route_to_projection():
+        return await read_projections.catalog_page(
+            session, category, locale, quest_type_id=quest_type_id, limit=limit, offset=offset,
+        )
     locale_row = await session.scalar(select(Locale).where(Locale.code == locale))
     if locale_row is None:
         raise HTTPException(status_code=400, detail=f"unknown locale: {locale}")
@@ -101,6 +106,8 @@ async def browse_catalog(
 
 @router.get("/categories")
 async def browse_categories(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    if read_projections.should_route_to_projection():
+        return await read_projections.category_counts(session)
     rows = (
         await session.execute(
             select(NodeType.key, func.count(Node.id))

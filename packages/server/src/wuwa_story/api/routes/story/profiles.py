@@ -8,6 +8,7 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
+from wuwa_story.api import read_projections
 from wuwa_story.api.item_acquisition import ITEM_QUEST_REWARD_LIMIT, item_map_sources
 from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.api.routes.story.shared import (
@@ -59,6 +60,8 @@ async def item_profile(
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if read_projections.should_route_to_projection():
+        return await read_projections.profile_page(session, "item", canonical_key, locale, game_version)
     node = await get_node(session, canonical_key, ('item',))
     if node is None:
         raise HTTPException(status_code=404, detail="item not found")
@@ -708,6 +711,8 @@ async def location_profile(
     locale: str = "en",
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if read_projections.should_route_to_projection():
+        return await read_projections.profile_page(session, "location", canonical_key, locale, None)
     node = await get_node(session, canonical_key, ('area', 'location'))
     if node is None:
         raise HTTPException(status_code=404, detail="location not found")
@@ -762,6 +767,8 @@ async def quest_profile(
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if read_projections.should_route_to_projection():
+        return await read_projections.profile_page(session, "quest", game_quest_id, locale, game_version)
     try:
         return await usecases.quest_profile(session, game_quest_id, locale, game_version)
     except StoryBrowsingError as error:
@@ -776,6 +783,8 @@ async def character_profile(
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if read_projections.should_route_to_projection():
+        return await read_projections.profile_page(session, "character", canonical_key, locale, game_version)
     node = await get_node(session, canonical_key, ('character',))
     if node is None:
         raise HTTPException(status_code=404, detail="character not found")

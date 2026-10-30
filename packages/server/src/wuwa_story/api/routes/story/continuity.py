@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api import read_projections
 from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.api.routes.story.shared import _localized, _release_id, _version_key
 from wuwa_story.db.models.core import Quest
@@ -71,6 +72,8 @@ async def quest_continuity(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Expose observed patch presence, quest category, chapter and authored tree links."""
+    if read_projections.should_route_to_projection():
+        return await read_projections.quest_section(session, game_quest_id, locale, game_version, "continuity")
     quest = await get_quest(session, game_quest_id)
     if quest is None:
         raise HTTPException(status_code=404, detail="quest not found")

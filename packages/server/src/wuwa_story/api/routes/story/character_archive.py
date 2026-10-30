@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api import read_projections
 from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.api.routes.story.shared import _release_id, _version_key
 from wuwa_story.config.settings import get_settings
@@ -118,6 +119,8 @@ async def character_archive(
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if read_projections.should_route_to_projection():
+        return await read_projections.archive_page(session, canonical_key, locale, game_version)
     node = await get_node(session, canonical_key, ('character',))
     if node is None or await session.get(Character, node.id) is None:
         raise HTTPException(status_code=404, detail="character not found")
