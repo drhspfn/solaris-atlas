@@ -55,7 +55,7 @@ async def illustration_payloads(session, rows):
         for path, key, metadata, identity, size in files:
             bundles.setdefault(path, {'url': storage.public_url(key), 'file_id': identity,
                                       'size_bytes': size, 'asset_version': (metadata or {}).get('asset_version'),
-                                      'playback': {key: value for key, value in ((metadata or {}).get('playback') or {}).items() if key != 'components'} or None})
+                                      'playback': {key: value for key, value in ((metadata or {}).get('playback') or {}).items() if key != 'components'} if settings.story_spine_playback_enabled else None})
     active = {}
     payloads = {}
     for action_id, state_id, items in actions:

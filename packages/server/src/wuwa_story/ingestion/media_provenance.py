@@ -45,7 +45,7 @@ def matches_source(metadata: dict, source: dict, target: dict) -> bool:
 
 
 async def missing_media_targets(session, targets: list[dict], *, source: dict, storage,
-                                reference_type: str | None = None) -> list[dict]:
+                                reference_type: str | None = None, require_spine_playback: bool = False) -> list[dict]:
     """One database query, one HEAD per unique candidate blob, bounded concurrency.
 
     Missing/legacy provenance, other versions, and stale locations remain retryable.
@@ -80,7 +80,7 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
         references.setdefault(identity, []).append(reference)
         target = by_source.get((identity[0], *identity[2:]))
         metadata = reference.metadata_json or {}
-        playable = target is None or target.get('kind') != 'spine' or ((metadata.get('playback') or {}).get('variants') and (metadata.get('playback') or {}).get('components') and not (metadata.get('playback') or {}).get('unsupported'))
+        playable = not require_spine_playback or target is None or target.get('kind') != 'spine' or ((metadata.get('playback') or {}).get('variants') and (metadata.get('playback') or {}).get('components') and not (metadata.get('playback') or {}).get('unsupported'))
         if target is not None and playable and matches_source(metadata, source, target):
             candidates.append((target_identity(target, reference_type), file.size_bytes,
                                location.object_key, reference, location))
@@ -92,7 +92,7 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
 
     components = {key: (reference.metadata_json or {}).get('playback', {}).get('components', [])
                   for _identity, _size, key, reference, _location in candidates
-                  if expected[_identity].get('kind') == 'spine'}
+                  if require_spine_playback and expected[_identity].get('kind') == 'spine'}
     keys = {c[2] for c in candidates} | {part['object_key'] for parts in components.values() for part in parts}
     objects = dict(await asyncio.gather(*(stat(key) for key in keys)))
     present = set()

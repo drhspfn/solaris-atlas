@@ -49,6 +49,14 @@ bounds downloads and decoded-texture budgets. Source bounds remain intact.
 A viewport is narrowed only when four static, opaque black, axis-aligned border
 meshes establish a geometric aperture; asset names are irrelevant.
 
+## Rollout
+
+`STORY_SPINE_PLAYBACK_ENABLED` defaults to `false` in API, workers and production
+environment generation. Archive-only imports do not publish browser components
+or become partial solely because a renderer feature is unsupported. The API does
+not expose playback data while disabled, including previously generated metadata.
+Set the shared flag to `true` only for an explicit playback rollout.
+
 ## Storage and repair
 
 Archive schema 2 retains original packages, skeleton/atlas/textures, dependencies,

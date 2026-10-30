@@ -44,6 +44,7 @@ GROUPS = {
         "WUWA_VIDEO_MEMORY": "2560m",
     },
     "shared.env": {
+        "STORY_SPINE_PLAYBACK_ENABLED": "false",
         "AGENT_PROVIDER": "responses",
         "AGENT_MODEL": "gpt-6-luna",
         "AGENT_BASE_URL": "https://api.openai.com/v1",

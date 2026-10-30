@@ -23,8 +23,20 @@ async def test_spine_reuse_verifies_recipe_and_every_open_component(recipe, miss
     session = AsyncMock()
     session.execute.return_value = [(reference, file, location)]
     storage = SimpleNamespace(backend='s3', bucket='media', stat=AsyncMock(side_effect=stat))
-    result = await missing_media_targets(session, [value], source={'asset_version': '3.7.0'}, storage=storage)
+    result = await missing_media_targets(session, [value], source={'asset_version': '3.7.0'}, storage=storage, require_spine_playback=True)
     assert result == ([value] if missing else [])
+
+
+@pytest.mark.asyncio
+async def test_archive_only_spine_reuse_needs_no_browser_components():
+    value = {**target('spine_background:7'), 'kind': 'spine', 'reference_type': 'story_spine', 'spine_recipe': 1}
+    reference, file, location = row(value, spine_recipe=1)
+    reference.reference_type = 'story_spine'
+    session = AsyncMock()
+    session.execute.return_value = [(reference, file, location)]
+    storage = SimpleNamespace(backend='s3', bucket='media', stat=AsyncMock(return_value=SimpleNamespace(size_bytes=12)))
+    assert await missing_media_targets(session, [value], source={'asset_version': '3.7.0'}, storage=storage) == []
+    storage.stat.assert_awaited_once()
 
 
 def target(path="/Game/Icon.Icon", language=None):

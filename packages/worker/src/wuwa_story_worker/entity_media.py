@@ -359,7 +359,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                     source["voice_plan_id"] = json.loads(
                         (voice_root / "plan.json").read_text(encoding="utf-8"))["id"]
                 targets = await missing_media_targets(
-                    session, payload["targets"], source=source, storage=storage)
+                    session, payload["targets"], source=source, storage=storage,
+                    require_spine_playback=get_settings().story_spine_playback_enabled)
                 missing_identities = {target_identity(t) for t in targets}
                 skipped = len(payload["targets"]) - len(targets)
                 voice_provenance = {}
@@ -444,7 +445,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         )
                     reference.file_id = published.id
                     playback = None
-                    if target['kind'] == 'spine':
+                    if target['kind'] == 'spine' and get_settings().story_spine_playback_enabled:
                         from wuwa_story_worker.story_spine import publish_open_playback
                         playback = await publish_open_playback(session, path, target, published, service,
                                                                storage, run.id, request.asset_version)

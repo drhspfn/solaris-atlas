@@ -44,8 +44,10 @@ prefab/material JSON, hashes and client identity. FileReference `story_spine` bi
 the immutable R2 object to its authored background. Shared default UI sprites stay
 explicit references rather than forcing a huge common-atlas export. Successful
 static pictures survive a failed Spine dependency; missing bundles remain retryable.
-Verified 4.1 mesh scenes now play through an independent open JSON adapter and
-WebGL player; unsupported features retain the archive and an explicit diagnostic. `PlaySequenceData` remains a distinct engine
+Spine archives are collected independently of browser playback.
+`STORY_SPINE_PLAYBACK_ENABLED=false` is the API/worker default: static pictures
+remain visible, animated packages are downloadable, and no live scene URLs are
+exposed or browser components required for archive reuse. `PlaySequenceData` remains a distinct engine
 scene with its source path. It is not relabelled as an MP4 or replaced with a nearby
 sequence asset's text. Static picture dialogue renders inline without an MP4.
 

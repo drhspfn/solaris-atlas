@@ -27,17 +27,18 @@ def test_existing_flow_sources_can_recover_only_authored_background_images():
 
 
 @pytest.mark.asyncio
-async def test_archived_spine_bundle_is_linked_to_the_authored_line(monkeypatch):
+@pytest.mark.parametrize('playback_enabled', [False, True])
+async def test_archived_spine_bundle_is_linked_to_the_authored_line(monkeypatch, playback_enabled):
     actions = [(10, 1, [{'BackgroundConfig': {'Type': 'SpineImage', 'Id': 850007, 'IsLoop': True}}, {}])]
     monkeypatch.setattr(illustrations.repository, 'illustration_actions', AsyncMock(return_value=actions))
-    monkeypatch.setattr(illustrations, 'get_settings', lambda: NS(s3_bucket='test'))
+    monkeypatch.setattr(illustrations, 'get_settings', lambda: NS(s3_bucket='test', story_spine_playback_enabled=playback_enabled))
     monkeypatch.setattr(illustrations, 'S3Storage', lambda _: NS(public_url=lambda key: 'https://cdn.test/' + key))
     session = NS(execute=AsyncMock(return_value=[('spine_background:850007', 'bundle.zip', {'asset_version': '3.7.0', 'playback': {'variants': [{'scene_url': 'https://cdn.test/scene.json'}], 'components': [{'object_key': 'private-inventory'}]}}, 55, 2048)]))
     row = (NS(node_id=1, source_index=1), NS(node_id=10), NS(node_id=1))
     result = await illustrations.illustration_payloads(session, [row])
     assert result[1]['bundle']['url'] == 'https://cdn.test/bundle.zip'
     assert result[1]['bundle']['file_id'] == 55
-    assert result[1]['bundle']['playback'] == {'variants': [{'scene_url': 'https://cdn.test/scene.json'}]}
+    assert result[1]['bundle']['playback'] == ({'variants': [{'scene_url': 'https://cdn.test/scene.json'}]} if playback_enabled else None)
     assert result[1]['loop'] is True and result[1]['images'] == []
 
 
