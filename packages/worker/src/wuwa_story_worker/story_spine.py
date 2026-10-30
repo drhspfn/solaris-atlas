@@ -202,7 +202,7 @@ async def publish_open_playback(session, bundle, target, published, service, sto
                 path = bundle.parent / 'open-playback' / expected['sha256']
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(data)
-                file = await service.register_file(session, path, 'unknown', mime_type=mime)
+                file = await service.register_file(session, path, 'image' if mime == 'image/png' else 'unknown', mime_type=mime)
                 await service.register_variant(session, published.id, file.id, 'spine_open_component', run_id)
                 reference = await session.scalar(select(FileReference).where(
                     FileReference.owner_node_id == target['owner'], FileReference.release_id == target['release_id'],

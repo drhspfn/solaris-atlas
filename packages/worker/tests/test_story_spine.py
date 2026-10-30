@@ -28,6 +28,7 @@ async def test_open_components_are_published_individually_with_archive_provenanc
     session = SimpleNamespace(scalar=AsyncMock(return_value=None))
     target = {'owner': 5, 'release_id': 7, 'path': 'spine_background:7'}
     result = await publish_open_playback(session, bundle, target, SimpleNamespace(id=55), service, SimpleNamespace(public_url=lambda key: 'https://cdn.test/' + key), 80, '3.7.0')
+    assert [call.args[2] for call in service.register_file.await_args_list] == ['unknown', 'image']
     assert len(result['components']) == 2
     assert result['variants'][0]['scene_url'].startswith('https://cdn.test/objects/')
     assert result['variants'][0]['textures']['page.png'] != result['variants'][0]['scene_url']
