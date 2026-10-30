@@ -25,6 +25,7 @@ from wuwa_story.api.routes import (
     media_jobs,
     nodes,
     notices,
+    read_projections,
     releases,
     search,
     seo,
@@ -106,6 +107,7 @@ app.include_router(releases.router)
 app.include_router(game_events.router)
 app.include_router(notices.router)
 app.include_router(admin_data.router)
+app.include_router(read_projections.router)
 app.include_router(maps.router)
 app.include_router(media_jobs.router)
 app.include_router(character_models.router)

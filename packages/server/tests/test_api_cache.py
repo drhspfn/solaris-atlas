@@ -299,3 +299,53 @@ async def test_story_map_revision_failure_bypasses_cache():
         assert (await client.get("/story-map")).headers["x-api-cache"] == "BYPASS"
         assert (await client.get("/catalog")).headers["x-api-cache"] == "MISS"
     assert state["calls"] == 3
+
+@pytest.mark.asyncio
+async def test_published_projection_cache_ignores_unpublished_source_changes():
+    app, state, _ = setup_cache()
+    generation = {"value": "published-1"}
+
+    async def published():
+        return generation["value"]
+
+    config = app.user_middleware[0].kwargs
+    config["settings"].read_projections_enabled = True
+    config["projection_revision_reader"] = published
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        assert (await client.get("/catalog")).headers["x-api-cache"] == "MISS"
+        state["revision"] = "new-raw-data-and-voices"
+        assert (await client.get("/catalog")).headers["x-api-cache"] == "HIT"
+        generation["value"] = "published-2"
+        assert (await client.get("/catalog")).headers["x-api-cache"] == "MISS"
+        # Model availability is still read from the model service, not a profile projection.
+        assert (await client.get("/characters/7/models")).headers["x-api-cache"] == "MISS"
+        state["revision"] = "model-uploaded"
+        assert (await client.get("/characters/7/models")).headers["x-api-cache"] == "MISS"
+
+
+@pytest.mark.asyncio
+async def test_projection_revision_checks_all_published_table_triggers(monkeypatch):
+    from wuwa_story.api import cache
+
+    monkeypatch.setattr(cache, "_PROJECTION_REVISION_CACHE", {"value": "", "expires": 0.0})
+    monkeypatch.setattr(cache, "_PROJECTION_REVISION_LOCK", asyncio.Lock())
+    connection = AsyncMock()
+    connection.__aenter__.return_value = connection
+    connection.scalar.return_value = "ready"
+    monkeypatch.setattr(cache, "engine", SimpleNamespace(connect=lambda: connection))
+    assert await asyncio.gather(*(cache.projection_revision() for _ in range(5))) == ["ready"] * 5
+    assert connection.scalar.await_count == 1
+    cache._PROJECTION_REVISION_CACHE["expires"] = 0
+    connection.scalar.return_value = None
+    with pytest.raises(RuntimeError, match="coverage is incomplete"):
+        await cache.projection_revision()
+
+
+def test_node_cache_revision_matches_explicit_projection_routing():
+    from wuwa_story.api.cache import projection_response
+
+    assert projection_response("/nodes/talk_item:剧情_3_3:1:20/narrative-context")
+    assert projection_response("/nodes/phone_message:17/related")
+    assert projection_response("/nodes/character:1211/source-record")
+    assert not projection_response("/nodes/action:剧情_3_3:1")
+    assert not projection_response("/nodes/5322879-denia")

@@ -56,6 +56,53 @@ _REVISION_CACHE = {"value": "", "expires": 0.0}
 _REVISION_LOCK = asyncio.Lock()
 _STORY_MAP_REVISION_CACHE = {"value": "", "expires": 0.0}
 _STORY_MAP_REVISION_LOCK = asyncio.Lock()
+PROJECTION_TABLES = tuple(f"core.{kind}_read" for kind in (
+    "character", "item", "location", "quest", "game_event", "game_notice",
+    "speaker", "dialogue", "cutscene", "story_map",
+)) + ("core.entity_read_relation", "i18n.locale")
+_PROJECTION_REVISION_CACHE = {"value": "", "expires": 0.0}
+_PROJECTION_REVISION_LOCK = asyncio.Lock()
+
+
+def projection_response(path: str) -> bool:
+    if path in {"/catalog", "/categories", "/events", "/notices", "/cutscenes", "/search", "/story-map"}:
+        return True
+    parts = path.strip("/").split("/")
+    if parts[0] == "nodes" and len(parts) >= 2:
+        from wuwa_story.read_models.readers.entities import supports_node_projection
+
+        identity = "/".join(parts[1:])
+        for suffix in ("/edges", "/related", "/source-record", "/narrative-context"):
+            if identity.endswith(suffix):
+                identity = identity.removesuffix(suffix)
+                break
+        return supports_node_projection(identity)
+    if len(parts) == 3:
+        if parts[0] == "characters":
+            return parts[2] in {"profile", "archive"}
+        if parts[0] in {"items", "locations"}:
+            return parts[2] == "profile"
+        if parts[0] == "quests":
+            return parts[2] in {"profile", "transcript", "continuity", "media"}
+    return len(parts) == 2 and parts[0] in {"notices", "cutscenes"}
+
+
+async def projection_revision() -> str:
+    now = time.monotonic()
+    if _PROJECTION_REVISION_CACHE["value"] and now < _PROJECTION_REVISION_CACHE["expires"]:
+        return _PROJECTION_REVISION_CACHE["value"]
+    async with asyncio.timeout(1), _PROJECTION_REVISION_LOCK:
+        now = time.monotonic()
+        if _PROJECTION_REVISION_CACHE["value"] and now < _PROJECTION_REVISION_CACHE["expires"]:
+            return _PROJECTION_REVISION_CACHE["value"]
+        async with engine.connect() as connection:
+            revision = await connection.scalar(STORY_MAP_REVISION_SQL, {
+                "expected_count": len(PROJECTION_TABLES), "tables": list(PROJECTION_TABLES),
+            })
+        if not revision:
+            raise RuntimeError("Public projection cache revision coverage is incomplete")
+        _PROJECTION_REVISION_CACHE.update(value=str(revision), expires=time.monotonic() + 5.0)
+        return str(revision)
 
 
 async def content_revision() -> str:
@@ -130,12 +177,14 @@ class PublicResponseCache:
         self, app: ASGIApp, settings: Settings, redis: Redis | None,
         revision_reader: Callable[[], Awaitable[str]] = content_revision,
         story_map_revision_reader: Callable[[], Awaitable[str]] = story_map_revision,
+        projection_revision_reader: Callable[[], Awaitable[str]] = projection_revision,
     ) -> None:
         self.app = app
         self.redis = redis
         self.settings = settings
         self.revision_reader = revision_reader
         self.story_map_revision_reader = story_map_revision_reader
+        self.projection_revision_reader = projection_revision_reader
         # Configuration changes must not serve links to a previous media host.
         config = [settings.api_cache_namespace, settings.media_public_base_url,
                   settings.s3_endpoint_url, settings.s3_bucket,
@@ -187,6 +236,8 @@ class PublicResponseCache:
             try:
                 revision_reader = (self.story_map_revision_reader if scope["path"] == "/story-map"
                                    else self.revision_reader)
+                if self.settings.read_projections_enabled and projection_response(scope["path"]):
+                    revision_reader = self.projection_revision_reader
                 key = cache_key(scope, await revision_reader(), self.namespace)
                 cached_body = await self.command(self.redis.get(key))
                 story_map = scope["path"] == "/story-map"

@@ -52,6 +52,11 @@ services:
       - ../../packages/worker/src:/app/packages/worker/src
       - ../../packages/server/src:/app/packages/server/src
 
+  projection-worker:
+    volumes:
+      - ../../packages/worker/src:/app/packages/worker/src
+      - ../../packages/server/src:/app/packages/server/src
+
   image-worker:
     volumes:
       - ../../packages/worker/src:/app/packages/worker/src
