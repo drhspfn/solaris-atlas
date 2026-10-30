@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,7 +21,7 @@ from wuwa_story.storage.hashing import content_object_key
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
-from wuwa_story_worker.asset_export import export_assets
+from wuwa_story_worker.asset_export import _extract_files, export_assets
 from wuwa_story_worker.broker import job_lock
 from wuwa_story_worker.client_assets import validate_plan
 from wuwa_story_worker.entity_media import tool
@@ -84,7 +85,7 @@ async def source_forms(session, release_id, role):
     return resolve_model_forms(role, preloads, morphs)
 
 
-async def extract_model(root, sources, fmodel, converter, include_animations=True):
+async def extract_model(root, sources, fmodel, converter, include_animations=True, *, local_client=None):
     model_dir = sources["model"].rsplit("/", 1)[0]
     filters = [model_dir + "/", *sources["blueprints"]]
     if include_animations:
@@ -105,7 +106,44 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
             # the authored root. Ownership is checked by skeleton metadata.
             character_dir.rsplit("/", 1)[1],
         ]
-    receipt = await export_assets(root, fmodel, "|".join(filters))
+    if local_client is None:
+        receipt = await export_assets(root, fmodel, "|".join(filters))
+    else:
+        output = root / "exports" / "local"
+        output.mkdir(parents=True)
+        (output / "files").mkdir()
+        # Local installations can have the original CLI without pipe filters.
+        for asset_filter in dict.fromkeys(filters):
+            with tempfile.TemporaryDirectory(dir=output) as scratch:
+                extracted = Path(scratch) / "export"
+                extracted.mkdir()
+                try:
+                    await finish_writes(asyncio.to_thread(
+                        _extract_files, root, fmodel, asset_filter, {"files": []}, extracted, Path(scratch),
+                        root / "fmodel.log", game_dir=local_client["game"],
+                        keys_file=local_client["keys"], processors=local_client["processors"], allow_empty=True,
+                    ))
+                except RuntimeError as error:
+                    lines = (root / "fmodel.log").read_text(encoding="utf-8", errors="replace").splitlines()
+                    failures = [line for line in lines if any(word in line.lower() for word in ("[fail]", "[error]"))]
+                    diagnostic = re.sub(r"(?:0x)?[0-9a-fA-F]{32,}", "<redacted-id>", "\n".join(failures[-8:]))
+                    raise RuntimeError(f"Local FModel export failed: {diagnostic or 'no supported files exported'}") from error
+                for path in (extracted / "files").rglob("*"):
+                    if not path.is_file():
+                        continue
+                    target = output / "files" / path.relative_to(extracted / "files")
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    if target.exists():
+                        if sha256(path) != sha256(target):
+                            raise ValueError("Local game changed during model extraction")
+                    else:
+                        path.replace(target)
+        receipt = output / "manifest.json"
+        receipt.write_text(json.dumps({"files": [
+            {"path": path.relative_to(output / "files").as_posix(),
+             "size": path.stat().st_size, "sha256": sha256(path)}
+            for path in sorted((output / "files").rglob("*")) if path.is_file()
+        ]}), encoding="utf-8")
     raw = receipt.parent / "files"
     converted, cooked = root / "converted", root / "source-json"
     converted.mkdir()
@@ -193,8 +231,11 @@ def component_model(component, converted, cooked, skeleton):
     return component_path.resolve()
 
 
-async def build_bundle(root, sources, include_animations=True, *, run_id=None):
+async def build_bundle(root, sources, include_animations=True, *, run_id=None, local_client=None,
+                       animation_workers=1, report_progress=None):
     async def progress(stage, **details):
+        if report_progress is not None:
+            report_progress(stage, **details)
         await model_progress(
             run_id, stage, form_id=sources.get("id"), form_label=sources.get("label"), **details
         )
@@ -205,8 +246,9 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None):
     if not (plugin / "io_scene_ueformat").is_dir():
         raise ValueError("UEFormat importer unavailable; use the dedicated model worker image")
     await progress("extract")
+    options = {"local_client": local_client} if local_client is not None else {}
     model, converted, cooked, manifest = await extract_model(
-        root, sources, fmodel, converter, include_animations
+        root, sources, fmodel, converter, include_animations, **options
     )
     output = root / "bundle"
     output.mkdir()
@@ -267,7 +309,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None):
         batch_size = 20
         batch_count = (len(clips) + batch_size - 1) // batch_size
         parts = []
-        for index in range(batch_count):
+        async def export_batch(index):
             await progress(
                 "animation_batch",
                 batch=index + 1,
@@ -276,6 +318,10 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None):
                 batch_size=batch_size,
             )
             started = time.monotonic()
+            log_root = root
+            if animation_workers > 1:
+                log_root = root / f"animation-log-{index:04d}"
+                log_root.mkdir()
             await run_blender(
                 [
                     *command,
@@ -286,7 +332,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None):
                     "--animation-batch-size",
                     str(batch_size),
                 ],
-                root,
+                log_root,
                 600,
             )
             part = output / "animation-parts" / f"part-{index:04d}.glb"
@@ -294,7 +340,6 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None):
             expected = min(batch_size, len(clips) - index * batch_size)
             if stats["animations"] != expected:
                 raise ValueError("Animation batch lost clips")
-            parts.append(part)
             await progress(
                 "animation_batch_completed",
                 batch=index + 1,
@@ -302,6 +347,24 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None):
                 seconds=round(time.monotonic() - started, 2),
                 clips=len(clips),
             )
+            return part
+
+        if animation_workers == 1:
+            for index in range(batch_count):
+                parts.append(await export_batch(index))
+        else:
+            semaphore = asyncio.Semaphore(animation_workers)
+
+            async def bounded(index):
+                async with semaphore:
+                    return await export_batch(index)
+
+            results = await finish_writes(asyncio.gather(
+                *(bounded(index) for index in range(batch_count)), return_exceptions=True))
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+                parts.append(result)
         await progress("merge_animation_batches", batches=batch_count)
         await asyncio.to_thread(merge_animation_glbs, parts, output / "animations.glb")
         summary = glb_summary(output / "animations.glb", allow_animations=True)
@@ -402,7 +465,7 @@ async def publish_bundle(job, output, summaries, provenance):
     )
 
 
-async def publish_forms(job, bundles):
+async def publish_forms(job, bundles, *, publication_payload=None):
     if not bundles or len({form["id"] for form, *_ in bundles}) != len(bundles):
         raise ValueError("Model publication requires distinct authored forms")
     validated = [publication_files(job, output, summaries) for _, output, summaries, _ in bundles]
@@ -422,7 +485,11 @@ async def publish_forms(job, bundles):
         run = await session.scalar(
             select(ProcessingRun).where(ProcessingRun.id == job.run_id).with_for_update()
         )
-        if run is None or CharacterModelJob.model_validate(run.metadata_json.get("payload")) != job:
+        identity_matches = run is not None and (
+            run.metadata_json.get("payload") == publication_payload if publication_payload is not None
+            else CharacterModelJob.model_validate(run.metadata_json.get("payload")) == job
+        )
+        if not identity_matches:
             raise ValueError("Model job identity changed before publication")
         if run.status in {"completed", "cancelled"}:
             return
@@ -484,6 +551,9 @@ async def publish_forms(job, bundles):
 
 
 async def process_character_model(payload):
+    if payload.get("job_type") == "media.character_model_upload":
+        from wuwa_story_worker.model_uploads import process_model_upload
+        return await process_model_upload(payload)
     job = CharacterModelJob.model_validate(payload)
     async with (
         engine.connect() as connection,

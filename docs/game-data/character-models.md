@@ -298,3 +298,66 @@ Both Linux builds and the offline plugin smoke check passed in run
 [`40574532763`](https://github.com/drhspfn/solaris-atlas/actions/runs/40574532763).
 Actual game-model conversion and browser playback were exercised on Windows;
 the CI smoke check does not mount or publish the user's game assets.
+
+## Local builds and archive uploads
+
+The existing **Import character model** dialog accepts an optional ZIP. Without
+a file it starts the existing server/game extraction. With a file it uploads a
+completed local build, validates it and publishes all forms through the same
+atomic file-reference transaction. **Rebuild existing model** is required to
+replace a published model. The archive determines whether animations are included.
+
+1. Download the local build recipe from that character's import dialog. Choose
+   the snapshot first: the recipe pins its character data and authored forms.
+2. Install Python 3.12 and the repository packages, for example
+   `uv sync --project packages/worker`. Supply FModelCLI, the texture/UEFormat
+   converter, Blender and the UEFormat Blender plugin used by the model worker.
+   Existing `WUWA_FMODEL_PATH`, `WUWA_TEXTURE_CONVERTER_PATH`, `WUWA_BLENDER_PATH`
+   and `WUWA_UEFORMAT_PLUGIN` settings also work in place of the flags below.
+3. Run the CLI against the installed game and the local keys file:
+
+```powershell
+uv run --project packages/worker wuwa-model `
+  --recipe C:/Models/character-recipe.json `
+  --game-dir 'E:/Games/Wuthering Waves/Wuthering Waves Game/Client' `
+  --keys-file C:/Models/keys.txt `
+  --asset-version 3.7.0 --tier hd `
+  --fmodel C:/Tools/FModelCLI.exe `
+  --converter C:/Tools/CUE4Parse.CLI.exe `
+  --blender C:/Tools/Blender/blender.exe `
+  --ueformat-plugin C:/Tools/UEFormat/plugins/blender `
+  --workers 4 --output C:/Models/character.zip
+```
+
+Use `--without-animations` for a rig-only archive. `--workers` (1..8, default up
+to 4) bounds local animation Blender processes and extraction parallelism. The
+server's default remains one animation batch at a time. The CLI reports stages
+and elapsed build time. It needs no database, admin session or R2 credentials.
+`--asset-version` and `--tier` describe the installed client; they do not download
+or change it. Keep the game closed while exporting. Temporary exports are created
+beside the output archive and removed on success or failure; keep sufficient
+scratch space. Existing output archives are never overwritten.
+
+4. Select the ZIP in the same character import dialog and submit. For the
+   snapshot choose the one used to download the recipe. A different or stale
+   character/form definition is rejected; download a fresh recipe and rebuild.
+   The existing run monitor shows validation and publication progress.
+
+`solaris-model-bundle-v1` contains `manifest.json` and content-addressed
+`objects/<sha256>` members. It includes only final GLBs, optional facial curves
+and physics JSON, plus source hashes/paths. Keys, tools and cooked exports are
+excluded. Identical files across forms are stored once. Both model GLBs must
+contain embedded buffers/textures; facial/animation targets are checked against
+the full rig. ZIP paths, duplicates, checksums and size limits are validated
+before publication. Limits are 4 GiB uploaded and 8 GiB expanded, 16 forms and
+80 unique files.
+
+Uploads use authenticated, CSRF-protected 8 MiB API requests and private R2
+staging objects; they do not require browser bucket credentials or writable API
+volumes. Parts are immutable and retriable with identical bytes. Completed
+publication is idempotent and deletes staging parts; worker scratch always
+expires when the operation exits. Failed publications retain uploaded parts for
+retry. Abandoned browser uploads older than 24 hours are collected when another
+upload starts. No new schema, queue or deployment credential is needed. Rolling
+back the application leaves ordinary game imports and already published bundles
+readable; upload processing requires a matching API and worker revision.

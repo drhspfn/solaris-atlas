@@ -34,7 +34,8 @@
 .character-model-import { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-default); }
 .data-operation-panel > .character-model-import { margin: 0; padding: 12px 20px 20px; border-top: 0; }
 .character-model-import summary { cursor: pointer; min-height: 44px; align-content: center; }
-.character-model-form label { display: grid; gap: 6px; font-size: 13px; color: var(--text-secondary); }
+.character-model-form label { display: grid; min-width: 0; gap: 6px; font-size: 13px; color: var(--text-secondary); }
+.character-model-form input[type="file"]::file-selector-button { min-height: 36px; margin-right: 10px; padding: 6px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-primary); font: inherit; cursor: pointer; }
 .character-model-form input:not([type="checkbox"]) { min-height: 44px; width: 100%; max-width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-1); color: var(--text-primary); font: inherit; }
 .character-model-form .character-model-force { display: flex; align-items: center; min-height: 44px; }
 .character-model [role="alert"], .character-model-import [role="alert"], .character-model-dialog [role="alert"] { color: var(--text-primary); }

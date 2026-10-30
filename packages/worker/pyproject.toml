@@ -14,6 +14,7 @@ dependencies = [
 [project.scripts]
 wuwa-story-worker = "wuwa_story_worker.cli:main"
 wuwa-story-import = "wuwa_story_worker.cli:import_main"
+wuwa-model = "wuwa_story_worker.model_cli:main"
 
 [tool.uv.sources]
 wuwa-story-server = { path = "../server" }
