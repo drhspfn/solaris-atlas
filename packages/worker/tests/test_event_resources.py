@@ -70,6 +70,14 @@ def test_sequence_control_dependencies_are_explicit_and_opt_in():
         ('dependency', '/Game/Story/Movie'), ('dependency', '/Game/Story/Data')}
 
 
+def test_script_receiver_classes_are_followed_only_for_control_exports():
+    value = {'Token': 'EX_Context', 'ObjectExpression': {'Token': 'EX_LocalVariable',
+        'Variable': {'Property': {'PropertyClass': {'ObjectName': "BlueprintGeneratedClass'Actor_C'",
+            'ObjectPath': '/Game/Story/Actor.Actor_C'}}}}}
+    assert list(ui_references(value)) == []
+    assert list(ui_references(value, include_sequences=True)) == [('dependency', '/Game/Story/Actor')]
+
+
 @pytest.mark.asyncio
 async def test_dependency_walk_caches_decodes_handles_cycles_and_keeps_partial_results(tmp_path, monkeypatch):
     from wuwa_story_worker import event_resources
