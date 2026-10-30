@@ -52,9 +52,10 @@ export function NodeExplorerPage({
   const [narrative, setNarrative] = useState<any>(initialNarrative?.available ? initialNarrative : null);
   const [loading, setLoading] = useState(!initialDetail);
   const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
-    if (locale === 'en' && !gameVersion && initialDetail && initialRelated && initialNarrative) {
+    if (locale === 'en' && !gameVersion && retry === 0 && initialDetail && initialRelated && initialNarrative) {
       setNode(initialDetail ?? null);
       setRelated(initialRelated ?? []);
       setNarrative(initialNarrative?.available ? initialNarrative : null);
@@ -63,17 +64,19 @@ export function NodeExplorerPage({
       return;
     }
     let active = true;
+    const controller = new AbortController();
     setLoading(true);
     setError('');
     const canonicalKey = key;
     const selection = new URLSearchParams({ locale });
     if (gameVersion) selection.set('game_version', gameVersion);
     Promise.all([
-      api<NodeDetail>(`/nodes/${encodeURIComponent(canonicalKey)}`),
+      api<NodeDetail>(`/nodes/${encodeURIComponent(canonicalKey)}`, { signal: controller.signal }),
       api<{ results: Related[] }>(
         `/nodes/${encodeURIComponent(canonicalKey)}/related?locale=${locale}&limit=${APP_SETTINGS.limits.relatedNodes}`,
+        { signal: controller.signal },
       ),
-      api<any>(`/nodes/${encodeURIComponent(canonicalKey)}/narrative-context?${selection}`).catch(
+      api<any>(`/nodes/${encodeURIComponent(canonicalKey)}/narrative-context?${selection}`, { signal: controller.signal }).catch(
         () => null,
       ),
     ])
@@ -91,14 +94,15 @@ export function NodeExplorerPage({
       });
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [key, locale, gameVersion, initialDetail, initialRelated, initialNarrative]);
+  }, [key, locale, gameVersion, initialDetail, initialRelated, initialNarrative, retry]);
 
   if (loading) return <PageLoader />;
   if (error || !node)
     return (
       <div className="page-container">
-        <ErrorPanel message={error || 'Node not found'} />
+        <ErrorPanel message={error || 'Node not found'} onRetry={() => setRetry((value) => value + 1)} />
       </div>
     );
   const dialogueText = interpolatePlayerName(

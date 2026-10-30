@@ -29,6 +29,7 @@ export default async function Page({
   ]);
   return (
     <CutsceneArchive
+      key={query.toString()}
       initial={initial}
       versions={[...new Set((releases || []).map((row) => row.game_version))]}
     />

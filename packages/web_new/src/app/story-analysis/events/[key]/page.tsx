@@ -41,5 +41,5 @@ export default async function StoryEventPage({ params, searchParams }: Props) {
 
   await canonicalRoute("story-analysis/events", key, initialEvent, searchParams);
 
-  return <StoryEventClient eventKey={key} initialEvent={initialEvent} />;
+  return <StoryEventClient key={key} eventKey={key} initialEvent={initialEvent} />;
 }

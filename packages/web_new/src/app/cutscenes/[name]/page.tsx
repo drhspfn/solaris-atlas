@@ -21,5 +21,5 @@ export default async function Page({
   const initial = await serverApi<CutsceneDetail>(
     `/cutscenes/${encodeURIComponent(name)}?${query}`,
   );
-  return <CutsceneRecord name={name} initial={initial} />;
+  return <CutsceneRecord key={`${name}?${query}`} name={name} initial={initial} />;
 }

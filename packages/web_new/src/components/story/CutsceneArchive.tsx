@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Film, Play, Search } from "lucide-react";
+import { ArrowLeft, ArrowRight, Film, Play, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/api/client";
 import { useLocale } from "@/hooks/useLocale";
@@ -55,9 +55,12 @@ export function CutsceneArchive({
   initial: CutscenePage | null;
   versions: string[];
 }) {
-  const locale = useLocale();
+  const selectedLocale = useLocale();
   const [params, setParams] = useSearchParams();
+  const locale = params?.get("locale") || selectedLocale;
   const query = params?.toString() || "";
+  const initialSelection = useRef({ query, locale: params?.get("locale") || "en" });
+  const searchInput = useRef<HTMLInputElement>(null);
   const [data, setData] = useState(initial);
   const [loading, setLoading] = useState(!initial);
   const [error, setError] = useState("");
@@ -78,6 +81,12 @@ export function CutsceneArchive({
     });
   }
   useEffect(() => {
+    if (initial && refresh === 0 && query === initialSelection.current.query && locale === initialSelection.current.locale) {
+      setData(initial);
+      setLoading(false);
+      setError("");
+      return;
+    }
     const controller = new AbortController();
     const search = new URLSearchParams(query);
     search.delete("cursor");
@@ -89,7 +98,9 @@ export function CutsceneArchive({
     setLoadingMore(false);
     setData(null);
     api<CutscenePage>(`/cutscenes?${search}`, { signal: controller.signal, cacheTtl: 0 })
-      .then(setData)
+      .then((result) => {
+        if (!controller.signal.aborted) setData(result);
+      })
       .catch((cause) => {
         if (!controller.signal.aborted) setError(String(cause));
       })
@@ -101,7 +112,7 @@ export function CutsceneArchive({
       pageRequest.current?.abort();
       pageRequest.current = null;
     };
-  }, [query, locale, refresh]);
+  }, [query, locale, refresh, initial]);
   async function loadMore() {
     if (!data?.next_cursor || pageRequest.current) return;
     const controller = new AbortController();
@@ -151,6 +162,7 @@ export function CutsceneArchive({
       </header>
       <form
         className="cutscene-filters"
+        noValidate
         onSubmit={(event) => {
           event.preventDefault();
           filter("q", searchText.trim());
@@ -161,12 +173,19 @@ export function CutsceneArchive({
           <div className="cutscene-search">
             <Search size={17} aria-hidden="true" />
             <input
+              ref={searchInput}
               name="q"
               placeholder="M0311…"
               value={searchText}
               onChange={(event) => setSearchText(event.target.value)}
               maxLength={128}
             />
+            {searchText && (
+              <button type="button" className="search-clear" aria-label="Clear scene search"
+                onClick={() => { setSearchText(""); filter("q", ""); searchInput.current?.focus(); }}>
+                <X size={16} aria-hidden="true" />
+              </button>
+            )}
           </div>
         </label>
         <div className="cutscene-filter">
@@ -201,7 +220,7 @@ export function CutsceneArchive({
         </button>
       </form>
       {error ? (
-        <ErrorPanel message={error} />
+        <ErrorPanel message={error} onRetry={() => setRefresh((value) => value + 1)} />
       ) : loading ? (
         <div role="status" aria-live="polite">
           <div className="cutscene-list" aria-hidden="true">
@@ -305,29 +324,41 @@ export function CutsceneRecord({
   name: string;
   initial: CutsceneDetail | null;
 }) {
-  const locale = useLocale();
+  const selectedLocale = useLocale();
   const [params] = useSearchParams();
+  const locale = params?.get("locale") || selectedLocale;
   const version = params?.get("game_version") || "";
+  const initialSelection = useRef({ name, version, locale: params?.get("locale") || "en" });
   const [data, setData] = useState(initial);
   const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
+    if (initial && retry === 0 && name === initialSelection.current.name &&
+        version === initialSelection.current.version && locale === initialSelection.current.locale) {
+      setData(initial);
+      setError("");
+      return;
+    }
     const controller = new AbortController();
+    setData(null);
     setError("");
     const search = new URLSearchParams({ locale });
     if (version) search.set("game_version", version);
     api<CutsceneDetail>(`/cutscenes/${encodeURIComponent(name)}?${search}`, {
       signal: controller.signal,
     })
-      .then(setData)
+      .then((result) => {
+        if (!controller.signal.aborted) setData(result);
+      })
       .catch((cause) => {
         if (!controller.signal.aborted) setError(String(cause));
       });
     return () => controller.abort();
-  }, [name, version, locale]);
+  }, [name, version, locale, retry, initial]);
   if (error)
     return (
       <main className="page-container">
-        <ErrorPanel message={error} />
+        <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} />
       </main>
     );
   if (!data) return <PageLoader />;

@@ -15,6 +15,13 @@ separate retry actions. Changing records resets local detail state. Shared
 Feedback owns accessible loading/error status and the optional Try again action;
 long names wrap within breadcrumbs and profile headings on narrow screens.
 
+Cutscene list/detail hydration retains matching server data, including explicit
+URL locales. Story-map, quest, node, event and interpretation failures expose a
+retry without discarding the current URL selection. A pending read projection
+means the archive selection is being prepared, not a database setup problem;
+bounded server-directed backoff precedes an explicit retry. Session identity
+refresh always reads current authentication state rather than the public GET cache.
+
 ## Character model quality and facial playback
 
 The profile remains a deferred compact preview. Full-resolution textures and

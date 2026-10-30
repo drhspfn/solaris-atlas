@@ -12,7 +12,9 @@ export function PageLoader() {
 export function ErrorPanel({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <div className="error-panel" role="alert">
-      <span>Archive connection interrupted</span>
+      <span>{message.includes('This archive selection is being prepared.')
+        ? 'Archive is being prepared'
+        : 'Archive connection interrupted'}</span>
       <p>{message}</p>
       <small>Try again in a moment.</small>
       {onRetry && <button type="button" onClick={onRetry}>Try again</button>}

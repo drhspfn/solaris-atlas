@@ -36,14 +36,19 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
 export default async function NoticePage({ params, searchParams }: Props) {
   await connection();
   const notice = await readNotice(params, searchParams);
-  if (!notice)
+  if (!notice) {
+    const { id } = await params;
+    const { revision } = await searchParams;
+    const retryQuery = revision && /^[a-f0-9]{64}$/.test(revision) ? `?revision=${revision}` : '';
     return (
       <main className="notices-page">
         <h1>Announcement unavailable</h1>
         <p>The archive could not load this announcement.</p>
+        <p><a href={`/notices/${encodeURIComponent(id)}${retryQuery}`}>Try again</a></p>
         <Link href="/notices">Return to announcements</Link>
       </main>
     );
+  }
   await canonicalRoute("notices", decodeRouteKey((await params).id), notice, searchParams);
   return (
     <main className="notices-page notice-detail">

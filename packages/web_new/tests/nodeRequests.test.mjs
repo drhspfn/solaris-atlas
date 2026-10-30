@@ -59,7 +59,7 @@ function nodeHarness({ incomplete = false, holdRequests = false } = {}) {
     module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
   } }).outputText;
   const exports = {};
-  vm.runInNewContext(code, { exports, require: (id) => mocks[id] ?? require(id), URLSearchParams });
+  vm.runInNewContext(code, { exports, require: (id) => mocks[id] ?? require(id), URLSearchParams, AbortController });
   return { calls, states, initialDetail, initialRelated,
     setQuery(value) { query = new URLSearchParams(value); },
     setLocale(value) { locale = value; },

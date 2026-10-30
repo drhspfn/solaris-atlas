@@ -16,7 +16,10 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code?: string,
   ) {
-    super(message);
+    const pending = status === 503 && (code === 'read_projection_pending' ||
+      message === 'Public read projection is not ready for this selection');
+    super(pending ? 'This archive selection is being prepared. Please try again shortly.' : message);
+    if (pending) this.code = 'read_projection_pending';
   }
 }
 

@@ -523,6 +523,11 @@ const backend = createServer(async (request, response) => {
       }),
     );
   } else if (request.url.startsWith('/notices?')) {
+    if (questRequest.searchParams.get('q') === 'fixture-unavailable') {
+      response.statusCode = 503;
+      response.end(JSON.stringify({ detail: 'Archive unavailable' }));
+      return;
+    }
     response.end(JSON.stringify({ notices: [notice], has_more: false }));
   } else if (request.url === '/notices/42') {
     response.end(JSON.stringify(notice));
@@ -826,6 +831,18 @@ test('announcement details and social preview are server rendered', async () => 
   assert.ok(html.includes('Complete the event to obtain Astrite.'));
   assert.ok(html.includes('src="https://cdn.solarisatlas.fun/objects/notice-banner"'));
   assert.ok(html.includes('href="/events?event=1"'));
+});
+
+test('announcement failures keep explicit retry addresses and revision selection', async () => {
+  const list = await fetch(`${site}/notices?q=fixture-unavailable&offset=24&category=game`);
+  const listHtml = (await list.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.ok(listHtml.includes('The announcement archive could not be loaded.'));
+  assert.ok(listHtml.includes('href="/notices?q=fixture-unavailable&amp;offset=24&amp;limit=24&amp;category=game">Try again</a>'));
+  const revision = 'b'.repeat(64);
+  const detail = await fetch(`${site}/notices/999?revision=${revision}`);
+  const detailHtml = (await detail.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.ok(detailHtml.includes('Announcement unavailable'));
+  assert.ok(detailHtml.includes(`href="/notices/999?revision=${revision}">Try again</a>`));
 });
 
 test('an event link restores event selection on the server', async () => {

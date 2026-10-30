@@ -83,32 +83,36 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
   const [map, setMap] = useState<StoryMap | null>(initialMap ?? null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(!initialMap);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
-    if (initialMap && locale === 'en' && map === initialMap &&
+    if (initialMap && locale === 'en' && retry === 0 &&
         initialMap.selected_game_version === (version || null) &&
         initialMap.quest_type_id === selectedType) {
+      setMap(initialMap);
+      setLoading(false);
+      setError('');
       return;
     }
-    let active = true;
+    const controller = new AbortController();
     setLoading(true);
     setError('');
     const search = new URLSearchParams({ locale, quest_type_id: String(selectedType) });
     if (version) search.set('game_version', version);
-    api<StoryMap>(`/story-map?${search.toString()}`)
+    api<StoryMap>(`/story-map?${search.toString()}`, { signal: controller.signal })
       .then((result) => {
-        if (active) setMap(result);
+        if (!controller.signal.aborted) setMap(result);
       })
       .catch((reason: Error) => {
-        if (active) setError(reason.message);
+        if (!controller.signal.aborted) setError(reason.message);
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       });
     return () => {
-      active = false;
+      controller.abort();
     };
-  }, [locale, selectedType, version]);
+  }, [locale, selectedType, version, retry, initialMap]);
 
   const chapters = useMemo(
     () =>
@@ -260,7 +264,7 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
       {loading ? (
         <PageLoader />
       ) : error ? (
-        <ErrorPanel message={error} />
+        <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} />
       ) : (
         map && (
           <>

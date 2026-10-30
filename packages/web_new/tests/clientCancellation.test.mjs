@@ -46,6 +46,21 @@ test('cacheTtl zero forces a fresh request instead of returning an old cached re
   assert.equal((await api('/catalog', { cacheTtl: 0 })).revision, 2);
 });
 
+test('projection-pending responses use a human message for legacy and structured backend contracts', async () => {
+  for (const detail of ['Public read projection is not ready for this selection',
+    { code: 'read_projection_pending', message: 'Projection is not published' }]) {
+    const api = load(async () => Response.json({ detail }, { status: 503 }));
+    await assert.rejects(api('/catalog'), (error) => {
+      assert.equal(error.status, 503);
+      assert.equal(error.code, 'read_projection_pending');
+      assert.equal(error.message, 'This archive selection is being prepared. Please try again shortly.');
+      return true;
+    });
+  }
+  await assert.rejects(load(async () => Response.json({ detail: 'Other unavailable service' }, { status: 503 }))('/catalog'),
+    (error) => error.message === 'Other unavailable service' && error.code === undefined);
+});
+
 test('public reads have a deadline even without a caller signal', async (t) => {
   const deadline = new AbortController();
   t.mock.method(AbortSignal, 'timeout', (ms) => {

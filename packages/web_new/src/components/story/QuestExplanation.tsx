@@ -34,7 +34,9 @@ export function QuestExplanation({
     api<ExplanationResponse>(`/quests/${questId}/explanation?${query}`, {
       signal: controller.signal,
     })
-      .then(setData)
+      .then((result) => {
+        if (!controller.signal.aborted) setData(result);
+      })
       .catch((reason: Error) => {
         if (!controller.signal.aborted) setError(reason.message);
       });

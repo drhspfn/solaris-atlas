@@ -76,6 +76,7 @@ export function QuestPageClient({
   const [continuityError, setContinuityError] = useState('');
   const [loading, setLoading] = useState(!initialProfile || !initialTranscript);
   const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
   const [onlyChoices, setOnlyChoices] = useState(false);
   const [onlyLines, setOnlyLines] = useState(false);
   const [activeChoiceId, setActiveChoiceId] = useState<string | null>(null);
@@ -152,6 +153,7 @@ export function QuestPageClient({
     if (
       initialProfile &&
       initialTranscript &&
+      retry === 0 &&
       locale === initialSelection.locale &&
       gameVersion === initialSelection.gameVersion &&
       (citedLine || '') === initialSelection.citedLine
@@ -166,6 +168,7 @@ export function QuestPageClient({
       return;
     }
     let active = true;
+    const controller = new AbortController();
     setLoading(true);
     setError('');
     const selection = new URLSearchParams({ locale });
@@ -174,14 +177,15 @@ export function QuestPageClient({
     if (citedLine) transcriptSelection.set('focus_line', citedLine);
 
     Promise.all([
-      api<any>(`/quests/${encodeURIComponent(questKey)}/profile?${selection}`),
+      api<any>(`/quests/${encodeURIComponent(questKey)}/profile?${selection}`, { signal: controller.signal }),
       api<any>(
         `/quests/${encodeURIComponent(questKey)}/transcript?${transcriptSelection}&limit=${APP_SETTINGS.limits.transcript}&include_raw=false`,
+        { signal: controller.signal },
       ),
-      api<QuestContinuityData>(`/quests/${encodeURIComponent(questKey)}/continuity?${selection}`)
+      api<QuestContinuityData>(`/quests/${encodeURIComponent(questKey)}/continuity?${selection}`, { signal: controller.signal })
         .then((result) => ({ result, failure: '' }))
         .catch((reason: Error) => ({ result: null, failure: reason.message })),
-      api<QuestMediaManifest>(`/quests/${encodeURIComponent(questKey)}/media?${selection}`).catch(
+      api<QuestMediaManifest>(`/quests/${encodeURIComponent(questKey)}/media?${selection}`, { signal: controller.signal }).catch(
         () => null,
       ),
     ])
@@ -202,6 +206,7 @@ export function QuestPageClient({
 
     return () => {
       active = false;
+      controller.abort();
     };
   }, [
     questKey,
@@ -213,13 +218,14 @@ export function QuestPageClient({
     initialTranscript,
     initialContinuity,
     initialMedia,
+    retry,
   ]);
 
   if (loading && (!profile || !transcript)) return <PageLoader />;
   if (error && (!profile || !transcript))
     return (
       <div className="page-container">
-        <ErrorPanel message={error} />
+        <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} />
       </div>
     );
 
@@ -682,6 +688,8 @@ export function QuestPageClient({
 
   return (
     <div className="page-container quest-container">
+      {error && <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} />}
+      {loading && <p role="status">Updating quest transcript…</p>}
       <div className="breadcrumbs">
         <Link to="/">Archive</Link>
         <ChevronRight size={13} />

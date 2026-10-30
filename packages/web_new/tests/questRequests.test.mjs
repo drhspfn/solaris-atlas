@@ -26,7 +26,7 @@ function load(relativePath, mocks, globals = {}) {
 }
 
 // Exercise the real component's effects without a browser or another test dependency.
-function questHarness({ missingTranscript = false } = {}) {
+function questHarness({ missingTranscript = false, failRequests = false } = {}) {
   let query = new URLSearchParams('game_version=2.0.0&locale=ru&line=dialogue%3A999');
   let storedLocale = 'en';
   const calls = [];
@@ -84,7 +84,7 @@ function questHarness({ missingTranscript = false } = {}) {
         return [
           states[index],
           (next) => {
-            states[index] = next;
+            states[index] = typeof next === 'function' ? next(states[index]) : next;
           },
         ];
       },
@@ -100,6 +100,7 @@ function questHarness({ missingTranscript = false } = {}) {
     '@/api/client': {
       api: async (path) => {
         calls.push(path);
+        if (failRequests) throw new Error('Quest unavailable');
         if (path.includes('/profile?')) return { quest: { name: { content: path } } };
         if (path.includes('/transcript?')) return { lines: [] };
         return null;
@@ -119,6 +120,7 @@ function questHarness({ missingTranscript = false } = {}) {
     '@/config/settings': { APP_SETTINGS: { limits: { transcript: 2000 } } },
   });
   const { QuestPageClient } = load('../src/components/quest/QuestPageClient.tsx', mocks, {
+    AbortController,
     window: {
       scrollY: 0,
       innerHeight: 800,
@@ -148,6 +150,7 @@ function questHarness({ missingTranscript = false } = {}) {
     initialProfile,
     props,
     focused,
+    recover() { failRequests = false; },
     setQuery(value) {
       query = new URLSearchParams(value);
     },
@@ -156,7 +159,7 @@ function questHarness({ missingTranscript = false } = {}) {
     },
     async render() {
       stateIndex = effectIndex = 0;
-      QuestPageClient(props);
+      const tree = QuestPageClient(props);
       for (const effect of effects) {
         if (effect.run) {
           const run = effect.run;
@@ -166,9 +169,22 @@ function questHarness({ missingTranscript = false } = {}) {
       }
       for (const callback of frames.splice(0)) callback();
       await new Promise((resolve) => setImmediate(resolve));
+      return tree;
     },
   };
 }
+
+test('failed initial quest read retries the same selection instead of remaining on an error', async () => {
+  const h = questHarness({ missingTranscript: true, failRequests: true });
+  await h.render();
+  const errorTree = await h.render();
+  const error = errorTree.props.children;
+  assert.equal(error.props.message, 'Quest unavailable');
+  h.recover(); error.props.onRetry();
+  await h.render(); const recoveredTree = await h.render();
+  assert.equal(h.calls.length, 8);
+  assert.equal(recoveredTree.props.className, 'page-container quest-container');
+});
 
 test('matching version, locale and focus reuse SSR; changed selections fetch and returning restores SSR', async () => {
   const h = questHarness();

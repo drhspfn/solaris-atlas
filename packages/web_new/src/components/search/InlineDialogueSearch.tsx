@@ -9,6 +9,7 @@ import { api } from '../../api/client';
 import { APP_SETTINGS } from '../../config/settings';
 import { useLocale } from '../../hooks/useLocale';
 import { type PlayerDisplay, PlayerText } from '../dialogue/PlayerText';
+import { ErrorPanel } from '../ui/Feedback';
 
 export function InlineDialogueSearch({
   character,
@@ -22,18 +23,28 @@ export function InlineDialogueSearch({
   const locale = useLocale();
   const input = useRef<HTMLInputElement>(null);
   const request = useRef<AbortController | null>(null);
-  useEffect(() => () => request.current?.abort(), []);
   const [q, setQ] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [questId, setQuestId] = useState('');
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  const [error, setError] = useState('');
+  const [searched, setSearched] = useState(false);
+  useEffect(() => {
+    request.current?.abort();
+    setBusy(false);
+    setResults([]);
+    setError('');
+    setSearched(false);
+    return () => request.current?.abort();
+  }, [character, locale, questId]);
+  async function search() {
     if (!q.trim()) return;
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
     setBusy(true);
+    setError('');
+    setSearched(true);
     try {
       const params = new URLSearchParams({
         q,
@@ -45,15 +56,18 @@ export function InlineDialogueSearch({
       if (questId) params.set('quest_id', questId);
       const data = await api<any>(`/search?${params}`, { signal: controller.signal });
       if (!controller.signal.aborted) setResults(data.results);
-    } catch {
-      if (!controller.signal.aborted) setResults([]);
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        setResults([]);
+        setError(cause instanceof Error ? cause.message : 'Dialogue search could not be loaded.');
+      }
     } finally {
       if (!controller.signal.aborted) setBusy(false);
     }
   }
   return (
     <>
-      <form className="dialogue-search" onSubmit={submit}>
+      <form className="dialogue-search" noValidate onSubmit={(event) => { event.preventDefault(); void search(); }}>
         <Search size={16} />
         <input
           ref={input}
@@ -72,6 +86,8 @@ export function InlineDialogueSearch({
               setBusy(false);
               setQ('');
               setResults([]);
+              setError('');
+              setSearched(false);
               input.current?.focus();
             }}
           >
@@ -97,6 +113,9 @@ export function InlineDialogueSearch({
         )}
         <button>{busy ? 'Searching' : 'Find lines'}</button>
       </form>
+      {busy && <p role="status">Searching dialogue…</p>}
+      {error && <ErrorPanel message={error} onRetry={() => void search()} />}
+      {searched && !busy && !error && !results.length && <p role="status">No matching dialogue lines. Try another phrase or quest.</p>}
       {results.map((r, i) => (
         <div className="quote-result" key={i}>
           <p>
