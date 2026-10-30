@@ -353,7 +353,7 @@ async def story_map(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Browse patch additions, in one selected patch or across all patches in order."""
-    if read_projections.should_route_to_projection("story_map", game_version):
+    if read_projections.should_route_to_projection("story_map", game_version, locale=locale):
         return await read_projections.story_map_page(session, locale, game_version, quest_type_id)
     if await session.scalar(select(Locale.id).where(Locale.code == locale)) is None:
         raise HTTPException(status_code=400, detail=f"unknown locale: {locale}")

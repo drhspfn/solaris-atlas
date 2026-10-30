@@ -948,3 +948,73 @@ async def test_worker_runtime_timeout_persists_retry_and_stops_heartbeat(databas
         assert row.lease_token is row.lease_until is None
         assert row.processed_generation == first.generation < row.requested_generation
         assert (await session.get(ENTITY_READ_MODELS["character"], (7, 1, "current"))).title == "previous good"
+
+
+async def test_selected_locale_refresh_preserves_other_locales_and_estimates_selected_rows(database, monkeypatch):
+    factory, _, _ = database
+    await dirty(factory)
+    first = (await refresh.claim_refreshes(factory))[0]
+    assert await refresh.publish_refresh(factory, first, [entry(title="old EN"), entry(locale=2, title="old JA")])
+    settings = refresh.get_settings().model_copy(update={"read_projection_locales": ("en",)})
+    monkeypatch.setattr(refresh, "get_settings", lambda: settings)
+    estimate = await refresh.estimate_backfill(factory, "character")
+    assert estimate.locales == 1
+    assert estimate.rows == estimate.entities
+    await dirty(factory)
+    claimed = (await refresh.claim_refreshes(factory))[0]
+    builder = AsyncMock(side_effect=lambda _session, _kind, identity, locale, _snapshot: entry(identity, locale, "new EN"))
+    assert await refresh.refresh_claim(factory, claimed, builder=builder, relation_builder=AsyncMock(return_value=[]))
+    assert [call.args[3] for call in builder.call_args_list] == [1]
+    async with factory() as session:
+        model = ENTITY_READ_MODELS["character"]
+        en = await session.get(model, (7, 1, "current"))
+        ja = await session.get(model, (7, 2, "current"))
+        assert (en.title, en.generation) == ("new EN", claimed.generation)
+        assert (ja.title, ja.generation) == ("old JA", first.generation)
+    # The default complete publication retains its pruning contract.
+    await dirty(factory)
+    full = (await refresh.claim_refreshes(factory))[0]
+    assert await refresh.publish_refresh(factory, full, [entry(title="full EN")])
+    async with factory() as session:
+        assert await session.get(model, (7, 2, "current")) is None
+
+
+async def test_selected_locale_refresh_proven_deletion_removes_all_locales(database, monkeypatch):
+    factory, _, _ = database
+    await dirty(factory)
+    first = (await refresh.claim_refreshes(factory))[0]
+    assert await refresh.publish_refresh(factory, first, [entry(), entry(locale=2)])
+    settings = refresh.get_settings().model_copy(update={"read_projection_locales": ("en",)})
+    monkeypatch.setattr(refresh, "get_settings", lambda: settings)
+    async with factory() as session, session.begin():
+        await session.execute(text("DELETE FROM graph.node WHERE id=7"))
+    await due(factory)
+    claimed = (await refresh.claim_refreshes(factory, entity_ids=[7]))[0]
+    assert await refresh.refresh_claim(
+        factory, claimed, builder=AsyncMock(side_effect=HTTPException(404, "deleted")),
+        relation_builder=AsyncMock(return_value=[]),
+    )
+    async with factory() as session:
+        model = ENTITY_READ_MODELS["character"]
+        assert list(await session.scalars(select(model).where(model.entity_id == 7))) == []
+
+
+async def test_selected_locale_refresh_acknowledges_unselected_notice_without_deletion(database, monkeypatch):
+    factory, _, _ = database
+    async with factory() as session, session.begin():
+        await session.execute(text("INSERT INTO core.game_notice(id,locale) VALUES(71,'ja')"))
+    await dirty(factory, (71,), "game_notice")
+    first = (await refresh.claim_refreshes(factory, entity_ids=[71]))[0]
+    assert await refresh.publish_refresh(factory, first, [entry(71, 2, "JA notice")])
+    await dirty(factory, (71,), "game_notice")
+    settings = refresh.get_settings().model_copy(update={"read_projection_locales": ("en",)})
+    monkeypatch.setattr(refresh, "get_settings", lambda: settings)
+    claimed = (await refresh.claim_refreshes(factory, entity_ids=[71]))[0]
+    builder = AsyncMock()
+    relations = AsyncMock()
+    assert await refresh.refresh_claim(factory, claimed, builder=builder, relation_builder=relations)
+    builder.assert_not_called()
+    relations.assert_not_called()
+    async with factory() as session:
+        assert (await session.get(ENTITY_READ_MODELS["game_notice"], (71, 2, "current"))).title == "JA notice"
+        assert (await session.get(ReadProjectionDirty, ("game_notice", 71, "current"))).processed_generation == claimed.generation

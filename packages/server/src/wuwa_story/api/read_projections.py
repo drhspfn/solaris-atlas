@@ -7,17 +7,24 @@ supports_node_projection = entities.supports_node_projection
 ENTITY_PROJECTION_KINDS = tuple(kind for kind in entities.ENTITY_READ_MODELS if kind != "story_map")
 
 
-def should_route_node_to_projection(identity, snapshot=None, *, settings=None):
+def should_route_node_to_projection(identity, snapshot=None, *, locale="en", settings=None):
     if not supports_node_projection(identity):
         return False
     prefix = str(identity).partition(":")[0]
     return should_route_to_projection(
-        entities._NODE_KIND_ALIASES.get(prefix, prefix), snapshot, settings=settings
+        entities._NODE_KIND_ALIASES.get(prefix, prefix), snapshot, locale=locale, settings=settings
     )
 
 
 def should_route_search_to_projection(
-    category=None, scope="entities", snapshot=None, character=None, *, settings=None
+    category=None,
+    scope="entities",
+    snapshot=None,
+    character=None,
+    *,
+    locale="en",
+    locale_id=None,
+    settings=None,
 ):
     kinds = (
         ["dialogue"]
@@ -32,7 +39,9 @@ def should_route_search_to_projection(
     ]
     if character:
         kinds.append("character")
-    return should_route_to_projection(kinds, snapshot, settings=settings)
+    return should_route_to_projection(
+        kinds, snapshot, locale=locale, locale_id=locale_id, settings=settings
+    )
 
 
 catalog_entry = catalog.catalog_entry

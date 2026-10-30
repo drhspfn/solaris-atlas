@@ -12,6 +12,7 @@ from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.repositories.search import lexical_search
 from wuwa_story.db.session import get_session
+from wuwa_story.read_models.context import source_build
 from wuwa_story.storage.entity_media import entity_image_urls
 
 router = APIRouter(prefix="/search", tags=["search"])
@@ -53,7 +54,7 @@ async def search(
                 detail="Search one scope at a time; use scope=dialogue or entity categories.",
             )
         scope = "dialogue"
-    if read_projections.should_route_search_to_projection(category, scope, game_version, character):
+    if read_projections.should_route_search_to_projection(category, scope, game_version, character, locale=locale, locale_id=locale_id):
         return await read_projections.search_page(
             session, q, category, scope, locale, game_version, locale_id, sort_by, sort_order, limit, offset, character, quest_id,
         )
@@ -77,16 +78,18 @@ async def search(
         # /dialogue/search and return a compact, list-card shape from this unified route.
         from wuwa_story.api.routes.story import search_dialogue
 
-        dialogue_page = await search_dialogue(
-            q=q,
-            character=character,
-            quest_id=quest_id,
-            locale=locale,
-            game_version=game_version,
-            limit=limit,
-            offset=offset,
-            session=session,
-        )
+        # Preserve the source routing decision across the delegated endpoint.
+        with source_build():
+            dialogue_page = await search_dialogue(
+                q=q,
+                character=character,
+                quest_id=quest_id,
+                locale=locale,
+                game_version=game_version,
+                limit=limit,
+                offset=offset,
+                session=session,
+            )
         compact = []
         for line in dialogue_page["results"]:
             text = line["text"]

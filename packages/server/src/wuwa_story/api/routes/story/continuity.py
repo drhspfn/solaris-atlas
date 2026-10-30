@@ -72,7 +72,7 @@ async def quest_continuity(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Expose observed patch presence, quest category, chapter and authored tree links."""
-    if read_projections.should_route_to_projection("quest", game_version):
+    if read_projections.should_route_to_projection("quest", game_version, locale=locale):
         return await read_projections.quest_section(session, game_quest_id, locale, game_version, "continuity")
     quest = await get_quest(session, game_quest_id)
     if quest is None:

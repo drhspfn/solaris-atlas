@@ -20,20 +20,24 @@ ROUTES = test_projection_routes.ROUTES
 FIRST_KINDS = ("character", "item", "location", "story_map")
 
 
-def settings(kinds=FIRST_KINDS, snapshots=("current",), enabled=True):
+def settings(kinds=FIRST_KINDS, snapshots=("current",), enabled=True, locales=()):
     return SimpleNamespace(
         read_projections_enabled=enabled,
         read_projection_kinds=kinds,
         read_projection_snapshots=snapshots,
+        read_projection_locales=locales,
     )
 
 
 def test_csv_environment_selectors_are_parsed_validated_and_empty_is_unrestricted(monkeypatch):
     monkeypatch.setenv("READ_PROJECTION_KINDS", " character, item,location,story_map,character ")
     monkeypatch.setenv("READ_PROJECTION_SNAPSHOTS", "current,3.3.0,current")
+    monkeypatch.setenv("READ_PROJECTION_LOCALES", " en,ja,en ")
     configured = Settings(_env_file=None)
     assert configured.read_projection_kinds == FIRST_KINDS
     assert configured.read_projection_snapshots == ("current", "3.3.0")
+    assert configured.read_projection_locales == ("en", "ja")
+    assert Settings(_env_file=None, read_projection_locales="").read_projection_locales == ()
     assert (
         Settings(
             _env_file=None, read_projection_kinds="", read_projection_snapshots=""
@@ -243,3 +247,193 @@ async def test_search_route_never_combines_projection_and_source_categories(
             with pytest.raises(SourceSelected):
                 await client.get(path)
             projected.assert_not_awaited()
+
+
+def test_locale_selector_and_search_id_override_are_configuration_only():
+    chosen = settings(kinds=READ_PROJECTION_KINDS, locales=("en",))
+    assert context.should_route_to_projection("character", settings=chosen)
+    assert not context.should_route_to_projection("character", locale="ja", settings=chosen)
+    assert reader.should_route_node_to_projection("character:7", locale="en", settings=chosen)
+    assert not reader.should_route_node_to_projection("character:7", locale="ja", settings=chosen)
+    assert reader.should_route_search_to_projection(["character"], locale="en", settings=chosen)
+    assert not reader.should_route_search_to_projection(["character"], locale="ja", settings=chosen)
+    for locale_id in (0, 1, 2):
+        assert not reader.should_route_search_to_projection(
+            ["character"], locale="en", locale_id=locale_id, settings=chosen
+        )
+        assert reader.should_route_search_to_projection(
+            ["character"],
+            locale="en",
+            locale_id=locale_id,
+            settings=settings(kinds=READ_PROJECTION_KINDS),
+        )
+    with context.source_build():
+        assert not context.should_route_to_projection("character", locale="en", settings=chosen)
+
+
+LOCALIZED_ROUTES = [
+    (path, helper)
+    for path, helper in ROUTES
+    if path
+    not in {
+        "/categories",
+        "/notices",
+        "/notices/7",
+        "/nodes/speaker:7",
+        "/nodes/speaker:7/edges",
+        "/nodes/speaker:7/source-record",
+    }
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path,helper", LOCALIZED_ROUTES)
+@pytest.mark.parametrize("locale", ["en", "ja"])
+async def test_locale_rollout_selected_misses_stay_503_unselected_uses_source(
+    app, monkeypatch, path, helper, locale
+):
+    monkeypatch.setattr(
+        context, "get_settings", lambda: settings(kinds=READ_PROJECTION_KINDS, locales=("en",))
+    )
+    source = SimpleNamespace(
+        info={},
+        **{
+            name: AsyncMock(side_effect=SourceSelected())
+            for name in ("scalar", "scalars", "execute", "get")
+        },
+    )
+    app.dependency_overrides[get_session] = lambda: source
+    projected = AsyncMock(side_effect=reader._unready())
+    monkeypatch.setattr(reader, helper, projected)
+    path += ("&" if "?" in path else "?") + "locale=" + locale
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url="http://test"
+    ) as client:
+        if locale == "en":
+            response = await client.get(path)
+            assert response.status_code == 503
+            projected.assert_awaited_once()
+            assert not any(
+                getattr(source, name).await_count
+                for name in ("scalar", "scalars", "execute", "get")
+            )
+        else:
+            with pytest.raises(SourceSelected):
+                await client.get(path)
+            projected.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/search?q=Name&category=character&locale=en&locale_id=1",
+        "/search?q=Name&scope=dialogue&locale_id=2",
+    ],
+)
+async def test_search_locale_id_override_preserves_source_reader_under_locale_allowlist(
+    app, monkeypatch, path
+):
+    monkeypatch.setattr(
+        context, "get_settings", lambda: settings(kinds=READ_PROJECTION_KINDS, locales=("en",))
+    )
+    app.dependency_overrides[get_session] = lambda: SimpleNamespace(
+        scalar=AsyncMock(side_effect=SourceSelected())
+    )
+    projected = AsyncMock(side_effect=AssertionError("Cannot infer locale from numeric ID"))
+    monkeypatch.setattr(reader, "search_page", projected)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url="http://test"
+    ) as client:
+        with pytest.raises(SourceSelected):
+            await client.get(path)
+    projected.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path,helper",
+    [
+        ("/categories", "category_counts"),
+        ("/notices", "notices_page"),
+        ("/notices/7", "notice_detail_payload"),
+        ("/nodes/speaker:7", "node_section"),
+        ("/nodes/speaker:7/edges", "node_section"),
+        ("/nodes/speaker:7/source-record", "node_section"),
+    ],
+)
+async def test_nonlocalized_routes_use_fixed_english_even_if_query_says_japanese(
+    app, monkeypatch, path, helper
+):
+    monkeypatch.setattr(
+        context, "get_settings", lambda: settings(kinds=READ_PROJECTION_KINDS, locales=("ja",))
+    )
+    source = SimpleNamespace(
+        info={},
+        **{
+            name: AsyncMock(side_effect=SourceSelected())
+            for name in ("scalar", "scalars", "execute", "get")
+        },
+    )
+    app.dependency_overrides[get_session] = lambda: source
+    projected = AsyncMock(side_effect=AssertionError("This route reads English only"))
+    monkeypatch.setattr(reader, helper, projected)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url="http://test"
+    ) as client:
+        with pytest.raises(SourceSelected):
+            await client.get(path + "?locale=ja")
+    projected.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dialogue_locale_id_source_selection_survives_delegation(app, monkeypatch):
+    from wuwa_story.api.routes.story import transcripts
+
+    monkeypatch.setattr(
+        context, "get_settings", lambda: settings(kinds=READ_PROJECTION_KINDS, locales=("en",))
+    )
+    app.dependency_overrides[get_session] = lambda: SimpleNamespace(
+        scalar=AsyncMock(return_value=None)
+    )
+    source = AsyncMock(side_effect=SourceSelected())
+    monkeypatch.setattr(transcripts.usecases, "search_dialogue", source)
+    projected = AsyncMock(side_effect=AssertionError("Delegation must retain source selection"))
+    monkeypatch.setattr(reader, "dialogue_search_page", projected)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url="http://test"
+    ) as client:
+        with pytest.raises(SourceSelected):
+            await client.get("/search?q=Name&scope=dialogue&locale=en&locale_id=1")
+    source.assert_awaited_once()
+    projected.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "path,query,expected",
+    [
+        ("/catalog", "category=character&locale=en", True),
+        ("/catalog", "category=character&locale=ja", False),
+        ("/characters/character:7/profile", "locale=ja", False),
+        ("/story-map", "locale=ja", False),
+        ("/events", "locale=ja", False),
+        ("/dialogue/search", "q=Name&locale=ja", False),
+        ("/search", "q=Name&category=character&locale=en", True),
+        ("/search", "q=Name&category=character&locale=en&locale_id=1", False),
+        ("/search", "q=Name&category=character&locale=ja", False),
+        ("/nodes/character:7/related", "locale=ja", False),
+        ("/nodes/character:7/narrative-context", "locale=ja", False),
+        ("/nodes/character:7", "locale=ja", True),
+        ("/nodes/character:7/edges", "locale=ja", True),
+        ("/nodes/character:7/source-record", "locale=ja", True),
+        ("/notices", "locale=ja", True),
+        ("/categories", "locale=ja", True),
+    ],
+)
+def test_locale_cache_selection_matches_effective_route_locale(path, query, expected):
+    from wuwa_story.api.cache import projection_request
+
+    configured = settings(kinds=READ_PROJECTION_KINDS, locales=("en",))
+    assert (
+        projection_request({"path": path, "query_string": query.encode()}, configured) is expected
+    )

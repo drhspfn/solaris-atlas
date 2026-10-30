@@ -29,7 +29,7 @@ async def browse_catalog(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Return a stable, localized catalog page for the frontend browse views."""
-    if read_projections.should_route_to_projection(category, "current"):
+    if read_projections.should_route_to_projection(category, "current", locale=locale):
         return await read_projections.catalog_page(
             session, category, locale, quest_type_id=quest_type_id, limit=limit, offset=offset,
         )

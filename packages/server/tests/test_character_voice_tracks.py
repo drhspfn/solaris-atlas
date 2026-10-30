@@ -28,8 +28,7 @@ async def test_archive_exposes_independent_tracks_without_changing_text_locale(m
     monkeypatch.setattr(archive, "_record_groups", record_groups)
     monkeypatch.setattr(archive, "get_settings", lambda: SimpleNamespace(s3_bucket="test"))
     monkeypatch.setattr(archive, "S3Storage", lambda _: SimpleNamespace(public_url=lambda key: f"https://cdn.example/{key}"))
-    rows = [(SimpleNamespace(source_path=path, source_name=language),
-             SimpleNamespace(mime_type=mime), SimpleNamespace(object_key=key))
+    rows = [(path, language, mime, key)
             for language, mime, key in [("en", "audio/wav", "en.wav"), ("ja", "audio/ogg", "ja.ogg"),
                                         ("zh", "audio/wav", "zh.wav"), ("ko", "text/plain", "wrong.txt"),
                                         (None, "audio/wav", "unlabelled.wav")]]

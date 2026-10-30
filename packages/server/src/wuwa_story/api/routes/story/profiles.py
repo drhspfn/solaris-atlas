@@ -60,7 +60,7 @@ async def item_profile(
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    if read_projections.should_route_to_projection("item", game_version):
+    if read_projections.should_route_to_projection("item", game_version, locale=locale):
         return await read_projections.profile_page(session, "item", canonical_key, locale, game_version)
     node = await get_node(session, canonical_key, ('item',))
     if node is None:
@@ -711,7 +711,7 @@ async def location_profile(
     locale: str = "en",
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    if read_projections.should_route_to_projection("location", "current"):
+    if read_projections.should_route_to_projection("location", "current", locale=locale):
         return await read_projections.profile_page(session, "location", canonical_key, locale, None)
     node = await get_node(session, canonical_key, ('area', 'location'))
     if node is None:
@@ -767,7 +767,7 @@ async def quest_profile(
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    if read_projections.should_route_to_projection("quest", game_version):
+    if read_projections.should_route_to_projection("quest", game_version, locale=locale):
         return await read_projections.profile_page(session, "quest", game_quest_id, locale, game_version)
     try:
         return await usecases.quest_profile(session, game_quest_id, locale, game_version)
@@ -783,7 +783,7 @@ async def character_profile(
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    if read_projections.should_route_to_projection("character", game_version):
+    if read_projections.should_route_to_projection("character", game_version, locale=locale):
         return await read_projections.profile_page(session, "character", canonical_key, locale, game_version)
     node = await get_node(session, canonical_key, ('character',))
     if node is None:

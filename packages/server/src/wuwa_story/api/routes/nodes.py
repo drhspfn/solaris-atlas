@@ -76,7 +76,7 @@ async def node_related(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Browse explicit graph neighbors with optional relation and node-type filters."""
-    if read_projections.should_route_node_to_projection(canonical_key):
+    if read_projections.should_route_node_to_projection(canonical_key, locale=locale):
         return await read_projections.node_related_page(
             session, canonical_key, direction, relation, category, source_file, include_evidence, locale, limit, offset,
         )
@@ -255,7 +255,7 @@ async def node_narrative_context(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Resolve authored context for a dialogue node using its canonical source joins."""
-    if read_projections.should_route_node_to_projection(canonical_key, game_version):
+    if read_projections.should_route_node_to_projection(canonical_key, game_version, locale=locale):
         return await read_projections.node_section(session, canonical_key, "narrative", locale, game_version)
     node = await get_node(session, canonical_key)
     if node is None:
