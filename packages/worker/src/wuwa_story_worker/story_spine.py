@@ -42,6 +42,35 @@ def background_resource(config, identity):
             'config_blob_sha256': hashlib.sha256(found[1]).hexdigest()}
 
 
+def sequence_prefabs(config, openings):
+    result, missing = [], []
+    if not openings:
+        return result, missing
+    with closing(open_db(config / 'db_ui_resource.db')) as db:
+        for opening in openings:
+            row = db.execute('SELECT Path, PcPath FROM uiresource WHERE Id=?',
+                             (opening['prefab_key'],)).fetchone()
+            path = row and (row[1] or row[0])
+            if not isinstance(path, str) or not path.startswith('/Game/') or '..' in path.split('/'):
+                missing.append({'expected': opening['prefab_key'], 'status': 'ui_resource_not_resolved'})
+                continue
+            result.append({**opening, 'prefab': path.split('.')[0]})
+    # These are aliases of the exact UI key, not proof that a config row's
+    # default animation was played. A sequence can override it (e.g. idle/start).
+    by_key = {}
+    with closing(open_db(config / 'db_SpineBackground.db')) as db:
+        for identity, blob in db.execute('SELECT Id, BinData FROM spinebackground'):
+            row = table(blob)
+            if integer(row, 0) != identity:
+                raise ValueError('SpineBackground alias has an incompatible client schema')
+            for slot in (2, 4):
+                if key := text(row, slot):
+                    by_key.setdefault(key, set()).add(identity)
+    for variant in result:
+        variant['background_resource_ids'] = sorted(by_key.get(variant['prefab_key'], []))
+    return result, missing
+
+
 def portable_bundle(output, resource, assets, icons, identity, *, presentation=None):
     entries = {}
     originals = set()
@@ -111,7 +140,7 @@ def portable_bundle(output, resource, assets, icons, identity, *, presentation=N
             # Raw image packages have the same stable Client/Content path as the prefab exports.
             from wuwa_story_worker.media_provenance import package_path
             entries['source/' + package_path(path)] = path.read_bytes()
-    if not skeletons or not any(name.endswith('.atlas') for name in entries):
+    if not resource.get('controller_archive') and (not skeletons or not any(name.endswith('.atlas') for name in entries)):
         raise ValueError(
             'Prefab did not resolve both a Spine skeleton and atlas')
     from wuwa_story_worker.spine_open import open_playback_entries
@@ -125,12 +154,17 @@ def portable_bundle(output, resource, assets, icons, identity, *, presentation=N
         if presentation_hash(score) != presentation.get('sha256'):
             raise ValueError(
                 'Spine presentation does not match its source hash')
-        if resource['resource_id'] not in score['resource_ids']:
+        if not resource.get('controller_archive') and resource['resource_id'] not in score['resource_ids']:
             raise ValueError(
                 'Spine presentation does not reference this resource')
         entries['presentation.json'] = json.dumps(
             presentation, ensure_ascii=False, sort_keys=True, allow_nan=False).encode('utf-8')
-    manifest = {'playback': playback, 'schema_version': 3, 'kind': 'story_spine', **identity, **resource,
+    if resource.get('control_score') is not None:
+        entries['controls.json'] = json.dumps(resource['control_score'], ensure_ascii=False,
+                                             sort_keys=True, allow_nan=False).encode('utf-8')
+    manifest = {'playback': playback, 'schema_version': 4, 'kind': 'story_spine', **identity,
+                **{key: value for key, value in resource.items() if key != 'control_score'},
+                'controls': {'file': 'controls.json'} if resource.get('control_score') is not None else None,
                 'presentation': {'file': 'presentation.json', 'sha256': presentation['sha256'],
                                  'timing_status': presentation['timing_status']} if presentation else None,
                 'dependencies': {source: sorted(paths) for source, paths in sorted(dependencies.items())},
@@ -155,7 +189,8 @@ async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentati
     configs = list((receipt.parent / 'files').rglob('db_SpineBackground.db'))
     if len(configs) != 1:
         raise ValueError('Expected one pinned SpineBackground client database')
-    resource = await asyncio.to_thread(background_resource, configs[0].parent, resource_id)
+    resource = (await asyncio.to_thread(background_resource, configs[0].parent, resource_id)
+                if resource_id is not None else {'resource_id': None, 'variants': [], 'controller_archive': True})
     assets = {}
     textures, missing = await prefab_images(root, [variant['prefab'] for variant in resource['variants']], assets=assets)
     if missing:
@@ -167,8 +202,24 @@ async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentati
                              if cue['kind'] == 'sequence'})
     if sequence_paths:
         _, missing_controls = await prefab_images(root, sequence_paths, assets=assets, include_sequences=True)
+        from wuwa_story_worker.sequence_controls import opened_ui_resources, sequence_control_score
+        score = await asyncio.to_thread(sequence_control_score, assets, presentation)
+        variants, unresolved = await asyncio.to_thread(sequence_prefabs, configs[0].parent, opened_ui_resources(score))
+        preloads, missing_preloads = await asyncio.to_thread(sequence_prefabs, configs[0].parent, score['preloads'])
+        # Following a direct UI key is essential: a sequence need not mention
+        # SpineBackground.Id anywhere. Keep its exact event evidence instead.
+        additional, missing_prefabs = await prefab_images(root, sorted({v['prefab'] for v in variants + preloads}), assets=assets)
+        textures.extend(additional)
+        resource['variants'].extend(v for v in variants if v not in resource['variants'])
+        resource['control_score'] = score
+        resource['preloads'] = preloads
         resource['control_sources'] = {'requested': sequence_paths, 'missing': missing_controls,
-                                       'timing_status': 'unresolved'}
+                                       'timing_status': 'authored_frames' if score['events'] else 'unresolved'}
+        resource['control_sources']['missing'].extend(unresolved + missing_prefabs + missing_preloads)
+        resource['control_sources']['missing'].extend(
+            {'expected': event['source'], 'status': 'unsupported_control', 'diagnostics': event['diagnostics']}
+            for event in score['events']
+            if any(d.get('code') != 'unbound_event_function' for d in event['diagnostics']))
     pages = set()
     for asset in assets.values():
         if asset.get('decode_failed'):
@@ -197,7 +248,7 @@ async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentati
     # Several flow states in one job may use the same resource with different
     # dialogue/control cues. Their output paths must not overwrite each other.
     suffix = '-' + presentation['sha256'] if presentation else ''
-    return await asyncio.to_thread(portable_bundle, root / 'story-spine' / f'{resource_id}{suffix}.zip',
+    return await asyncio.to_thread(portable_bundle, root / 'story-spine' / f'{resource_id if resource_id is not None else "sequence"}{suffix}.zip',
                                    resource, assets, icons, identity, presentation=presentation)
 
 

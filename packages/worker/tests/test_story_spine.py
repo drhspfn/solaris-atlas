@@ -111,7 +111,7 @@ def test_archive_retains_score_and_rejects_changed_control_source(tmp_path):
                     {}, presentation=presentation)
     with zipfile.ZipFile(output) as archive:
         manifest = json.loads(archive.read('manifest.json'))
-        assert manifest['schema_version'] == 3
+        assert manifest['schema_version'] == 4
         assert json.loads(archive.read(
             manifest['presentation']['file'])) == presentation
         assert manifest['presentation']['timing_status'] == 'unresolved'
@@ -130,6 +130,21 @@ def test_score_cannot_be_attached_to_an_unrelated_resource(tmp_path):
     with pytest.raises(ValueError, match='does not reference'):
         portable_bundle(tmp_path / 'bad.zip', {'resource_id': 8, 'variants': []}, assets, icons, {},
                         presentation=flow_presentation({'Actions': []}))
+
+
+def test_controller_only_archive_does_not_invent_a_skeleton_or_playback(tmp_path):
+    from wuwa_story.ingestion.spine_presentation import flow_presentation
+    assets, _ = fixture(tmp_path)
+    (tmp_path / 'decoded/Story.json').write_text(json.dumps([{'Type': 'LevelSequence', 'Properties': {}}]))
+    resource = {'resource_id': None, 'controller_archive': True, 'variants': [],
+                'control_score': {'format': 'solaris.sequence-controls.v1', 'events': [], 'dialogues': []}}
+    output, _ = portable_bundle(tmp_path / 'controller.zip', resource, assets, {}, {},
+                               presentation=flow_presentation({'Actions': [{'Name': 'PlaySequenceData',
+                                                        'Params': {'Path': '/Game/Story.Sequence'}}]}))
+    with zipfile.ZipFile(output) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        assert manifest['skeletons'] == [] and manifest['playback']['variants'] == []
+        assert json.loads(archive.read(manifest['controls']['file'])) == resource['control_score']
 
 
 @pytest.mark.asyncio

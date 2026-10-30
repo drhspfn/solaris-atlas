@@ -42,7 +42,9 @@ async def enqueue_release_media(
             NodeRevision.release_id == release_id)
         illustrated = select(QuestState.node_id).join(QuestAction,
                                                       QuestAction.quest_state_node_id == QuestState.node_id).where(
-            func.jsonb_path_exists(QuestAction.params, cast('$.**.BackgroundConfig', JSONPATH)))
+            func.jsonb_path_exists(QuestAction.params, cast('$.**.BackgroundConfig', JSONPATH))
+            | func.jsonb_path_exists(QuestAction.params, cast('$.**.SequenceDataAsset', JSONPATH))
+            | (QuestAction.action_name == 'PlaySequenceData'))
         catalog = ((Node.canonical_key.startswith("character:"))
                    | (Node.canonical_key.startswith("item:")) | (Node.canonical_key.startswith("skill:")))
         entities = list(await session.scalars(select(Node.canonical_key).where(
@@ -95,7 +97,7 @@ async def enqueue_release_media(
             if repair_story:
                 request['repair_story'] = 1
         if kind == 'images' and any(key.startswith('flow_state:') for key in targets):
-            request['illustration_schema'] = 4
+            request['illustration_schema'] = 5
         digest = hashlib.sha256(json.dumps(
             request, sort_keys=True).encode()).digest()
         run = await session.scalar(select(ProcessingRun).where(

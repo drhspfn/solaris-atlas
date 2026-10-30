@@ -134,7 +134,7 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
                 }
                 for path in images
             )
-            if kind == 'flow_state' and flow_spine_ids(raw):
+            if kind == 'flow_state':
                 presentation = flow_presentation(raw)
                 targets.extend({'owner': node.id, 'release_id': release_id,
                                 'path': f'spine_background:{identity}', 'resource_id': identity,
@@ -142,6 +142,12 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
                                 'spine_recipe': SPINE_RECIPE, 'presentation': presentation,
                                 'presentation_sha256': presentation['sha256']}
                                for identity in presentation['resource_ids'])
+                if not presentation['resource_ids'] and any(cue['kind'] == 'sequence' for cue in presentation['cues']):
+                    targets.append({'owner': node.id, 'release_id': release_id,
+                                    'path': f'story_sequence:{node.canonical_key}', 'resource_id': None,
+                                    'kind': 'spine', 'language': None, 'reference_type': 'story_presentation',
+                                    'spine_recipe': SPINE_RECIPE, 'presentation': presentation,
+                                    'presentation_sha256': presentation['sha256']})
         if kind == "character" and "voice" in request.kinds:
             for row in await records("BinData/favor/favorword.json", "RoleId", int(identifier)):
                 path = row.get("Voice")

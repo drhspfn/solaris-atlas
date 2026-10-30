@@ -1,4 +1,8 @@
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
 
 from wuwa_story.ingestion.entity_media import flow_background_paths, flow_spine_ids
 from wuwa_story.ingestion.spine_presentation import flow_presentation
@@ -68,3 +72,18 @@ def test_sequence_showtalk_keeps_talk_event_bindings_and_exact_controller_refere
     frames, = [cue for cue in result['cues'] if cue['kind'] == 'frame_events']
     assert frames['command'] == [event]
     assert 'time' not in frames
+
+
+@pytest.mark.asyncio
+async def test_sequence_only_flow_is_not_dropped_when_it_has_no_spine_background_id():
+    from wuwa_story.ingestion.entity_media import MediaRequest, entity_media_targets
+    raw = {'StateKey': 'Story_1_2', 'Actions': [{'Name': 'ShowTalk', 'Params': {
+        'SequenceDataAsset': '/Game/Story/Data.Data', 'TalkItems': [{'TidTalk': 'line'}]}}]}
+    node = SimpleNamespace(id=5, canonical_key='flow_state:Story_1_2')
+    session = SimpleNamespace(scalar=AsyncMock(side_effect=[7, node, raw]))
+    request = MediaRequest(download_id='a' * 64, asset_version='3.7.0', game_version='3.7.0',
+                           entities=[node.canonical_key], kinds=['image'])
+    target, = await entity_media_targets(session, request)
+    assert target['owner'] == 5 and target['reference_type'] == 'story_presentation'
+    assert target['resource_id'] is None and target['spine_recipe'] == 3
+    assert target['presentation']['cues'][0]['kind'] == 'sequence'

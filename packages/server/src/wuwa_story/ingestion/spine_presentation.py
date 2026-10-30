@@ -10,7 +10,7 @@ import json
 from wuwa_story.ingestion.dungeon_context import decoded, walk
 from wuwa_story.ingestion.talk_backgrounds import background_config
 
-SPINE_RECIPE = 2
+SPINE_RECIPE = 3
 
 
 def presentation_hash(value):

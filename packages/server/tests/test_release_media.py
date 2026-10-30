@@ -98,10 +98,10 @@ async def test_illustration_repair_does_not_even_scan_audio_or_movie_tables(monk
     payloads = [call.args[0] for call in publish.await_args_list]
     assert [payload['kind'] for payload in payloads] == ['prepare', 'images']
     assert payloads[1]['targets'] == ['flow_state:Story_1_29']
-    assert payloads[1]['illustration_schema'] == 4
+    assert payloads[1]['illustration_schema'] == 5
     query = str(session.scalars.call_args.args[0])
     assert 'jsonb_path_exists' in query
-    assert 'action_name =' not in query
+    assert 'ShowTalk' not in session.scalars.call_args.args[0].compile().params.values()
     session.scalars.assert_awaited_once()
 
 
