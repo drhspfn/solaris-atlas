@@ -12,8 +12,10 @@ from wuwa_story_worker.model_bundle import (
     animation_batch,
     animation_file,
     animation_sources,
+    base_color_alpha_is_opacity,
     base_color_texture,
     build_animation_plan,
+    canonical_animation_rig,
     effect_space_only,
     file_sha256,
     indexed_gltf_references,
@@ -215,6 +217,27 @@ def test_mask_cutoff_uses_cooked_value_and_rejects_invalid_values():
         opacity_mask_cutoff({"Properties": {"BasePropertyOverrides": {"OpacityMaskClipValue": 2}}})
 
 
+def test_denia_skin_passes_do_not_cut_neck_but_cloth_and_other_characters_keep_masks():
+    skin = {"BlendMode": 1, "Switches": {"UseOnlySkinRampColor": True}}
+    for name in ("MI_R2T1DaniyaMd10011Up01", "MI_R2T1DaniyaMd10011Up02"):
+        assert not base_color_alpha_is_opacity(name, skin)
+        assert base_color_alpha_is_opacity(name, {"BlendMode": 1})
+    assert base_color_alpha_is_opacity("MI_R2T1DaniyaMd10011Cloth", skin)
+    assert base_color_alpha_is_opacity("MI_OtherCharacterUp01", skin)
+    assert base_color_alpha_is_opacity("Hair", {"BlendMode": 2})
+    assert not base_color_alpha_is_opacity("Face", {"BlendMode": 0})
+
+
+def test_animation_container_names_are_form_independent_without_renaming_joints():
+    rigs = [SimpleNamespace(name=name, data=SimpleNamespace(name=name, bones=[
+        SimpleNamespace(name="root"), SimpleNamespace(name="SolarisAnimationRig"),
+    ])) for name in ("Denia", "Denia_Body")]
+    for rig in rigs:
+        canonical_animation_rig(rig)
+        assert rig.name == rig.data.name == "SolarisAnimationRig_"
+        assert [bone.name for bone in rig.data.bones] == ["root", "SolarisAnimationRig"]
+
+
 def test_effect_space_pass_is_not_treated_as_color_geometry():
     metadata = {"Textures": {"MaskTex": {}}, "Properties": {"BasePropertyOverrides": {"bEffectSpaceWrite": True}}}
     assert effect_space_only(metadata)
@@ -396,11 +419,12 @@ def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_
     ]
     if rig_only:
         argv.append("--rig-only")
-    plan = {"animations": [{"action": "Stand1"}], "animation_coverage": {"playable_clips": 1}}
+    plan = {"animations": [{"action": "Stand1"}], "animation_coverage": {"playable_clips": 1},
+            "facial": {"format": "solaris-facial-v1", "clips": []}}
     if planned:
         argv.extend(["--animation-plan", str(tmp_path / "plan.json")])
         monkeypatch.setattr("wuwa_story_worker.model_bundle.animation_sources", lambda *a: {})
-        monkeypatch.setattr("wuwa_story_worker.model_bundle.build_animation_plan", lambda *a: plan)
+        monkeypatch.setattr("wuwa_story_worker.model_bundle.build_animation_plan", lambda *a, **kw: plan)
     monkeypatch.setattr(sys, "argv", argv)
     monkeypatch.setattr(sys, "path", sys.path.copy())
     armature = SimpleNamespace(
@@ -417,7 +441,7 @@ def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_
         data=MeshData(
             vertices=[0, 1, 2],
             materials=[],
-            shape_keys=SimpleNamespace(key_blocks=list(range(87))),
+            shape_keys=SimpleNamespace(key_blocks=[SimpleNamespace(name=f"Shape{i}") for i in range(87)]),
             uv_layers=[],
             color_attributes=[],
         ),

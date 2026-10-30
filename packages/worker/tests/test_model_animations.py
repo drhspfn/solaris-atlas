@@ -232,6 +232,24 @@ def job_payload():
     )
 
 
+def test_facial_publication_is_validated_against_the_body_animation_collection(tmp_path):
+    job = worker.CharacterModelJob.model_validate({**job_payload(), "include_animations": True})
+    animation_glb(tmp_path / "animations.glb")
+    summaries = {"animations": glb_summary(tmp_path / "animations.glb", allow_animations=True)}
+    pack = {"format": "solaris-facial-v1", "clips": [
+        {"name": "Stand1", "body_clip": "Stand1", "seconds": 1,
+         "tracks": [{"target": "E_Close", "keys": [[0, 0], [1, 1]]}]},
+    ]}
+    path = tmp_path / "facial.json"
+    path.write_text(json.dumps(pack))
+    files, count = worker.publication_files(job, tmp_path, summaries)
+    assert ("facial", path, "raw_json", "application/json") in files and count == 1
+    pack["clips"][0]["body_clip"] = "Missing"
+    path.write_text(json.dumps(pack))
+    with pytest.raises(ValueError, match="unpublished body clip"):
+        worker.publication_files(job, tmp_path, summaries)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("include", [None, True, False])
 @pytest.mark.parametrize("form_count", [1, 2])
@@ -341,8 +359,9 @@ async def test_claim_accepts_legacy_payload_but_rejects_changed_animation_reques
     "include,clip_count,fail_batch",
     [(False, 0, False), (True, 1, False), (True, 41, False), (True, 41, True)],
 )
+@pytest.mark.parametrize("animation_workers", [1, 3])
 async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
-    tmp_path, monkeypatch, include, clip_count, fail_batch
+    tmp_path, monkeypatch, include, clip_count, fail_batch, animation_workers
 ):
     model = "Aki/Character/Role/FemaleM/Test/Variant/Model/Rig"
     cooked = tmp_path / "source-json"
@@ -411,12 +430,14 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
     if fail_batch:
         with pytest.raises(RuntimeError, match="Blender exited"):
             await worker.build_bundle(
-                tmp_path, {"model": model, "blueprints": []}, include_animations=True
+                tmp_path, {"model": model, "blueprints": []}, include_animations=True,
+                animation_workers=animation_workers,
             )
         assert not (tmp_path / "bundle/animations.glb").exists()
         return
     _, summaries, provenance = await worker.build_bundle(
-        tmp_path, {"model": model, "blueprints": []}, include_animations=include
+        tmp_path, {"model": model, "blueprints": []}, include_animations=include,
+        animation_workers=animation_workers,
     )
     assert extraction.call_args.args[-1] is include
     assert ("animations" in summaries) is include

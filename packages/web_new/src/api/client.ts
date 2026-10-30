@@ -46,7 +46,8 @@ export async function api<T>(
 
   const fetchPromise = (async () => {
     const headers = new Headers({ Accept: 'application/json' });
-    if (options.body !== undefined) headers.set('Content-Type', 'application/json');
+    const binaryBody = typeof Blob !== 'undefined' && options.body instanceof Blob;
+    if (options.body !== undefined) headers.set('Content-Type', binaryBody ? 'application/octet-stream' : 'application/json');
     if (isBrowser && (options.csrf ?? !['GET', 'HEAD', 'OPTIONS'].includes(method))) {
       try {
         const csrf = await fetch(`${defaultClientBase}/auth/csrf`, { credentials: 'include' });
@@ -62,6 +63,7 @@ export async function api<T>(
     const requestBody =
       options.body === undefined
         ? undefined
+        : binaryBody ? options.body as Blob
         : typeof options.body === 'string'
           ? options.body
           : JSON.stringify(options.body);

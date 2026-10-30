@@ -120,6 +120,12 @@ input[type=number] { width: 100%; min-height: 44px; border: 1px solid var(--bord
 .picker-option[aria-checked=true]::after { content: '✓'; flex-shrink: 0; }
 .picker-empty { color: var(--text-secondary); font-size: 12px; padding: 16px 10px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#model-downloads { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+#facial-controls { max-width: 440px; margin: 8px 0; }
+#facial-controls summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; color: var(--accent-mint); font-size: 12px; cursor: pointer; list-style: none; }
+#facial-controls summary::-webkit-details-marker { display: none; }
+#facial-controls[open] summary .picker-chevron { transform: rotate(180deg); }
+#facial-status, #model-quality-status { font-size: 12px; color: var(--text-secondary); }
 body[data-mode=preview] { background: transparent; }
 body[data-mode=preview] > :not(#viewport), body[data-mode=preview] #viewport > :not(canvas) { display: none !important; }
 body[data-mode=preview] #viewport, body[data-mode=preview] canvas { background: transparent; }

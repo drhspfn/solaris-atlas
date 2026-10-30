@@ -327,6 +327,7 @@ async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeyp
         "download": None,
         "physics": None,
         "animations": None,
+        "facial": None,
         "viewer_url": None,
         "forms": [],
     }
@@ -523,12 +524,25 @@ async def test_public_forms_keep_files_and_viewers_in_their_form(public_forms):
             "download",
             "physics",
             "animations",
+            "facial",
             "viewer_url",
         }
         for kind in repository.REFERENCE_TYPES.values():
             if form[kind]:
                 assert set(form[kind]) == {"url", "size_bytes"}
     assert "model_bundle_id" not in str(result) and "form_order" not in str(result)
+
+
+async def test_facial_pack_never_borrows_from_another_form_or_publication(public_forms):
+    public_forms.extend(form_rows("new", kinds=("preview", "download", "facial")))
+    public_forms.extend(form_rows("new", "mesh-100039", "Transformed", 1))
+    public_forms.extend(form_rows("old", "mesh-100039", "Transformed", 1, ("facial",)))
+    result = await service.public_character_model(
+        AsyncMock(), 15, SimpleNamespace(id=8, game_version="3.0.0")
+    )
+    assert result["facial"] == result["forms"][0]["facial"]
+    assert result["forms"][0]["facial"]["url"].endswith("/new/mesh-100038/facial")
+    assert result["forms"][1]["facial"] is None
 
 
 async def test_public_forms_accept_multiple_compositions_of_one_mesh(public_forms):

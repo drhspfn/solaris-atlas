@@ -82,6 +82,7 @@ async function stage() {
     "viewer.js",
     "spring-bones.js",
     "animations.js",
+    "facial.js",
     "viewer-ui.js",
     "camera-rig.js",
     "root-motion.js",

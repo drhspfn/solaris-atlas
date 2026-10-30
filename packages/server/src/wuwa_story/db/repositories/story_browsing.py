@@ -1,6 +1,6 @@
 """SQL reads for quest browsing; request caching and payloads belong to story services."""
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import ARRAY, Numeric, and_, case, cast, func, or_, select
 from sqlalchemy.orm import defer, load_only
 
 from wuwa_story.db.models.core import (
@@ -242,13 +242,20 @@ async def quest_area_rows(session, quest_node_id):
 
 
 async def latest_source_row(session, node_id):
+    # Match version_key's numeric component ordering, then break ties by import.
+    components = func.btrim(
+        func.regexp_replace(func.coalesce(GameRelease.game_version, ""), "[^0-9]+", ".", "g"),
+        ".",
+    )
+    version = cast(func.string_to_array(components, "."), ARRAY(Numeric))
     result = await session.execute(
         select(NodeRevision, SourceRecord, SourceFile, GameRelease)
         .join(SourceRecord, SourceRecord.id == NodeRevision.source_record_id)
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
         .outerjoin(GameRelease, GameRelease.id == NodeRevision.release_id)
         .where(NodeRevision.node_id == node_id)
-        .order_by(NodeRevision.revision.desc(), NodeRevision.id.desc())
+        .order_by(version.desc(), GameRelease.sequence.desc().nulls_last(),
+                  NodeRevision.revision.desc(), NodeRevision.id.desc())
         .limit(1)
     )
     row = result.first()

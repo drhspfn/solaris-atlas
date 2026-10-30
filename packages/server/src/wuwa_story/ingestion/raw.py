@@ -242,14 +242,16 @@ async def import_raw_snapshot(
         expected_count = table.get("record_count")
         stored_count = existing_counts.get(source_file_id, 0)
         ingestion_state = file_record.metadata_json.get("ingestion_state")
-        if ingestion_state == "raw_fallback" or (
+        if (ingestion_state == "raw_fallback" and stored_count > 0) or (
             ingestion_state == "parsed"
             and isinstance(expected_count, int)
             and stored_count >= expected_count
         ):
             # The immutable source hash and stored count prove this file was fully
             # ingested already; don't reread or stream millions of duplicate rows.
-            seen += expected_count
+            # A malformed file has no reliable source row count. Count the
+            # retained records, including its complete raw fallback payload.
+            seen += stored_count if ingestion_state == "raw_fallback" else expected_count
             continue
         preserve_surrogates = verify_indexed_file(path, entry)
         normalizations: set[str] = set()

@@ -117,6 +117,7 @@ function harness(importing = false, role = "admin") {
       disconnect() { this.disconnected = true; }
     },
     AbortController,
+    crypto: { randomUUID: () => "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
     URLSearchParams,
     document,
     window,
@@ -225,6 +226,7 @@ const model = {
   download: { url: "https://cdn.example/full.glb", size_bytes: 4096 },
   physics: { url: "/api/media/physics.json", size_bytes: 100 },
   animations: { url: "https://cdn.example/animations.glb", size_bytes: 8000 },
+  facial: { url: "https://cdn.example/facial.json", size_bytes: 500 },
 };
 const forms = [
   { ...model, id: "default", label: "Default" },
@@ -234,6 +236,7 @@ const forms = [
     download: { url: "/api/media/alternate-full.glb", size_bytes: 8192 },
     physics: { url: "/api/media/alternate-physics.json", size_bytes: 200 },
     animations: { url: "/api/media/alternate-animations.glb", size_bytes: 16000 },
+    facial: { url: "/api/media/alternate-facial.json", size_bytes: 700 },
     viewer_url: "https://alternate.example/model-viewer/old/index.html",
   },
 ];
@@ -282,6 +285,8 @@ test("form selection switches both stages while fullscreen is open, remounts rig
     assert.equal(url.searchParams.get("physics"), index ? forms[1].physics.url : null);
     assert.equal(url.searchParams.get("animations"), index ? forms[1].animations.url : null);
     assert.equal(url.searchParams.get("animation_bytes"), index ? String(forms[1].animations.size_bytes) : null);
+    assert.equal(url.searchParams.get("facial"), index ? forms[1].facial.url : null);
+    assert.equal(url.searchParams.get("full_model"), index ? forms[1].download.url : null);
   });
   assert.deepEqual(nodes(tree).filter((n) => n.type === "a").map((n) => n.props.href), [forms[1].download.url, forms[1].animations.url]);
   assert.equal(nodes(tree).filter((n) => n.props.role === "status").length, 2);
@@ -313,7 +318,7 @@ test("forms never borrow missing assets or runtime URLs from root metadata", asy
   const url = new URL(frame.props.src, "https://atlas.example");
   assert.equal(url.origin, "https://atlas.example");
   assert.equal(url.searchParams.get("model"), sparse.preview.url);
-  for (const param of ["physics", "animations", "animation_bytes"]) assert(!url.searchParams.has(param));
+  for (const param of ["physics", "animations", "animation_bytes", "facial", "full_model"]) assert(!url.searchParams.has(param));
   assert.equal(nodes(tree).filter((n) => n.type === "a").length, 0);
   chooseForm(tree, "Unpublished", 1);
   tree = h.render();
@@ -416,6 +421,8 @@ test("near-visible preview is deferred, lightweight and opens a separate fullscr
   assert.equal(previewUrl.searchParams.get("model"), model.preview.url);
   assert(!previewUrl.searchParams.has("animations"));
   assert(!previewUrl.searchParams.has("physics"));
+  assert(!previewUrl.searchParams.has("facial"));
+  assert(!previewUrl.searchParams.has("full_model"));
   assert.equal(compact.props.tabIndex, -1);
   assert(h.observers[0].disconnected);
   assert.equal(compact.props.onLoad, undefined);
@@ -430,6 +437,10 @@ test("near-visible preview is deferred, lightweight and opens a separate fullscr
   assert.equal(fullUrl.searchParams.get("physics"), model.physics.url);
   assert.equal(fullUrl.searchParams.get("animations"), model.animations.url);
   assert.equal(fullUrl.searchParams.get("animation_bytes"), String(model.animations.size_bytes));
+  assert.equal(fullUrl.searchParams.get("full_model"), model.download.url);
+  assert.equal(fullUrl.searchParams.get("model_bytes"), String(model.download.size_bytes));
+  assert.equal(fullUrl.searchParams.get("facial"), model.facial.url);
+  assert.equal(fullUrl.searchParams.get("facial_bytes"), String(model.facial.size_bytes));
   assert.equal(fullUrl.searchParams.get("name"), h.props.name);
   const modal = nodes(tree).find((n) => n.type === "dialog");
   assert(modal.props.ref.current.open);
@@ -528,6 +539,31 @@ test("administrators can explicitly skip the animation pack", () => {
   animations.props.onChange({ target: { checked: false } });
   nodes(h.render()).find((node) => node.type === "form").props.onSubmit({ preventDefault() {} });
   assert.equal(h.requests[0].options.body.include_animations, false);
+  h.close();
+});
+
+test("an archive in the existing import form uploads bounded chunks then queues publication", async () => {
+  const h = harness(true);
+  const file = { size: 9, slice(start, end) { return { start, bytes: Math.min(end, 9) - start }; } };
+  nodes(h.render()).find(node => node.type === "input" && node.props.type === "file")
+    .props.onChange({ target: { files: [file] } });
+  let tree = h.render();
+  assert.equal(nodes(tree).find(node => node.type === "input" && node.props.type === "checkbox").props.disabled, true);
+  nodes(tree).find(node => node.type === "form").props.onSubmit({ preventDefault() {} });
+  assert.equal(h.requests[0].url, "/admin/character-models/uploads");
+  h.requests[0].resolve({ id: 8, status: "uploading", chunk_bytes: 4 });
+  await flush();
+  for (let part = 0; part < 3; part++) {
+    const request = h.requests[part + 1];
+    assert.equal(request.url, `/admin/character-models/uploads/8/parts/${part}`);
+    assert.equal(request.options.body.bytes, part === 2 ? 1 : 4);
+    request.resolve({ id: 8 }); await flush();
+  }
+  assert.equal(h.requests[4].url, "/admin/character-models/uploads/8/complete");
+  h.requests[4].resolve({ id: 8, status: "completed" });
+  await flush(); tree = h.render();
+  assert(nodes(tree).some(node => node.props.role === "status"));
+  assert(!h.requests.some(request => request.url === "/admin/character-models"));
   h.close();
 });
 

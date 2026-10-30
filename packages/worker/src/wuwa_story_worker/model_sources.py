@@ -113,6 +113,8 @@ def glb_summary(path, allow_animations=False):
         raise ValueError("Character model publication must not embed animation collections")
     if any("uri" in image for image in data.get("images", [])):
         raise ValueError("Model textures must be embedded")
+    if any("uri" in buffer for buffer in data.get("buffers", [])):
+        raise ValueError("Model buffers must be embedded")
     with path.open("rb") as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
     return {

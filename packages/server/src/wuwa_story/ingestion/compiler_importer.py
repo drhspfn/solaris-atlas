@@ -83,7 +83,7 @@ class CompiledDatasetImporter(Importer):
             # Search documents are a deterministic projection of imported localized text.
             # Build them as part of snapshot import so freshly imported releases are searchable.
             async def search():
-                await build_lexical_index(session, release.game_version, batch_size)
+                await build_lexical_index(session, release.game_version, batch_size, release_id=release.id)
                 return 0, 0
 
             await progress.phase("search", search)

@@ -103,10 +103,13 @@ def validate_animation_bones(dto, bone_names):
 
 
 def build_animation_plan(
-    model, converted, skeleton, sources, bone_names, read_animation, animation=None
+    model, converted, skeleton, sources, bone_names, read_animation, animation=None, morph_names=()
 ):
     """Decode one DTO at a time; never allocate Blender actions during preflight."""
-    rows, clips, seen, names = [], [], set(), set()
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from model_facial import FORMAT, facial_clip
+
+    rows, clips, seen, names, facial = [], [], set(), set(), []
     for path in sorted(converted.rglob("*.ueanim")):
         header, dto = read_animation(path, sources)
         key = package_path(header.object_path)
@@ -132,6 +135,10 @@ def build_animation_plan(
             raise ValueError(f"{source['source']} ({row['file']}): {exc}") from exc
         if excluded:
             row["excluded_reason"] = excluded
+            # Facial curves are weights, independent of additive bone transforms.
+            face = facial_clip(dto, f"Expression {len(facial) + 1}: {header.object_name}", morph_names)
+            if face is not None:
+                facial.append(face)
             del dto
             continue
         validate_animation_bones(dto, bone_names)
@@ -147,6 +154,9 @@ def build_animation_plan(
         names.add(name)
         row.update(action=name, included_in_glb=True)
         clips.append({**row, "name": name, "sha256": file_sha256(path)})
+        face = facial_clip(dto, name, morph_names, body_clip=name)
+        if face is not None:
+            facial.append(face)
         del dto
     missing = missing_animation_sources(sources, seen)
     if missing:
@@ -160,6 +170,7 @@ def build_animation_plan(
         "bones": sorted(bone_names),
         "clips": clips,
         "animations": rows,
+        "facial": {"format": FORMAT, "clips": facial},
         "animation_coverage": {
             "matching_sources": sum(row["matches_skeleton"] for row in sources.values()),
             "decoded_clips": len(rows),
@@ -320,6 +331,17 @@ def effect_space_only(metadata: dict) -> bool:
     return overrides.get("bEffectSpaceWrite") is True and "MaskTex" in metadata.get("Textures", {})
 
 
+def base_color_alpha_is_opacity(material_name: str, metadata: dict) -> bool:
+    """The base-color fallback must not treat Denia's skin shader data as holes."""
+    if material_name in {"MI_R2T1DaniyaMd10011Up01", "MI_R2T1DaniyaMd10011Up02"} and (
+        metadata.get("Switches", {}).get("UseOnlySkinRampColor") is True
+    ):
+        # Verified against both cooked skin passes and before/after renders.
+        # Their diffuse alpha clips the neck; retain cloth/hair mask behavior.
+        return False
+    return metadata.get("BlendMode") in {1, 2}
+
+
 def same_rest_skeleton(primary, extra) -> bool:
     primary_bones = {bone.name: bone for bone in primary.data.bones}
     extra_bones = {bone.name: bone for bone in extra.data.bones}
@@ -336,6 +358,16 @@ def same_rest_skeleton(primary, extra) -> bool:
         ):
             return False
     return True
+
+
+def canonical_animation_rig(armature):
+    """Keep animation-only container/skin names independent of a form's mesh."""
+    name = "SolarisAnimationRig"
+    bone_names = {bone.name for bone in armature.data.bones}
+    while name in bone_names:
+        name += "_"
+    armature.name = name
+    armature.data.name = name
 
 
 @contextmanager
@@ -582,6 +614,7 @@ def main():
         from io_scene_gltf2.blender.exp.exporter import GlTF2Exporter
         from io_scene_gltf2.io.com.gltf2_io import Accessor, BufferView
 
+        canonical_animation_rig(armature)
         with indexed_gltf_references(GlTF2Exporter, (Accessor, BufferView)):
             result = bpy.ops.export_scene.gltf(
                 filepath=str(part.resolve()),
@@ -635,11 +668,18 @@ def main():
             {bone.name for bone in armature.data.bones},
             read_animation,
             args.animation,
+            morph_names={
+                key.name for mesh in meshes if mesh.data.shape_keys
+                for key in list(mesh.data.shape_keys.key_blocks)[1:]
+            },
         )
         args.animation_plan.parent.mkdir(parents=True, exist_ok=True)
         args.animation_plan.write_text(json.dumps(plan, indent=2), encoding="utf-8")
         report["animations"] = plan["animations"]
         report["animation_coverage"] = plan["animation_coverage"]
+        (args.output / "facial.json").write_text(
+            json.dumps(plan["facial"], separators=(",", ":")), encoding="utf-8"
+        )
     metadata_files = list(args.converted.rglob("*.json"))
     material_files = {path.stem: path for path in metadata_files}
     # An effect-space write is a non-color game render pass, not visible geometry.
@@ -685,7 +725,7 @@ def main():
             node.image = image
             material.node_tree.links.new(node.outputs["Color"], shader.inputs["Base Color"])
             blend_mode = metadata.get("BlendMode")
-            if blend_mode in {1, 2}:
+            if base_color_alpha_is_opacity(path.stem if path else material.name, metadata):
                 alpha = node.outputs["Alpha"]
                 if blend_mode == 1:
                     clip = material.node_tree.nodes.new("ShaderNodeMath")
@@ -853,6 +893,7 @@ def main():
         bpy.ops.object.select_all(action="DESELECT")
         armature.select_set(True)
         bpy.context.view_layer.objects.active = armature
+        canonical_animation_rig(armature)
         export_glb("animations.glb", morph=False, animations=True, selected=True)
         # Blender runs this file as a script, outside the worker package imports.
         sys.path.insert(0, str(Path(__file__).resolve().parent))

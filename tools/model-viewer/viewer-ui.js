@@ -301,6 +301,11 @@ export function createViewerUI() {
     empty: "No bones available",
     searchable: true,
   });
+  const facial = picker({
+    triggerId: "facial-picker", selectionId: "facial-selection", listId: "facial-list",
+    label: "Facial animations", empty: "No facial animations", searchable: true,
+    rememberPath: true,
+  });
   const speed = picker({
     triggerId: "speed-picker",
     selectionId: "speed-selection",
@@ -404,6 +409,13 @@ export function createViewerUI() {
     });
   }
   instance = {
+    setFacial(clips, onSelect) {
+      facial.set([
+        { value: "auto", label: "Follow body animation" },
+        { value: "off", label: "Off · neutral expression" },
+        ...clips.map(clip => ({ value: clip.name, label: clip.name, path: ["Expressions"] })),
+      ], onSelect, "auto");
+    },
     setAnimations(clips, onSelect, initialName) {
       animationNames = clips.map(clip => clip.name);
       animationCallback = onSelect;
