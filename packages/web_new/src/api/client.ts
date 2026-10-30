@@ -6,6 +6,7 @@ import { retryableFetch } from './retryableFetch';
 const isBrowser = typeof window !== 'undefined';
 const defaultClientBase = (process.env.NEXT_PUBLIC_API_BASE ?? APP_SETTINGS.api.defaultBase).replace(/\/$/, '');
 const serverBackendBase = (process.env.INTERNAL_API_BASE || process.env.API_PROXY_TARGET || 'http://localhost:8000').replace(/\/$/, '');
+const PUBLIC_READ_TIMEOUT_MS = 30_000;
 
 export const apiBase = isBrowser ? defaultClientBase : serverBackendBase;
 
@@ -35,8 +36,10 @@ export async function api<T>(
 ): Promise<T> {
   const method = options.method ?? 'GET';
   const cacheKey = `${method}:${path}`;
+  // A caller-owned signal must not cancel another consumer's shared request.
+  const cacheRead = method === 'GET' && isBrowser && !options.signal && options.cacheTtl !== 0;
 
-  if (method === 'GET' && isBrowser) {
+  if (cacheRead) {
     const cached = requestCache.get(cacheKey);
     if (cached && cached.expiry > Date.now()) {
       if (cached.promise) return cached.promise;
@@ -76,7 +79,9 @@ export async function api<T>(
 
     const fetchOptions: RequestInit & { next?: any } = {
       method,
-      signal: options.signal,
+      signal: isBrowser && method === 'GET'
+        ? AbortSignal.any([AbortSignal.timeout(PUBLIC_READ_TIMEOUT_MS), ...(options.signal ? [options.signal] : [])])
+        : options.signal,
       headers,
       body: requestBody,
     };
@@ -91,6 +96,7 @@ export async function api<T>(
 
     const response = await (isBrowser ? retryableFetch : fetch)(url, fetchOptions);
     const result = await response.json().catch(() => null);
+    fetchOptions.signal?.throwIfAborted();
     if (!response.ok) {
       const detail = result?.detail;
       throw new ApiError(
@@ -104,7 +110,7 @@ export async function api<T>(
     return result as T;
   })();
 
-  if (method === 'GET' && isBrowser) {
+  if (cacheRead) {
     const ttl = options.cacheTtl ?? (path.startsWith('/admin/') ? 0 : 300000);
     requestCache.set(cacheKey, { data: null, expiry: Date.now() + ttl, promise: fetchPromise });
     try {

@@ -20,7 +20,7 @@ test("binary model chunks preserve bytes, credentials and CSRF while JSON reques
   const code = ts.transpileModule(readFileSync(new URL("../src/api/client.ts", import.meta.url), "utf8"),
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   vm.runInNewContext(code, { exports, require: id => mocks[id], process: { env: {} }, window: {},
-    Headers, Blob, fetch, Date, Map });
+    Headers, Blob, fetch, Date, Map, AbortSignal });
   const chunk = new Blob([new Uint8Array([0, 255, 1])]);
   await exports.api("/admin/character-models/uploads/1/parts/0", { method: "PUT", body: chunk });
   assert.equal(calls[0].options.body, chunk);

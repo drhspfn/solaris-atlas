@@ -858,6 +858,7 @@ button {
 }
 .breadcrumbs {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   font-size: 10px;
@@ -872,9 +873,16 @@ button {
 }
 .breadcrumbs svg {
   color: #59665e;
+  flex-shrink: 0;
+}
+.breadcrumbs > span,
+.breadcrumbs > a {
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .page-heading {
   display: flex;
+  gap: 16px;
   justify-content: space-between;
   align-items: end;
   padding-bottom: 27px;
@@ -891,6 +899,11 @@ button {
   color: #96a198;
   font-size: 12px;
   margin: 0;
+}
+.page-heading > div:first-child,
+.profile-main {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .heading-period {
   color: #9dd4ab;
@@ -1111,6 +1124,7 @@ button {
 }
 .pagination {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   align-items: center;
   gap: 20px;
@@ -1337,6 +1351,7 @@ button {
 }
 .connection-row small {
   font-size: 9px;
+  overflow-wrap: anywhere;
   color: #87958b;
 }
 .reading-cta {
@@ -1743,6 +1758,16 @@ button {
 .error-panel small {
   font-size: 9px;
   color: #9d756e;
+}
+.error-panel button {
+  display: block;
+  margin-top: 16px;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  color: var(--text-primary);
 }
 .empty-inline {
   padding: 20px 5px;

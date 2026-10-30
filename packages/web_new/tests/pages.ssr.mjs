@@ -653,6 +653,7 @@ for (const [slug, version, locale] of [
 
 for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
   test(`character details and preview are in initial HTML for ${userAgent}`, async () => {
+    const start = requests.length;
     const response = await fetch(`${site}/characters/character%3A1102`, {
       headers: { 'User-Agent': userAgent },
     });
@@ -670,6 +671,17 @@ for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
     assert.doesNotMatch(html, /Opening archive record|Loading character details|id="S:\d+"/);
     assert.ok(requests.includes('/characters/character%3A1102/archive?locale=en'));
     assert.ok(!requests.some((path) => path.includes('%253A')));
+    const calls = requests.slice(start).filter((path) => path.startsWith('/characters/character%3A1102/'));
+    // ISR may satisfy a warm read; a cold render must never duplicate either endpoint.
+    for (const endpoint of ['profile', 'archive']) {
+      assert.ok(calls.filter((path) => path.includes(`/${endpoint}?`)).length <= 1,
+        `metadata and page must share the character ${endpoint} read`);
+    }
+    if (calls.length === 2) {
+      const timings = requestTimes.slice(start).filter((entry) => entry.path.startsWith('/characters/character%3A1102/'));
+      assert.ok(Math.max(...timings.map((entry) => entry.start)) < Math.min(...timings.map((entry) => entry.end)),
+        'character profile and archive must overlap rather than form an SSR waterfall');
+    }
     const gallery =
       main.match(/<div class="character-artwork-gallery">([\s\S]*?)<\/figure><\/div>/)?.[1] ?? '';
     assert.ok(gallery.includes(`src="${portrait}"`));

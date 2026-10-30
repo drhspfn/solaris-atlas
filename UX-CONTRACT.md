@@ -1,5 +1,20 @@
 # Interactive map UX contract
 
+## Public archive recovery
+
+Public server reads have a 15-second deadline and share results between metadata
+and page rendering within one server request. Detail content, social previews and
+canonical redirects remain in the initial HTML response; a root streaming loader
+must not replace them. Character profile and archive reads start together.
+
+Client GET reads have a 30-second deadline. Catalogs distinguish failed initial
+reads from genuinely empty collections and retry failures. Catalog, search and
+entity-profile requests ignore superseded responses; canceling one consumer does
+not cancel another consumer's read. Profile and character-archive errors expose
+separate retry actions. Changing records resets local detail state. Shared
+Feedback owns accessible loading/error status and the optional Try again action;
+long names wrap within breadcrumbs and profile headings on narrow screens.
+
 ## Character model quality and facial playback
 
 The profile remains a deferred compact preview. Full-resolution textures and

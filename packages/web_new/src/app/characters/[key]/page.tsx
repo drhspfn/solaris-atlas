@@ -71,6 +71,7 @@ export default async function CharacterProfilePage({ params, searchParams }: Pro
 
   return (
     <EntityProfileClient
+      key={key}
       kind="character"
       entityKey={key}
       initialData={initialData}

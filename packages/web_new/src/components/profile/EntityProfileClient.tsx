@@ -42,27 +42,48 @@ export function EntityProfileClient({
   const [archive, setArchive] = useState<CharacterArchiveData | null>(initialArchive ?? null);
   const [archiveError, setArchiveError] = useState('');
   const [modelRevision, setModelRevision] = useState(0);
+  const [profileRetry, setProfileRetry] = useState(0);
+  const [archiveRetry, setArchiveRetry] = useState(0);
 
   useEffect(() => {
-    if (initialData && locale === 'en' && data === initialData) return;
+    if (initialData && locale === 'en' && profileRetry === 0) {
+      setData(initialData);
+      setLoading(false);
+      setError('');
+      return;
+    }
+    const controller = new AbortController();
     setLoading(true);
     setError('');
     api<any>(
       `/${kind === 'character' ? 'characters' : kind === 'item' ? 'items' : 'locations'}/${encodeURIComponent(entityKey)}/profile?locale=${locale}`,
+      { signal: controller.signal },
     )
-      .then(setData)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [kind, entityKey, locale]);
+      .then((result) => {
+        if (!controller.signal.aborted) setData(result);
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setError(e.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [kind, entityKey, locale, initialData, profileRetry]);
 
   useEffect(() => {
-    if (initialArchive && locale === 'en' && archive === initialArchive) return;
+    if (initialArchive && locale === 'en' && archiveRetry === 0) {
+      setArchive(initialArchive);
+      setArchiveError('');
+      return;
+    }
     setArchive(null);
     setArchiveError('');
     if (kind !== 'character') return;
     const controller = new AbortController();
     api<CharacterArchiveData>(
       `/characters/${encodeURIComponent(entityKey)}/archive?locale=${encodeURIComponent(locale)}`,
+      { signal: controller.signal },
     )
       .then((result) => {
         if (!controller.signal.aborted) setArchive(result);
@@ -71,13 +92,13 @@ export function EntityProfileClient({
         if (!controller.signal.aborted) setArchiveError(cause.message);
       });
     return () => controller.abort();
-  }, [kind, entityKey, locale]);
+  }, [kind, entityKey, locale, initialArchive, archiveRetry]);
 
   if (loading && !data) return <PageLoader />;
   if (error && !data)
     return (
       <div className="page-container">
-        <ErrorPanel message={error} />
+        <ErrorPanel message={error} onRetry={() => setProfileRetry((value) => value + 1)} />
       </div>
     );
 
@@ -161,6 +182,8 @@ export function EntityProfileClient({
 
   return (
     <div className="page-container">
+      {error && <ErrorPanel message={error} onRetry={() => setProfileRetry((value) => value + 1)} />}
+      {loading && <p role="status">Updating archive record…</p>}
       <div className="breadcrumbs">
         <Link to="/">Archive</Link>
         <ChevronRight size={13} />
@@ -224,11 +247,10 @@ export function EntityProfileClient({
             characterKey={entityKey}
           />
         ) : archiveError ? (
-          <div className="character-archive-error">
-            Character details unavailable: {archiveError}
-          </div>
+          <ErrorPanel message={`Character details unavailable: ${archiveError}`}
+            onRetry={() => setArchiveRetry((value) => value + 1)} />
         ) : (
-          <div className="character-archive-loading">Loading character details…</div>
+          <div className="character-archive-loading" role="status">Loading character details…</div>
         ))}
       {kind === 'character' && entity?.canonical_key && (
         <CharacterModel key={entity.canonical_key} characterKey={entity.canonical_key} name={name} refreshKey={modelRevision} />
