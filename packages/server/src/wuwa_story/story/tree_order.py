@@ -14,6 +14,7 @@ from wuwa_story.db.repositories.cutscenes import source_parents
 from wuwa_story.ingestion.dungeon_context import walk
 from wuwa_story.ingestion.quest_tree_order import tree_node_order_hash
 from wuwa_story.story.media import media_links
+from wuwa_story.story.runtime_blocks import project_blocks
 
 
 def records_match(nodes: list[dict], records: dict[int, dict]) -> bool:
@@ -104,6 +105,8 @@ async def authored_order(session, quest_id: int, release_id: int | None):
         AuthoredTreeOrder.tree_kind == 'level_play', AuthoredTreeOrder.tree_id.in_(level_ids)))) if level_ids else []
     level_trees = {tree.tree_id: (tree.nodes, await rows(
         'BinData/LevelPlayNodeData/levelplaynodedata.json', tree.tree_id)) for tree in trees}
+    level_trees = {identity: tree for identity, tree in level_trees.items() if records_match(*tree)}
+    blocks = project_blocks(quest_id, quest_tree.nodes, qrecords, level_trees)
     possible = set()
     for record in list(qrecords.values()) + [row for _, records in level_trees.values() for row in records.values()]:
         for _, value in walk(record):
@@ -114,7 +117,7 @@ async def authored_order(session, quest_id: int, release_id: int | None):
         .join(NodeRevision, NodeRevision.node_id == QuestState.node_id)
         .where(NodeRevision.release_id == release_id, QuestState.state_key.in_(possible)).distinct())).all())
     positions = flow_positions(quest_tree.nodes, qrecords, level_trees, set(states))
-    if not positions:
+    if not positions and not blocks:
         return None
     ids = [states[key] for key, _ in positions]
     actions = list(await session.execute(select(QuestAction.node_id, QuestAction.quest_state_node_id)
@@ -136,4 +139,5 @@ async def authored_order(session, quest_id: int, release_id: int | None):
             if identity not in ordered:
                 ordered.append(identity)
     return {'state_ids': ordered, 'asset_version': quest_tree.asset_version,
-            'mapped_flow_states': [key for key, _ in positions]}
+            'mapped_flow_states': [key for key, _ in positions],
+            'positions': dict(positions), 'blocks': blocks}

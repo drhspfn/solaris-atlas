@@ -25,6 +25,7 @@ from wuwa_story.ingestion.dungeon_context import (
     level_memberships,
     requirements,
 )
+from wuwa_story.ingestion.runtime_media import quest_runtime_links
 from wuwa_story.ingestion.scenario_context import scenario_links
 from wuwa_story.ingestion.video_package_context import (
     QUEST_VIDEO,
@@ -82,6 +83,16 @@ async def backfill(session, release_id, dry_run=False):
     records += [{**link, "version": release.game_version, "source_repository": release.upstream_name,
                  "source_commit": release.upstream_commit}
                 for link in packages if link["from"] in package_nodes and link["to"] in package_nodes]
+    runtime_candidates = list(quest_runtime_links(quest_nodes, package_nodes | {
+        key for key in await session.scalars(select(Node.canonical_key).join(
+            NodeRevision, NodeRevision.node_id == Node.id).where(
+            NodeRevision.release_id == release_id, Node.canonical_key.like('cutscene:%')))
+    }))
+    runtime_owners = set(await session.scalars(select(Node.canonical_key).where(
+        Node.canonical_key.in_({link['from'] for link in runtime_candidates})))) if runtime_candidates else set()
+    records += [{**link, 'version': release.game_version, 'source_repository': release.upstream_name,
+                 'source_commit': release.upstream_commit}
+                for link in runtime_candidates if link['from'] in runtime_owners]
     records = list({(row["type"], row["from"], row["to"],
                    row["raw_path"]): row for row in records}.values())
     source, target = Node.__table__.alias(
@@ -92,7 +103,7 @@ async def backfill(session, release_id, dry_run=False):
         .select_from(Edge).join(RelationType, RelationType.id == Edge.relation_type_id)
         .join(source, source.c.id == Edge.from_node_id).join(target, target.c.id == Edge.to_node_id)
         .join(EdgeEvidence, EdgeEvidence.edge_id == Edge.id)
-        .where(RelationType.key.in_((RELATION, "references_scenario_flow_state", "references_packaged_cutscene")), Edge.layer == "source",
+        .where(RelationType.key.in_((RELATION, "references_scenario_flow_state", "references_packaged_cutscene", "plays_cutscene")), Edge.layer == "source",
                EdgeEvidence.release_id == release_id)
     ))
     missing = [row for row in records if (
