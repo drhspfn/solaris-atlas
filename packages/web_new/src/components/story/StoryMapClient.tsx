@@ -7,8 +7,9 @@ import { ErrorPanel, PageLoader } from '@/components/ui/Feedback';
 import { Select } from '@/components/ui/Select';
 import type { StoryMap, StoryTreeNode } from '@/data/story';
 import { useLocale } from '@/hooks/useLocale';
-import { Link, useSearchParams } from '@/lib/router';
+import { Link, useNavigate, useSearchParams } from '@/lib/router';
 import { questPath } from '@/lib/routeKey';
+import { storyChapterGroups, storyMapPage, storyPageForHash, storyPageNumber } from './storyMapPaging';
 
 const questTypes = [
   { id: 0, label: 'All story paths' },
@@ -73,14 +74,19 @@ function StoryStep({ node, version }: { node: StoryTreeNode; version: string }) 
   );
 }
 
-export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null }) {
+export function StoryMapClient({ initialMap, initialPage = 1, initialQuery = '' }: {
+  initialMap?: StoryMap | null; initialPage?: number; initialQuery?: string;
+}) {
   const searchInput = useRef<HTMLInputElement>(null);
   const locale = useLocale();
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const selectionKey = params?.toString() || '';
+  const query = params ? params.get('q') || '' : initialQuery;
   const version = params?.get('game_version') || '';
   const questType = Number(params?.get('quest_type') ?? '0');
   const selectedType = questTypes.some((entry) => entry.id === questType) ? questType : 0;
-  const [query, setQuery] = useState('');
+  const requestedPage = storyPageNumber(params ? params.get('page') : initialPage);
   const [map, setMap] = useState<StoryMap | null>(initialMap ?? null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(!initialMap);
@@ -115,70 +121,72 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
     };
   }, [locale, selectedType, version, retry, initialMap]);
 
-  const chapters = useMemo(
-    () =>
-      map?.chapters
-        .map((chapter) => ({
-          ...chapter,
-          nodes: chapter.nodes.filter(
-            (node) =>
-              !query.trim() ||
-              [
-                chapter.title,
-                chapter.act_title,
-                chapter.snapshot_game_version,
-                node.title,
-                node.chapter_label,
-                ...node.quests.map((quest) => quest.title),
-              ].some((value) =>
-                value?.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
-              ),
-          ),
-        }))
-        .filter((chapter) => chapter.nodes.length) ?? [],
-    [map, query],
-  );
-  const total = map?.chapters.reduce((sum, chapter) => sum + chapter.nodes.length, 0) ?? 0;
-  const visible = chapters.reduce((sum, chapter) => sum + chapter.nodes.length, 0);
-  const groupedChapters = useMemo(() => {
-    const groups: {
-      title: string;
-      subtitle: string | null;
-      unchaptered: boolean;
-      version: string;
-      treeAvailable: boolean;
-      acts: typeof chapters;
-    }[] = [];
-    for (const chapter of chapters) {
-      const title = chapter.title || `Chapter ${chapter.id}`;
-      const subtitle = chapter.act_title === title ? null : chapter.chapter_number || null;
-      const last = groups.at(-1);
-      if (
-        last &&
-        !chapter.tree_available &&
-        last.title === title &&
-        last.subtitle === subtitle &&
-        last.unchaptered === (chapter.id === 0) &&
-        last.version === chapter.snapshot_game_version
-      )
-        last.acts.push(chapter);
-      else
-        groups.push({
-          title,
-          subtitle,
-          unchaptered: chapter.id === 0,
-          version: chapter.snapshot_game_version,
-          treeAvailable: chapter.tree_available,
-          acts: [chapter],
-        });
-    }
-    return groups;
-  }, [chapters]);
+  const groupedChapters = useMemo(() => storyChapterGroups(map?.chapters || []), [map]);
+  const total = groupedChapters.reduce((sum, group) => sum + group.count, 0);
+  const paging = useMemo(() => storyMapPage(groupedChapters, query, requestedPage),
+    [groupedChapters, query, requestedPage]);
+  const resolvedHash = useRef('');
+  const pendingHash = useRef('');
+
+  function pageHref(page: number, searchText = query) {
+    const next = new URLSearchParams(selectionKey);
+    if (page > 1) next.set('page', String(page));
+    else next.delete('page');
+    if (searchText.trim()) next.set('q', searchText);
+    else next.delete('q');
+    return `/story-map${next.size ? `?${next}` : ''}`;
+  }
+
+  function setQuery(value: string) {
+    // Next synchronizes native history with useSearchParams without refetching RSC.
+    // Keep both query and page in the URL; no local reset can override navigation.
+    window.history.replaceState(null, '', pageHref(1, value));
+  }
+
+  useEffect(() => {
+    if (loading) return;
+    const reveal = () => {
+      const hash = window.location.hash;
+      if (!hash || hash === resolvedHash.current) return;
+      const matchingPage = storyPageForHash(paging.matches, hash);
+      const targetPage = matchingPage ?? storyPageForHash(groupedChapters, hash);
+      if (targetPage === null) return;
+      resolvedHash.current = hash;
+      pendingHash.current = decodeURIComponent(hash).slice(1);
+      const heading = document.getElementById(pendingHash.current);
+      if (targetPage === paging.page && matchingPage !== null && heading) {
+        heading.scrollIntoView({ block: 'start' });
+        heading.focus({ preventScroll: true });
+        pendingHash.current = '';
+      }
+      if (targetPage !== paging.page || matchingPage === null)
+        navigate(`${pageHref(targetPage, matchingPage === null ? '' : query)}${hash}`, { replace: true });
+    };
+    const changed = () => { resolvedHash.current = ''; reveal(); };
+    reveal();
+    window.addEventListener('hashchange', changed);
+    return () => window.removeEventListener('hashchange', changed);
+  }, [loading, groupedChapters, paging.matches, paging.page, query, selectionKey, navigate]);
+
+  useEffect(() => {
+    if (!pendingHash.current) return;
+    const frame = requestAnimationFrame(() => {
+      const heading = document.getElementById(pendingHash.current);
+      if (!heading) return;
+      heading.scrollIntoView({ block: 'start' });
+      heading.focus({ preventScroll: true });
+      pendingHash.current = '';
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [paging.visibleGroups]);
 
   function updateParam(key: string, value: string) {
     const next = new URLSearchParams(params?.toString() || '');
     if (value) next.set(key, value);
     else next.delete(key);
+    next.delete('page');
+    if (query.trim()) next.set('q', query);
+    else next.delete('q');
     if (setParams) {
       setParams(next);
     }
@@ -263,9 +271,9 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
       ) : (
         map && (
           <>
-            <div className="story-map-context">
+            <div className="story-map-context" id="story-map-results" tabIndex={-1}>
               <span>
-                {visible} of {total} source entries ·{' '}
+                {paging.total} of {total} source entries ·{' '}
                 {version ? `additions in ${version}` : 'all patches in order'}
               </span>
               <p>
@@ -291,21 +299,21 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
                   Browse quests <ArrowRight size={15} />
                 </Link>
               </div>
-            ) : chapters.length ? (
-              groupedChapters.map((group, index) => (
-                <Fragment key={`${group.version}:${group.title}:${index}`}>
+            ) : paging.total ? (
+              paging.visibleGroups.map((group, pageIndex) => (
+                <Fragment key={`${group.version}:${group.title}:${group.index}`}>
                   {!version &&
-                    (index === 0 || groupedChapters[index - 1].version !== group.version) && (
+                    (pageIndex === 0 || paging.visibleGroups[pageIndex - 1].version !== group.version) && (
                       <div className="story-patch-marker">
                         First seen in snapshot {group.version}
                       </div>
                     )}
                   <section
                     className="story-chapter"
-                    aria-labelledby={`story-chapter-group-${index}`}
+                    aria-labelledby={`story-chapter-group-${group.index}`}
                   >
                     <div className="story-chapter-heading">
-                      <span>{String(index + 1).padStart(2, '0')}</span>
+                      <span>{String(group.index + 1).padStart(2, '0')}</span>
                       <div>
                         <small>
                           {group.treeAvailable
@@ -314,10 +322,10 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
                               ? 'QUESTS WITHOUT A CHAPTER'
                               : group.subtitle || 'QUEST CHAPTER'}
                         </small>
-                        <h2 id={`story-chapter-group-${index}`}>{group.title}</h2>
+                        <h2 id={`story-chapter-group-${group.index}`} tabIndex={-1}>{group.title}</h2>
                       </div>
                       <b>
-                        {group.acts.reduce((sum, act) => sum + act.nodes.length, 0)}{' '}
+                        {group.count}{' '}
                         {group.treeAvailable ? 'paths' : 'source quests'}
                       </b>
                     </div>
@@ -331,7 +339,7 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
                                 `Act ${act.id}`}
                             </h3>
                           )}
-                        <ol className="story-steps">
+                        <ol className="story-steps" start={act.start}>
                           {act.nodes.map((node) => (
                             <StoryStep key={node.id} node={node} version={group.version} />
                           ))}
@@ -346,6 +354,15 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
                 <h2>No matching quests</h2>
                 <p>Try another name or story path.</p>
               </div>
+            )}
+            {paging.total > 0 && (
+              <nav className="pagination" aria-label="Story pages">
+                {paging.page > 1 && <Link to={`${pageHref(paging.page - 1)}#story-map-results`}>Previous</Link>}
+                <span aria-live="polite">
+                  {paging.start}–{paging.end} of {paging.total.toLocaleString()} · Page {paging.page} of {paging.pages}
+                </span>
+                {paging.page < paging.pages && <Link to={`${pageHref(paging.page + 1)}#story-map-results`}>Next</Link>}
+              </nav>
             )}
           </>
         )

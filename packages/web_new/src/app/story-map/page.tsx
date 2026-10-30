@@ -4,6 +4,7 @@ import { connection } from 'next/server';
 import { serverApi } from '@/api/serverApi';
 import { StoryMapClient } from '@/components/story/StoryMapClient';
 import type { StoryMap } from '@/data/story';
+import { storyPageNumber } from '@/components/story/storyMapPaging';
 
 export const metadata: Metadata = {
   title: 'Story Map — Solaris-3 Chronology',
@@ -38,5 +39,7 @@ export default async function StoryMapPage({
   // Render the requested patch immediately; never flash the 1.0 overview first.
   const initialMap = await serverApi<StoryMap>(`/story-map?${query}`);
 
-  return <StoryMapClient initialMap={initialMap} />;
+  return <StoryMapClient initialMap={initialMap}
+    initialPage={storyPageNumber(typeof params.page === 'string' ? params.page : undefined)}
+    initialQuery={typeof params.q === 'string' ? params.q : ''} />;
 }
