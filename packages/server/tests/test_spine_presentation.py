@@ -13,7 +13,7 @@ def test_score_keeps_branches_audio_and_external_cues_without_inventing_timing()
                 'Config': {'Type': 'Play', 'Name': '1to2', 'IsLoop': False}}}]}
     raw = {'StateKey': 'state', 'Actions': json.dumps([
         {'Name': 'ShowTalk', 'Params': {'TalkItems': [talk],
-                                      'SequenceTransitions': {'0': [{'NextSequenceIndex': 2}]}}},
+                                        'SequenceTransitions': {'0': [{'NextSequenceIndex': 2}]}}},
         {'Name': 'PlaySequenceData', 'Params': {'Path': '/Game/Story.Sequence'}},
         {'Name': 'PostAkEvent', 'Params': {'EventConfig': {'AkEvent': '/Game/Music.Event'}}}])}
     result = flow_presentation(raw)
@@ -23,7 +23,8 @@ def test_score_keeps_branches_audio_and_external_cues_without_inventing_timing()
     assert result['source']['Actions'][0]['Params']['SequenceTransitions']
     dialogue, = [cue for cue in result['cues'] if cue['kind'] == 'dialogue']
     assert dialogue['command'] == talk
-    animation, = [cue for cue in result['cues'] if cue['kind'] == 'play_animation']
+    animation, = [cue for cue in result['cues']
+                  if cue['kind'] == 'play_animation']
     assert animation['source_path'] == '$.Actions[0].Params.TalkItems[0].Actions[0].Params.Config'
     assert animation['command']['Name'] == '1to2'
     assert 'duration' not in animation and 'start_time' not in animation
@@ -31,6 +32,7 @@ def test_score_keeps_branches_audio_and_external_cues_without_inventing_timing()
     assert result['unresolved'][0]['asset'] == '/Game/Story.Sequence'
     assert result == flow_presentation(raw)
     assert raw['Actions'].startswith('[')  # Source is not mutated.
+    assert result == flow_presentation(json.loads(json.dumps(raw, sort_keys=True)))
 
 
 def test_nested_backgrounds_are_discovered_and_unrelated_numeric_ids_are_not():
@@ -53,3 +55,16 @@ def test_pose_and_frame_events_are_kept_for_the_external_clock():
     assert result['cues'][1]['command']['Name'] == '2'
     changed = flow_presentation({'FrameEvents': []})
     assert result['sha256'] != changed['sha256']
+
+
+def test_sequence_showtalk_keeps_talk_event_bindings_and_exact_controller_reference():
+    event = {'Position': {'TalkItemId': 8}, 'FrameEvent': {
+        'EventKey': 'cue', 'EventActions': [{'Name': 'PlaySpine', 'Params': {
+            'Config': {'Type': 'Play', 'Name': 'close', 'IsLoop': False}}}]}}
+    result = flow_presentation({'Actions': [{'Name': 'ShowTalk', 'Params': {
+        'SequenceDataAsset': '/Game/Story/Data.Data', 'TalkFrameEvents': [event]}}]})
+    sequence, = [cue for cue in result['cues'] if cue['kind'] == 'sequence']
+    assert sequence['source_path'] == '$.Actions[0].Params.SequenceDataAsset'
+    frames, = [cue for cue in result['cues'] if cue['kind'] == 'frame_events']
+    assert frames['command'] == [event]
+    assert 'time' not in frames

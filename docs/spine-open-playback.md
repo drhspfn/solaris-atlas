@@ -59,13 +59,34 @@ Set the shared flag to `true` only for an explicit playback rollout.
 
 ## Storage and repair
 
-Archive schema 2 retains original packages, skeleton/atlas/textures, dependencies,
-source identities and hashes. Playback JSON and PNG files are content-addressed
+Archive schema 3 retains original packages, skeleton/atlas/textures, the typed
+dependency map, source identities and hashes. `presentation.json` separately
+retains the owning FlowState source and explicit background/PlaySpine, dialogue,
+voice/audio and sequence commands, including nested branches and source paths.
+Exact `SequenceDataAsset` and `PlaySequenceData.Params.Path` references trigger
+archival of their controller packages, generated data and LevelSequence dependencies.
+Missing controller packages are listed in `control_sources.missing`; a successfully
+archived skeleton is not mistaken for a decoded, synchronized presentation.
+This score describes authored structure, not a flattened runtime playthrough.
+Zero-duration poses are not assigned fabricated durations. Frame events without
+their owning sequence clock remain explicitly unresolved; clip names do not
+establish timing, music synchronization or quest membership.
+
+The independent Universal Skeleton Engine CLI accepts a `.skel` plus `.atlas`
+and writes a neutral IR and import report. This is an asset conversion boundary;
+the game-specific presentation score stays outside the engine. The unfinished
+external engine is not a production dependency. Its unverified compatibility
+report must not be treated as verified playback or discarded by an integration.
+
+Playback JSON and PNG files are content-addressed
 storage objects. `story_spine_part` references and `spine_open_component` variants
 retain archive provenance. Public responses contain playback URLs, not internal
 object inventories. Repeated publication updates existing references.
 
-Illustration job schema 3 / Spine recipe 1 upgrade older archive-only results.
+Illustration job schema 4 / Spine recipe 2 upgrade older archive-only results.
+Reuse also requires the presentation source hash to match. Different FlowStates
+using the same Spine resource have distinct archive outputs and cannot overwrite
+one another during a batch. Unchanged source archives remain reusable.
 Reuse checks verify the bundle AND each playback component; missing parts remain
 retryable. Existing owner locks, workspace cleanup and deduplication are reused.
 After deployment, use scoped repair in `quest-runtime-blocks.md`; a full patch

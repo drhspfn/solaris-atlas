@@ -11,7 +11,7 @@ from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.ingestion.character_artwork import character_artwork_scope
 from wuwa_story.ingestion.dungeon_context import walk
 from wuwa_story.ingestion.spine_presentation import SPINE_RECIPE, flow_presentation
-from wuwa_story.ingestion.talk_backgrounds import background_changes
+from wuwa_story.ingestion.talk_backgrounds import background_config
 
 
 class MediaRequest(BaseModel):
@@ -45,14 +45,17 @@ def image_paths(value, field="") -> set[str]:
 def flow_background_paths(raw: dict) -> set[str]:
     paths = set()
     for _, value in walk(raw):
-        for _, background in background_changes(value.get('TalkItems')):
+        background = background_config(value.get('BackgroundConfig'))
+        if background:
             paths.update(image['engine_path']
                          for image in background['images'])
     return paths
 
 
 def flow_spine_ids(raw: dict) -> set[int]:
-    return set(flow_presentation(raw)['resource_ids'])
+    return {background['resource_id'] for _, value in walk(raw)
+            if (background := background_config(value.get('BackgroundConfig')))
+            and background['kind'] == 'spine'}
 
 
 async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
@@ -131,7 +134,7 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
                 }
                 for path in images
             )
-            if kind == 'flow_state':
+            if kind == 'flow_state' and flow_spine_ids(raw):
                 presentation = flow_presentation(raw)
                 targets.extend({'owner': node.id, 'release_id': release_id,
                                 'path': f'spine_background:{identity}', 'resource_id': identity,

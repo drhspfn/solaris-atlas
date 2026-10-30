@@ -42,7 +42,7 @@ def background_resource(config, identity):
             'config_blob_sha256': hashlib.sha256(found[1]).hexdigest()}
 
 
-def portable_bundle(output, resource, assets, icons, identity):
+def portable_bundle(output, resource, assets, icons, identity, *, presentation=None):
     entries = {}
     originals = set()
     skeletons = []
@@ -63,14 +63,14 @@ def portable_bundle(output, resource, assets, icons, identity):
                         path.relative_to(asset['raw']).as_posix()] = path.read_bytes()
         source_packages.append(source)
         exports = []
-        for path in sorted(asset['decoded'].rglob('*.json')):
+        for path in sorted(asset['decoded'].rglob('*.json')) if not asset.get('decode_failed') else []:
             decoded = json.loads(path.read_text(encoding='utf-8-sig'))
             if isinstance(decoded, list) and any(isinstance(item, dict) and item.get('Type') for item in decoded):
                 exports.extend(decoded)
                 entries['decoded/' +
                         path.relative_to(asset['decoded']).as_posix()] = path.read_bytes()
         dependencies[source] = {path for kind, path in ui_references(
-            exports) if kind == 'dependency'}
+            exports, include_sequences=True) if kind == 'dependency'}
         folder = 'spine/' + \
             hashlib.sha256(source.encode()).hexdigest()[:16] + '/'
         for export in exports:
@@ -118,7 +118,22 @@ def portable_bundle(output, resource, assets, icons, identity):
     generated, playback = open_playback_entries(
         entries, resource, skeletons, dependencies)
     entries.update(generated)
-    manifest = {'playback': playback, 'schema_version': 2, 'kind': 'story_spine', **identity, **resource,
+    if presentation is not None:
+        from wuwa_story.ingestion.spine_presentation import presentation_hash
+        score = {key: value for key, value in presentation.items()
+                 if key != 'sha256'}
+        if presentation_hash(score) != presentation.get('sha256'):
+            raise ValueError(
+                'Spine presentation does not match its source hash')
+        if resource['resource_id'] not in score['resource_ids']:
+            raise ValueError(
+                'Spine presentation does not reference this resource')
+        entries['presentation.json'] = json.dumps(
+            presentation, ensure_ascii=False, sort_keys=True, allow_nan=False).encode('utf-8')
+    manifest = {'playback': playback, 'schema_version': 3, 'kind': 'story_spine', **identity, **resource,
+                'presentation': {'file': 'presentation.json', 'sha256': presentation['sha256'],
+                                 'timing_status': presentation['timing_status']} if presentation else None,
+                'dependencies': {source: sorted(paths) for source, paths in sorted(dependencies.items())},
                 'packages': source_packages, 'skeletons': skeletons, 'textures': texture_files,
                 'files': {name: {'sha256': hashlib.sha256(data).hexdigest(), 'size_bytes': len(data)}
                           for name, data in sorted(entries.items())}}
@@ -135,7 +150,7 @@ def portable_bundle(output, resource, assets, icons, identity):
     return output, sorted(originals)
 
 
-async def build_spine_bundle(root, resource_id, fmodel, converter):
+async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentation=None):
     receipt = await export_assets(root, fmodel, 'ConfigDB')
     configs = list((receipt.parent / 'files').rglob('db_SpineBackground.db'))
     if len(configs) != 1:
@@ -146,8 +161,18 @@ async def build_spine_bundle(root, resource_id, fmodel, converter):
     if missing:
         raise ValueError(
             f'Spine dependency is incomplete: {missing[0]["expected"]}')
+    # Keep the authored controller packages as well as the rig. Missing control
+    # sources must be visible in the archive, without losing a valid composition.
+    sequence_paths = sorted({cue['asset'].split('.')[0] for cue in (presentation or {}).get('cues', [])
+                             if cue['kind'] == 'sequence'})
+    if sequence_paths:
+        _, missing_controls = await prefab_images(root, sequence_paths, assets=assets, include_sequences=True)
+        resource['control_sources'] = {'requested': sequence_paths, 'missing': missing_controls,
+                                       'timing_status': 'unresolved'}
     pages = set()
     for asset in assets.values():
+        if asset.get('decode_failed'):
+            continue
         for path in asset['decoded'].rglob('*.json'):
             exports = json.loads(path.read_text(encoding='utf-8-sig'))
             for export in exports if isinstance(exports, list) else []:
@@ -169,8 +194,11 @@ async def build_spine_bundle(root, resource_id, fmodel, converter):
     plan = json.loads((root / 'plan.json').read_text(encoding='utf-8'))
     identity = {'asset_version': plan['version'],
                 'download_id': plan['id'], 'tier': plan['tier']}
-    return await asyncio.to_thread(portable_bundle, root / 'story-spine' / f'{resource_id}.zip',
-                                   resource, assets, icons, identity)
+    # Several flow states in one job may use the same resource with different
+    # dialogue/control cues. Their output paths must not overwrite each other.
+    suffix = '-' + presentation['sha256'] if presentation else ''
+    return await asyncio.to_thread(portable_bundle, root / 'story-spine' / f'{resource_id}{suffix}.zip',
+                                   resource, assets, icons, identity, presentation=presentation)
 
 
 async def publish_open_playback(session, bundle, target, published, service, storage, run_id, asset_version):

@@ -60,6 +60,16 @@ def test_prefab_references_keep_actual_textures_and_skip_script_audio_and_cycles
                                          ("image", "/Game/UI/Atlas/SP_Reward"), ("dependency", "/Game/UI/Prefabs/Child")}
 
 
+def test_sequence_control_dependencies_are_explicit_and_opt_in():
+    value = {'剧情资源': [{'ObjectName': "LevelSequence'Movie'", 'ObjectPath': '/Game/Story/Movie.Movie'}],
+             'GeneratedData': {'ObjectName': "BP_SequenceData_Generated_C'Data'", 'ObjectPath': '/Game/Story/Data.Data'},
+             'Class': {'ObjectName': "Class'Blueprint'", 'ObjectPath': '/Script/Engine'},
+             'Unrelated': '/Game/Story/Unreferenced.Unreferenced'}
+    assert list(ui_references(value)) == []
+    assert set(ui_references(value, include_sequences=True)) == {
+        ('dependency', '/Game/Story/Movie'), ('dependency', '/Game/Story/Data')}
+
+
 @pytest.mark.asyncio
 async def test_dependency_walk_caches_decodes_handles_cycles_and_keeps_partial_results(tmp_path, monkeypatch):
     from wuwa_story_worker import event_resources

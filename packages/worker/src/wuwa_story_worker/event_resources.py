@@ -20,6 +20,8 @@ from wuwa_story_worker.tooling import tool_path
 IMAGE_TYPES = {"Texture2D", "LGUITexturePackerSpriteData"}
 DEPENDENCY_TYPES = {"PrefabAsset", "Material", "MaterialInstanceConstant", "SpineAtlasAsset",
                     "SpineSkeletonDataAsset"}
+SEQUENCE_TYPES = {'SequenceData', 'LevelSequence',
+                  'BP_SequenceData_C', 'BP_SequenceData_Generated_C'}
 
 
 async def annotate_image_packages(root: Path, records: dict) -> list[dict]:
@@ -41,7 +43,7 @@ async def annotate_image_packages(root: Path, records: dict) -> list[dict]:
     return list(missing.values())
 
 
-def ui_references(value):
+def ui_references(value, *, include_sequences=False):
     """Yield typed references, excluding script classes, audio and gameplay assets."""
     if isinstance(value, dict):
         raw = value.get("ObjectPath") or value.get("AssetPathName")
@@ -52,16 +54,16 @@ def ui_references(value):
         if path:
             if kind in IMAGE_TYPES or (not kind and any(p in path for p in ("/Image/", "/Atlas/"))):
                 yield "image", path
-            elif kind in DEPENDENCY_TYPES or (not kind and "/Prefabs/" in path):
+            elif kind in DEPENDENCY_TYPES or (include_sequences and kind in SEQUENCE_TYPES) or (not kind and "/Prefabs/" in path):
                 yield "dependency", path
         for child in value.values():
-            yield from ui_references(child)
+            yield from ui_references(child, include_sequences=include_sequences)
     elif isinstance(value, list):
         for child in value:
-            yield from ui_references(child)
+            yield from ui_references(child, include_sequences=include_sequences)
 
 
-async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = None):
+async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = None, include_sequences=False):
     pending = set(paths)
     seen = set()
     images = {}
@@ -88,9 +90,15 @@ async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = N
             receipt = await export_assets(root, fmodel, package.rsplit(".", 1)[0])
             raw = receipt.parent / "files"
             output = receipt.parent / \
-                ("ui-json-references-v2-" + _sha256(converter)[:16])
+                (("ui-json-sequences-v1-" if include_sequences else "ui-json-references-v2-") +
+                 _sha256(converter)[:16])
             output.mkdir(exist_ok=True)
             complete = output / "references.json"
+            if assets is not None and include_sequences:
+                # A converter may not know the cooked controller class yet. Its
+                # original bytes are still essential for a later score rebuild.
+                assets[source] = {'raw': raw, 'decoded': output, 'package': package,
+                                  'decode_failed': True}
 
             def decode(raw=raw, output=output, complete=complete, package=package):
                 with workspace_lock(output):
@@ -110,7 +118,8 @@ async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = N
                                            stdout=log, stderr=subprocess.STDOUT, check=True, timeout=1800,
                                            env={**os.environ, "DOTNET_PROCESSOR_COUNT": "2"})
                     references = sorted({ref for path in output.rglob("*.json") if path != complete
-                                         for ref in ui_references(json.loads(path.read_text(encoding="utf-8-sig")))})
+                                         for ref in ui_references(json.loads(path.read_text(encoding="utf-8-sig")),
+                                                                  include_sequences=include_sequences)})
                     if not list(output.rglob("*.json")):
                         raise ValueError("Prefab converter produced no JSON")
                     temporary = complete.with_suffix(".partial")

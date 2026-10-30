@@ -32,7 +32,9 @@ def matches_source(metadata: dict, source: dict, target: dict) -> bool:
              if key != "WUWA_VGMSTREAM_PATH" or target.get("kind") != "image"}
     return (
         (target.get('kind') != 'spine' or provenance.get(
-            'spine_recipe') == target.get('spine_recipe'))
+            'spine_recipe') == target.get('spine_recipe') and provenance.get(
+            'presentation_sha256') == target.get('presentation_sha256') and
+         provenance.get('control_sources_complete', True))
         and provenance.get("schema_version") == 1
         and provenance.get("package_path") == authored_package_path(target)
         and bool(files)
