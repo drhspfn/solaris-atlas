@@ -9,8 +9,9 @@ from wuwa_story.db.models.graph import Node, NodeRevision
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.ingestion.character_artwork import character_artwork_scope
-from wuwa_story.ingestion.dungeon_context import decoded
-from wuwa_story.ingestion.talk_backgrounds import background_changes
+from wuwa_story.ingestion.dungeon_context import walk
+from wuwa_story.ingestion.spine_presentation import SPINE_RECIPE, flow_presentation
+from wuwa_story.ingestion.talk_backgrounds import background_config
 
 
 class MediaRequest(BaseModel):
@@ -42,30 +43,19 @@ def image_paths(value, field="") -> set[str]:
 
 
 def flow_background_paths(raw: dict) -> set[str]:
-    actions = decoded(raw.get('Actions', []))
     paths = set()
-    for action in actions if isinstance(actions, list) else []:
-        if not isinstance(action, dict):
-            continue
-        params = decoded(action.get('Params'))
-        if not isinstance(params, dict):
-            continue
-        for _, background in background_changes(params.get('TalkItems')):
+    for _, value in walk(raw):
+        background = background_config(value.get('BackgroundConfig'))
+        if background:
             paths.update(image['engine_path']
                          for image in background['images'])
     return paths
 
 
 def flow_spine_ids(raw: dict) -> set[int]:
-    actions = decoded(raw.get('Actions', []))
-    ids = set()
-    for action in actions if isinstance(actions, list) else []:
-        params = decoded(action.get('Params')) if isinstance(
-            action, dict) else None
-        for _, background in background_changes(params.get('TalkItems') if isinstance(params, dict) else None):
-            if background['kind'] == 'spine':
-                ids.add(background['resource_id'])
-    return ids
+    return {background['resource_id'] for _, value in walk(raw)
+            if (background := background_config(value.get('BackgroundConfig')))
+            and background['kind'] == 'spine'}
 
 
 async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
@@ -145,10 +135,19 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
                 for path in images
             )
             if kind == 'flow_state':
+                presentation = flow_presentation(raw)
                 targets.extend({'owner': node.id, 'release_id': release_id,
                                 'path': f'spine_background:{identity}', 'resource_id': identity,
-                                'kind': 'spine', 'language': None, 'reference_type': 'story_spine', 'spine_recipe': 1}
-                               for identity in sorted(flow_spine_ids(raw)))
+                                'kind': 'spine', 'language': None, 'reference_type': 'story_spine',
+                                'spine_recipe': SPINE_RECIPE, 'presentation': presentation,
+                                'presentation_sha256': presentation['sha256']}
+                               for identity in presentation['resource_ids'])
+                if not presentation['resource_ids'] and any(cue['kind'] == 'sequence' for cue in presentation['cues']):
+                    targets.append({'owner': node.id, 'release_id': release_id,
+                                    'path': f'story_sequence:{node.canonical_key}', 'resource_id': None,
+                                    'kind': 'spine', 'language': None, 'reference_type': 'story_presentation',
+                                    'spine_recipe': SPINE_RECIPE, 'presentation': presentation,
+                                    'presentation_sha256': presentation['sha256']})
         if kind == "character" and "voice" in request.kinds:
             for row in await records("BinData/favor/favorword.json", "RoleId", int(identifier)):
                 path = row.get("Voice")

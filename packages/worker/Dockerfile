@@ -41,10 +41,11 @@ RUN git clone https://github.com/Herselfta/FModelCLI.git /src/fmodel \
     && git -C /src/cue-cli -c user.email=build@example.com -c user.name=build merge --no-edit FETCH_HEAD \
     && git -C /src/cue-cli submodule update --init --recursive
 
-COPY packages/worker/docker/patch_tools.py packages/worker/docker/patch_model_tools.py packages/worker/docker/native_probe.py \
+COPY packages/worker/docker/patch_tools.py packages/worker/docker/patch_model_tools.py packages/worker/docker/patch_story_tools.py packages/worker/docker/native_probe.py \
      packages/worker/docker/NativeTools.cs /build/
 RUN python3 /build/patch_tools.py /src/fmodel /src/cue-cli \
     && python3 /build/patch_model_tools.py /src/cue-cli \
+    && python3 /build/patch_story_tools.py /src/cue-cli \
     && dotnet publish /src/fmodel/FModelCLI/FModelCLI.csproj -c Release -r linux-x64 \
        --self-contained true -p:PublishReadyToRun=false -p:PublishSingleFile=false \
        -p:PublishTrimmed=false -o /tools/fmodelcli \

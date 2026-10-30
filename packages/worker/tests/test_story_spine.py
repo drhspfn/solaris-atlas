@@ -98,6 +98,111 @@ def test_spine_archive_contains_portable_data_originals_and_verified_manifest(tm
     assert not (tmp_path / 'incomplete.zip').exists()
 
 
+def test_archive_retains_score_and_rejects_changed_control_source(tmp_path):
+    from wuwa_story.ingestion.spine_presentation import flow_presentation
+    assets, icons = fixture(tmp_path)
+    presentation = flow_presentation({'StateKey': 'branch', 'Actions': [
+        {'Name': 'ShowTalk', 'Params': {'TalkItems': [
+            {'BackgroundConfig': {'Type': 'SpineImage', 'Id': 7}}]}},
+        {'Name': 'PlaySpine', 'Params': {'Config': {'Type': 'Play', 'Name': '1to2'}}}]})
+    resource = {'resource_id': 7, 'variants': []}
+    output = tmp_path / 'score.zip'
+    portable_bundle(output, resource, assets, icons,
+                    {}, presentation=presentation)
+    with zipfile.ZipFile(output) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        assert manifest['schema_version'] == 4
+        assert json.loads(archive.read(
+            manifest['presentation']['file'])) == presentation
+        assert manifest['presentation']['timing_status'] == 'unresolved'
+        assert 'presentation.json' in manifest['files']
+    digest = hashlib.sha256(output.read_bytes()).digest()
+    presentation['source']['StateKey'] = 'different'
+    with pytest.raises(ValueError, match='source hash'):
+        portable_bundle(output, resource, assets, icons,
+                        {}, presentation=presentation)
+    assert hashlib.sha256(output.read_bytes()).digest() == digest
+
+
+def test_score_cannot_be_attached_to_an_unrelated_resource(tmp_path):
+    from wuwa_story.ingestion.spine_presentation import flow_presentation
+    assets, icons = fixture(tmp_path)
+    with pytest.raises(ValueError, match='does not reference'):
+        portable_bundle(tmp_path / 'bad.zip', {'resource_id': 8, 'variants': []}, assets, icons, {},
+                        presentation=flow_presentation({'Actions': []}))
+
+
+def test_controller_only_archive_does_not_invent_a_skeleton_or_playback(tmp_path):
+    from wuwa_story.ingestion.spine_presentation import flow_presentation
+    assets, _ = fixture(tmp_path)
+    (tmp_path / 'decoded/Story.json').write_text(json.dumps([{'Type': 'LevelSequence', 'Properties': {}}]))
+    resource = {'resource_id': None, 'controller_archive': True, 'variants': [],
+                'control_score': {'format': 'solaris.sequence-controls.v1', 'events': [], 'dialogues': []}}
+    output, _ = portable_bundle(tmp_path / 'controller.zip', resource, assets, {}, {},
+                               presentation=flow_presentation({'Actions': [{'Name': 'PlaySequenceData',
+                                                        'Params': {'Path': '/Game/Story.Sequence'}}]}))
+    with zipfile.ZipFile(output) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        assert manifest['skeletons'] == [] and manifest['playback']['variants'] == []
+        assert json.loads(archive.read(manifest['controls']['file'])) == resource['control_score']
+
+
+@pytest.mark.asyncio
+async def test_controller_exports_and_flow_scores_survive_as_separate_archive_outputs(tmp_path, monkeypatch):
+    from wuwa_story.ingestion.spine_presentation import flow_presentation
+
+    from wuwa_story_worker import story_spine
+
+    assets, icons = fixture(tmp_path)
+    config = tmp_path / 'config' / 'files'
+    config.mkdir(parents=True)
+    (config / 'db_SpineBackground.db').touch()
+    monkeypatch.setattr(story_spine, 'export_assets', AsyncMock(
+        return_value=config.parent / 'manifest.json'))
+    monkeypatch.setattr(story_spine, 'background_resource', lambda *_: {'resource_id': 7,
+                        'variants': [{'prefab': '/Game/Story', 'animation': 'idle', 'rover': None}]})
+    control = tmp_path / 'control'
+    control.mkdir()
+    (control / 'Client').mkdir()
+    (control / 'Client' /
+     'Controller.uasset').write_bytes(b'cooked control with unsupported class')
+    decoded = control / 'decoded'
+    decoded.mkdir()
+    (decoded / 'incomplete.json').write_text('{broken')
+
+    async def extract(root, paths, *, assets, **kwargs):
+        if not kwargs:
+            assets.update(fixture_assets)
+            return [], []
+        assert paths == ['/Game/Controller'] and kwargs['include_sequences']
+        assets['/Game/Controller'] = {'raw': control, 'decoded': decoded,
+                                      'package': 'Client/Controller.uasset', 'decode_failed': True}
+        return [], [{'expected': '/Game/Controller', 'status': 'dependency_failed'}]
+    fixture_assets = assets
+    monkeypatch.setattr(story_spine, 'prefab_images', extract)
+    monkeypatch.setattr(story_spine, 'build_icons',
+                        AsyncMock(return_value=icons))
+    (tmp_path / 'plan.json').write_text(json.dumps(
+        {'version': '3.7.0', 'id': 'client', 'tier': 'hd'}))
+    outputs = []
+    for state in ('first', 'second'):
+        presentation = flow_presentation({'StateKey': state, 'Actions': [
+            {'Name': 'ShowTalk', 'Params': {'SequenceDataAsset': '/Game/Controller.Controller',
+                                            'TalkItems': [{'BackgroundConfig': {'Type': 'SpineImage', 'Id': 7}}]}}]})
+        output, _ = await story_spine.build_spine_bundle(tmp_path, 7, tmp_path / 'tool', tmp_path / 'tool',
+                                                         presentation=presentation)
+        outputs.append(output)
+        with zipfile.ZipFile(output) as archive:
+            manifest = json.loads(archive.read('manifest.json'))
+            assert manifest['control_sources']['missing'][0]['expected'] == '/Game/Controller'
+            assert archive.read(
+                'source/Client/Controller.uasset').startswith(b'cooked control')
+            assert json.loads(archive.read('presentation.json'))[
+                'source']['StateKey'] == state
+    assert outputs[0] != outputs[1] and all(
+        output.exists() for output in outputs)
+
+
 @pytest.mark.asyncio
 async def test_missing_spine_does_not_drop_successful_static_images(tmp_path, monkeypatch):
     from PIL import Image

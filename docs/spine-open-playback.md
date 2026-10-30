@@ -59,13 +59,61 @@ Set the shared flag to `true` only for an explicit playback rollout.
 
 ## Storage and repair
 
-Archive schema 2 retains original packages, skeleton/atlas/textures, dependencies,
-source identities and hashes. Playback JSON and PNG files are content-addressed
+Archive schema 4 retains original packages, skeleton/atlas/textures, the typed
+dependency map, source identities and hashes. `presentation.json` separately
+retains the owning FlowState source and explicit background/PlaySpine, dialogue,
+voice/audio and sequence commands, including nested branches and source paths.
+Exact `SequenceDataAsset` and `PlaySequenceData.Params.Path` references trigger
+archival of their controller packages, generated data and LevelSequence dependencies.
+Missing controller packages are listed in `control_sources.missing`; a successfully
+archived skeleton is not mistaken for a decoded, synchronized presentation.
+This score describes authored structure, not a flattened runtime playthrough.
+Zero-duration poses are not assigned fabricated durations. Frame events without
+their owning sequence clock remain explicitly unresolved; clip names do not
+establish timing, music synchronization or quest membership.
+
+Sequence exports opt in to CUE4Parse `ReadScriptData` through the tool-local
+`WUWA_READ_SCRIPT_DATA=1`; ordinary image exports keep it off. Dependency walking
+includes receiver Blueprint classes used by event calls. A bounded static resolver
+follows literal arguments, local wrappers, persistent-frame assignments and
+constant entry-point jumps. It never executes game code, guesses dynamic operands,
+or flattens unknown conditional branches. Unsupported paths retain diagnostics and
+their original packages for retry. `controls.json` retains source traces, event
+frames, rational MovieScene tick resolution, dialogue sections and exact
+localization-key links to the owning FlowState. Music/audio actions stay separate.
+Event times are sequence-clock positions, not guaranteed elapsed wall time when
+dialogue or QTE pauses the scene.
+
+Discovery supports `SpineImage.Id`, direct `OpenUiView` UI keys and gender variants,
+array opens, typed SequenceData/LevelSequence/subsequence dependencies, and generated
+`PreloadUiArray` keys. Preloads are archived separately and never reported as played.
+Unknown animation arrays retain the proven prefab key without substituting a clip.
+Flows with sequences and no `SpineImage` now produce `story_presentation` references;
+controller-only archives need not contain a skeleton. No schema migration is needed.
+
+The independent Universal Skeleton Engine CLI accepts a `.skel` plus `.atlas`
+and writes a neutral IR and import report. This is an asset conversion boundary;
+the game-specific presentation score stays outside the engine. The unfinished
+external engine is not a production dependency. Its unverified compatibility
+report must not be treated as verified playback or discarded by an integration.
+
+Playback JSON and PNG files are content-addressed
 storage objects. `story_spine_part` references and `spine_open_component` variants
 retain archive provenance. Public responses contain playback URLs, not internal
 object inventories. Repeated publication updates existing references.
 
-Illustration job schema 3 / Spine recipe 1 upgrade older archive-only results.
+Illustration job schema 5 / Spine recipe 3 upgrade older archive-only results.
+Reuse also requires the presentation source hash to match. Different FlowStates
+using the same Spine resource have distinct archive outputs and cannot overwrite
+one another during a batch. Unchanged source archives remain reusable.
+
+Local source proof: the UI key for background `900005` is opened by
+`DA_M2_3_34 → M2_3_34_1Z → BP_KuroMasterSeqEvent → PlotBlueprintFunctionLibrary`.
+The event frames are 0 (`start`), 670 (`1to2`), 976 (`2to3`), 1721 (`3to4`),
+2347 (`4to5`) and 3449 (close). All ten MovieScene dialogue keys join the retained
+FlowState exactly. Another event at frame 85 has no bound function; it is preserved
+as such. The ConfigDB default `idle` is absent from this skeleton and is not the
+animation chosen by this sequence. Neither `CG2_0` nor `M2_3_34` is a release label.
 Reuse checks verify the bundle AND each playback component; missing parts remain
 retryable. Existing owner locks, workspace cleanup and deduplication are reused.
 After deployment, use scoped repair in `quest-runtime-blocks.md`; a full patch

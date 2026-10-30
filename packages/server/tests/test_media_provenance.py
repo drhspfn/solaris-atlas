@@ -39,6 +39,30 @@ async def test_archive_only_spine_reuse_needs_no_browser_components():
     storage.stat.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('archived_hash', [None, 'old', 'new'])
+async def test_spine_reuse_requires_the_same_authored_control_source(archived_hash):
+    value = {**target('spine_background:7'), 'kind': 'spine', 'reference_type': 'story_spine',
+             'spine_recipe': 2, 'presentation_sha256': 'new'}
+    reference, file, location = row(
+        value, spine_recipe=2, presentation_sha256=archived_hash)
+    reference.reference_type = 'story_spine'
+    session = AsyncMock()
+    session.execute.return_value = [(reference, file, location)]
+    storage = SimpleNamespace(backend='s3', bucket='media', stat=AsyncMock(
+        return_value=SimpleNamespace(size_bytes=12)))
+    result = await missing_media_targets(session, [value], source={'asset_version': '3.7.0'}, storage=storage)
+    assert result == ([] if archived_hash == 'new' else [value])
+
+
+def test_incomplete_controller_archive_remains_retryable():
+    from wuwa_story.ingestion.media_provenance import matches_source
+    value = {**target('spine_background:7'), 'kind': 'spine', 'spine_recipe': 2,
+             'presentation_sha256': 'same'}
+    reference, _, _ = row(value, spine_recipe=2, presentation_sha256='same', control_sources_complete=False)
+    assert not matches_source(reference.metadata_json, {'asset_version': '3.7.0'}, value)
+
+
 def target(path="/Game/Icon.Icon", language=None):
     return {"owner": 4, "release_id": 2, "path": path,
             "language": language, "kind": "voice" if language else "image"}
