@@ -25,6 +25,8 @@ async def enqueue_release_media(
     session, release_id: int, *, event_artwork_only: bool = False, notices_only: bool = False,
     illustrations_only: bool = False,
     story_structure_only: bool = False,
+    story_media_only: bool = False,
+    repair_story: bool = False,
 ) -> dict:
     release = await session.get(GameRelease, release_id)
     if release is None:
@@ -45,18 +47,21 @@ async def enqueue_release_media(
         catalog = ((Node.canonical_key.startswith("character:"))
                    | (Node.canonical_key.startswith("item:")) | (Node.canonical_key.startswith("skill:")))
         entities = list(await session.scalars(select(Node.canonical_key).where(
-            Node.id.in_(present), Node.id.in_(illustrated) if illustrations_only else
+            Node.id.in_(present), Node.id.in_(illustrated) if illustrations_only or story_media_only else
             catalog | Node.id.in_(illustrated)).order_by(Node.id)))
         cutscenes, voices = [], []
         if not illustrations_only:
             cutscenes = list(await session.scalars(select(Cutscene.cg_name).where(
                 Cutscene.node_id.in_(present), Cutscene.cg_name.is_not(None)).order_by(Cutscene.node_id)))
-            voices = list(await session.scalars(select(VoiceReference.file_name).where(
-                VoiceReference.node_id.in_(present), VoiceReference.file_name.is_not(None))
-                .distinct().order_by(VoiceReference.file_name)))
+            if not story_media_only:
+                voices = list(await session.scalars(select(VoiceReference.file_name).where(
+                    VoiceReference.node_id.in_(present), VoiceReference.file_name.is_not(None))
+                    .distinct().order_by(VoiceReference.file_name)))
     characters = [key for key in entities if key.startswith("character:")]
     if illustrations_only:
         cutscenes, voices, characters = [], [], []
+    if story_media_only:
+        voices, characters = [], []
     specs = [("prepare", [])]
     if notices_only:
         specs.append(("event_notices", ["en"]))
@@ -66,10 +71,10 @@ async def enqueue_release_media(
         specs.append(("event_catalog", ["client-catalog:v2"]))
     if not (event_artwork_only or notices_only) and cutscenes:
         specs.append(("cutscene_assets", sorted(set(cutscenes))))
-    if not (event_artwork_only or notices_only) and (voices or characters):
+    if not (event_artwork_only or notices_only) and (voices or characters or story_media_only and cutscenes):
         specs.append(("voice_packages", []))
     if not (event_artwork_only or notices_only):
-        if not illustrations_only:
+        if not illustrations_only and not story_media_only:
             specs.append(("tree_order", []))
         specs.extend(("images", batch) for batch in batches(entities))
         specs.extend(("cutscene", [name]) for name in sorted(set(cutscenes)))
@@ -80,6 +85,7 @@ async def enqueue_release_media(
     parent_id = None
     dependencies = {}
     refresh_files = False
+    resume_story_media = False
     for kind, targets in specs:
         dependency = dependencies.get("event_catalog" if kind == "event_images" else "cutscene_assets" if kind ==
                                       "cutscene" else "voice_packages" if kind in {"voices", "character_voices"} else "prepare")
@@ -87,6 +93,8 @@ async def enqueue_release_media(
                    "kind": kind, "targets": targets, "parent_id": dependency}
         if kind == 'tree_order':
             request['index_schema'] = 3
+            if repair_story:
+                request['repair_story'] = 1
         if kind == 'images' and any(key.startswith('flow_state:') for key in targets):
             request['illustration_schema'] = 2
         digest = hashlib.sha256(json.dumps(
@@ -128,6 +136,8 @@ async def enqueue_release_media(
                                  "queue": queue}
             pending.append((run, payload, queue))
         runs.append(run)
+        if kind == 'tree_order' and repair_story and run.status == 'completed':
+            resume_story_media = True
     await session.commit()
     failed = 0
     for run, payload, queue in pending:
@@ -138,8 +148,11 @@ async def enqueue_release_media(
             run.error = "Broker did not confirm publication; repeat the media import to retry"
             await session.commit()
             failed += 1
-    return {"release_id": release_id, "parent_id": parent_id, "tasks": len(runs),
-            "queued": len(pending) - failed, "enqueue_failed": failed}
+    report = {"release_id": release_id, "parent_id": parent_id, "tasks": len(runs),
+              "queued": len(pending) - failed, "enqueue_failed": failed}
+    if resume_story_media:
+        report['story_media'] = await enqueue_release_media(session, release_id, story_media_only=True)
+    return report
 
 
 async def enqueue_event_images(session, payload: dict, paths: list[str], *, kind="event_images") -> dict:

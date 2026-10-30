@@ -7,6 +7,62 @@ from wuwa_story.ingestion import release_media
 
 
 @pytest.mark.asyncio
+async def test_complete_story_repair_marks_index_for_ordered_media_followup(monkeypatch):
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version='3.7.0')
+    session.scalar.side_effect = [4, None, None]
+    runs = []
+    session.add = runs.append
+    async def flush():
+        runs[-1].id = len(runs)
+    session.flush.side_effect = flush
+    publish = AsyncMock()
+    monkeypatch.setattr(release_media, 'publish_media_job', publish)
+    await release_media.enqueue_release_media(session, 9, story_structure_only=True, repair_story=True)
+    payloads = [call.args[0] for call in publish.await_args_list]
+    assert [payload['kind'] for payload in payloads] == ['prepare', 'tree_order']
+    assert payloads[1]['repair_story'] == 1
+    session.scalars.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_story_media_followup_keeps_images_and_movie_dependencies_without_catalog_or_voice_line_imports(monkeypatch):
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version='3.7.0')
+    session.scalars.side_effect = [['flow_state:Story'], ['C0028']]
+    session.scalar.side_effect = [4] + [None] * 5
+    runs = []
+    session.add = runs.append
+    async def flush():
+        runs[-1].id = len(runs)
+    session.flush.side_effect = flush
+    publish = AsyncMock()
+    monkeypatch.setattr(release_media, 'publish_media_job', publish)
+    await release_media.enqueue_release_media(session, 9, story_media_only=True)
+    payloads = [call.args[0] for call in publish.await_args_list]
+    assert [p['kind'] for p in payloads] == ['prepare', 'cutscene_assets', 'voice_packages', 'images', 'cutscene']
+    assert next(p for p in payloads if p['kind'] == 'images')['targets'] == ['flow_state:Story']
+    assert session.scalars.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_repeating_complete_repair_resumes_media_after_an_already_completed_index(monkeypatch):
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version='3.7.0')
+    prepare = SimpleNamespace(id=10, status='completed')
+    tree = SimpleNamespace(id=11, status='completed')
+    session.scalar.side_effect = [4, prepare, tree, 4, prepare]
+    session.scalars.side_effect = [[], []]
+    publish = AsyncMock()
+    monkeypatch.setattr(release_media, 'publish_media_job', publish)
+    result = await release_media.enqueue_release_media(session, 9, story_structure_only=True, repair_story=True)
+    assert result['queued'] == 0
+    assert result['story_media']['queued'] == 0
+    assert session.scalars.await_count == 2
+    publish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_story_repair_queues_only_index_and_reuses_normal_prepare(monkeypatch):
     session = AsyncMock()
     session.get.return_value = SimpleNamespace(game_version='3.7.0')

@@ -186,6 +186,17 @@ async def import_tree_orders(parent, session):
         return result, status
 
 
+async def repair_indexed_story(payload, result, status, session):
+    from wuwa_story.ingestion.dungeon_backfill import backfill
+    result['graph_repair'] = await backfill(session, payload['release_id'])
+    if payload.get('repair_story') and status == 'completed':
+        result['story_media'] = await enqueue_release_media(
+            session, payload['release_id'], story_media_only=True)
+    elif payload.get('repair_story'):
+        result['story_media'] = {'deferred': True, 'reason': 'Client structure index is incomplete'}
+    return result
+
+
 async def _import_tree_orders(parent, session):
     root = client_root(parent)
     extractor = tool_path("WUWA_FMODEL_PATH")
@@ -888,6 +899,8 @@ async def _process_release_media(payload):
                         repair_scope = {}
                         if payload['kind'] == 'tree_order':
                             repair_scope['story_structure_only'] = True
+                            if payload.get('repair_story'):
+                                repair_scope['repair_story'] = True
                         elif (payload['kind'] == 'images' and payload.get('targets')
                               and all(key.startswith('flow_state:') for key in payload['targets'])):
                             repair_scope['illustrations_only'] = True
@@ -913,8 +926,7 @@ async def _process_release_media(payload):
                         result, status = await import_notices(client_root(parent.raw_output), session)
                     elif payload["kind"] == "tree_order":
                         result, status = await import_tree_orders(parent.raw_output, session)
-                        from wuwa_story.ingestion.dungeon_backfill import backfill
-                        result['graph_repair'] = await backfill(session, payload['release_id'])
+                        result = await repair_indexed_story(payload, result, status, session)
                     elif payload["kind"] == "cutscene_assets":
                         result, status = await cutscene_assets(payload, parent.raw_output)
                     elif payload["kind"] == "voice_packages":

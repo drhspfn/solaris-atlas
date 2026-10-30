@@ -58,6 +58,32 @@ their own rail instead of widening the page.
 
 ## Scoped repair
 
+For the complete story repair pipeline, preview and then queue:
+
+```sh
+python -m wuwa_story.ingestion.story_repair --first 1.0.0 --last 3.7.0 --complete --dry-run
+python -m wuwa_story.ingestion.story_repair --first 1.0.0 --last 3.7.0 --complete
+```
+
+This first repairs retained links and queues the pinned client structure index.
+Only after that index finishes successfully does its worker repair the expanded
+graph and enqueue story illustrations (including Spine archives) and cutscene
+media. The follow-up includes the existing multilingual movie-audio preparation,
+but does not import standalone voice lines, character models or catalog artwork.
+Existing publication/provenance checks reuse matching files. Partial indexes retain
+diagnostics and do not silently proceed as complete. Repeating the command also
+resumes media dispatch when the index was already completed, including broker retries.
+
+The archived Spine sample uses 4.1 data. Public playback using the official runtime
+requires an appropriate Spine Editor license; the Trial license does not grant
+runtime integration/distribution rights. A locally installed 3.8 editor neither
+establishes that license nor makes 4.1 data compatible. See the official
+[license](https://en.esotericsoftware.com/spine-editor-license) and
+[versioning guide](https://esotericsoftware.com/spine-versioning).
+No official runtime dependency is included in this PR while that requirement is
+unresolved. The complete repair flag describes recovery/storage, not implemented
+browser animation.
+
 After deploying the code, inspect retained-source repairs first:
 
 ```sh
