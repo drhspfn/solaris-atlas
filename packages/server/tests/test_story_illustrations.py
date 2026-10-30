@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from wuwa_story.ingestion.entity_media import flow_background_paths
+from wuwa_story.ingestion.entity_media import flow_background_paths, flow_spine_ids
 from wuwa_story.ingestion.talk_backgrounds import background_changes, background_config
 from wuwa_story.story import illustrations
 
@@ -23,6 +23,21 @@ def test_existing_flow_sources_can_recover_only_authored_background_images():
                {'Params': None}, {'Params': {'TalkItems': None}}]
     assert flow_background_paths({'Actions': json.dumps(actions)}) == {'/Game/A.A'}
     assert flow_background_paths({'Actions': None}) == set()
+    assert flow_spine_ids({'Actions': [{'Params': {'TalkItems': [{'BackgroundConfig': {'Type': 'SpineImage', 'Id': 7}}]}}]}) == {7}
+
+
+@pytest.mark.asyncio
+async def test_archived_spine_bundle_is_linked_to_the_authored_line(monkeypatch):
+    actions = [(10, 1, [{'BackgroundConfig': {'Type': 'SpineImage', 'Id': 850007, 'IsLoop': True}}, {}])]
+    monkeypatch.setattr(illustrations.repository, 'illustration_actions', AsyncMock(return_value=actions))
+    monkeypatch.setattr(illustrations, 'get_settings', lambda: NS(s3_bucket='test'))
+    monkeypatch.setattr(illustrations, 'S3Storage', lambda _: NS(public_url=lambda key: 'https://cdn.test/' + key))
+    session = NS(execute=AsyncMock(return_value=[('spine_background:850007', 'bundle.zip', {'asset_version': '3.7.0'}, 55, 2048)]))
+    row = (NS(node_id=1, source_index=1), NS(node_id=10), NS(node_id=1))
+    result = await illustrations.illustration_payloads(session, [row])
+    assert result[1]['bundle']['url'] == 'https://cdn.test/bundle.zip'
+    assert result[1]['bundle']['file_id'] == 55
+    assert result[1]['loop'] is True and result[1]['images'] == []
 
 
 @pytest.mark.asyncio

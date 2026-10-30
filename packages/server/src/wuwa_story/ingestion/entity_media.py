@@ -51,13 +51,27 @@ def flow_background_paths(raw: dict) -> set[str]:
         if not isinstance(params, dict):
             continue
         for _, background in background_changes(params.get('TalkItems')):
-            paths.update(image['engine_path'] for image in background['images'])
+            paths.update(image['engine_path']
+                         for image in background['images'])
     return paths
+
+
+def flow_spine_ids(raw: dict) -> set[int]:
+    actions = decoded(raw.get('Actions', []))
+    ids = set()
+    for action in actions if isinstance(actions, list) else []:
+        params = decoded(action.get('Params')) if isinstance(
+            action, dict) else None
+        for _, background in background_changes(params.get('TalkItems') if isinstance(params, dict) else None):
+            if background['kind'] == 'spine':
+                ids.add(background['resource_id'])
+    return ids
 
 
 async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
     release_id = await session.scalar(
-        select(GameRelease.id).where(GameRelease.game_version == request.game_version)
+        select(GameRelease.id).where(
+            GameRelease.game_version == request.game_version)
         .where(GameRelease.id == request.release_id if request.release_id is not None else True)
         .order_by(GameRelease.sequence.desc()).limit(1)
     )
@@ -101,7 +115,8 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
             rows = [{field: value for field, value in raw.items()
                      if character_artwork_scope(field, value, int(identifier)) == "character"}]
             for path, field, value in (
-                ("BinData/skill/skill.json", "SkillGroupId", raw.get("SkillId") or int(identifier)),
+                ("BinData/skill/skill.json", "SkillGroupId",
+                 raw.get("SkillId") or int(identifier)),
                 (
                     "BinData/skillTree/skilltree.json",
                     "NodeGroup",
@@ -129,6 +144,11 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
                 }
                 for path in images
             )
+            if kind == 'flow_state':
+                targets.extend({'owner': node.id, 'release_id': release_id,
+                                'path': f'spine_background:{identity}', 'resource_id': identity,
+                                'kind': 'spine', 'language': None, 'reference_type': 'story_spine'}
+                               for identity in sorted(flow_spine_ids(raw)))
         if kind == "character" and "voice" in request.kinds:
             for row in await records("BinData/favor/favorword.json", "RoleId", int(identifier)):
                 path = row.get("Voice")

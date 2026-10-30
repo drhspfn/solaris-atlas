@@ -36,9 +36,10 @@ async def enqueue_release_media(
     if event_artwork_only or notices_only or story_structure_only:
         entities, cutscenes, voices = [], [], []
     else:
-        present = select(NodeRevision.node_id).where(NodeRevision.release_id == release_id)
+        present = select(NodeRevision.node_id).where(
+            NodeRevision.release_id == release_id)
         illustrated = select(QuestState.node_id).join(QuestAction,
-            QuestAction.quest_state_node_id == QuestState.node_id).where(
+                                                      QuestAction.quest_state_node_id == QuestState.node_id).where(
             QuestAction.action_name == 'ShowTalk',
             QuestAction.params['TalkItems'].astext.contains('"BackgroundConfig"'))
         catalog = ((Node.canonical_key.startswith("character:"))
@@ -73,18 +74,23 @@ async def enqueue_release_media(
         specs.extend(("images", batch) for batch in batches(entities))
         specs.extend(("cutscene", [name]) for name in sorted(set(cutscenes)))
         specs.extend(("voices", batch) for batch in batches(voices))
-        specs.extend(("character_voices", batch) for batch in batches(characters, size=1))
+        specs.extend(("character_voices", batch)
+                     for batch in batches(characters, size=1))
     pending, runs = [], []
     parent_id = None
     dependencies = {}
     refresh_files = False
     for kind, targets in specs:
-        dependency = dependencies.get("event_catalog" if kind == "event_images" else "cutscene_assets" if kind == "cutscene" else "voice_packages" if kind in {"voices", "character_voices"} else "prepare")
+        dependency = dependencies.get("event_catalog" if kind == "event_images" else "cutscene_assets" if kind ==
+                                      "cutscene" else "voice_packages" if kind in {"voices", "character_voices"} else "prepare")
         request = {"release_id": release_id, "game_version": release.game_version,
                    "kind": kind, "targets": targets, "parent_id": dependency}
         if kind == 'tree_order':
             request['index_schema'] = 3
-        digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).digest()
+        if kind == 'images' and any(key.startswith('flow_state:') for key in targets):
+            request['illustration_schema'] = 2
+        digest = hashlib.sha256(json.dumps(
+            request, sort_keys=True).encode()).digest()
         run = await session.scalar(select(ProcessingRun).where(
             ProcessingRun.processor_id == processor, ProcessingRun.input_hash == digest)
             .order_by(ProcessingRun.id.desc()).limit(1))
@@ -96,7 +102,8 @@ async def enqueue_release_media(
         if kind == "prepare":
             parent_id = run.id
             await retain_workspace(session, parent_id)
-            refresh_files = run.status == "completed" and workspace_expired(run)
+            refresh_files = run.status == "completed" and workspace_expired(
+                run)
         if refresh_files and run.status == "completed":
             run.status = "pending"
             run.raw_output = None
@@ -107,7 +114,8 @@ async def enqueue_release_media(
             # An explicit reimport must revisit failed/partial image children,
             # while successful extraction work remains reusable.
             run.status = "pending"
-        already_queued = run.status == "queued" and (run.metadata_json or {}).get("queue", QUEUE) == queue
+        already_queued = run.status == "queued" and (
+            run.metadata_json or {}).get("queue", QUEUE) == queue
         if run.status not in {"running", "completed", "waiting_dependency"} and not already_queued:
             payload = {"schema_version": 1, "job_type": "media.release", "run_id": run.id,
                        **request}
@@ -139,7 +147,8 @@ async def enqueue_event_images(session, payload: dict, paths: list[str], *, kind
     parent = await session.get(ProcessingRun, payload["run_id"])
     if parent is None:
         raise ValueError("Event catalog task not found")
-    workspace_id = (parent.raw_output or {}).get("workspace_id") if getattr(parent, "raw_output", None) else None
+    workspace_id = (parent.raw_output or {}).get(
+        "workspace_id") if getattr(parent, "raw_output", None) else None
     if workspace_id is not None:
         await retain_workspace(session, workspace_id)
     pending = []
@@ -150,7 +159,8 @@ async def enqueue_event_images(session, payload: dict, paths: list[str], *, kind
         request = {"release_id": payload["release_id"], "game_version": payload["game_version"],
                    "kind": kind, "targets": targets, "parent_id": parent.id,
                    "catalog_revision": 2}
-        digest = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).digest()
+        digest = hashlib.sha256(json.dumps(
+            request, sort_keys=True).encode()).digest()
         run = await session.scalar(select(ProcessingRun).where(
             ProcessingRun.processor_id == parent.processor_id, ProcessingRun.input_hash == digest))
         if run is None:
