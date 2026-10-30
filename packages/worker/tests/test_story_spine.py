@@ -2,12 +2,44 @@ import hashlib
 import json
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from wuwa_story_worker.event_resources import ui_references
 from wuwa_story_worker.story_spine import portable_bundle
+
+
+@pytest.mark.asyncio
+async def test_open_components_are_published_individually_with_archive_provenance(tmp_path):
+    from wuwa_story_worker.story_spine import publish_open_playback
+    payloads = {'scene.json': b'{"format":"solaris.skeletal-scene.v1"}', 'page.png': b'png fixture'}
+    playback = {'variants': [{'rover': None, 'animation': 'idle', 'scene': 'scene.json', 'textures': {'page.png': 'page.png'}}], 'unsupported': []}
+    manifest = {'playback': playback, 'files': {name: {'sha256': hashlib.sha256(data).hexdigest(), 'size_bytes': len(data)} for name, data in payloads.items()}}
+    bundle = tmp_path / 'scene.zip'
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        archive.writestr('manifest.json', json.dumps(manifest))
+        for name, data in payloads.items():
+            archive.writestr(name, data)
+    async def register(session, path, kind, **kwargs):
+        return SimpleNamespace(id=100, sha256=hashlib.sha256(path.read_bytes()).digest())
+    service = SimpleNamespace(register_file=AsyncMock(side_effect=register), register_variant=AsyncMock(), register_reference=AsyncMock(side_effect=lambda *_args, **_kwargs: SimpleNamespace()))
+    session = SimpleNamespace(scalar=AsyncMock(return_value=None))
+    target = {'owner': 5, 'release_id': 7, 'path': 'spine_background:7'}
+    result = await publish_open_playback(session, bundle, target, SimpleNamespace(id=55), service, SimpleNamespace(public_url=lambda key: 'https://cdn.test/' + key), 80, '3.7.0')
+    assert len(result['components']) == 2
+    assert result['variants'][0]['scene_url'].startswith('https://cdn.test/objects/')
+    assert result['variants'][0]['textures']['page.png'] != result['variants'][0]['scene_url']
+    assert service.register_reference.await_count == 2
+    assert all(call.kwargs['reference_type'] == 'story_spine_part' for call in service.register_reference.await_args_list)
+    # Re-running publication updates existing references rather than creating duplicates.
+    references = [SimpleNamespace(), SimpleNamespace()]
+    session.scalar = AsyncMock(side_effect=references)
+    service.register_reference.reset_mock()
+    await publish_open_playback(session, bundle, target, SimpleNamespace(id=55), service, SimpleNamespace(public_url=lambda key: 'https://cdn.test/' + key), 80, '3.7.0')
+    service.register_reference.assert_not_awaited()
+    assert all(reference.metadata_json['bundle_file_id'] == 55 for reference in references)
 
 
 def test_typed_spine_atlas_pages_follow_full_client_package_paths():

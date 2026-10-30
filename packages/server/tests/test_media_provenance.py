@@ -8,6 +8,25 @@ from wuwa_story.ingestion.entity_media import MediaRequest
 from wuwa_story.ingestion.media_provenance import missing_media_targets
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('recipe,missing_part,playable,missing', [(0, False, True, True), (1, True, True, True), (1, False, False, True), (1, False, True, False)])
+async def test_spine_reuse_verifies_recipe_and_every_open_component(recipe, missing_part, playable, missing):
+    value = {**target('spine_background:7'), 'kind': 'spine', 'reference_type': 'story_spine', 'spine_recipe': 1}
+    reference, file, location = row(value, spine_recipe=recipe)
+    reference.reference_type = 'story_spine'
+    reference.metadata_json['playback'] = {'variants': [{}] if playable else [], 'unsupported': [],
+                                          'components': [{'object_key': 'objects/scene', 'size_bytes': 3}]}
+    async def stat(key):
+        if key == 'objects/scene':
+            return None if missing_part else SimpleNamespace(size_bytes=3)
+        return SimpleNamespace(size_bytes=12)
+    session = AsyncMock()
+    session.execute.return_value = [(reference, file, location)]
+    storage = SimpleNamespace(backend='s3', bucket='media', stat=AsyncMock(side_effect=stat))
+    result = await missing_media_targets(session, [value], source={'asset_version': '3.7.0'}, storage=storage)
+    assert result == ([value] if missing else [])
+
+
 def target(path="/Game/Icon.Icon", language=None):
     return {"owner": 4, "release_id": 2, "path": path,
             "language": language, "kind": "voice" if language else "image"}

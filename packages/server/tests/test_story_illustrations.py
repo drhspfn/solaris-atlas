@@ -32,11 +32,12 @@ async def test_archived_spine_bundle_is_linked_to_the_authored_line(monkeypatch)
     monkeypatch.setattr(illustrations.repository, 'illustration_actions', AsyncMock(return_value=actions))
     monkeypatch.setattr(illustrations, 'get_settings', lambda: NS(s3_bucket='test'))
     monkeypatch.setattr(illustrations, 'S3Storage', lambda _: NS(public_url=lambda key: 'https://cdn.test/' + key))
-    session = NS(execute=AsyncMock(return_value=[('spine_background:850007', 'bundle.zip', {'asset_version': '3.7.0'}, 55, 2048)]))
+    session = NS(execute=AsyncMock(return_value=[('spine_background:850007', 'bundle.zip', {'asset_version': '3.7.0', 'playback': {'variants': [{'scene_url': 'https://cdn.test/scene.json'}], 'components': [{'object_key': 'private-inventory'}]}}, 55, 2048)]))
     row = (NS(node_id=1, source_index=1), NS(node_id=10), NS(node_id=1))
     result = await illustrations.illustration_payloads(session, [row])
     assert result[1]['bundle']['url'] == 'https://cdn.test/bundle.zip'
     assert result[1]['bundle']['file_id'] == 55
+    assert result[1]['bundle']['playback'] == {'variants': [{'scene_url': 'https://cdn.test/scene.json'}]}
     assert result[1]['loop'] is True and result[1]['images'] == []
 
 

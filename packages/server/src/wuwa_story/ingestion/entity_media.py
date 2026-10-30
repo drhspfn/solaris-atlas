@@ -147,7 +147,7 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
             if kind == 'flow_state':
                 targets.extend({'owner': node.id, 'release_id': release_id,
                                 'path': f'spine_background:{identity}', 'resource_id': identity,
-                                'kind': 'spine', 'language': None, 'reference_type': 'story_spine'}
+                                'kind': 'spine', 'language': None, 'reference_type': 'story_spine', 'spine_recipe': 1}
                                for identity in sorted(flow_spine_ids(raw)))
         if kind == "character" and "voice" in request.kinds:
             for row in await records("BinData/favor/favorword.json", "RoleId", int(identifier)):

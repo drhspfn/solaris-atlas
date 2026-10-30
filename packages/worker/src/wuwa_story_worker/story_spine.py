@@ -48,6 +48,7 @@ def portable_bundle(output, resource, assets, icons, identity):
     skeletons = []
     texture_files = {}
     source_packages = []
+    dependencies = {}
     for source, asset in sorted(assets.items()):
         package = Path(asset['package'])
         raw = asset['raw'] / package
@@ -68,6 +69,8 @@ def portable_bundle(output, resource, assets, icons, identity):
                 exports.extend(decoded)
                 entries['decoded/' +
                         path.relative_to(asset['decoded']).as_posix()] = path.read_bytes()
+        dependencies[source] = {path for kind, path in ui_references(
+            exports) if kind == 'dependency'}
         folder = 'spine/' + \
             hashlib.sha256(source.encode()).hexdigest()[:16] + '/'
         for export in exports:
@@ -111,7 +114,11 @@ def portable_bundle(output, resource, assets, icons, identity):
     if not skeletons or not any(name.endswith('.atlas') for name in entries):
         raise ValueError(
             'Prefab did not resolve both a Spine skeleton and atlas')
-    manifest = {'schema_version': 1, 'kind': 'story_spine', **identity, **resource,
+    from wuwa_story_worker.spine_open import open_playback_entries
+    generated, playback = open_playback_entries(
+        entries, resource, skeletons, dependencies)
+    entries.update(generated)
+    manifest = {'playback': playback, 'schema_version': 2, 'kind': 'story_spine', **identity, **resource,
                 'packages': source_packages, 'skeletons': skeletons, 'textures': texture_files,
                 'files': {name: {'sha256': hashlib.sha256(data).hexdigest(), 'size_bytes': len(data)}
                           for name, data in sorted(entries.items())}}
@@ -164,3 +171,57 @@ async def build_spine_bundle(root, resource_id, fmodel, converter):
                 'download_id': plan['id'], 'tier': plan['tier']}
     return await asyncio.to_thread(portable_bundle, root / 'story-spine' / f'{resource_id}.zip',
                                    resource, assets, icons, identity)
+
+
+async def publish_open_playback(session, bundle, target, published, service, storage, run_id, asset_version):
+    """Publish only the browser's open JSON/PNG files, with retained archive identity."""
+    from sqlalchemy import select
+    from wuwa_story.db.models.storage import FileReference
+
+    with zipfile.ZipFile(bundle) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        playback = manifest.get('playback', {})
+        files = {}
+        components = []
+        for variant in playback.get('variants', []):
+            for entry in [variant['scene'], *variant['textures'].values()]:
+                if entry in files:
+                    continue
+                expected = manifest['files'][entry]
+                if expected['size_bytes'] > 64 * 1024 * 1024:
+                    raise ValueError(
+                        'Open scene component exceeds its bounded profile')
+                data = archive.read(entry)
+                if len(data) != expected['size_bytes'] or hashlib.sha256(data).hexdigest() != expected['sha256']:
+                    raise ValueError(
+                        'Open scene component does not match its archive manifest')
+                mime = 'application/json' if entry.endswith(
+                    '.json') else 'image/png' if entry.endswith('.png') else None
+                if mime is None:
+                    raise ValueError('Unsupported browser scene component')
+                path = bundle.parent / 'open-playback' / expected['sha256']
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+                file = await service.register_file(session, path, 'unknown', mime_type=mime)
+                await service.register_variant(session, published.id, file.id, 'spine_open_component', run_id)
+                reference = await session.scalar(select(FileReference).where(
+                    FileReference.owner_node_id == target['owner'], FileReference.release_id == target['release_id'],
+                    FileReference.reference_type == 'story_spine_part', FileReference.source_path == target[
+                        'path'],
+                    FileReference.source_name == entry))
+                if reference is None:
+                    reference = await service.register_reference(session, file_id=file.id,
+                                                                 reference_type='story_spine_part', owner_node_id=target['owner'], release_id=target['release_id'],
+                                                                 source_path=target['path'], source_name=entry)
+                reference.file_id = file.id
+                reference.metadata_json = {
+                    'asset_version': asset_version, 'bundle_file_id': published.id, 'archive_entry': entry}
+                from wuwa_story.storage.hashing import content_object_key
+                object_key = content_object_key(file.sha256)
+                files[entry] = storage.public_url(object_key)
+                components.append({'file_id': file.id, 'object_key': object_key, 'size_bytes': len(data)})
+        return {'format': 'solaris.skeletal-scene.v1', 'components': components, 'variants': [
+            {'rover': variant['rover'], 'animation': variant['animation'],
+             'scene_url': files[variant['scene']],
+             'textures': {name: files[entry] for name, entry in variant['textures'].items()}}
+            for variant in playback.get('variants', [])], 'unsupported': playback.get('unsupported', [])}

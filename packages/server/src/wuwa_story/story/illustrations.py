@@ -54,7 +54,8 @@ async def illustration_payloads(session, rows):
             FileLocation.is_primary.is_(True)).order_by(FileReference.id.desc()))
         for path, key, metadata, identity, size in files:
             bundles.setdefault(path, {'url': storage.public_url(key), 'file_id': identity,
-                                      'size_bytes': size, 'asset_version': (metadata or {}).get('asset_version')})
+                                      'size_bytes': size, 'asset_version': (metadata or {}).get('asset_version'),
+                                      'playback': {key: value for key, value in ((metadata or {}).get('playback') or {}).items() if key != 'components'} or None})
     active = {}
     payloads = {}
     for action_id, state_id, items in actions:

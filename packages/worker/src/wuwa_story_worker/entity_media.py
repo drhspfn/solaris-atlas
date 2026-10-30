@@ -393,12 +393,13 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 await storage.ensure_bucket()
                 service = FileRegistrationService(storage)
                 published_count = 0
+                unsupported_spine = []
                 for target, path, kind, mime, originals in files:
                     await session.execute(text("SELECT pg_advisory_xact_lock(:id)"),
                                           {"id": target["owner"]})
                     provenance = await asyncio.to_thread(
                         source_provenance, request, target, originals, tools,
-                        voice_provenance.get(
+                        {'spine_recipe': target['spine_recipe']} if target['kind'] == 'spine' else voice_provenance.get(
                             (target["path"], target["language"])),
                     )
                     published = await service.register_file(session, path, kind, mime_type=mime)
@@ -442,7 +443,15 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                             source_name=target["language"],
                         )
                     reference.file_id = published.id
+                    playback = None
+                    if target['kind'] == 'spine':
+                        from wuwa_story_worker.story_spine import publish_open_playback
+                        playback = await publish_open_playback(session, path, target, published, service,
+                                                               storage, run.id, request.asset_version)
+                        if not playback['variants'] or playback['unsupported']:
+                            unsupported_spine.append({'path': target['path'], 'diagnostics': playback['unsupported']})
                     reference.metadata_json = {
+                        **({'playback': playback} if playback else {}),
                         "asset_version": request.asset_version,
                         "download_id": request.download_id,
                         "language": target["language"],
@@ -454,12 +463,13 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                                       "published": published_count + 1}
                     await session.commit()
                     published_count += 1
-                run.status = "partial" if missing else "completed"
+                run.status = "partial" if missing or unsupported_spine else "completed"
                 run.raw_output = {
                     "media_report": report,
                     "skipped": skipped,
                     "published": published_count,
                     "images": sum(t["kind"] == "image" for t, *_ in files),
+                    "unsupported_spine": unsupported_spine,
                     "spine_bundles": sum(t['kind'] == 'spine' for t, *_ in files),
                     "voice_tracks": sum(t["kind"] == "voice" for t, *_ in files),
                     "missing_images": sorted(set(missing) & {t["path"] for t in payload["targets"] if t["kind"] == "image"}),

@@ -44,7 +44,8 @@ prefab/material JSON, hashes and client identity. FileReference `story_spine` bi
 the immutable R2 object to its authored background. Shared default UI sprites stay
 explicit references rather than forcing a huge common-atlas export. Successful
 static pictures survive a failed Spine dependency; missing bundles remain retryable.
-Browser playback of the animated skeleton is not implemented. `PlaySequenceData` remains a distinct engine
+Verified 4.1 mesh scenes now play through an independent open JSON adapter and
+WebGL player; unsupported features retain the archive and an explicit diagnostic. `PlaySequenceData` remains a distinct engine
 scene with its source path. It is not relabelled as an MP4 or replaced with a nearby
 sequence asset's text. Static picture dialogue renders inline without an MP4.
 
@@ -74,15 +75,9 @@ Existing publication/provenance checks reuse matching files. Partial indexes ret
 diagnostics and do not silently proceed as complete. Repeating the command also
 resumes media dispatch when the index was already completed, including broker retries.
 
-The archived Spine sample uses 4.1 data. Public playback using the official runtime
-requires an appropriate Spine Editor license; the Trial license does not grant
-runtime integration/distribution rights. A locally installed 3.8 editor neither
-establishes that license nor makes 4.1 data compatible. See the official
-[license](https://en.esotericsoftware.com/spine-editor-license) and
-[versioning guide](https://esotericsoftware.com/spine-versioning).
-No official runtime dependency is included in this PR while that requirement is
-unresolved. The complete repair flag describes recovery/storage, not implemented
-browser animation.
+The browser uses the existing Three.js WebGL dependency, not the official Spine
+Runtime or an installed editor. Adapter provenance, feature limits and verification
+are documented in [spine-open-playback.md](spine-open-playback.md).
 
 After deploying the code, inspect retained-source repairs first:
 
@@ -100,8 +95,8 @@ This reuses normal client preparation and existing queue deduplication. It does 
 queue voice conversion, cutscene transcoding or full patch imports. Each structure
 job repairs graph links after indexing, including when its pinned client index is
 reused. Repeating the command adds missing evidence and reuses completed tasks.
-Illustration jobs use schema 2 so previously completed image-only jobs can acquire
-the newly supported Spine bundles without repeating unrelated media work.
+Illustration jobs use schema 3 and Spine recipe 1 so previously completed image-only
+or archive-only jobs can acquire browser JSON and textures without repeating unrelated media work.
 Workspace retention/cleanup follows the existing media workspace lifecycle.
 
 No schema migration is required. Rolling back the application leaves older readers
