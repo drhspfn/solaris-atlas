@@ -4,7 +4,7 @@ from collections import Counter
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import JSON, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
@@ -44,6 +44,7 @@ from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.search import EntityAlias, SearchDocument
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.db.session import get_session
+from wuwa_story.read_models.context import SOURCE_BUILD
 from wuwa_story.storage.entity_media import entity_image_urls
 from wuwa_story.story import usecases
 from wuwa_story.story.domain import StoryBrowsingError
@@ -51,6 +52,31 @@ from wuwa_story.story.service import prefetch_dialogue, prefetch_node_labels
 from wuwa_story.urls import node_address
 
 router = APIRouter(tags=["story browsing"])
+
+
+async def _shared_scene_dialogue(session, statement, locale, release_id):
+    include_raw = not SOURCE_BUILD.get()
+    if not include_raw:
+        # Compaction omits non-null params but keeps params=None. Preserve that
+        # distinction without transferring the full JSON for every dialogue row.
+        statement = statement.add_columns(
+            or_(QuestAction.params.is_(None), QuestAction.params == JSON.NULL)
+        )
+    rows = list((await session.execute(statement)).all())
+    transcript_rows = rows if include_raw else [row[:6] for row in rows]
+    await prefetch_dialogue(session, transcript_rows, locale, release_id, include_raw=include_raw)
+    transcript = [
+        await _dialogue_payload(
+            session, row, locale_code=locale, release_id=release_id, include_raw=include_raw
+        )
+        for row in transcript_rows
+    ]
+    if not include_raw:
+        for line, row in zip(transcript, rows, strict=True):
+            if line["action"] is not None and not row[6]:
+                del line["action"]["params"]
+    return transcript_rows, transcript
+
 
 @router.get("/items/{canonical_key:path}/profile")
 @public_addresses
@@ -991,14 +1017,9 @@ async def character_profile(
                     .order_by(QuestAction.action_index, DialogueLine.source_index, DialogueLine.node_id)
                     .limit(80)
                 )
-                transcript_rows = list((await session.execute(dialogue_statement)).all())
-                await prefetch_dialogue(session, transcript_rows, locale, release_id)
-                transcript = [
-                    await _dialogue_payload(
-                        session, row, locale_code=locale, release_id=release_id
-                    )
-                    for row in transcript_rows
-                ]
+                transcript_rows, transcript = await _shared_scene_dialogue(
+                    session, dialogue_statement, locale, release_id
+                )
                 owner_nodes = select(Edge.from_node_id).join(
                     RelationType, Edge.relation_type_id == RelationType.id
                 ).where(
