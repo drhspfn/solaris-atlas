@@ -19,7 +19,10 @@ async def browse_events(
                for event, occurrence in rows}
     def assets(event, occurrence):
         return artwork[(event.id, occurrence.id if occurrence else None)]
-    announcements = await repository.read_event_announcements(session)
+    notice_ids = {(row.source_data or {}).get("notice_id") for _, row in rows if row}
+    announcements = await repository.read_event_announcements(
+        session, event_id=event_id, notice_ids=notice_ids - {None},
+    )
     notice_links = {}
     notice_banners = {notice.id: notice.content.get("banner_url") for notice in announcements}
     revisions = {(row.source_data or {}).get("notice_revision") for _, row in rows if row}
@@ -48,7 +51,16 @@ async def browse_events(
     banner_urls: dict[tuple[str, str], str] = {}
     if banner_paths:
         settings = get_settings()
-        media = await repository.read_event_media(session, banner_paths, settings.s3_bucket)
+        captures = {
+            (_client_data(event, occurrence).get("download_id", ""), path)
+            for event, occurrence in rows
+            for path in [*(asset["path"] for asset in assets(event, occurrence)),
+                         (occurrence.banner_path if occurrence else None) or event.banner_path]
+            if path
+        }
+        media = await repository.read_event_media(
+            session, banner_paths, settings.s3_bucket, captures=captures,
+        )
         storage = S3Storage(settings)
         for source_path, object_key, metadata in media:
             if source_path is None:

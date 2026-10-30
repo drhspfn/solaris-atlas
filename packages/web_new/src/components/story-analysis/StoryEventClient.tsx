@@ -26,26 +26,33 @@ export function StoryEventClient({ eventKey, initialEvent }: { eventKey: string;
   const version = params?.get('game_version') || '';
   const [event, setEvent] = useState<StoryEvent | null>(initialEvent ?? null);
   const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
-    if (initialEvent && locale === 'en' && !version && event === initialEvent) return;
+    if (initialEvent && locale === 'en' && !version && retry === 0) {
+      setEvent(initialEvent);
+      setError('');
+      return;
+    }
     const controller = new AbortController();
     setEvent(null);
     setError('');
     const query = new URLSearchParams({ locale });
     if (version) query.set('game_version', version);
-    api<StoryEvent>(`/story-analysis/events/${eventKey}?${query.toString()}`, { signal: controller.signal })
-      .then(setEvent)
+    api<StoryEvent>(`/story-analysis/events/${encodeURIComponent(eventKey)}?${query.toString()}`, { signal: controller.signal })
+      .then((result) => {
+        if (!controller.signal.aborted) setEvent(result);
+      })
       .catch((reason: Error) => {
         if (!controller.signal.aborted) setError(reason.message);
       });
     return () => controller.abort();
-  }, [eventKey, locale, version]);
+  }, [eventKey, locale, version, retry, initialEvent]);
 
   if (error)
     return (
       <div className="page-container">
-        <ErrorPanel message={error} />
+        <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} />
       </div>
     );
   if (!event) return <PageLoader />;

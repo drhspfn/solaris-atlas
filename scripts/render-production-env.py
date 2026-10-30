@@ -31,6 +31,7 @@ GROUPS = {
         "WUWA_ASSET_CPUS": "0.5",
         "WUWA_ASSET_MEMORY": "1536m",
         "WUWA_COORDINATOR_REPLICAS": "1",
+        "WUWA_PROJECTION_REPLICAS": "0",
         "WUWA_COORDINATOR_CPUS": "0.25",
         "WUWA_COORDINATOR_MEMORY": "768m",
         "WUWA_IMAGE_REPLICAS": "1",
@@ -44,6 +45,12 @@ GROUPS = {
         "WUWA_VIDEO_MEMORY": "2560m",
     },
     "shared.env": {
+        "READ_PROJECTIONS_ENABLED": "false",
+        "READ_PROJECTION_KINDS": "",
+        "READ_PROJECTION_SNAPSHOTS": "",
+        "READ_PROJECTION_MIN_FREE_GIB": "20",
+        "READ_PROJECTION_MAX_ROWS": "250000",
+        "READ_PROJECTION_MAX_BYTES": "2147483648",
         "STORY_SPINE_PLAYBACK_ENABLED": "false",
         "AGENT_PROVIDER": "responses",
         "AGENT_MODEL": "gpt-6-luna",
@@ -127,9 +134,12 @@ def validate_worker_config(rendered):
     for key, value in compose.items():
         if key.startswith("WUWA_") and key.endswith(("_REPLICAS", "_CPUS")):
             try:
-                positive = Decimal(value).is_finite() and Decimal(value) > 0
+                minimum = 0 if key == "WUWA_PROJECTION_REPLICAS" else 1
+                positive = Decimal(value).is_finite() and Decimal(value) >= minimum
+                if key.endswith("_CPUS"):
+                    positive = Decimal(value).is_finite() and Decimal(value) > 0
                 if key.endswith("_REPLICAS"):
-                    positive = positive and int(value) > 0
+                    positive = positive and int(value) >= minimum
             except (ValueError, InvalidOperation):
                 positive = False
             if not positive:

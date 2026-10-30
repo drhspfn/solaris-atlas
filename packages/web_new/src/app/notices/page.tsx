@@ -79,7 +79,7 @@ export default async function NoticesPage({
       </form>
       {!data ? (
         <p role="alert">
-          The announcement archive could not be loaded. <Link href={href({})}>Try again</Link>
+          The announcement archive could not be loaded. <a href={href({})}>Try again</a>
         </p>
       ) : (
         <>

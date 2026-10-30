@@ -169,9 +169,9 @@ case "$DEPLOY_COMPONENT" in
   api) services=(api) ;;
   web) services=(web) ;;
   caddy) services=(caddy) ;;
-  snapshot-worker) services=(snapshot-worker asset-worker media-worker image-worker audio-worker video-worker model-worker) ;;
+  snapshot-worker) services=(snapshot-worker asset-worker media-worker projection-worker image-worker audio-worker video-worker model-worker) ;;
   story-agent|cutscene-vision) services=("$DEPLOY_COMPONENT") ;;
-  all) services=(api web caddy snapshot-worker asset-worker media-worker image-worker audio-worker video-worker model-worker story-agent cutscene-vision) ;;
+  all) services=(api web caddy snapshot-worker asset-worker media-worker projection-worker image-worker audio-worker video-worker model-worker story-agent cutscene-vision) ;;
   *) echo "Unsupported DEPLOY_COMPONENT: $DEPLOY_COMPONENT" >&2; exit 2 ;;
 esac
 
@@ -181,7 +181,7 @@ if [[ "$DEPLOY_COMPONENT" == api || "$DEPLOY_COMPONENT" == all ]]; then
   # before DDL, and restore exactly the running containers even if migration fails.
   migrate_stopped() (
       running_clients=$("${compose[@]}" ps -q --status running \
-        api snapshot-worker asset-worker media-worker image-worker audio-worker video-worker model-worker story-agent cutscene-vision)
+        api snapshot-worker asset-worker media-worker projection-worker image-worker audio-worker video-worker model-worker story-agent cutscene-vision)
       migration_clients=()
       if [[ -n "$running_clients" ]]; then
         mapfile -t migration_clients <<< "$running_clients"
@@ -215,7 +215,7 @@ fi
 if [[ "$DEPLOY_COMPONENT" != infrastructure ]]; then
   pull_services=()
   for service in "${services[@]}"; do
-    if [[ "$WORKER_IMAGE" == solaris-atlas-worker:* && ( "$service" == snapshot-worker || "$service" == media-worker || "$service" == asset-worker || "$service" == image-worker || "$service" == audio-worker || "$service" == video-worker ) ]]; then
+    if [[ "$WORKER_IMAGE" == solaris-atlas-worker:* && ( "$service" == snapshot-worker || "$service" == media-worker || "$service" == projection-worker || "$service" == asset-worker || "$service" == image-worker || "$service" == audio-worker || "$service" == video-worker ) ]]; then
       docker image inspect "$WORKER_IMAGE" >/dev/null
     else
       pull_services+=("$service")

@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api import read_projections
 from wuwa_story.db.session import get_session
 
 # Preserve helper imports used by existing event/notice consumers and tests.
@@ -40,6 +41,8 @@ async def list_game_events(
     ),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if read_projections.should_route_to_projection("game_event", version):
+        return await read_projections.events_page(session, server, kind, version, locale, summary)
     return await _game_events_response(server, kind, version, locale, session, summary=summary)
 
 
@@ -51,6 +54,8 @@ async def game_event_detail(
     locale: str = Query(default="en", pattern=r"^[a-zA-Z-]{2,16}$"),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if read_projections.should_route_to_projection("game_event", "current"):
+        return await read_projections.event_detail(session, event_id, server, occurrence_id, locale)
     result = await _game_events_response(
         server, None, None, locale, session, event_id=event_id, occurrence_id=occurrence_id,
     )

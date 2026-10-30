@@ -1,5 +1,27 @@
 # Interactive map UX contract
 
+## Public archive recovery
+
+Public server reads have a 15-second deadline and share results between metadata
+and page rendering within one server request. Detail content, social previews and
+canonical redirects remain in the initial HTML response; a root streaming loader
+must not replace them. Character profile and archive reads start together.
+
+Client GET reads have a 30-second deadline. Catalogs distinguish failed initial
+reads from genuinely empty collections and retry failures. Catalog, search and
+entity-profile requests ignore superseded responses; canceling one consumer does
+not cancel another consumer's read. Profile and character-archive errors expose
+separate retry actions. Changing records resets local detail state. Shared
+Feedback owns accessible loading/error status and the optional Try again action;
+long names wrap within breadcrumbs and profile headings on narrow screens.
+
+Cutscene list/detail hydration retains matching server data, including explicit
+URL locales. Story-map, quest, node, event and interpretation failures expose a
+retry without discarding the current URL selection. A pending read projection
+means the archive selection is being prepared, not a database setup problem;
+bounded server-directed backoff precedes an explicit retry. Session identity
+refresh always reads current authentication state rather than the public GET cache.
+
 ## Character model quality and facial playback
 
 The profile remains a deferred compact preview. Full-resolution textures and
@@ -139,7 +161,7 @@ Read-only game atlas at `/map`, using published map manifests, positioned entiti
 
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 | --- | --- | --- | --- | --- |
-| Select/Listbox | `packages/web_new/src/components/ui/Select.tsx` for map region/location, archive language and event filters; native select elsewhere | October 2026 public-shell refinement | Authored popups own geometry and dark styling; untouched workflows retain native semantics | Arrows/Home/End/typeahead, Enter/Space, Escape/Tab, long names and narrow popup checks |
+| Select/Listbox | `packages/web_new/src/components/ui/Select.tsx` for public map fields, archive language, event filters, story path/patch and character-dialogue quest scope | Explicit public-selector consistency requirement | Authored popups own geometry, dark styling and keyboard behavior; existing admin native selects remain allowed | Arrows/Home/End/typeahead, Enter/Space, Escape/Tab, long names, URL selection, cancellation and narrow popup checks |
 | Search | Native search input with visible label | WorldMapPage | Immediate local filtering; committed query in URL | Empty results and clear input |
 | Checkbox | Native checkbox | WorldMapPage | Hidden placements and unknown floor | Keyboard toggle |
 | Object selection | Native button with aria-pressed | WorldMapPage | Two-column icon/name/count tiles; compact icon grid for other resources; select all and clear per group | Keyboard, individual types, group actions and counts |

@@ -43,7 +43,6 @@ from wuwa_story.db.models.core import (
     VoiceReference,
 )
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
-from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision, NodeType
 from wuwa_story.db.models.i18n import (
     Locale,
@@ -51,7 +50,9 @@ from wuwa_story.db.models.i18n import (
     LocalizationKey,
     LocalizationValue,
 )
+from wuwa_story.db.models.lore import LoreChunk, LoreChunkEmbedding
 from wuwa_story.db.models.maps import MapMarker, MapTile, TileMap
+from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.ontology import (
     EventType,
     NodeTag,
@@ -71,7 +72,7 @@ from wuwa_story.db.models.ops import (
     Processor,
 )
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
-from wuwa_story.db.models.lore import LoreChunk, LoreChunkEmbedding
+from wuwa_story.db.models.read_refresh import ReadProjectionDirty, ReadProjectionScope
 from wuwa_story.db.models.search import (
     DialogueChunk,
     DialogueChunkEmbedding,
@@ -181,4 +182,25 @@ __all__ = [
     "Scene",
     "StoryContainer",
     "StoryMembership",
+]
+
+# Durable browse projections are registered independently of refresh bookkeeping.
+from wuwa_story.db.models.browse import (  # noqa: E402
+    CharacterRead,
+    CutsceneRead,
+    DialogueRead,
+    EntityReadRelation,
+    GameEventRead,
+    GameNoticeRead,
+    ItemRead,
+    LocationRead,
+    QuestRead,
+    SpeakerRead,
+    StoryMapRead,
+)
+
+__all__ += [
+    "CharacterRead", "CutsceneRead", "DialogueRead", "EntityReadRelation", "GameEventRead",
+    "GameNoticeRead", "ItemRead", "LocationRead", "QuestRead", "SpeakerRead", "StoryMapRead",
+    "ReadProjectionDirty", "ReadProjectionScope",
 ]

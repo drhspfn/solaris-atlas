@@ -26,6 +26,16 @@ class WorkerConfigurationTests(unittest.TestCase):
         settings["worker.env"]["WUWA_QUEUE_CONCURRENCY"] = "snapshot_build=1,pool_audio=2"
         validate(settings)
 
+    def test_projection_workers_can_be_disabled_and_scaled_independently(self):
+        settings = self.settings()
+        for count in ("0", "1", "3"):
+            settings["compose.env"]["WUWA_PROJECTION_REPLICAS"] = count
+            RENDERER["validate_worker_config"](settings)
+        for count in ("-1", "0.5"):
+            settings["compose.env"]["WUWA_PROJECTION_REPLICAS"] = count
+            with self.assertRaises(SystemExit):
+                RENDERER["validate_worker_config"](settings)
+
     def test_heavy_defaults_include_measured_export_headroom(self):
         settings = self.settings()
         self.assertEqual(settings["compose.env"]["WUWA_ASSET_MEMORY"], "1536m")

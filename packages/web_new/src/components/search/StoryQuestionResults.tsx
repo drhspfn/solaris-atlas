@@ -35,7 +35,9 @@ export function StoryQuestionResults({
     });
     if (version) params.set('game_version', version);
     api<ExplanationResults>(`/story-analysis/search?${params}`, { signal: controller.signal })
-      .then(setData)
+      .then((result) => {
+        if (!controller.signal.aborted) setData(result);
+      })
       .catch((reason: Error) => {
         if (!controller.signal.aborted) setError(reason.message);
       });

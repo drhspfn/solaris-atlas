@@ -4,6 +4,7 @@ import { ArrowRight, BookOpen, ChevronRight, GitBranch, Search, X } from 'lucide
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/api/client';
 import { ErrorPanel, PageLoader } from '@/components/ui/Feedback';
+import { Select } from '@/components/ui/Select';
 import type { StoryMap, StoryTreeNode } from '@/data/story';
 import { useLocale } from '@/hooks/useLocale';
 import { Link, useSearchParams } from '@/lib/router';
@@ -83,32 +84,36 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
   const [map, setMap] = useState<StoryMap | null>(initialMap ?? null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(!initialMap);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
-    if (initialMap && locale === 'en' && map === initialMap &&
+    if (initialMap && locale === 'en' && retry === 0 &&
         initialMap.selected_game_version === (version || null) &&
         initialMap.quest_type_id === selectedType) {
+      setMap(initialMap);
+      setLoading(false);
+      setError('');
       return;
     }
-    let active = true;
+    const controller = new AbortController();
     setLoading(true);
     setError('');
     const search = new URLSearchParams({ locale, quest_type_id: String(selectedType) });
     if (version) search.set('game_version', version);
-    api<StoryMap>(`/story-map?${search.toString()}`)
+    api<StoryMap>(`/story-map?${search.toString()}`, { signal: controller.signal })
       .then((result) => {
-        if (active) setMap(result);
+        if (!controller.signal.aborted) setMap(result);
       })
       .catch((reason: Error) => {
-        if (active) setError(reason.message);
+        if (!controller.signal.aborted) setError(reason.message);
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       });
     return () => {
-      active = false;
+      controller.abort();
     };
-  }, [locale, selectedType, version]);
+  }, [locale, selectedType, version, retry, initialMap]);
 
   const chapters = useMemo(
     () =>
@@ -203,33 +208,27 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
         </div>
       </header>
       <div className="story-map-tools">
-        <label>
-          Story path
-          <select
+        <div className="story-map-field">
+          <span>Story path</span>
+          <Select
+            label="Story path"
             value={selectedType}
-            onChange={(event) => updateParam('quest_type', event.target.value)}
-          >
-            {questTypes.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Patch
-          <select
+            onChange={(value) => updateParam('quest_type', value)}
+            options={questTypes.map((entry) => ({ value: entry.id, label: entry.label }))}
+          />
+        </div>
+        <div className="story-map-field">
+          <span>Patch</span>
+          <Select
+            label="Patch"
             value={version}
-            onChange={(event) => updateParam('game_version', event.target.value)}
-          >
-            <option value="">All patches</option>
-            {(map?.imported_game_versions || []).map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-        </label>
+            onChange={(value) => updateParam('game_version', value)}
+            options={[
+              { value: '', label: 'All patches' },
+              ...(map?.imported_game_versions || []).map((item) => ({ value: item, label: item })),
+            ]}
+          />
+        </div>
         <div className="story-map-search">
           <label htmlFor="story-path-search">Find a quest in this path</label>
           <span>
@@ -260,7 +259,7 @@ export function StoryMapClient({ initialMap }: { initialMap?: StoryMap | null })
       {loading ? (
         <PageLoader />
       ) : error ? (
-        <ErrorPanel message={error} />
+        <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} />
       ) : (
         map && (
           <>

@@ -5,6 +5,7 @@ from inspect import signature
 
 from sqlalchemy import select
 
+from wuwa_story.api.read_projections import ProjectedPayload
 from wuwa_story.db.models.core import Quest
 from wuwa_story.db.models.graph import Node, NodeType
 from wuwa_story.urls import node_address
@@ -86,5 +87,7 @@ def public_addresses(endpoint):
     @wraps(endpoint)
     async def wrapped(*args, **kwargs):
         payload = await endpoint(*args, **kwargs)
+        if isinstance(payload, ProjectedPayload):
+            return payload
         return await attach_addresses(parameters.bind(*args, **kwargs).arguments["session"], payload)
     return wrapped

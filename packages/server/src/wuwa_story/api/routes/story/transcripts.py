@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api import read_projections
 from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.db.session import get_session
@@ -26,6 +27,8 @@ async def search_dialogue(
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if read_projections.should_route_to_projection(("dialogue", "character") if character else "dialogue", game_version):
+        return await read_projections.dialogue_search_page(session, q, character, quest_id, locale, game_version, limit, offset)
     try:
         return await usecases.search_dialogue(
             session,
@@ -56,6 +59,10 @@ async def quest_transcript(
     include_raw: bool = True,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if read_projections.should_route_to_projection(("quest", "character", "dialogue") if character else "quest", game_version):
+        return await read_projections.transcript_page(
+            session, game_quest_id, character, q, locale, game_version, limit, offset, focus_line, include_raw,
+        )
     try:
         return await usecases.quest_transcript(
             session,

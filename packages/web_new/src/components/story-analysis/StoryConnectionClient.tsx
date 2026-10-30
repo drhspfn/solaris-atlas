@@ -27,20 +27,26 @@ export function StoryConnectionClient({
   const [retry, setRetry] = useState(0);
 
   useEffect(() => {
-    if (initialData && locale === 'en' && retry === 0 && data === initialData) return;
+    if (initialData && locale === 'en' && retry === 0) {
+      setData(initialData);
+      setError('');
+      return;
+    }
     const controller = new AbortController();
     setData(null);
     setError('');
     api<StoryConnection>(
-      `/story-analysis/connections/${documentId}/${index}?${new URLSearchParams({ locale }).toString()}`,
+      `/story-analysis/connections/${encodeURIComponent(documentId)}/${encodeURIComponent(index)}?${new URLSearchParams({ locale }).toString()}`,
       { signal: controller.signal },
     )
-      .then(setData)
+      .then((result) => {
+        if (!controller.signal.aborted) setData(result);
+      })
       .catch((reason: Error) => {
         if (!controller.signal.aborted) setError(reason.message);
       });
     return () => controller.abort();
-  }, [documentId, index, locale, retry]);
+  }, [documentId, index, locale, retry, initialData]);
 
   if (error)
     return (

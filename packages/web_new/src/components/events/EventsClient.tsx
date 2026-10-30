@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api } from '@/api/client';
 import { Select } from '@/components/ui/Select';
+import { ErrorPanel } from '@/components/ui/Feedback';
 import { EventDetails } from './EventDetails';
 import { EventArtwork } from './EventArtwork';
 import { EventArchiveHeader } from './EventArchiveHeader';
@@ -56,6 +57,7 @@ export function EventsPage({
   const [chosen, setChosen] = useState<number[]>(initialEventIds);
   const [loading, setLoading] = useState(!initialData);
   const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
   const [search, setSearch] = useState('');
   const [month, setMonth] = useState(monthKey(Date.now()));
   const [now, setNow] = useState<number | null>(null);
@@ -69,7 +71,6 @@ export function EventsPage({
     returnFocus.current = trigger;
     setSelected(event);
   };
-  const firstFetch = useRef(true);
   const timeZone = localTime ? localZone : zones[server];
   useEffect(() => {
     setLocalZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -78,13 +79,15 @@ export function EventsPage({
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
-    if (firstFetch.current && initialData && server === 'europe') {
-      firstFetch.current = false;
+    if (initialData && server === 'europe' && retry === 0) {
+      setEvents(initialData.events);
+      setLoading(false);
+      setError('');
       return;
     }
-    firstFetch.current = false;
     const controller = new AbortController();
     setLoading(true);
+    setError('');
     setSelected(null);
     void api<EventsResponse>(`/events?server=${server}&summary=true`, {
       signal: controller.signal,
@@ -103,7 +106,7 @@ export function EventsPage({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [server, initialData]);
+  }, [server, initialData, retry]);
   useEffect(() => {
     setCatalogLimit(24);
   }, [search, kind, chosen]);
@@ -284,9 +287,7 @@ export function EventsPage({
         </div>
       )}
       {error && (
-        <p className="events-error" role="alert">
-          {error}
-        </p>
+        <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} />
       )}
       <section className="events-timeline" aria-label="Events timeline" aria-busy={loading}>
         <header className="events-calendar-tools">

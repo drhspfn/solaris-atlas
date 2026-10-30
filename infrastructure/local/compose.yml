@@ -223,6 +223,14 @@ services:
     deploy:
       replicas: ${WUWA_COORDINATOR_REPLICAS:-1}
 
+  projection-worker:
+    <<: *asset-worker
+    command: ["python", "-m", "wuwa_story.read_models.worker", "--watch"]
+    cpus: 0.5
+    mem_limit: 1g
+    deploy:
+      replicas: ${WUWA_PROJECTION_REPLICAS:-0}
+
   image-worker:
     <<: *asset-worker
     command: ["wuwa-story-worker", "run", "--pool", "image"]

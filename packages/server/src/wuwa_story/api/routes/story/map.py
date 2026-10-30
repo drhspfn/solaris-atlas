@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api import read_projections
 from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.api.routes.story.shared import _display_label, _version_key
 from wuwa_story.db.models.core import Quest
@@ -352,6 +353,8 @@ async def story_map(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Browse patch additions, in one selected patch or across all patches in order."""
+    if read_projections.should_route_to_projection("story_map", game_version):
+        return await read_projections.story_map_page(session, locale, game_version, quest_type_id)
     if await session.scalar(select(Locale.id).where(Locale.code == locale)) is None:
         raise HTTPException(status_code=400, detail=f"unknown locale: {locale}")
     releases = list(await session.scalars(

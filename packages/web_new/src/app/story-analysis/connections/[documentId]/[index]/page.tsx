@@ -37,5 +37,5 @@ export default async function StoryConnectionPage({ params }: Props) {
     `/story-analysis/connections/${encodeURIComponent(documentId)}/${encodeURIComponent(index)}?locale=en`,
   );
 
-  return <StoryConnectionClient documentId={documentId} index={index} initialData={initialData} />;
+  return <StoryConnectionClient key={`${documentId}:${index}`} documentId={documentId} index={index} initialData={initialData} />;
 }

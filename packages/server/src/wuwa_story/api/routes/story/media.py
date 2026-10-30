@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.agents.cutscene_vision import visual_reference
 from wuwa_story.agents.evidence import quest_fingerprint
+from wuwa_story.api import read_projections
 from wuwa_story.api.routes.story.captions import caption_texts, caption_tracks
 from wuwa_story.api.routes.story.cutscene_audio import audio_bundles
 from wuwa_story.api.routes.story.shared import _release_id
@@ -180,6 +181,8 @@ async def quest_media(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Authored media references with published playable files when available."""
+    if read_projections.should_route_to_projection("quest", game_version):
+        return await read_projections.quest_section(session, game_quest_id, locale, game_version, "media")
     quest = await get_quest(session, game_quest_id)
     if quest is None:
         raise HTTPException(status_code=404, detail="quest not found")

@@ -6,7 +6,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
+from wuwa_story.api import read_projections
 from wuwa_story.api.item_acquisition import ITEM_QUEST_REWARD_LIMIT, item_map_sources
 from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.api.routes.story.shared import (
@@ -58,6 +60,8 @@ async def item_profile(
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if read_projections.should_route_to_projection("item", game_version):
+        return await read_projections.profile_page(session, "item", canonical_key, locale, game_version)
     node = await get_node(session, canonical_key, ('item',))
     if node is None:
         raise HTTPException(status_code=404, detail="item not found")
@@ -707,6 +711,8 @@ async def location_profile(
     locale: str = "en",
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if read_projections.should_route_to_projection("location", "current"):
+        return await read_projections.profile_page(session, "location", canonical_key, locale, None)
     node = await get_node(session, canonical_key, ('area', 'location'))
     if node is None:
         raise HTTPException(status_code=404, detail="location not found")
@@ -761,6 +767,8 @@ async def quest_profile(
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if read_projections.should_route_to_projection("quest", game_version):
+        return await read_projections.profile_page(session, "quest", game_quest_id, locale, game_version)
     try:
         return await usecases.quest_profile(session, game_quest_id, locale, game_version)
     except StoryBrowsingError as error:
@@ -775,6 +783,8 @@ async def character_profile(
     game_version: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    if read_projections.should_route_to_projection("character", game_version):
+        return await read_projections.profile_page(session, "character", canonical_key, locale, game_version)
     node = await get_node(session, canonical_key, ('character',))
     if node is None:
         raise HTTPException(status_code=404, detail="character not found")
@@ -809,13 +819,6 @@ async def character_profile(
                 "evidence_source_record_id": link.source_record_id,
             }
         )
-        speaker_states = (
-            select(QuestAction.quest_state_node_id)
-            .join(DialogueLine, DialogueLine.action_node_id == QuestAction.node_id)
-            .where(DialogueLine.speaker_node_id == speaker.node_id)
-        )
-        state_ids.update(await session.scalars(speaker_states))
-
     # Some snapshots do not ship precomputed speaker/character links. A unique,
     # exact match between the character's FormationRoleCard and Speaker's
     # RolePileIconAsset is source evidence; shared icon paths are intentionally
@@ -888,12 +891,13 @@ async def character_profile(
                                     },
                                 }
                             )
-                            speaker_states = (
-                                select(QuestAction.quest_state_node_id)
-                                .join(DialogueLine, DialogueLine.action_node_id == QuestAction.node_id)
-                                .where(DialogueLine.speaker_node_id == matched_speaker.node_id)
-                            )
-                            state_ids.update(await session.scalars(speaker_states))
+    if own_speaker_ids:
+        state_ids.update(await session.scalars(
+            select(QuestAction.quest_state_node_id)
+            .join(DialogueLine, DialogueLine.action_node_id == QuestAction.node_id)
+            .where(DialogueLine.speaker_node_id.in_(own_speaker_ids))
+            .distinct()
+        ))
 
     co_present: dict[int, set[int]] = {}
     co_present_speakers: dict[int, set[int]] = {}
@@ -925,15 +929,42 @@ async def character_profile(
             co_present.setdefault(entity_node_id, set()).add(state_node_id)
     co_present_characters = []
     shared_scene_cache: dict[int, dict[str, Any]] = {}
-    await prefetch_node_labels(session, co_present.keys(), locale)
-    for entity_node_id, co_states in sorted(co_present.items()):
-        state_rows = list(
-            await session.scalars(
-                select(QuestState)
-                .where(QuestState.node_id.in_(co_states))
-                .order_by(QuestState.state_key)
-            )
+    # Every card refers to states already found for this character. Load those
+    # states and speaker mappings once instead of querying for each card.
+    card_state_ids = set().union(*co_present.values(), *co_present_speakers.values())
+    states = list(await session.scalars(
+        select(QuestState).where(QuestState.node_id.in_(card_state_ids)).order_by(QuestState.state_key)
+    )) if card_state_ids else []
+    speaker_entities: dict[int, list[int]] = {}
+    if co_present_speakers:
+        for speaker_id, entity_id in await session.execute(
+            select(SpeakerEntityLink.speaker_node_id, SpeakerEntityLink.entity_node_id)
+            .where(SpeakerEntityLink.speaker_node_id.in_(co_present_speakers))
+        ):
+            speaker_entities.setdefault(speaker_id, []).append(entity_id)
+    await prefetch_node_labels(session, {
+        *co_present, *co_present_speakers,
+        *(entity_id for entities in speaker_entities.values() for entity_id in entities),
+    }, locale)
+    character_states = {
+        entity_id: [state for state in states if state.node_id in co_states]
+        for entity_id, co_states in co_present.items()
+    }
+    shared_source_ids = {
+        state.source_record_id
+        for state_rows in character_states.values()
+        for state in state_rows[:8]
+        if state.source_record_id is not None
+    }
+    state_sources = {
+        record_id: (row_index, path)
+        for record_id, row_index, path in await session.execute(
+            select(SourceRecord.id, SourceRecord.row_index, SourceFile.logical_source_path)
+            .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+            .where(SourceRecord.id.in_(shared_source_ids))
         )
+    } if shared_source_ids else {}
+    for entity_node_id, state_rows in sorted(character_states.items()):
         shared_scenes = []
         # Expose source-authored context for the relationship card. A shared
         # flow state is evidence of co-presence only, so return its transcript
@@ -942,6 +973,15 @@ async def character_profile(
             if shared_state.node_id not in shared_scene_cache:
                 dialogue_statement = (
                     select(DialogueLine, QuestAction, QuestState, Node, SourceRecord, SourceFile)
+                    .options(
+                        defer(QuestAction.params),
+                        defer(QuestAction.metadata_json),
+                        defer(QuestState.metadata_json),
+                        defer(Node.metadata_json),
+                        defer(SourceRecord.data),
+                        defer(SourceFile.metadata_json),
+                        defer(DialogueLine.metadata_json),
+                    )
                     .join(Node, Node.id == DialogueLine.node_id)
                     .join(QuestAction, QuestAction.node_id == DialogueLine.action_node_id)
                     .join(QuestState, QuestState.node_id == QuestAction.quest_state_node_id)
@@ -982,13 +1022,7 @@ async def character_profile(
                     .order_by(Quest.game_quest_id)
                     .limit(5)
                 )
-                state_source = (
-                    await session.execute(
-                        select(SourceRecord, SourceFile)
-                        .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
-                        .where(SourceRecord.id == shared_state.source_record_id)
-                    )
-                ).first()
+                state_source = state_sources.get(shared_state.source_record_id)
                 shared_scene_cache[shared_state.node_id] = {
                     "flow_state": shared_state.state_key,
                     "quest_refs": [
@@ -999,8 +1033,8 @@ async def character_profile(
                     "dialogue_truncated": len(transcript_rows) == 80,
                     "basis": "full authored dialogue rows in the same QuestState; shared state does not imply direct conversation",
                     "source": {
-                        "file": state_source[1].logical_source_path if state_source else None,
-                        "row": state_source[0].row_index if state_source else None,
+                        "file": state_source[1] if state_source else None,
+                        "row": state_source[0] if state_source else None,
                         "record_id": shared_state.source_record_id,
                     },
                 }
@@ -1018,26 +1052,17 @@ async def character_profile(
         )
     co_speaker_cards = []
     for speaker_node_id, co_states in sorted(co_present_speakers.items()):
-        mapped_characters = await session.scalars(
-            select(SpeakerEntityLink.entity_node_id).where(
-                SpeakerEntityLink.speaker_node_id == speaker_node_id
-            )
-        )
         co_speaker_cards.append(
             {
                 "speaker": await _node_label(session, speaker_node_id, locale),
                 "character_entities": [
                     await _node_label(session, entity_node_id, locale)
-                    for entity_node_id in mapped_characters
+                    for entity_node_id in speaker_entities.get(speaker_node_id, [])
                 ],
                 "basis": "shared_flow_state_dialogue",
                 "flow_states": [
                     state.state_key
-                    for state in await session.scalars(
-                        select(QuestState)
-                        .where(QuestState.node_id.in_(co_states))
-                        .order_by(QuestState.state_key)
-                    )
+                    for state in states if state.node_id in co_states
                 ],
             }
         )

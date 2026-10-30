@@ -18,8 +18,9 @@ spec.loader.exec_module(module)
 
 @pytest.mark.parametrize(
     "heads,expected",
-    [([], "before:last"), (["0021_authored_tree_order"], "before:last"),
-     (["0022_tree_index_schema_version"], "ready:last"), (["0023_search_body_trgm"], "done:last")],
+    [([], "before:more"), (["0021_authored_tree_order"], "before:more"),
+     (["0022_tree_index_schema_version"], "ready:more"), (["0023_search_body_trgm"], "done:more"),
+     (["0024_browse_read_models"], "done:more")],
 )
 def test_plan_existing_migration_history(heads, expected):
     scripts = ScriptDirectory.from_config(Config(str(SERVER / "alembic.ini")))

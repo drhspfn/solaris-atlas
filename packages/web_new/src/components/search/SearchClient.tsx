@@ -24,6 +24,7 @@ export function SearchClient() {
   const [data, setData] = useState<Entity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -35,7 +36,9 @@ export function SearchClient() {
       new URLSearchParams(queryString).getAll('category').forEach((c) => p.append('category', c));
     }
     api<{ results: Entity[] }>(`/search?${p.toString()}`, { signal: controller.signal })
-      .then((d) => setData(d.results))
+      .then((d) => {
+        if (!controller.signal.aborted) setData(d.results);
+      })
       .catch((e) => {
         if (!controller.signal.aborted) setError(e.message);
       })
@@ -43,7 +46,7 @@ export function SearchClient() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [q, queryString, locale, storyMode]);
+  }, [q, queryString, locale, storyMode, retry]);
 
   return (
     <div className="page-container">
@@ -104,7 +107,7 @@ export function SearchClient() {
             ))}
           </div>
           {error ? (
-            <ErrorPanel message={error} />
+            <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} />
           ) : loading ? (
             <div className="loading-grid">
               {Array.from({ length: APP_SETTINGS.presentation.skeletonCount }, (_, i) => (

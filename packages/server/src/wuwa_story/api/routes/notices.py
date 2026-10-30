@@ -4,11 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api import read_projections
 from wuwa_story.db.models.game_events import GameEvent
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.session import get_session
-from wuwa_story.urls import numeric_id, record_url
 from wuwa_story.ingestion.notices import public_notice_image
+from wuwa_story.urls import numeric_id, record_url
 
 router = APIRouter(tags=["notices"])
 
@@ -40,6 +41,8 @@ async def list_notices(
     event_id: int | None = Query(None, gt=0),
     session: AsyncSession = Depends(get_session),
 ):
+    if read_projections.should_route_to_projection("game_notice", "current"):
+        return await read_projections.notices_page(session, category, q, offset, limit, event_id)
     query = select(GameNotice).where(GameNotice.locale == "en")
     if category:
         query = query.where(GameNotice.category == category)
@@ -67,6 +70,8 @@ async def notice_detail(
     revision: str | None = Query(None, pattern=r"^[a-f0-9]{64}$"),
     session: AsyncSession = Depends(get_session),
 ):
+    if read_projections.should_route_to_projection("game_notice", "current"):
+        return await read_projections.notice_detail_payload(session, notice_id, revision)
     identifier = numeric_id(notice_id)
     notice = (await session.get(GameNotice, identifier) if identifier is not None else
               await session.scalar(select(GameNotice).where(GameNotice.slug == notice_id)))

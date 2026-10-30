@@ -520,7 +520,10 @@ export function WorldMapPage() {
   }, []);
   useEffect(() => {
     let cancelled = false;
-    api<Atlas[]>('/maps')
+    const controller = new AbortController();
+    setLoading(true);
+    setError('');
+    api<Atlas[]>('/maps', { signal: controller.signal })
       .then((data) => {
         if (!cancelled) {
           setMaps(data);
@@ -535,6 +538,7 @@ export function WorldMapPage() {
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [retry]);
   const roots = useMemo(() => latestMapRoots(maps), [maps]);
@@ -606,7 +610,7 @@ export function WorldMapPage() {
         m.layer === active,
     );
     if (target)
-      api<Atlas>(`/maps/${target.id}`)
+      api<Atlas>(`/maps/${target.id}`, { cacheTtl: 0 })
         .then((m) => {
           if (!cancelled) {
             setFloors([m]);

@@ -55,5 +55,5 @@ export default async function LocationProfilePage({ params, searchParams }: Prop
 
   await canonicalRoute("locations", key, initialData?.location, searchParams);
 
-  return <EntityProfileClient kind="location" entityKey={key} initialData={initialData} />;
+  return <EntityProfileClient key={key} kind="location" entityKey={key} initialData={initialData} />;
 }

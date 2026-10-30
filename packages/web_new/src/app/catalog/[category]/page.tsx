@@ -40,7 +40,9 @@ export default async function CatalogPage({ params }: Props) {
 
   return (
     <CatalogClient
+      key={category}
       category={category}
+      initialLoaded={initialData !== null}
       initialItems={initialData?.results ?? []}
       initialTotal={initialData?.total ?? 0}
     />

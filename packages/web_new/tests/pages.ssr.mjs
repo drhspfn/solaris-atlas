@@ -523,6 +523,11 @@ const backend = createServer(async (request, response) => {
       }),
     );
   } else if (request.url.startsWith('/notices?')) {
+    if (questRequest.searchParams.get('q') === 'fixture-unavailable') {
+      response.statusCode = 503;
+      response.end(JSON.stringify({ detail: 'Archive unavailable' }));
+      return;
+    }
     response.end(JSON.stringify({ notices: [notice], has_more: false }));
   } else if (request.url === '/notices/42') {
     response.end(JSON.stringify(notice));
@@ -653,6 +658,7 @@ for (const [slug, version, locale] of [
 
 for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
   test(`character details and preview are in initial HTML for ${userAgent}`, async () => {
+    const start = requests.length;
     const response = await fetch(`${site}/characters/character%3A1102`, {
       headers: { 'User-Agent': userAgent },
     });
@@ -670,6 +676,17 @@ for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
     assert.doesNotMatch(html, /Opening archive record|Loading character details|id="S:\d+"/);
     assert.ok(requests.includes('/characters/character%3A1102/archive?locale=en'));
     assert.ok(!requests.some((path) => path.includes('%253A')));
+    const calls = requests.slice(start).filter((path) => path.startsWith('/characters/character%3A1102/'));
+    // ISR may satisfy a warm read; a cold render must never duplicate either endpoint.
+    for (const endpoint of ['profile', 'archive']) {
+      assert.ok(calls.filter((path) => path.includes(`/${endpoint}?`)).length <= 1,
+        `metadata and page must share the character ${endpoint} read`);
+    }
+    if (calls.length === 2) {
+      const timings = requestTimes.slice(start).filter((entry) => entry.path.startsWith('/characters/character%3A1102/'));
+      assert.ok(Math.max(...timings.map((entry) => entry.start)) < Math.min(...timings.map((entry) => entry.end)),
+        'character profile and archive must overlap rather than form an SSR waterfall');
+    }
     const gallery =
       main.match(/<div class="character-artwork-gallery">([\s\S]*?)<\/figure><\/div>/)?.[1] ?? '';
     assert.ok(gallery.includes(`src="${portrait}"`));
@@ -814,6 +831,18 @@ test('announcement details and social preview are server rendered', async () => 
   assert.ok(html.includes('Complete the event to obtain Astrite.'));
   assert.ok(html.includes('src="https://cdn.solarisatlas.fun/objects/notice-banner"'));
   assert.ok(html.includes('href="/events?event=1"'));
+});
+
+test('announcement failures keep explicit retry addresses and revision selection', async () => {
+  const list = await fetch(`${site}/notices?q=fixture-unavailable&offset=24&category=game`);
+  const listHtml = (await list.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.ok(listHtml.includes('The announcement archive could not be loaded.'));
+  assert.ok(listHtml.includes('href="/notices?q=fixture-unavailable&amp;offset=24&amp;limit=24&amp;category=game">Try again</a>'));
+  const revision = 'b'.repeat(64);
+  const detail = await fetch(`${site}/notices/999?revision=${revision}`);
+  const detailHtml = (await detail.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
+  assert.ok(detailHtml.includes('Announcement unavailable'));
+  assert.ok(detailHtml.includes(`href="/notices/999?revision=${revision}">Try again</a>`));
 });
 
 test('an event link restores event selection on the server', async () => {

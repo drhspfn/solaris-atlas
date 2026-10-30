@@ -3,16 +3,18 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.api import read_projections
 from wuwa_story.api.routes.story.shared import _display_label, _localized, _release_id
-from wuwa_story.db.models.core import Character, DialogueLine, Item, Location, Quest, Speaker
+from wuwa_story.db.models.core import DialogueLine
 from wuwa_story.db.models.graph import Node, NodeType
-from wuwa_story.db.models.i18n import Locale, LocalizationValue
-from wuwa_story.db.models.search import SearchDocument
+from wuwa_story.db.models.i18n import Locale
+from wuwa_story.db.repositories.catalog import read_catalog
 from wuwa_story.db.session import get_session
 from wuwa_story.storage.entity_media import entity_image_urls
+from wuwa_story.story.service import prefetch_localizations
 from wuwa_story.urls import node_url
 
 router = APIRouter(tags=["story browsing"])
@@ -27,114 +29,25 @@ async def browse_catalog(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Return a stable, localized catalog page for the frontend browse views."""
+    if read_projections.should_route_to_projection(category, "current"):
+        return await read_projections.catalog_page(
+            session, category, locale, quest_type_id=quest_type_id, limit=limit, offset=offset,
+        )
     locale_row = await session.scalar(select(Locale).where(Locale.code == locale))
     if locale_row is None:
         raise HTTPException(status_code=400, detail=f"unknown locale: {locale}")
     if quest_type_id is not None and category != "quest":
         raise HTTPException(status_code=400, detail="quest_type_id requires category=quest")
     release_id = await _release_id(session, None)
-    node_types = {"location": ["area", "location"], "quest": ["quest"]}.get(category, [category])
-    name_key_id = func.coalesce(
-        Character.name_key_id,
-        Item.name_key_id,
-        Location.name_key_id,
-        Quest.name_key_id,
-        Speaker.name_key_id,
+    total, rows = await read_catalog(
+        session, category, locale_row.id, release_id, limit, offset, quest_type_id,
     )
-    canonical_name = func.coalesce(
-        Character.canonical_name,
-        Item.canonical_name,
-        Location.canonical_name,
-    )
-    alternate_title = (
-        select(SearchDocument.title)
-        .where(
-            SearchDocument.target_node_id == Node.id,
-            SearchDocument.locale_id == locale_row.id,
-            SearchDocument.category == f"{category}_nickname",
-        )
-        .order_by(SearchDocument.id)
-        .limit(1)
-        .correlate(Node)
-        .scalar_subquery()
-    )
-    statement = (
-        select(
-            Node,
-            NodeType.key,
-            SearchDocument.title,
-            SearchDocument.aliases,
-            LocalizationValue.content,
-            name_key_id,
-            canonical_name,
-            alternate_title,
-        )
-        .join(NodeType, NodeType.id == Node.type_id)
-        .outerjoin(
-            SearchDocument,
-            and_(
-                SearchDocument.target_node_id == Node.id,
-                SearchDocument.locale_id == locale_row.id,
-                SearchDocument.category.in_(node_types),
-            ),
-        )
-        .outerjoin(Character, Character.node_id == Node.id)
-        .outerjoin(Item, Item.node_id == Node.id)
-        .outerjoin(Location, Location.node_id == Node.id)
-        .outerjoin(Quest, Quest.node_id == Node.id)
-        .outerjoin(Speaker, Speaker.node_id == Node.id)
-        .outerjoin(
-            LocalizationValue,
-            and_(
-                LocalizationValue.key_id == name_key_id,
-                LocalizationValue.locale_id == locale_row.id,
-                LocalizationValue.release_id == release_id,
-            ),
-        )
-        .where(NodeType.key.in_(node_types), Node.status == "active")
-        .order_by(func.lower(func.coalesce(SearchDocument.title, Node.canonical_key)), Node.id)
-    )
-    if category == "character":
-        role_type = Character.metadata_json["role_type"].as_integer()
-        # RoleInfo.RoleType=2 rows are alternate/battle role configs, not the
-        # primary Resonator roster. Keep unknown future values visible.
-        statement = statement.where(or_(role_type == 1, role_type.is_(None)))
-    if quest_type_id is not None:
-        statement = statement.where(Quest.quest_type == str(quest_type_id))
-    total = (
-        await session.scalar(
-            select(func.count(Node.id))
-            .join(NodeType, NodeType.id == Node.type_id)
-            .outerjoin(Character, Character.node_id == Node.id)
-            .where(NodeType.key.in_(node_types), Node.status == "active")
-        )
-        or 0
-    )
-    if category == "character":
-        role_type = Character.metadata_json["role_type"].as_integer()
-        total = (
-            await session.scalar(
-                select(func.count(Node.id))
-                .join(NodeType, NodeType.id == Node.type_id)
-                .join(Character, Character.node_id == Node.id)
-                .where(
-                    NodeType.key == "character",
-                    Node.status == "active",
-                    or_(role_type == 1, role_type.is_(None)),
-                )
-            )
-            or 0
-        )
-    elif quest_type_id is not None:
-        total = (
-            await session.scalar(
-                select(func.count(Node.id))
-                .join(Quest, Quest.node_id == Node.id)
-                .where(Node.status == "active", Quest.quest_type == str(quest_type_id))
-            )
-            or 0
-        )
-    rows = (await session.execute(statement.offset(offset).limit(limit))).all()
+    fallback_keys = {
+        row[5] for row in rows
+        if row[5] is not None
+        and not any(_display_label(row[index]) for index in (2, 4, 6, 7))
+    }
+    await prefetch_localizations(session, fallback_keys, locale, release_id)
     images = await entity_image_urls(session, [row[0].id for row in rows])
     results = []
     fallback_labels = {
@@ -193,6 +106,8 @@ async def browse_catalog(
 
 @router.get("/categories")
 async def browse_categories(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    if read_projections.should_route_to_projection(read_projections.ENTITY_PROJECTION_KINDS, "current"):
+        return await read_projections.category_counts(session)
     rows = (
         await session.execute(
             select(NodeType.key, func.count(Node.id))

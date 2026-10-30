@@ -10,64 +10,74 @@ import { categories, categoryTitle, type Entity } from '@/data/entities';
 import { useLocale } from '@/hooks/useLocale';
 import { Link } from '@/lib/router';
 
+const emptyItems: Entity[] = [];
+
 export function CatalogClient({
   category,
-  initialItems = [],
+  initialItems = emptyItems,
   initialTotal = 0,
+  initialLoaded = false,
 }: {
   category: string;
   initialItems?: Entity[];
   initialTotal?: number;
+  initialLoaded?: boolean;
 }) {
   const searchInput = useRef<HTMLInputElement>(null);
   const locale = useLocale();
   const [query, setQuery] = useState('');
   const [items, setItems] = useState<Entity[]>(initialItems);
   const [total, setTotal] = useState(initialTotal);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(!initialLoaded);
   const [error, setError] = useState('');
   const [offset, setOffset] = useState(0);
   const [searchResults, setSearchResults] = useState<Entity[] | null>(null);
+  const [submittedQuery, setSubmittedQuery] = useState('');
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
-    setQuery('');
     setOffset(0);
-    setSearchResults(null);
-  }, [category]);
+  }, [locale]);
 
   useEffect(() => {
-    if (offset === 0 && items === initialItems && locale === 'en') return;
-    setLoading(true);
-    setError('');
-    api<{ results: Entity[]; total: number }>(
-      `/catalog?category=${category}&locale=${locale}&limit=${APP_SETTINGS.limits.catalogPage}&offset=${offset}`,
-    )
-      .then((d) => {
-        setItems(d.results);
-        setTotal(d.total);
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [category, locale, offset]);
-
-  const search = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query.trim()) {
+    if (initialLoaded && offset === 0 && !submittedQuery && locale === 'en' && retry === 0) {
+      setItems(initialItems);
+      setTotal(initialTotal);
       setSearchResults(null);
+      setLoading(false);
+      setError('');
       return;
     }
+    const controller = new AbortController();
     setLoading(true);
     setError('');
-    try {
-      const d = await api<{ results: Entity[] }>(
-        `/search?q=${encodeURIComponent(query)}&category=${category}&locale=${locale}&limit=${APP_SETTINGS.limits.catalogSearch}`,
-      );
-      setSearchResults(d.results);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
+    const path = submittedQuery
+      ? `/search?q=${encodeURIComponent(submittedQuery)}&category=${encodeURIComponent(category)}&locale=${encodeURIComponent(locale)}&limit=${APP_SETTINGS.limits.catalogSearch}`
+      : `/catalog?category=${encodeURIComponent(category)}&locale=${encodeURIComponent(locale)}&limit=${APP_SETTINGS.limits.catalogPage}&offset=${offset}`;
+    api<{ results: Entity[]; total: number }>(path, { signal: controller.signal })
+      .then((d) => {
+        if (controller.signal.aborted) return;
+        if (submittedQuery) setSearchResults(d.results);
+        else {
+          setSearchResults(null);
+          setItems(d.results);
+          setTotal(d.total);
+        }
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setError(e.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [category, locale, offset, submittedQuery, retry, initialLoaded, initialItems, initialTotal]);
+
+  const search = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmittedQuery(query.trim());
+    setOffset(0);
+    setRetry((value) => value + 1);
   };
 
   const list = searchResults ?? items;
@@ -95,7 +105,7 @@ export function CatalogClient({
         </div>
       </div>
       <div className="catalog-tools">
-        <form className="catalog-search" onSubmit={search}>
+        <form className="catalog-search" onSubmit={search} noValidate>
           <Search size={17} />
           <input
             ref={searchInput}
@@ -112,6 +122,8 @@ export function CatalogClient({
               onClick={() => {
                 setQuery('');
                 setSearchResults(null);
+                setSubmittedQuery('');
+                setError('');
                 searchInput.current?.focus();
               }}
             >
@@ -133,9 +145,9 @@ export function CatalogClient({
         </div>
       </div>
       {error ? (
-        <ErrorPanel message={error} />
+        <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} />
       ) : loading ? (
-        <div className="loading-grid">
+        <div className="loading-grid" role="status" aria-label="Loading catalog">
           {Array.from({ length: APP_SETTINGS.presentation.skeletonCount }, (_, i) => (
             <div className="skeleton" key={i} />
           ))}

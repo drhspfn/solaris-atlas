@@ -26,7 +26,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const refresh = useCallback(async () => {
     try {
-      setUser(await api<CurrentUser>('/auth/me'));
+      setUser(await api<CurrentUser>('/auth/me', { cacheTtl: 0 }));
     } catch {
       setUser(null);
     } finally {

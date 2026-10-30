@@ -1,7 +1,7 @@
 export function PageLoader() {
   return (
     <div className="page-container">
-      <div className="loading-detail">
+      <div className="loading-detail" role="status">
         <div />
         <span>Opening archive record…</span>
       </div>
@@ -9,12 +9,15 @@ export function PageLoader() {
   );
 }
 
-export function ErrorPanel({ message }: { message: string }) {
+export function ErrorPanel({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className="error-panel">
-      <span>Archive connection interrupted</span>
+    <div className="error-panel" role="alert">
+      <span>{message.includes('This archive selection is being prepared.')
+        ? 'Archive is being prepared'
+        : 'Archive connection interrupted'}</span>
       <p>{message}</p>
-      <small>Make sure the API and database services are running.</small>
+      <small>Try again in a moment.</small>
+      {onRetry && <button type="button" onClick={onRetry}>Try again</button>}
     </div>
   );
 }

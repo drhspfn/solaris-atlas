@@ -53,5 +53,5 @@ export default async function ItemProfilePage({ params, searchParams }: Props) {
 
   await canonicalRoute("items", key, initialData?.item, searchParams);
 
-  return <EntityProfileClient kind="item" entityKey={key} initialData={initialData} />;
+  return <EntityProfileClient key={key} kind="item" entityKey={key} initialData={initialData} />;
 }
