@@ -112,16 +112,22 @@ async def read_event_media(
 ):
     if not banner_paths:
         return []
+    from wuwa_story.read_models.context import SOURCE_BUILD
+
+    cache = session.info.setdefault("story_event_media", {"exact": {}, "suffix": {}}) if SOURCE_BUILD.get() else None
     def media_query(path_filter):
         # Fence the path lookup so the large media joins see only candidate refs.
+        reference_columns = [FileReference.file_id, FileReference.source_path,
+                             FileReference.metadata_json.label("metadata_json")]
+        if cache is not None:
+            reference_columns.append(FileReference.id.label("reference_id"))
         candidates = (
-            select(FileReference.file_id, FileReference.source_path,
-                   FileReference.metadata_json.label("metadata_json"))
+            select(*reference_columns)
             .where(path_filter)
             .cte("event_media_candidates")
             .prefix_with("MATERIALIZED", dialect="postgresql")
         )
-        return (
+        statement = (
             select(candidates.c.source_path, FileLocation.object_key, candidates.c.metadata_json)
             .select_from(candidates)
             .join(FileObject, FileObject.id == candidates.c.file_id)
@@ -136,7 +142,38 @@ async def read_event_media(
                 ),
             )
         )
-    rows = list(await session.execute(media_query(FileReference.source_path.in_(banner_paths))))
+        # Reference identity prevents overlapping suffixes from duplicating a
+        # row when independently cached path results are combined later.
+        return statement.add_columns(candidates.c.reference_id) if cache is not None else statement
+
+    async def cached_rows(paths, *, suffix=False):
+        if cache is None:
+            predicate = or_(*(FileReference.source_path.endswith("/" + path, autoescape=True) for path in paths)) if suffix else FileReference.source_path.in_(paths)
+            return list(await session.execute(media_query(predicate)))
+        entries = cache["suffix" if suffix else "exact"]
+        missing = [path for path in paths if (bucket, path) not in entries]
+        if missing:
+            predicate = or_(*(FileReference.source_path.endswith("/" + path, autoescape=True) for path in missing)) if suffix else FileReference.source_path.in_(missing)
+            fetched = list(await session.execute(media_query(predicate)))
+            for path in missing:
+                entries[(bucket, path)] = [
+                    row for row in fetched
+                    if row[0] is not None and (row[0].endswith("/" + path) if suffix else row[0] == path)
+                ]
+        # A broad suffix already contains every match for nested suffixes. Use
+        # its complete fetched order rather than prepending narrower results.
+        output_paths = [path for path in paths if not any(
+            path != other and path.endswith("/" + other) for other in paths
+        )] if suffix else paths
+        rows, seen = [], set()
+        for path in output_paths:
+            for source_path, object_key, metadata, reference_id in entries[(bucket, path)]:
+                if reference_id not in seen:
+                    rows.append((source_path, object_key, metadata))
+                    seen.add(reference_id)
+        return rows
+
+    rows = await cached_rows(sorted(banner_paths))
     resolved = {((metadata or {}).get("download_id", ""), path) for path, _, metadata in rows}
     # An exact hit from another capture must not hide an older run's suffix asset.
     unresolved = (
@@ -145,10 +182,7 @@ async def read_event_media(
     )
     relative_paths = sorted(path for path in unresolved if not path.startswith("/Game/"))
     if relative_paths:
-        rows.extend(await session.execute(media_query(or_(
-            *(FileReference.source_path.endswith("/" + path, autoescape=True)
-              for path in relative_paths)
-        ))))
+        rows.extend(await cached_rows(relative_paths, suffix=True))
     return rows
 
 
