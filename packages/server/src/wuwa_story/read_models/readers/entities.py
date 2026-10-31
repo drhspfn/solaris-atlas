@@ -1,5 +1,6 @@
 """Exact projection lookup, coverage and stored entity/page-section reads."""
 
+from collections import Counter
 from types import SimpleNamespace
 
 from fastapi import HTTPException
@@ -344,26 +345,50 @@ async def node_related_page(
         raise _unready()
     evidence = include_evidence or category == "source_reference" or source_file is not None
     selected = []
+    evidence_rows = []
     for item in results:
         node = item.get("node", {})
         if (
             direction != "both"
             and item.get("direction") != {"in": "incoming", "out": "outgoing"}[direction]
+            and node.get("id") != entry.entity_id
         ):
             continue
         if relation and item.get("relation") != relation:
             continue
+        if node.get("type") == "source_reference":
+            evidence_rows.append(item)
         if category and node.get("type") != category:
             continue
         if not evidence and node.get("type") == "source_reference":
             continue
         if source_file:
-            actual_file = (item.get("provenance") or {}).get("source_file")
-            if actual_file is None:
+            actual_file = item.get(
+                "_source_file", (item.get("provenance") or {}).get("source_file")
+            )
+            if actual_file is None and "_source_file" not in item:
                 raise _unready()
             if actual_file != source_file:
                 continue
         selected.append(item)
+    source_evidence = data.get("source_evidence", [])
+    if all("_source_file" in item for item in evidence_rows):
+        from wuwa_story.api.source_labels import source_family_label
+
+        counts = Counter((item["_source_file"], item["relation"]) for item in evidence_rows)
+        source_evidence = [
+            {
+                "label": source_family_label(file),
+                "source_file": file,
+                "relation": key,
+                "record_count": count,
+            }
+            for (file, key), count in sorted(
+                counts.items(),
+                key=lambda pair: (-pair[1], pair[0][0] is None, pair[0][0] or "", pair[0][1]),
+            )
+        ]
+    visible = selected[offset : offset + limit]
     return {
         **data,
         "direction": direction,
@@ -374,7 +399,15 @@ async def node_related_page(
         "locale": locale,
         "limit": limit,
         "offset": offset,
-        "results": selected[offset : offset + limit],
+        "summary": (
+            f"Found {len(visible)} linked entities."
+            if visible
+            else "No linked entity neighbors were found. Source records below are raw game configuration references, not inferred character or story relationships."
+        ),
+        "source_evidence": source_evidence,
+        "results": [
+            {key: value for key, value in item.items() if key != "_source_file"} for item in visible
+        ],
     }
 
 
