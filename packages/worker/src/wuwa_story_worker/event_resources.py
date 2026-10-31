@@ -24,6 +24,23 @@ SEQUENCE_TYPES = {'SequenceData', 'LevelSequence',
                   'BP_SequenceData_C', 'BP_SequenceData_Generated_C'}
 
 
+def spine_references(value):
+    """Find explicitly typed Spine dependencies in decoded event packages."""
+    if isinstance(value, dict):
+        kind = value.get('ObjectName', '').partition("'")[0]
+        raw = value.get('ObjectPath') or value.get('AssetPathName')
+        if isinstance(raw, str):
+            if raw.startswith('Client/Content/'):
+                raw = '/Game/' + raw.removeprefix('Client/Content/')
+            if kind in {'SpineAtlasAsset', 'SpineSkeletonDataAsset'} and (path := texture_path(raw)):
+                yield kind, path
+        for child in value.values():
+            yield from spine_references(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from spine_references(child)
+
+
 async def annotate_image_packages(root: Path, records: dict) -> list[dict]:
     expected = {image["path"][6:] for record in records.values()
                 for image in record.get("artwork", [])}
@@ -174,13 +191,24 @@ async def event_resources(payload, parent, session, root: Path):
                 "Event UI dependency request belongs to another client catalog")
         prefabs = sorted({resource["path"] for resource in client.get("resources", [])
                           if "/Prefabs/" in resource["path"]})
-        artwork, missing = await prefab_images(root, prefabs)
+        assets = {}
+        artwork, missing = await prefab_images(root, prefabs, assets=assets)
+        spine = set()
+        for source, asset in assets.items():
+            for file in asset['decoded'].rglob('*.json'):
+                if file.name == 'references.json':
+                    continue
+                for kind, path in spine_references(json.loads(file.read_text(encoding='utf-8-sig'))):
+                    spine.add((source, kind, path))
         await session.refresh(event, with_for_update=True)
         client = (event.source_data or {}).get("client", {})
         if client.get("download_id") != parent["download_id"]:
             raise ValueError(
                 "A newer client catalog replaced this event during UI extraction")
         event.source_data = {**event.source_data, "client": {**client, "prefab_artwork": artwork,
+                                                             "prefab_spine_resources": [
+                                                                 {"source": source, "type": kind, "path": path}
+                                                                 for source, kind, path in sorted(spine)],
                                                              "missing_resources": missing}}
         await session.commit()
         paths.update(image["path"] for image in artwork)

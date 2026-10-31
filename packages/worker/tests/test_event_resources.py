@@ -27,9 +27,14 @@ async def test_prefab_export_does_not_hold_catalog_transaction(tmp_path, monkeyp
     }})
     session.scalars.return_value = [event]
 
-    async def extract(*args):
+    async def extract(*args, **kwargs):
         session.commit.assert_awaited_once()
         session.refresh.assert_not_awaited()
+        decoded = tmp_path / 'decoded'
+        decoded.mkdir()
+        (decoded / 'prefab.json').write_text(json.dumps({'ObjectName': "SpineAtlasAsset'A'",
+                                                        'ObjectPath': '/Game/UI/A.A'}))
+        kwargs['assets']['/Game/UI/Prefabs/Matrix'] = {'decoded': decoded}
         return [], []
 
     monkeypatch.setattr(event_resources, "prefab_images", extract)
@@ -42,6 +47,21 @@ async def test_prefab_export_does_not_hold_catalog_transaction(tmp_path, monkeyp
     )
     assert status == "completed"
     session.refresh.assert_awaited_once_with(event, with_for_update=True)
+    assert event.source_data['client']['prefab_spine_resources'] == [
+        {'source': '/Game/UI/Prefabs/Matrix', 'type': 'SpineAtlasAsset', 'path': '/Game/UI/A'}]
+
+
+def test_spine_references_keep_typed_paths_and_reject_other_assets():
+    from wuwa_story_worker.event_resources import spine_references
+
+    value = {'items': [
+        {'ObjectName': "SpineAtlasAsset'A'", 'ObjectPath': 'Client/Content/UI/A.A'},
+        {'ObjectName': "SpineSkeletonDataAsset'B'", 'ObjectPath': '/Game/UI/B.B'},
+        {'ObjectName': "Texture2D'C'", 'ObjectPath': '/Game/UI/C.C'},
+        {'ObjectName': "SpineAtlasAsset'X'", 'ObjectPath': '/Game/../X'},
+    ]}
+    assert set(spine_references(value)) == {
+        ('SpineAtlasAsset', '/Game/UI/A'), ('SpineSkeletonDataAsset', '/Game/UI/B')}
 
 
 def test_prefab_references_keep_actual_textures_and_skip_script_audio_and_cycles():
