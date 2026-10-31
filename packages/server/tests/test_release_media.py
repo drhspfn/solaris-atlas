@@ -1,7 +1,11 @@
+import hashlib
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
 
 from wuwa_story.ingestion import release_media
 
@@ -14,7 +18,8 @@ async def test_complete_story_repair_marks_index_for_ordered_media_followup(monk
     runs = []
     session.add = runs.append
     async def flush():
-        runs[-1].id = len(runs)
+        if runs:
+            runs[-1].id = len(runs)
     session.flush.side_effect = flush
     publish = AsyncMock()
     monkeypatch.setattr(release_media, 'publish_media_job', publish)
@@ -34,7 +39,8 @@ async def test_story_media_followup_keeps_images_and_movie_dependencies_without_
     runs = []
     session.add = runs.append
     async def flush():
-        runs[-1].id = len(runs)
+        if runs:
+            runs[-1].id = len(runs)
     session.flush.side_effect = flush
     publish = AsyncMock()
     monkeypatch.setattr(release_media, 'publish_media_job', publish)
@@ -70,7 +76,8 @@ async def test_story_repair_queues_only_index_and_reuses_normal_prepare(monkeypa
     runs = []
     session.add = runs.append
     async def flush():
-        runs[-1].id = len(runs)
+        if runs:
+            runs[-1].id = len(runs)
     session.flush.side_effect = flush
     publish = AsyncMock()
     monkeypatch.setattr(release_media, 'publish_media_job', publish)
@@ -90,7 +97,8 @@ async def test_illustration_repair_does_not_even_scan_audio_or_movie_tables(monk
     runs = []
     session.add = runs.append
     async def flush():
-        runs[-1].id = len(runs)
+        if runs:
+            runs[-1].id = len(runs)
     session.flush.side_effect = flush
     publish = AsyncMock()
     monkeypatch.setattr(release_media, 'publish_media_job', publish)
@@ -113,7 +121,8 @@ async def test_notice_refresh_does_not_queue_unrelated_asset_work(monkeypatch):
     runs = []
     session.add = runs.append
     async def flush():
-        runs[-1].id = len(runs)
+        if runs:
+            runs[-1].id = len(runs)
     session.flush.side_effect = flush
     publish = AsyncMock()
     monkeypatch.setattr(release_media, "publish_media_job", publish)
@@ -134,7 +143,8 @@ async def test_fanout_pins_dependencies_and_keeps_analysis_manual(monkeypatch):
     session.add = lambda run: runs.append(run)
 
     async def flush():
-        runs[-1].id = len(runs)
+        if runs:
+            runs[-1].id = len(runs)
     session.flush.side_effect = flush
     published = AsyncMock()
     monkeypatch.setattr(release_media, "publish_media_job", published)
@@ -161,7 +171,8 @@ async def test_character_audio_is_published_in_independent_character_jobs(monkey
     session.scalar.side_effect = [4] + [None] * 6
     session.add = runs.append
     async def flush():
-        runs[-1].id = len(runs)
+        if runs:
+            runs[-1].id = len(runs)
     session.flush.side_effect = flush
     published = AsyncMock()
     monkeypatch.setattr(release_media, "publish_media_job", published)
@@ -182,7 +193,8 @@ async def test_unconfirmed_media_publication_is_recorded_for_retry(monkeypatch):
     runs = []
     session.add = lambda run: runs.append(run)
     async def flush():
-        runs[-1].id = 1
+        if runs:
+            runs[-1].id = 1
     session.flush.side_effect = flush
     monkeypatch.setattr(release_media, "publish_media_job", AsyncMock(side_effect=OSError("offline")))
     result = await release_media.enqueue_release_media(session, 9)
@@ -252,7 +264,8 @@ async def test_event_artwork_import_queues_extraction_after_client_preparation(m
     session.add = lambda run: runs.append(run)
 
     async def flush():
-        runs[-1].id = len(runs)
+        if runs:
+            runs[-1].id = len(runs)
 
     session.flush.side_effect = flush
     published = AsyncMock()
@@ -289,3 +302,137 @@ async def test_event_image_fanout_is_bounded_and_retries_only_incomplete_tasks(m
     job = publish.await_args.args[0]
     assert job["parent_id"] == 8 and len(job["targets"]) == 1
     assert failed.raw_output is None and failed.status == "queued"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("coordinator_status", ["completed", "queued", "running"])
+@pytest.mark.parametrize("coordinator_workspace", [False, True])
+async def test_fresh_root_renews_legacy_coordinators_once_without_resetting_leaves(
+    monkeypatch, tmp_path, coordinator_status, coordinator_workspace,
+):
+    monkeypatch.setenv("WUWA_ASSET_WORKSPACE", str(tmp_path))
+    marker = tmp_path / "patch-workspaces" / "10" / "workspace.json"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("{}")
+    kinds = ["prepare", "cutscene_assets", "voice_packages", "tree_order",
+             "images", "cutscene", "voices", "character_voices"]
+    runs = [SimpleNamespace(
+        id=10 + index, status=coordinator_status if kind in {"cutscene_assets", "voice_packages"} else "completed",
+        raw_output={"asset_version": "3.7.0"} if index in {1, 2} and not coordinator_workspace else
+                   {"asset_version": "3.7.0", "workspace_id": 10, "kept": kind},
+        metadata_json={"queue": release_media.QUEUE},
+    ) for index, kind in enumerate(kinds)]
+    original_outputs = [run.raw_output for run in runs]
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version="1.0.0")
+    session.scalars.side_effect = [["character:1"], ["C0028"], ["voice1"]] * 2
+    session.scalar.side_effect = [4, *runs, 4, *runs]
+    publish = AsyncMock()
+    monkeypatch.setattr(release_media, "publish_media_job", publish)
+    first = await release_media.enqueue_release_media(session, 1)
+    second = await release_media.enqueue_release_media(session, 1)
+    expected = 2 if coordinator_status == "completed" and not coordinator_workspace else 0
+    assert first["queued"] == expected
+    assert second["queued"] == 0
+    assert publish.await_count == expected
+    assert [run.id for run in runs] == list(range(10, 18))
+    for index, run in enumerate(runs):
+        if index in {1, 2} and expected:
+            assert run.status == "queued" and run.raw_output is None
+        else:
+            assert run.raw_output is original_outputs[index]
+            assert run.status == (coordinator_status if index in {1, 2} else "completed")
+    if expected:
+        assert {call.args[0]["kind"] for call in publish.await_args_list} == {"cutscene_assets", "voice_packages"}
+        assert all(call.args[0]["parent_id"] == 10 for call in publish.await_args_list)
+        assert all("recheck_files" not in call.args[0] for call in publish.await_args_list)
+    # Every run is re-read after taking the release lock.
+    for call in session.scalar.await_args_list:
+        statement = call.args[0]
+        if statement.column_descriptions[0].get("entity") is release_media.ProcessingRun:
+            assert statement.get_execution_options()["populate_existing"] is True
+    assert "pg_advisory_xact_lock(701" in str(session.execute.await_args_list[0].args[0])
+    session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_waiting_release_lock_refreshes_stale_coordinators_and_preserves_pending_reset(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setenv("WUWA_ASSET_WORKSPACE", str(tmp_path))
+    marker = tmp_path / "patch-workspaces" / "10" / "workspace.json"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("{}")
+    engine = create_engine("sqlite://")
+    with engine.connect() as connection:
+        connection.exec_driver_sql("ATTACH DATABASE ':memory:' AS ops")
+        connection.exec_driver_sql("CREATE TABLE ops.processor (id INTEGER PRIMARY KEY, key TEXT UNIQUE, version TEXT, description TEXT, metadata JSON)")
+        connection.exec_driver_sql("""CREATE TABLE ops.processing_run (
+            id INTEGER PRIMARY KEY, processor_id INTEGER, model_id INTEGER,
+            target_node_id INTEGER, prompt_version TEXT, input_hash BLOB, status TEXT,
+            tokens_input INTEGER, tokens_output INTEGER, cost FLOAT, raw_output JSON,
+            started_at DATETIME, finished_at DATETIME, error TEXT, metadata JSON)""")
+        connection.exec_driver_sql("INSERT INTO ops.processor(id,key,version) VALUES(4,'release_media','1')")
+        connection.commit()
+        with Session(connection, expire_on_commit=False, autoflush=False) as sync:
+            dependencies = {}
+            for identity, kind, targets in (
+                (10, "prepare", []), (11, "cutscene_assets", ["C0028"]),
+                (12, "voice_packages", []), (13, "tree_order", []),
+                (14, "cutscene", ["C0028"]), (15, "voices", ["voice1"]),
+            ):
+                parent = dependencies.get("cutscene_assets" if kind == "cutscene" else
+                                          "voice_packages" if kind == "voices" else "prepare")
+                request = {"release_id": 1, "game_version": "1.0.0", "kind": kind,
+                           "targets": targets, "parent_id": parent}
+                if kind == "tree_order":
+                    request["index_schema"] = 3
+                sync.add(release_media.ProcessingRun(
+                    id=identity, processor_id=4,
+                    input_hash=hashlib.sha256(json.dumps(request, sort_keys=True).encode()).digest(),
+                    status="running" if kind == "voices" else "completed",
+                    raw_output={"asset_version": "3.7.0"} if identity in {11, 12} else
+                               {"asset_version": "3.7.0", "workspace_id": 10, "entity_run_id": 99},
+                    metadata_json={"request": request, "queue": release_media.QUEUE},
+                ))
+                dependencies[kind] = identity
+            sync.commit()
+            stale = [sync.get(release_media.ProcessingRun, identity) for identity in (11, 12)]
+            leaf = sync.get(release_media.ProcessingRun, 15)
+            leaf.raw_output = None  # The worker clears its obsolete entity child.
+            source_rows = iter([[], ["C0028"], ["voice1"]])
+
+            class Adapter:
+                async def get(self, *_args):
+                    return SimpleNamespace(game_version="1.0.0")
+
+                async def execute(self, statement, params=None):
+                    if "pg_advisory_xact_lock(701" in str(statement):
+                        # Simulate sibling commits while we waited for the lock;
+                        # the identity map still contains completed legacy rows.
+                        connection.execute(text("UPDATE ops.processing_run SET status=CASE id WHEN 11 THEN 'running' ELSE 'queued' END WHERE id IN (11,12)"))
+                        assert all(run.status == "completed" for run in stale)
+                    elif "pg_advisory_xact_lock_shared" not in str(statement):
+                        return sync.execute(statement, params or {})
+
+                async def scalar(self, statement):
+                    return sync.scalar(statement)
+
+                async def scalars(self, _statement):
+                    return next(source_rows)
+
+                async def commit(self):
+                    sync.commit()
+
+                async def flush(self):
+                    sync.flush()
+
+            publish = AsyncMock()
+            monkeypatch.setattr(release_media, "publish_media_job", publish)
+            result = await release_media.enqueue_release_media(Adapter(), 1)
+            assert result["queued"] == 0
+            assert [run.status for run in stale] == ["running", "queued"]
+            assert sync.scalar(text("SELECT raw_output FROM ops.processing_run WHERE id=15")) == "null"
+            assert leaf.raw_output is None
+            publish.assert_not_awaited()
+    engine.dispose()

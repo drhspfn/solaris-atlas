@@ -76,6 +76,14 @@ With the same captured 674,406-byte production API payload (1,132 source nodes),
 
 URL pagination preserves complete-selection search before slicing, chapter/act identities, snapshot-specific quest links and chapter-hash navigation. Search changes update native history without a new server-component request per keystroke. Node tests cover the search/clear/Next transition and hash recovery after conflicting search, in addition to 344-node chapter boundaries. The full API JSON and serialized initial map remain unchanged; pagination bounds rendered markup rather than data transfer.
 
+After PR 102 deployment, a public HTML response measured 868,247 decoded bytes. The live browser showed 1,483 DOM elements and 60 of 1,132 source nodes on page one; search/clear/Next navigation reached page two correctly. A single browser navigation observed DOMContentLoaded at approximately 1.15 s versus 1.65 s in the earlier browser observation. Browser cache/load differed, so these are not percentile or controlled navigation benchmarks.
+
+## Legacy media coordinator recovery
+
+Production inspection found 134 active audio/video children under six completed package coordinators whose legacy outputs had no workspace ID. Their three root preparations already had workspace IDs. Renewal only checked the root, leaving these intermediate prerequisites completed and repeatedly triggering full-release discovery on deferred child deliveries.
+
+Renew expired completed voice/cutscene coordinators independently while retaining valid completed leaf outputs and active coordinators. Existing per-release lock 701 and refreshed ORM state prevent repeated enqueue from resetting work already queued or running. This corrects the loop; it does not require importing the source graph again.
+
 ## Event refresh media reuse
 
 An isolated read-only production comparison built three recorded runs of event 1574 in the same repeatable-read transaction. Complete output matched (1,472,837 bytes, SHA-256 `b264a907d509db30c4485e781e0fd15a68f19144b1b0dbc39cf860cd4d42b408`). Original assembly took 18.925 s across 12 queries; the source-build-only media cache took 5.243 s across 10 queries. Its successive runs took 4.104, 0.685 and 0.150 s. This is an observed per-event rebuild improvement, not a public-calendar latency claim.
