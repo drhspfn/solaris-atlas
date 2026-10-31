@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
+from wuwa_story.db.models.core import Character
 from wuwa_story.db.models.graph import Node, NodeRevision
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
@@ -125,12 +126,18 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
             images = sorted(set().union(*(image_paths(row) for row in rows)))
         if "image" in request.kinds:
             if kind == 'character':
+                character_metadata = await session.scalar(select(Character.metadata_json).where(Character.node_id == node.id))
+                presentation = (character_metadata or {}).get('trial_presentation')
                 trial_rows = []
-                for source_path in ('BinData/RoleTrial/roletrialroleconfig.json',
-                                    'BinData/activity/roletrialroleconfig.json'):
-                    trial_rows = await records(source_path, 'RoleId', int(identifier))
-                    if trial_rows:
-                        break
+                if presentation and presentation.get('role_id') == int(identifier):
+                    trial_rows = [{'FormationSpineSkeletonData': presentation.get('skeleton'),
+                                   'FormationSpineAtlas': presentation.get('atlas')}]
+                else:
+                    for source_path in ('BinData/RoleTrial/roletrialroleconfig.json',
+                                        'BinData/activity/roletrialroleconfig.json'):
+                        trial_rows = await records(source_path, 'RoleId', int(identifier))
+                        if trial_rows:
+                            break
                 if len(trial_rows) == 1:
                     trial = trial_rows[0]
                     resources = sorted({value.split('.')[0] for field in (
