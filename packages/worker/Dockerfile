@@ -88,6 +88,12 @@ RUN curl -fSL --retry 3 https://github.com/bnnm/wwiser/releases/download/v202608
     && echo 'f4ba1368895adab285f27fa37b142e5da805bcc6fb77e8daba282dac65d89411  /tools/wwiser.pyz' | sha256sum -c - \
     && cd /tools && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
 
+FROM node:22-bookworm-slim AS riglyph-builder
+WORKDIR /riglyph
+COPY packages/worker/docker/riglyph/package.json packages/worker/docker/riglyph/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
+    && node node_modules/@riglyph/cli/dist/cli/main.js --version
+
 FROM ghcr.io/astral-sh/uv:0.11.6 AS uv
 FROM python:3.12-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -95,6 +101,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=tools-builder /tools /app/tools
 COPY --from=vgmstream-tools /tools /app/tools
+COPY --from=riglyph-builder /usr/local/bin/node /usr/local/bin/node
+COPY --from=riglyph-builder /riglyph/node_modules /app/tools/riglyph/node_modules
 RUN cd /app/tools && sha256sum vgmstream-cli vgmstream_probe.py >> SHA256SUMS
 COPY --from=uv /uv /uvx /bin/
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv PATH="/opt/venv/bin:$PATH" \
