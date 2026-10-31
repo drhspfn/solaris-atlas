@@ -69,8 +69,8 @@ async def localization_keys(session, identities):
 
 
 async def named_localization_keys(session, keys):
-    return dict(await session.execute(select(LocalizationKey.key, LocalizationKey.id)
-                                     .where(LocalizationKey.key.in_(keys)))) if keys else {}
+    return dict((await session.execute(select(LocalizationKey.key, LocalizationKey.id)
+                                     .where(LocalizationKey.key.in_(keys)))).all()) if keys else {}
 
 
 async def illustration_actions(session, state_ids):

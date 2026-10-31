@@ -2,6 +2,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.engine.result import IteratorResult, SimpleResultMetaData
 
 from wuwa_story.ingestion.entity_media import flow_background_paths, flow_spine_ids
 from wuwa_story.ingestion.talk_backgrounds import background_changes, background_config
@@ -77,7 +78,9 @@ async def test_transition_movie_is_an_ordered_quest_event_without_flow_action(mo
     for name in ['_links', 'cutscene_flows', 'cutscene_videos', 'caption_texts']:
         monkeypatch.setattr(media, name, AsyncMock(return_value={}))
     session = NS(scalars=AsyncMock(return_value=[]), scalar=AsyncMock(return_value=None),
-        execute=AsyncMock(side_effect=[NS(all=lambda: []), [('cutscene:M0355_Loading', 55)] if known_asset else [], []]),
+        execute=AsyncMock(side_effect=[NS(all=lambda: []), IteratorResult(
+            SimpleResultMetaData(['canonical_key', 'id']),
+            iter([('cutscene:M0355_Loading', 55)] if known_asset else [])), []]),
         get=AsyncMock(return_value=NS(game_version='3.7.0')))
     result = await media.quest_media('121000040', '3.7.0', 'en', session)
     event, = result['events']
