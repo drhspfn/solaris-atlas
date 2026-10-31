@@ -194,7 +194,8 @@ async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentati
     resource = (await asyncio.to_thread(background_resource, configs[0].parent, resource_id)
                 if resource_id is not None else {'resource_id': None, 'variants': [], 'controller_archive': True})
     assets = {}
-    textures, missing = await prefab_images(root, direct_resources or [variant['prefab'] for variant in resource['variants']], assets=assets)
+    textures, missing = await prefab_images(root, direct_resources or [variant['prefab'] for variant in resource['variants']], assets=assets,
+                                           **({'include_sequences': True} if direct_resources else {}))
     if direct_resources:
         resource.update(controller_archive=False, source_resources=direct_resources)
     if missing:

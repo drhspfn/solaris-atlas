@@ -85,8 +85,9 @@ async def test_direct_character_resources_use_shared_portable_archive(tmp_path, 
     (config / 'db_SpineBackground.db').touch()
     monkeypatch.setattr(story_spine, 'export_assets', AsyncMock(return_value=config.parent / 'manifest.json'))
 
-    async def extract(root, paths, *, assets):
+    async def extract(root, paths, *, assets, **kwargs):
         assert paths == ['/Game/Character/Atlas', '/Game/Character/Skeleton']
+        assert kwargs['include_sequences']
         assets.update(source_assets)
         return [], []
 

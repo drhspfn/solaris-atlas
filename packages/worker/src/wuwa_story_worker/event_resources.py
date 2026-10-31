@@ -213,7 +213,7 @@ async def event_resources(payload, parent, session, root: Path):
         prefabs = sorted({resource["path"] for resource in client.get("resources", [])
                           if "/Prefabs/" in resource["path"]})
         assets = {}
-        artwork, missing = await prefab_images(root, prefabs, assets=assets)
+        artwork, missing = await prefab_images(root, prefabs, assets=assets, include_sequences=True)
         spine = set()
         for source, asset in assets.items():
             for file in asset['decoded'].rglob('*.json'):
@@ -242,7 +242,7 @@ async def event_resources(payload, parent, session, root: Path):
 
             bundle, _ = await build_spine_bundle(
                 root, None, tool_path('WUWA_FMODEL_PATH'), tool_path('WUWA_TEXTURE_CONVERTER_PATH'),
-                direct_resources=sorted({path for _, _, path in spine}))
+                direct_resources=prefabs)
             storage = S3Storage(get_settings())
             service = FileRegistrationService(storage)
             prepared = await service.prepare_file(bundle, 'application/zip')
