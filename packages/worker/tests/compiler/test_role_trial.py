@@ -18,6 +18,10 @@ def test_trial_presentation_belongs_to_exact_character(tmp_path):
         {"RoleId": 18, "FormationSpineAtlas": "/Game/A"},
         {"RoleId": 18, "FormationSpineAtlas": "/Game/B"},
     ]))
+    (base / "RoleTrial" / "roletrialinfo.json").write_text(json.dumps([
+        {"Id": 9001, "RoleId": 17, "TrialRoleId": 1701, "InstanceId": 12, "GachaId": 23},
+        {"Id": 9002, "RoleId": 99, "TrialRoleId": 9901},
+    ]))
     out = tmp_path / "out"
     writer = Writer(out, "3.7.0")
     compile_entities(tmp_path / "source", writer, {})
@@ -29,4 +33,9 @@ def test_trial_presentation_belongs_to_exact_character(tmp_path):
     assert presentation["skeleton"] == "/Game/Chixia.Chixia"
     assert presentation["spine_param"] == [1, 2, 3]
     assert presentation["source"]["file"] == "BinData/RoleTrial/roletrialroleconfig.json"
+    assert characters[0]["trial_entries"] == [{
+        "source": {"file": "BinData/RoleTrial/roletrialinfo.json", "row": 0},
+        "id": 9001, "trial_role_id": 1701, "instance_id": 12, "gacha_id": 23,
+    }]
     assert "trial_presentation" not in characters[1]
+    assert "trial_entries" not in characters[1]

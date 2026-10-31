@@ -33,6 +33,18 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
         for index, raw in enumerate(read_json(trial_file)):
             if isinstance(raw, dict) and raw.get("RoleId") is not None:
                 trial_roles.setdefault(raw["RoleId"], []).append((index, raw))
+    trial_info_file = next((base / name for name in (
+        "RoleTrial/roletrialinfo.json", "activity/roletrialinfo.json"
+    ) if (base / name).is_file()), None)
+    trial_infos: dict[Any, list[dict[str, Any]]] = {}
+    if trial_info_file:
+        for index, raw in enumerate(read_json(trial_info_file)):
+            if isinstance(raw, dict) and raw.get("RoleId") is not None:
+                trial_infos.setdefault(raw["RoleId"], []).append({
+                    "source": {"file": trial_info_file.relative_to(root).as_posix(), "row": index},
+                    "id": raw.get("Id"), "trial_role_id": raw.get("TrialRoleId"),
+                    "instance_id": raw.get("InstanceId"), "gacha_id": raw.get("GachaId"),
+                })
 
     def rows(rel: str):
         path = base / rel
@@ -73,6 +85,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
                     "ui_config_id": trial.get("UiConfigId"),
                     "animation": "idle",
                 }
+            if kind == "character" and value in trial_infos:
+                record["trial_entries"] = trial_infos[value]
             for field in fields:
                 record[field.lower()] = loc(raw.get(field))
             if kind == "speaker":
