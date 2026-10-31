@@ -140,8 +140,8 @@ async def authored_order(session, quest_id: int, release_id: int | None):
     for key in sorted(optional_states):
         if key in states and states[key] not in ordered:
             ordered.append(states[key])
-    caption_keys = dict(await session.execute(select(QuestState.node_id, QuestState.state_key).where(
-        QuestState.node_id.in_(caption_positions)))) if caption_positions else {}
+    caption_keys = dict((await session.execute(select(QuestState.node_id, QuestState.state_key).where(
+        QuestState.node_id.in_(caption_positions)))).all()) if caption_positions else {}
     all_positions = {**dict(positions), **{caption_keys[identity]: position for identity, position in caption_positions.items()
                                          if identity in caption_keys}}
     return {'state_ids': ordered, 'asset_version': quest_tree.asset_version,

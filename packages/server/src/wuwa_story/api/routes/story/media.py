@@ -220,10 +220,10 @@ async def quest_media(
                           'interaction_id': block['id'] + ':' + item['id']}, ref)
                         for block in (tree_order or {}).get('blocks', [])
                         for item in block.get('interactions', []) for ref in item.get('media', []))
-    runtime_nodes = dict(await session.execute(select(Node.canonical_key, Node.id).where(
+    runtime_nodes = dict((await session.execute(select(Node.canonical_key, Node.id).where(
         Node.canonical_key.in_({ref['reference'] for _, ref in runtime_refs}),
         select(NodeRevision.id).where(NodeRevision.node_id == Node.id,
-                                      NodeRevision.release_id == release_id).exists()))) if runtime_refs else {}
+                                      NodeRevision.release_id == release_id).exists()))).all()) if runtime_refs else {}
     cutscene_ids = [link["node_id"] for entries in action_links.values() for link in entries
                     if link["relation"] == "plays_cutscene"]
     cutscene_ids = list(set(cutscene_ids) | {runtime_nodes[ref['reference']] for _, ref in runtime_refs

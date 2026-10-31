@@ -6,11 +6,19 @@ from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.engine.result import IteratorResult, SimpleResultMetaData
 
 from wuwa_story.api.routes.story import transcripts
 from wuwa_story.db.repositories import story_browsing as repository
 from wuwa_story.story import service, usecases
 from wuwa_story.story.domain import localization_payload
+
+
+@pytest.mark.asyncio
+async def test_named_localization_keys_consumes_sqlalchemy_result_rows():
+    rows = IteratorResult(SimpleResultMetaData(['key', 'id']), iter([('quest.title', 42)]))
+    session = Row(execute=AsyncMock(return_value=rows))
+    assert await repository.named_localization_keys(session, ['quest.title']) == {'quest.title': 42}
 
 
 def versions():
