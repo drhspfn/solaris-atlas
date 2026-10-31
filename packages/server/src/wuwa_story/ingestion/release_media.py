@@ -32,6 +32,8 @@ async def enqueue_release_media(
     if release is None:
         raise ValueError("Imported snapshot not found")
     await session.execute(text("SELECT pg_advisory_xact_lock(701, :id)"), {"id": release_id})
+    # Preserve callers' pending output resets before refreshing matched runs.
+    await session.flush()
     await session.execute(insert(Processor).values(key=PROCESSOR, version="1")
                           .on_conflict_do_nothing(index_elements=[Processor.key]))
     processor = await session.scalar(select(Processor.id).where(Processor.key == PROCESSOR))
@@ -102,7 +104,8 @@ async def enqueue_release_media(
             request, sort_keys=True).encode()).digest()
         run = await session.scalar(select(ProcessingRun).where(
             ProcessingRun.processor_id == processor, ProcessingRun.input_hash == digest)
-            .order_by(ProcessingRun.id.desc()).limit(1))
+            .order_by(ProcessingRun.id.desc()).limit(1)
+            .execution_options(populate_existing=True))
         if run is None:
             run = ProcessingRun(processor_id=processor, input_hash=digest)
             session.add(run)
@@ -113,7 +116,11 @@ async def enqueue_release_media(
             await retain_workspace(session, parent_id)
             refresh_files = run.status == "completed" and workspace_expired(
                 run)
-        if refresh_files and run.status == "completed":
+        # A root can already be renewed while its completed package coordinators
+        # still carry legacy results. Renew those without resetting good leaves.
+        if run.status == "completed" and (refresh_files or (
+            kind in {"cutscene_assets", "voice_packages"} and workspace_expired(run)
+        )):
             run.status = "pending"
             run.raw_output = None
         queue = EVENT_QUEUE if event_artwork_only or notices_only else QUEUE
