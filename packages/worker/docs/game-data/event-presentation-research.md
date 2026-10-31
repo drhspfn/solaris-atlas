@@ -70,12 +70,13 @@ individual browser assets. Character-trial paths are not yet scheduled through
 this worker and these ZIPs are not yet converted by Riglyph.
 
 The independent engine is now at `E:/Projects/Riglyph` (version 0.15.1 at the
-time of investigation). Its CLI supports `riglyph convert <file> --atlas
+time of investigation) and its CLI is published on npm. It supports `riglyph convert <file> --atlas
 <file> --images <directory> --out-dir <directory>`, producing a manifest, IR
 and texture pages. Its documentation states that unsupported semantics fail
-explicitly. A production worker image still needs a pinned, independently
-verified build of that CLI and its Node dependencies; a developer's local path
-must not be assumed to exist inside the worker container.
+explicitly. The worker image installs the pinned CLI using a lockfile. With
+`WUWA_RIGLYPH_ENABLED=true`, newly built, single-rig story bundles are converted
+and saved as a file variant; source bundles are retained. This does not yet
+convert already-published archives or publish a browser player.
 
 Migration must handle multiple skeletons, variants, nested atlas paths and
 controller-only archives. Validate each archive, all conversions and uploaded

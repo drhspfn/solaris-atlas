@@ -8,7 +8,7 @@ from wuwa_story_worker.riglyph_convert import convert_archive
 
 
 def test_converter_validates_bundle_before_running_cli(tmp_path, monkeypatch):
-    entries = {"spine/a/test.skel": b"skeleton", "spine/a/test.atlas": b"atlas"}
+    entries = {"spine/a/test.skel": b"skeleton", "spine/b/test.atlas": b"atlas"}
     manifest = {"skeletons": [{"file": "spine/a/test.skel"}], "files": {
         name: {"size_bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
         for name, data in entries.items()}}

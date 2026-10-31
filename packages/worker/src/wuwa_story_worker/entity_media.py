@@ -398,7 +398,17 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 published_count = 0
                 unsupported_spine = []
                 incomplete_spine_controls = []
+                riglyph_failures = []
                 for target, path, kind, mime, originals in files:
+                    converted = None
+                    if target['kind'] == 'spine' and os.getenv('WUWA_RIGLYPH_ENABLED', '').lower() in {'1', 'true'}:
+                        from wuwa_story_worker.riglyph_convert import convert_bundle
+                        try:
+                            converted = await asyncio.to_thread(
+                                convert_bundle, path, path.with_suffix('.riglyph.zip'),
+                                ['node', os.getenv('WUWA_RIGLYPH_CLI', '/app/tools/riglyph/node_modules/@riglyph/cli/dist/cli/main.js')])
+                        except (OSError, ValueError, subprocess.SubprocessError, zipfile.BadZipFile) as error:
+                            riglyph_failures.append({'path': target['path'], 'error': str(error)[:500]})
                     await session.execute(text("SELECT pg_advisory_xact_lock(:id)"),
                                           {"id": target["owner"]})
                     spine_source = {}
@@ -416,6 +426,10 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                             (target["path"], target["language"])),
                     )
                     published = await service.register_file(session, path, kind, mime_type=mime)
+                    converted_file = None
+                    if converted is not None:
+                        converted_file = await service.register_file(session, converted, 'unknown', mime_type='application/zip')
+                        await service.register_variant(session, published.id, converted_file.id, 'riglyph_bundle', run.id)
                     for original_path in originals:
                         original = await service.register_file(
                             session,
@@ -466,6 +480,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                                 {'path': target['path'], 'diagnostics': playback['unsupported']})
                     reference.metadata_json = {
                         **({'playback': playback} if playback else {}),
+                        **({'riglyph_file_id': converted_file.id} if converted_file else {}),
                         "asset_version": request.asset_version,
                         "download_id": request.download_id,
                         "language": target["language"],
@@ -477,13 +492,14 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                                       "published": published_count + 1}
                     await session.commit()
                     published_count += 1
-                run.status = "partial" if missing or unsupported_spine or incomplete_spine_controls else "completed"
+                run.status = "partial" if missing or unsupported_spine or incomplete_spine_controls or riglyph_failures else "completed"
                 run.raw_output = {
                     "media_report": report,
                     "skipped": skipped,
                     "published": published_count,
                     "images": sum(t["kind"] == "image" for t, *_ in files),
                     "unsupported_spine": unsupported_spine,
+                    "riglyph_failures": riglyph_failures,
                     "incomplete_spine_controls": incomplete_spine_controls,
                     "spine_bundles": sum(t['kind'] == 'spine' for t, *_ in files),
                     "voice_tracks": sum(t["kind"] == "voice" for t, *_ in files),

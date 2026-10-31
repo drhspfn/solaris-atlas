@@ -21,10 +21,9 @@ def convert_archive(bundle: Path, output: Path, cli: list[str]) -> None:
             files = manifest["files"]
             if str(skeleton) not in files:
                 raise ValueError("Skeleton is absent from the archive manifest")
-            atlases = [PurePosixPath(name) for name in files
-                       if name.endswith(".atlas") and PurePosixPath(name).parent == skeleton.parent]
+            atlases = [PurePosixPath(name) for name in files if name.endswith(".atlas")]
             if len(atlases) != 1:
-                raise ValueError("Expected one atlas alongside the skeleton")
+                raise ValueError("Expected one atlas; multi-atlas archives require explicit mapping")
             for name, expected in files.items():
                 relative = PurePosixPath(name)
                 if relative.is_absolute() or ".." in relative.parts or "\\" in name:
@@ -35,7 +34,7 @@ def convert_archive(bundle: Path, output: Path, cli: list[str]) -> None:
                 data = archive.read(info)
                 if hashlib.sha256(data).hexdigest() != expected["sha256"]:
                     raise ValueError("Archive checksum mismatch")
-                if relative.parent == skeleton.parent:
+                if relative == skeleton or relative.parent == atlases[0].parent:
                     dest = root.joinpath(*relative.parts)
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     dest.write_bytes(data)
@@ -45,3 +44,22 @@ def convert_archive(bundle: Path, output: Path, cli: list[str]) -> None:
                             str(atlas.parent), "--out-dir", str(output)], check=True, timeout=300)
             if not (output / "manifest.json").is_file() or not (output / "skeleton.ir.json").is_file():
                 raise ValueError("Riglyph did not produce a complete bundle")
+
+
+def convert_bundle(bundle: Path, output: Path, cli: list[str]) -> Path:
+    """Package the CLI output deterministically for the worker's object store."""
+    with tempfile.TemporaryDirectory(prefix="riglyph-output-") as temporary:
+        converted = Path(temporary) / "converted"
+        convert_archive(bundle, converted, cli)
+        partial = output.with_suffix(".partial")
+        try:
+            with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for path in sorted(converted.rglob("*")):
+                    if path.is_file():
+                        info = zipfile.ZipInfo(path.relative_to(converted).as_posix(), (2000, 1, 1, 0, 0, 0))
+                        info.compress_type = zipfile.ZIP_DEFLATED
+                        archive.writestr(info, path.read_bytes())
+            partial.replace(output)
+        finally:
+            partial.unlink(missing_ok=True)
+    return output
