@@ -75,6 +75,34 @@ def fixture(tmp_path):
     return assets, icons
 
 
+@pytest.mark.asyncio
+async def test_direct_character_resources_use_shared_portable_archive(tmp_path, monkeypatch):
+    from wuwa_story_worker import story_spine
+
+    assets, icons = fixture(tmp_path)
+    config = tmp_path / 'config' / 'files'
+    config.mkdir(parents=True)
+    (config / 'db_SpineBackground.db').touch()
+    monkeypatch.setattr(story_spine, 'export_assets', AsyncMock(return_value=config.parent / 'manifest.json'))
+
+    async def extract(root, paths, *, assets):
+        assert paths == ['/Game/Character/Atlas', '/Game/Character/Skeleton']
+        assets.update(source_assets)
+        return [], []
+
+    source_assets = assets
+    monkeypatch.setattr(story_spine, 'prefab_images', extract)
+    monkeypatch.setattr(story_spine, 'build_icons', AsyncMock(return_value=icons))
+    (tmp_path / 'plan.json').write_text(json.dumps({'version': '3.7.0', 'id': 'client', 'tier': 'hd'}))
+    output, _ = await story_spine.build_spine_bundle(
+        tmp_path, None, tmp_path / 'tool', tmp_path / 'tool',
+        direct_resources=['/Game/Character/Atlas', '/Game/Character/Skeleton'])
+    with zipfile.ZipFile(output) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        assert manifest['source_resources'] == ['/Game/Character/Atlas', '/Game/Character/Skeleton']
+        assert manifest['skeletons']
+
+
 def test_spine_archive_contains_portable_data_originals_and_verified_manifest(tmp_path):
     assets, icons = fixture(tmp_path)
     output, originals = portable_bundle(tmp_path / 'bundle.zip', {'resource_id': 7, 'variants': []},

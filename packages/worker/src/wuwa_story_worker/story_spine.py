@@ -184,15 +184,19 @@ def portable_bundle(output, resource, assets, icons, identity, *, presentation=N
     return output, sorted(originals)
 
 
-async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentation=None):
-    receipt = await export_assets(root, fmodel, 'ConfigDB')
-    configs = list((receipt.parent / 'files').rglob('db_SpineBackground.db'))
-    if len(configs) != 1:
-        raise ValueError('Expected one pinned SpineBackground client database')
+async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentation=None, direct_resources=None):
+    configs = []
+    if not direct_resources or presentation:
+        receipt = await export_assets(root, fmodel, 'ConfigDB')
+        configs = list((receipt.parent / 'files').rglob('db_SpineBackground.db'))
+        if len(configs) != 1:
+            raise ValueError('Expected one pinned SpineBackground client database')
     resource = (await asyncio.to_thread(background_resource, configs[0].parent, resource_id)
                 if resource_id is not None else {'resource_id': None, 'variants': [], 'controller_archive': True})
     assets = {}
-    textures, missing = await prefab_images(root, [variant['prefab'] for variant in resource['variants']], assets=assets)
+    textures, missing = await prefab_images(root, direct_resources or [variant['prefab'] for variant in resource['variants']], assets=assets)
+    if direct_resources:
+        resource.update(controller_archive=False, source_resources=direct_resources)
     if missing:
         raise ValueError(
             f'Spine dependency is incomplete: {missing[0]["expected"]}')
@@ -248,6 +252,8 @@ async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentati
     # Several flow states in one job may use the same resource with different
     # dialogue/control cues. Their output paths must not overwrite each other.
     suffix = '-' + presentation['sha256'] if presentation else ''
+    if direct_resources:
+        suffix += '-' + hashlib.sha256(json.dumps(sorted(direct_resources)).encode()).hexdigest()[:16]
     return await asyncio.to_thread(portable_bundle, root / 'story-spine' / f'{resource_id if resource_id is not None else "sequence"}{suffix}.zip',
                                    resource, assets, icons, identity, presentation=presentation)
 

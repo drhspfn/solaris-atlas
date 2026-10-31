@@ -211,6 +211,36 @@ async def event_resources(payload, parent, session, root: Path):
                                                                  for source, kind, path in sorted(spine)],
                                                              "missing_resources": missing}}
         await session.commit()
+        if {kind for _, kind, _ in spine} >= {'SpineAtlasAsset', 'SpineSkeletonDataAsset'}:
+            from wuwa_story.config.settings import get_settings
+            from wuwa_story.db.models.storage import FileReference
+            from wuwa_story.storage.s3 import S3Storage
+            from wuwa_story.storage.service import FileRegistrationService
+
+            from wuwa_story_worker.story_spine import build_spine_bundle
+
+            bundle, _ = await build_spine_bundle(
+                root, None, tool_path('WUWA_FMODEL_PATH'), tool_path('WUWA_TEXTURE_CONVERTER_PATH'),
+                direct_resources=sorted({path for _, _, path in spine}))
+            storage = S3Storage(get_settings())
+            service = FileRegistrationService(storage)
+            prepared = await service.prepare_file(bundle, 'application/zip')
+            await session.refresh(event, with_for_update=True)
+            if (event.source_data or {}).get('client', {}).get('download_id') != parent['download_id']:
+                raise ValueError('Event catalog changed during Spine extraction')
+            published = await service.register_file(session, bundle, 'unknown', mime_type='application/zip', prepared=prepared)
+            reference = await session.scalar(select(FileReference).where(
+                FileReference.reference_type == 'event_spine',
+                FileReference.source_path == event.source_id,
+                FileReference.source_name == parent['download_id']))
+            if reference is None:
+                reference = await service.register_reference(
+                    session, file_id=published.id, reference_type='event_spine',
+                    source_path=event.source_id, source_name=parent['download_id'])
+            reference.file_id = published.id
+            reference.metadata_json = {'asset_version': parent['asset_version'],
+                                       'download_id': parent['download_id'], 'event_id': event.id}
+            await session.commit()
         paths.update(image["path"] for image in artwork)
         entries.extend(missing)
     await session.commit()

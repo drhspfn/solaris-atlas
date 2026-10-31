@@ -169,7 +169,9 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
         from wuwa_story_worker.story_spine import build_spine_bundle
         try:
             bundle, originals = await build_spine_bundle(root, target['resource_id'], fmodel, converter,
-                                                         presentation=target.get('presentation'))
+                                                         presentation=target.get('presentation'),
+                                                         **({'direct_resources': target['direct_resources']}
+                                                            if target.get('direct_resources') else {}))
         except BlockingIOError:
             raise
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
