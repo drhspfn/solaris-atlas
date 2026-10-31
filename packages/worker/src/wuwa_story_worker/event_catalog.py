@@ -13,6 +13,10 @@ from flatbuffers.table import Table
 from wuwa_story_worker.map_catalog import int_list
 from wuwa_story_worker.map_sources import flag, integer, open_db, strings, table, text
 
+# ActivityShipTowerController.GetActivityResource returns this exact key.
+# Its UiResource row lacks the activity module tag, so tag-only joins omit it.
+ACTIVITY_ENTRY_KEYS = {'NewTowerClimbing': 'UiItem_ActivityMowingTower2'}
+
 
 def texture_path(value: str) -> str | None:
     if not value.startswith("/Game/") or ".." in value.split("/"):
@@ -199,6 +203,8 @@ def read_event_catalog(config: Path, readers: Path | None = None) -> dict[str, d
                 values = _artwork([("ui_resource", text(row, 1)), ("pc_resource", text(row, 2))],
                                   "UiResource", identifier)
                 targets = [record for module in modules for record in activities.get(module, [])]
+                targets.extend(record for module, entries in activities.items()
+                               if ACTIVITY_ENTRY_KEYS.get(module) == identifier for record in entries)
                 # Spine prefab keys are exact UiResource IDs, not guessed filenames.
                 targets.extend(record for record in records.values()
                                if record.get("spine_prefab_key") == identifier)
