@@ -111,6 +111,7 @@ def context(monkeypatch):
         AsyncMock(return_value=Row(model_dump=lambda: {"canonical_key": "speaker:70"})),
     )
     monkeypatch.setattr(sections.nodes, "node_related", AsyncMock(return_value={"results": []}))
+    monkeypatch.setattr(sections, "source_related", AsyncMock(return_value={"results": [], "offset": 0}))
     monkeypatch.setattr(
         sections.nodes,
         "node_source_record",
@@ -455,17 +456,14 @@ async def test_missing_archive_aborts_the_whole_character_projection(context):
 @pytest.mark.asyncio
 async def test_speaker_related_payload_does_not_silently_stop_at_first_page(context):
     context.node_type.key = "speaker"
-    first = [{"node": {"id": identity}, "basis": "explicit_reference"} for identity in range(500)]
-    sections.nodes.node_related.side_effect = [
-        {"results": first, "include_evidence": True},
-        {"results": [{"node": {"id": 500}}]},
-    ]
+    results = [{"node": {"id": identity}, "basis": "explicit_reference"} for identity in range(501)]
+    sections.source_related.return_value = {"results": results, "include_evidence": True, "offset": 0}
     result = await builders.build_entity(context.session, "speaker", 7, 2)
     assert len(result["payload"]["related"]["results"]) == 501
-    assert [call.kwargs["offset"] for call in sections.nodes.node_related.await_args_list] == [
-        0,
-        500,
-    ]
+    sections.source_related.assert_awaited_once_with(
+        context.session, 7, "character:70", include_evidence=True, locale="ja", limit=None,
+    )
+    sections.nodes.node_related.assert_not_awaited()
     assert result["payload"]["related"]["include_evidence"] is True
 
 

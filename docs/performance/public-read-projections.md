@@ -84,6 +84,12 @@ Production inspection found 134 active audio/video children under six completed 
 
 Renew expired completed voice/cutscene coordinators independently while retaining valid completed leaf outputs and active coordinators. Existing per-release lock 701 and refreshed ORM state prevent repeated enqueue from resetting work already queued or running. This corrects the loop; it does not require importing the source graph again.
 
+## Complete neighbor reads during refresh
+
+Background builders now fetch an entity's complete ordered neighbor set through a shared source service, rather than sorting and querying the same adjacency set once per 500-row HTTP page. HTTP validation retains its 500-row cap. A production read-only probe fetched all 19,748 neighbors of location 9906 in 24.418 s. Comparing its first 1,000 rows against two current source API pages in the same repeatable-read transaction matched all row/order/evidence fields. The response filter echo intentionally differs: the previous handler overwrote `source_file_filter` with a neighbor's path; the extracted service preserves the requested filter.
+
+Projected neighbor responses derive summaries and evidence counts from the requested direction/relation and page, with private source-file metadata retained for filtering but excluded from public results.
+
 ## Event refresh media reuse
 
 An isolated read-only production comparison built three recorded runs of event 1574 in the same repeatable-read transaction. Complete output matched (1,472,837 bytes, SHA-256 `b264a907d509db30c4485e781e0fd15a68f19144b1b0dbc39cf860cd4d42b408`). Original assembly took 18.925 s across 12 queries; the source-build-only media cache took 5.243 s across 10 queries. Its successive runs took 4.104, 0.685 and 0.150 s. This is an observed per-event rebuild improvement, not a public-calendar latency claim.

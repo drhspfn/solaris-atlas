@@ -37,6 +37,7 @@ from wuwa_story.ingestion.game_events import CLIENT_SOURCE
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.story import service
 from wuwa_story.story.cutscenes import summaries as cutscene_summaries
+from wuwa_story.story.node_related import source_related
 from wuwa_story.urls import record_url
 
 _PRIVATE_FIELDS = {
@@ -439,34 +440,12 @@ async def _node_edges(session, entity_id):
 
 async def _node_payload(session, key, locale, entity_id):
     detail = (await nodes.node_detail(key, session=session)).model_dump()
-    related = None
-    results = []
-    seen_pages = set()
-    while True:
-        page = await nodes.node_related(
-            key,
-            direction="both",
-            relation=None,
-            category=None,
-            source_file=None,
-            include_evidence=True,
-            locale=locale,
-            limit=500,
-            offset=len(results),
-            session=session,
-        )
-        if related is None:
-            related = page
-        signature = repr(page["results"])
-        if page["results"] and signature in seen_pages:
-            raise ValueError("Related-node pagination did not advance")
-        seen_pages.add(signature)
-        results.extend(page["results"])
-        if len(page["results"]) < 500:
-            break
+    related = await source_related(
+        session, entity_id, key, include_evidence=True, locale=locale, limit=None,
+    )
     return {
         "node": detail,
-        "related": {**related, "results": results, "offset": 0, "limit": len(results)},
+        "related": {**related, "limit": len(related["results"])},
         "edges": await _node_edges(session, entity_id),
         "source_record": await nodes.node_source_record(key, session=session),
     }

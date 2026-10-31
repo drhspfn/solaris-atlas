@@ -17,6 +17,7 @@ from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.search import SearchDocument
 from wuwa_story.read_models.context import source_build
 from wuwa_story.read_models.source_sections import _request_caches
+from wuwa_story.story import node_related as related_source
 
 
 def legacy_incident(identity, direction):
@@ -127,7 +128,7 @@ async def related(database, **kwargs):
 ])
 async def test_sqlite_legacy_parity(database, monkeypatch, direction, filters):
     actual = await related(database, direction=direction, **filters)
-    monkeypatch.setattr(nodes, "_incident_edges", legacy_incident)
+    monkeypatch.setattr(related_source, "_incident_edges", legacy_incident)
     assert actual == await related(database, direction=direction, **filters)
 
 
