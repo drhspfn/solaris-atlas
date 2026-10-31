@@ -19,8 +19,8 @@ The matrix's main screen is a separate composition: the actual
 The latter was independently extracted and archived (4,323,914 bytes). It has
 two rigs and two texture pages: `PnlFullBg` and `MowingTower_boss_35`.
 Both converted successfully through published `@riglyph/cli` 0.15.1. The
-converted archive is 2,735,511 bytes; the background has `idle`, and the
-character has `idle` and `idle2`.
+converted archive is 2,735,511 bytes; the background has `idle` and `idle2`,
+and the character has `idle`.
 
 All four actual rig conversions (Cubie, Fishing, matrix background, matrix
 character) reported Spine 4.1.23, no losses and no unsupported features.
