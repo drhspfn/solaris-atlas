@@ -8,13 +8,15 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 
-def convert_archive(bundle: Path, output: Path, cli: list[str]) -> None:
+def convert_archive(bundle: Path, output: Path, cli: list[str], *, skeleton_file: str | None = None) -> None:
     """Run the independent CLI; reject ambiguous or damaged source bundles."""
     with tempfile.TemporaryDirectory(prefix="riglyph-") as temporary:
         root = Path(temporary)
         with zipfile.ZipFile(bundle) as archive:
             manifest = json.loads(archive.read("manifest.json"))
             skeletons = manifest.get("skeletons", [])
+            if skeleton_file is not None:
+                skeletons = [item for item in skeletons if item['file'] == skeleton_file]
             if len(skeletons) != 1:
                 raise ValueError("Expected exactly one skeleton; multi-rig archives require explicit mapping")
             skeleton = PurePosixPath(skeletons[0]["file"])
@@ -22,6 +24,9 @@ def convert_archive(bundle: Path, output: Path, cli: list[str]) -> None:
             if str(skeleton) not in files:
                 raise ValueError("Skeleton is absent from the archive manifest")
             atlases = [PurePosixPath(name) for name in files if name.endswith(".atlas")]
+            local_atlases = [path for path in atlases if path.parent == skeleton.parent]
+            if len(local_atlases) == 1:
+                atlases = local_atlases
             if len(atlases) != 1:
                 raise ValueError("Expected one atlas; multi-atlas archives require explicit mapping")
             for name, expected in files.items():
@@ -50,7 +55,23 @@ def convert_bundle(bundle: Path, output: Path, cli: list[str]) -> Path:
     """Package the CLI output deterministically for the worker's object store."""
     with tempfile.TemporaryDirectory(prefix="riglyph-output-") as temporary:
         converted = Path(temporary) / "converted"
-        convert_archive(bundle, converted, cli)
+        with zipfile.ZipFile(bundle) as archive:
+            source_manifest = json.loads(archive.read('manifest.json'))
+        skeletons = source_manifest.get('skeletons', [])
+        if len(skeletons) <= 1:
+            convert_archive(bundle, converted, cli)
+        else:
+            components = []
+            for skeleton in skeletons:
+                component = 'components/' + hashlib.sha256(skeleton['file'].encode()).hexdigest()[:16]
+                destination = converted / component
+                convert_archive(bundle, destination, cli, skeleton_file=skeleton['file'])
+                components.append({'source': skeleton['source'], 'skeleton': skeleton['file'],
+                                   'manifest': component + '/manifest.json'})
+            (converted / 'manifest.json').write_text(json.dumps({
+                'format': 'solaris.riglyph-components.v1', 'components': components,
+                'composition_status': 'source_controls_required'}, sort_keys=True), encoding='utf-8')
+            (converted / 'source-manifest.json').write_text(json.dumps(source_manifest, sort_keys=True), encoding='utf-8')
         partial = output.with_suffix(".partial")
         try:
             with zipfile.ZipFile(partial, "w", compression=zipfile.ZIP_DEFLATED) as archive:
