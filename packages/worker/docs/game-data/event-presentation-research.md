@@ -59,3 +59,30 @@ retain their provenance and failed dependencies, determine sequence/animation
 control and rendering layers, then convert and validate the Spine bundle with
 the independent engine. Preserve a static fallback until the full composition
 is supported. Never treat an unrelated event's assets as a verified match.
+
+## Conversion and storage investigation
+
+Story Spine already uses `build_spine_bundle` and `portable_bundle`: the ZIP
+contains cooked packages, decoded JSON, binary skeletons, atlas text, texture
+pages, checksums, and where available control/presentation information. It is
+registered as `story_spine`; optional `story_spine_part` references expose
+individual browser assets. Character-trial paths are not yet scheduled through
+this worker and these ZIPs are not yet converted by Riglyph.
+
+The independent engine is now at `E:/Projects/Riglyph` (version 0.15.1 at the
+time of investigation). Its CLI supports `riglyph convert <file> --atlas
+<file> --images <directory> --out-dir <directory>`, producing a manifest, IR
+and texture pages. Its documentation states that unsupported semantics fail
+explicitly. A production worker image still needs a pinned, independently
+verified build of that CLI and its Node dependencies; a developer's local path
+must not be assumed to exist inside the worker container.
+
+Migration must handle multiple skeletons, variants, nested atlas paths and
+controller-only archives. Validate each archive, all conversions and uploaded
+objects before an atomic DB reference swap. Files are content-addressed and
+`FileReference` and `FileVariant` may share a `FileObject`, so a successful
+conversion of one owner is not evidence that the old object is safe to delete.
+Delete only after checking all remaining references and variants with suitable
+concurrency protection, and retain the original whenever conversion is
+unsupported, ambiguous or fails. Conversion and publication must be resumable
+and idempotent; incomplete outputs must never replace the source.
