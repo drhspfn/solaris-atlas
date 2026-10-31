@@ -23,6 +23,17 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
     base = root / "BinData"
     counts: dict[str, int] = {}
 
+    # RoleTrialRoleConfig is keyed by the actual RoleInfo character ID. Keep
+    # the authored paths even when its event schedule is supplied by the server.
+    trial_file = next((base / name for name in (
+        "RoleTrial/roletrialroleconfig.json", "activity/roletrialroleconfig.json"
+    ) if (base / name).is_file()), None)
+    trial_roles: dict[Any, list[tuple[int, dict[str, Any]]]] = {}
+    if trial_file:
+        for index, raw in enumerate(read_json(trial_file)):
+            if isinstance(raw, dict) and raw.get("RoleId") is not None:
+                trial_roles.setdefault(raw["RoleId"], []).append((index, raw))
+
     def rows(rel: str):
         path = base / rel
         if not path.exists():
@@ -50,6 +61,18 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
             record = {"id": identifier, "game_id": value,
                       "source": {"file": source, "row": index, "raw_path": f"$[{index}]"},
                       "raw": raw}
+            if kind == "character" and len(trial_roles.get(value, [])) == 1:
+                trial_index, trial = trial_roles[value][0]
+                record["trial_presentation"] = {
+                    "source": {"file": trial_file.relative_to(root).as_posix(), "row": trial_index},
+                    "role_id": value,
+                    "skeleton": trial.get("FormationSpineSkeletonData"),
+                    "atlas": trial.get("FormationSpineAtlas"),
+                    "spine_param": trial.get("SpineParam"),
+                    "role_stand": trial.get("RoleStand2"),
+                    "ui_config_id": trial.get("UiConfigId"),
+                    "animation": "idle",
+                }
             for field in fields:
                 record[field.lower()] = loc(raw.get(field))
             if kind == "speaker":

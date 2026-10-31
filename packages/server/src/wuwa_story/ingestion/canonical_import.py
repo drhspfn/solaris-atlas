@@ -507,6 +507,8 @@ async def _insert_typed_entities(
                                 "role_type": raw.get("RoleType"),
                                 "is_trial": raw.get("IsTrial"),
                                 "is_show": raw.get("IsShow"),
+                                **({"trial_presentation": record["trial_presentation"]}
+                                   if record.get("trial_presentation") else {}),
                             },
                         }
                     ],
