@@ -1,6 +1,7 @@
 """Follow authored UI prefab/material references to their event textures."""
 
 import asyncio
+import hashlib
 import json
 import os
 import subprocess
@@ -100,7 +101,24 @@ async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = N
     fmodel, converter = tool_path("WUWA_FMODEL_PATH"), tool_path(
         "WUWA_TEXTURE_CONVERTER_PATH")
     index = await ensure_archive_index(root, fmodel, root) if pending else None
+    batches = {}
     while pending:
+        wave = [] if any(path in batches for path in pending) else sorted(pending - seen)[:64]
+        if len(wave) > 1:
+            packages = await asyncio.to_thread(indexed_package_paths, index, [path[6:] for path in wave])
+            available_wave = [path for path in wave if path[6:] in packages]
+            if len(available_wave) > 1:
+                try:
+                    receipt = await export_assets(root, fmodel, '|'.join(
+                        packages[path[6:]].rsplit('.', 1)[0] for path in available_wave))
+                    batches.update({path: receipt for path in available_wave})
+                except BlockingIOError:
+                    raise
+                except (RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                    for path in available_wave:
+                        pending.discard(path)
+                        missing.append({'expected': path, 'status': 'dependency_failed', 'error': str(error)[:500]})
+                    continue
         source = min(pending)
         pending.remove(source)
         if source in seen:
@@ -116,11 +134,14 @@ async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = N
                     {"expected": source, "status": "not_in_client", "matches": []})
                 continue
             package = available[source[6:]]
-            receipt = await export_assets(root, fmodel, package.rsplit(".", 1)[0])
+            receipt = batches.get(source)
+            batched = receipt is not None
+            if receipt is None:
+                receipt = await export_assets(root, fmodel, package.rsplit(".", 1)[0])
             raw = receipt.parent / "files"
             output = receipt.parent / \
                 (("ui-json-sequences-v2-" if include_sequences else "ui-json-references-v2-") +
-                 _sha256(converter)[:16])
+                 _sha256(converter)[:16] + ('-' + hashlib.sha256(source.encode()).hexdigest()[:16] if batched else ''))
             output.mkdir(exist_ok=True)
             complete = output / "references.json"
             if assets is not None and include_sequences:

@@ -1,3 +1,4 @@
+import hashlib
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -15,6 +16,31 @@ def package_index(root, paths):
     log.write_text("".join(f"[File] {path}\n" for path in files) + f"[Done] Listed {len(files)} files\n",
                    encoding="utf-8")
     index_voice_paths(log)
+
+
+@pytest.mark.asyncio
+async def test_batch_export_keeps_each_packages_decoded_references_separate(tmp_path, monkeypatch):
+    from wuwa_story_worker import event_resources
+
+    paths = ['/Game/UI/Prefabs/A', '/Game/UI/Prefabs/B']
+    package_index(tmp_path, paths)
+    tool = tmp_path / 'tool'
+    tool.write_bytes(b'tool')
+    group = tmp_path / 'batch'
+    (group / 'files').mkdir(parents=True)
+    for path in paths:
+        output = group / ('ui-json-references-v2-' + event_resources._sha256(tool)[:16] +
+                          '-' + hashlib.sha256(path.encode()).hexdigest()[:16])
+        output.mkdir()
+        (output / 'references.json').write_text(json.dumps([['image', path + 'Image']]))
+    exporter = AsyncMock(return_value=group / 'manifest.json')
+    monkeypatch.setattr(event_resources, 'export_assets', exporter)
+    monkeypatch.setattr(event_resources, 'tool_path', lambda _: tool)
+    images, missing = await event_resources.prefab_images(tmp_path, paths)
+    assert missing == []
+    assert {i['path'] for i in images} == {p + 'Image' for p in paths}
+    assert exporter.await_count == 1
+    assert '|' in exporter.await_args.args[2]
 
 
 @pytest.mark.asyncio
