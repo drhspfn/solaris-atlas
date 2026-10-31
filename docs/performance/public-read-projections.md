@@ -95,3 +95,11 @@ Projected neighbor responses derive summaries and evidence counts from the reque
 An isolated read-only production comparison built three recorded runs of event 1574 in the same repeatable-read transaction. Complete output matched (1,472,837 bytes, SHA-256 `b264a907d509db30c4485e781e0fd15a68f19144b1b0dbc39cf860cd4d42b408`). Original assembly took 18.925 s across 12 queries; the source-build-only media cache took 5.243 s across 10 queries. Its successive runs took 4.104, 0.685 and 0.150 s. This is an observed per-event rebuild improvement, not a public-calendar latency claim.
 
 Exact and suffix lookups, including negative results, are reused only within one entity/locale build and separated by bucket/path. Capture-specific fallback is still evaluated for every run. Scope exit clears the cache, and ordinary public reads retain their existing uncached repository behavior. A separate candidate that narrowed full-detail JSON transfer was not merged because timings did not demonstrate a consistent improvement.
+
+## Final staged rollout observations
+
+PRs 101–105 deployed the remaining character-builder fixes, bounded map rendering, event media reuse and legacy coordinator recovery. The English/current location scope also completed and was added to the live reader allowlist alongside character, story_map and game_notice. Historical snapshots and other locales retain their configured source readers.
+
+A subsequent public HTTPS page probe returned 200 without the archive error for the character catalog (0.613 s), Denia (0.506 s), story map (0.333 s) and location catalog (0.226 s). These are single observations and may include warmed upstream caches. A separate in-container API probe returned character catalog in 1.218 s, Denia profile in 0.324 s, Denia archive in 0.237 s and story map in 0.326 s; these omit browser/network latency.
+
+The latest server/deployment-script run passed 1,078 tests with 146 skipped and the same two baseline MCP failures described above. Worker and frontend results are recorded in their sections. Events still require completion of their initial publication before reader activation; item, quest, speaker, dialogue and cutscene projection population remains staged background work. This is not a claim that every endpoint or historical version has moved to projected reads.
