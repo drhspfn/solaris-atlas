@@ -45,10 +45,18 @@ def convert_archive(bundle: Path, output: Path, cli: list[str], *, skeleton_file
                     dest.write_bytes(data)
             skel = root.joinpath(*skeleton.parts)
             atlas = root.joinpath(*atlases[0].parts)
-            subprocess.run([*cli, "convert", str(skel), "--atlas", str(atlas), "--images",
-                            str(atlas.parent), "--out-dir", str(output)], check=True, timeout=300)
+            completed = subprocess.run([*cli, "convert", str(skel), "--atlas", str(atlas), "--images",
+                                        str(atlas.parent), "--out-dir", str(output)],
+                                       check=True, timeout=300, capture_output=True, text=True)
+            response = json.loads(completed.stdout)
+            report = response.get('report') if isinstance(response, dict) else None
+            if not isinstance(report, dict) or report.get('losses') != [] or report.get('unsupported') != []:
+                raise ValueError('Riglyph conversion has missing diagnostics, losses or unsupported features')
+            if report.get('bytesConsumed') != skel.stat().st_size:
+                raise ValueError('Riglyph did not consume the complete skeleton')
             if not (output / "manifest.json").is_file() or not (output / "skeleton.ir.json").is_file():
                 raise ValueError("Riglyph did not produce a complete bundle")
+            (output / 'conversion-report.json').write_text(json.dumps(report, sort_keys=True), encoding='utf-8')
 
 
 def convert_bundle(bundle: Path, output: Path, cli: list[str]) -> Path:

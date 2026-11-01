@@ -2,6 +2,7 @@ import hashlib
 import json
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,6 +27,7 @@ def test_converter_validates_bundle_before_running_cli(tmp_path, monkeypatch):
         out.mkdir()
         (out / "manifest.json").write_text("{}")
         (out / "skeleton.ir.json").write_text("{}")
+        return SimpleNamespace(stdout=json.dumps({'report': {'losses': [], 'unsupported': [], 'bytesConsumed': 8}}))
 
     monkeypatch.setattr("wuwa_story_worker.riglyph_convert.subprocess.run", run)
     convert_archive(bundle, tmp_path / "out", ["riglyph"])
@@ -61,6 +63,8 @@ def test_multi_rig_bundle_preserves_components_and_does_not_invent_layer_order(t
         destination.mkdir(parents=True)
         (destination / 'manifest.json').write_text('{}')
         (destination / 'skeleton.ir.json').write_text('{}')
+        return SimpleNamespace(stdout=json.dumps({'report': {'losses': [], 'unsupported': [],
+                                                             'bytesConsumed': Path(args[2]).stat().st_size}}))
 
     monkeypatch.setattr('wuwa_story_worker.riglyph_convert.subprocess.run', run)
     result = convert_bundle(source, tmp_path / 'converted.zip', ['riglyph'])
@@ -70,3 +74,26 @@ def test_multi_rig_bundle_preserves_components_and_does_not_invent_layer_order(t
         assert output['composition_status'] == 'source_controls_required'
         assert all(component['manifest'] in archive.namelist() for component in output['components'])
     assert len(calls) == 2 and source.exists()
+
+
+@pytest.mark.parametrize('report', [
+    {'losses': ['deform'], 'unsupported': [], 'bytesConsumed': 4},
+    {'losses': [], 'unsupported': ['material'], 'bytesConsumed': 4},
+    {'losses': [], 'unsupported': [], 'bytesConsumed': 3},
+])
+def test_failed_semantic_conversion_keeps_source_and_publishes_no_archive(tmp_path, monkeypatch, report):
+    entries = {'rig/a.skel': b'rig!', 'rig/a.atlas': b'page'}
+    manifest = {'skeletons': [{'file': 'rig/a.skel'}], 'files': {
+        name: {'size_bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+        for name, data in entries.items()}}
+    source = tmp_path / 'source.zip'
+    with zipfile.ZipFile(source, 'w') as archive:
+        archive.writestr('manifest.json', json.dumps(manifest))
+        for name, data in entries.items():
+            archive.writestr(name, data)
+    monkeypatch.setattr('wuwa_story_worker.riglyph_convert.subprocess.run',
+                        lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps({'report': report})))
+    output = tmp_path / 'converted.zip'
+    with pytest.raises(ValueError):
+        convert_bundle(source, output, ['riglyph'])
+    assert source.exists() and not output.exists()
