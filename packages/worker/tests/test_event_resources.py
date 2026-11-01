@@ -48,7 +48,7 @@ async def test_prefab_export_does_not_hold_catalog_transaction(tmp_path, monkeyp
     from wuwa_story_worker import event_resources
 
     session = AsyncMock()
-    event = SimpleNamespace(source_data={"client": {
+    event = SimpleNamespace(source_id='activity:1', source_data={"client": {
         "download_id": "pinned", "resources": [{"path": "/Game/UI/Prefabs/Matrix"}],
     }})
     session.scalars.return_value = [event]
@@ -61,7 +61,7 @@ async def test_prefab_export_does_not_hold_catalog_transaction(tmp_path, monkeyp
         (decoded / 'prefab.json').write_text(json.dumps({'ObjectName': "SpineAtlasAsset'A'",
                                                         'ObjectPath': '/Game/UI/A.A'}))
         kwargs['assets']['/Game/UI/Prefabs/Matrix'] = {'decoded': decoded}
-        return [], []
+        return [{'path': '/Game/UI/Image/Fallback', 'role': 'prefab_texture'}], []
 
     monkeypatch.setattr(event_resources, "prefab_images", extract)
     monkeypatch.setattr(event_resources, "enqueue_event_images",
@@ -75,6 +75,9 @@ async def test_prefab_export_does_not_hold_catalog_transaction(tmp_path, monkeyp
     session.refresh.assert_awaited_once_with(event, with_for_update=True)
     assert event.source_data['client']['prefab_spine_resources'] == [
         {'source': '/Game/UI/Prefabs/Matrix', 'type': 'SpineAtlasAsset', 'path': '/Game/UI/A'}]
+    assert event.source_data['client']['animation_import']['display'] == 'static'
+    assert not event.source_data['client']['animation_import']['conversion_allowed']
+    assert event_resources.enqueue_event_images.await_args.args[2] == ['/Game/UI/Image/Fallback']
 
 
 def test_spine_references_keep_typed_paths_and_reject_other_assets():

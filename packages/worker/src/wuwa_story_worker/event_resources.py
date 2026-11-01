@@ -205,6 +205,7 @@ async def event_resources(payload, parent, session, root: Path):
     await session.commit()
     paths = set()
     entries = []
+    animation_decisions = []
     for event in events:
         client = (event.source_data or {}).get("client", {})
         if client.get("download_id") != parent["download_id"]:
@@ -216,11 +217,21 @@ async def event_resources(payload, parent, session, root: Path):
         artwork, missing = await prefab_images(root, prefabs, assets=assets, include_sequences=True)
         spine = set()
         for source, asset in assets.items():
+            if asset.get('decode_failed'):
+                continue
             for file in asset['decoded'].rglob('*.json'):
                 if file.name == 'references.json':
                     continue
-                for kind, path in spine_references(json.loads(file.read_text(encoding='utf-8-sig'))):
+                try:
+                    decoded = json.loads(file.read_text(encoding='utf-8-sig'))
+                except (OSError, ValueError):
+                    missing.append({'expected': source, 'status': 'invalid_decoded_source'})
+                    continue
+                for kind, path in spine_references(decoded):
                     spine.add((source, kind, path))
+        from wuwa_story_worker.animation_policy import assess_animation_sources
+        animation = assess_animation_sources(assets, missing, prefabs)
+        animation_decisions.append({'event': event.source_id, **animation})
         await session.refresh(event, with_for_update=True)
         client = (event.source_data or {}).get("client", {})
         if client.get("download_id") != parent["download_id"]:
@@ -231,8 +242,9 @@ async def event_resources(payload, parent, session, root: Path):
                                                                  {"source": source, "type": kind, "path": path}
                                                                  for source, kind, path in sorted(spine)],
                                                              "missing_resources": missing}}
+        event.source_data['client']['animation_import'] = animation
         await session.commit()
-        if {kind for _, kind, _ in spine} >= {'SpineAtlasAsset', 'SpineSkeletonDataAsset'}:
+        if animation['conversion_allowed']:
             from wuwa_story.config.settings import get_settings
             from wuwa_story.db.models.storage import FileReference
             from wuwa_story.storage.s3 import S3Storage
@@ -269,5 +281,6 @@ async def event_resources(payload, parent, session, root: Path):
     client = {key: parent[key]
               for key in ("asset_version", "download_id", "tier")}
     return {**client, "stage": "event_resources_ready", "events": len(events),
+            "animation_decisions": animation_decisions,
             "images": len(paths), "image_tasks": jobs, "media_report": {"entries": entries},
             "missing": len(entries)}, "partial" if entries else "completed"

@@ -403,7 +403,13 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 riglyph_failures = []
                 for target, path, kind, mime, originals in files:
                     converted = None
-                    if target['kind'] == 'spine' and os.getenv('WUWA_RIGLYPH_ENABLED', '').lower() in {'1', 'true'}:
+                    animation = None
+                    if target['kind'] == 'spine':
+                        with zipfile.ZipFile(path) as archive:
+                            animation = json.loads(archive.read('manifest.json')).get('animation_import', {
+                                'display': 'static', 'state': 'static_only', 'conversion_allowed': False,
+                                'reasons': [{'code': 'source_eligibility_unknown'}]})
+                    if animation and animation.get('conversion_allowed') and os.getenv('WUWA_RIGLYPH_ENABLED', '').lower() in {'1', 'true'}:
                         from wuwa_story_worker.riglyph_convert import convert_bundle
                         try:
                             converted = await asyncio.to_thread(
@@ -411,6 +417,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                                 ['node', os.getenv('WUWA_RIGLYPH_CLI', '/app/tools/riglyph/node_modules/@riglyph/cli/dist/cli/main.js')])
                         except (OSError, ValueError, subprocess.SubprocessError, zipfile.BadZipFile) as error:
                             riglyph_failures.append({'path': target['path'], 'error': str(error)[:500]})
+                            animation = {**animation, 'display': 'static', 'state': 'conversion_failed',
+                                         'reasons': [{'code': 'conversion_failed', 'error': str(error)[:500]}]}
                     await session.execute(text("SELECT pg_advisory_xact_lock(:id)"),
                                           {"id": target["owner"]})
                     spine_source = {}
@@ -473,7 +481,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         )
                     reference.file_id = published.id
                     playback = None
-                    if target['kind'] == 'spine' and get_settings().story_spine_playback_enabled:
+                    if target['kind'] == 'spine' and get_settings().story_spine_playback_enabled and (animation or {}).get('display') == 'animated':
                         from wuwa_story_worker.story_spine import publish_open_playback
                         playback = await publish_open_playback(session, path, target, published, service,
                                                                storage, run.id, request.asset_version)
@@ -483,6 +491,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                     reference.metadata_json = {
                         **({'playback': playback} if playback else {}),
                         **({'riglyph_file_id': converted_file.id} if converted_file else {}),
+                        **({'animation_import': animation} if animation else {}),
                         "asset_version": request.asset_version,
                         "download_id": request.download_id,
                         "language": target["language"],

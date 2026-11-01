@@ -240,6 +240,10 @@ async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentati
     # references in the prefab JSON rather than exporting that unrelated atlas.
     resource['ui_image_references'] = sorted(
         {image['path'] for image in textures} - pages)
+    from wuwa_story_worker.animation_policy import assess_animation_sources
+    resource['animation_import'] = assess_animation_sources(
+        assets, resource.get('control_sources', {}).get('missing', []),
+        direct_resources or [variant['prefab'] for variant in resource['variants']])
     icons = await build_icons(root, fmodel, converter,
                               [{'metadata_json': {'icon_source': path}}
                                   for path in sorted(pages)],
