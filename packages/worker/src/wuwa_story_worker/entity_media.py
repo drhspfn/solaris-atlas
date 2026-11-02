@@ -295,6 +295,7 @@ async def _locked_process_entity_media(payload: dict) -> None:
             raise JobDeferred("Asset workspace is in use") from error
         except Exception as error:
             await connection.rollback()
+            from wuwa_story_worker.broker import transient_job_error
             async with SessionFactory(bind=connection) as session:
                 run = await session.get(ProcessingRun, payload["run_id"])
                 if (
@@ -302,9 +303,9 @@ async def _locked_process_entity_media(payload: dict) -> None:
                     and run.metadata_json.get("payload") == payload
                     and run.status not in ("completed", "partial", "cancelled")
                 ):
-                    run.status = "failed"
+                    run.status = "waiting_dependency" if transient_job_error(error) else "failed"
                     run.error = str(error)[:2000]
-                    run.finished_at = datetime.now(UTC)
+                    run.finished_at = None if run.status == "waiting_dependency" else datetime.now(UTC)
                     await session.commit()
             raise
 
