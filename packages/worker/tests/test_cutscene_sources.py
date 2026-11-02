@@ -67,6 +67,30 @@ async def test_absent_base_movie_is_reported_for_video_package_resolution(tmp_pa
     export.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_failed_movie_batch_isolated_without_losing_other_movies(tmp_path, monkeypatch):
+    wrappers, movies = [], []
+    for name in ("Good", "Bad"):
+        wrapper = f"Client/Content/Aki/Sequence/{name}.uasset"
+        movie = f"Client/Content/Aki/Movies/{name}.mp4"
+        path = tmp_path / wrapper.replace(".uasset", ".uexp")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"filepath://./" + movie.removeprefix("Client/Content/").encode() + b"\0")
+        wrappers.append(wrapper)
+        movies.append(movie)
+    index = archive_index(tmp_path, movies)
+
+    async def export(root, executable, paths):
+        if "|" in paths or paths == movies[1]:
+            raise RuntimeError("extractor out of memory")
+        return tmp_path / "good-receipt.json"
+
+    monkeypatch.setattr(cutscene_sources, "export_assets", export)
+    result = await cutscene_sources.prepare_base_movies(tmp_path, tmp_path, wrappers, tmp_path / "fmodel", index=index)
+    assert result["receipts"] == [tmp_path / "good-receipt.json"]
+    assert result["errors"][movies[1]] == "extractor out of memory"
+
+
 @pytest.mark.parametrize("wrapper", ["../escape.uasset", "/absolute.uasset", "Client/Content/Aki/../escape.uasset"])
 def test_wrapper_paths_cannot_escape_export_root(tmp_path, wrapper):
     with pytest.raises(ValueError):
