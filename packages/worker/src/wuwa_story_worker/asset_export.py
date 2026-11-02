@@ -144,7 +144,9 @@ def _extract_files(root, executable, asset_filter, plan, output, temporary, log,
     log_text = log.read_text(encoding="utf-8", errors="replace")
     summary = re.search(r"\[Done\] Extracted (\d+) files", log_text)
     if "[Fail]" in log_text or "[Error]" in log_text or not summary or (int(summary[1]) == 0 and not allow_empty):
-        raise RuntimeError(f"FModelCLI failed or exported no files; inspect {log}")
+        failures = [line for line in log_text.splitlines() if line.startswith(("[Fail]", "[Error]"))]
+        detail = "; ".join(failures[:2])[:800]
+        raise RuntimeError(f"FModelCLI failed or exported no files; {detail}; inspect {log}")
     expected_paks = {Path(item["path"]).name.casefold() for item in plan["files"] if item["path"].endswith(".pak")}
     mounted_paks = {name.casefold() for name in re.findall(r'Pak "([^"]+)":', log_text)}
     if missing := expected_paks - mounted_paks:

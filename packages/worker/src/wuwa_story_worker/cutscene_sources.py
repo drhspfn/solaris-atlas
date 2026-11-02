@@ -71,6 +71,18 @@ async def prepare_base_movies(root: Path, assets: Path, wrapper_paths, fmodel: P
     available = await asyncio.to_thread(indexed_movie_paths, index, movies.values())
     receipts = []
     for batch in voice_filter_batches(available.values()):
-        receipts.append(await export_assets(root, fmodel, "|".join(batch)))
+        try:
+            receipts.append(await export_assets(root, fmodel, "|".join(batch)))
+        except RuntimeError:
+            # A single large movie can exhaust the extractor's memory and must
+            # not prevent unrelated cutscenes from being imported.
+            for path in batch:
+                try:
+                    receipts.append(await export_assets(root, fmodel, path))
+                except RuntimeError as error:
+                    errors[path] = str(error)
+                    logger.warning("cutscene.movie_export_failed path=%s reason=%s", path, error)
+    if errors:
+        diagnostics["errors"] = errors
     return {"receipts": receipts, "movies": movies,
             "missing": sorted(set(movies.values()) - available.keys()), **diagnostics}
