@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
 from wuwa_story.config.settings import get_settings
@@ -17,6 +18,7 @@ from wuwa_story.storage.s3 import S3Storage
 
 from wuwa_story_worker.client_assets import save_json, validate_plan, wait_workspace_lock
 from wuwa_story_worker.media_workspace import finish_writes, workspace_lease
+from wuwa_story_worker.tooling import asset_workspace
 
 _exports: dict[tuple, asyncio.Task] = {}
 
@@ -97,7 +99,12 @@ async def _finish_export(root, executable, asset_filter, upload, plan, tag, outp
     if not receipt.exists():
         # FModelCLI can exit zero after failed exports, so the log and actual files
         # must be checked before publishing a success manifest.
-        log = output / "fmodel.log"
+        # Extraction workspaces are removed after a run; retain every attempt
+        # separately so failures remain diagnosable after that cleanup.
+        workspace = root.name if root.parent.name == "patch-workspaces" and root.name.isdigit() else "shared"
+        log_dir = asset_workspace() / "export-logs" / workspace / tag
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log = log_dir / f"{uuid.uuid4().hex}.log"
         def extract() -> None:
             with tempfile.TemporaryDirectory(prefix=".export-", dir=output) as temporary:
                 _extract_files(root, executable, asset_filter, plan, output, Path(temporary), log)
