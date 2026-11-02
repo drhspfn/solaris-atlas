@@ -36,6 +36,28 @@ source = replace(source, 'var seen = new HashSet<string>(StringComparer.OrdinalI
                  'var filters = filter.Split(\'|\');\n            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);')
 source = replace(source, 'if (!string.IsNullOrEmpty(filter) && !file.Key.ToLower().Contains(filter))',
                  'if (!string.IsNullOrEmpty(filter) && !filters.Any(part => file.Key.Contains(part, StringComparison.OrdinalIgnoreCase)))')
+source = replace(source, '                    var fileData = file.Value.Read();\n', '')
+source = replace(source, '                    File.WriteAllBytes(outPath, fileData);', '''                    if (file.Key.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)
+                        && file.Value is CUE4Parse.UE4.Pak.Objects.FPakEntry pak)
+                    {
+                        const int chunkSize = 16 * 1024 * 1024;
+                        using var outputStream = File.Create(outPath);
+                        for (long offset = 0; offset < pak.UncompressedSize; offset += chunkSize)
+                        {
+                            var count = (int) Math.Min(chunkSize, pak.UncompressedSize - offset);
+                            var header = new CUE4Parse.UE4.Assets.Objects.FByteBulkDataHeader(
+                                default, count, (uint) count, offset, default);
+                            var chunk = pak.Read(header);
+                            if (chunk.Length != count) throw new IOException("Incomplete movie chunk");
+                            if (pak.UncompressedSize <= chunkSize && !chunk.SequenceEqual(pak.Read()))
+                                throw new IOException("Movie chunk differs from full extraction");
+                            outputStream.Write(chunk, 0, chunk.Length);
+                        }
+                    }
+                    else
+                    {
+                        File.WriteAllBytes(outPath, file.Value.Read());
+                    }''')
 program.write_text(source, encoding="utf-8")
 project = fmodel / "FModelCLI/FModelCLI.csproj"
 source = project.read_text(encoding="utf-8-sig")
