@@ -69,6 +69,30 @@ def test_missing_localization_is_reported_without_inventing_a_title(tmp_path):
     assert client_event_record(catalog, "2:102000009")["locales"] == {}
 
 
+def test_matrix_entry_follows_controller_key_without_module_tag(tmp_path):
+    config = fixture_config(tmp_path)
+    builder = flatbuffers.Builder(128)
+    module = builder.CreateString('NewTowerClimbing')
+    builder.StartObject(2)
+    builder.PrependInt32Slot(0, 33, 0)
+    builder.PrependUOffsetTRelativeSlot(1, module, 0)
+    builder.Finish(builder.EndObject())
+    with sqlite3.connect(config / 'db_activity.db') as db:
+        db.execute('CREATE TABLE activitysplitpak (BinData BLOB)')
+        db.execute('INSERT INTO activitysplitpak VALUES (?)', (bytes(builder.Output()),))
+    builder = flatbuffers.Builder(128)
+    path = builder.CreateString('/Game/UI/Prefabs/MatrixEntry.MatrixEntry')
+    builder.StartObject(5)
+    builder.PrependUOffsetTRelativeSlot(1, path, 0)
+    builder.Finish(builder.EndObject())
+    with sqlite3.connect(config / 'db_ui_resource.db') as db:
+        db.execute('CREATE TABLE uiresource (Id TEXT, BinData BLOB)')
+        db.execute('INSERT INTO uiresource VALUES (?, ?)',
+                   ('UiItem_ActivityMowingTower2', bytes(builder.Output())))
+    record = read_event_catalog(config)['102000009']
+    assert any(resource['path'] == '/Game/UI/Prefabs/MatrixEntry' for resource in record['resources'])
+
+
 @pytest.mark.parametrize("path", ["/Game/../Secret", "Common/Event", ""])
 def test_invalid_texture_paths_are_not_used(path):
     assert texture_path(path) is None

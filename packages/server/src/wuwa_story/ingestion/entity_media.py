@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
+from wuwa_story.db.models.core import Character
 from wuwa_story.db.models.graph import Node, NodeRevision
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
@@ -124,6 +125,32 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
         else:
             images = sorted(set().union(*(image_paths(row) for row in rows)))
         if "image" in request.kinds:
+            if kind == 'character':
+                character_metadata = await session.scalar(select(Character.metadata_json).where(Character.node_id == node.id))
+                presentation = (character_metadata or {}).get('trial_presentation')
+                trial_rows = []
+                if presentation and presentation.get('role_id') == int(identifier):
+                    trial_rows = [{'FormationSpineSkeletonData': presentation.get('skeleton'),
+                                   'FormationSpineAtlas': presentation.get('atlas')}]
+                else:
+                    for source_path in ('BinData/RoleTrial/roletrialroleconfig.json',
+                                        'BinData/activity/roletrialroleconfig.json'):
+                        trial_rows = await records(source_path, 'RoleId', int(identifier))
+                        if trial_rows:
+                            break
+                if len(trial_rows) == 1:
+                    trial = trial_rows[0]
+                    resources = sorted({value.split('.')[0] for field in (
+                        'FormationSpineSkeletonData', 'FormationSpineAtlas')
+                        if isinstance(value := trial.get(field), str)
+                        and value.startswith('/Game/') and '..' not in value.split('/')})
+                    if resources:
+                        targets.append({'owner': node.id, 'release_id': release_id,
+                                        'path': f'character_trial:{identifier}', 'resource_id': None,
+                                        'kind': 'spine', 'language': None,
+                                        'reference_type': 'character_trial_spine',
+                                        'spine_recipe': SPINE_RECIPE,
+                                        'direct_resources': resources})
             targets.extend(
                 {
                     "owner": node.id,

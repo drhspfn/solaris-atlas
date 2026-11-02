@@ -18,6 +18,7 @@ htmlcov/
 # Package-local environments and frontend artifacts
 packages/*/.venv/
 packages/*/node_modules/
+packages/worker/docker/riglyph/node_modules/
 packages/*/dist/
 packages/*/.vite/
 packages/*/.next/

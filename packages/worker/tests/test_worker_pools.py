@@ -35,6 +35,30 @@ def delivery(body=b'{"run_id":1,"kind":"voices","job_type":"media.release"}', **
                            nack=AsyncMock(), **kwargs)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exhausted", [False, True])
+async def test_rate_limit_retry_is_bounded(monkeypatch, exhausted):
+    class RateLimit(Exception):
+        response = {"ResponseMetadata": {"HTTPStatusCode": 429}}
+
+    async def execute(payload, handler):
+        await handler(payload)
+
+    monkeypatch.setattr(broker, "execute_media_job", execute)
+    monkeypatch.setattr(broker, "record_job_failure", AsyncMock())
+    monkeypatch.setattr(broker, "notify_job_result", AsyncMock())
+    async with consumer(monkeypatch, "pool_audio", AsyncMock(side_effect=RateLimit())) as (callback, channel, *_):
+        message = delivery()
+        message.headers["db_retry_count"] = 3 if exhausted else 2
+        await callback(message)
+        if exhausted:
+            message.nack.assert_awaited_once_with(requeue=False)
+            broker.record_job_failure.assert_awaited_once()
+        else:
+            assert channel.default_exchange.publish.call_args.args[0].headers["db_retry_count"] == 3
+            message.ack.assert_awaited_once()
+
+
 @pytest.mark.parametrize("payload,pool", [
     ({"kind": "prepare"}, "coordinator"),
     ({"kind": "event_catalog"}, "image"),

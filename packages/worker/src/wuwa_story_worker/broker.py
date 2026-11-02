@@ -30,6 +30,18 @@ JobHandler = Callable[[dict[str, Any]], Awaitable[None]]
 MEDIA_QUEUES = {"release_media", "event_media", "entity_media", "release_images", "entity_images"}
 
 
+def transient_job_error(error: Exception) -> bool:
+    if isinstance(error, DBAPIError):
+        code = getattr(error.orig, "sqlstate", None)
+        return (error.connection_invalidated or code in {"40P01", "40001", "55P03", "57014", "53300", "57P01"}
+                or bool(code and code.startswith("08")))
+    response = getattr(error, "response", None)
+    if isinstance(response, dict):
+        status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        return status == 429 or isinstance(status, int) and 500 <= status <= 599
+    return isinstance(error, (TimeoutError, ConnectionError))
+
+
 async def record_job_failure(payload, processor_key, error):
     if not isinstance(payload, dict) or payload.get("run_id") is None:
         return
@@ -326,10 +338,7 @@ async def consume_jobs(
                             await message.nack(requeue=True)
                     except DBAPIError as error:
                         retries = int((message.headers or {}).get("db_retry_count", 0))
-                        code = getattr(error.orig, "sqlstate", None)
-                        transient = (error.connection_invalidated or
-                                     code in {"40P01", "40001", "55P03", "57014", "53300", "57P01"}
-                                     or bool(code and code.startswith("08")))
+                        transient = transient_job_error(error)
                         if transient and retries < 3:
                             try:
                                 if payload.get("run_id") is not None:
@@ -347,6 +356,17 @@ async def consume_jobs(
                             await notify_job_result(payload.get("run_id"), processor_key, str(error))
                             await message.nack(requeue=False)
                     except Exception as error:
+                        retries = int((message.headers or {}).get("db_retry_count", 0))
+                        if transient_job_error(error) and retries < 3:
+                            try:
+                                if payload.get("run_id") is not None:
+                                    await update_admin_run(payload["run_id"], processor_key, "waiting_dependency",
+                                                           error=f"Transient failure; retry {retries + 1}/3: {type(error).__name__}")
+                                await defer_job(job_channel, job_key, message, retry_count=retries + 1)
+                            except Exception:
+                                logger.exception("Could not defer transient retry")
+                                await message.nack(requeue=True)
+                            return
                         logger.exception(
                             "Worker job failed (%s, id=%s); moving it to the failed queue",
                             job_key,

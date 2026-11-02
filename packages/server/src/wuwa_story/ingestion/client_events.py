@@ -48,7 +48,7 @@ async def store_client_events(session, records: dict, asset_version: str, downlo
         if event.source == SOURCE:
             provenance.update(legacy_source=event.source, legacy_source_id=event.source_id)
         if previous.get("download_id") == download_id:
-            for field in ("prefab_artwork", "missing_resources"):
+            for field in ("prefab_artwork", "prefab_spine_resources", "missing_resources", "animation_import"):
                 if field in previous:
                     presentation[field] = previous[field]
         event.source, event.source_id = CLIENT_SOURCE, identity

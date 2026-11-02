@@ -1,3 +1,4 @@
+import hashlib
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -18,19 +19,49 @@ def package_index(root, paths):
 
 
 @pytest.mark.asyncio
+async def test_batch_export_keeps_each_packages_decoded_references_separate(tmp_path, monkeypatch):
+    from wuwa_story_worker import event_resources
+
+    paths = ['/Game/UI/Prefabs/A', '/Game/UI/Prefabs/B']
+    package_index(tmp_path, paths)
+    tool = tmp_path / 'tool'
+    tool.write_bytes(b'tool')
+    group = tmp_path / 'batch'
+    (group / 'files').mkdir(parents=True)
+    for path in paths:
+        output = group / ('ui-json-references-v2-' + event_resources._sha256(tool)[:16] +
+                          '-' + hashlib.sha256(path.encode()).hexdigest()[:16])
+        output.mkdir()
+        (output / 'references.json').write_text(json.dumps([['image', path + 'Image']]))
+    exporter = AsyncMock(return_value=group / 'manifest.json')
+    monkeypatch.setattr(event_resources, 'export_assets', exporter)
+    monkeypatch.setattr(event_resources, 'tool_path', lambda _: tool)
+    images, missing = await event_resources.prefab_images(tmp_path, paths)
+    assert missing == []
+    assert {i['path'] for i in images} == {p + 'Image' for p in paths}
+    assert exporter.await_count == 1
+    assert '|' in exporter.await_args.args[2]
+
+
+@pytest.mark.asyncio
 async def test_prefab_export_does_not_hold_catalog_transaction(tmp_path, monkeypatch):
     from wuwa_story_worker import event_resources
 
     session = AsyncMock()
-    event = SimpleNamespace(source_data={"client": {
+    event = SimpleNamespace(source_id='activity:1', source_data={"client": {
         "download_id": "pinned", "resources": [{"path": "/Game/UI/Prefabs/Matrix"}],
     }})
     session.scalars.return_value = [event]
 
-    async def extract(*args):
+    async def extract(*args, **kwargs):
         session.commit.assert_awaited_once()
         session.refresh.assert_not_awaited()
-        return [], []
+        decoded = tmp_path / 'decoded'
+        decoded.mkdir()
+        (decoded / 'prefab.json').write_text(json.dumps({'ObjectName': "SpineAtlasAsset'A'",
+                                                        'ObjectPath': '/Game/UI/A.A'}))
+        kwargs['assets']['/Game/UI/Prefabs/Matrix'] = {'decoded': decoded}
+        return [{'path': '/Game/UI/Image/Fallback', 'role': 'prefab_texture'}], []
 
     monkeypatch.setattr(event_resources, "prefab_images", extract)
     monkeypatch.setattr(event_resources, "enqueue_event_images",
@@ -42,6 +73,24 @@ async def test_prefab_export_does_not_hold_catalog_transaction(tmp_path, monkeyp
     )
     assert status == "completed"
     session.refresh.assert_awaited_once_with(event, with_for_update=True)
+    assert event.source_data['client']['prefab_spine_resources'] == [
+        {'source': '/Game/UI/Prefabs/Matrix', 'type': 'SpineAtlasAsset', 'path': '/Game/UI/A'}]
+    assert event.source_data['client']['animation_import']['display'] == 'static'
+    assert not event.source_data['client']['animation_import']['conversion_allowed']
+    assert event_resources.enqueue_event_images.await_args.args[2] == ['/Game/UI/Image/Fallback']
+
+
+def test_spine_references_keep_typed_paths_and_reject_other_assets():
+    from wuwa_story_worker.event_resources import spine_references
+
+    value = {'items': [
+        {'ObjectName': "SpineAtlasAsset'A'", 'ObjectPath': 'Client/Content/UI/A.A'},
+        {'ObjectName': "SpineSkeletonDataAsset'B'", 'ObjectPath': '/Game/UI/B.B'},
+        {'ObjectName': "Texture2D'C'", 'ObjectPath': '/Game/UI/C.C'},
+        {'ObjectName': "SpineAtlasAsset'X'", 'ObjectPath': '/Game/../X'},
+    ]}
+    assert set(spine_references(value)) == {
+        ('SpineAtlasAsset', '/Game/UI/A'), ('SpineSkeletonDataAsset', '/Game/UI/B')}
 
 
 def test_prefab_references_keep_actual_textures_and_skip_script_audio_and_cycles():

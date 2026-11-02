@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from wuwa_story.ingestion.entity_media import flow_background_paths, flow_spine_ids
-from wuwa_story.ingestion.spine_presentation import flow_presentation
+from wuwa_story.ingestion.spine_presentation import SPINE_RECIPE, flow_presentation
 
 
 def test_score_keeps_branches_audio_and_external_cues_without_inventing_timing():
@@ -85,5 +85,5 @@ async def test_sequence_only_flow_is_not_dropped_when_it_has_no_spine_background
                            entities=[node.canonical_key], kinds=['image'])
     target, = await entity_media_targets(session, request)
     assert target['owner'] == 5 and target['reference_type'] == 'story_presentation'
-    assert target['resource_id'] is None and target['spine_recipe'] == 3
+    assert target['resource_id'] is None and target['spine_recipe'] == SPINE_RECIPE
     assert target['presentation']['cues'][0]['kind'] == 'sequence'

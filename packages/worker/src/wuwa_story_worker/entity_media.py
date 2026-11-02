@@ -169,7 +169,9 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
         from wuwa_story_worker.story_spine import build_spine_bundle
         try:
             bundle, originals = await build_spine_bundle(root, target['resource_id'], fmodel, converter,
-                                                         presentation=target.get('presentation'))
+                                                         presentation=target.get('presentation'),
+                                                         **({'direct_resources': target['direct_resources']}
+                                                            if target.get('direct_resources') else {}))
         except BlockingIOError:
             raise
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
@@ -293,6 +295,7 @@ async def _locked_process_entity_media(payload: dict) -> None:
             raise JobDeferred("Asset workspace is in use") from error
         except Exception as error:
             await connection.rollback()
+            from wuwa_story_worker.broker import transient_job_error
             async with SessionFactory(bind=connection) as session:
                 run = await session.get(ProcessingRun, payload["run_id"])
                 if (
@@ -300,9 +303,9 @@ async def _locked_process_entity_media(payload: dict) -> None:
                     and run.metadata_json.get("payload") == payload
                     and run.status not in ("completed", "partial", "cancelled")
                 ):
-                    run.status = "failed"
+                    run.status = "waiting_dependency" if transient_job_error(error) else "failed"
                     run.error = str(error)[:2000]
-                    run.finished_at = datetime.now(UTC)
+                    run.finished_at = None if run.status == "waiting_dependency" else datetime.now(UTC)
                     await session.commit()
             raise
 
@@ -398,7 +401,25 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 published_count = 0
                 unsupported_spine = []
                 incomplete_spine_controls = []
+                riglyph_failures = []
                 for target, path, kind, mime, originals in files:
+                    converted = None
+                    animation = None
+                    if target['kind'] == 'spine':
+                        with zipfile.ZipFile(path) as archive:
+                            animation = json.loads(archive.read('manifest.json')).get('animation_import', {
+                                'display': 'static', 'state': 'static_only', 'conversion_allowed': False,
+                                'reasons': [{'code': 'source_eligibility_unknown'}]})
+                    if animation and animation.get('conversion_allowed') and os.getenv('WUWA_RIGLYPH_ENABLED', '').lower() in {'1', 'true'}:
+                        from wuwa_story_worker.riglyph_convert import convert_bundle
+                        try:
+                            converted = await asyncio.to_thread(
+                                convert_bundle, path, path.with_suffix('.riglyph.zip'),
+                                ['node', os.getenv('WUWA_RIGLYPH_CLI', '/app/tools/riglyph/node_modules/@riglyph/cli/dist/cli/main.js')])
+                        except (OSError, ValueError, subprocess.SubprocessError, zipfile.BadZipFile) as error:
+                            riglyph_failures.append({'path': target['path'], 'error': str(error)[:500]})
+                            animation = {**animation, 'display': 'static', 'state': 'conversion_failed',
+                                         'reasons': [{'code': 'conversion_failed', 'error': str(error)[:500]}]}
                     await session.execute(text("SELECT pg_advisory_xact_lock(:id)"),
                                           {"id": target["owner"]})
                     spine_source = {}
@@ -416,6 +437,10 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                             (target["path"], target["language"])),
                     )
                     published = await service.register_file(session, path, kind, mime_type=mime)
+                    converted_file = None
+                    if converted is not None:
+                        converted_file = await service.register_file(session, converted, 'unknown', mime_type='application/zip')
+                        await service.register_variant(session, published.id, converted_file.id, 'riglyph_bundle', run.id)
                     for original_path in originals:
                         original = await service.register_file(
                             session,
@@ -457,7 +482,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         )
                     reference.file_id = published.id
                     playback = None
-                    if target['kind'] == 'spine' and get_settings().story_spine_playback_enabled:
+                    if target['kind'] == 'spine' and get_settings().story_spine_playback_enabled and (animation or {}).get('display') == 'animated':
                         from wuwa_story_worker.story_spine import publish_open_playback
                         playback = await publish_open_playback(session, path, target, published, service,
                                                                storage, run.id, request.asset_version)
@@ -466,6 +491,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                                 {'path': target['path'], 'diagnostics': playback['unsupported']})
                     reference.metadata_json = {
                         **({'playback': playback} if playback else {}),
+                        **({'riglyph_file_id': converted_file.id} if converted_file else {}),
+                        **({'animation_import': animation} if animation else {}),
                         "asset_version": request.asset_version,
                         "download_id": request.download_id,
                         "language": target["language"],
@@ -477,13 +504,14 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                                       "published": published_count + 1}
                     await session.commit()
                     published_count += 1
-                run.status = "partial" if missing or unsupported_spine or incomplete_spine_controls else "completed"
+                run.status = "partial" if missing or unsupported_spine or incomplete_spine_controls or riglyph_failures else "completed"
                 run.raw_output = {
                     "media_report": report,
                     "skipped": skipped,
                     "published": published_count,
                     "images": sum(t["kind"] == "image" for t, *_ in files),
                     "unsupported_spine": unsupported_spine,
+                    "riglyph_failures": riglyph_failures,
                     "incomplete_spine_controls": incomplete_spine_controls,
                     "spine_bundles": sum(t['kind'] == 'spine' for t, *_ in files),
                     "voice_tracks": sum(t["kind"] == "voice" for t, *_ in files),

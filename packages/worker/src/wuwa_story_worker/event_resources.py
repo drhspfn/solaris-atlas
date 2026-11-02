@@ -1,6 +1,7 @@
 """Follow authored UI prefab/material references to their event textures."""
 
 import asyncio
+import hashlib
 import json
 import os
 import subprocess
@@ -22,6 +23,23 @@ DEPENDENCY_TYPES = {"PrefabAsset", "Material", "MaterialInstanceConstant", "Spin
                     "SpineSkeletonDataAsset"}
 SEQUENCE_TYPES = {'SequenceData', 'LevelSequence',
                   'BP_SequenceData_C', 'BP_SequenceData_Generated_C'}
+
+
+def spine_references(value):
+    """Find explicitly typed Spine dependencies in decoded event packages."""
+    if isinstance(value, dict):
+        kind = value.get('ObjectName', '').partition("'")[0]
+        raw = value.get('ObjectPath') or value.get('AssetPathName')
+        if isinstance(raw, str):
+            if raw.startswith('Client/Content/'):
+                raw = '/Game/' + raw.removeprefix('Client/Content/')
+            if kind in {'SpineAtlasAsset', 'SpineSkeletonDataAsset'} and (path := texture_path(raw)):
+                yield kind, path
+        for child in value.values():
+            yield from spine_references(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from spine_references(child)
 
 
 async def annotate_image_packages(root: Path, records: dict) -> list[dict]:
@@ -83,7 +101,24 @@ async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = N
     fmodel, converter = tool_path("WUWA_FMODEL_PATH"), tool_path(
         "WUWA_TEXTURE_CONVERTER_PATH")
     index = await ensure_archive_index(root, fmodel, root) if pending else None
+    batches = {}
     while pending:
+        wave = [] if any(path in batches for path in pending) else sorted(pending - seen)[:64]
+        if len(wave) > 1:
+            packages = await asyncio.to_thread(indexed_package_paths, index, [path[6:] for path in wave])
+            available_wave = [path for path in wave if path[6:] in packages]
+            if len(available_wave) > 1:
+                try:
+                    receipt = await export_assets(root, fmodel, '|'.join(
+                        packages[path[6:]].rsplit('.', 1)[0] for path in available_wave))
+                    batches.update({path: receipt for path in available_wave})
+                except BlockingIOError:
+                    raise
+                except (RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                    for path in available_wave:
+                        pending.discard(path)
+                        missing.append({'expected': path, 'status': 'dependency_failed', 'error': str(error)[:500]})
+                    continue
         source = min(pending)
         pending.remove(source)
         if source in seen:
@@ -99,11 +134,14 @@ async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = N
                     {"expected": source, "status": "not_in_client", "matches": []})
                 continue
             package = available[source[6:]]
-            receipt = await export_assets(root, fmodel, package.rsplit(".", 1)[0])
+            receipt = batches.get(source)
+            batched = receipt is not None
+            if receipt is None:
+                receipt = await export_assets(root, fmodel, package.rsplit(".", 1)[0])
             raw = receipt.parent / "files"
             output = receipt.parent / \
                 (("ui-json-sequences-v2-" if include_sequences else "ui-json-references-v2-") +
-                 _sha256(converter)[:16])
+                 _sha256(converter)[:16] + ('-' + hashlib.sha256(source.encode()).hexdigest()[:16] if batched else ''))
             output.mkdir(exist_ok=True)
             complete = output / "references.json"
             if assets is not None and include_sequences:
@@ -167,6 +205,7 @@ async def event_resources(payload, parent, session, root: Path):
     await session.commit()
     paths = set()
     entries = []
+    animation_decisions = []
     for event in events:
         client = (event.source_data or {}).get("client", {})
         if client.get("download_id") != parent["download_id"]:
@@ -174,15 +213,67 @@ async def event_resources(payload, parent, session, root: Path):
                 "Event UI dependency request belongs to another client catalog")
         prefabs = sorted({resource["path"] for resource in client.get("resources", [])
                           if "/Prefabs/" in resource["path"]})
-        artwork, missing = await prefab_images(root, prefabs)
+        assets = {}
+        artwork, missing = await prefab_images(root, prefabs, assets=assets, include_sequences=True)
+        spine = set()
+        for source, asset in assets.items():
+            if asset.get('decode_failed'):
+                continue
+            for file in asset['decoded'].rglob('*.json'):
+                if file.name == 'references.json':
+                    continue
+                try:
+                    decoded = json.loads(file.read_text(encoding='utf-8-sig'))
+                except (OSError, ValueError):
+                    missing.append({'expected': source, 'status': 'invalid_decoded_source'})
+                    continue
+                for kind, path in spine_references(decoded):
+                    spine.add((source, kind, path))
+        from wuwa_story_worker.animation_policy import assess_animation_sources
+        animation = assess_animation_sources(assets, missing, prefabs)
+        animation_decisions.append({'event': event.source_id, **animation})
         await session.refresh(event, with_for_update=True)
         client = (event.source_data or {}).get("client", {})
         if client.get("download_id") != parent["download_id"]:
             raise ValueError(
                 "A newer client catalog replaced this event during UI extraction")
         event.source_data = {**event.source_data, "client": {**client, "prefab_artwork": artwork,
+                                                             "prefab_spine_resources": [
+                                                                 {"source": source, "type": kind, "path": path}
+                                                                 for source, kind, path in sorted(spine)],
                                                              "missing_resources": missing}}
+        event.source_data['client']['animation_import'] = animation
         await session.commit()
+        if animation['conversion_allowed']:
+            from wuwa_story.config.settings import get_settings
+            from wuwa_story.db.models.storage import FileReference
+            from wuwa_story.storage.s3 import S3Storage
+            from wuwa_story.storage.service import FileRegistrationService
+
+            from wuwa_story_worker.story_spine import build_spine_bundle
+
+            bundle, _ = await build_spine_bundle(
+                root, None, tool_path('WUWA_FMODEL_PATH'), tool_path('WUWA_TEXTURE_CONVERTER_PATH'),
+                direct_resources=prefabs)
+            storage = S3Storage(get_settings())
+            service = FileRegistrationService(storage)
+            prepared = await service.prepare_file(bundle, 'application/zip')
+            await session.refresh(event, with_for_update=True)
+            if (event.source_data or {}).get('client', {}).get('download_id') != parent['download_id']:
+                raise ValueError('Event catalog changed during Spine extraction')
+            published = await service.register_file(session, bundle, 'unknown', mime_type='application/zip', prepared=prepared)
+            reference = await session.scalar(select(FileReference).where(
+                FileReference.reference_type == 'event_spine',
+                FileReference.source_path == event.source_id,
+                FileReference.source_name == parent['download_id']))
+            if reference is None:
+                reference = await service.register_reference(
+                    session, file_id=published.id, reference_type='event_spine',
+                    source_path=event.source_id, source_name=parent['download_id'])
+            reference.file_id = published.id
+            reference.metadata_json = {'asset_version': parent['asset_version'],
+                                       'download_id': parent['download_id'], 'event_id': event.id}
+            await session.commit()
         paths.update(image["path"] for image in artwork)
         entries.extend(missing)
     await session.commit()
@@ -190,5 +281,6 @@ async def event_resources(payload, parent, session, root: Path):
     client = {key: parent[key]
               for key in ("asset_version", "download_id", "tier")}
     return {**client, "stage": "event_resources_ready", "events": len(events),
+            "animation_decisions": animation_decisions,
             "images": len(paths), "image_tasks": jobs, "media_report": {"entries": entries},
             "missing": len(entries)}, "partial" if entries else "completed"

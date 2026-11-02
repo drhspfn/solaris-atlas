@@ -971,5 +971,7 @@ async def _process_release_media(payload):
             raise JobDeferred("Asset workspace is in use") from error
         except Exception as error:
             await connection.rollback()
-            await update_admin_run(payload["run_id"], "release_media", "failed", error=f"{type(error).__name__}: {error}"[:2000])
+            from wuwa_story_worker.broker import transient_job_error
+            status = "waiting_dependency" if transient_job_error(error) else "failed"
+            await update_admin_run(payload["run_id"], "release_media", status, error=f"{type(error).__name__}: {error}"[:2000])
             raise
