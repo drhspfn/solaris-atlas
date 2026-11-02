@@ -77,7 +77,8 @@ async def enqueue_failed_release_media(session, release_id: int, *, kinds: set[s
 
     Defaults: failed/partial cutscenes and failed images/event catalogs, including
     leaves blocked by a failed prerequisite. Explicit
-    statuses may select failed/partial for any requested supported kind. Active
+    statuses may select failed/partial for any requested supported kind. Audio
+    kinds must be selected explicitly and receive fresh voice-package dependencies. Active
     retry graphs are reused; unconfirmed publication is retried in the same graph
     while its workspace is valid. A failed retry leaf becomes a new source attempt.
 
