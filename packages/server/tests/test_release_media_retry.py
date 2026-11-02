@@ -64,6 +64,21 @@ class Session:
 
 
 @pytest.mark.asyncio
+async def test_audio_retry_recreates_voice_dependency_and_skips_completed(monkeypatch):
+    session = Session([old_run(10, "character_voices", "failed", ["character:1"]),
+                       old_run(11, "voices", "blocked", ["voice_a"]),
+                       old_run(12, "voices", "completed", ["voice_b"])])
+    monkeypatch.setattr(retry, "publish_media_job", AsyncMock())
+    result = await retry.enqueue_failed_release_media(session, 4, kinds={"voices", "character_voices"})
+    assert result["retry_of"] == [10, 11]
+    by_kind = {retry._request(run)["kind"]: run for run in session.added}
+    assert set(by_kind) == {"prepare", "voice_packages", "voices", "character_voices"}
+    assert retry._request(by_kind["voice_packages"])["parent_id"] == by_kind["prepare"].id
+    assert retry._request(by_kind["voices"])["parent_id"] == by_kind["voice_packages"].id
+    assert retry._request(by_kind["character_voices"])["parent_id"] == by_kind["voice_packages"].id
+
+
+@pytest.mark.asyncio
 async def test_default_retry_allocates_only_selected_failures_and_required_prerequisites(monkeypatch):
     originals = [old_run(index, "cutscene", "completed", [f"good-{index}"]) for index in range(1, 201)]
     originals += [old_run(210, "cutscene", "failed", ["CG_A"]),
@@ -256,7 +271,7 @@ async def test_gc_winning_before_resume_lock_creates_fresh_prerequisites(monkeyp
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kwargs", [{"kinds": {"voices"}}, {"kinds": set()},
+@pytest.mark.parametrize("kwargs", [{"kinds": {"unsupported"}}, {"kinds": set()},
                                    {"statuses": {"cancelled"}}, {"statuses": set()}])
 async def test_unsupported_scope_fails_before_database_work(kwargs):
     session = AsyncMock()

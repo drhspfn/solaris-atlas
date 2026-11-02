@@ -14,6 +14,7 @@ from wuwa_story.ingestion.release_media import EVENT_QUEUE, PROCESSOR, QUEUE
 logger = logging.getLogger(__name__)
 DEFAULT_STATUSES = {"cutscene": {"failed", "partial", "blocked"},
                     "images": {"failed", "blocked"}, "event_catalog": {"failed", "blocked"}}
+AUDIO_STATUSES = {"voices": {"failed", "blocked"}, "character_voices": {"failed", "blocked"}}
 ACTIVE = {"pending", "queued", "running", "waiting_dependency"}
 
 
@@ -89,8 +90,9 @@ async def enqueue_failed_release_media(session, release_id: int, *, kinds: set[s
     statuses and request format. No live jobs are cancelled or reset here.
     """
     kinds = set(DEFAULT_STATUSES) if kinds is None else set(kinds)
-    if not kinds or not kinds <= DEFAULT_STATUSES.keys():
-        raise ValueError("Retry kinds must be cutscene, images or event_catalog")
+    allowed_statuses = DEFAULT_STATUSES | AUDIO_STATUSES
+    if not kinds or not kinds <= allowed_statuses.keys():
+        raise ValueError("Unsupported retry kind")
     if statuses is not None and (not statuses or not set(statuses) <= {"failed", "partial"}):
         raise ValueError("Retry statuses must be failed or partial")
     if type(release_id) is not int or release_id < 1:
@@ -118,7 +120,7 @@ async def enqueue_failed_release_media(session, release_id: int, *, kinds: set[s
         if run.status == "completed":
             continue
         kind = _request(run)["kind"]
-        eligible = run.status in (set(statuses) if statuses is not None else DEFAULT_STATUSES[kind])
+        eligible = run.status in (set(statuses) if statuses is not None else allowed_statuses[kind])
         root_id = (run.metadata_json or {}).get("retry_root_id")
         graph = graphs.get(root_id, [])
         recoverable = any(item.status == "enqueue_failed" for item in graph)
@@ -164,16 +166,22 @@ async def enqueue_failed_release_media(session, release_id: int, *, kinds: set[s
         runs.append(root)
         cutscenes = [run for run in sources if _request(run)["kind"] == "cutscene"]
         assets = None
+        audio = [run for run in sources if _request(run)["kind"] in AUDIO_STATUSES]
+        voices = None
         if cutscenes:
             source_ids = [run.id for run in cutscenes]
             targets = sorted({target for run in cutscenes for target in _request(run)["targets"]})
             assets = await _new_run(session, processor, release, "cutscene_assets", targets, root.id, source_ids, root.id)
+            runs.append(assets)
+        if cutscenes or audio:
+            source_ids = [run.id for run in [*cutscenes, *audio]]
             voices = await _new_run(session, processor, release, "voice_packages", [], root.id, source_ids, root.id)
-            runs.extend([assets, voices])
+            runs.append(voices)
         for source in sources:
             request = _request(source)
+            parent = assets if request["kind"] == "cutscene" else voices if request["kind"] in AUDIO_STATUSES else root
             runs.append(await _new_run(session, processor, release, request["kind"], list(request["targets"]),
-                                       assets.id if request["kind"] == "cutscene" else root.id, source.id, root.id))
+                                       parent.id, source.id, root.id))
     # GC and broker consumers see every prerequisite and descendant atomically.
     await session.commit()
     queued, failed = await _publish_pending(session, release_id, runs)
