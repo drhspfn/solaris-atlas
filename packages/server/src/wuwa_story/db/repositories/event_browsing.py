@@ -10,7 +10,8 @@ from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
-from wuwa_story.ingestion.game_events import CLIENT_SOURCE
+from wuwa_story.events.domain import CLIENT_SOURCE
+from wuwa_story.events.domain import PREVIEW_ROLES as _PREVIEW_ROLES
 
 
 async def read_event_runs(
@@ -68,13 +69,6 @@ async def read_event_runs(
     return rows
 
 
-# Only these roles participate in the existing calendar preview/background rules.
-_PREVIEW_ROLES = (
-    "content", "tab_selected", "tab", "featured_portrait", "featured_weapon",
-    "featured_card", "content_background", "background",
-)
-
-
 def _summary_source(source, locale):
     def field(*keys):
         value = source
@@ -84,16 +78,20 @@ def _summary_source(source, locale):
 
     predicate = " || ".join(f'@.role == "{role}"' for role in _PREVIEW_ROLES)
     client = func.jsonb_build_object(
-        "download_id", func.coalesce(field("client", "download_id"), func.to_jsonb("")),
+        "download_id", func.coalesce(
+            field("client", "download_id"), func.to_jsonb("")),
         "asset_version", field("client", "asset_version"),
-        "hidden", func.coalesce(field("client", "hidden"), func.to_jsonb(False)),
+        "hidden", func.coalesce(
+            field("client", "hidden"), func.to_jsonb(False)),
         "convene_type", field("client", "convene_type"),
         "locales", func.jsonb_build_object(
             "en", field("client", "locales", "en"),
             locale, field("client", "locales", locale),
         ),
-        "artwork", func.jsonb_path_query_array(source, cast(f"$.client.artwork[*] ? ({predicate})", JSONPATH)),
-        "prefab_artwork", func.jsonb_path_query_array(source, cast(f"$.client.prefab_artwork[*] ? ({predicate})", JSONPATH)),
+        "artwork", func.jsonb_path_query_array(source, cast(
+            f"$.client.artwork[*] ? ({predicate})", JSONPATH)),
+        "prefab_artwork", func.jsonb_path_query_array(source, cast(
+            f"$.client.prefab_artwork[*] ? ({predicate})", JSONPATH)),
     )
     return func.jsonb_build_object(
         "client", case(((func.jsonb_typeof(field("client")) == "object") & (field("client") != cast({}, JSONB)), client),
@@ -114,7 +112,9 @@ async def read_event_media(
         return []
     from wuwa_story.read_models.context import SOURCE_BUILD
 
-    cache = session.info.setdefault("story_event_media", {"exact": {}, "suffix": {}}) if SOURCE_BUILD.get() else None
+    cache = session.info.setdefault("story_event_media", {
+                                    "exact": {}, "suffix": {}}) if SOURCE_BUILD.get() else None
+
     def media_query(path_filter):
         # Fence the path lookup so the large media joins see only candidate refs.
         reference_columns = [FileReference.file_id, FileReference.source_path,
@@ -128,7 +128,8 @@ async def read_event_media(
             .prefix_with("MATERIALIZED", dialect="postgresql")
         )
         statement = (
-            select(candidates.c.source_path, FileLocation.object_key, candidates.c.metadata_json)
+            select(candidates.c.source_path, FileLocation.object_key,
+                   candidates.c.metadata_json)
             .select_from(candidates)
             .join(FileObject, FileObject.id == candidates.c.file_id)
             .join(FileLocation, FileLocation.file_id == FileObject.id)
@@ -148,12 +149,14 @@ async def read_event_media(
 
     async def cached_rows(paths, *, suffix=False):
         if cache is None:
-            predicate = or_(*(FileReference.source_path.endswith("/" + path, autoescape=True) for path in paths)) if suffix else FileReference.source_path.in_(paths)
+            predicate = or_(*(FileReference.source_path.endswith("/" + path, autoescape=True)
+                            for path in paths)) if suffix else FileReference.source_path.in_(paths)
             return list(await session.execute(media_query(predicate)))
         entries = cache["suffix" if suffix else "exact"]
         missing = [path for path in paths if (bucket, path) not in entries]
         if missing:
-            predicate = or_(*(FileReference.source_path.endswith("/" + path, autoescape=True) for path in missing)) if suffix else FileReference.source_path.in_(missing)
+            predicate = or_(*(FileReference.source_path.endswith("/" + path, autoescape=True)
+                            for path in missing)) if suffix else FileReference.source_path.in_(missing)
             fetched = list(await session.execute(media_query(predicate)))
             for path in missing:
                 entries[(bucket, path)] = [
@@ -174,13 +177,16 @@ async def read_event_media(
         return rows
 
     rows = await cached_rows(sorted(banner_paths))
-    resolved = {((metadata or {}).get("download_id", ""), path) for path, _, metadata in rows}
+    resolved = {((metadata or {}).get("download_id", ""), path)
+                for path, _, metadata in rows}
     # An exact hit from another capture must not hide an older run's suffix asset.
     unresolved = (
-        {path for download, path in captures if (download, path) not in resolved}
+        {path for download, path in captures if (
+            download, path) not in resolved}
         if captures is not None else banner_paths - {path for path, _, _ in rows}
     )
-    relative_paths = sorted(path for path in unresolved if not path.startswith("/Game/"))
+    relative_paths = sorted(
+        path for path in unresolved if not path.startswith("/Game/"))
     if relative_paths:
         rows.extend(await cached_rows(relative_paths, suffix=True))
     return rows
@@ -205,7 +211,8 @@ async def read_event_notice_snapshots(
     if not revisions:
         return []
     return list(await session.scalars(
-        select(GameNoticeRevision).where(GameNoticeRevision.revision.in_(revisions))
+        select(GameNoticeRevision).where(
+            GameNoticeRevision.revision.in_(revisions))
     ))
 
 

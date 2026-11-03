@@ -12,9 +12,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+from wuwa_story.events.domain import CLIENT_SOURCE as CLIENT_SOURCE
 
 SOURCE = "Sanma5657/wuwa-wiki-public"
-CLIENT_SOURCE = "wuwa-game-client"
 SOURCE_COMMIT_URL = f"https://api.github.com/repos/{SOURCE}/commits/main"
 SOURCE_RAW_ROOT = f"https://raw.githubusercontent.com/{SOURCE}"
 SERVER_KEYS = ("asia", "europe", "america")
@@ -24,12 +24,14 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
     """Fetch a pinned upstream snapshot and idempotently synchronize its event schedules."""
     async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
         response = await client.get(
-            SOURCE_COMMIT_URL, headers={"Accept": "application/vnd.github+json"}
+            SOURCE_COMMIT_URL, headers={
+                "Accept": "application/vnd.github+json"}
         )
         response.raise_for_status()
         revision = response.json().get("sha")
         if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
-            raise ValueError("The upstream event archive did not return a valid commit SHA")
+            raise ValueError(
+                "The upstream event archive did not return a valid commit SHA")
         source_root = f"{SOURCE_RAW_ROOT}/{revision}"
         documents = {}
         for filename in ("events.json", "eventsinfo.json"):
@@ -69,11 +71,13 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
                     "source_data": {"group_id": group_id, "item": item, "event_info": event_info},
                 }
             for index, region_time in enumerate(item.get("time", [])):
-                region = SERVER_KEYS[index] if index < len(SERVER_KEYS) else f"region_{index + 1}"
+                region = SERVER_KEYS[index] if index < len(
+                    SERVER_KEYS) else f"region_{index + 1}"
                 start = region_time[0] if region_time else None
                 end = region_time[1] if len(region_time) > 1 else None
                 versions = item.get("ver") or []
-                version = next((v for v in versions if re.fullmatch(r"\d+\.\d+", str(v))), None)
+                version = next(
+                    (v for v in versions if re.fullmatch(r"\d+\.\d+", str(v))), None)
                 occurrence_rows.append(
                     {
                         "source_id": event_source_id,
@@ -92,7 +96,7 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
     # Re-importing the timetable must not erase presentation extracted from
     # the game client by the dependent catalog task.
     existing_events = list(await session.scalars(select(GameEvent).where(GameEvent.source == SOURCE)
-                                               .order_by(GameEvent.id).with_for_update()))
+                                                 .order_by(GameEvent.id).with_for_update()))
     for event in existing_events:
         row = event_rows.get(event.source_id)
         client_data = (event.source_data or {}).get("client")
@@ -100,9 +104,11 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
             row["source_data"]["client"] = client_data
             row["title"] = event.title
             row["description"] = event.description
-            row["banner_path"] = client_data.get("banner_path") or row["banner_path"]
+            row["banner_path"] = client_data.get(
+                "banner_path") or row["banner_path"]
     existing_occurrences = list(await session.scalars(select(GameEventOccurrence).where(
-        GameEventOccurrence.event_id.in_([event.id for event in existing_events])
+        GameEventOccurrence.event_id.in_(
+            [event.id for event in existing_events])
     )))
     occurrence_clients = {
         (row.event_id, row.source_occurrence_id, row.server, row.game_version): row.source_data["client"]
@@ -132,7 +138,8 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
         await session.execute(statement)
 
     if not event_rows:
-        raise ValueError("The upstream event archive contains no event records")
+        raise ValueError(
+            "The upstream event archive contains no event records")
 
     # Missing entries in a later snapshot do not delete archived runs.
     event_ids = dict(
@@ -165,7 +172,8 @@ async def import_game_events(session: AsyncSession) -> dict[str, Any]:
                                              row["server"], row["game_version"]))
         if client_data:
             row["source_data"]["client"] = client_data
-            row["banner_path"] = client_data.get("banner_path") or row["banner_path"]
+            row["banner_path"] = client_data.get(
+                "banner_path") or row["banner_path"]
     if values:
         statement = insert(GameEventOccurrence).values(values)
         statement = statement.on_conflict_do_update(

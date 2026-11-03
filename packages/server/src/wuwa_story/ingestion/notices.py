@@ -14,9 +14,12 @@ from sqlalchemy.dialects.postgresql import insert
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
+from wuwa_story.notices.matching import notice_candidates as notice_candidates
+from wuwa_story.notices.matching import notice_matches as notice_matches
 from wuwa_story.storage.notice_images import public_notice_image as public_notice_image
 
-NOTICE_HOSTS = {"aki-gm-resources-oversea.aki-game.net", "aki-gm-resources-back.aki-game.net"}
+NOTICE_HOSTS = {"aki-gm-resources-oversea.aki-game.net",
+                "aki-gm-resources-back.aki-game.net"}
 SERVER_OFFSETS = {"asia": 8, "europe": 1, "america": -5}
 
 
@@ -68,9 +71,11 @@ class NoticeBody(HTMLParser):
             self.flush()
         if tag == "img" and (url := safe_notice_url(attrs.get("src"), image=True)):
             self.flush()
-            self.blocks.append({"type": "image", "url": url, "source_url": url})
+            self.blocks.append(
+                {"type": "image", "url": url, "source_url": url})
         if tag in {"a", "iframe", "video", "source"}:
-            url = safe_notice_url(attrs.get("href") if tag == "a" else attrs.get("src"))
+            url = safe_notice_url(
+                attrs.get("href") if tag == "a" else attrs.get("src"))
             if url and url not in self.links:
                 self.links.append(url)
 
@@ -111,72 +116,20 @@ def notice_period(content, server):
     )
     if not match:
         return None
-    offset = SERVER_OFFSETS[server] if match[3] == "server time" else int(match[3][3:])
+    offset = SERVER_OFFSETS[server] if match[3] == "server time" else int(
+        match[3][3:])
     if not -12 <= offset <= 14:
         return None
     zone = timezone(timedelta(hours=offset))
     try:
         start, end = [
-            datetime.strptime(match[i], "%Y-%m-%d %H:%M").replace(tzinfo=zone).astimezone(UTC)
+            datetime.strptime(
+                match[i], "%Y-%m-%d %H:%M").replace(tzinfo=zone).astimezone(UTC)
             for i in (1, 2)
         ]
     except ValueError:
         return None
     return (start, end) if end > start else None
-
-
-def notice_candidates(content, events, *, match_roster=True):
-    def normalized(value):
-        return re.sub(r"[^\w]+", "", value.casefold())
-
-    title = re.search(r"\[([^]]+)\]", content["title"])
-    name = normalized(title[1]) if title else None
-    featured = re.search(r"5-Star (Resonator|Weapon):\s*([^,\n]+)", content["text"])
-    rate_up = re.search(
-        r"4-Star (?:Resonators|Weapons):\s*(.*?)\s+receive boosted drop rates",
-        content["text"],
-        re.S,
-    )
-    rate_up_names = (
-        {normalized(n) for n in re.split(r",|\band\b", rate_up[1]) if n.strip()}
-        if rate_up
-        else None
-    )
-    matches = []
-    for event in events:
-        english = (event.source_data or {}).get("client", {}).get("locales", {}).get("en", {})
-        exact_title = name and normalized(english.get("title", event.title)) == name
-        exact_featured = (
-            featured
-            and event.event_kind == "banner"
-            and any(
-                normalized(n) == normalized(featured[2]) for n in english.get("featured_names", [])
-            )
-            and ((featured[1] == "Weapon") == ("Weapon Convene" in english.get("title", "")))
-        )
-        if exact_title or exact_featured:
-            matches.append(event)
-    if match_roster and len(matches) > 1 and rate_up_names:
-        matches = [
-            event
-            for event in matches
-            if rate_up_names
-            == {
-                normalized(n)
-                for n in (event.source_data or {})
-                .get("client", {})
-                .get("locales", {})
-                .get("en", {})
-                .get("up_names", [])
-            }
-        ]
-    return matches
-
-
-def notice_matches(content, events):
-    # Repeated titles/featured characters are not proof of which client row is used.
-    matches = notice_candidates(content, events)
-    return matches if len(matches) == 1 else []
 
 
 async def fetch_notice_feed(launcher_define):
@@ -202,7 +155,8 @@ async def fetch_notice_feed(launcher_define):
             raise ValueError("Notice web application entry not found")
         response = await client.get(page.rsplit("/", 1)[0] + "/" + script[1])
         response.raise_for_status()
-        origin = re.search(r'VITE_APP_AXIOS_BASE_URL_GLOBAL_FIRST:"([^"]+)"', response.text)
+        origin = re.search(
+            r'VITE_APP_AXIOS_BASE_URL_GLOBAL_FIRST:"([^"]+)"', response.text)
         if (
             not origin
             or urlparse(origin[1]).hostname not in NOTICE_HOSTS
@@ -244,7 +198,8 @@ async def store_notices(session, feed, page, document):
     for category in ("recommend", "game", "activity"):
         for raw in document.get(category, []):
             if raw.get("whiteList"):
-                continue  # Do not republish targeted/player-specific announcements.
+                # Do not republish targeted/player-specific announcements.
+                continue
             content = parse_notice(raw, category)
             revision = hashlib.sha256(
                 json.dumps(raw, sort_keys=True, ensure_ascii=False).encode()
@@ -257,11 +212,13 @@ async def store_notices(session, feed, page, document):
                 )
             )
             if notice is None:
-                notice = GameNotice(feed=feed, locale="en", source_id=str(raw["id"]))
+                notice = GameNotice(feed=feed, locale="en",
+                                    source_id=str(raw["id"]))
                 session.add(notice)
             matched = notice_matches(content, events)
             if notice.revision == revision and notice.related_event_ids:
-                matched = [event for event in events if event.id in notice.related_event_ids]
+                matched = [
+                    event for event in events if event.id in notice.related_event_ids]
             notice.title, notice.category = content["title"], category
             if notice.revision != revision:
                 notice.content = {
@@ -291,8 +248,10 @@ async def store_notices(session, feed, page, document):
                         # must never create or replace that run's schedule.
                         if not raw.get("startTimeMs") or not raw.get("endTimeMs"):
                             continue
-                        visible_start = datetime.fromtimestamp(raw["startTimeMs"] / 1000, UTC)
-                        visible_end = datetime.fromtimestamp(raw["endTimeMs"] / 1000, UTC)
+                        visible_start = datetime.fromtimestamp(
+                            raw["startTimeMs"] / 1000, UTC)
+                        visible_end = datetime.fromtimestamp(
+                            raw["endTimeMs"] / 1000, UTC)
                         candidates = list(
                             await session.scalars(
                                 select(GameEventOccurrence)
