@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -43,8 +41,13 @@ def test_mcp_streamable_http_endpoint_lists_tools() -> None:
 
     assert listed.status_code == 200
     assert {tool["name"] for tool in listed.json()["result"]["tools"]} == {
+        "search",
+        "get_node",
+        "get_node_related",
+        "get_node_edges",
+        "get_node_narrative_context",
+        "get_quest_transcript",
         "search_lore",
-        "get_quest",
         "get_character_timeline",
     }
 
@@ -54,8 +57,8 @@ async def test_mcp_tool_uses_configured_async_session_factory(monkeypatch) -> No
     from wuwa_story.api.routes import mcp
 
     class FakeSession:
-        async def execute(self, _statement):
-            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+        async def scalars(self, _statement):
+            return []
 
     class FakeSessionFactory:
         def __call__(self):
@@ -72,4 +75,4 @@ async def test_mcp_tool_uses_configured_async_session_factory(monkeypatch) -> No
     monkeypatch.setattr(session, "SessionFactory", FakeSessionFactory())
     result = await mcp.handle_call_tool("get_quest", {"quest_id": "test-quest"})
 
-    assert result[0].text == "No lore chunks found for quest test-quest."
+    assert result[0].text == "Quest 'test-quest' not found."
