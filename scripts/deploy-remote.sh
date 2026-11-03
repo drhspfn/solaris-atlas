@@ -211,6 +211,9 @@ if [[ "$DEPLOY_COMPONENT" == api || "$DEPLOY_COMPONENT" == all ]]; then
   case "$migration_plan" in
     before:more|ready:more|done:more|legacy) migrate_stopped head ;;
   esac
+  # Reconcile grants even when Alembic is already at head; use the direct DB login.
+  "${compose[@]}" run --rm --no-deps api sh -ec \
+    'unset WUWA_DB_TRANSACTION_POOLING; if [ -f scripts/setup_agent_reader.py ]; then exec python scripts/setup_agent_reader.py; fi'
 fi
 if [[ "$DEPLOY_COMPONENT" != infrastructure ]]; then
   pull_services=()

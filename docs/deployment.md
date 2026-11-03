@@ -463,3 +463,38 @@ already imported release, restore missing weapon nodes and item search documents
 same command without `--dry-run`. It reuses durable raw records/localization,
 processes 100 records per batch, and is safe to repeat. New snapshot compilation
 includes weapons automatically.
+
+
+### Agent reader and fresh database deployment
+
+API/all deployments apply migration `0028_agent_reader_role`, then run
+`scripts/setup_agent_reader.py` with the direct `MIGRATION_DATABASE_URL` before
+starting the new API. The setup runs even when Alembic is already at head, so a
+repeated deployment verifies/reconciles source-table grants. Setup failure stops
+the deployment. Local `scripts/migrate.sh` follows the same order and uses
+`MIGRATION_DATABASE_URL` when supplied. No separate reader URL or password is
+required. Setup connects through `MIGRATION_DATABASE_URL` and automatically grants
+membership to the login from the runtime `DATABASE_URL`, even when they differ.
+The migration owner needs CREATEROLE on first installation; the runtime login
+does not. The Compose PostgreSQL owner already has that permission.
+
+The fixed `solaris_agent_readonly` role cannot log in, inherits no other roles,
+and receives only source-schema USAGE/table SELECT. Migration-owner defaults
+also grant SELECT on future source tables. A separately restricted runtime
+login is detected automatically; `--application-role <login>` is only an optional
+explicit override. Role/grant verification still happens before agent reads.
+
+Fresh installation now uses frozen initial DDL from commit `dd6b612` instead of
+current ORM metadata. This repairs duplicate-table/index failures in the initial
+migration chain; an already-versioned database never reruns `0001`. The new role
+migration changes grants without rewriting application data. Downgrade retains
+the cluster-shared role and read grants to avoid disrupting other databases.
+
+Verified on disposable PostgreSQL 17 databases: empty → head, 0027 → head with
+existing data, repeated deployment at head with a revoked SELECT grant, and a
+clean PostgreSQL cluster where the reader role did not yet exist. Separate
+runtime/migration logins are covered by an integration test, without a manual
+role argument. The staged 0022 → online 0023 → head deployment is also covered.
+Server validation on the fresh schema: 1170 passed, 99 skipped; the three
+MCP/health tests passed in a separate process because of their existing global
+session-manager lifecycle conflict. Deployment/planner checks: 37 passed.

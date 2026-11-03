@@ -1,5 +1,178 @@
 # Story research pipeline
 
+## Agent workspace and roles (V8)
+
+New jobs use `story-v8`. Apply migrations through `0028_agent_reader_role` before
+starting the updated API or worker. Migration 0027 adds durable tool receipts, versioned
+memory, model-scoped memory vectors and a work ledger. Existing published hooks
+and unresolved questions are indexed into that ledger without rewriting their
+documents. Earlier prompt protocols remain readable and resumable.
+
+The public `/chat` endpoint has an explicit read-only capability registry and an
+archive-only prompt. Client messages cannot choose a role or inject system
+messages. Runtime authorization rejects unadvertised write/SQL tools even if a
+provider invents a call. A reply without retrieved archive evidence becomes a
+scope response, rather than a general-knowledge answer. Both chat roles now use
+the same budget reservation/settlement infrastructure as research.
+
+The administrator's `/admin/story-agent/chat` can inspect schemas, read raw
+records, execute restricted SELECTs, search/write memory, inspect work and queue
+validated analyses. The research worker also stages generated relationship
+revisions and answers to questions from other quests. SQL is always a read path;
+generated changes use structured tools and publication validation.
+
+### Schema discovery and SQL setup
+
+`read_schema` enumerates the populated SQLAlchemy metadata registry, including
+columns, types, primary/foreign keys, schema/table filters and pagination. It does
+not maintain a duplicate list of entity models. `read_records` accepts discovered
+tables, selected columns and exact scalar filters. Operational/authentication
+schemas are outside this generic source gateway; memory, work and audit have
+dedicated tools/routes.
+
+`query_database` and `read_records` automatically use the fixed PostgreSQL role
+`solaris_agent_readonly` (`NOLOGIN`); there is no reader password or extra URL to
+manage. Before each read, an independent bootstrap transaction verifies the role,
+creates it if missing and grants missing source-schema/table SELECT privileges.
+An advisory lock serializes concurrent initializations. The actual read uses a
+separate read-only transaction with `SET LOCAL ROLE`, which resets on release and
+works with transaction pooling. Missing grants on newly created tables are picked
+up on the next read. The model cannot choose a role, provision one, or execute DDL.
+
+Migration `0028_agent_reader_role` prepares the role automatically. API/all
+deployments and `scripts/migrate.sh` also reconcile it after migrations, including
+when already at head, using the direct migration connection. No separate manual
+setup is needed for the normal Compose deployment. The setup script uses
+`MIGRATION_DATABASE_URL` for role administration and automatically identifies the
+runtime login from `DATABASE_URL`. Only the migration owner needs CREATEROLE on
+first installation. A separate runtime login needs no role-creation permission,
+reader password or manual setup command. `--application-role` remains available
+as an explicit deployment override.
+
+Runtime revalidation of existing correct grants needs no CREATEROLE permission.
+The membership uses `INHERIT FALSE, SET TRUE`: ordinary application transactions
+do not inherit reader grants. Unexpected elevated attributes, role memberships or
+write grants fail closed; they are not silently accepted or used to broaden access.
+The shared cluster role is retained on application rollback. An explicit legacy
+`AGENT_READ_DATABASE_URL` remains supported for an operator-managed dedicated login;
+it is optional and still undergoes the same privilege/transaction checks.
+
+Queries are parsed as PostgreSQL ASTs: only one SELECT/query expression is
+accepted, source tables must be discovered and schema-qualified, and mutations,
+locking, SELECT INTO, operational/auth tables and side-effectful functions are
+rejected. A separate connection starts a read-only transaction, checks the active role
+has no elevated/write privileges, and applies a five-second statement timeout,
+one-second lock timeout, 100-row maximum and bounded output. Credentials are
+never returned by schema discovery or retained in a job config.
+
+### Story sections, relationships and cross-quest questions
+
+V8 analyses provide `sections`: stable keys, titles, descriptions, inclusive
+start/end dialogue node IDs and exact boundary citations. Validation requires
+ordered, contiguous, non-overlapping coverage of the whole target transcript.
+These are editorial reading sections; they do not flatten alternative branches
+into a single canonical playthrough. Cutscene titles/descriptions retain the
+existing variant-specific visual receipt validation.
+
+`update_relationship` stages a link between discovered source nodes. All staged
+links join the final result and pass the existing citation, ontology and signal
+checks. Publication revises the semantic/inference edge confidence and producing
+run while retaining immutable document/claim history and imported source edges.
+
+Hooks and questions are searchable work records ordered by priority. New
+unresolved questions must have a cited hook, stable key and distinctive search
+terms. `find_work` finds open/partial questions across quests. `resolve_question`
+requires the read revision, reread original evidence and answering citations.
+It stages a resolution; publication rechecks sources and applies it atomically
+with the new explanation. A conflicting revision prevents publication. Public
+answers are shown only for completed producing runs and after fresh source
+verification, including sources from newer imported patches. The quest notes
+show questions before narrative prose and keep later answers in closed spoiler
+disclosures. Superseded document heads are excluded from active work searches.
+
+Worker `queue_analysis` records a related-quest task instead of recursively
+launching another paid model loop. Administrator calls can enqueue explicitly.
+
+### Short/long memory and embedding migration
+
+`write_memory` creates a stable key with `expected_revision=0`; updating requires
+the currently read revision. Short memory belongs to a run. Long memory survives
+run cleanup, can be scoped to a node, and is retrieved in small query-selected
+pages. Generated memory is untrusted guidance, never publication evidence.
+`read_memory` also retains the previous source-scoped notes; the versioned
+workspace is available as `read_workspace_memory` in internal chat.
+
+Memory, explanation and query embeddings share the same provider request/vector
+validation adapter in `agents/embeddings.py`. Their calls use the shared budget.
+The default dimension is **1536**; the checked local configuration currently has
+no embedding model enabled. Vectors use variable-dimension pgvector storage and
+are isolated by provider, endpoint, model and dimension. Equal dimensions alone
+do not make two models compatible. Memory additionally checks its content hash.
+
+For an independent local OpenAI-compatible endpoint, configure for example:
+
+```dotenv
+AGENT_EMBEDDING_PROVIDER=chat
+AGENT_EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1
+AGENT_EMBEDDING_MODEL=your-local-embedding-model
+AGENT_EMBEDDING_DIMENSIONS=1536
+AGENT_EMBEDDING_API_KEY=
+```
+
+Set the dimension to the model's actual output (for example 768 if that is what
+it produces). The main model's credential is not forwarded to a different
+embedding endpoint. Keyless loopback embeddings still require a positive shared
+budget and remain token-accounted. Re-embed old content when changing models,
+even if dimensions match. For memory, run a bounded explicit batch:
+`cd packages/server; uv run python scripts/reindex_agent_memory.py --limit 20 --after 0`.
+Continue with the printed cursor. Changed entries are skipped rather than
+indexed with a stale vector. Old explanations fall back to text search until
+embeddings under the selected model identity are available.
+
+### Autonomous work and receipts
+
+Set `AGENT_AUTONOMOUS_ENABLED=true` only after migration/queue/model setup.
+The existing story-agent consumer starts the dispatcher alongside import revisits.
+`AGENT_AUTONOMOUS_POLL_SECONDS` defaults to 60 and
+`AGENT_AUTONOMOUS_MAX_PENDING` to 1. The dispatcher uses a database advisory lock,
+checks pending jobs and daily USD/token usage, prioritizes questions, and otherwise
+chooses an imported quest without an explanation or prior job. Job creation and
+work assignment commit together. Lost broker confirmations reuse the same job;
+failed, paused and uncertain model work is never automatically resumed. An
+unresolved question is attempted once per imported corpus revision. Administrators
+can request one bounded dispatch with `POST /admin/story-agent/work/dispatch`.
+
+Every public/internal/worker tool call has a durable start and terminal receipt,
+role, request/run/step/call IDs, redacted arguments/results and duration. Audit
+transactions are independent of caller rollback; interrupted starts and pending
+commits remain visible. Native hidden reasoning and credentials are not included
+in tool receipts. Tool inputs/results are bounded before execution/delivery;
+oversized audit values are explicitly marked truncated. Read logs through
+`GET /admin/story-agent/tool-logs` with request ID, role, run ID and cursor filters.
+The chat reply includes its request ID. `GET /admin/story-agent/work` exposes work
+and its assigned run. These endpoints retain administrator authorization; public
+users cannot retrieve other users' tool logs or internal memory.
+
+Rollback application images first and retain the additive tables to preserve
+work/history. A downgrade to 0026 deletes workspace data and should follow an
+explicit export. The disposable PostgreSQL 17 test database was upgraded to 0027;
+75 targeted agent integration/security tests passed, including a real restricted reader.
+No working database upgrade, paid analysis or autonomous activation was performed.
+Managed-role tests additionally cover passwordless reads, blocked writes, grant drift,
+pool role reset and a runtime login without CREATEROLE privileges.
+The fresh-install chain now uses frozen 0001 DDL, preventing tables/indexes
+introduced by later migrations from being created twice. Empty → head and
+0027 → head with retained data pass through ordinary Alembic without a bootstrap.
+Downgrade 0027 → 0026 and upgrade back were also verified in the disposable DB.
+
+Frontend: 120 tests, TypeScript and production build passed; SSR checks: 28 passed.
+Worker startup/dispatch checks: 6 passed. The full PostgreSQL-enabled server run
+(before the final missing-grant recovery case) had 1168 passed, 98 skipped and one
+existing lifecycle failure: test_api_health reuses the global MCP session manager
+after the auth integration test has already started/stopped it. The SDK permits
+one run per manager instance. All three API-health/MCP tests pass in isolation.
+The final managed-reader regression cases pass in the targeted run above.
+
 Research and browsing share `db.repositories.quest_scope.quest_state_links`.
 The research scope includes direct quest references, quest nodes, plot-step scenes,
 and the transcript states of their cutscenes. Every hop must have source evidence

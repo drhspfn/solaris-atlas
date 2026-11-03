@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+
 from wuwa_story.agents.contracts import AnalysisRequest
 from wuwa_story.agents.cutscene_vision import enqueue_visual_job, resume_visual_job
 from wuwa_story.agents.jobs import enqueue_analysis
@@ -29,7 +30,6 @@ from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.ops import ProcessingRun, Processor
 from wuwa_story.db.models.storage import FileReference
 from wuwa_story.ingestion.compiler_importer import CompiledDatasetImporter
-
 from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.asset_jobs import (
     download_client_assets,
@@ -52,7 +52,11 @@ from wuwa_story_worker.scheduler import (
     run_watch,
 )
 from wuwa_story_worker.snapshot_jobs import build_and_import_snapshot
-from wuwa_story_worker.story_agent import dispatch_story_revisits, process_story_analysis
+from wuwa_story_worker.story_agent import (
+    dispatch_story_revisits,
+    dispatch_story_work,
+    process_story_analysis,
+)
 from wuwa_story_worker.voice_packages import discover_voice_plan, download_voice_plan
 
 
@@ -273,6 +277,7 @@ async def _run(queues: list[str] | None = None, pool: str | None = None) -> None
                 background.append(asyncio.create_task(watch_client_updates()))
             if "story_agent" in selected:
                 background.append(asyncio.create_task(dispatch_story_revisits()))
+                background.append(asyncio.create_task(dispatch_story_work()))
             if "cutscene_vision" in selected:
                 background.append(asyncio.create_task(dispatch_visual_jobs()))
         for task in background:

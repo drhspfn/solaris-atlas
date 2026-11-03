@@ -12,6 +12,7 @@ import { ConnectionLink } from './ConnectionLink';
 import { ExplanationBlocks } from './ExplanationBlocks';
 import { ExplanationContext, ExplanationFollowUps } from './ExplanationContext';
 import { ExplanationSources } from './ExplanationSources';
+import { ExplanationWorkspace } from './ExplanationWorkspace';
 
 export function QuestExplanation({
   questId,
@@ -81,6 +82,7 @@ export function QuestExplanation({
               </p>
             )}
             <h3 className="story-reading-title">{explanation.title}</h3>
+            <ExplanationWorkspace explanation={explanation} />
             <ExplanationBlocks explanation={explanation} />
             <details className="explanation-context story-research-details">
               <summary>Analysis details and connections</summary>
@@ -143,7 +145,7 @@ export function QuestExplanation({
                   ))}
                 </div>
               )}
-              {explanation.unresolved_questions.length > 0 && (
+              {!explanation.questions?.length && explanation.unresolved_questions.length > 0 && (
                 <details className="explanation-context">
                   <summary>Open questions · {explanation.unresolved_questions.length}</summary>
                   <ul>

@@ -10,7 +10,6 @@ from pydantic import Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.agents.budget import settle
 from wuwa_story.agents.contracts import AnalysisRequest, StrictModel
 from wuwa_story.agents.jobs import enqueue_analysis, resume_analysis
@@ -24,6 +23,7 @@ from wuwa_story.agents.retrieval import (
 )
 from wuwa_story.agents.settings import AgentSettings, get_agent_settings
 from wuwa_story.agents.trace import legacy_trace
+from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.api.routes.cutscene_analysis import router as cutscene_admin
 from wuwa_story.auth.dependencies import require_admin, require_csrf
 from wuwa_story.db.models.agents import (
@@ -53,6 +53,49 @@ class ResumeRequest(StrictModel):
     tool_calls_per_step: int | None = Field(default=None, ge=1, le=20)
     compact_context: bool = False
     output_tokens: int | None = Field(default=None, ge=128, le=32000)
+
+
+@admin.get("/tool-logs")
+async def tool_logs(
+    request_id: str | None = Query(None, max_length=64),
+    run_id: int | None = Query(None, gt=0),
+    role: Literal["public", "internal", "worker"] | None = None,
+    before: int | None = Query(None, gt=0),
+    limit: int = Query(30, ge=1, le=100),
+    session: AsyncSession = Depends(get_session),
+):
+    from wuwa_story.db.models.agent_workspace import AgentToolAudit
+    statement = select(AgentToolAudit)
+    for column, value in ((AgentToolAudit.request_id, request_id), (AgentToolAudit.run_id, run_id), (AgentToolAudit.role, role)):
+        if value is not None:
+            statement = statement.where(column == value)
+    if before:
+        statement = statement.where(AgentToolAudit.id < before)
+    rows = list(await session.scalars(statement.order_by(AgentToolAudit.id.desc()).limit(limit)))
+    return {"logs": [{"id": row.id, "request_id": row.request_id, "role": row.role,
+                      "run_id": row.run_id, "step": row.step, "call_id": row.call_id,
+                      "tool": row.tool, "status": row.status, "arguments": row.arguments,
+                      "result": row.result, "duration_ms": row.duration_ms, "created_at": row.created_at}
+                     for row in rows], "next_before": rows[-1].id if len(rows) == limit else None}
+
+
+@admin.get("/work")
+async def work_queue(query: str = Query("", max_length=512), status: str = "open", session: AsyncSession = Depends(get_session)):
+    from wuwa_story.agents.workspace import find_work
+    try:
+        return await find_work(session, query=query, status=status, limit=30)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+
+@admin.post("/work/dispatch", dependencies=[Depends(require_csrf)])
+async def dispatch_one_work_item(session: AsyncSession = Depends(get_session)):
+    from wuwa_story.agents.work import dispatch_work
+    try:
+        run_id = await dispatch_work(session, get_agent_settings().model_copy(update={"autonomous_enabled": True}))
+        return {"run_id": run_id, "queued": run_id is not None}
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
 
 
 class ReconcileRequest(StrictModel):
@@ -474,287 +517,14 @@ async def generated_event(
 
 class ChatMessage(StrictModel):
     role: Literal["user", "assistant"]
-    content: str
+    content: str = Field(min_length=1, max_length=12000)
 
 
 class ChatRequest(StrictModel):
-    messages: list[ChatMessage]
+    messages: list[ChatMessage] = Field(min_length=1, max_length=20)
 
 
 @admin.post("/chat", dependencies=[Depends(require_csrf)])
 async def admin_chat(request: ChatRequest, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
-    from wuwa_story.agents.providers import Provider
-    from wuwa_story.agents.settings import get_agent_settings
-    import httpx
-
-    settings = get_agent_settings()
-    
-    tools = [
-        {
-            "name": "search_dialogue",
-            "description": "Search actual spoken in-game dialogue lines across quests and scenes.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Text spoken in dialogue"},
-                    "character": {"type": "string", "description": "Optional character name"},
-                    "quest_id": {"type": "integer", "description": "Optional quest ID"}
-                },
-                "required": ["query"],
-                "additionalProperties": False,
-            }
-        },
-        {
-            "name": "search_entities",
-            "description": "Search the database for characters, quests, items, and locations.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Entity name or keyword"},
-                    "category": {"type": "string", "description": "Optional category: character, quest, item, location"}
-                },
-                "required": ["query"],
-                "additionalProperties": False,
-            }
-        },
-        {
-            "name": "search_lore",
-            "description": "Semantic search across previously generated Wuthering Waves storyline lore (cutscenes, quests, characters). Use this to recall past lore facts.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"}
-                },
-                "required": ["query"],
-                "additionalProperties": False,
-            }
-        },
-        {
-            "name": "get_quest_lore",
-            "description": "Get all generated lore facts and cutscenes for a specific quest ID.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "quest_id": {"type": "string"}
-                },
-                "required": ["quest_id"],
-                "additionalProperties": False,
-            }
-        },
-        {
-            "name": "update_lore_chunk",
-            "description": "Correct or update an existing lore chunk if you find a mistake.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "chunk_id": {"type": "integer"},
-                    "new_content": {"type": "string"}
-                },
-                "required": ["chunk_id", "new_content"],
-                "additionalProperties": False,
-            }
-        },
-        {
-            "name": "add_lore_fact",
-            "description": "Add a brand new lore fact or explanation to the database.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "content": {"type": "string"},
-                    "quest_id": {"type": "string", "description": "Optional quest ID this relates to"},
-                    "characters": {"type": "array", "items": {"type": "string"}, "description": "Characters involved"}
-                },
-                "required": ["content"],
-                "additionalProperties": False,
-            }
-        }
-    ]
-
-    history = [
-        {"role": "system", "content": (
-            "You are the Solaris Atlas Admin Lore Assistant. "
-            "You help the administrator manage and answer questions about the Wuthering Waves lore database. "
-            "You can search in-game dialogue with 'search_dialogue', search characters/quests/items with 'search_entities', "
-            "and search past generated lore explanations using 'search_lore' and read entire quests with 'get_quest_lore'. "
-            "If the admin asks to correct information, use 'update_lore_chunk'. "
-            "If the admin provides new information to add, use 'add_lore_fact'. "
-            "Always be precise and base your answers on the lore chunks and dialogue you find. "
-            "If you update or add a chunk, confirm the action and chunk ID in your response."
-        )}
-    ]
-    for msg in request.messages:
-        history.append({"role": msg.role, "content": msg.content})
-
-    async with httpx.AsyncClient() as client:
-        provider = Provider(settings, client)
-        
-        for _ in range(5):
-            path, payload = provider.request(history, tools)
-            raw = await provider.post(path, payload)
-            turn = provider.parse(raw)
-            
-            if turn.calls:
-                # Add model's tool calls to history
-                history.extend(turn.items)
-                
-                # Execute tools and append responses
-                for call in turn.calls:
-                    if call.name == "search_dialogue":
-                        query = call.arguments.get("query", "")
-                        character = call.arguments.get("character")
-                        quest_id = call.arguments.get("quest_id")
-                        from wuwa_story.api.routes.story.transcripts import search_dialogue as api_search_dialogue
-                        try:
-                            res = await api_search_dialogue(
-                                q=query,
-                                character=character,
-                                quest_id=quest_id,
-                                locale="en",
-                                limit=15,
-                                offset=0,
-                                session=session
-                            )
-                            lines = []
-                            for r in res.get("results", []):
-                                speaker = r.get("speaker") or "Narrator"
-                                text = r.get("text") or ""
-                                q_id = r.get("quest_id") or (r.get("game_ids") or ["N/A"])[0]
-                                lines.append(f"[{speaker} in Quest {q_id}]: \"{text}\"")
-                            result_data = {"results": "\n".join(lines) if lines else "No dialogue lines found"}
-                        except Exception as e:
-                            result_data = {"error": str(e)}
-
-                    elif call.name == "search_entities":
-                        query = call.arguments.get("query", "")
-                        category = call.arguments.get("category")
-                        from wuwa_story.db.repositories.search import lexical_search
-                        from wuwa_story.api.routes.story.shared import _node_label
-                        from sqlalchemy import select
-                        from wuwa_story.db.models.i18n import Locale
-                        try:
-                            locale_id = await session.scalar(select(Locale.id).where(Locale.code == "en"))
-                            res = await lexical_search(
-                                session,
-                                query,
-                                limit=10,
-                                categories=[category] if category else None,
-                                locale_id=locale_id
-                            )
-                            items = []
-                            for r in res:
-                                label = (await _node_label(session, r["id"], "en")).get("label") or r.get("alias")
-                                items.append(f"[{r.get('node_type')}] {label} (key: {r.get('canonical_key')})")
-                            result_data = {"results": "\n".join(items) if items else "No entities found"}
-                        except Exception as e:
-                            result_data = {"error": str(e)}
-
-                    elif call.name == "search_lore":
-                        query = call.arguments.get("query", "")
-                        from wuwa_story.search.lore import LoreSearchService
-                        from wuwa_story.search.embedding import generate_query_embedding
-                        try:
-                            query_embedding = await generate_query_embedding(session, query)
-                            service = LoreSearchService(session)
-                            results = await service.hybrid_search(query, query_embedding, limit=5)
-                            output = ""
-                            for i, r in enumerate(results, 1):
-                                output += f"[{i}] Chunk ID: {r.chunk_id} | Quest: {r.quest_id} | Type: {r.chunk_type}\n{r.content}\n\n"
-                            result_data = {"results": output if output else "No results found"}
-                        except Exception as e:
-                            result_data = {"error": str(e)}
-                    elif call.name == "get_quest_lore":
-                        quest_id = call.arguments.get("quest_id")
-                        from sqlalchemy import select
-                        from wuwa_story.db.models.lore import LoreChunk
-                        try:
-                            stmt = select(LoreChunk).where(LoreChunk.quest_id == quest_id).order_by(LoreChunk.id)
-                            result = await session.execute(stmt)
-                            chunks = result.scalars().all()
-                            if chunks:
-                                output = ""
-                                for r in chunks:
-                                    output += f"[Chunk ID: {r.id}] Type: {r.chunk_type}\n{r.content}\n\n"
-                                result_data = {"results": output}
-                            else:
-                                result_data = {"results": "No lore found for this quest."}
-                        except Exception as e:
-                            result_data = {"error": str(e)}
-                    elif call.name == "update_lore_chunk":
-                        chunk_id = call.arguments.get("chunk_id")
-                        new_content = call.arguments.get("new_content")
-                        from wuwa_story.db.models.lore import LoreChunk, LoreChunkEmbedding
-                        from wuwa_story.search.embedding import generate_query_embedding
-                        from sqlalchemy import select, delete, func
-                        import hashlib
-                        try:
-                            chunk = await session.get(LoreChunk, chunk_id)
-                            if chunk:
-                                chunk.content = new_content
-                                chunk.search_vector = func.to_tsvector("english", new_content)
-                                await session.execute(delete(LoreChunkEmbedding).where(LoreChunkEmbedding.chunk_id == chunk_id))
-                                new_emb = await generate_query_embedding(session, new_content)
-                                from wuwa_story.db.models.search import EmbeddingModel
-                                model = await session.scalar(select(EmbeddingModel).where(EmbeddingModel.active == True).limit(1))
-                                if model:
-                                    content_hash = hashlib.sha256(new_content.encode()).digest()
-                                    new_emb_row = LoreChunkEmbedding(
-                                        chunk_id=chunk_id,
-                                        model_id=model.id,
-                                        content_hash=content_hash,
-                                        embedding=new_emb
-                                    )
-                                    session.add(new_emb_row)
-                                await session.commit()
-                                result_data = {"success": True, "message": f"Chunk {chunk_id} updated."}
-                            else:
-                                result_data = {"error": "Chunk not found."}
-                        except Exception as e:
-                            await session.rollback()
-                            result_data = {"error": str(e)}
-                    elif call.name == "add_lore_fact":
-                        content = call.arguments.get("content")
-                        quest_id = call.arguments.get("quest_id")
-                        characters = call.arguments.get("characters", [])
-                        from wuwa_story.db.models.lore import LoreChunk, LoreChunkEmbedding
-                        from wuwa_story.search.embedding import generate_query_embedding
-                        from wuwa_story.db.models.search import EmbeddingModel
-                        from sqlalchemy import select, func
-                        import hashlib
-                        try:
-                            new_chunk = LoreChunk(
-                                source_type="manual_fact",
-                                source_id="admin_chat",
-                                quest_id=quest_id,
-                                characters=characters,
-                                chunk_type="fact",
-                                content=content,
-                                search_vector=func.to_tsvector("english", content)
-                            )
-                            session.add(new_chunk)
-                            await session.flush()
-                            
-                            new_emb = await generate_query_embedding(session, content)
-                            model = await session.scalar(select(EmbeddingModel).where(EmbeddingModel.active == True).limit(1))
-                            if model:
-                                content_hash = hashlib.sha256(content.encode()).digest()
-                                new_emb_row = LoreChunkEmbedding(
-                                    chunk_id=new_chunk.id,
-                                    model_id=model.id,
-                                    content_hash=content_hash,
-                                    embedding=new_emb
-                                )
-                                session.add(new_emb_row)
-                            await session.commit()
-                            result_data = {"success": True, "message": f"New fact added with chunk ID {new_chunk.id}."}
-                        except Exception as e:
-                            await session.rollback()
-                            result_data = {"error": str(e)}
-                    else:
-                        result_data = {"error": "Unknown tool"}
-                        
-                    history.append(provider.tool_result(call, result_data))
-            else:
-                return {"reply": turn.text}
-                
-        return {"reply": "I needed too many steps to answer. Please try again."}
-
+    from wuwa_story.agents.chat import run_chat
+    return await run_chat(session, request.messages, role="internal")

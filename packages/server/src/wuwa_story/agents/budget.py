@@ -92,7 +92,12 @@ async def reserve(
     output_bound: int,
     kind: str = "analysis",
 ) -> AgentCall:
-    settings.require_enabled()
+    from urllib.parse import urlparse
+    if kind == "embedding" and not settings.api_key.get_secret_value() and urlparse(settings.base_url).hostname in {"localhost", "127.0.0.1", "::1"}:
+        if settings.daily_budget_usd <= 0:
+            raise ValueError("A positive shared budget is required even for local embeddings")
+    else:
+        settings.require_enabled()
     if input_bound > settings.max_input_tokens:
         raise BudgetExceeded("Input context exceeds the configured token bound")
     day = datetime.now(UTC).astimezone(ZoneInfo(settings.budget_timezone)).date()

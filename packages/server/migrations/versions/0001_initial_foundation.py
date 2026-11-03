@@ -1,10 +1,11 @@
-"""Create the complete initial WuWa Story Platform database foundation."""
+"""Create the frozen initial WuWa Story Platform database foundation."""
+
+from pathlib import Path
 
 from alembic import op
 from sqlalchemy.dialects.postgresql import insert
 
 import wuwa_story.db.models  # noqa: F401 - populate Base.metadata
-from wuwa_story.db.base import SCHEMAS, Base
 from wuwa_story.db.models.graph import NodeType
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.ontology import EventType, RelationType
@@ -26,19 +27,18 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Preserve the originally shipped DDL independently of evolving ORM tables.
+    ddl = Path(__file__).resolve().parents[1] / \
+        "ddl" / "0001_initial_foundation.sql"
+    for statement in ddl.read_text(encoding="utf-8").split("\n-- statement\n")[1:]:
+        op.execute(statement.strip())
     bind = op.get_bind()
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
-    op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-    op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
-    for schema in SCHEMAS:
-        op.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
-    Base.metadata.create_all(bind=bind, checkfirst=True)
-
     bind.execute(
         insert(NodeType)
         .values(
             [
-                {"id": index, "key": key, "description": "Canonical source or semantic node type"}
+                {"id": index, "key": key,
+                    "description": "Canonical source or semantic node type"}
                 for index, key in enumerate(NODE_TYPES, start=1)
             ]
         )
@@ -64,7 +64,8 @@ def upgrade() -> None:
         insert(EventType)
         .values(
             [
-                {"id": index, "key": key, "label": key.replace("_", " ").title()}
+                {"id": index, "key": key,
+                    "label": key.replace("_", " ").title()}
                 for index, key in enumerate(EVENT_TYPES, start=1)
             ]
         )
@@ -74,7 +75,8 @@ def upgrade() -> None:
         insert(FileType)
         .values(
             [
-                {"id": index, "key": key, "description": key.replace("_", " ").title()}
+                {"id": index, "key": key,
+                    "description": key.replace("_", " ").title()}
                 for index, key in enumerate(FILE_TYPES, start=1)
             ]
         )
@@ -107,21 +109,6 @@ def upgrade() -> None:
         )
         .on_conflict_do_nothing()
     )
-    op.execute("""
-    CREATE FUNCTION search.refresh_document_vector() RETURNS trigger AS $$
-    BEGIN
-      NEW.search_vector :=
-        setweight(to_tsvector('simple', coalesce(NEW.title, '')), 'A') ||
-        setweight(to_tsvector('simple', coalesce(NEW.body, '')), 'B');
-      RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql
-    """)
-    op.execute("""
-    CREATE TRIGGER trg_search_document_vector
-    BEFORE INSERT OR UPDATE OF title, body ON search.document
-    FOR EACH ROW EXECUTE FUNCTION search.refresh_document_vector()
-    """)
 
 
 def downgrade() -> None:

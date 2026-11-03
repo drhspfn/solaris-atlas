@@ -52,8 +52,10 @@ async def publish_analysis(
         )
         or 0
     ) + 1
-    reference_ids = {c.node_id for group in citation_groups(result) for c in group.citations}
-    reference_ids.update(value for block in result.blocks for value in block.related_node_ids)
+    reference_ids = {c.node_id for group in citation_groups(
+        result) for c in group.citations}
+    reference_ids.update(
+        value for block in result.blocks for value in block.related_node_ids)
     reference_ids.update(
         record.node_id for block in result.blocks for record in block.related_records
     )
@@ -66,7 +68,8 @@ async def publish_analysis(
         document_type=kind,
         revision=revision,
         title=result.title,
-        plain_text="\n\n".join(result.search_text(i) for i in range(len(result.blocks))),
+        plain_text="\n\n".join(result.search_text(i)
+                               for i in range(len(result.blocks))),
         body_ast=[block.model_dump() for block in result.blocks],
         source_hash=run.input_hash or hash_value(result.model_dump()),
         processor_run_id=run.id,
@@ -79,6 +82,7 @@ async def publish_analysis(
             "source_scope": "all_locales" if run.prompt_version != "story-v1" else "locale",
             "unresolved_questions": result.unresolved_questions,
             "assessment": result.assessment.model_dump() if result.assessment else None,
+            "sections": [section.model_dump() for section in result.sections],
             "cutscene_descriptions": [
                 description.model_dump() for description in result.cutscene_descriptions
             ],
@@ -125,12 +129,14 @@ async def publish_analysis(
         for record in block.related_records
     ]
     refs += [
-        (item.chronology_in_quest.anchor_node_id, "chronology", item.chronology_in_quest.label)
+        (item.chronology_in_quest.anchor_node_id,
+         "chronology", item.chronology_in_quest.label)
         for block in result.blocks
         for item in block.assertions
     ]
     refs += [
-        (resolution.revealed_in_node_id, "later_resolution", resolution.text[:512])
+        (resolution.revealed_in_node_id,
+         "later_resolution", resolution.text[:512])
         for block in result.blocks
         for item in block.assertions
         for resolution in item.later_resolution
@@ -166,7 +172,8 @@ async def publish_analysis(
         session.add(claim)
         await session.flush()
         for citation_id in {c.node_id for c in citations}:
-            session.add(ClaimEvidence(claim_id=claim.id, evidence_node_id=citation_id, relevance=1))
+            session.add(ClaimEvidence(claim_id=claim.id,
+                        evidence_node_id=citation_id, relevance=1))
         edge_id = await session.scalar(
             insert(Edge)
             .values(
@@ -179,7 +186,9 @@ async def publish_analysis(
                 processor_run_id=run.id,
                 created_release_id=job.release_id,
             )
-            .on_conflict_do_nothing(constraint="uq_edge_identity")
+            .on_conflict_do_update(constraint="uq_edge_identity", set_={
+                "confidence": confidence, "processor_run_id": run.id,
+            })
             .returning(Edge.id)
         )
         if edge_id is None:
@@ -217,7 +226,8 @@ async def publish_analysis(
             item.citations,
         )
     for event in result.events:
-        key = "agent-event:" + hash_value({"run": run.id, "event": event.model_dump()}).hex()
+        key = "agent-event:" + \
+            hash_value({"run": run.id, "event": event.model_dump()}).hex()
         event_node = Node(
             type_id=await session.scalar(select(NodeType.id).where(NodeType.key == "event")),
             canonical_key=key,
@@ -280,26 +290,20 @@ async def publish_analysis(
             )
         )
     if vectors:
-        key = (
-            "story:"
-            + hash_value(
-                {
-                    "provider": job.config["provider"],
-                    "base_url": job.config["base_url"],
-                    "model": job.config["embedding_model"],
-                    "dimensions": job.config["embedding_dimensions"],
-                }
-            ).hex()
-        )
+        from wuwa_story.agents.embeddings import model_identity, model_key
+        from wuwa_story.agents.settings import AgentSettings
+        vector_settings = AgentSettings(_env_file=None, **job.config)
+        identity = model_identity(vector_settings)
+        key = model_key(vector_settings)
         await session.execute(
             insert(EmbeddingModel)
             .values(
                 key=key,
-                provider=job.config["provider"],
-                model_name=job.config["embedding_model"],
+                provider=identity["provider"],
+                model_name=identity["model"],
                 dimensions=job.config["embedding_dimensions"],
                 distance_metric="cosine",
-                config={"base_url": job.config["base_url"]},
+                config={"base_url": identity["base_url"]},
                 active=True,
             )
             .on_conflict_do_nothing(index_elements=[EmbeddingModel.key])
@@ -315,7 +319,7 @@ async def publish_analysis(
                     embedding=vector,
                 )
             )
-    
+
     if result.scene_knowledge:
         # quest_summary
         session.add(
@@ -355,5 +359,7 @@ async def publish_analysis(
                 )
             )
 
+    from wuwa_story.agents.work import publish_questions
+    await publish_questions(session, document, result)
     job.document_id = document.id
     return document

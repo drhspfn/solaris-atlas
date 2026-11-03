@@ -16,6 +16,7 @@ from wuwa_story.agents.evidence import (
 from wuwa_story.agents.lore import assessment_policy
 from wuwa_story.agents.providers import Provider
 from wuwa_story.agents.settings import AgentSettings
+from wuwa_story.db.models.agent_workspace import AgentWorkItem
 from wuwa_story.db.models.agents import AgentCall, AgentJob, AgentRevisit
 from wuwa_story.db.models.content import Document
 from wuwa_story.db.models.ops import AIModel, ProcessingRun, Processor
@@ -44,6 +45,7 @@ async def enqueue_analysis(
     settings: AgentSettings,
     *,
     revisit: AgentRevisit | None = None,
+    work_item: AgentWorkItem | None = None,
 ) -> ProcessingRun:
     quest, release, locale = await scope_for_request(
         session, **request.model_dump(exclude={"generation"})
@@ -96,6 +98,8 @@ async def enqueue_analysis(
         .where(AgentJob.identity_hash == identity)
     )
     if existing:
+        if work_item:
+            work_item.run_id, work_item.status = existing.id, "queued"
         if revisit:
             revisit.run_id, revisit.status, revisit.error = existing.id, "queued", None
         if existing.status not in ("queued", "enqueue_failed"):
@@ -129,6 +133,8 @@ async def enqueue_analysis(
             "request": request.model_dump(),
             "source_release_ids": source_release_ids,
             "revisit": review_context,
+            "work_item": {"id": work_item.id, "kind": work_item.kind, "question": work_item.text,
+                          "citations": work_item.citations, "priority": work_item.priority} if work_item else None,
         },
     )
     session.add(run)
@@ -145,6 +151,8 @@ async def enqueue_analysis(
     )
     if revisit:
         revisit.run_id, revisit.status, revisit.error = run.id, "queued", None
+    if work_item:
+        work_item.run_id, work_item.status = run.id, "queued"
     return await publish_job(session, run)
 
 

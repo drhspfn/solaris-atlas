@@ -1,59 +1,39 @@
+"""Lexical search falls back safely; vectors share the agent embedding adapter."""
+
 import logging
 import os
-from typing import Any
 
-import httpx
+from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.agents.settings import get_agent_settings
+from wuwa_story.agents.workspace import paid_vector
 from wuwa_story.db.models.search import EmbeddingModel
 
 logger = logging.getLogger(__name__)
 
 
+class QueryEmbedding(list[float]):
+    def __init__(self, values: list[float], model_id: int) -> None:
+        super().__init__(values)
+        self.model_id = model_id
+
+
 async def generate_query_embedding(session: AsyncSession, text: str) -> list[float] | None:
-    """Generate an embedding for a search query using the active model.
-    Returns None if no active embedding model is configured or if generation fails.
-    """
     try:
-        model = await session.scalar(
-            select(EmbeddingModel).where(EmbeddingModel.active == True).limit(1)
-        )
-        if not model:
-            logger.info("No active embedding model configured in DB; falling back to lexical search")
+        model = await session.scalar(select(EmbeddingModel).where(EmbeddingModel.active.is_(True)).order_by(EmbeddingModel.id.desc()).limit(1))
+        if model is None:
             return None
-
-        api_key = os.environ.get("EMBEDDING_API_KEY", "")
-        if not api_key:
-            return [0.0] * model.dimensions
-
-        base_url = model.config.get("base_url", "")
-
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            if model.provider == "gemini":
-                url = f"{base_url}/models/{model.model_name}:embedContent?key={api_key}"
-                payload = {
-                    "model": "models/" + model.model_name,
-                    "content": {"parts": [{"text": text}]},
-                    "outputDimensionality": model.dimensions,
-                }
-                resp = await client.post(url, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                return data["embedding"]["values"]
-            else:  # OpenAI-like
-                url = f"{base_url}/embeddings"
-                headers = {"Authorization": f"Bearer {api_key}"}
-                payload = {
-                    "model": model.model_name,
-                    "input": [text],
-                    "dimensions": model.dimensions,
-                }
-                resp = await client.post(url, headers=headers, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                return data["data"][0]["embedding"]
-    except Exception as e:
-        logger.warning(f"Embedding generation failed: {e}; falling back to lexical search")
+        live = get_agent_settings()
+        settings = live.model_copy(update={
+            "embedding_provider": "gemini" if model.provider == "gemini" else "chat",
+            "embedding_base_url": model.config.get("base_url") or live.base_url,
+            "embedding_api_key": SecretStr(os.environ.get("EMBEDDING_API_KEY", "")) if os.environ.get("EMBEDDING_API_KEY") else live.embedding_api_key,
+            "embedding_model": model.model_name, "embedding_dimensions": model.dimensions,
+        })
+        vector = await paid_vector(session, settings, text, existing_model_id=model.id)
+        return QueryEmbedding(vector[1], model.id) if vector else None
+    except Exception as error:
+        logger.warning("search.embedding_failed type=%s; lexical fallback", type(error).__name__)
         return None
-

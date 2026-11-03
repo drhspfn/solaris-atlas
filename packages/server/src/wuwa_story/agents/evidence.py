@@ -830,6 +830,9 @@ class EvidenceTools:
         else:
             statement = statement.where(AgentNote.node_id == self.quest.node_id)
         notes = list(await self.session.scalars(statement.order_by(AgentNote.id.desc()).limit(8)))
+        from wuwa_story.agents.workspace import read_memory
+        workspace = await read_memory(self.session, self.settings, query, run_id=self.run_id,
+                                      node_id=None if query else self.quest.node_id)
         return {
             "notes": [
                 {
@@ -842,6 +845,7 @@ class EvidenceTools:
                 }
                 for note in notes
             ],
+            "workspace": workspace,
             "meaning": "Generated working memory, NOT primary evidence. Re-read cited source nodes.",
         }
 
@@ -864,6 +868,42 @@ class EvidenceTools:
 
     async def call(self, call: ToolCall) -> dict[str, Any]:
         args = dict(call.arguments)
+        from wuwa_story.agents.capabilities import INTERNAL_TOOLS, execute_internal
+        from wuwa_story.agents.workspace import QuestionResolution
+        if call.name in INTERNAL_TOOLS:
+            if call.name == "write_memory" and args.get("citations"):
+                request = NoteRequest(text=args["text"], citations=args["citations"])
+                validate_citations(request, self.evidence)
+                if self.cross_snapshot:
+                    self.validate_source_identity(request)
+            return await execute_internal(self.session, self.settings, call.name, args, run_id=self.run_id)
+        if call.name == "resolve_question":
+            from wuwa_story.db.models.agent_workspace import AgentWorkItem
+            request = QuestionResolution.model_validate(args)
+            receipt = NoteRequest(text=request.explanation, citations=request.citations)
+            validate_citations(receipt, self.evidence)
+            if self.cross_snapshot:
+                self.validate_source_identity(receipt)
+            work = await self.session.get(AgentWorkItem, request.work_id, populate_existing=True)
+            if work is None or work.kind != "question":
+                raise ValueError("Unknown question; use find_work first")
+            if work.revision != request.expected_revision:
+                raise ValueError("Question revision changed; use find_work again")
+            old_sources = {(c.get("snapshot_id"), c["node_id"]) for c in work.citations}
+            cited_sources = {(c.snapshot_id, c.node_id) for c in request.citations}
+            if old_sources and not old_sources.intersection(cited_sources):
+                raise ValueError("Reread and cite the original question evidence as well as its answer")
+            original_quotes = {(c.get("snapshot_id"), c["node_id"], c["quote"]) for c in work.citations}
+            if request.status in {"resolved", "partial"} and original_quotes and not any((c.snapshot_id, c.node_id, c.quote) not in original_quotes for c in request.citations):
+                raise ValueError("Cite answering evidence in addition to the original question")
+            if not old_sources and work.node_id not in self.known_nodes:
+                raise ValueError("Read the original question's quest before resolving it")
+            for citation in request.citations:
+                context = await self.context(citation.snapshot_id or self.release_id)
+                fresh = await context.read_node(citation.node_id, citation.locale)
+                if citation.quote not in fresh["text"]:
+                    raise ValueError("Resolution source changed; reread it")
+            return {"staged_resolution": request.model_dump(), "status": "staged_for_publication"}
         if call.name == "list_snapshots":
             return await self.snapshots()
         if call.name in ("read_quest", "read_node", "graph_neighbors", "read_cutscene_visual"):
@@ -958,6 +998,22 @@ class EvidenceTools:
             }:
                 raise ValueError("Cutscene description is outside this quest")
             validate_description(description, report.metadata_json, receipt["indices"])
+        if result.sections:
+            positions = await self.target_positions()
+            end_position = -1
+            keys = set()
+            for section in result.sections:
+                if section.key in keys or section.start_node_id not in positions or section.end_node_id not in positions:
+                    raise ValueError("Sections need unique keys and target-quest dialogue anchors")
+                start_position, finish_position = positions[section.start_node_id], positions[section.end_node_id]
+                if start_position != end_position + 1 or start_position > finish_position:
+                    raise ValueError("Sections must be ordered, non-overlapping authored ranges")
+                if not {section.start_node_id, section.end_node_id} <= {c.node_id for c in section.citations}:
+                    raise ValueError("Cite both section boundary passages")
+                keys.add(section.key)
+                end_position = finish_position
+            if require_full_quest and end_position != len(positions) - 1:
+                raise ValueError("Sections must cover the whole target transcript")
         validate_citations(result, self.evidence)
         if self.cross_snapshot:
             self.validate_source_identity(result)
@@ -1082,7 +1138,7 @@ def definitions() -> list[dict[str, Any]]:
         "type": "string",
         "description": "Optional source language (en, zh-Hans, ja, or another imported locale). Omit for priority fallback.",
     }
-    return [
+    tools = [
         tool(
             "list_snapshots",
             "List pinned imported snapshots available for research. Patch versions do not establish story chronology.",
@@ -1153,3 +1209,5 @@ def definitions() -> list[dict[str, Any]]:
             ["result_json"],
         ),
     ]
+    from wuwa_story.agents.capabilities import internal_definitions
+    return tools + internal_definitions(worker=True)
