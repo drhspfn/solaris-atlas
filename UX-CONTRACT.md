@@ -515,3 +515,16 @@ remain explicit. Published Spine bundles expose a source download containing
 skeletons, atlases, textures and original packages; a texture atlas is never shown
 as though it were a composed story picture. Browser Spine animation is separate
 from archival availability and is not claimed by the download action.
+
+
+## Backend ORM console
+
+`/console` is a separate Starlette-admin surface, backed directly by SQLAlchemy.
+The library owns table selection, saved URL filters/sorts/pagination, select/date
+widgets, form validation, save transitions and accessible confirmation dialogs.
+Python ModelViews configure these components; no React/admin data provider or
+project-owned HTML forms are introduced. Tables cap page size at 100. Existing
+administrator DB sessions own access and expiry; user/session secrets never appear
+as table fields. Changes are confirmed before sensitive actions; stale memory/task
+revisions fail instead of overwriting newer changes. Imported facts and execution
+history have no delete/edit controls. The existing public site UI is unaffected.
