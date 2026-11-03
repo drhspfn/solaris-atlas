@@ -89,6 +89,12 @@ successfully completed snapshot imports appear in the patch selector.
 
 ## Cited story explanations
 
+V8 story notes show searchable high-priority questions before narrative prose.
+Later discoveries use closed native spoiler disclosures with source receipts.
+Editorial quest sections expose titles, descriptions and links to cited boundary
+passages; they preserve the authored reading order and do not merge alternatives.
+Older explanations without workspace fields keep their existing presentation.
+
 The primary explanation is readable prose with section headings and bounded
 Markdown formatting. The agent may embed contextual links to its own sourced
 connections, events and records; arbitrary URLs, HTML and remote images are not

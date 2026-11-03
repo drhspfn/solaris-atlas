@@ -43,6 +43,25 @@ export type StoryAssertion = {
   }[];
 };
 export type StoryExplanation = {
+  sections?: {
+    key: string;
+    title: string;
+    description: string;
+    start_node_id: number;
+    end_node_id: number;
+    citations: SourceCitation[];
+  }[];
+  questions?: {
+    id: number;
+    question: string;
+    priority: number;
+    status: string;
+    resolution: {
+      explanation: string;
+      citations: SourceCitation[];
+      run_id: number;
+    } | null;
+  }[];
   is_supplement?: boolean;
   assessment?: {
     narrative_weight: string;
