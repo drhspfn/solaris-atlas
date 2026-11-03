@@ -123,3 +123,9 @@ app.include_router(auth_router)
 
 app.include_router(mcp.router)
 app.mount("/mcp", mcp.streamable_http.handle_request)
+
+
+from wuwa_story.admin.composition import install_admin  # noqa: E402
+from wuwa_story.db.session import engine  # noqa: E402
+
+console = install_admin(app, engine)

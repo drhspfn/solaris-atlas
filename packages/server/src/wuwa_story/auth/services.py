@@ -198,6 +198,8 @@ async def login(
     settings: Settings,
     ip: str | None,
     user_agent: str | None,
+    *,
+    required_role: UserRole | None = None,
 ) -> tuple[User, str]:
     try:
         normalized = normalize_email(email)
@@ -214,6 +216,8 @@ async def login(
         logger.warning("login.failed reason=invalid_credentials")
         raise AuthError("INVALID_CREDENTIALS", "Invalid email or password.", 401)
     assert user is not None
+    if required_role is not None and user.role != required_role:
+        raise AuthError("INVALID_CREDENTIALS", "Invalid email or password.", 401)
     if user.status != UserStatus.ACTIVE:
         logger.warning("login.failed user_id=%s reason=disabled", user.id)
         raise AuthError("ACCOUNT_DISABLED", "This account is disabled.", 403)
