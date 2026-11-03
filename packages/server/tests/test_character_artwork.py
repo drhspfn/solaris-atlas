@@ -74,6 +74,7 @@ async def test_export_omits_shared_character_resources_but_keeps_item_icons(kind
             "RoleStand": stand,
             "Icon": icon,
         },
+        *([None] if kind == "character" else []),  # No stored trial metadata.
     ]
     session.scalars.return_value = []
     request = MediaRequest(
@@ -101,6 +102,7 @@ async def test_export_preserves_cartethyia_card_but_omits_yangyang_portrait():
             "FormationRoleCard": own,
             "RolePortrait": foreign,
         },
+        None,  # No stored trial metadata.
     ]
     session.scalars.return_value = []
     request = MediaRequest(

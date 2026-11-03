@@ -18,7 +18,59 @@ Within `packages/server/src/wuwa_story`:
 - `ingestion` handles canonical/raw snapshot processing, release registration, and GitHub snapshot operations that are shared by the command worker.
 - `graph`, `search`, and `storage` own their focused services and adapters.
 
-There is no separate generic `libs/` or empty `domain/` layer: the current project has no independent, persistence-free domain model that would justify a package boundary there. Introduce one when a real use case needs logic shared across transport or storage implementations.
+There is no separate generic `libs/` or global `domain/` layer. Feature-specific
+domain models belong with the use cases that need them.
+
+### Notice browsing module
+
+`notices/domain.py` owns persistence-free notice read models and the historical
+revision policy: revision content overrides title, category, observation time and
+event links while the public identity stays stable. Missing historical metadata
+retains the existing current-value fallback; explicitly empty event links stay
+empty. Historical artwork never falls back to current artwork.
+
+`notices/service.py` provides list and detail use cases through the
+`NoticeRepository` protocol in `notices/repository.py`. The SQLAlchemy adapter is
+in `db/repositories/notices.py`, following the shared persistence layout. It owns
+source queries, English-only listing, literal title search, ordering and paging.
+The service owns the one-row lookahead and public response assembly.
+
+`notices/composition.py` wires the adapter and public image URL resolver. HTTP
+routes receive the service through `api/dependencies.py` and FastAPI `Depends`;
+they retain query validation, projection routing and domain-to-HTTP error mapping.
+Background projection publication calls the same service directly, without
+invoking HTTP handlers. Projection reads retain their existing ready/coverage
+checks. Ingestion still owns feed parsing and writes; database mappings
+and transaction ownership are unchanged.
+
+### Event browsing module
+
+`events/domain.py` contains persistence-free event, occurrence and related read
+models. Its policies select capture-scoped client metadata, localized notice
+overrides, eligible artwork, preview provenance and verified official links.
+`PREVIEW_ROLES` is shared by the SQL summary projection and projection reader.
+
+`events/service.py` implements calendar and run-detail use cases against the
+`EventRepository` protocol in `events/repository.py`. It receives media and notice
+URL policies through its constructor and imports neither SQLAlchemy, application
+settings nor storage clients. Localized presentation is computed once per run.
+
+`db/repositories/event_browsing.py` retains the optimized source queries and
+adapts ORM rows and SQL summary rows to domain read models through
+`SqlAlchemyEventRepository`. It preserves server/occurrence filters, undated
+fallbacks, bounded summary JSON and capture-aware media caches. The adapter owns
+the media bucket; the service does not select storage configuration.
+
+`events/composition.py` assembles the repository, service and URL policies.
+`api/dependencies.py` provides the service with FastAPI `Depends`; HTTP routes
+retain validation, projection routing and domain-to-HTTP 404 mapping. Background
+publication uses the composition entry point directly. S3 URL construction does
+not initialize an SDK client or perform network calls.
+
+`notices/matching.py` holds the pure authored-identity matching used by both event
+browsing and notice ingestion. Ingestion retains compatibility exports for
+existing callers and owns all writes and transaction boundaries. No schema,
+public response fields or projection publication formats change.
 
 ## Environment and build commands
 

@@ -20,6 +20,7 @@ from wuwa_story.db.models.graph import Node, NodeType
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.notices import GameNotice
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS
+from wuwa_story.notices.domain import NoticeRevisionNotFound
 from wuwa_story.read_models import builders
 from wuwa_story.read_models import source_payloads as payloads
 from wuwa_story.read_models import source_relations as relations
@@ -90,13 +91,12 @@ def context(monkeypatch):
         sections.continuity, "quest_continuity", AsyncMock(return_value={"presence": "observed"})
     )
     monkeypatch.setattr(sections.media, "quest_media", AsyncMock(return_value={"events": []}))
-    monkeypatch.setattr(
-        payloads.notices,
-        "notice_detail",
-        AsyncMock(
+    notice_service = Row(
+        detail=AsyncMock(
             return_value={"id": 7, "title": "Notice", "slug": "notice", "revisions": ["r1", "r2"]}
-        ),
+        )
     )
+    monkeypatch.setattr(payloads, "build_notice_service", lambda session: notice_service)
     monkeypatch.setattr(
         payloads.cutscenes, "detail", AsyncMock(return_value={"event": {"kind": "cutscene"}})
     )
@@ -153,6 +153,7 @@ def context(monkeypatch):
     monkeypatch.setattr(sections, "_artwork", AsyncMock(return_value=[]))
     return Row(
         session=session,
+        notice_service=notice_service,
         locale=locale,
         node=node,
         node_type=node_type,
@@ -393,7 +394,7 @@ async def test_unavailable_historical_selection_is_never_published_as_current(co
     with pytest.raises(ValueError, match="no public historical snapshot selector"):
         await builders.build_entity(context.session, kind, 7, 2, "3.10")
     sections.profiles.location_profile.assert_not_awaited()
-    payloads.notices.notice_detail.assert_not_awaited()
+    context.notice_service.detail.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -401,7 +402,7 @@ async def test_notice_locale_cannot_be_relabelled(context):
     context.records[(GameNotice, 7)].locale = "en"
     with pytest.raises(ValueError, match="different locale"):
         await builders.build_entity(context.session, "notice", 7, 2)
-    payloads.notices.notice_detail.assert_not_awaited()
+    context.notice_service.detail.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -573,7 +574,7 @@ async def test_notice_physical_listing_card_preserves_exact_fields_without_body_
         "related_event_ids": [1, 2],
     }
     body = [{"type": "text", "text": "Full body " * 10000}]
-    payloads.notices.notice_detail.return_value = {
+    context.notice_service.detail.return_value = {
         **listing,
         "blocks": body,
         "links": [{"url": "https://example.org/detail"}],
@@ -616,13 +617,13 @@ async def test_cutscene_physical_catalog_card_is_independent_of_full_playback_pa
 
 
 @pytest.mark.asyncio
-async def test_notice_payload_and_artwork_are_jsonb_serializable_after_direct_route_call(context):
+async def test_notice_payload_and_artwork_are_jsonb_serializable_after_service_call(context):
     class ImageKind(Enum):
         BANNER = "banner"
 
     identity = UUID("61e2ae61-9047-4e39-914c-29d603092f19")
     observed_at = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
-    payloads.notices.notice_detail.return_value.update(
+    context.notice_service.detail.return_value.update(
         observed_at=observed_at,
         related_payload={
             "price": Decimal("12.50"),
@@ -674,12 +675,12 @@ async def test_notice_revision_overrides_reconstruct_public_response_without_sha
         "banner_url": None,
     }
 
-    async def detail(identity, revision, session):
+    async def detail(identity, revision):
         assert SOURCE_BUILD.get()
-        assert identity == "7" and session is context.session
+        assert identity == "7"
         return previous if revision == "r1" else current
 
-    payloads.notices.notice_detail.side_effect = detail
+    context.notice_service.detail.side_effect = detail
     entry = await builders.build_entity(context.session, "notice", 7, 2)
     payload = entry["payload"]
     assert payload["revision_snapshot_format"] == "overrides-v1"
@@ -688,7 +689,7 @@ async def test_notice_revision_overrides_reconstruct_public_response_without_sha
     assert "blocks" not in overrides and "links" not in overrides
     assert len(json.dumps(overrides)) < 500
     assert "Previous notice" not in entry["searchable_text"]
-    assert payloads.notices.notice_detail.await_count == 2
+    assert context.notice_service.detail.await_count == 2
     monkeypatch.setattr(events.entities, "page_payload", AsyncMock(return_value=payload))
     assert await events.notice_detail_payload(context.session, "7", "r1") == jsonable_encoder(
         previous
@@ -698,22 +699,21 @@ async def test_notice_revision_overrides_reconstruct_public_response_without_sha
     )
     assert await events.notice_detail_payload(context.session, "7") == jsonable_encoder(current)
     # Request-time reads use only the projection; source rendering remains background-only.
-    assert payloads.notices.notice_detail.await_count == 2
+    assert context.notice_service.detail.await_count == 2
 
 
 @pytest.mark.asyncio
 async def test_missing_notice_revision_aborts_publication_instead_of_listing_unreadable_history(
     context,
 ):
-    async def detail(identity, revision, session):
+    async def detail(identity, revision):
         if revision:
-            raise HTTPException(404, "Announcement revision not found")
+            raise NoticeRevisionNotFound()
         return {"revision": "r2", "revisions": ["r2", "r1"]}
 
-    payloads.notices.notice_detail.side_effect = detail
-    with pytest.raises(HTTPException) as error:
+    context.notice_service.detail.side_effect = detail
+    with pytest.raises(NoticeRevisionNotFound):
         await builders.build_entity(context.session, "notice", 7, 2)
-    assert error.value.status_code == 404
 
 
 @pytest.mark.asyncio

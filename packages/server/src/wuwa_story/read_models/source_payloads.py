@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 
-from wuwa_story.api.routes import cutscenes, nodes, notices
+from wuwa_story.api.routes import cutscenes, nodes
 from wuwa_story.api.routes.story import (
     character_archive,
     profiles,
@@ -23,6 +23,7 @@ from wuwa_story.db.models.core import (
 from wuwa_story.db.models.graph import Node, NodeType
 from wuwa_story.db.models.notices import GameNotice
 from wuwa_story.db.models.search import EntityAlias
+from wuwa_story.notices.composition import build_notice_service
 from wuwa_story.read_models import source_relations as relations
 from wuwa_story.read_models import source_sections as sections
 from wuwa_story.story import service
@@ -92,19 +93,16 @@ def _searchable_text(kind, title, card, payload, version=None):
 
 async def _notice_payload(session, entity_id):
     """Materialize revision field overrides without copying unchanged notice bodies."""
+    service = build_notice_service(session)
     current = sections._public_json(
-        jsonable_encoder(
-            await notices.notice_detail(str(entity_id), revision=None, session=session)
-        )
+        jsonable_encoder(await service.detail(str(entity_id), revision=None))
     )
     snapshots = {}
     for revision in dict.fromkeys(current.get("revisions", [])):
         if revision == current.get("revision"):
             continue
         snapshot = sections._public_json(
-            jsonable_encoder(
-                await notices.notice_detail(str(entity_id), revision=revision, session=session)
-            )
+            jsonable_encoder(await service.detail(str(entity_id), revision=revision))
         )
         # The public service emits the same fields for current and revision
         # responses. An overlay cannot represent a removed field safely.

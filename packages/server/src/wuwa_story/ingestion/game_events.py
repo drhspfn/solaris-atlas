@@ -12,9 +12,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
+from wuwa_story.events.domain import CLIENT_SOURCE as CLIENT_SOURCE
 
 SOURCE = "Sanma5657/wuwa-wiki-public"
-CLIENT_SOURCE = "wuwa-game-client"
 SOURCE_COMMIT_URL = f"https://api.github.com/repos/{SOURCE}/commits/main"
 SOURCE_RAW_ROOT = f"https://raw.githubusercontent.com/{SOURCE}"
 SERVER_KEYS = ("asia", "europe", "america")

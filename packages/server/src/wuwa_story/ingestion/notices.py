@@ -14,6 +14,9 @@ from sqlalchemy.dialects.postgresql import insert
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
+from wuwa_story.notices.matching import notice_candidates as notice_candidates
+from wuwa_story.notices.matching import notice_matches as notice_matches
+from wuwa_story.storage.notice_images import public_notice_image as public_notice_image
 
 NOTICE_HOSTS = {"aki-gm-resources-oversea.aki-game.net", "aki-gm-resources-back.aki-game.net"}
 SERVER_OFFSETS = {"asia": 8, "europe": 1, "america": -5}
@@ -122,71 +125,6 @@ def notice_period(content, server):
     except ValueError:
         return None
     return (start, end) if end > start else None
-
-
-def public_notice_image(url):
-    """Repair archived URLs written by workers without a public CDN setting."""
-    from wuwa_story.config.settings import get_settings
-
-    settings = get_settings()
-    prefix = f"{settings.s3_endpoint_url.rstrip('/')}/{settings.s3_bucket}"
-    if url and settings.media_public_base_url and url.startswith(prefix + "/objects/"):
-        return settings.media_public_base_url.rstrip('/') + url[len(prefix):]
-    return url
-
-
-def notice_candidates(content, events, *, match_roster=True):
-    def normalized(value):
-        return re.sub(r"[^\w]+", "", value.casefold())
-
-    title = re.search(r"\[([^]]+)\]", content["title"])
-    name = normalized(title[1]) if title else None
-    featured = re.search(r"5-Star (Resonator|Weapon):\s*([^,\n]+)", content["text"])
-    rate_up = re.search(
-        r"4-Star (?:Resonators|Weapons):\s*(.*?)\s+receive boosted drop rates",
-        content["text"],
-        re.S,
-    )
-    rate_up_names = (
-        {normalized(n) for n in re.split(r",|\band\b", rate_up[1]) if n.strip()}
-        if rate_up
-        else None
-    )
-    matches = []
-    for event in events:
-        english = (event.source_data or {}).get("client", {}).get("locales", {}).get("en", {})
-        exact_title = name and normalized(english.get("title", event.title)) == name
-        exact_featured = (
-            featured
-            and event.event_kind == "banner"
-            and any(
-                normalized(n) == normalized(featured[2]) for n in english.get("featured_names", [])
-            )
-            and ((featured[1] == "Weapon") == ("Weapon Convene" in english.get("title", "")))
-        )
-        if exact_title or exact_featured:
-            matches.append(event)
-    if match_roster and len(matches) > 1 and rate_up_names:
-        matches = [
-            event
-            for event in matches
-            if rate_up_names
-            == {
-                normalized(n)
-                for n in (event.source_data or {})
-                .get("client", {})
-                .get("locales", {})
-                .get("en", {})
-                .get("up_names", [])
-            }
-        ]
-    return matches
-
-
-def notice_matches(content, events):
-    # Repeated titles/featured characters are not proof of which client row is used.
-    matches = notice_candidates(content, events)
-    return matches if len(matches) == 1 else []
 
 
 async def fetch_notice_feed(launcher_define):

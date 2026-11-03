@@ -1,6 +1,7 @@
 """Read event runs without transferring the full client prefab catalog for lists."""
 
 from types import SimpleNamespace
+from typing import Any
 
 from sqlalchemy import and_, case, cast, func, or_, select
 from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
@@ -10,14 +11,24 @@ from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
-from wuwa_story.ingestion.game_events import CLIENT_SOURCE
+from wuwa_story.events.domain import (
+    CLIENT_SOURCE,
+    Event,
+    EventAnnouncement,
+    EventMedia,
+    EventNoticeSnapshot,
+    EventOccurrence,
+    EventRewardNode,
+    EventRun,
+)
+from wuwa_story.events.domain import PREVIEW_ROLES as _PREVIEW_ROLES
 
 
 async def read_event_runs(
     session: AsyncSession, *, server: str, kind: str | None = None,
     version: str | None = None, locale: str = "en", summary: bool = False,
     event_id: int | None = None, occurrence_id: int | None = None,
-):
+) -> list[Any]:
     statement = (
         select(GameEvent, GameEventOccurrence)
         .outerjoin(
@@ -46,7 +57,7 @@ async def read_event_runs(
     if summary:
         # Project JSON in PostgreSQL: joined ORM rows otherwise transfer and decode
         # the complete prefab catalog once per occurrence before we can trim it.
-        columns = []
+        columns: list[Any] = []
         names = []
         for model in (GameEvent, GameEventOccurrence):
             fields = [column.key for column in model.__table__.columns]
@@ -57,26 +68,19 @@ async def read_event_runs(
             )
         projected = (await session.execute(statement.with_only_columns(*columns))).all()
         split = len(names[0])
-        rows = [
+        rows: list[Any] = [
             (SimpleNamespace(**dict(zip(names[0], row[:split], strict=True))),
              SimpleNamespace(**dict(zip(names[1], row[split:], strict=True)))
              if row[split] is not None else None)
             for row in projected
         ]
     else:
-        rows = (await session.execute(statement)).all()
+        rows = list((await session.execute(statement)).all())
     return rows
 
 
-# Only these roles participate in the existing calendar preview/background rules.
-_PREVIEW_ROLES = (
-    "content", "tab_selected", "tab", "featured_portrait", "featured_weapon",
-    "featured_card", "content_background", "background",
-)
-
-
-def _summary_source(source, locale):
-    def field(*keys):
+def _summary_source(source: Any, locale: str) -> Any:
+    def field(*keys: str) -> Any:
         value = source
         for key in keys:
             value = value[key]
@@ -109,13 +113,14 @@ def _summary_source(source, locale):
 async def read_event_media(
     session: AsyncSession, banner_paths: set[str], bucket: str, *,
     captures: set[tuple[str, str]] | None = None,
-):
+) -> list[Any]:
     if not banner_paths:
         return []
     from wuwa_story.read_models.context import SOURCE_BUILD
 
     cache = session.info.setdefault("story_event_media", {"exact": {}, "suffix": {}}) if SOURCE_BUILD.get() else None
-    def media_query(path_filter):
+
+    def media_query(path_filter: Any) -> Any:
         # Fence the path lookup so the large media joins see only candidate refs.
         reference_columns = [FileReference.file_id, FileReference.source_path,
                              FileReference.metadata_json.label("metadata_json")]
@@ -146,7 +151,7 @@ async def read_event_media(
         # row when independently cached path results are combined later.
         return statement.add_columns(candidates.c.reference_id) if cache is not None else statement
 
-    async def cached_rows(paths, *, suffix=False):
+    async def cached_rows(paths: list[str], *, suffix: bool = False) -> list[Any]:
         if cache is None:
             predicate = or_(*(FileReference.source_path.endswith("/" + path, autoescape=True) for path in paths)) if suffix else FileReference.source_path.in_(paths)
             return list(await session.execute(media_query(predicate)))
@@ -213,3 +218,58 @@ async def read_event_reward_nodes(session: AsyncSession, reward_keys: set[str]) 
     if not reward_keys:
         return []
     return list(await session.scalars(select(Node).where(Node.canonical_key.in_(reward_keys))))
+
+
+class SqlAlchemyEventRepository:
+    """Translate optimized source queries to persistence-free event read models."""
+
+    def __init__(self, session: AsyncSession, bucket: str) -> None:
+        self.session = session
+        self.bucket = bucket
+
+    async def runs(
+        self, *, server: str, kind: str | None, version: str | None, locale: str,
+        summary: bool, event_id: int | None, occurrence_id: int | None,
+    ) -> list[EventRun]:
+        rows = await read_event_runs(
+            self.session, server=server, kind=kind, version=version, locale=locale,
+            summary=summary, event_id=event_id, occurrence_id=occurrence_id,
+        )
+        return [
+            EventRun(
+                Event(
+                    id=event.id, slug=event.slug, source_id=event.source_id,
+                    title=event.title, description=event.description, event_kind=event.event_kind,
+                    banner_path=event.banner_path, rewards=event.rewards, game_path=event.game_path,
+                    source_url=event.source_url, source_data=event.source_data,
+                ),
+                EventOccurrence(
+                    id=occurrence.id, game_version=occurrence.game_version,
+                    starts_at=occurrence.starts_at, ends_at=occurrence.ends_at,
+                    season=occurrence.season, banner_path=occurrence.banner_path,
+                    source_data=occurrence.source_data,
+                ) if occurrence else None,
+            )
+            for event, occurrence in rows
+        ]
+
+    async def announcements(
+        self, *, event_id: int | None, notice_ids: set[int],
+    ) -> list[EventAnnouncement]:
+        rows = await read_event_announcements(self.session, event_id=event_id, notice_ids=notice_ids)
+        return [EventAnnouncement(row.id, row.slug, row.title, row.related_event_ids,
+                                  row.published_at, row.content) for row in rows]
+
+    async def notice_snapshots(self, revisions: set[str]) -> list[EventNoticeSnapshot]:
+        rows = await read_event_notice_snapshots(self.session, revisions)
+        return [EventNoticeSnapshot(row.notice_id, row.revision, row.content) for row in rows]
+
+    async def reward_nodes(self, reward_keys: set[str]) -> list[EventRewardNode]:
+        rows = await read_event_reward_nodes(self.session, reward_keys)
+        return [EventRewardNode(row.canonical_key, row.slug) for row in rows]
+
+    async def media(
+        self, paths: set[str], *, captures: set[tuple[str, str]],
+    ) -> list[EventMedia]:
+        rows = await read_event_media(self.session, paths, self.bucket, captures=captures)
+        return [EventMedia(path, key, metadata or {}) for path, key, metadata in rows]
