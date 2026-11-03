@@ -1,11 +1,9 @@
 import logging
 from dataclasses import dataclass
-from typing import Any, List
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from wuwa_story.db.models.lore import LoreChunk, LoreChunkEmbedding
 from wuwa_story.db.models.search import EmbeddingModel
 
 logger = logging.getLogger(__name__)
@@ -24,7 +22,7 @@ class LoreSearchService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def text_search(self, query: str, limit: int = 30) -> List[SearchResult]:
+    async def text_search(self, query: str, limit: int = 30) -> list[SearchResult]:
         """Lexical and full-text search across lore chunks."""
         sql = """
         SELECT 
@@ -63,11 +61,13 @@ class LoreSearchService:
             for row in rows
         ]
 
-    async def hybrid_search(self, query: str, query_embedding: list[float] | None, limit: int = 30) -> List[SearchResult]:
+    async def hybrid_search(self, query: str, query_embedding: list[float] | None, limit: int = 30) -> list[SearchResult]:
         if not query_embedding:
             return await self.text_search(query, limit=limit)
 
-        model_id = await self.session.scalar(select(EmbeddingModel.id).where(EmbeddingModel.active == True).limit(1))
+        model_id = getattr(query_embedding, "model_id", None)
+        if model_id:
+            model_id = await self.session.scalar(select(EmbeddingModel.id).where(EmbeddingModel.id == model_id, EmbeddingModel.dimensions == len(query_embedding)))
         if not model_id:
             logger.info("No active embedding model found for vector search; falling back to text search")
             return await self.text_search(query, limit=limit)
@@ -85,8 +85,8 @@ class LoreSearchService:
                 c.quest_id, 
                 c.chunk_type, 
                 c.content,
-                e.embedding <=> :query_embedding::vector AS distance,
-                RANK() OVER (ORDER BY e.embedding <=> :query_embedding::vector) AS rank
+                e.embedding <=> CAST(:query_embedding AS vector) AS distance,
+                RANK() OVER (ORDER BY e.embedding <=> CAST(:query_embedding AS vector)) AS rank
             FROM search.lore_chunk c
             JOIN search.lore_chunk_embedding e ON e.chunk_id = c.id
             WHERE e.model_id = :model_id
@@ -132,7 +132,7 @@ class LoreSearchService:
             text(sql), 
             {
                 "query": query, 
-                "query_embedding": query_embedding, 
+                "query_embedding": __import__("json").dumps(list(query_embedding)), 
                 "model_id": model_id,
                 "limit": limit
             }

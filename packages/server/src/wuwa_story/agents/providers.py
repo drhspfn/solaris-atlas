@@ -367,26 +367,16 @@ class Provider:
         }
 
     async def embed(self, texts: list[str]) -> tuple[list[list[float]], dict[str, Any]]:
-        s = self.settings
-        if s.provider == "gemini":
-            # Single-document requests are portable across Gemini embedding versions.
-            if len(texts) != 1:
-                raise ProviderFailure("gemini_embedding_requires_single_input")
-            raw = await self.post(
-                f"/models/{s.embedding_model}:embedContent",
-                {
-                    "model": "models/" + s.embedding_model,
-                    "content": {"parts": [{"text": texts[0]}]},
-                    "outputDimensionality": s.embedding_dimensions,
-                },
-            )
-            values = [raw["embedding"]["values"]]
-        else:
-            raw = await self.post(
-                "/embeddings",
-                {"model": s.embedding_model, "input": texts, "dimensions": s.embedding_dimensions},
-            )
-            values = [row["embedding"] for row in sorted(raw["data"], key=lambda row: row["index"])]
+        from wuwa_story.agents.embeddings import (
+            embedding_request,
+            embedding_settings,
+            embedding_values,
+        )
+
+        settings = embedding_settings(self.settings)
+        route, payload = embedding_request(settings, texts)
+        raw = await Provider(settings, self.client).post(route, payload)
+        values = embedding_values(settings, raw)
         if len(values) != len(texts):
             raise ProviderFailure("embedding_count_mismatch")
-        return [vector_values(value, s.embedding_dimensions) for value in values], raw
+        return values, raw

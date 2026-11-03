@@ -1,5 +1,11 @@
 # This module re-exports mapped classes to populate metadata for Alembic and callers.
 # ruff: noqa: F401
+from wuwa_story.db.models.agent_workspace import (
+    AgentMemory,
+    AgentMemoryEmbedding,
+    AgentToolAudit,
+    AgentWorkItem,
+)
 from wuwa_story.db.models.agents import (
     AgentCall,
     AgentDailyUsage,

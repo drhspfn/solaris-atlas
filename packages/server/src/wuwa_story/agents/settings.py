@@ -38,6 +38,14 @@ class AgentSettings(BaseSettings):
     chat_token_parameter: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
     embedding_model: str = ""
     embedding_dimensions: int = Field(default=1536, ge=1, le=4096)
+    embedding_provider: Literal["responses", "chat", "gemini"] | None = None
+    embedding_base_url: str | None = None
+    embedding_api_key: SecretStr = SecretStr("")
+    read_database_url: SecretStr = SecretStr("")
+    database_schemas: str = "core,raw,graph,i18n,ontology,content,story,search,storage"
+    autonomous_enabled: bool = False
+    autonomous_poll_seconds: int = Field(default=60, ge=10, le=3600)
+    autonomous_max_pending: int = Field(default=1, ge=1, le=10)
     embedding_input_usd_per_million: Decimal = Field(default=Decimal("0.02"), ge=0)
     public_query_embeddings: bool = False
     query_requests_per_hour: int = Field(default=30, ge=1, le=1000)
@@ -60,7 +68,7 @@ class AgentSettings(BaseSettings):
         # Never checkpoint API keys. Endpoint/model/rates are pinned per job.
         return self.model_dump(
             mode="json",
-            exclude={"api_key", "daily_budget_usd", "daily_token_limit", "public_query_embeddings"},
+            exclude={"api_key", "embedding_api_key", "read_database_url", "daily_budget_usd", "daily_token_limit", "public_query_embeddings"},
         )
 
     def require_enabled(self) -> None:
