@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
+from wuwa_story.storage.notice_images import public_notice_image as public_notice_image
 
 NOTICE_HOSTS = {"aki-gm-resources-oversea.aki-game.net", "aki-gm-resources-back.aki-game.net"}
 SERVER_OFFSETS = {"asia": 8, "europe": 1, "america": -5}
@@ -122,17 +123,6 @@ def notice_period(content, server):
     except ValueError:
         return None
     return (start, end) if end > start else None
-
-
-def public_notice_image(url):
-    """Repair archived URLs written by workers without a public CDN setting."""
-    from wuwa_story.config.settings import get_settings
-
-    settings = get_settings()
-    prefix = f"{settings.s3_endpoint_url.rstrip('/')}/{settings.s3_bucket}"
-    if url and settings.media_public_base_url and url.startswith(prefix + "/objects/"):
-        return settings.media_public_base_url.rstrip('/') + url[len(prefix):]
-    return url
 
 
 def notice_candidates(content, events, *, match_roster=True):

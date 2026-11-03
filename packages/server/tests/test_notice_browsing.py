@@ -6,10 +6,12 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 from fastapi import FastAPI
+from sqlalchemy.dialects import postgresql
 
 from wuwa_story.api.routes import notices
 from wuwa_story.db.models.game_events import GameEvent
 from wuwa_story.db.models.notices import GameNotice, GameNoticeRevision
+from wuwa_story.db.repositories.notices import SqlAlchemyNoticeRepository
 
 CURRENT = "a" * 64
 PREVIOUS = "b" * 64
@@ -153,3 +155,69 @@ async def test_explicit_current_revision_requires_its_archived_snapshot(source_c
         response = await client.get(f"/notices/7?revision={CURRENT}")
     assert response.status_code == 404
     assert response.json() == {"detail": "Announcement revision not found"}
+
+
+@pytest.mark.asyncio
+async def test_repository_filters_literal_search_and_bounds_page_in_postgres():
+    session = AsyncMock()
+    session.scalars.return_value = []
+    await SqlAlchemyNoticeRepository(session).page(
+        category="game",
+        q="  100%_/  ",
+        offset=3,
+        limit=25,
+        event_id=11,
+    )
+    statement = session.scalars.await_args.args[0].compile(dialect=postgresql.dialect())
+    assert statement.params == {
+        "locale_1": "en",
+        "category_1": "game",
+        "title_1": "100/%/_//",
+        "related_event_ids_1": [11],
+        "param_1": 25,
+        "param_2": 3,
+    }
+    sql = str(statement)
+    assert "ESCAPE '/'" in sql and "@>" in sql
+    assert "ORDER BY core.game_notice.published_at DESC NULLS LAST, core.game_notice.id DESC" in sql
+
+
+@pytest.mark.asyncio
+async def test_http_service_can_be_overridden_without_database_access(monkeypatch):
+    monkeypatch.setattr(notices.read_projections, "should_route_to_projection", lambda *_: False)
+    service = AsyncMock()
+    service.page.return_value = {"notices": [], "has_more": False, "offset": 0}
+    app = FastAPI()
+    app.include_router(notices.router)
+    app.dependency_overrides[notices.get_notice_service] = lambda: service
+    app.dependency_overrides[notices.get_session] = lambda: object()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/notices")
+    assert response.status_code == 200 and response.json() == service.page.return_value
+    service.page.assert_awaited_once_with(category=None, q="", offset=0, limit=24, event_id=None)
+
+
+@pytest.mark.asyncio
+async def test_projection_publisher_reuses_service_without_http_handlers(monkeypatch):
+    from wuwa_story.read_models.source_payloads import _notice_payload
+
+    handler = AsyncMock(side_effect=AssertionError("Publisher must not invoke an HTTP handler"))
+    monkeypatch.setattr(notices, "notice_detail", handler)
+    session = AsyncMock()
+    current = notice_record(related_event_ids=[])
+    snapshot = GameNoticeRevision(
+        notice_id=7,
+        revision=PREVIOUS,
+        content={"title": "Old title"},
+        observed_at=datetime(2026, 10, 29, tzinfo=UTC),
+    )
+    session.get.side_effect = [current, current, snapshot]
+    session.scalars.side_effect = [[CURRENT, PREVIOUS], [CURRENT, PREVIOUS]]
+    payload = await _notice_payload(session, 7)
+    assert payload["title"] == "Current title"
+    assert payload["revision_snapshot_format"] == "overrides-v1"
+    assert payload["revision_snapshots"][PREVIOUS]["title"] == "Old title"
+    assert payload["revision_snapshots"][PREVIOUS]["revision"] == PREVIOUS
+    handler.assert_not_awaited()

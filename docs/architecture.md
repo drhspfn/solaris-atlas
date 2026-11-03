@@ -18,7 +18,30 @@ Within `packages/server/src/wuwa_story`:
 - `ingestion` handles canonical/raw snapshot processing, release registration, and GitHub snapshot operations that are shared by the command worker.
 - `graph`, `search`, and `storage` own their focused services and adapters.
 
-There is no separate generic `libs/` or empty `domain/` layer: the current project has no independent, persistence-free domain model that would justify a package boundary there. Introduce one when a real use case needs logic shared across transport or storage implementations.
+There is no separate generic `libs/` or global `domain/` layer. Feature-specific
+domain models belong with the use cases that need them.
+
+### Notice browsing module
+
+`notices/domain.py` owns persistence-free notice read models and the historical
+revision policy: revision content overrides title, category, observation time and
+event links while the public identity stays stable. Missing historical metadata
+retains the existing current-value fallback; explicitly empty event links stay
+empty. Historical artwork never falls back to current artwork.
+
+`notices/service.py` provides list and detail use cases through the
+`NoticeRepository` protocol in `notices/repository.py`. The SQLAlchemy adapter is
+in `db/repositories/notices.py`, following the shared persistence layout. It owns
+source queries, English-only listing, literal title search, ordering and paging.
+The service owns the one-row lookahead and public response assembly.
+
+`notices/composition.py` wires the adapter and public image URL resolver. HTTP
+routes receive the service through `api/dependencies.py` and FastAPI `Depends`;
+they retain query validation, projection routing and domain-to-HTTP error mapping.
+Background projection publication calls the same service directly, without
+invoking HTTP handlers. Projection reads retain their existing ready/coverage
+checks. Ingestion still owns feed parsing, matching and writes; database mappings
+and transaction ownership are unchanged.
 
 ## Environment and build commands
 
