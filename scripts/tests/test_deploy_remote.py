@@ -52,7 +52,7 @@ ssh() {
 class DeploymentTests(unittest.TestCase):
     def deploy(self, component, fail_validation=False, worker_image="", fail_migration=False, empty_auth=False,
                fail_activation=False, migration_plan="done:more", fail_online=False, fail_lock=False,
-               fail_client_listing=False):
+               fail_client_listing=False, fail_reader_setup=False):
         source = (ROOT / "scripts/deploy-remote.sh").read_text()
         lock_block = source.split("# Serialize deployments", 1)[1].split("\numask 077", 1)[0]
         tail = 'case "$DEPLOY_COMPONENT" in' + source.split('case "$DEPLOY_COMPONENT" in', 1)[1]
@@ -68,6 +68,7 @@ MIGRATION_PLAN=$7
 FAIL_ONLINE=$8
 FAIL_LOCK=$9
 FAIL_CLIENT_LISTING=${10}
+FAIL_READER_SETUP=${11}
 GHCR_OWNER=test
 IMAGE_TAG=abc1234
 USE_MINIO=false
@@ -107,6 +108,9 @@ record_compose() {
   if [[ "$*" == *"alembic upgrade 0023_search_body_trgm"* && "$FAIL_ONLINE" == 1 ]]; then
     return 1
   fi
+  if [[ "$*" == *"exec python scripts/setup_agent_reader.py"* && "$FAIL_READER_SETUP" == 1 ]]; then
+    return 1
+  fi
   if [[ "$*" == *"caddy validate"* && "$FAIL_VALIDATION" == 1 ]]; then
     return 1
   fi
@@ -117,7 +121,7 @@ compose=(record_compose)
             [BASH, "-s", "--", component, "1" if fail_validation else "0", worker_image,
              "1" if fail_migration else "0", "1" if empty_auth else "0", "1" if fail_activation else "0",
              migration_plan, "1" if fail_online else "0", "1" if fail_lock else "0",
-             "1" if fail_client_listing else "0"],
+             "1" if fail_client_listing else "0", "1" if fail_reader_setup else "0"],
             input=harness + "\n# Serialize deployments" + lock_block + "\n" + tail,
             text=True, encoding="utf-8", capture_output=True, timeout=10, check=False,
         )
@@ -253,6 +257,49 @@ compose=(record_compose)
                 if plan.endswith("more"):
                     self.assertGreater(stops[-1], index)
                     self.assertIn("sh head", commands[stops[-1] + 1])
+
+    def test_local_migration_prepares_reader_using_direct_database(self):
+        source = ROOT / "scripts/migrate.sh"
+        harness = r'uv() { printf "%s|db=%s|pool=%s\n" "$*" "$DATABASE_URL" "${WUWA_DB_TRANSACTION_POOLING-unset}"; }; source "$1"'
+        result = subprocess.run(
+            [BASH, "-e", "-c", harness, "test", str(source)],
+            env={**os.environ, "DATABASE_URL": "postgresql://runtime",
+                 "MIGRATION_DATABASE_URL": "postgresql://migration", "WUWA_DB_TRANSACTION_POOLING": "1"},
+            text=True, encoding="utf-8", capture_output=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), [
+            "run alembic upgrade head|db=postgresql://migration|pool=unset",
+            "run python scripts/setup_agent_reader.py|db=postgresql://runtime|pool=unset",
+        ])
+
+
+    def test_reader_setup_runs_after_migrations_even_at_head(self):
+        for plan in ("before:more", "done:more", "done:last"):
+            with self.subTest(plan=plan):
+                result = self.deploy("api", migration_plan=plan)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                commands = result.stdout.splitlines()
+                setup = next(i for i, line in enumerate(commands)
+                             if "exec python scripts/setup_agent_reader.py" in line)
+                migrations = [i for i, line in enumerate(
+                    commands) if "alembic upgrade" in line]
+                if migrations:
+                    self.assertGreater(setup, max(migrations))
+                startup = next(i for i, line in enumerate(
+                    commands) if line.startswith("up -d"))
+                self.assertLess(setup, startup)
+                self.assertNotIn("export DATABASE_URL=", commands[setup])
+                self.assertIn(
+                    "unset WUWA_DB_TRANSACTION_POOLING", commands[setup])
+
+
+    def test_reader_setup_failure_prevents_application_start(self):
+        result = self.deploy(
+            "api", migration_plan="done:last", fail_reader_setup=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("up -d", result.stdout)
+
 
     def test_online_failure_stops_deployment_without_stopping_running_clients(self):
         result = self.deploy("api", migration_plan="ready:last", fail_online=True)

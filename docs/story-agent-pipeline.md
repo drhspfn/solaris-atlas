@@ -2,8 +2,8 @@
 
 ## Agent workspace and roles (V8)
 
-New jobs use `story-v8`. Apply additive migration `0027_agent_workspace` before
-starting the updated API or worker. It adds durable tool receipts, versioned
+New jobs use `story-v8`. Apply migrations through `0028_agent_reader_role` before
+starting the updated API or worker. Migration 0027 adds durable tool receipts, versioned
 memory, model-scoped memory vectors and a work ledger. Existing published hooks
 and unresolved questions are indexed into that ledger without rewriting their
 documents. Earlier prompt protocols remain readable and resumable.
@@ -39,14 +39,15 @@ separate read-only transaction with `SET LOCAL ROLE`, which resets on release an
 works with transaction pooling. Missing grants on newly created tables are picked
 up on the next read. The model cannot choose a role, provision one, or execute DDL.
 
-First initialization needs a database owner with CREATEROLE. If the runtime login
-is deliberately restricted, run this once after migration, using the migration
-login's `DATABASE_URL`:
-
-```sh
-cd packages/server
-uv run python scripts/setup_agent_reader.py --application-role your_runtime_login
-```
+Migration `0028_agent_reader_role` prepares the role automatically. API/all
+deployments and `scripts/migrate.sh` also reconcile it after migrations, including
+when already at head, using the direct migration connection. No separate manual
+setup is needed for the normal Compose deployment. The setup script uses
+`MIGRATION_DATABASE_URL` for role administration and automatically identifies the
+runtime login from `DATABASE_URL`. Only the migration owner needs CREATEROLE on
+first installation. A separate runtime login needs no role-creation permission,
+reader password or manual setup command. `--application-role` remains available
+as an explicit deployment override.
 
 Runtime revalidation of existing correct grants needs no CREATEROLE permission.
 The membership uses `INHERIT FALSE, SET TRUE`: ordinary application transactions
@@ -159,9 +160,9 @@ explicit export. The disposable PostgreSQL 17 test database was upgraded to 0027
 No working database upgrade, paid analysis or autonomous activation was performed.
 Managed-role tests additionally cover passwordless reads, blocked writes, grant drift,
 pool role reset and a runtime login without CREATEROLE privileges.
-The existing fresh-install chain has a separate issue: model-backed 0001 creates
-tables later recreated by 0012. Test bootstrap excluded later-created tables from
-0001 without modifying historical migrations; 0026 → 0027 ran unchanged.
+The fresh-install chain now uses frozen 0001 DDL, preventing tables/indexes
+introduced by later migrations from being created twice. Empty → head and
+0027 → head with retained data pass through ordinary Alembic without a bootstrap.
 Downgrade 0027 → 0026 and upgrade back were also verified in the disposable DB.
 
 Frontend: 120 tests, TypeScript and production build passed; SSR checks: 28 passed.
