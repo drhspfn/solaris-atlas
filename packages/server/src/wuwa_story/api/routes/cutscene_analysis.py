@@ -5,7 +5,6 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import Field
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.agents.contracts import StrictModel
@@ -87,7 +86,7 @@ async def assets(
             FileReference.reference_type == "cutscene_video",
             FileReference.owner_node_id.is_not(None),
         )
-        .ext(distinct_on(FileReference.owner_node_id, version))
+        .distinct(FileReference.owner_node_id, version)
         .order_by(
             FileReference.owner_node_id,
             version,
@@ -136,7 +135,7 @@ async def create_visual_jobs(request: VisualRequest, session: AsyncSession = Dep
                 FileReference.owner_node_id.in_(ids),
                 FileReference.metadata_json["asset_version"].astext == request.game_version,
             )
-            .ext(distinct_on(FileReference.owner_node_id))
+            .distinct(FileReference.owner_node_id)
             .order_by(FileReference.owner_node_id, FileReference.id.desc())
         )
     )

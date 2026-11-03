@@ -101,6 +101,8 @@ services:
       - path: ./env/api.env
         format: raw
     environment:
+      # API has no published port; Caddy is the public ingress and sets forwarded headers.
+      FORWARDED_ALLOW_IPS: "*"
       WUWA_ASSET_WORKSPACE: /var/lib/wuwa-worker/client-assets
     volumes:
       - worker_data:/var/lib/wuwa-worker:ro

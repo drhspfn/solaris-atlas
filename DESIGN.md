@@ -234,3 +234,12 @@ voice control stays with that line. A transcript mode exposes the whole passage.
 Exploration and interaction objectives use compact map/conversation marks and
 expandable local content. These views reuse the existing palette, typography,
 Select, focus treatments and source disclosures; they introduce no global theme.
+
+
+### Internal ORM console
+
+The separate `/console` backend surface deliberately uses Starlette-admin's native
+Tabler theme and generated components. The framework owns its visual tokens and
+forms; public atlas runtime tokens are not copied into another renderer. Model
+configuration and Python actions are the extension points. See `docs/admin-console.md`
+and the backend-console section of `UX-CONTRACT.md` for behavior and security.

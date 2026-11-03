@@ -18,11 +18,12 @@ dependencies = [
   "redis>=5.2,<7",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.6,<3",
-  "sqlalchemy[asyncio]>=2.0.36,<3",
+  "sqlalchemy[asyncio]>=2.0.36,<2.1",
   "tzdata>=2025",
   "uvicorn[standard]>=0.32,<1",
   "mcp>=1.9,<2",
   "sqlglot>=27,<30",
+  "starlette-admin>=0.17.1,<0.18",
 ]
 
 [dependency-groups]
