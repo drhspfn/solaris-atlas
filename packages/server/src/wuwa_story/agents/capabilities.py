@@ -81,7 +81,8 @@ def internal_definitions(*, worker: bool = False) -> list[dict[str, Any]]:
         tool(
             "read_schema",
             "Discover mapped database tables, columns, keys and foreign keys; filter and paginate.",
-            {"schema": string, "table": string, "offset": integer, "limit": integer},
+            {"schema": string, "table": string,
+                "offset": integer, "limit": integer},
         ),
         tool(
             "read_records",
@@ -162,7 +163,7 @@ async def execute_internal(
     if name == "read_records":
         return await database.read_records(session, settings, **arguments)
     if name == "query_database":
-        return await database.query_database(settings, **arguments)
+        return await database.query_database(settings, bind=session.bind, **arguments)
     if name == "read_workspace_memory":
         return await workspace.read_memory(session, settings, run_id=run_id, **arguments)
     if name == "write_memory":
@@ -183,7 +184,8 @@ async def execute_internal(
             from wuwa_story.db.models.core import Quest
 
             target = await session.scalar(
-                select(Quest.node_id).where(Quest.game_quest_id == arguments["quest_id"])
+                select(Quest.node_id).where(
+                    Quest.game_quest_id == arguments["quest_id"])
             )
             if target is None:
                 raise ValueError("Unknown quest")

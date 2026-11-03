@@ -7,10 +7,10 @@ from typing import Any, cast
 import sqlglot
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 from sqlglot import exp
 
+from wuwa_story.agents.reader import reader_connection
 from wuwa_story.agents.settings import AgentSettings
 from wuwa_story.db.base import Base
 
@@ -90,10 +90,11 @@ def read_schema(
                     for column in item.columns
                 ],
             }
-            for item in tables[offset : offset + limit]
+            for item in tables[offset: offset + limit]
         ],
         "next_offset": offset + limit if offset + limit < len(tables) else None,
-        "sql_available": bool(settings.read_database_url.get_secret_value()),
+        "sql_available": True,
+        "sql_access": "dedicated_login" if settings.read_database_url.get_secret_value() else "managed_readonly_role",
     }
 
 
@@ -109,7 +110,8 @@ def validate_sql(sql: str, settings: AgentSettings) -> str:
     query = statements[0]
     forbidden = (exp.DDL, exp.DML, exp.Into, exp.Lock, exp.Command)
     if any(isinstance(node, forbidden) for node in query.walk()):
-        raise ValueError("Mutations, SELECT INTO and locking queries are prohibited")
+        raise ValueError(
+            "Mutations, SELECT INTO and locking queries are prohibited")
     if any(item.this == exp.DataType.Type.USERDEFINED for item in query.find_all(exp.DataType)):
         raise ValueError("User-defined SQL casts are not permitted")
     ctes = {cte.alias_or_name for cte in query.find_all(exp.CTE)}
@@ -118,7 +120,8 @@ def validate_sql(sql: str, settings: AgentSettings) -> str:
         if not item.db and item.name in ctes:
             continue
         if item.catalog or f"{item.db}.{item.name}" not in tables:
-            raise ValueError("Use schema-qualified tables returned by read_schema")
+            raise ValueError(
+                "Use schema-qualified tables returned by read_schema")
     for function in query.find_all(exp.Func):
         name = (
             function.name.upper()
@@ -143,35 +146,18 @@ def bounded_rows(rows: Sequence[Any], max_chars: int = 16000) -> dict[str, Any]:
     return {"rows": output, "truncated": False}
 
 
-async def query_database(settings: AgentSettings, sql: str, limit: int = 50) -> dict[str, Any]:
+async def query_database(
+    settings: AgentSettings, sql: str, limit: int = 50,
+    *, bind: AsyncEngine | AsyncConnection | None = None,
+) -> dict[str, Any]:
     sql = validate_sql(sql, settings)
     if not 1 <= limit <= 100:
         raise ValueError("Query limit must be 1..100")
-    url = settings.read_database_url.get_secret_value()
-    if not url:
-        raise ValueError(
-            "Configure AGENT_READ_DATABASE_URL with a restricted read-only database login"
-        )
-    engine = create_async_engine(url, poolclass=NullPool)
     try:
-        async with engine.connect() as connection, connection.begin():
-            await connection.execute(text("SET TRANSACTION READ ONLY"))
-            await connection.execute(text("SET LOCAL statement_timeout='5s'"))
-            await connection.execute(text("SET LOCAL lock_timeout='1s'"))
-            unsafe = await connection.scalar(
-                text("""
-                SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=current_user
-                    AND (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls))
-                OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-                    WHERE n.nspname NOT IN ('pg_catalog','information_schema')
-                    AND c.relkind IN ('r','p','v','m','f')
-                    AND has_table_privilege(current_user,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE'))
-            """)
-            )
-            if unsafe:
-                raise ValueError("SQL reader must not have privileged or write capabilities")
+        async with reader_connection(settings, bind) as connection:
             result = await connection.execute(
-                text(f"SELECT * FROM ({sql}) AS agent_read LIMIT :_agent_limit"),
+                text(
+                    f"SELECT * FROM ({sql}) AS agent_read LIMIT :_agent_limit"),
                 {"_agent_limit": limit + 1},
             )
             rows = result.mappings().all()
@@ -180,10 +166,8 @@ async def query_database(settings: AgentSettings, sql: str, limit: int = 50) -> 
             return response
     except SQLAlchemyError as error:
         raise ValueError(
-            f"Read query rejected: {type(error).__name__}; inspect read_schema and correct the query"
+            "Read query rejected; check SQL and managed reader setup (database owner/CREATEROLE on first use)"
         ) from error
-    finally:
-        await engine.dispose()
 
 
 async def read_records(
@@ -210,14 +194,14 @@ async def read_records(
         if not isinstance(value, (str, int, float, bool, type(None))):
             raise ValueError("Filters accept scalar values only")
         query = query.where(source.c[key] == value)
-    query = query.order_by(*source.primary_key.columns).limit(limit + 1).offset(offset)
+    query = query.order_by(
+        *source.primary_key.columns).limit(limit + 1).offset(offset)
     try:
-        async with AsyncSession(session.bind) as reader:
-            await reader.execute(text("SET TRANSACTION READ ONLY"))
-            await reader.execute(text("SET LOCAL statement_timeout='5s'"))
+        async with reader_connection(settings, session.bind) as reader:
             rows = (await reader.execute(query)).mappings().all()
     except SQLAlchemyError as error:
-        raise ValueError("Record read failed; check field types and narrow the filters") from error
+        raise ValueError(
+            "Record read failed; check field types and narrow the filters") from error
     response = bounded_rows(rows[:limit])
     response["truncated"] |= len(rows) > limit
     response["next_offset"] = offset + limit if len(rows) > limit else None

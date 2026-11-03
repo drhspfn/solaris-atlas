@@ -30,18 +30,36 @@ tables, selected columns and exact scalar filters. Operational/authentication
 schemas are outside this generic source gateway; memory, work and audit have
 dedicated tools/routes.
 
-`query_database` requires `AGENT_READ_DATABASE_URL` in the API and worker
-environments. As the database owner, run
-`psql ... -f packages/server/scripts/setup_agent_reader.sql`, then set the login
-password separately with `\password solaris_agent_reader`. Point the agent URL
-at this login, never the application owner. The script grants SELECT on source
-schemas and future tables created by the current owner. Deployments with other
-table owners must grant their default privileges too.
+`query_database` and `read_records` automatically use the fixed PostgreSQL role
+`solaris_agent_readonly` (`NOLOGIN`); there is no reader password or extra URL to
+manage. Before each read, an independent bootstrap transaction verifies the role,
+creates it if missing and grants missing source-schema/table SELECT privileges.
+An advisory lock serializes concurrent initializations. The actual read uses a
+separate read-only transaction with `SET LOCAL ROLE`, which resets on release and
+works with transaction pooling. Missing grants on newly created tables are picked
+up on the next read. The model cannot choose a role, provision one, or execute DDL.
+
+First initialization needs a database owner with CREATEROLE. If the runtime login
+is deliberately restricted, run this once after migration, using the migration
+login's `DATABASE_URL`:
+
+```sh
+cd packages/server
+uv run python scripts/setup_agent_reader.py --application-role your_runtime_login
+```
+
+Runtime revalidation of existing correct grants needs no CREATEROLE permission.
+The membership uses `INHERIT FALSE, SET TRUE`: ordinary application transactions
+do not inherit reader grants. Unexpected elevated attributes, role memberships or
+write grants fail closed; they are not silently accepted or used to broaden access.
+The shared cluster role is retained on application rollback. An explicit legacy
+`AGENT_READ_DATABASE_URL` remains supported for an operator-managed dedicated login;
+it is optional and still undergoes the same privilege/transaction checks.
 
 Queries are parsed as PostgreSQL ASTs: only one SELECT/query expression is
 accepted, source tables must be discovered and schema-qualified, and mutations,
 locking, SELECT INTO, operational/auth tables and side-effectful functions are
-rejected. A separate connection starts a read-only transaction, checks the login
+rejected. A separate connection starts a read-only transaction, checks the active role
 has no elevated/write privileges, and applies a five-second statement timeout,
 one-second lock timeout, 100-row maximum and bounded output. Credentials are
 never returned by schema discovery or retained in a job config.
@@ -137,15 +155,22 @@ users cannot retrieve other users' tool logs or internal memory.
 Rollback application images first and retain the additive tables to preserve
 work/history. A downgrade to 0026 deletes workspace data and should follow an
 explicit export. The disposable PostgreSQL 17 test database was upgraded to 0027;
-71 agent integration/security tests passed, including a real restricted reader.
+75 targeted agent integration/security tests passed, including a real restricted reader.
 No working database upgrade, paid analysis or autonomous activation was performed.
+Managed-role tests additionally cover passwordless reads, blocked writes, grant drift,
+pool role reset and a runtime login without CREATEROLE privileges.
 The existing fresh-install chain has a separate issue: model-backed 0001 creates
 tables later recreated by 0012. Test bootstrap excluded later-created tables from
 0001 without modifying historical migrations; 0026 → 0027 ran unchanged.
+Downgrade 0027 → 0026 and upgrade back were also verified in the disposable DB.
 
 Frontend: 120 tests, TypeScript and production build passed; SSR checks: 28 passed.
-Worker startup/dispatch checks: 6 passed. Server suite without optional services:
-1101 passed, 161 skipped before the two additional PostgreSQL-only checks.
+Worker startup/dispatch checks: 6 passed. The full PostgreSQL-enabled server run
+(before the final missing-grant recovery case) had 1168 passed, 98 skipped and one
+existing lifecycle failure: test_api_health reuses the global MCP session manager
+after the auth integration test has already started/stopped it. The SDK permits
+one run per manager instance. All three API-health/MCP tests pass in isolation.
+The final managed-reader regression cases pass in the targeted run above.
 
 Research and browsing share `db.repositories.quest_scope.quest_state_links`.
 The research scope includes direct quest references, quest nodes, plot-step scenes,
