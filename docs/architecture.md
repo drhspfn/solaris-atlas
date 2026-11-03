@@ -40,8 +40,37 @@ routes receive the service through `api/dependencies.py` and FastAPI `Depends`;
 they retain query validation, projection routing and domain-to-HTTP error mapping.
 Background projection publication calls the same service directly, without
 invoking HTTP handlers. Projection reads retain their existing ready/coverage
-checks. Ingestion still owns feed parsing, matching and writes; database mappings
+checks. Ingestion still owns feed parsing and writes; database mappings
 and transaction ownership are unchanged.
+
+### Event browsing module
+
+`events/domain.py` contains persistence-free event, occurrence and related read
+models. Its policies select capture-scoped client metadata, localized notice
+overrides, eligible artwork, preview provenance and verified official links.
+`PREVIEW_ROLES` is shared by the SQL summary projection and projection reader.
+
+`events/service.py` implements calendar and run-detail use cases against the
+`EventRepository` protocol in `events/repository.py`. It receives media and notice
+URL policies through its constructor and imports neither SQLAlchemy, application
+settings nor storage clients. Localized presentation is computed once per run.
+
+`db/repositories/event_browsing.py` retains the optimized source queries and
+adapts ORM rows and SQL summary rows to domain read models through
+`SqlAlchemyEventRepository`. It preserves server/occurrence filters, undated
+fallbacks, bounded summary JSON and capture-aware media caches. The adapter owns
+the media bucket; the service does not select storage configuration.
+
+`events/composition.py` assembles the repository, service and URL policies.
+`api/dependencies.py` provides the service with FastAPI `Depends`; HTTP routes
+retain validation, projection routing and domain-to-HTTP 404 mapping. Background
+publication uses the composition entry point directly. S3 URL construction does
+not initialize an SDK client or perform network calls.
+
+`notices/matching.py` holds the pure authored-identity matching used by both event
+browsing and notice ingestion. Ingestion retains compatibility exports for
+existing callers and owns all writes and transaction boundaries. No schema,
+public response fields or projection publication formats change.
 
 ## Environment and build commands
 

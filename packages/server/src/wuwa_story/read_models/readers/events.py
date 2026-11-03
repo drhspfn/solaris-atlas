@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS
+from wuwa_story.events.domain import PREVIEW_ROLES
 from wuwa_story.read_models.readers import entities
 
 
@@ -51,16 +52,6 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
         card=summary,
     )
     events = []
-    preview_roles = {
-        "content",
-        "tab_selected",
-        "tab",
-        "featured_portrait",
-        "featured_weapon",
-        "featured_card",
-        "content_background",
-        "background",
-    }
     for entry in entries:
         payload = entry.payload
         event, runs = payload.get("event"), payload.get("occurrences")
@@ -80,7 +71,7 @@ async def events_page(session, server, kind=None, version=None, locale="en", sum
             result = {key: value for key, value in run.items() if key != "server"}
             if summary:
                 result["artwork"] = [
-                    art for art in run.get("artwork", []) if art.get("role") in preview_roles
+                    art for art in run.get("artwork", []) if art.get("role") in PREVIEW_ROLES
                 ]
                 result["detail_url"] = (
                     f"/events/{entry.entity_id}/detail?server={server}&locale={locale}"

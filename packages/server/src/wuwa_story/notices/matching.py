@@ -27,25 +27,21 @@ def notice_candidates[T: MatchingEvent](
 
     title = re.search(r"\[([^]]+)\]", content["title"])
     name = normalized(title[1]) if title else None
-    featured = re.search(
-        r"5-Star (Resonator|Weapon):\s*([^,\n]+)", content["text"])
+    featured = re.search(r"5-Star (Resonator|Weapon):\s*([^,\n]+)", content["text"])
     rate_up = re.search(
         r"4-Star (?:Resonators|Weapons):\s*(.*?)\s+receive boosted drop rates",
         content["text"],
         re.S,
     )
     rate_up_names = (
-        {normalized(n)
-         for n in re.split(r",|\band\b", rate_up[1]) if n.strip()}
+        {normalized(n) for n in re.split(r",|\band\b", rate_up[1]) if n.strip()}
         if rate_up
         else None
     )
     matches = []
     for event in events:
-        english = (event.source_data or {}).get(
-            "client", {}).get("locales", {}).get("en", {})
-        exact_title = name and normalized(
-            english.get("title", event.title)) == name
+        english = (event.source_data or {}).get("client", {}).get("locales", {}).get("en", {})
+        exact_title = name and normalized(english.get("title", event.title)) == name
         exact_featured = (
             featured
             and event.event_kind == "banner"

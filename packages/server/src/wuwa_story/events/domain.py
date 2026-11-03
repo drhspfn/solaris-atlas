@@ -100,8 +100,7 @@ class EventMedia:
 
 def _client_data(event: ClientSource, occurrence: ClientSource | None) -> dict[str, Any]:
     current = (event.source_data or {}).get("client", {})
-    dated = ((occurrence.source_data or {})
-             if occurrence else {}).get("client", {})
+    dated = ((occurrence.source_data or {}) if occurrence else {}).get("client", {})
     if current.get("download_id") and current.get("download_id") == dated.get("download_id"):
         return cast(dict[str, Any], current)
     return cast(dict[str, Any], dated or current)
@@ -179,8 +178,7 @@ def _presentation(
 ) -> dict[str, Any]:
     locales = _client_data(event, occurrence).get("locales", {})
     presentation = locales.get(locale) or locales.get("en") or {}
-    notice = ((occurrence.source_data or {}) if occurrence else {}).get(
-        "notice_presentation") or {}
+    notice = ((occurrence.source_data or {}) if occurrence else {}).get("notice_presentation") or {}
     return {**presentation, **(notice.get(locale) or notice.get("en") or {})}
 
 

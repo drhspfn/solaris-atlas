@@ -31,7 +31,7 @@ from wuwa_story.db.models.raw import SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.repositories import cutscenes as cutscene_repository
 from wuwa_story.db.repositories.event_browsing import _PREVIEW_ROLES
-from wuwa_story.events.service import browse_events
+from wuwa_story.events.composition import browse_events
 from wuwa_story.ingestion.character_artwork import character_artwork_scope
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
 from wuwa_story.storage.s3 import S3Storage
