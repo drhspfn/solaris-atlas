@@ -58,6 +58,7 @@ async def test_quest_page_budget_includes_visual_inventory(world, monkeypatch):
 
 async def test_visual_variant_pages_are_required_and_published_with_story(world):
     engine, settings, _, nodes, locale, release, quest = world
+    settings.max_input_tokens = 128000  # This transport scripts tool calls, not compaction.
     settings.max_steps = 8
     async with AsyncSession(engine, expire_on_commit=False) as db:
         visual_nodes = []
@@ -92,7 +93,7 @@ async def test_visual_variant_pages_are_required_and_published_with_story(world)
         await db.commit()
         report_id, file_id, asset_id = report.id, file.id, visual_nodes[2].id
     run_id = await create(world, adaptive=True)
-    final = result_for(nodes)
+    final = result_for(nodes, sections=True)
     final['links'] = []
     final['narrative_function'] = 'Explains a local route change.'
     final['review'] = dict.fromkeys(['choices_labeled', 'future_knowledge_separated', 'proportional_depth',
@@ -184,6 +185,7 @@ async def world(monkeypatch):
                 )
             )
             nodes.append(node)
+        nodes[0].canonical_key = f"quest:{nodes[0].id}"
         quest = Quest(node_id=nodes[0].id, game_quest_id=nodes[0].id)
         db.add(quest)
         db.add(QuestState(node_id=nodes[1].id, state_key="test-state"))
@@ -268,7 +270,7 @@ async def world(monkeypatch):
         await engine.dispose()
 
 
-def result_for(nodes):
+def result_for(nodes, *, sections=False):
     citation = {
         "node_id": nodes[3].id,
         "quote": "The bridge was destroyed.",
@@ -276,6 +278,9 @@ def result_for(nodes):
     }
     return {
         "title": "A blocked crossing",
+        "sections": [{"key": "bridge-crossing", "title": "A blocked crossing", "description": "The traveller learns why the route changes.",
+                      "start_node_id": nodes[3].id, "end_node_id": nodes[4].id,
+                      "citations": [citation, {"node_id": nodes[4].id, "quote": "We need another route.", "snapshot_id": nodes[4].created_release_id}]}] if sections else [],
         "blocks": [
             {
                 "title": "Why the route changes",
@@ -607,7 +612,9 @@ async def test_cross_patch_publication_links_to_later_source_and_invalidates_cha
         ]
         assert public["research_scope"] == "all_imported_snapshots"
         later = public["blocks"][0]["assertions"][0]["later_resolution"][0]["citations"][0]
-        assert f"/quests/{later_quest.game_quest_id}?" in later["href"]
+        from wuwa_story.urls import node_url
+        later_quest_node = await db.get(Node, later_nodes[0].id, populate_existing=True)
+        assert later["href"].startswith(node_url(later_quest_node, "quest") + "?")
         assert f"game_version={later_release.game_version}" in later["href"]
         assert (
             public["blocks"][0]["assertions"][0]["knowledge_state"]
@@ -732,9 +739,10 @@ async def test_quest_only_request_resolves_and_pins_latest_observed_snapshot(wor
 
 async def test_adaptive_prescan_is_required_checkpointed_and_published(world):
     engine, settings, _, nodes, _, release, _ = world
+    settings.max_input_tokens = 128000  # Compaction has dedicated provider fixtures.
     settings.max_steps = 3
     run_id = await create(world, adaptive=True)
-    final = result_for(nodes)
+    final = result_for(nodes, sections=True)
     final["narrative_function"] = "Explains a local obstacle and the change of route."
     final["review"] = dict.fromkeys(
         [
@@ -831,6 +839,7 @@ async def test_import_revisit_outbox_recovers_and_preserves_original(world, monk
     from wuwa_story.db.models.agents import AgentRevisit
 
     engine, settings, request, nodes, locale, release, quest = world
+    settings.max_input_tokens = 128000  # Scripted actions do not model compaction.
     run_id = await create(world, adaptive=True)
     original = AnalysisResult.model_validate(result_for(nodes))
     original.links = []
@@ -984,9 +993,10 @@ async def test_import_revisit_outbox_recovers_and_preserves_original(world, monk
         async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
             await execute_job(child_id, engine, settings, client)
             await execute_job(child_id, engine, settings, client)
-        assert len(calls) == 2
         async with AsyncSession(engine) as db:
-            assert (await db.get(ProcessingRun, child_id)).status == "completed"
+            child = await db.get(ProcessingRun, child_id)
+            assert child.status == "completed", child.error
+            assert len(calls) == 2
             assert (await db.get(Document, parent_id)).body_ast == original_body
             payload = (await get_explanation(db, request.quest_id, release.game_version, "en"))[
                 "explanation"
@@ -2159,3 +2169,49 @@ async def test_source_links_and_bounded_transcript_focus(world):
             f"/quests/{request.quest_id}/transcript", params={**params, "focus_line": "missing"}
         )
         assert missing.status_code == 404
+
+
+async def test_workspace_memory_revision_and_raw_reads_on_postgres(world):
+    from wuwa_story.agents.database import read_records
+    from wuwa_story.agents.workspace import MemoryWrite, read_memory, save_memory
+
+    engine, settings, _, nodes, _, _, quest = world
+    key = 'test-' + uuid4().hex
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        records = await read_records(db, settings, 'core.quest',
+            columns=['node_id', 'game_quest_id'], filters={'node_id': quest.node_id})
+        assert records['rows'] == [{'node_id': quest.node_id, 'game_quest_id': quest.game_quest_id}]
+        first = await save_memory(db, settings,
+            MemoryWrite(key=key, text='Unanswered bridge mystery', node_id=nodes[0].id), run_id=None)
+        await db.commit()
+        assert first['revision'] == 1
+        found = await read_memory(db, settings, 'bridge mystery', node_id=nodes[0].id)
+        assert any(row['id'] == first['id'] for row in found['entries'])
+        second = await save_memory(db, settings,
+            MemoryWrite(key=key, text='Bridge mystery resolved', node_id=nodes[0].id,
+                expected_revision=1), run_id=None)
+        await db.commit()
+        assert second['revision'] == 2
+        with pytest.raises(ValueError, match='revision conflict'):
+            await save_memory(db, settings,
+                MemoryWrite(key=key, text='Stale overwrite', expected_revision=1), run_id=None)
+        await db.rollback()
+
+
+async def test_database_sql_rejects_owner_and_reads_with_restricted_role(world):
+    from wuwa_story.agents.database import query_database
+
+    reader_url = os.getenv('WUWA_TEST_AGENT_READ_DATABASE_URL')
+    if not reader_url:
+        pytest.skip('Dedicated test reader required')
+    _, settings, _, _, _, _, quest = world
+    from pydantic import SecretStr
+    settings.read_database_url = SecretStr(DATABASE_URL)
+    with pytest.raises(ValueError, match='privileged or write'):
+        await query_database(settings, 'SELECT count(*) FROM core.quest')
+    settings.read_database_url = SecretStr(reader_url)
+    result = await query_database(settings,
+        f'SELECT node_id FROM core.quest WHERE game_quest_id = {quest.game_quest_id}')
+    assert result['rows'] == [{'node_id': quest.node_id}]
+    with pytest.raises(ValueError):
+        await query_database(settings, 'SELECT email FROM auth.account')

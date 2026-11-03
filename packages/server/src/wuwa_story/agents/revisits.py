@@ -32,7 +32,7 @@ async def schedule_revisits(session: AsyncSession, release_id: int) -> None:
             Document.document_type.startswith("story-explanation:"),
             Document.metadata_json["schema_version"]
             .as_string()
-            .in_(["story-v5", "story-v6", "story-v7"]),
+            .in_(["story-v5", "story-v6", "story-v7", "story-v8"]),
         )
         .execution_options(yield_per=100)
     )
@@ -54,7 +54,8 @@ async def find_candidates(
     session: AsyncSession, document: Document, release_id: int
 ) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
-    observed = select(NodeRevision.node_id).where(NodeRevision.release_id == release_id)
+    observed = select(NodeRevision.node_id).where(
+        NodeRevision.release_id == release_id)
     for hook in document.metadata_json.get("hooks", []):
         if not hook.get("revisit_on_new_versions"):
             continue
@@ -73,7 +74,8 @@ async def find_candidates(
                         SearchDocument.search_vector.op("@@")(query),
                     )
                     .order_by(
-                        func.ts_rank_cd(SearchDocument.search_vector, query).desc(),
+                        func.ts_rank_cd(
+                            SearchDocument.search_vector, query).desc(),
                         SearchDocument.target_node_id,
                     )
                     .limit(CANDIDATES_PER_HOOK)
@@ -110,7 +112,8 @@ def validate_revisit(result: AnalysisResult, context: dict[str, Any]) -> None:
         }
         sources = {(c.snapshot_id, c.node_id) for c in review.citations}
         if not sources.intersection(old_sources):
-            raise ValueError("A hook review must reread and cite its original evidence")
+            raise ValueError(
+                "A hook review must reread and cite its original evidence")
         if not any(c.snapshot_id == context["release_id"] for c in review.citations):
             raise ValueError(
                 "A hook review must cite inspected new-import evidence, even for a rejected candidate"
@@ -165,7 +168,8 @@ async def dispatch_revisits(
             document = await session.get(Document, task.document_id)
             assert document is not None
             current = await session.scalar(
-                select(DocumentHead.document_id).where(DocumentHead.document_id == document.id)
+                select(DocumentHead.document_id).where(
+                    DocumentHead.document_id == document.id)
             )
             if not current:
                 task.status = "superseded"
@@ -182,7 +186,8 @@ async def dispatch_revisits(
             assert quest is not None and release is not None
             await enqueue_analysis(
                 session,
-                AnalysisRequest(quest_id=quest.game_quest_id, game_version=release.game_version),
+                AnalysisRequest(quest_id=quest.game_quest_id,
+                                game_version=release.game_version),
                 settings,
                 revisit=task,
             )
@@ -193,6 +198,7 @@ async def dispatch_revisits(
                 task.error = f"{type(error).__name__}: review dispatch deferred; retry is automatic"
                 await session.commit()
             logger.warning(
-                "agent.revisit_deferred task_id=%s error_type=%s", task_id, type(error).__name__
+                "agent.revisit_deferred task_id=%s error_type=%s", task_id, type(
+                    error).__name__
             )
     return ids[-1] if ids else 0

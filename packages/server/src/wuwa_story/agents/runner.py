@@ -12,13 +12,17 @@ import httpx
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from wuwa_story.agents import audit
 from wuwa_story.agents.budget import BudgetExceeded, reserve, settle
+from wuwa_story.agents.capabilities import INTERNAL_PROMPT
 from wuwa_story.agents.contracts import (
     AnalysisResult,
+    InferredLink,
     NoteRequest,
     QuestAssessment,
     validate_citations,
 )
+from wuwa_story.agents.embeddings import embedding_request, embedding_settings, embedding_values
 from wuwa_story.agents.evidence import EvidenceTools, definitions, quest_fingerprint
 from wuwa_story.agents.lore import assessment_policy, primary_quest_role, validate_lore_result
 from wuwa_story.agents.providers import (
@@ -27,7 +31,6 @@ from wuwa_story.agents.providers import (
     ProviderRejected,
     ToolCall,
     token_usage,
-    vector_values,
 )
 from wuwa_story.agents.publication import publish_analysis
 from wuwa_story.agents.revisits import validate_revisit
@@ -114,7 +117,7 @@ def system_prompt(
     locale: str, relations: list[str], cross_snapshot: bool = False, *, include_schema: bool = True
 ) -> str:
     return (
-        "You explain Wuthering Waves story using ONLY imported source tools. "
+        INTERNAL_PROMPT + "\nYou explain Wuthering Waves story using ONLY imported source tools. "
         + (
             "The target snapshot selects the quest being explained, NOT a research cutoff. "
             "Use list_snapshots, search_entities and graph_neighbors across ALL pinned imported patches "
@@ -172,12 +175,20 @@ def system_prompt(
         "including a summary, a list of facts with explicit/inferred/speculative evidence levels, "
         "and structured relationships. This ensures downstream semantic search tools can easily index "
         "the story without parsing huge markdown blocks.\n"
+        "After assess_quest, find high-priority unresolved questions with find_work and relevant memory before broad research. "
+        "Use read_schema/SQL/raw records for discovery only; read_node/read_quest must establish citation receipts. "
+        "Create sections covering the full quest as ordered nonoverlapping dialogue ranges with key, title, "
+        "description, start_node_id, end_node_id and exact boundary citations. These are editorial acts, "
+        "not a claim that alternative branches all happened. Check old questions from other quests and "
+        "stage sourced answers with resolve_question. Use update_relationship to revise generated links "
+        "between any read entities; finish_analysis will validate and atomically publish all staged changes. "
         f"Write in locale {locale}. Finish via finish_analysis as the ONLY tool call in that turn. "
         "Allowed relations: "
         + ", ".join(relations)
         + (
             ". AnalysisResult JSON schema: "
-            + json.dumps(AnalysisResult.model_json_schema(), ensure_ascii=False)
+            + json.dumps(AnalysisResult.model_json_schema(),
+                         ensure_ascii=False)
             if include_schema
             else ""
         )
@@ -202,8 +213,14 @@ async def pause(session: AsyncSession, run: ProcessingRun, status: str, reason: 
                 )
             )
     run.status, run.error = status, reason
+    from sqlalchemy import case, update
+
+    from wuwa_story.db.models.agent_workspace import AgentWorkItem
+    await session.execute(update(AgentWorkItem).where(AgentWorkItem.run_id == run.id, AgentWorkItem.status == "queued")
+                          .values(status=case((AgentWorkItem.kind == "analysis", "deferred"), else_="open")))
     await session.commit()
-    logger.info("agent.paused run_id=%s status=%s reason=%s", run.id, status, reason)
+    logger.info("agent.paused run_id=%s status=%s reason=%s",
+                run.id, status, reason)
 
 
 async def remote_call(
@@ -219,7 +236,8 @@ async def remote_call(
     compaction: bool = False,
 ) -> dict[str, Any] | None:
     call = await session.scalar(
-        select(AgentCall).where(AgentCall.run_id == run.id, AgentCall.step == step)
+        select(AgentCall).where(AgentCall.run_id ==
+                                run.id, AgentCall.step == step)
     )
     if call:
         if call.status == "completed" and call.response is not None:
@@ -241,7 +259,8 @@ async def remote_call(
         try:
             counted = await provider.count_input(payload)
             tokens = counted.get("input_tokens")
-            fits = type(tokens) is int and 0 <= tokens <= settings.max_input_tokens
+            fits = type(
+                tokens) is int and 0 <= tokens <= settings.max_input_tokens
             if type(tokens) is int and 0 <= tokens <= settings.max_input_tokens:
                 input_bound = tokens
                 counted_input = True
@@ -318,7 +337,8 @@ async def remote_call(
     waited = 0.0
     next_retry = metadata.get("retry_at")
     delay = (
-        max(0.0, (datetime.fromisoformat(next_retry) - datetime.now(UTC)).total_seconds())
+        max(0.0, (datetime.fromisoformat(next_retry) -
+            datetime.now(UTC)).total_seconds())
         if next_retry
         else 0.0
     )
@@ -332,7 +352,8 @@ async def remote_call(
             )
             return None
         if delay:
-            logger.info("agent.rate_limit_wait run_id=%s step=%s seconds=%.1f", run.id, step, delay)
+            logger.info(
+                "agent.rate_limit_wait run_id=%s step=%s seconds=%.1f", run.id, step, delay)
             await asyncio.sleep(delay)
             waited += delay
         attempts += 1
@@ -441,11 +462,13 @@ async def run_locked(
         _env_file=None,
         **job.config,
         api_key=live.api_key,
+        embedding_api_key=live.embedding_api_key,
+        read_database_url=live.read_database_url,
         daily_budget_usd=live.daily_budget_usd,
         daily_token_limit=live.daily_token_limit,
     )
     # Never send a newly rotated credential to a job's old provider endpoint.
-    if settings.base_url != live.base_url or settings.provider != live.provider:
+    if settings.base_url != live.base_url or settings.provider != live.provider or settings.embedding_base_url != live.embedding_base_url or settings.embedding_provider != live.embedding_provider:
         await pause(
             session,
             run,
@@ -453,6 +476,8 @@ async def run_locked(
             "Worker provider/endpoint differs from pinned job; use the matching worker configuration",
         )
         return
+    settings.database_schemas = ",".join(sorted(set(
+        settings.database_schemas.split(",")) & set(live.database_schemas.split(","))))
     try:
         settings.require_enabled()
     except ValueError as error:
@@ -470,7 +495,8 @@ async def run_locked(
             quest,
             job.release_id,
             fingerprint_locale,
-            include_visual=run.prompt_version in ("story-v6", "story-v7"),
+            include_visual=run.prompt_version in (
+                "story-v6", "story-v7", "story-v8"),
         )
         != run.input_hash
     ):
@@ -484,24 +510,31 @@ async def run_locked(
     finalization_end = cp.get("finalization_end")
     if finalization_end:
         step_ceiling = finalization_end
-    cross_snapshot = run.prompt_version in ("story-v4", "story-v5", "story-v6", "story-v7")
-    adaptive = run.prompt_version in ("story-v5", "story-v6", "story-v7")
+    cross_snapshot = run.prompt_version in (
+        "story-v4", "story-v5", "story-v6", "story-v7", "story-v8")
+    adaptive = run.prompt_version in (
+        "story-v5", "story-v6", "story-v7", "story-v8")
     revisit = run.metadata_json.get("revisit")
-    source_release_ids = run.metadata_json.get("source_release_ids") if cross_snapshot else None
+    source_release_ids = run.metadata_json.get(
+        "source_release_ids") if cross_snapshot else None
     if cross_snapshot and (not source_release_ids or job.release_id not in source_release_ids):
         await pause(session, run, "stale", "Pinned research snapshots missing; create a new job")
         return
     provider = Provider(settings, client)
     history = cp.get("history")
+    relations = list(await session.scalars(select(RelationType.key).order_by(RelationType.key)))
     if history is None:
-        relations = list(await session.scalars(select(RelationType.key).order_by(RelationType.key)))
         history = provider.initial(
             system_prompt(
-                locale.code, relations, cross_snapshot, include_schema=not adaptive or bool(revisit)
+                locale.code, relations, cross_snapshot, include_schema=not adaptive or bool(
+                    revisit)
             )
             + (ADAPTIVE_INSTRUCTIONS if adaptive else ""),
             f"Analyze quest game ID {quest.game_quest_id}, node ID {quest.node_id}; snapshot ID {job.release_id}. Begin with read_quest.",
         )
+        if run.metadata_json.get("work_item"):
+            history.extend(provider.initial("", "Priority work for this run; reread its sources before acting: " +
+                           json.dumps(run.metadata_json["work_item"], ensure_ascii=False))[1:])
         if revisit:
             history.extend(
                 provider.initial(
@@ -536,17 +569,20 @@ async def run_locked(
     run.status, run.error = "running", None
     await session.commit()
     logger.info("agent.started run_id=%s step=%s", run.id, cp.get("step", 0))
-    result = AnalysisResult.model_validate(cp["result"]) if "result" in cp else None
+    result = AnalysisResult.model_validate(
+        cp["result"]) if "result" in cp else None
     if result is None:
         visual_inventory = await evidence.cutscene_inventory(quest) if adaptive else []
         required_read_turns = (
             (len(await evidence.target_positions()) + 49) // 50
-            + sum((asset["observation_count"] + 19) // 20 for asset in visual_inventory)
+            + sum((asset["observation_count"] + 19) //
+                  20 for asset in visual_inventory)
             if adaptive else 0
         )
         for step in range(cp.get("step", 0), step_ceiling):
             assessment = (
-                QuestAssessment.model_validate(cp["assessment"]) if cp.get("assessment") else None
+                QuestAssessment.model_validate(
+                    cp["assessment"]) if cp.get("assessment") else None
             )
             prescan = adaptive and assessment is None
             step_tools = definitions()
@@ -558,17 +594,25 @@ async def run_locked(
                 covered = max(covered, offset + count)
             missing_visual = []
             for asset in visual_inventory:
-                receipt = evidence.visual_evidence.get(str(asset["visual_reference_id"]), {})
-                unread = sorted(set(range(asset["observation_count"])) - set(receipt.get("indices", [])))
+                receipt = evidence.visual_evidence.get(
+                    str(asset["visual_reference_id"]), {})
+                unread = sorted(
+                    set(range(asset["observation_count"])) - set(receipt.get("indices", [])))
                 if unread:
-                    missing_visual.append({"asset_node_id": asset["asset_node_id"], "offset": unread[0], "limit": 20})
-            history.extend(provider.initial("", f"Server progress: {remaining} turns remain. Target dialogue covered through offset {covered}; total={evidence.total_lines}. Read only missing pages via returned next_offset; do not reread covered pages. Finish with finish_analysis before the turn budget ends. Pagination limits: read_quest <=50, read_cutscene_visual <=20. Correct validation errors using saved evidence.")[1:])
+                    missing_visual.append(
+                        {"asset_node_id": asset["asset_node_id"], "offset": unread[0], "limit": 20})
+            history.extend(provider.initial(
+                "", f"Server progress: {remaining} turns remain. Target dialogue covered through offset {covered}; total={evidence.total_lines}. Read only missing pages via returned next_offset; do not reread covered pages. Finish with finish_analysis before the turn budget ends. Pagination limits: read_quest <=50, read_cutscene_visual <=20. Correct validation errors using saved evidence.")[1:])
             if missing_visual:
-                history.extend(provider.initial("", "Required unread visual pages (batch these reads within the per-turn tool limit): " + json.dumps(missing_visual))[1:])
+                history.extend(provider.initial(
+                    "", "Required unread visual pages (batch these reads within the per-turn tool limit): " + json.dumps(missing_visual))[1:])
             if finalization_end:
-                history.extend(provider.initial("", "Finalization only: use existing research, read required missing dialogue/visual pages or exact cited sources, then submit finish_analysis. Do not explore new connections or reassess depth. All citation, coverage and budget checks remain enforced.")[1:])
-                allowed = {"finish_analysis", "read_quest", "read_cutscene_visual", "read_node"}
-                step_tools = [tool for tool in step_tools if tool["name"] in allowed]
+                history.extend(provider.initial(
+                    "", "Finalization only: use existing research, read required missing dialogue/visual pages or exact cited sources, then submit finish_analysis. Do not explore new connections or reassess depth. All citation, coverage and budget checks remain enforced.")[1:])
+                allowed = {"finish_analysis", "read_quest",
+                           "read_cutscene_visual", "read_node"}
+                step_tools = [
+                    tool for tool in step_tools if tool["name"] in allowed]
             if adaptive and not finalization_end:
                 step_tools.append(
                     {
@@ -585,7 +629,8 @@ async def run_locked(
                     if cp.get("prescan_reads", 0) < 3
                     else {"assess_quest"}
                 )
-                step_tools = [tool for tool in step_tools if tool["name"] in allowed]
+                step_tools = [
+                    tool for tool in step_tools if tool["name"] in allowed]
             call_settings = (
                 settings.model_copy(update={"max_output_tokens": 2048})
                 if prescan and settings.max_output_tokens <= 4096
@@ -604,7 +649,8 @@ async def run_locked(
                 )
             ):
                 before = request_bound(payload)
-                compact_route, compact_payload = provider.compact_request(history)
+                compact_route, compact_payload = provider.compact_request(
+                    history)
                 compact_raw = await remote_call(
                     session,
                     run,
@@ -669,11 +715,14 @@ async def run_locked(
                 await pause(session, run, "failed", "Provider output was truncated or blocked")
                 return
             history.extend(turn.items)
-            trace = {"recorded": True, "text": preview(turn.text, 8000), "tools": []}
+            trace = {"recorded": True, "text": preview(
+                turn.text, 8000), "tools": []}
+            audit_receipts = []
             signatures = dict(cp.get("tool_signatures", {}))
             if not turn.calls:
                 history.extend(
-                    provider.initial("", "Use tools to research or finish_analysis to publish.")[1:]
+                    provider.initial(
+                        "", "Use tools to research or finish_analysis to publish.")[1:]
                 )
             for tool_index, tool_call in enumerate(turn.calls):
                 executed_call = tool_call
@@ -682,6 +731,9 @@ async def run_locked(
                 repeats = signatures.get(fingerprint, 0)
                 signatures[fingerprint] = repeats + 1
                 validation = None
+                audit_id = await audit.start(session, request_id=f"run:{run.id}", role="worker",
+                                             run_id=run.id, step=step, call_id=tool_call.id, tool=tool_call.name,
+                                             arguments=tool_call.arguments)
                 logger.info(
                     "agent.tool_started run_id=%s step=%s tool=%s repeat=%s",
                     run.id,
@@ -698,13 +750,14 @@ async def run_locked(
                 previous_source_nodes = dict(evidence.source_nodes)
                 try:
                     if finalization_end and tool_call.name not in {"finish_analysis", "read_quest", "read_cutscene_visual", "read_node"}:
-                        raise ValueError("Finalization permits only missing required sources and finish_analysis")
+                        raise ValueError(
+                            "Finalization permits only missing required sources and finish_analysis")
                     if tool_index >= settings.max_tool_calls_per_step:
                         raise ValueError(
                             f"Tool call limit reached ({settings.max_tool_calls_per_step}); "
                             "this call was not executed. Request remaining tools in another turn."
                         )
-                    if prescan and tool_call.name not in {tool["name"] for tool in step_tools}:
+                    if tool_call.name not in {tool["name"] for tool in step_tools}:
                         raise ValueError(
                             "Complete assess_quest before broad research or publication"
                         )
@@ -713,16 +766,21 @@ async def run_locked(
                         and tool_call.name != "assess_quest"
                         and cp.get("prescan_reads", 0) >= 3
                     ):
-                        raise ValueError("Pre-scan read allowance reached; submit assess_quest")
+                        raise ValueError(
+                            "Pre-scan read allowance reached; submit assess_quest")
                     if tool_call.name == "assess_quest" and adaptive:
                         if len(turn.calls) != 1:
-                            raise ValueError("Assessment must be the only call in this turn")
-                        selected = QuestAssessment.model_validate(tool_call.arguments)
+                            raise ValueError(
+                                "Assessment must be the only call in this turn")
+                        selected = QuestAssessment.model_validate(
+                            tool_call.arguments)
                         authored_type = None
-                        if run.prompt_version in ("story-v6", "story-v7"):
+                        if run.prompt_version in ("story-v6", "story-v7", "story-v8"):
                             authored_type = await evidence.authored_quest_type()
-                            selected = primary_quest_role(selected, authored_type)
-                        policy = assessment_policy(selected, authored_main=authored_type == "1")
+                            selected = primary_quest_role(
+                                selected, authored_type)
+                        policy = assessment_policy(
+                            selected, authored_main=authored_type == "1")
                         if assessment and (
                             not selected.upgrade_reason or policy["words"] <= cp["policy"]["words"]
                         ):
@@ -740,10 +798,12 @@ async def run_locked(
                             evidence_note = NoteRequest(
                                 text="Assessment evidence", citations=citations
                             )
-                            validate_citations(evidence_note, evidence.evidence)
+                            validate_citations(
+                                evidence_note, evidence.evidence)
                             evidence.validate_source_identity(evidence_note)
                         if not any(c.snapshot_id == job.release_id for c in selected.citations):
-                            raise ValueError("Assessment must cite the target quest snapshot")
+                            raise ValueError(
+                                "Assessment must cite the target quest snapshot")
                         output = {
                             "policy": policy,
                             "assessment": selected.model_dump(),
@@ -756,47 +816,92 @@ async def run_locked(
                             "policy": policy,
                             "stage": "research",
                         }
-                        settings.max_steps = min(step_ceiling, step + 1 + required_read_turns + policy["research_steps"])
+                        settings.max_steps = min(
+                            step_ceiling, step + 1 + required_read_turns + policy["research_steps"])
                         settings.max_output_tokens = max(
                             settings.max_output_tokens, policy["output_tokens"]
                         )
                         job.config = settings.public_config()
+                    elif tool_call.name == "update_relationship":
+                        link = InferredLink.model_validate(tool_call.arguments)
+                        validate_citations(NoteRequest(
+                            text=link.explanation, citations=link.citations), evidence.evidence)
+                        if cross_snapshot:
+                            evidence.validate_source_identity(NoteRequest(
+                                text=link.explanation, citations=link.citations))
+                        if link.from_node_id not in evidence.known_nodes or link.to_node_id not in evidence.known_nodes:
+                            raise ValueError(
+                                "Read both relationship endpoints before updating")
+                        if link.relation not in relations or link.certainty == "theory":
+                            raise ValueError(
+                                "Use an existing relation with sourced non-theoretical evidence")
+                        staged = list(cp.get("staged_links", []))
+                        staged = [item for item in staged if (item["from_node_id"], item["to_node_id"], item["relation"]) != (
+                            link.from_node_id, link.to_node_id, link.relation)]
+                        if len(staged) >= 60:
+                            raise ValueError(
+                                "Staged relationship limit reached")
+                        staged.append(link.model_dump())
+                        cp["staged_links"] = staged
+                        output = {"status": "staged_for_publication",
+                                  "relationships": len(staged)}
                     elif tool_call.name == "finish_analysis":
                         if len(turn.calls) != 1:
-                            raise ValueError("Finish must be the only call in a turn")
+                            raise ValueError(
+                                "Finish must be the only call in a turn")
                         candidate = AnalysisResult.model_validate_json(
                             tool_call.arguments["result_json"]
                         )
+                        merged = {(item.from_node_id, item.to_node_id,
+                                   item.relation): item for item in candidate.links}
+                        for item in cp.get("staged_links", []):
+                            link = InferredLink.model_validate(item)
+                            merged[(link.from_node_id, link.to_node_id,
+                                    link.relation)] = link
+                        if len(merged) > 60:
+                            raise ValueError(
+                                "Too many final relationships; retain at most 60 sourced links")
+                        candidate.links = list(merged.values())
                         final_errors: list[str] = []
+                        if run.prompt_version == "story-v8" and not revisit and await evidence.target_positions() and not candidate.sections:
+                            final_errors.append(
+                                "Create titled, described sections covering the target quest transcript")
+                        if run.prompt_version == "story-v8" and any(question.casefold() not in {hook.question.casefold() for hook in candidate.hooks} for question in candidate.unresolved_questions):
+                            final_errors.append(
+                                "Represent each unresolved question as a cited hook with a stable key and search terms")
                         if adaptive:
                             if assessment is None:
-                                raise ValueError("Classify this quest before publishing")
+                                raise ValueError(
+                                    "Classify this quest before publishing")
                             candidate.assessment = assessment
                             try:
                                 validate_lore_result(
                                     candidate,
                                     assessment,
-                                    authored_main=cp.get("authored_quest_type") == "1",
+                                    authored_main=cp.get(
+                                        "authored_quest_type") == "1",
                                 )
                             except ValueError as error:
                                 final_errors.append(str(error))
                         if revisit:
                             validate_revisit(candidate, revisit)
                         elif candidate.revisited_hooks:
-                            raise ValueError("Hook reviews require a focused revisit job")
+                            raise ValueError(
+                                "Hook reviews require a focused revisit job")
                         if run.prompt_version in (
                             "story-v3",
                             "story-v4",
                             "story-v5",
                             "story-v6",
-                            "story-v7",
+                            "story-v7", "story-v8",
                         ):
                             candidate.validate_temporal_structure()
                         try:
                             await evidence.validate_result(
                                 candidate,
                                 require_full_quest=not bool(revisit),
-                                require_visual=run.prompt_version in ("story-v6", "story-v7")
+                                require_visual=run.prompt_version in (
+                                    "story-v6", "story-v7", "story-v8")
                                 and not bool(revisit),
                             )
                         except ValueError as error:
@@ -816,10 +921,21 @@ async def run_locked(
                             and 1 <= tool_call.arguments.get("limit", 30) <= 50
                         ):
                             # Full-quest intake uses size-bounded pages, not tiny model-selected batches.
-                            executed_call = ToolCall(tool_call.id, tool_call.name, {**tool_call.arguments, "limit": 50}, tool_call.native_id)
+                            executed_call = ToolCall(tool_call.id, tool_call.name, {
+                                                     **tool_call.arguments, "limit": 50}, tool_call.native_id)
                         output = await evidence.call(executed_call)
                     if len(json.dumps(output, ensure_ascii=False)) > settings.tool_result_chars:
-                        raise ValueError("Tool result too large; request fewer records")
+                        raise ValueError(
+                            "Tool result too large; request fewer records")
+                    if "staged_resolution" in output:
+                        pending = {item["work_id"]: item for item in cp.get(
+                            "pending_resolutions", [])}
+                        pending[output["staged_resolution"]
+                                ["work_id"]] = output["staged_resolution"]
+                        if len(pending) > 30:
+                            raise ValueError(
+                                "Question-resolution limit reached")
+                        cp["pending_resolutions"] = list(pending.values())
                     if prescan and tool_call.name != "assess_quest":
                         cp["prescan_reads"] = cp.get("prescan_reads", 0) + 1
                 except (ValueError, TypeError, KeyError) as error:
@@ -834,6 +950,14 @@ async def run_locked(
                         "error": "Invalid arguments, unread/changed citation, incomplete quest, unknown node/relation or oversized result. Read missing sources and retry with bounded arguments.",
                         "validation": validation,
                     }
+                except BaseException as error:
+                    await audit.complete(session, audit_id, {"error": type(error).__name__}, round((time.monotonic() - started) * 1000), "interrupted" if isinstance(error, asyncio.CancelledError) else "error")
+                    raise
+                audit_status = "error" if "error" in output else "pending_commit"
+                audit_ms = round((time.monotonic() - started) * 1000)
+                await audit.complete(session, audit_id, output, audit_ms, audit_status)
+                if audit_status == "pending_commit":
+                    audit_receipts.append((audit_id, output, audit_ms))
                 event = {
                     "name": tool_call.name,
                     "call_id": tool_call.id,
@@ -869,7 +993,8 @@ async def run_locked(
                     provider.initial(
                         "",
                         "Research output contract, used by finish_analysis result_json: "
-                        + json.dumps(AnalysisResult.model_json_schema(), ensure_ascii=False),
+                        + json.dumps(AnalysisResult.model_json_schema(),
+                                     ensure_ascii=False),
                     )[1:]
                 )
                 cp["research_schema_sent"] = True
@@ -890,7 +1015,8 @@ async def run_locked(
                 cp["result"] = result.model_dump()
             job.checkpoint = cp
             recorded_call = await session.scalar(
-                select(AgentCall).where(AgentCall.run_id == run.id, AgentCall.step == step)
+                select(AgentCall).where(AgentCall.run_id ==
+                                        run.id, AgentCall.step == step)
             )
             if recorded_call is not None:
                 recorded_call.response = {
@@ -899,6 +1025,8 @@ async def run_locked(
                 }
             # Tool writes and checkpoint advance atomically.
             await session.commit()
+            for audit_id, audit_output, audit_ms in audit_receipts:
+                await audit.complete(session, audit_id, audit_output, audit_ms)
             if result:
                 break
             if step + 1 >= (finalization_end or settings.max_steps):
@@ -915,34 +1043,15 @@ async def run_locked(
     if settings.embedding_model:
         for ordinal in range(len(vectors), len(result.blocks)):
             content = result.search_text(ordinal)
-            if settings.provider == "gemini":
-                route = f"/models/{settings.embedding_model}:embedContent"
-                payload = {
-                    "model": "models/" + settings.embedding_model,
-                    "content": {"parts": [{"text": content}]},
-                    "outputDimensionality": settings.embedding_dimensions,
-                }
-            else:
-                route, payload = (
-                    "/embeddings",
-                    {
-                        "model": settings.embedding_model,
-                        "input": [content],
-                        "dimensions": settings.embedding_dimensions,
-                    },
-                )
+            vector_settings = embedding_settings(settings)
+            route, payload = embedding_request(vector_settings, [content])
             raw = await remote_call(
-                session, run, settings, provider, 1000 + ordinal, route, payload, embedding=True
+                session, run, vector_settings, Provider(vector_settings, client), 1000 + ordinal, route, payload, embedding=True
             )
             if raw is None:
                 return
             try:
-                value = (
-                    raw["embedding"]["values"]
-                    if settings.provider == "gemini"
-                    else raw["data"][0]["embedding"]
-                )
-                vectors.append(vector_values(value, settings.embedding_dimensions))
+                vectors.append(embedding_values(vector_settings, raw)[0])
             except (ValueError, KeyError, IndexError, TypeError):
                 await pause(session, run, "failed", "Invalid embedding response")
                 return
@@ -955,7 +1064,8 @@ async def run_locked(
             quest,
             job.release_id,
             fingerprint_locale,
-            include_visual=run.prompt_version in ("story-v6", "story-v7"),
+            include_visual=run.prompt_version in (
+                "story-v6", "story-v7", "story-v8"),
         )
         != run.input_hash
     ):
@@ -967,12 +1077,23 @@ async def run_locked(
         await evidence.validate_result(
             result,
             require_full_quest=not bool(revisit),
-            require_visual=run.prompt_version in ("story-v6", "story-v7") and not bool(revisit),
+            require_visual=run.prompt_version in (
+                "story-v6", "story-v7", "story-v8") and not bool(revisit),
         )
     except ValueError:
         await pause(
             session, run, "stale", "Cited source changed during analysis; result was not published"
         )
+        return
+    from wuwa_story.agents.workspace import QuestionResolution, resolve_question
+    try:
+        for arguments in cp.get("pending_resolutions", []):
+            await evidence.call(ToolCall("publication", "resolve_question", arguments))
+            await resolve_question(session, QuestionResolution.model_validate(arguments), run_id=run.id)
+    except ValueError:
+        await session.rollback()
+        await session.refresh(run)
+        await pause(session, run, "stale", "Cross-quest question or its sources changed before publication")
         return
     document = await publish_analysis(
         session,
@@ -983,7 +1104,13 @@ async def run_locked(
         source_receipts=evidence.validated_sources if cross_snapshot else None,
         source_nodes=evidence.source_nodes if cross_snapshot else None,
     )
-    run.status, run.error, run.finished_at = "completed", None, datetime.now(UTC)
+    run.status, run.error, run.finished_at = "completed", None, datetime.now(
+        UTC)
+    from sqlalchemy import case, update
+
+    from wuwa_story.db.models.agent_workspace import AgentWorkItem
+    await session.execute(update(AgentWorkItem).where(AgentWorkItem.run_id == run.id, ((AgentWorkItem.kind == "analysis") | (AgentWorkItem.status == "queued")))
+                          .values(status=case((AgentWorkItem.kind == "analysis", "completed"), else_="open")))
     run.raw_output = {
         "document_id": document.id,
         "blocks": len(result.blocks),
@@ -991,9 +1118,11 @@ async def run_locked(
         "events": len(result.events),
     }
     # Preserve evidence/coverage and result, drop large private native conversation once published.
-    job.checkpoint = {key: value for key, value in cp.items() if key not in ("history", "vectors")}
+    job.checkpoint = {key: value for key,
+                      value in cp.items() if key not in ("history", "vectors")}
     await session.commit()
-    logger.info("agent.completed run_id=%s document_id=%s", run.id, document.id)
+    logger.info("agent.completed run_id=%s document_id=%s",
+                run.id, document.id)
 
 
 async def execute_job(

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.agents.budget import BudgetExceeded, reserve, settle
 from wuwa_story.agents.contracts import SOURCE_LOCALE_PRIORITY
+from wuwa_story.agents.embeddings import model_key
 from wuwa_story.agents.evidence import (
     EvidenceTools,
     hash_value,
@@ -23,6 +24,7 @@ from wuwa_story.agents.evidence import (
 from wuwa_story.agents.providers import Provider, vector_values
 from wuwa_story.agents.publication import document_type
 from wuwa_story.agents.settings import AgentSettings
+from wuwa_story.agents.work import public_questions
 from wuwa_story.db.models.agents import ExplanationEmbedding
 from wuwa_story.db.models.content import Document, DocumentHead, DocumentReference
 from wuwa_story.db.models.core import (
@@ -60,7 +62,8 @@ async def source_link(
                 or_(
                     Quest.node_id.in_(owners),
                     Quest.game_quest_id.in_(
-                        select(QuestNode.game_quest_id).where(QuestNode.node_id.in_(owners))
+                        select(QuestNode.game_quest_id).where(
+                            QuestNode.node_id.in_(owners))
                     ),
                 )
             )
@@ -91,14 +94,16 @@ async def public_document(
     output_locale = await session.get(Locale, document.locale_id)
     assert output_locale is not None
     fingerprint_locale = (
-        None if document.metadata_json.get("source_scope") == "all_locales" else output_locale.id
+        None if document.metadata_json.get(
+            "source_scope") == "all_locales" else output_locale.id
     )
     if document.source_hash != await quest_fingerprint(
         session,
         quest,
         release.id,
         fingerprint_locale,
-        include_visual=document.metadata_json.get("schema_version") in ("story-v6", "story-v7"),
+        include_visual=document.metadata_json.get(
+            "schema_version") in ("story-v6", "story-v7", "story-v8"),
     ):
         return None
     corpus_changed = False
@@ -106,7 +111,7 @@ async def public_document(
         "story-v4",
         "story-v5",
         "story-v6",
-        "story-v7",
+        "story-v7", "story-v8",
     ):
         corpus_changed = document.metadata_json.get(
             "source_release_ids"
@@ -138,14 +143,17 @@ async def public_document(
             )
         )
     ).all()
-    ids = {c["node_id"] for block in document.body_ast for c in block.get("citations", [])}
+    ids = {c["node_id"]
+           for block in document.body_ast for c in block.get("citations", [])}
     for hook in document.metadata_json.get("hooks", []):
         ids.update(c["node_id"] for c in hook["citations"])
     for review in document.metadata_json.get("revisited_hooks", []):
         ids.update(c["node_id"] for c in review["citations"])
-    ids.update(value for block in document.body_ast for value in block.get("related_node_ids", []))
+    ids.update(value for block in document.body_ast for value in block.get(
+        "related_node_ids", []))
     for block in document.body_ast:
-        ids.update(record["node_id"] for record in block.get("related_records", []))
+        ids.update(record["node_id"]
+                   for record in block.get("related_records", []))
         for assertion in block.get("assertions", []):
             ids.add(assertion["chronology_in_quest"]["anchor_node_id"])
             ids.update(c["node_id"] for c in assertion["citations"])
@@ -172,12 +180,14 @@ async def public_document(
     snapshot_releases = {
         value.id: value
         for value in await session.scalars(
-            select(GameRelease).where(GameRelease.id.in_([release.id, *node_snapshots.values()]))
+            select(GameRelease).where(GameRelease.id.in_(
+                [release.id, *node_snapshots.values()]))
         )
     }
     for node, kind, label, inline_text in (
         await session.execute(
-            select(Node, NodeType.key, LocalizationValue.content, DialogueLine.inline_text)
+            select(Node, NodeType.key, LocalizationValue.content,
+                   DialogueLine.inline_text)
             .join(NodeType, NodeType.id == Node.type_id)
             .outerjoin(Character, Character.node_id == Node.id)
             .outerjoin(Item, Item.node_id == Node.id)
@@ -239,7 +249,8 @@ async def public_document(
             citation_node = await session.get(Node, citation["node_id"])
             citation_kind = (
                 await session.scalar(
-                    select(NodeType.key).where(NodeType.id == citation_node.type_id)
+                    select(NodeType.key).where(
+                        NodeType.id == citation_node.type_id)
                 )
                 if citation_node
                 else None
@@ -278,13 +289,16 @@ async def public_document(
         "game_version": release.game_version,
         "research_scope": "all_imported_snapshots"
         if document.metadata_json.get("schema_version")
-        in ("story-v4", "story-v5", "story-v6", "story-v7")
+        in ("story-v4", "story-v5", "story-v6", "story-v7", "story-v8")
         else "target_snapshot",
         "locale": output_locale.code,
         "requested_locale": locale.code,
         "title": document.title,
         "assessment": document.metadata_json.get("assessment"),
         "cutscene_descriptions": document.metadata_json.get("cutscene_descriptions", []),
+        "sections": [await with_citations(section) for section in document.metadata_json.get("sections", [])],
+        "questions": await public_questions(session, document.id, tools)
+        if document.metadata_json.get("schema_version") == "story-v8" else [],
         "narrative_function": document.metadata_json.get("narrative_function"),
         "knowledge_boundary": document.metadata_json.get("knowledge_boundary"),
         "hooks": [await with_citations(hook) for hook in document.metadata_json.get("hooks", [])],
@@ -298,7 +312,8 @@ async def public_document(
                 select(GameRelease.game_version)
                 .where(
                     GameRelease.id.in_(
-                        document.metadata_json.get("source_release_ids", [release.id])
+                        document.metadata_json.get(
+                            "source_release_ids", [release.id])
                     )
                 )
                 .order_by(GameRelease.sequence)
@@ -345,7 +360,8 @@ async def get_connection(
         raise ValueError("Connection source not found")
     payload = await public_document(session, document, quest, release, language)
     if not payload or index < 0 or index >= len(payload["links"]):
-        raise ValueError("Connection unavailable or its source passages have changed")
+        raise ValueError(
+            "Connection unavailable or its source passages have changed")
     link = payload["links"][index]
     nodes = {node["id"]: node for node in payload["nodes"]}
     return {
@@ -386,7 +402,8 @@ async def get_explanation(
                 select(Document)
                 .join(DocumentHead, DocumentHead.document_id == Document.id)
                 .where(
-                    Document.document_type.startswith(f"story-recontextualization:{document.id}:")
+                    Document.document_type.startswith(
+                        f"story-recontextualization:{document.id}:")
                 )
                 .order_by(Document.id)
             )
@@ -407,7 +424,8 @@ def language_priority(requested: str) -> Any:
     codes = list(dict.fromkeys((requested, *SOURCE_LOCALE_PRIORITY)))
     return case(
         {code: index for index, code in enumerate(codes)},
-        value=select(Locale.code).where(Locale.id == Document.locale_id).scalar_subquery(),
+        value=select(Locale.code).where(
+            Locale.id == Document.locale_id).scalar_subquery(),
         else_=len(codes),
     )
 
@@ -415,6 +433,8 @@ def language_priority(requested: str) -> Any:
 async def query_vector(
     session: AsyncSession, query: str, settings: AgentSettings, redis: Redis | None, actor: str
 ) -> list[float] | None:
+    from wuwa_story.agents.embeddings import embedding_settings
+    settings = embedding_settings(settings)
     if not settings.public_query_embeddings or not settings.embedding_model or redis is None:
         return None
     identity = hash_value(
@@ -467,7 +487,8 @@ async def query_vector(
     try:
         async with httpx.AsyncClient() as client:
             vectors, raw = await Provider(settings, client).embed([query])
-        tokens = raw.get("usage", {}).get("prompt_tokens", len(query.encode()) + 1024)
+        tokens = raw.get("usage", {}).get(
+            "prompt_tokens", len(query.encode()) + 1024)
         if type(tokens) is not int:
             raise ValueError("Invalid usage")
         bounded = await settle(session, call.id, settings, tokens, 0, raw)
@@ -494,6 +515,9 @@ async def search_explanations(
     vector: list[float] | None = None,
     settings: AgentSettings | None = None,
 ) -> dict[str, Any]:
+    if settings is not None:
+        from wuwa_story.agents.embeddings import embedding_settings
+        settings = embedding_settings(settings)
     release, language = await scope(session, game_version, locale)
     # A supplement is current only while its original explanation is still the head.
     parent_heads = select(DocumentHead.document_id).where(
@@ -508,31 +532,32 @@ async def search_explanations(
             or_(
                 Document.document_type == document_type(release.id),
                 and_(
-                    Document.document_type.startswith("story-recontextualization:"),
-                    Document.metadata_json["revisit"]["document_id"].as_integer().in_(parent_heads),
+                    Document.document_type.startswith(
+                        "story-recontextualization:"),
+                    Document.metadata_json["revisit"]["document_id"].as_integer().in_(
+                        parent_heads),
                 ),
             )
         )
     )
     score = func.ts_rank_cd(
-        func.to_tsvector("simple", Document.plain_text), func.plainto_tsquery("simple", query)
+        func.to_tsvector("simple", Document.plain_text), func.plainto_tsquery(
+            "simple", query)
     )
     mode = "text"
     if vector is not None and settings is not None:
         model_id = await session.scalar(
             select(EmbeddingModel.id)
             .where(
-                EmbeddingModel.provider == settings.provider,
-                EmbeddingModel.model_name == settings.embedding_model,
-                EmbeddingModel.dimensions == settings.embedding_dimensions,
-                EmbeddingModel.config["base_url"].astext == settings.base_url,
+                EmbeddingModel.key == model_key(settings),
             )
             .limit(1)
         )
         if model_id:
             distance = ExplanationEmbedding.embedding.cosine_distance(vector)
             statement = (
-                base.add_columns(ExplanationEmbedding.ordinal, (1 - distance).label("score"))
+                base.add_columns(ExplanationEmbedding.ordinal,
+                                 (1 - distance).label("score"))
                 .join(ExplanationEmbedding, ExplanationEmbedding.document_id == Document.id)
                 .where(ExplanationEmbedding.model_id == model_id)
                 .order_by(distance, language_priority(language.code))
@@ -555,7 +580,8 @@ async def search_explanations(
         document, quest = cast(Document, row[0]), cast(Quest, row[1])
         if quest.node_id in seen:
             continue
-        ordinal_or_score, score_or_fuzzy = cast(float, row[2]), cast(float, row[3])
+        ordinal_or_score, score_or_fuzzy = cast(
+            float, row[2]), cast(float, row[3])
         payload = await public_document(session, document, quest, release, language)
         if payload is None:
             continue
@@ -566,7 +592,8 @@ async def search_explanations(
             words = query.casefold().split()
             blocks = sorted(
                 payload["blocks"],
-                key=lambda block: sum(word in block["text"].casefold() for word in words),
+                key=lambda block: sum(
+                    word in block["text"].casefold() for word in words),
                 reverse=True,
             )[:2]
             rank = float(ordinal_or_score) + float(score_or_fuzzy)

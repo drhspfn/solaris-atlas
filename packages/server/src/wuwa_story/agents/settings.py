@@ -8,7 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AgentSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AGENT_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="AGENT_", env_file=".env", extra="ignore")
     provider: Literal["responses", "chat", "gemini"] = "responses"
     model: str = "gpt-6-luna"
     base_url: str = "https://api.openai.com/v1"
@@ -35,7 +36,8 @@ class AgentSettings(BaseSettings):
     rate_limit_wait_seconds: float = Field(default=180, ge=1, le=600)
     max_response_bytes: int = Field(default=2_000_000, ge=10000)
     reasoning_effort: str = "medium"
-    chat_token_parameter: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
+    chat_token_parameter: Literal["max_tokens",
+                                  "max_completion_tokens"] = "max_tokens"
     embedding_model: str = ""
     embedding_dimensions: int = Field(default=1536, ge=1, le=4096)
     embedding_provider: Literal["responses", "chat", "gemini"] | None = None
@@ -46,7 +48,8 @@ class AgentSettings(BaseSettings):
     autonomous_enabled: bool = False
     autonomous_poll_seconds: int = Field(default=60, ge=10, le=3600)
     autonomous_max_pending: int = Field(default=1, ge=1, le=10)
-    embedding_input_usd_per_million: Decimal = Field(default=Decimal("0.02"), ge=0)
+    embedding_input_usd_per_million: Decimal = Field(
+        default=Decimal("0.02"), ge=0)
     public_query_embeddings: bool = False
     query_requests_per_hour: int = Field(default=30, ge=1, le=1000)
     vision_enabled: bool = False
@@ -60,7 +63,7 @@ class AgentSettings(BaseSettings):
 
     @field_validator("embedding_provider", "embedding_base_url", mode="before")
     @classmethod
-    def empty_embedding_override(cls, value):
+    def empty_embedding_override(cls, value: str | None) -> str | None:
         return value or None
 
     @field_validator("budget_timezone")
@@ -73,14 +76,17 @@ class AgentSettings(BaseSettings):
         # Never checkpoint API keys. Endpoint/model/rates are pinned per job.
         return self.model_dump(
             mode="json",
-            exclude={"api_key", "embedding_api_key", "read_database_url", "daily_budget_usd", "daily_token_limit", "public_query_embeddings", "autonomous_enabled", "autonomous_poll_seconds", "autonomous_max_pending"},
+            exclude={"api_key", "embedding_api_key", "read_database_url", "daily_budget_usd", "daily_token_limit",
+                     "public_query_embeddings", "autonomous_enabled", "autonomous_poll_seconds", "autonomous_max_pending"},
         )
 
     def require_enabled(self) -> None:
         if not self.api_key.get_secret_value() or self.daily_budget_usd <= 0:
-            raise ValueError("Configure AGENT_API_KEY and a positive AGENT_DAILY_BUDGET_USD")
+            raise ValueError(
+                "Configure AGENT_API_KEY and a positive AGENT_DAILY_BUDGET_USD")
         if self.input_usd_per_million == 0 and self.output_usd_per_million == 0:
-            raise ValueError("Configure nonzero model prices for paid execution")
+            raise ValueError(
+                "Configure nonzero model prices for paid execution")
 
 
 @lru_cache
