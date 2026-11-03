@@ -229,6 +229,8 @@ class Provider:
             if self.settings.provider == "gemini"
             else {"Authorization": "Bearer " + self.settings.api_key.get_secret_value()}
         )
+        if not self.settings.api_key.get_secret_value():
+            headers = {}
         try:
             async with self.client.stream(
                 "POST",

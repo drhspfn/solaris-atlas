@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from wuwa_story.agents import audit
 from wuwa_story.agents.database import read_schema, validate_sql
-from wuwa_story.agents.embeddings import embedding_request, model_key
+from wuwa_story.agents.embeddings import embedding_request, embedding_settings, model_key
 from wuwa_story.agents.settings import AgentSettings
 from wuwa_story.agents.workspace import MemoryWrite, save_memory
 from wuwa_story.db.base import Base
@@ -21,6 +21,7 @@ from wuwa_story.db.models.agent_workspace import AgentToolAudit
         "SELECT * FROM auth.app_user",
         "SELECT * FROM ops.agent_call",
         "SELECT pg_sleep(10)",
+        "SELECT CAST('payload' AS public.custom_type)",
         "SELECT pg_read_file('/etc/passwd')",
         "SELECT * FROM core.quest FOR UPDATE",
         "WITH x AS (DELETE FROM core.quest RETURNING *) SELECT * FROM x",
@@ -74,6 +75,22 @@ def test_embedding_endpoint_and_dimensions_share_one_identity():
     )
     assert model_key(settings) != model_key(
         settings.model_copy(update={"embedding_model": "another-model"})
+    )
+
+
+def test_local_embedding_endpoint_does_not_receive_the_main_provider_key():
+    settings = AgentSettings(
+        _env_file=None, api_key="main-secret", embedding_base_url="http://localhost:8080/v1"
+    )
+    assert not embedding_settings(settings).api_key.get_secret_value()
+    settings.embedding_api_key = settings.api_key
+    assert embedding_settings(settings).api_key.get_secret_value() == "main-secret"
+    settings.read_database_url = settings.api_key
+    config = settings.public_config()
+    assert (
+        "api_key" not in config
+        and "embedding_api_key" not in config
+        and "read_database_url" not in config
     )
 
 

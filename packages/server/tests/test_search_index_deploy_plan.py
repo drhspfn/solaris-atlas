@@ -22,7 +22,8 @@ spec.loader.exec_module(module)
      (["0022_tree_index_schema_version"], "ready:more"), (["0023_search_body_trgm"], "done:more"),
      (["0024_browse_read_models"], "done:more"),
      (["0025_event_asset_dependencies"], "done:more"),
-     (["0026_event_publication_locks"], "done:last")],
+     (["0026_event_publication_locks"], "done:more"),
+     (["0027_agent_workspace"], "done:last")],
 )
 def test_plan_existing_migration_history(heads, expected):
     scripts = ScriptDirectory.from_config(Config(str(SERVER / "alembic.ini")))

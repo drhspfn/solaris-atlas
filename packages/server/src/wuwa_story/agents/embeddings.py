@@ -4,6 +4,8 @@ import hashlib
 import json
 from typing import Any
 
+from pydantic import SecretStr
+
 from wuwa_story.agents.settings import AgentSettings
 
 
@@ -14,6 +16,8 @@ def embedding_settings(settings: AgentSettings) -> AgentSettings:
             "base_url": settings.embedding_base_url or settings.base_url,
             "api_key": settings.embedding_api_key
             if settings.embedding_api_key.get_secret_value()
+            else SecretStr("")
+            if settings.embedding_base_url and settings.embedding_base_url != settings.base_url
             else settings.api_key,
         }
     )

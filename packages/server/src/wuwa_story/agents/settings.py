@@ -58,6 +58,11 @@ class AgentSettings(BaseSettings):
     vision_atlas_quality: int = Field(default=85, ge=60, le=95)
     vision_output_tokens: int = Field(default=8192, ge=1024, le=16000)
 
+    @field_validator("embedding_provider", "embedding_base_url", mode="before")
+    @classmethod
+    def empty_embedding_override(cls, value):
+        return value or None
+
     @field_validator("budget_timezone")
     @classmethod
     def valid_timezone(cls, value: str) -> str:
@@ -68,7 +73,7 @@ class AgentSettings(BaseSettings):
         # Never checkpoint API keys. Endpoint/model/rates are pinned per job.
         return self.model_dump(
             mode="json",
-            exclude={"api_key", "embedding_api_key", "read_database_url", "daily_budget_usd", "daily_token_limit", "public_query_embeddings"},
+            exclude={"api_key", "embedding_api_key", "read_database_url", "daily_budget_usd", "daily_token_limit", "public_query_embeddings", "autonomous_enabled", "autonomous_poll_seconds", "autonomous_max_pending"},
         )
 
     def require_enabled(self) -> None:

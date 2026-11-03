@@ -17,7 +17,7 @@ def upgrade():
     op.execute("CREATE INDEX ix_agent_tool_audit_request_id ON ops.agent_tool_audit (request_id)")
     op.execute("CREATE INDEX ix_agent_tool_audit_run_id ON ops.agent_tool_audit (run_id)")
     op.execute(
-        "CREATE TABLE ops.agent_memory (\n\tid BIGINT GENERATED ALWAYS AS IDENTITY, \n\tkey VARCHAR(160) NOT NULL, \n\tscope VARCHAR(16) NOT NULL, \n\trun_id BIGINT, \n\tnode_id BIGINT, \n\ttext TEXT NOT NULL, \n\tcitations JSONB NOT NULL, \n\trevision INTEGER NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_agent_memory PRIMARY KEY (id), \n\tCONSTRAINT uq_agent_memory_key UNIQUE (key), \n\tCONSTRAINT fk_agent_memory_run_id_processing_run FOREIGN KEY(run_id) REFERENCES ops.processing_run (id) ON DELETE CASCADE, \n\tCONSTRAINT fk_agent_memory_node_id_node FOREIGN KEY(node_id) REFERENCES graph.node (id) ON DELETE CASCADE\n)"
+        "CREATE TABLE ops.agent_memory (\n\tid BIGINT GENERATED ALWAYS AS IDENTITY, \n\tkey VARCHAR(160) NOT NULL, \n\tscope VARCHAR(16) NOT NULL, \n\trun_id BIGINT, \n\tnode_id BIGINT, \n\ttext TEXT NOT NULL, \n\tcitations JSONB NOT NULL, \n\trevision INTEGER NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, \n\tCONSTRAINT pk_agent_memory PRIMARY KEY (id), \n\tCONSTRAINT uq_agent_memory_key UNIQUE (key), \n\tCONSTRAINT fk_agent_memory_run_id_processing_run FOREIGN KEY(run_id) REFERENCES ops.processing_run (id) ON DELETE SET NULL, \n\tCONSTRAINT fk_agent_memory_node_id_node FOREIGN KEY(node_id) REFERENCES graph.node (id) ON DELETE CASCADE\n)"
     )
     op.execute("CREATE INDEX ix_agent_memory_node_id ON ops.agent_memory (node_id)")
     op.execute("CREATE INDEX ix_agent_memory_run_id ON ops.agent_memory (run_id)")
@@ -41,8 +41,42 @@ def upgrade():
         "CREATE INDEX ix_agent_work_item_text ON ops.agent_work_item USING gin (to_tsvector('simple', text))"
     )
 
+    # Existing published questions become searchable work without rewriting documents.
+    op.execute("""
+        INSERT INTO ops.agent_work_item
+            (key,kind,node_id,document_id,priority,status,title,text,search_terms,citations,resolution,revision)
+        SELECT 'question:'||d.node_id||':'||d.locale_id||':'||(d.metadata->>'release_id')||':'||(h.value->>'key'),
+            'question',d.node_id,d.id,
+            CASE h.value->>'priority' WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
+            'open',left(h.value->>'question',512),h.value->>'question',
+            coalesce(h.value->'search_terms','[]'::jsonb),coalesce(h.value->'citations','[]'::jsonb),'{}'::jsonb,1
+        FROM content.document d JOIN content.document_head head ON head.document_id=d.id
+        CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(d.metadata->'hooks')='array' THEN d.metadata->'hooks' ELSE '[]'::jsonb END) h(value)
+        WHERE d.document_type LIKE 'story-explanation:%' AND d.locale_id IS NOT NULL
+            AND d.metadata->>'release_id' IS NOT NULL AND h.value->>'key' IS NOT NULL
+        ON CONFLICT (key) DO NOTHING
+    """)
+    op.execute("""
+        INSERT INTO ops.agent_work_item
+            (key,kind,node_id,document_id,priority,status,title,text,search_terms,citations,resolution,revision)
+        SELECT 'legacy-question:'||d.id||':'||q.ordinality,'question',d.node_id,d.id,2,'open',
+            left(q.value,512),q.value,'[]'::jsonb,'[]'::jsonb,'{}'::jsonb,1
+        FROM content.document d JOIN content.document_head head ON head.document_id=d.id
+        CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(d.metadata->'unresolved_questions')='array' THEN d.metadata->'unresolved_questions' ELSE '[]'::jsonb END) WITH ORDINALITY q(value,ordinality)
+        WHERE d.document_type LIKE 'story-explanation:%' AND length(q.value)>0
+            AND NOT EXISTS (SELECT 1 FROM ops.agent_work_item w WHERE w.document_id=d.id AND w.text=q.value)
+        ON CONFLICT (key) DO NOTHING
+    """)
+    op.execute(
+        "INSERT INTO ops.public_cache_revision VALUES ('ops.agent_work_item',txid_current()) ON CONFLICT DO NOTHING"
+    )
+    op.execute(
+        "CREATE TRIGGER public_cache_changed AFTER UPDATE OF resolution ON ops.agent_work_item FOR EACH STATEMENT EXECUTE FUNCTION ops.bump_public_cache_revision()"
+    )
+
 
 def downgrade():
+    op.execute("DELETE FROM ops.public_cache_revision WHERE table_name='ops.agent_work_item'")
     op.drop_table("agent_work_item", schema="ops")
     op.drop_table("agent_memory_embedding", schema="search")
     op.drop_table("agent_memory", schema="ops")

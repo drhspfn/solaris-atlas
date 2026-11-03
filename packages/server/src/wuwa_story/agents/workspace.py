@@ -2,7 +2,7 @@
 
 import hashlib
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 from pydantic import Field
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.agents.contracts import Citation, StrictModel
 from wuwa_story.agents.embeddings import embedding_settings, model_identity, model_key
+from wuwa_story.agents.settings import AgentSettings
 from wuwa_story.db.models.agent_workspace import AgentMemory, AgentMemoryEmbedding, AgentWorkItem
 from wuwa_story.db.models.search import EmbeddingModel
 
@@ -33,7 +34,13 @@ class QuestionResolution(StrictModel):
     citations: list[Citation] = Field(min_length=1, max_length=12)
 
 
-async def paid_vector(session: AsyncSession, settings, content: str):
+async def paid_vector(
+    session: AsyncSession,
+    settings: AgentSettings,
+    content: str,
+    *,
+    existing_model_id: int | None = None,
+) -> tuple[int, list[float]] | None:
     """Independent budget transaction; never commit a tool's unfinished writes."""
     if not settings.embedding_model:
         return None
@@ -67,6 +74,9 @@ async def paid_vector(session: AsyncSession, settings, content: str):
             if not accepted:
                 await ledger.commit()
                 return None
+            if existing_model_id is not None:
+                await ledger.commit()
+                return existing_model_id, vectors[0]
             identity = model_identity(settings)
             key = model_key(settings)
             await ledger.execute(
@@ -86,17 +96,21 @@ async def paid_vector(session: AsyncSession, settings, content: str):
                 select(EmbeddingModel.id).where(EmbeddingModel.key == key)
             )
             await ledger.commit()
+            if model_id is None:
+                raise ValueError("Embedding model registration failed")
             return model_id, vectors[0]
         except Exception:
             await ledger.rollback()
-            call = await ledger.get(type(call), call_id)
-            if call:
-                call.status = "uncertain"
+            uncertain = await ledger.get(type(call), call_id)
+            if uncertain:
+                uncertain.status = "uncertain"
                 await ledger.commit()
             return None
 
 
-async def save_memory(session, settings, request: MemoryWrite, *, run_id: int | None):
+async def save_memory(
+    session: AsyncSession, settings: AgentSettings, request: MemoryWrite, *, run_id: int | None
+) -> dict[str, Any]:
     if request.scope == "short" and run_id is None:
         raise ValueError("Short-term memory requires a research run")
     key = f"run:{run_id}:{request.key}" if request.scope == "short" else f"long:{request.key}"
@@ -149,14 +163,14 @@ async def save_memory(session, settings, request: MemoryWrite, *, run_id: int | 
 
 
 async def read_memory(
-    session,
-    settings,
+    session: AsyncSession,
+    settings: AgentSettings,
     query: str = "",
     *,
     run_id: int | None = None,
     node_id: int | None = None,
     limit: int = 8,
-):
+) -> dict[str, Any]:
     if len(query) > 512 or not 1 <= limit <= 12:
         raise ValueError("Memory query must be <=512 characters; limit 1..12")
     scope = (
@@ -173,7 +187,11 @@ async def read_memory(
         distance = AgentMemoryEmbedding.embedding.cosine_distance(vector[1])
         statement = (
             statement.join(AgentMemoryEmbedding)
-            .where(AgentMemoryEmbedding.model_id == vector[0])
+            .where(
+                AgentMemoryEmbedding.model_id == vector[0],
+                AgentMemoryEmbedding.content_hash
+                == func.encode(func.digest(AgentMemory.text, "sha256"), "hex"),
+            )
             .order_by(distance)
         )
     elif query:
@@ -221,17 +239,35 @@ async def read_memory(
     }
 
 
-async def find_work(session, query: str = "", status: str = "open", limit: int = 12):
+async def find_work(
+    session: AsyncSession, query: str = "", status: str = "open", limit: int = 12
+) -> dict[str, Any]:
     if (
         len(query) > 512
-        or status not in {"open", "resolved", "partial", "queued", "completed"}
+        or status
+        not in {"open", "resolved", "partial", "queued", "completed", "contradicted", "deferred"}
         or not 1 <= limit <= 30
     ):
         raise ValueError("Invalid work filters")
-    statement = select(AgentWorkItem).where(AgentWorkItem.status == status)
+    from wuwa_story.db.models.content import DocumentHead
+
+    active = (
+        select(DocumentHead.document_id)
+        .where(DocumentHead.document_id == AgentWorkItem.document_id)
+        .exists()
+    )
+    statement = select(AgentWorkItem).where(
+        AgentWorkItem.status.in_(["open", "partial"])
+        if status == "open"
+        else AgentWorkItem.status == status,
+        or_(AgentWorkItem.document_id.is_(None), active),
+    )
     if query:
         statement = statement.where(
             or_(
+                func.to_tsvector("simple", AgentWorkItem.text).op("@@")(
+                    func.plainto_tsquery("simple", query)
+                ),
                 AgentWorkItem.text.icontains(query, autoescape=True),
                 AgentWorkItem.title.icontains(query, autoescape=True),
                 AgentWorkItem.search_terms.contains([query]),
@@ -247,6 +283,7 @@ async def find_work(session, query: str = "", status: str = "open", limit: int =
                 "kind": row.kind,
                 "node_id": row.node_id,
                 "document_id": row.document_id,
+                "run_id": row.run_id,
                 "title": row.title,
                 "text": row.text[:1500],
                 "priority": row.priority,
@@ -261,7 +298,9 @@ async def find_work(session, query: str = "", status: str = "open", limit: int =
     }
 
 
-async def resolve_question(session, request: QuestionResolution, *, run_id: int):
+async def resolve_question(
+    session: AsyncSession, request: QuestionResolution, *, run_id: int
+) -> dict[str, Any]:
     changed = await session.scalar(
         update(AgentWorkItem)
         .where(

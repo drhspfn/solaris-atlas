@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+from typing import Any
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +13,8 @@ from wuwa_story.db.models.agent_workspace import AgentToolAudit
 logger = logging.getLogger(__name__)
 
 
-def redacted(value, limit: int = 48000) -> dict:
-    def clean(item):
+def redacted(value: Any, limit: int = 48000) -> dict[str, Any]:
+    def clean(item: Any) -> Any:
         if isinstance(item, dict):
             return {
                 str(key): "[redacted]"
@@ -46,15 +47,15 @@ def redacted(value, limit: int = 48000) -> dict:
 
 
 async def start(
-    session,
+    session: AsyncSession,
     *,
     request_id: str,
     role: str,
     call_id: str,
     tool: str,
-    arguments: dict,
-    run_id=None,
-    step=None,
+    arguments: dict[str, Any],
+    run_id: int | None = None,
+    step: int | None = None,
 ) -> int:
     async with AsyncSession(session.bind, expire_on_commit=False) as audit:
         receipt = AgentToolAudit(
@@ -83,7 +84,11 @@ async def start(
 
 
 async def complete(
-    session, identity: int, result: dict, duration_ms: int, status: str = "completed"
+    session: AsyncSession,
+    identity: int,
+    result: dict[str, Any],
+    duration_ms: int,
+    status: str = "completed",
 ) -> None:
     async with AsyncSession(session.bind) as audit:
         await audit.execute(

@@ -39,7 +39,7 @@ class AgentMemory(Base):
     key: Mapped[str] = mapped_column(String(160), unique=True, nullable=False)
     scope: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     run_id: Mapped[int | None] = mapped_column(
-        ForeignKey("ops.processing_run.id", ondelete="CASCADE"), index=True
+        ForeignKey("ops.processing_run.id", ondelete="SET NULL"), index=True
     )
     node_id: Mapped[int | None] = mapped_column(
         ForeignKey("graph.node.id", ondelete="CASCADE"), index=True

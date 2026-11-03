@@ -1,11 +1,13 @@
 """Internal-only metadata discovery and bounded, independently read-only queries."""
 
 import json
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, cast
 
 import sqlglot
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 from sqlglot import exp
 
@@ -64,7 +66,7 @@ def read_schema(
     table: str = "",
     offset: int = 0,
     limit: int = 20,
-) -> dict:
+) -> dict[str, Any]:
     if offset < 0 or not 1 <= limit <= 30 or len(table) > 128:
         raise ValueError("Invalid schema pagination")
     tables = [
@@ -108,6 +110,8 @@ def validate_sql(sql: str, settings: AgentSettings) -> str:
     forbidden = (exp.DDL, exp.DML, exp.Into, exp.Lock, exp.Command)
     if any(isinstance(node, forbidden) for node in query.walk()):
         raise ValueError("Mutations, SELECT INTO and locking queries are prohibited")
+    if any(item.this == exp.DataType.Type.USERDEFINED for item in query.find_all(exp.DataType)):
+        raise ValueError("User-defined SQL casts are not permitted")
     ctes = {cte.alias_or_name for cte in query.find_all(exp.CTE)}
     tables = source_tables(settings)
     for item in query.find_all(exp.Table):
@@ -116,14 +120,19 @@ def validate_sql(sql: str, settings: AgentSettings) -> str:
         if item.catalog or f"{item.db}.{item.name}" not in tables:
             raise ValueError("Use schema-qualified tables returned by read_schema")
     for function in query.find_all(exp.Func):
-        name = function.name.upper() if isinstance(function, exp.Anonymous) else function.sql_name()
+        name = (
+            function.name.upper()
+            if isinstance(function, exp.Anonymous)
+            else cast(Any, function).sql_name()
+        )
         if name not in SAFE_FUNCTIONS or isinstance(function.parent, exp.Dot):
             raise ValueError("Only approved pure SQL functions are allowed")
     return query.sql(dialect="postgres")
 
 
-def bounded_rows(rows, max_chars: int = 16000) -> dict:
-    output, size = [], 0
+def bounded_rows(rows: Sequence[Any], max_chars: int = 16000) -> dict[str, Any]:
+    output: list[dict[str, Any]] = []
+    size = 0
     for row in rows:
         row = dict(row)
         encoded = json.dumps(row, default=str, ensure_ascii=False)
@@ -134,7 +143,7 @@ def bounded_rows(rows, max_chars: int = 16000) -> dict:
     return {"rows": output, "truncated": False}
 
 
-async def query_database(settings: AgentSettings, sql: str, limit: int = 50) -> dict:
+async def query_database(settings: AgentSettings, sql: str, limit: int = 50) -> dict[str, Any]:
     sql = validate_sql(sql, settings)
     if not 1 <= limit <= 100:
         raise ValueError("Query limit must be 1..100")
@@ -169,21 +178,25 @@ async def query_database(settings: AgentSettings, sql: str, limit: int = 50) -> 
             response = bounded_rows(rows[:limit])
             response["truncated"] |= len(rows) > limit
             return response
+    except SQLAlchemyError as error:
+        raise ValueError(
+            f"Read query rejected: {type(error).__name__}; inspect read_schema and correct the query"
+        ) from error
     finally:
         await engine.dispose()
 
 
 async def read_records(
-    session,
+    session: AsyncSession,
     settings: AgentSettings,
     table: str,
     columns: list[str] | None = None,
     filters: dict[str, Any] | None = None,
     limit: int = 20,
     offset: int = 0,
-) -> dict:
+) -> dict[str, Any]:
     source = source_tables(settings).get(table)
-    if source is None or not 1 <= limit <= 100 or offset < 0:
+    if source is None or not 1 <= limit <= 100 or not 0 <= offset <= 1000000:
         raise ValueError("Unknown source table or invalid pagination")
     columns = columns or [column.name for column in source.columns]
     if (
@@ -194,9 +207,17 @@ async def read_records(
         raise ValueError("Unknown columns; inspect read_schema first")
     query = select(*(source.c[key] for key in columns))
     for key, value in (filters or {}).items():
+        if not isinstance(value, (str, int, float, bool, type(None))):
+            raise ValueError("Filters accept scalar values only")
         query = query.where(source.c[key] == value)
     query = query.order_by(*source.primary_key.columns).limit(limit + 1).offset(offset)
-    rows = (await session.execute(query)).mappings().all()
+    try:
+        async with AsyncSession(session.bind) as reader:
+            await reader.execute(text("SET TRANSACTION READ ONLY"))
+            await reader.execute(text("SET LOCAL statement_timeout='5s'"))
+            rows = (await reader.execute(query)).mappings().all()
+    except SQLAlchemyError as error:
+        raise ValueError("Record read failed; check field types and narrow the filters") from error
     response = bounded_rows(rows[:limit])
     response["truncated"] |= len(rows) > limit
     response["next_offset"] = offset + limit if len(rows) > limit else None

@@ -257,7 +257,7 @@ async def test_chat_entity_tool_uses_projected_search_without_legacy_graph_queri
 ):
     from starlette.requests import Request
 
-    from wuwa_story.agents import providers, settings
+    from wuwa_story.agents import providers
     from wuwa_story.api.routes.story import shared
     from wuwa_story.db.repositories import search as legacy
 
@@ -289,7 +289,14 @@ async def test_chat_entity_tool_uses_projected_search_without_legacy_graph_queri
             return {"result": value}
 
     monkeypatch.setattr(providers, "Provider", Provider)
-    monkeypatch.setattr(settings, "get_agent_settings", lambda: None)
+    from wuwa_story.agents import audit, chat
+    monkeypatch.setattr(chat, "get_agent_settings", lambda: SimpleNamespace(max_tool_calls_per_step=8, tool_result_chars=18000))
+    async def unmetered_model(session, settings, provider, history, tools, step):
+        route, payload = provider.request(history, tools)
+        return provider.parse(await provider.post(route, payload))
+    monkeypatch.setattr(chat, "call_model", unmetered_model)
+    monkeypatch.setattr(audit, "start", AsyncMock(return_value=1))
+    monkeypatch.setattr(audit, "complete", AsyncMock())
     projected = AsyncMock(
         return_value={
             "results": [{"title": "Story", "node_type": "quest", "canonical_key": "quest:7"}]
@@ -302,10 +309,10 @@ async def test_chat_entity_tool_uses_projected_search_without_legacy_graph_queri
     monkeypatch.setattr(shared, "_node_label", label)
     response = await search.public_chat(
         Request({"type": "http", "client": None}),
-        search.PublicChatRequest(messages=[]),
-        session=SimpleNamespace(),
+        search.PublicChatRequest(messages=[{"role": "user", "content": "Find Story"}]),
+        session=SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
     )
-    assert response == {"reply": "done"}
+    assert response["reply"] == "done" and response["request_id"]
     projected.assert_awaited_once()
     legacy_search.assert_not_awaited()
     label.assert_not_awaited()

@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass
 
@@ -132,7 +133,7 @@ class LoreSearchService:
             text(sql), 
             {
                 "query": query, 
-                "query_embedding": __import__("json").dumps(list(query_embedding)), 
+                "query_embedding": json.dumps(list(query_embedding)),
                 "model_id": model_id,
                 "limit": limit
             }
