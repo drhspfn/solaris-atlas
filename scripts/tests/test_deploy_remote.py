@@ -145,32 +145,12 @@ compose=(record_compose)
         self.assertNotIn("caddy reload", result.stdout)
         self.assertNotIn("\nps\n", result.stdout)
 
-    def test_viewer_activation_uses_fresh_release_image_before_web_starts(self):
-        activation = "run --rm --no-deps model-worker python -m wuwa_story_worker.model_publication --activate"
-        for component in ("web", "all"):
-            with self.subTest(component=component):
-                result = self.deploy(component)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                commands = result.stdout.splitlines()
-                activate = commands.index(activation)
-                pulls = [i for i, line in enumerate(commands) if line.startswith("pull ")]
-                self.assertLess(max(pulls), activate)
-                self.assertIn("pull model-worker", commands)
-                web = next(i for i, line in enumerate(commands) if line.startswith("up -d ") and "web" in line)
-                self.assertLess(activate, web)
-                self.assertEqual(commands.count(activation), 1)
-                self.assertEqual((result.stdout + result.stderr).count("activation-image=ghcr.io/test/solaris-atlas-models:abc1234"), 2)
-                if component == "web":
-                    self.assertNotIn("stop ", result.stdout)
-                    self.assertNotIn("up -d model-worker", result.stdout)
-
-    def test_activation_failure_prevents_new_web_start(self):
-        for component in ("web", "all"):
-            with self.subTest(component=component):
-                result = self.deploy(component, fail_activation=True)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertNotIn("up -d", result.stdout)
-                self.assertNotIn("caddy reload", result.stdout)
+    def test_web_deployment_does_not_pull_or_publish_model_runtime(self):
+        result = self.deploy("web")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("pull model-worker", result.stdout)
+        self.assertNotIn("model_publication", result.stdout)
+        self.assertIn("up -d web", result.stdout)
 
     def test_worker_deployment_does_not_touch_the_proxy(self):
         result = self.deploy("snapshot-worker")

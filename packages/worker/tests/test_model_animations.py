@@ -284,7 +284,6 @@ async def test_publication_validates_legacy_payload_and_publishes_actual_count(
     monkeypatch.setattr(worker, "get_settings", lambda: None)
     monkeypatch.setattr(worker, "S3Storage", lambda settings: None)
     monkeypatch.setattr(worker, "FileRegistrationService", lambda storage: service)
-    monkeypatch.setattr(worker, "publish_viewer", AsyncMock(return_value="viewer/index.html"))
     monkeypatch.setattr(worker, "ensure_glb_download", AsyncMock())
     summaries = {}
     if include:
