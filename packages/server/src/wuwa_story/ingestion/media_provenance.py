@@ -82,7 +82,9 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
         references.setdefault(identity, []).append(reference)
         target = by_source.get((identity[0], *identity[2:]))
         metadata = reference.metadata_json or {}
-        playable = not require_spine_playback or target is None or target.get('kind') != 'spine' or ((metadata.get('playback') or {}).get('variants') and (metadata.get('playback') or {}).get('components') and not (metadata.get('playback') or {}).get('unsupported'))
+        preview = metadata.get('animation_preview') or {}
+        native_ready = preview.get('recipe') == 'riglyph-native-v1' and preview.get('status') == 'ready' and preview.get('variants')
+        playable = not require_spine_playback or target is None or target.get('kind') != 'spine' or native_ready or ((metadata.get('playback') or {}).get('variants') and (metadata.get('playback') or {}).get('components') and not (metadata.get('playback') or {}).get('unsupported'))
         if target is not None and playable and matches_source(metadata, source, target):
             candidates.append((target_identity(target, reference_type), file.size_bytes,
                                location.object_key, reference, location))
@@ -92,7 +94,8 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
         async with semaphore:
             return key, await storage.stat(key)
 
-    components = {key: (reference.metadata_json or {}).get('playback', {}).get('components', [])
+    components = {key: ((reference.metadata_json or {}).get('animation_preview') or {}).get('variants', [])
+                  or (reference.metadata_json or {}).get('playback', {}).get('components', [])
                   for _identity, _size, key, reference, _location in candidates
                   if require_spine_playback and expected[_identity].get('kind') == 'spine'}
     keys = {c[2] for c in candidates} | {part['object_key'] for parts in components.values() for part in parts}

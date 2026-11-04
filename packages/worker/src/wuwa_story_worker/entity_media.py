@@ -403,7 +403,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 incomplete_spine_controls = []
                 riglyph_failures = []
                 for target, path, kind, mime, originals in files:
-                    converted = None
+                    rendered = None
                     animation = None
                     if target['kind'] == 'spine':
                         with zipfile.ZipFile(path) as archive:
@@ -411,11 +411,10 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                                 'display': 'static', 'state': 'static_only', 'conversion_allowed': False,
                                 'reasons': [{'code': 'source_eligibility_unknown'}]})
                     if animation and animation.get('conversion_allowed') and os.getenv('WUWA_RIGLYPH_ENABLED', '').lower() in {'1', 'true'}:
-                        from wuwa_story_worker.riglyph_convert import convert_bundle
+                        from wuwa_story_worker.riglyph_render import build_animation
                         try:
-                            converted = await asyncio.to_thread(
-                                convert_bundle, path, path.with_suffix('.riglyph.zip'),
-                                ['node', os.getenv('WUWA_RIGLYPH_CLI', '/app/tools/riglyph/node_modules/@riglyph/cli/dist/cli/main.js')])
+                            rendered = await asyncio.to_thread(build_animation, path)
+                            animation = rendered.decision
                         except (OSError, ValueError, subprocess.SubprocessError, zipfile.BadZipFile) as error:
                             riglyph_failures.append({'path': target['path'], 'error': str(error)[:500]})
                             animation = {**animation, 'display': 'static', 'state': 'conversion_failed',
@@ -437,10 +436,11 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                             (target["path"], target["language"])),
                     )
                     published = await service.register_file(session, path, kind, mime_type=mime)
-                    converted_file = None
-                    if converted is not None:
-                        converted_file = await service.register_file(session, converted, 'unknown', mime_type='application/zip')
-                        await service.register_variant(session, published.id, converted_file.id, 'riglyph_bundle', run.id)
+                    rendered_metadata = {}
+                    if rendered is not None:
+                        from wuwa_story_worker.riglyph_render import publish_animation
+                        rendered_metadata = await publish_animation(
+                            session, path, published, service, run.id, artifacts=rendered)
                     for original_path in originals:
                         original = await service.register_file(
                             session,
@@ -482,7 +482,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         )
                     reference.file_id = published.id
                     playback = None
-                    if target['kind'] == 'spine' and get_settings().story_spine_playback_enabled and (animation or {}).get('display') == 'animated':
+                    if target['kind'] == 'spine' and not rendered_metadata and get_settings().story_spine_playback_enabled and (animation or {}).get('display') == 'animated':
                         from wuwa_story_worker.story_spine import publish_open_playback
                         playback = await publish_open_playback(session, path, target, published, service,
                                                                storage, run.id, request.asset_version)
@@ -491,8 +491,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                                 {'path': target['path'], 'diagnostics': playback['unsupported']})
                     reference.metadata_json = {
                         **({'playback': playback} if playback else {}),
-                        **({'riglyph_file_id': converted_file.id} if converted_file else {}),
                         **({'animation_import': animation} if animation else {}),
+                        **rendered_metadata,
                         "asset_version": request.asset_version,
                         "download_id": request.download_id,
                         "language": target["language"],
