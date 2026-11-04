@@ -4,6 +4,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DBAPIError, TimeoutError
 
+from wuwa_story.cache import CacheUnavailable
+
 logger = logging.getLogger(__name__)
 
 
@@ -12,6 +14,12 @@ class NotFoundError(Exception):
 
 
 def install_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(CacheUnavailable)
+    async def cache_error_handler(_request: Request, _exc: CacheUnavailable) -> JSONResponse:
+        return JSONResponse(status_code=503,
+            content={"detail": "Shared cache is temporarily unavailable"},
+            headers={"Retry-After": "2", "Cache-Control": "no-store"})
+
     @app.exception_handler(DBAPIError)
     @app.exception_handler(TimeoutError)
     async def database_error_handler(_request: Request, exc: Exception) -> JSONResponse:
