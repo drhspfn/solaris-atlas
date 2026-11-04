@@ -67,6 +67,7 @@ export default async function QuestTranscriptPage({ params, searchParams }: Prop
     serverApi<any>(`/quests/${encodeURIComponent(key)}/profile?${selection}`),
     serverApi<any>(
       `/quests/${encodeURIComponent(key)}/transcript?${transcriptSelection}&limit=${APP_SETTINGS.limits.transcript}&include_raw=false`,
+      { cache: 'no-store' },
     ),
     serverApi<QuestContinuityData>(`/quests/${encodeURIComponent(key)}/continuity?${selection}`),
     serverApi<QuestMediaManifest>(`/quests/${encodeURIComponent(key)}/media?${selection}`),
