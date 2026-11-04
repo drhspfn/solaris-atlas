@@ -8,4 +8,5 @@
 .quest-illustration.is-background > .rendered-animation { height: 100%; aspect-ratio: auto; }
 .quest-illustration .rendered-animation-error { inset: 65px 12px auto; }
 .events-artwork > .rendered-animation { height: 100%; aspect-ratio: auto; background: transparent; }
-.events-artwork > .rendered-animation > video { object-fit: cover; }
+.events-artwork > .rendered-animation > video { object-fit: contain; }
+.character-artwork > .rendered-animation { max-height: min(70vh, 640px); }

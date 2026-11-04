@@ -63,7 +63,7 @@ const archive = {
       recipe: 'riglyph-native-v1', status: 'ready',
       default_animation: 'idle',
       variants: [{ animation: 'idle', file_id: 701, url: 'https://cdn.test/trial-idle.webm',
-        mime_type: 'video/webm', duration_seconds: 10, width: 640, height: 360, loop: true }],
+        mime_type: 'video/webm', duration_seconds: 10, width: 736, height: 1920, loop: true }],
     },
   },
   biography: `<color=white>${biography}</color>`,
@@ -533,7 +533,15 @@ const backend = createServer(async (request, response) => {
           {
             id: 1,
             slug: '1-artisans-search',
-            spine: [archive.trial_spine],
+            spine: [{
+              ...archive.trial_spine,
+              animation_preview: {
+                ...archive.trial_spine.animation_preview,
+                variants: archive.trial_spine.animation_preview.variants.map((clip) => ({
+                  ...clip, width: 1024, height: 1024,
+                })),
+              },
+            }],
             source_id: 'test-event',
             title: "Artisan's Search",
             kind: 'limited',
@@ -724,6 +732,7 @@ for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
     assert.ok(head.includes('href="https://solarisatlas.fun/characters/character%3A1102"'));
     assert.match(main, /<h1>Sanhua/);
     assert.match(main, /<video[^>]*aria-label="Character trial animation"[^>]*controls=""/);
+    assert.match(main, /class="rendered-animation" style="aspect-ratio:736 \/ 1920"/);
     assert.match(main, /href="https:\/\/cdn.test\/trial.zip"/);
     assert.doesNotMatch(main, /src="https:\/\/cdn.test\/trial-idle.webm"/);
     for (const detail of [biography, 'January 20', 'Eternal Frost', portrait])
@@ -880,6 +889,7 @@ test('events fetch at request time and render their artwork without JavaScript',
   assert.ok(html.includes('Artisan&#x27;s Search'));
   assert.ok(html.includes('src="https://cdn.solarisatlas.fun/objects/test-event"'));
   assert.match(html, /<video[^>]*aria-hidden="true"/);
+  assert.match(html, /class="rendered-animation" style="aspect-ratio:1024 \/ 1024"/);
   assert.ok(html.includes('src="https://cdn.solarisatlas.fun/objects/featured-portrait"'));
   assert.ok(!html.includes('src="https://cdn.solarisatlas.fun/objects/empty-background"'));
   assert.ok(html.includes('Server schedule unavailable'));
