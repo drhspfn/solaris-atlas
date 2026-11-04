@@ -132,6 +132,12 @@ async def backfill_reference(session_factory, storage, ref_id, *, engine, rebuil
                     # storage.file_reference's public_cache_changed trigger invalidates
                     # API caches in the same commit as files, variants and metadata.
                     await session.commit()
+                    if (metadata.get("animation_preview") or {}).get("status") == "failed":
+                        # Conversion succeeded: retain its archive and failure metadata
+                        # before reporting a retryable native render failure.
+                        logger.warning("riglyph.backfill_render_failed reference_id=%s source_file_id=%s riglyph_file_id=%s",
+                                       ref_id, source_id, metadata.get("riglyph_file_id"))
+                        return "failed"
                     return "updated"
         finally:
             await lock.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": lock_key})

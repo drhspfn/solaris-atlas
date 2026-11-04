@@ -1,4 +1,5 @@
 import hashlib
+import json
 import sys
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -124,6 +125,51 @@ async def test_static_publication_is_bound_to_source_and_skipped_on_retry(setup)
     s.reader.get.side_effect = [s.reference]
     assert await apply(s) == "current"
     assert s.downloads == ["objects/source"]
+
+
+@pytest.mark.asyncio
+async def test_native_failure_commits_converted_archive_and_reports_retryable_failure(
+        setup, monkeypatch, capsys, caplog):
+    from wuwa_story.db import session
+    from wuwa_story.storage import s3
+
+    s = setup
+    successful_publish = s.publisher.side_effect
+    s.publisher.side_effect = None
+    s.publisher.return_value = {
+        "riglyph_file_id": 99,
+        "animation_preview": {"recipe": backfill.RECIPE, "status": "failed",
+                              "variants": [], "source_file_id": 20},
+        "animation_import": {"display": "static", "state": "render_failed"},
+    }
+    selection = SimpleNamespace(scalars=AsyncMock(return_value=[5]))
+    factory = Mock(side_effect=lambda: context(selection) if factory.call_count == 1 else s.factory())
+    monkeypatch.setattr(session, "SessionFactory", factory)
+    monkeypatch.setattr(session, "engine", SimpleNamespace(
+        connect=s.engine.connect, dispose=AsyncMock()))
+    monkeypatch.setattr(s3, "S3Storage", Mock(return_value=s.storage))
+    monkeypatch.delenv("WUWA_DB_TRANSACTION_POOLING", raising=False)
+
+    assert await backfill.run(backfill.parser().parse_args(["--apply", "--ref-id", "5"])) == 1
+    assert json.loads(capsys.readouterr().out)["results"] == [
+        {"reference_id": 5, "status": "failed"}]
+    s.writer.commit.assert_awaited_once()
+    s.writer.rollback.assert_not_called()
+    assert s.reference.file_id == 20
+    assert s.reference.metadata_json["riglyph_file_id"] == 99
+    assert s.reference.metadata_json["animation_import"]["state"] == "render_failed"
+    assert s.reference.metadata_json["game_source"] == {"download_id": "old"}
+    assert "riglyph.backfill_render_failed reference_id=5 source_file_id=20 riglyph_file_id=99" in caplog.text
+    assert not backfill.current(s.reference.metadata_json, 20)
+
+    # A later explicit retry needs no --rebuild and can publish a ready preview.
+    s.factory.reset_mock()
+    s.reader.get.side_effect = [s.reference, s.source]
+    s.publisher.side_effect = successful_publish
+    assert await apply(s) == "updated"
+    assert s.reference.file_id == 20
+    assert s.writer.commit.await_count == 2
+    assert s.reference.metadata_json["animation_preview"]["status"] == "ready"
 
 
 @pytest.mark.asyncio
