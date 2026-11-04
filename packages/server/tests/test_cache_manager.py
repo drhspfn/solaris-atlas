@@ -87,7 +87,7 @@ from wuwa_story.config.settings import Settings
 async def main():
     async with cache_lifespan(Settings(redis_url=os.environ['WUWA_TEST_REDIS_URL'],
         cache_namespace=os.environ['CACHE_TEST_NAMESPACE'], cache_timeout_seconds=2)) as cache:
-        result = await asyncio.gather(*[cache.rate_limit('processes', limit=5, window_seconds=86400) for _ in range(8)])
+        result = await asyncio.gather(*[cache.rate_limits(['processes:account', 'processes:ip:' + str(os.getpid())], limit=5, window_seconds=86400) for _ in range(8)])
         print(json.dumps(sum(item.allowed for item in result)))
 asyncio.run(main())
 """
@@ -210,7 +210,7 @@ async def test_public_chat_shares_quota_between_app_instances(caches, monkeypatc
             {"role": "user", "content": "Again"}]})).status_code == 429
 
 
-def chat_app(cache):
+def chat_app(cache, user_id=None):
     from fastapi import FastAPI
 
     from wuwa_story.api.errors import install_error_handlers
@@ -226,6 +226,14 @@ def chat_app(cache):
         yield object()
 
     app.dependency_overrides[get_session] = session
+    if user_id is not None:
+        from wuwa_story.auth.dependencies import AuthContext, optional_auth_context
+        from wuwa_story.db.models.auth import AuthSession, User
+
+        async def identity():
+            return AuthContext(User(id=user_id), AuthSession())
+
+        app.dependency_overrides[optional_auth_context] = identity
     return app
 
 
@@ -246,3 +254,70 @@ async def test_public_chat_does_not_invoke_model_without_quota_or_client(client,
     assert response.status_code == 503
     assert response.headers["retry-after"]
     run_chat.assert_not_awaited()
+
+
+async def test_joint_quota_denial_does_not_charge_other_identity(caches):
+    first, second, _ = caches
+    for exhausted_first in (True, False):
+        used, fresh = ("used:" + str(exhausted_first), "fresh:" + str(exhausted_first))
+        for _ in range(5):
+            assert (await first.rate_limit(used, limit=5, window_seconds=86400)).allowed
+        keys = [used, fresh] if exhausted_first else [fresh, used]
+        assert not (await second.rate_limits(keys, limit=5, window_seconds=86400)).allowed
+        for _ in range(5):
+            assert (await first.rate_limit(fresh, limit=5, window_seconds=86400)).allowed
+
+
+async def test_joint_account_limit_is_atomic_across_many_ips(caches):
+    first, second, _ = caches
+    results = await asyncio.gather(*[
+        (first if i % 2 else second).rate_limits(
+            [f"ip:{i}", "account:42"], limit=5, window_seconds=86400) for i in range(80)])
+    assert sum(result.allowed for result in results) == 5
+    assert (await first.rate_limits(["unused-ip", "another-account"],
+        limit=5, window_seconds=86400)).allowed
+    with pytest.raises(ValueError):
+        await first.rate_limits([], limit=5, window_seconds=86400)
+
+
+async def test_authenticated_chat_account_cannot_reset_quota_by_changing_ip(caches, monkeypatch):
+    import httpx
+
+    from wuwa_story.agents import chat
+    first, second, _ = caches
+    run = AsyncMock(return_value={"reply": "done"})
+    monkeypatch.setattr(chat, "run_chat", run)
+    for i in range(6):
+        app = chat_app(first if i % 2 else second, user_id=42)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app,
+            client=(f"198.51.100.{i+1}", 1234)), base_url="http://test") as caller:
+            response = await caller.post("/search/chat", json={"messages": [
+                {"role": "user", "content": "Find Story"}], "user_id": 9000+i})
+        assert response.status_code == (200 if i < 5 else 429)
+    assert run.await_count == 5
+    # The rejected sixth IP was not charged for the exhausted account.
+    assert (await second.rate_limit("public-chat:198.51.100.6", limit=5, window_seconds=86400)).remaining == 4
+
+
+async def test_shared_ip_cannot_reset_quota_by_switching_accounts_or_logging_out(caches, monkeypatch):
+    import httpx
+
+    from wuwa_story.agents import chat
+    first, second, _ = caches
+    run = AsyncMock(return_value={"reply": "done"})
+    monkeypatch.setattr(chat, "run_chat", run)
+
+    async def submit(user_id, ip):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(chat_app(second, user_id),
+            client=(ip, 1234)), base_url="http://test") as caller:
+            return await caller.post("/search/chat", json={"messages": [{"role": "user", "content": "Find Story"}]})
+
+    for user_id in [1, 1, 1, 2, 2]:
+        assert (await submit(user_id, "198.51.100.20")).status_code == 200
+    assert (await submit(2, "198.51.100.20")).status_code == 429
+    assert (await submit(None, "198.51.100.20")).status_code == 429
+    # The blocked IP did not burn user 2's remaining three attempts.
+    for _ in range(3):
+        assert (await submit(2, "198.51.100.21")).status_code == 200
+    assert (await submit(2, "198.51.100.22")).status_code == 429
+    assert run.await_count == 8

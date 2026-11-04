@@ -86,13 +86,21 @@ and their existing PostgreSQL locks; this change does not replace them.
 
 ## First consumer: public chat
 
-`POST /search/chat` injects the manager and admits at most **five attempts per
-canonical visitor IP per UTC day**, shared by all API processes. IPv4-mapped IPv6
-addresses use the same allowance as IPv4. One Lua operation uses Redis server
-time, checks/increments the quota and expires it at the next UTC midnight.
-Concurrent processes cannot each admit five requests. Rejected attempts do not
-extend the window or increase the counter. Accepted attempts consume quota even
-if the downstream model fails, matching the previous pre-call accounting.
+`POST /search/chat` admits at most **five attempts per account and five per
+canonical visitor IP per UTC day**, shared by all API processes. Authenticated
+requests must have allowance in both quotas; guests use the IP quota only.
+Account identity comes from the existing validated session, never from request
+payload fields. Changing IP does not reset an account's quota; switching accounts
+or logging out does not reset an IP's quota. Visitors sharing an IP share its limit.
+IPv4-mapped IPv6 addresses use the same allowance as IPv4.
+
+One Lua operation uses Redis server time and checks all quotas before incrementing
+any of them. A blocked account does not consume a fresh IP's allowance, and a
+blocked IP does not consume an account's allowance. Counters expire at the next
+UTC midnight. Concurrent processes cannot each admit five requests. Accepted
+attempts consume quota even if the downstream model fails. Existing IP counters
+are preserved on rollout; account counters start with the first authenticated
+request after rollout. No database migration or additional configuration is needed.
 
 Quota exhaustion returns `429` with `Retry-After` until reset. Missing client IP
 or unavailable Redis returns `503` before any paid model invocation. Forwarding

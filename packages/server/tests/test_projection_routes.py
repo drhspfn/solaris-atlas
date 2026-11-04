@@ -311,7 +311,8 @@ async def test_chat_entity_tool_uses_projected_search_without_legacy_graph_queri
         Request({"type": "http", "client": ("198.51.100.1", 1234)}),
         search.PublicChatRequest(messages=[{"role": "user", "content": "Find Story"}]),
         session=SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock()),
-        cache=SimpleNamespace(rate_limit=AsyncMock(return_value=SimpleNamespace(allowed=True))),
+        cache=SimpleNamespace(rate_limits=AsyncMock(return_value=SimpleNamespace(allowed=True))),
+        context=None,
     )
     assert response["reply"] == "done" and response["request_id"]
     projected.assert_awaited_once()
