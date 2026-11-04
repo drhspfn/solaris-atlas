@@ -23,7 +23,9 @@ export function QuestIllustratedScene({
   const stopAudio = () =>
     root.current
       ?.querySelectorAll<HTMLMediaElement>('audio,video')
-      .forEach((media) => media.pause());
+      .forEach((media) => {
+        if (!media.closest('.quest-illustration')) media.pause();
+      });
   const select = (next: number) => {
     stopAudio();
     active.current = next;

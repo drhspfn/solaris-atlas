@@ -57,6 +57,15 @@ const testQuest = {
   },
 };
 const archive = {
+  trial_spine: {
+    url: 'https://cdn.test/trial.zip', file_id: 700,
+    animation_preview: {
+      recipe: 'riglyph-native-v1', status: 'ready',
+      default_animation: 'idle',
+      variants: [{ animation: 'idle', file_id: 701, url: 'https://cdn.test/trial-idle.webm',
+        mime_type: 'video/webm', duration_seconds: 10, width: 640, height: 360, loop: true }],
+    },
+  },
   biography: `<color=white>${biography}</color>`,
   profile: { birthday: 'January 20', affiliation: 'Jinzhou', voice_actors: {} },
   artwork: [
@@ -216,10 +225,18 @@ const backend = createServer(async (request, response) => {
                   : {
                       id: 'spine-bg',
                       kind: 'spine',
+                      animation: '1to2',
                       loop: true,
                       resource_id: 850007,
                       images: [],
                       bundle: {
+                        animation_preview: {
+                          recipe: 'riglyph-native-v1', status: 'ready',
+                          variants: [
+                            { animation: '1', file_id: 702, url: 'https://cdn.test/pose.webm', mime_type: 'video/webm', duration_seconds: 0, loop: false },
+                            { animation: '1to2', file_id: 703, url: 'https://cdn.test/transition.webm', mime_type: 'video/webm', duration_seconds: 1, loop: false },
+                          ],
+                        },
                         url: 'https://cdn.test/scene.zip',
                         size_bytes: 12345678,
                         asset_version: '3.7.0',
@@ -516,6 +533,7 @@ const backend = createServer(async (request, response) => {
           {
             id: 1,
             slug: '1-artisans-search',
+            spine: [archive.trial_spine],
             source_id: 'test-event',
             title: "Artisan's Search",
             kind: 'limited',
@@ -705,6 +723,9 @@ for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
     assert.ok(head.includes(`content="${portrait}"`));
     assert.ok(head.includes('href="https://solarisatlas.fun/characters/character%3A1102"'));
     assert.match(main, /<h1>Sanhua/);
+    assert.match(main, /<video[^>]*aria-label="Character trial animation"[^>]*controls=""/);
+    assert.match(main, /href="https:\/\/cdn.test\/trial.zip"/);
+    assert.doesNotMatch(main, /src="https:\/\/cdn.test\/trial-idle.webm"/);
     for (const detail of [biography, 'January 20', 'Eternal Frost', portrait])
       assert.ok(main.includes(detail), detail);
     assert.doesNotMatch(html, /Opening archive record|Loading character details|id="S:\d+"/);
@@ -858,6 +879,7 @@ test('events fetch at request time and render their artwork without JavaScript',
   const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
   assert.ok(html.includes('Artisan&#x27;s Search'));
   assert.ok(html.includes('src="https://cdn.solarisatlas.fun/objects/test-event"'));
+  assert.match(html, /<video[^>]*aria-hidden="true"/);
   assert.ok(html.includes('src="https://cdn.solarisatlas.fun/objects/featured-portrait"'));
   assert.ok(!html.includes('src="https://cdn.solarisatlas.fun/objects/empty-background"'));
   assert.ok(html.includes('Server schedule unavailable'));

@@ -1,0 +1,11 @@
+.rendered-animation { display: block; position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: var(--bg-root); }
+.rendered-animation > video { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
+.rendered-animation-fallback { position: absolute; inset: 0; display: grid; align-items: center; }
+.rendered-animation-fallback > img { width: 100%; height: 100%; object-fit: contain; }
+.rendered-animation-error { position: absolute; inset: auto 0 0; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 12px; padding: 12px; background: var(--surface-1); color: var(--text-secondary); font-size: 12px; }
+.rendered-animation-error button { min-height: 44px; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-1); color: var(--accent-mint); font: inherit; }
+.rendered-animation-toggle { position: absolute; z-index: 1; top: 52px; left: 12px; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); background: var(--surface-1); font: inherit; font-size: 12px; }
+.quest-illustration.is-background > .rendered-animation { height: 100%; aspect-ratio: auto; }
+.quest-illustration .rendered-animation-error { inset: 65px 12px auto; }
+.events-artwork > .rendered-animation { height: 100%; aspect-ratio: auto; background: transparent; }
+.events-artwork > .rendered-animation > video { object-fit: cover; }

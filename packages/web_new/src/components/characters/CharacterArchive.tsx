@@ -9,9 +9,19 @@ import { entityPath } from '../../data/entities';
 import { availableLocales } from '../../data/locales';
 import { Select } from '@/components/ui/Select';
 import { TrackPlayer } from '@/components/ui/TrackPlayer';
+import { RenderedAnimation } from "@/components/ui/RenderedAnimation";
+import {
+  selectAnimationClip,
+  type AnimationPreview,
+} from "@/components/ui/animationPreview";
 import '@/styles/character-voice-lines.css';
 
 export interface CharacterArchiveData {
+  trial_spine?: {
+    url: string;
+    file_id: number;
+    animation_preview?: AnimationPreview | null;
+  } | null;
   biography: string | null;
   profile: {
     country: string | null;
@@ -175,6 +185,10 @@ export function CharacterArchive({
   const spoken = textLocale === locale ? archive : (textArchive?.data ?? archive);
   const textLoading = textLocale !== locale && textArchive?.locale !== textLocale && !textError;
   const portrait = archive?.artwork.find((art) => art.kind === 'RoleHeadIconLarge');
+  const trialArtwork = archive?.artwork.find(
+    (art) =>
+      art.kind === "RoleStand" && art.scope !== "shared_resource" && art.url,
+  );
 
   return (
     <div className="character-archive">
@@ -234,6 +248,39 @@ export function CharacterArchive({
               <Image size={16} /> Portrait source found; image export is pending.{' '}
               <code title={portrait.engine_path}>{portrait.engine_path.split('/').at(-1)}</code>
             </div>
+          )}
+          {archive?.trial_spine && (
+            <section
+              aria-label="Character trial animation"
+              className="character-artwork"
+            >
+              <h3>Trial animation</h3>
+              <RenderedAnimation
+                preview={selectAnimationClip(
+                  archive.trial_spine.animation_preview,
+                  "idle",
+                )}
+                label="Character trial animation"
+                fallback={
+                  <div className="character-artwork-placeholder">
+                    {trialArtwork?.url ? (
+                      <img
+                        src={apiUrl(trialArtwork.url.replace(/^\/api/, ""))}
+                        alt="Character trial artwork"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <span>
+                        Trial animation archived · playback unavailable
+                      </span>
+                    )}
+                  </div>
+                }
+              />
+              <a href={archive.trial_spine.url} download>
+                Download trial scene
+              </a>
+            </section>
           )}
           {!!archive?.artwork.length && (
             <section aria-label="Character artwork" className="character-artwork">

@@ -5,18 +5,22 @@ import { Archive, Download, ImageOff } from 'lucide-react';
 import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
 import { Select } from '../ui/Select';
 import { QuestAnimatedBackdrop, type OpenPlayback } from './QuestAnimatedBackdrop';
+import { RenderedAnimation } from '../ui/RenderedAnimation';
+import { selectAnimationClip, type AnimationPreview } from '../ui/animationPreview';
 
 export type Illustration = {
   id: string;
   kind: 'image' | 'clear' | 'spine';
   resource_id?: number;
   loop?: boolean;
+  animation?: string | null;
   bundle?: {
     url: string;
     asset_version?: string;
     size_bytes?: number;
     file_id?: number;
     playback?: OpenPlayback | null;
+    animation_preview?: AnimationPreview | null;
   } | null;
   images: Array<{
     rover: 'male' | 'female' | null;
@@ -41,14 +45,18 @@ export function QuestIllustration({
     illustration.images.find((image) => image.rover === choice) ||
     illustration.images.find((image) => !image.rover);
   const playback = illustration.bundle?.playback;
+  const animation = illustration.animation ?? illustration.bundle?.animation_preview?.default_animation;
+  const preview = selectAnimationClip(illustration.bundle?.animation_preview, animation, choice);
+  const authoredVariants = playback?.variants.filter((variant) => variant.animation === animation);
   const animated =
-    playback?.variants.find((variant) => variant.rover === choice) ||
-    playback?.variants.find((variant) => !variant.rover);
+    authoredVariants?.find((variant) => variant.rover === choice) ||
+    authoredVariants?.find((variant) => !variant.rover);
   const rovers = [
     ...new Set(
       [
         ...illustration.images.map((image) => image.rover),
         ...(playback?.variants || []).map((variant) => variant.rover),
+        ...(illustration.bundle?.animation_preview?.variants || []).map((variant) => variant.rover),
       ].filter(Boolean),
     ),
   ];
@@ -63,51 +71,59 @@ export function QuestIllustration({
     <figure
       className={`quest-illustration${presentation === 'background' ? ' is-background' : ''}${animated ? ' has-animation' : ''}`}
     >
-      {animated ? (
-        <QuestAnimatedBackdrop
-          key={animated.scene_url}
-          variant={animated}
-          loop={!!illustration.loop}
-        />
-      ) : selected?.url && failedUrl !== selected.url ? (
-        <img
-          ref={image}
-          key={`${selected.url}:${retry}`}
-          src={selected.url}
-          alt="Story illustration"
-          loading="lazy"
-          decoding="async"
-          onError={() => setFailedUrl(selected.url)}
-        />
-      ) : (
-        <div className="quest-illustration-placeholder">
-          <ImageOff size={24} aria-hidden="true" />
-          <p>
-            {failedUrl && failedUrl === selected?.url
-              ? 'Illustration could not load.'
-              : illustration.kind === 'spine'
-                ? illustration.bundle
-                  ? variants && !choice
-                    ? 'Choose Rover to view this scene.'
-                    : 'Animated scene archived · playback unavailable'
-                  : 'Animated scene · awaiting export'
-                : variants && !choice
-                  ? 'Choose Rover to view this illustration.'
-                  : 'Illustration · awaiting image export.'}
-          </p>
-          {failedUrl === selected?.url && selected?.url && (
-            <button
-              type="button"
-              onClick={() => {
-                setFailedUrl(null);
-                setRetry(retry + 1);
-              }}
-            >
-              Retry illustration
-            </button>
-          )}
-        </div>
-      )}
+      <RenderedAnimation
+        key={`${illustration.id}:${choice}:${animation || ''}`}
+        preview={preview}
+        label="Animated story illustration"
+        compact={presentation === 'background'}
+        fallback={
+          animated && !preview ? (
+            <QuestAnimatedBackdrop
+              key={animated.scene_url}
+              variant={animated}
+              loop={!!illustration.loop}
+            />
+          ) : selected?.url && failedUrl !== selected.url ? (
+            <img
+              ref={image}
+              key={`${selected.url}:${retry}`}
+              src={selected.url}
+              alt="Story illustration"
+              loading="lazy"
+              decoding="async"
+              onError={() => setFailedUrl(selected.url)}
+            />
+          ) : (
+            <div className="quest-illustration-placeholder">
+              <ImageOff size={24} aria-hidden="true" />
+              <p>
+                {failedUrl && failedUrl === selected?.url
+                  ? 'Illustration could not load.'
+                  : illustration.kind === 'spine'
+                    ? illustration.bundle
+                      ? variants && !choice
+                        ? 'Choose Rover to view this scene.'
+                        : 'Animated scene archived · playback unavailable'
+                      : 'Animated scene · awaiting export'
+                    : variants && !choice
+                      ? 'Choose Rover to view this illustration.'
+                      : 'Illustration · awaiting image export.'}
+              </p>
+              {failedUrl === selected?.url && selected?.url && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFailedUrl(null);
+                    setRetry(retry + 1);
+                  }}
+                >
+                  Retry illustration
+                </button>
+              )}
+            </div>
+          )
+        }
+      />
       <figcaption>
         <span>ILLUSTRATED STORY</span>
         {variants && (
