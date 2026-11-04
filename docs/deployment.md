@@ -212,6 +212,22 @@ PostgreSQL data and passwords throughout rollback.
 
 ## Rollback and backups
 
+Image pulls run with `COMPOSE_PARALLEL_LIMIT=1` to limit simultaneous image
+downloads. Transient registry/network failures (connection resets, unexpected EOF,
+timeouts, temporary DNS errors, throttling and common HTTP 5xx responses) retry
+up to four times, waiting 5, 10 and 20 seconds. Successfully downloaded layers
+can be reused by subsequent attempts. Live download output remains visible.
+Authentication, missing-manifest and certificate errors fail immediately; the
+original error status is preserved, and cancelled commands are never retried.
+Only `pull` is repeated, so this mechanism cannot replay migrations, viewer
+publication or container changes. IPv6 and TLS verification remain enabled.
+
+An error such as `read tcp [server-ipv6] -> [registry-ipv6]:443: connection reset
+by peer` is on the origin-server-to-registry connection, not the runner's SSH
+connection. Inspect Docker/server logs and compare IPv4/IPv6 connectivity before
+changing host networking. Do not disable IPv6, pin registry CDN addresses in
+`/etc/hosts`, or bypass certificate verification based on a single reset.
+
 Web and full deployments validate and reload the running Caddy configuration.
 The Next.js frontend listens on port 3000; replacing the web image alone does
 not make Caddy reread its mounted configuration. A reload applies updated

@@ -159,7 +159,7 @@ compose=(record_compose)
                 web = next(i for i, line in enumerate(commands) if line.startswith("up -d ") and "web" in line)
                 self.assertLess(activate, web)
                 self.assertEqual(commands.count(activation), 1)
-                self.assertEqual(result.stderr.count("activation-image=ghcr.io/test/solaris-atlas-models:abc1234"), 2)
+                self.assertEqual((result.stdout + result.stderr).count("activation-image=ghcr.io/test/solaris-atlas-models:abc1234"), 2)
                 if component == "web":
                     self.assertNotIn("stop ", result.stdout)
                     self.assertNotIn("up -d model-worker", result.stdout)
@@ -414,3 +414,70 @@ class ModelWorkerConfigurationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(BASH, "Bash is required to test image download retries")
+class DockerPullRetryTests(unittest.TestCase):
+    def pull(self, error, failures, status=37):
+        source = (ROOT / "scripts/deploy-remote.sh").read_text()
+        helper = "pull_images() {" + source.split("pull_images() {", 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+        harness = r"""
+set -euo pipefail
+APP_DIR=$(mktemp -d)
+trap 'rm -f "$APP_DIR/count"; rmdir "$APP_DIR"' EXIT
+printf 0 > "$APP_DIR/count"
+sleep() { printf 'delay=%s\n' "$1"; }
+download() {
+  [[ "$COMPOSE_PARALLEL_LIMIT" == 1 ]] || return 99
+  local count
+  count=$(cat "$APP_DIR/count")
+  count=$((count + 1))
+  printf '%s' "$count" > "$APP_DIR/count"
+  printf 'download=%s\n' "$*"
+  if (( count <= TEST_FAILURES )); then
+    printf '%s\n' "$TEST_ERROR" >&2
+    return "$TEST_STATUS"
+  fi
+}
+compose=(download)
+"""
+        tail = r"""
+if pull_images api web; then result=0; else result=$?; fi
+printf 'attempts=%s\n' "$(cat "$APP_DIR/count")"
+exit "$result"
+"""
+        return subprocess.run([BASH, "-s"], input=harness + helper + tail,
+            env={**os.environ, "TEST_ERROR": error, "TEST_FAILURES": str(failures), "TEST_STATUS": str(status)},
+            capture_output=True, text=True, timeout=10, check=False)
+
+    def test_reset_recovers_with_bounded_backoff_and_serial_downloads(self):
+        result = self.pull("failed to copy: read tcp [::1]:443: connection reset by peer", 2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("attempts=3", result.stdout)
+        self.assertIn("delay=5", result.stdout)
+        self.assertIn("delay=10", result.stdout)
+        self.assertEqual(result.stdout.count("download=pull api web"), 3)
+
+    def test_transient_retries_stop_after_four_attempts_and_preserve_failure(self):
+        for message in ("unexpected EOF", "TLS handshake timeout", "503 Service Unavailable"):
+            with self.subTest(message=message):
+                result = self.pull(message, 99)
+                self.assertEqual(result.returncode, 37, result.stderr)
+                self.assertIn("attempts=4", result.stdout)
+                self.assertIn("delay=20", result.stdout)
+                self.assertNotIn("attempt 5", result.stderr)
+
+    def test_auth_manifest_tls_and_unknown_errors_fail_without_retry(self):
+        for message in ("unauthorized: authentication required", "manifest unknown",
+                        "x509: certificate signed by unknown authority", "403 Forbidden", "unrecognized failure"):
+            with self.subTest(message=message):
+                result = self.pull(message, 99, status=71)
+                self.assertEqual(result.returncode, 71, result.stderr)
+                self.assertIn("attempts=1", result.stdout)
+                self.assertNotIn("delay=", result.stdout)
+
+    def test_cancellation_is_never_retried(self):
+        result = self.pull("connection reset by peer", 99, status=130)
+        self.assertEqual(result.returncode, 130, result.stderr)
+        self.assertIn("attempts=1", result.stdout)
+        self.assertNotIn("delay=", result.stdout)
