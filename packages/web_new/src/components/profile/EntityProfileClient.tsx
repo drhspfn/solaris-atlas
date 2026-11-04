@@ -3,6 +3,7 @@
 import { ArrowRight, BookOpen, ChevronRight, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api, apiUrl } from '@/api/client';
+import type { CharacterModelData } from '@/components/models/types';
 import { CharacterModel } from '@/components/characters/CharacterModel';
 import { CharacterModelImport } from '@/components/characters/CharacterModelImport';
 import {
@@ -27,11 +28,13 @@ export function EntityProfileClient({
   entityKey,
   initialData,
   initialArchive,
+  initialModel,
 }: {
   kind: 'character' | 'item' | 'location';
   entityKey: string;
   initialData?: any;
   initialArchive?: CharacterArchiveData | null;
+  initialModel?: CharacterModelData | null;
 }) {
   const locale = useLocale();
   const playerDisplay = usePlayerDisplay();
@@ -253,7 +256,7 @@ export function EntityProfileClient({
           <div className="character-archive-loading" role="status">Loading character details…</div>
         ))}
       {kind === 'character' && entity?.canonical_key && (
-        <CharacterModel key={entity.canonical_key} characterKey={entity.canonical_key} name={name} refreshKey={modelRevision} />
+        <CharacterModel initialModel={initialModel} key={entity.canonical_key} characterKey={entity.canonical_key} name={name} refreshKey={modelRevision} />
       )}
       <div className="profile-columns">
         <section className="content-panel">

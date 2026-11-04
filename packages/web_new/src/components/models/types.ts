@@ -50,12 +50,13 @@ export type ViewerState = {
   physicsBones: number;
   physicsStatus: string;
   rootAvailable: boolean;
+  preferredBone: string;
 };
 export const initialViewerState: ViewerState = {
   ready: false, error: '', status: 'Loading model…', busy: false,
   fullQuality: false, animationsLoaded: false, facialLoaded: false,
   animations: [], bones: [], faces: [], animation: '', face: 'auto',
-  time: 0, duration: 0, physicsBones: 0, physicsStatus: 'No physics profile loaded', rootAvailable: false,
+  time: 0, duration: 0, physicsBones: 0, physicsStatus: 'No physics profile loaded', rootAvailable: false, preferredBone: '',
 };
 export type ViewerCommand =
   | 'reset' | 'left' | 'right' | 'closer' | 'farther' | 'focus'

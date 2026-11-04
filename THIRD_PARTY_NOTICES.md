@@ -28,7 +28,7 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 DM Sans and Manrope variable fonts are distributed unchanged from the official
 Google Fonts repository (`ofl/dmsans` and `ofl/manrope`) under the SIL Open Font
 License 1.1. Their copyright and complete license notices are preserved in
-`tools/model-viewer/fonts/DMSans-OFL.txt` and `Manrope-OFL.txt`, and staged beside
+`packages/web_new/public/fonts/DMSans-OFL.txt` and `Manrope-OFL.txt`, and distributed with
 the fonts in each frontend/viewer publication. The frontend uses these local files
 through `next/font/local`; builds make no Google Fonts requests.
 

@@ -1,11 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import vm from "node:vm";
 import * as THREE from "three";
-import { BoneCamera, cameraBones } from "../src/components/models/engine/camera-rig.js";
-import { RootMotionLock } from "../src/components/models/engine/root-motion.js";
-import { FacialAnimation } from "../src/components/models/engine/facial.js";
 import {
   resourceUrl,
   animationLoadLabel,

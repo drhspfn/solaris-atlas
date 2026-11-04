@@ -13,14 +13,14 @@ import { CookieConsent } from '@/components/layout/CookieConsent';
 import { adsenseClient } from '@/lib/adsense';
 
 const dmSans = localFont({
-  src: '../../public/model-viewer/fonts/DMSans.ttf',
+  src: '../../public/fonts/DMSans.ttf',
   weight: '100 1000',
   variable: '--font-body',
   display: 'swap',
 });
 
 const manrope = localFont({
-  src: '../../public/model-viewer/fonts/Manrope.ttf',
+  src: '../../public/fonts/Manrope.ttf',
   weight: '200 800',
   variable: '--font-display',
   display: 'swap',

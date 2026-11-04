@@ -6,21 +6,9 @@ import { api, apiUrl } from "@/api/client";
 import { Select } from "@/components/ui/Select";
 import "@/styles/character-model.css";
 
-type Asset = { url: string; size_bytes: number };
-type ModelAssets = {
-  preview: Asset | null;
-  download: Asset | null;
-  physics: Asset | null;
-  animations?: Asset | null;
-  facial?: Asset | null;
-  viewer_url?: string | null;
-};
-type ModelForm = ModelAssets & { id: string; label: string };
-type Model = ModelAssets & {
-  status: "ready" | "missing";
-  game_version: string | null;
-  forms?: ModelForm[] | null;
-};
+import { ModelViewer } from '@/components/models/ModelViewer';
+import type { CharacterModelData as Model } from '@/components/models/types';
+
 const assetUrl = (url: string) => apiUrl(url.replace(/^\/api(?=\/)/, ""));
 const size = (bytes: number) => `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
 
@@ -29,17 +17,19 @@ export function CharacterModel({
   name,
   gameVersion,
   refreshKey = 0,
+  initialModel,
 }: {
   characterKey: string;
   name: string;
   gameVersion?: string;
   refreshKey?: number;
+  initialModel?: Model | null;
 }) {
   const id = useId();
   const preview = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const [nearby, setNearby] = useState(false);
-  const [model, setModel] = useState<Model | null>(null);
+  const [model, setModel] = useState<Model | null>(initialModel ?? null);
   const [selectedForm, setSelectedForm] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
@@ -48,7 +38,7 @@ export function CharacterModel({
 
   useEffect(() => {
     const controller = new AbortController();
-    setModel(null);
+    if (!initialModel || revision || refreshKey) setModel(null);
     setSelectedForm(null);
     setError("");
     setViewing(false);
@@ -56,6 +46,7 @@ export function CharacterModel({
     const query = gameVersion
       ? `?game_version=${encodeURIComponent(gameVersion)}`
       : "";
+    if (initialModel && !revision && !refreshKey) return () => controller.abort();
     api<Model>(
       `/characters/${encodeURIComponent(characterKey)}/model${query}`,
       {
@@ -75,7 +66,7 @@ export function CharacterModel({
           );
       });
     return () => controller.abort();
-  }, [characterKey, gameVersion, revision, refreshKey]);
+  }, [characterKey, gameVersion, revision, refreshKey, initialModel]);
 
   // A form owns all its assets; absent optional assets never borrow the default rig.
   const form = model?.forms?.find((item) => item.id === selectedForm)
@@ -115,36 +106,6 @@ export function CharacterModel({
     };
   }, [viewing]);
 
-  let runtimeURL = "/model-viewer/index.html";
-  if (assets?.viewer_url) {
-    try {
-      const publishedViewer = new URL(assets.viewer_url);
-      if (["https:", "http:"].includes(publishedViewer.protocol)) {
-        const current = new URL("../current/index.html", publishedViewer);
-        runtimeURL = `${current.origin}${current.pathname}`;
-      }
-    } catch {
-      // Invalid metadata retains the local runtime fallback.
-    }
-  }
-  const params = new URLSearchParams({ name });
-  if (assets?.preview) params.set("model", assetUrl(assets.preview.url));
-  const previewSrc = `${runtimeURL}?${params}&mode=preview`;
-  if (assets?.download) {
-    params.set("full_model", assetUrl(assets.download.url));
-    params.set("model_bytes", String(assets.download.size_bytes));
-  }
-  if (assets?.facial) {
-    params.set("facial", assetUrl(assets.facial.url));
-    params.set("facial_bytes", String(assets.facial.size_bytes));
-  }
-  if (assets?.physics) params.set("physics", assetUrl(assets.physics.url));
-  if (assets?.animations) {
-    params.set("animations", assetUrl(assets.animations.url));
-    params.set("animation_bytes", String(assets.animations.size_bytes));
-  }
-  // The current pointer upgrades published models without rebuilding their assets.
-  const viewerSrc = `${runtimeURL}?${params}`;
   const formOptions = model?.forms?.map(({ id, label }) => ({ value: id, label })) ?? [];
   const formSelector = formOptions.length > 1 && (
     <Select
@@ -183,14 +144,10 @@ export function CharacterModel({
         <>
           {assets?.preview && (
             <div className="character-model-preview" ref={preview}>
-              {nearby && (
-                <ModelFrame
-                  key={`${form?.id ?? "legacy"}:${previewSrc}`}
-                  src={previewSrc}
-                  title={`3D preview of ${name}`}
-                  compact
-                />
-              )}
+              {!viewing && <ModelViewer
+                key={`${form?.id ?? "legacy"}:${assets.preview.url}`}
+                assets={assets} name={name} preview active={nearby}
+              />}
               <button
                 type="button"
                 className="character-model-expand"
@@ -218,16 +175,16 @@ export function CharacterModel({
               </a>
             )}
           </div>
-          {viewing && (
-            <dialog
+          <dialog
               ref={dialog}
               className="character-model-dialog character-model-viewer"
               aria-labelledby={`${id}-viewer-title`}
               onCancel={(event) => {
+                if (event.target !== event.currentTarget) return;
                 event.preventDefault();
                 setViewing(false);
               }}
-              onClose={() => setViewing(false)}
+              onClose={(event) => { if (event.target === event.currentTarget) setViewing(false); }}
             >
               <header className="character-model-dialog-heading">
                 <h2 id={`${id}-viewer-title`}>{name} · 3D model</h2>
@@ -242,95 +199,14 @@ export function CharacterModel({
                 </button>
               </header>
               {assets?.preview ? (
-                <ModelFrame
-                  key={`${form?.id ?? "legacy"}:${viewerSrc}`}
-                  src={viewerSrc}
-                  title={`3D viewer of ${name}`}
-                />
+                <ModelViewer key={`${viewing}:${form?.id ?? "legacy"}:${assets.preview.url}`}
+                  assets={assets} name={name} active={viewing} />
               ) : (
                 <p role="status">No preview has been published for this form.</p>
               )}
             </dialog>
-          )}
         </>
       )}
     </section>
-  );
-}
-
-function ModelFrame({
-  src,
-  title,
-  compact = false,
-}: {
-  src: string;
-  title: string;
-  compact?: boolean;
-}) {
-  const frame = useRef<HTMLIFrameElement>(null);
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-  const [message, setMessage] = useState("");
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    const trustedOrigin = new URL(src, window.location.origin).origin;
-    function receive(event: MessageEvent) {
-      if (
-        event.origin !== trustedOrigin ||
-        !frame.current?.contentWindow ||
-        event.source !== frame.current.contentWindow ||
-        event.data?.type !== "solaris-model-state"
-      ) return;
-      if (event.data.state === "ready") setState("ready");
-      else if (event.data.state === "error") {
-        setMessage(typeof event.data.message === "string" ? event.data.message : "");
-        setState("error");
-      }
-    }
-    window.addEventListener("message", receive);
-    return () => window.removeEventListener("message", receive);
-  }, [src, attempt]);
-  useEffect(() => {
-    if (state !== "loading") return;
-    const timer = setTimeout(() => setState("error"), 30000);
-    return () => clearTimeout(timer);
-  }, [state, attempt]);
-  return (
-    <div
-      className={`character-model-embed${compact ? " character-model-embed-compact" : ""}`}
-    >
-      {state !== "error" && (
-        <iframe
-          ref={frame}
-          key={attempt}
-          title={title}
-          src={src}
-          className="character-model-frame"
-          allowFullScreen={!compact}
-          tabIndex={compact ? -1 : 0}
-          aria-hidden={compact || undefined}
-          onError={() => setState("error")}
-        />
-      )}
-      {state === "loading" && (
-        <p className="character-model-feedback" role="status">
-          Loading model…
-        </p>
-      )}
-      {state === "error" && (
-        <div className="character-model-feedback" role="alert">
-          <p>{message || "Model could not be loaded."}</p>
-          <button
-            type="button"
-            onClick={() => {
-              setAttempt((value) => value + 1);
-              setMessage("");
-              setState("loading");
-            }}
-          >
-            Retry viewer
-          </button>
-        </div>
-      )}
-    </div>
   );
 }

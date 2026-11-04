@@ -462,12 +462,16 @@ Model availability comes from the existing public character-model endpoint. Near
 the visible profile stage, the page may automatically mount the small rig preview;
 the animation pack is never fetched by browsing or scrolling. Clicking the stage
 opens a full native dialog, Escape closes it and returns focus, and closing unloads
-the full viewer. Deployment activates the static viewer independently through the
-CDN's revalidated `model-viewer/current/index.html` entry point. It redirects to a
-complete immutable runtime, so existing published GLBs receive interface fixes
-without a model reimport. Media remains restricted to the viewer's own origin,
-without URL credentials. Preview readiness accepts messages only from the exact
-iframe window and its expected runtime origin.
+the full viewer. Next.js owns the server-rendered shell and controls, with only
+the Three.js canvas and engine behind a lazy Suspense boundary. No iframe, remote
+script, import map, runtime pointer or model-worker image is needed to deploy the
+viewer. R2 serves only model/animation/physics/facial data. Existing published
+models work without reimport; legacy viewer URLs are ignored. Resource requests
+reject URL credentials, unsafe protocols, mixed content and external GLB dependencies
+outside the asset origins supplied by the API. Closing, retrying or switching forms
+disposes the old canvas, mixer, GPU resources, observers and visibility listeners;
+late model loads are disposed without updating an unmounted viewer. The compact
+preview unmounts while the full viewer is open.
 
 An explicit Load animations action shows loading/failure/retry feedback. Name-based
 category/group/subgroup metadata is stored in glTF extras by the import merger;
