@@ -9,21 +9,29 @@ import argparse
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
 
-from sqlalchemy import and_, func, select, text
+from sqlalchemy import and_, case, func, or_, select, text
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.storage.service import FileRegistrationService
 
 REFERENCE_TYPES = ("story_spine", "character_trial_spine", "event_spine")
 RECIPE = "riglyph-native-v1"
+logger = logging.getLogger(__name__)
 
 
-def current(metadata):
+def current(metadata, source_id):
     preview = (metadata or {}).get("animation_preview") or {}
-    return preview.get("recipe") == RECIPE and preview.get("status") == "ready"
+    if (not isinstance(preview, dict) or preview.get("recipe") != RECIPE
+            or type(preview.get("source_file_id")) is not int
+            or preview["source_file_id"] != source_id or source_id is None):
+        return False
+    variants = preview.get("variants")
+    return preview.get("status") == "static" or (
+        preview.get("status") == "ready" and isinstance(variants, list) and bool(variants))
 
 
 def candidates(*, limit, cursor=0, ref_ids=(), rebuild=False):
@@ -36,9 +44,14 @@ def candidates(*, limit, cursor=0, ref_ids=(), rebuild=False):
         query = query.where(FileReference.id.in_(ref_ids))
     if not rebuild:
         preview = FileReference.metadata_json["animation_preview"]
+        # CASE avoids jsonb_array_length errors on old/malformed scalar values.
+        variant_count = case((func.jsonb_typeof(preview["variants"]) == "array",
+                              func.jsonb_array_length(preview["variants"])), else_=0)
         query = query.where(~func.coalesce(and_(
             preview["recipe"].astext == RECIPE,
-            preview["status"].astext == "ready",
+            preview["source_file_id"] == func.to_jsonb(FileReference.file_id),
+            or_(preview["status"].astext == "static",
+                and_(preview["status"].astext == "ready", variant_count > 0)),
         ), False))
     return query.order_by(FileReference.id).limit(limit)
 
@@ -76,7 +89,7 @@ async def backfill_reference(session_factory, storage, ref_id, *, engine, rebuil
                 reference = await session.get(FileReference, ref_id)
                 if reference is None or reference.reference_type not in REFERENCE_TYPES or reference.file_id is None:
                     return "missing"
-                if not rebuild and current(reference.metadata_json):
+                if not rebuild and current(reference.metadata_json, reference.file_id):
                     return "current"
                 source_id = reference.file_id
                 published = await session.get(FileObject, source_id)
@@ -108,9 +121,12 @@ async def backfill_reference(session_factory, storage, ref_id, *, engine, rebuil
                     if reference is None or reference.file_id != source_id or reference.reference_type not in REFERENCE_TYPES:
                         await session.rollback()
                         return "changed"
-                    if not rebuild and current(reference.metadata_json):
+                    if not rebuild and current(reference.metadata_json, source_id):
                         await session.rollback()
                         return "current"
+                    if isinstance(metadata.get("animation_preview"), dict):
+                        metadata = {**metadata, "animation_preview": {
+                            **metadata["animation_preview"], "source_file_id": source_id}}
                     reference.metadata_json = {
                         **(reference.metadata_json or {}), **metadata}
                     # storage.file_reference's public_cache_changed trigger invalidates
@@ -142,9 +158,15 @@ async def run(args):
                     SessionFactory, storage, ref_id, engine=engine, rebuild=args.rebuild,
                     max_bytes=args.max_bundle_bytes) if args.apply else "dry_run"
             except Exception as error:
-                # Never print remote error bodies or credentials.
+                # Retain diagnostic stack locations without exception messages or
+                # chained remote bodies, which may contain payloads/credentials.
+                safe_error = RuntimeError(f"Backfill failed ({type(error).__name__})")
+                logger.exception("riglyph.backfill_failed reference_id=%s error_type=%s",
+                                 ref_id, type(error).__name__,
+                                 exc_info=(RuntimeError, safe_error, error.__traceback__))
                 results.append(
-                    {"reference_id": ref_id, "status": "failed", "error_type": type(error).__name__})
+                    {"reference_id": ref_id, "status": "failed", "error_type": type(error).__name__,
+                     "log_event": "riglyph.backfill_failed"})
             else:
                 results.append({"reference_id": ref_id, "status": status})
         report = {"apply": args.apply, "next_cursor": ids[-1] if ids else args.cursor,
@@ -171,7 +193,7 @@ def parser():
                       help="list eligible IDs without downloads or writes")
     cli.set_defaults(apply=False)
     cli.add_argument("--rebuild", action="store_true",
-                     help="also replace current ready previews")
+                     help="also reevaluate current ready/static previews")
     cli.add_argument("--limit", type=positive, default=100,
                      help="maximum references scanned (1–10000)")
     cli.add_argument("--cursor", type=int, default=0,

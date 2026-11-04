@@ -51,7 +51,7 @@ def setup(monkeypatch):
         assert service.storage is storage
         assert run_id is None
         assert kwargs["artifacts"] is artifacts
-        return {"riglyph_file_id": 99, "animation_preview": {"recipe": backfill.RECIPE, "status": "ready", "variants": []},
+        return {"riglyph_file_id": 99, "animation_preview": {"recipe": backfill.RECIPE, "status": "ready", "variants": [{"file_id": 100}]},
                 "animation_import": {"display": "animated"}}
 
     publisher = AsyncMock(side_effect=publish)
@@ -76,6 +76,7 @@ async def test_publish_preserves_source_and_metadata_and_unlocks(setup, kind):
     assert s.reference.metadata_json["game_source"] == {"download_id": "old"}
     assert s.reference.metadata_json["playback"] == {"old": True}
     assert s.reference.metadata_json["riglyph_file_id"] == 99
+    assert s.reference.metadata_json["animation_preview"]["source_file_id"] == 20
     assert s.downloads == ["objects/source"]
     s.reader.expunge.assert_called_once_with(s.source)
     s.writer.commit.assert_awaited_once()
@@ -84,15 +85,45 @@ async def test_publish_preserves_source_and_metadata_and_unlocks(setup, kind):
 
 
 @pytest.mark.asyncio
-async def test_current_recipe_is_idempotent_unless_rebuilding(setup):
+@pytest.mark.parametrize("status", ["ready", "static"])
+async def test_current_recipe_is_idempotent_unless_rebuilding(setup, status):
     s = setup
-    s.reference.metadata_json["animation_preview"] = {"recipe": backfill.RECIPE, "status": "ready"}
+    s.reference.metadata_json["animation_preview"] = {
+        "recipe": backfill.RECIPE, "status": status, "source_file_id": 20,
+        "variants": [{"file_id": 100}] if status == "ready" else []}
     assert await apply(s) == "current"
     s.publisher.assert_not_called()
     assert not s.downloads
     s.factory.reset_mock()
     s.reader.get.side_effect = [s.reference, s.source]
     assert await apply(s, rebuild=True) == "updated"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preview_source", [None, 19])
+@pytest.mark.parametrize("status", ["ready", "static"])
+async def test_missing_or_replaced_preview_source_is_rebuilt(setup, preview_source, status):
+    s = setup
+    preview = {"recipe": backfill.RECIPE, "status": status, "variants": [{"file_id": 100}]}
+    if preview_source is not None:
+        preview["source_file_id"] = preview_source
+    s.reference.metadata_json["animation_preview"] = preview
+    assert await apply(s) == "updated"
+    assert s.reference.metadata_json["animation_preview"]["source_file_id"] == 20
+    assert s.downloads == ["objects/source"]
+
+
+@pytest.mark.asyncio
+async def test_static_publication_is_bound_to_source_and_skipped_on_retry(setup):
+    s = setup
+    s.publisher.side_effect = None
+    s.publisher.return_value = {"animation_preview": {
+        "recipe": backfill.RECIPE, "status": "static", "variants": []}}
+    assert await apply(s) == "updated"
+    s.factory.reset_mock()
+    s.reader.get.side_effect = [s.reference]
+    assert await apply(s) == "current"
+    assert s.downloads == ["objects/source"]
 
 
 @pytest.mark.asyncio
@@ -105,21 +136,23 @@ async def test_contending_worker_does_no_work(setup):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("change", ["source", "ready", "deleted", "type"])
+@pytest.mark.parametrize("change", ["source", "ready", "static", "deleted", "type"])
 async def test_concurrent_source_changes_roll_back_publication(setup, change):
     s = setup
     async def publish(*args, **kwargs):
         if change == "source":
             s.reference.file_id = 21
-        elif change == "ready":
-            s.reference.metadata_json["animation_preview"] = {"recipe": backfill.RECIPE, "status": "ready"}
+        elif change in {"ready", "static"}:
+            s.reference.metadata_json["animation_preview"] = {
+                "recipe": backfill.RECIPE, "status": change, "source_file_id": 20,
+                "variants": [{"file_id": 100}] if change == "ready" else []}
         elif change == "type":
             s.reference.reference_type = "entity_image"
         else:
             s.writer.scalar.return_value = None
         return {"riglyph_file_id": 99}
     s.publisher.side_effect = publish
-    assert await apply(s) == ("current" if change == "ready" else "changed")
+    assert await apply(s) == ("current" if change in {"ready", "static"} else "changed")
     s.writer.rollback.assert_awaited_once()
     s.writer.commit.assert_not_called()
     assert "riglyph_file_id" not in s.reference.metadata_json
@@ -173,18 +206,28 @@ def test_cli_is_dry_by_default_and_selection_is_bounded():
     for clause in ["LIMIT 2", "file_reference.id > 10", "file_reference.id IN (12, 13)", "ORDER BY", *backfill.REFERENCE_TYPES]:
         assert clause in sql
     assert "coalesce" in sql and backfill.RECIPE in sql
+    assert "to_jsonb(storage.file_reference.file_id)" in sql
+    assert "jsonb_array_length" in sql and "CASE WHEN" in sql
+    assert "static" in sql
     assert "coalesce" not in str(backfill.candidates(limit=2, rebuild=True))
     assert not backfill.parser().parse_args(["--dry-run"]).apply
 
 
-@pytest.mark.parametrize("preview,expected", [
-    (None, False),
-    ({"recipe": "old", "status": "ready"}, False),
-    ({"recipe": backfill.RECIPE, "status": "failed"}, False),
-    ({"recipe": backfill.RECIPE, "status": "ready"}, True),
+@pytest.mark.parametrize("status,variants,expected", [
+    ("failed", [1], False),
+    ("ready", [1], True),
+    ("ready", [], False),
+    ("ready", None, False),
+    ("ready", {"file_id": 1}, False),
+    ("static", [], True),
 ])
-def test_only_ready_current_recipe_is_skipped(preview, expected):
-    assert backfill.current({"animation_preview": preview}) is expected
+def test_current_requires_source_and_complete_status(status, variants, expected):
+    preview = {"recipe": backfill.RECIPE, "status": status,
+               "variants": variants, "source_file_id": 20}
+    assert backfill.current({"animation_preview": preview}, 20) is expected
+    assert not backfill.current({"animation_preview": preview}, 21)
+    assert not backfill.current({"animation_preview": {**preview, "recipe": "old"}}, 20)
+    assert not backfill.current({}, 20)
 
 
 @pytest.mark.asyncio
@@ -204,7 +247,7 @@ async def test_dry_run_does_not_construct_storage_or_publish(monkeypatch, capsys
 
 
 @pytest.mark.asyncio
-async def test_batch_continues_after_failure_and_reports_retry_ids(monkeypatch, capsys):
+async def test_batch_continues_after_failure_and_reports_retry_ids(monkeypatch, capsys, caplog):
     from wuwa_story.db import session
     from wuwa_story.storage import s3
     db = SimpleNamespace(scalars=AsyncMock(return_value=[1, 2]))
@@ -220,3 +263,18 @@ async def test_batch_continues_after_failure_and_reports_retry_ids(monkeypatch, 
     assert '"reference_id": 1, "status": "failed"' in output
     assert '"next_cursor": 2' in output
     assert "secret" not in output
+    assert '"log_event": "riglyph.backfill_failed"' in output
+    assert "riglyph.backfill_failed reference_id=1 error_type=RuntimeError" in caplog.text
+    assert "Traceback" in caplog.text
+    assert "secret remote body" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_transaction_pooling_rejected_before_connecting(monkeypatch):
+    from wuwa_story.db import session
+    connect = Mock(side_effect=AssertionError("must not open session-level lock"))
+    monkeypatch.setattr(session, "engine", SimpleNamespace(connect=connect))
+    monkeypatch.setenv("WUWA_DB_TRANSACTION_POOLING", "1")
+    with pytest.raises(ValueError, match="direct database connection"):
+        await backfill.run(backfill.parser().parse_args(["--apply"]))
+    connect.assert_not_called()
