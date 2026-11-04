@@ -537,8 +537,9 @@ const backend = createServer(async (request, response) => {
               ...archive.trial_spine,
               animation_preview: {
                 ...archive.trial_spine.animation_preview,
+                default_animation: 'start',
                 variants: archive.trial_spine.animation_preview.variants.map((clip) => ({
-                  ...clip, width: 1024, height: 1024,
+                  ...clip, animation: 'start', width: 1024, height: 1024,
                 })),
               },
             }],

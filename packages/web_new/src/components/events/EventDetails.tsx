@@ -126,7 +126,6 @@ export function EventDetails({
                 <RenderedAnimation
                   preview={preview}
                   label={scene.label || 'Event animation'}
-                  loop={preview?.animation === 'idle' ? true : undefined}
                   fallback={<EventArtwork event={event} animate={false} />}
                 />
                 <a className="events-official-link" href={scene.url} download>Download animated scene</a>

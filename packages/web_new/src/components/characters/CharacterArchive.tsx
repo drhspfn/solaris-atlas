@@ -261,7 +261,6 @@ export function CharacterArchive({
                   "idle",
                 )}
                 label="Character trial animation"
-                  loop
                 fallback={
                   <div className="character-artwork-placeholder">
                     {trialArtwork?.url ? (

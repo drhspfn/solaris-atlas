@@ -81,7 +81,7 @@ export function QuestIllustration({
             <QuestAnimatedBackdrop
               key={animated.scene_url}
               variant={animated}
-              loop={!!illustration.loop}
+              loop={illustration.loop ?? true}
             />
           ) : selected?.url && failedUrl !== selected.url ? (
             <img

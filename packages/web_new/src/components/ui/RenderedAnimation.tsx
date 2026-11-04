@@ -9,7 +9,7 @@ export function RenderedAnimation({
   preview,
   label,
   fallback,
-  loop,
+  loop = true,
   compact = false,
   decorative = false,
 }: {
@@ -31,7 +31,7 @@ export function RenderedAnimation({
       compact={compact}
       decorative={decorative}
       aspectRatio={preview?.width && preview?.height ? `${preview.width} / ${preview.height}` : undefined}
-      loop={preview?.duration_seconds === 0 ? false : (loop ?? preview?.loop ?? false)}
+      loop={loop}
     />
   );
 }
