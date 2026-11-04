@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import and_, case, cast, func, or_, select
+from sqlalchemy import and_, case, cast, func, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import JSONB, JSONPATH
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -92,6 +92,7 @@ def _summary_source(source: Any, locale: str) -> Any:
         "asset_version", field("client", "asset_version"),
         "hidden", func.coalesce(field("client", "hidden"), func.to_jsonb(False)),
         "convene_type", field("client", "convene_type"),
+        "animation_import", field("client", "animation_import"),
         "locales", func.jsonb_build_object(
             "en", field("client", "locales", "en"),
             locale, field("client", "locales", locale),
@@ -226,6 +227,25 @@ class SqlAlchemyEventRepository:
     def __init__(self, session: AsyncSession, bucket: str) -> None:
         self.session = session
         self.bucket = bucket
+
+    async def spine(self, captures: set[tuple[str, str]]) -> list[EventMedia]:
+        if not captures:
+            return []
+        rows = await self.session.execute(
+            select(FileReference.source_path, FileLocation.object_key, FileReference.metadata_json,
+                   FileObject.id, FileObject.size_bytes)
+            .select_from(FileReference)
+            .join(FileObject, FileObject.id == FileReference.file_id)
+            .join(FileLocation, FileLocation.file_id == FileObject.id)
+            .where(FileReference.reference_type == 'event_spine',
+                   tuple_(FileReference.source_path, FileReference.source_name).in_(captures),
+                   FileObject.mime_type == 'application/zip',
+                   FileLocation.available.is_(True), FileLocation.is_primary.is_(True),
+                   FileLocation.backend == 's3', FileLocation.bucket == self.bucket)
+            .order_by(FileReference.id.desc())
+        )
+        return [EventMedia(path, key, metadata or {}, identity, size)
+                for path, key, metadata, identity, size in rows]
 
     async def runs(
         self, *, server: str, kind: str | None, version: str | None, locale: str,

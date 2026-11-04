@@ -6,6 +6,7 @@ from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.repositories import story_browsing as repository
 from wuwa_story.ingestion.talk_backgrounds import background_changes
+from wuwa_story.storage.animation_previews import spine_bundle
 from wuwa_story.storage.s3 import S3Storage
 
 
@@ -53,8 +54,7 @@ async def illustration_payloads(session, rows):
                                           True),
             FileLocation.is_primary.is_(True)).order_by(FileReference.id.desc()))
         for path, key, metadata, identity, size in files:
-            bundles.setdefault(path, {'url': storage.public_url(key), 'file_id': identity,
-                                      'size_bytes': size, 'asset_version': (metadata or {}).get('asset_version'),
+            bundles.setdefault(path, {**spine_bundle(storage.public_url(key), identity, size, metadata, settings.story_spine_playback_enabled),
                                       'playback': {key: value for key, value in ((metadata or {}).get('playback') or {}).items() if key != 'components'} if settings.story_spine_playback_enabled else None})
     active = {}
     payloads = {}
@@ -65,8 +65,20 @@ async def illustration_payloads(session, rows):
                 active[state_id] = {**background, 'id': f'{action_id}:{index}',
                                     'images': [{**image, 'url': urls.get(image['engine_path'])} for image in background['images']]}
                 if background['kind'] == 'spine':
+                    active[state_id]['animation'] = None
                     active[state_id]['bundle'] = bundles.get(
                         f'spine_background:{background["resource_id"]}')
+            if active.get(state_id, {}).get('kind') == 'spine' and isinstance(items[index], dict):
+                commands = [action.get('Params', {}).get('Config')
+                            for action in (items[index].get('Actions') or [])
+                            if isinstance(action, dict) and action.get('Name') == 'PlaySpine'
+                            and isinstance(action.get('Params'), dict)]
+                if commands:
+                    command = commands[0] if len(commands) == 1 else None
+                    animation = command.get('Name') if isinstance(command, dict) and command.get('Type') == 'Play' else None
+                    active[state_id] = {**active[state_id], 'animation': animation if isinstance(animation, str) else None}
+                    if isinstance(command, dict) and type(command.get('IsLoop')) is bool:
+                        active[state_id]['loop'] = command['IsLoop']
             if state_id in active:
                 payloads[(action_id, index)] = active[state_id]
     return {row[0].node_id: payloads[(row[1].node_id, row[0].source_index)] for row in rows

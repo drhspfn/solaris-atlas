@@ -96,6 +96,8 @@ class EventMedia:
     source_path: str | None
     object_key: str
     metadata: dict[str, Any]
+    file_id: int | None = None
+    size_bytes: int | None = None
 
 
 def _client_data(event: ClientSource, occurrence: ClientSource | None) -> dict[str, Any]:
