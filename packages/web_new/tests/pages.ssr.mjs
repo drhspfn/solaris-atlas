@@ -405,6 +405,12 @@ const backend = createServer(async (request, response) => {
         }),
       );
     else response.end('null');
+  } else if (request.url === '/characters/character%3A1102/model') {
+    response.end(JSON.stringify({ status: 'ready', game_version: '3.7.0',
+      preview: { url: 'https://cdn.solarisatlas.fun/objects/ssr-model', size_bytes: 1000 },
+      download: null, physics: null, animations: null, facial: null,
+      viewer_url: 'https://cdn.solarisatlas.fun/model-viewer/legacy/index.html',
+    }));
   } else if (request.url === '/characters/character%3A1102/profile?locale=en') {
     response.end(JSON.stringify(profile));
   } else if (request.url === '/characters/character%3A1102/archive?locale=en') {
@@ -705,6 +711,12 @@ for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
     assert.ok(head.includes(`content="${portrait}"`));
     assert.ok(head.includes('href="https://solarisatlas.fun/characters/character%3A1102"'));
     assert.match(main, /<h1>Sanhua/);
+    assert.match(main, /Character model/);
+    assert.match(main, /Camera controls/);
+    assert.match(main, /Model settings/);
+    assert.match(main, /Preview loads when visible/);
+    assert.doesNotMatch(main, /<iframe|model-viewer\/.*index\.html/);
+    assert.doesNotMatch(html, /<script[^>]+src="https:\/\/cdn\.solarisatlas\.fun/);
     for (const detail of [biography, 'January 20', 'Eternal Frost', portrait])
       assert.ok(main.includes(detail), detail);
     assert.doesNotMatch(html, /Opening archive record|Loading character details|id="S:\d+"/);

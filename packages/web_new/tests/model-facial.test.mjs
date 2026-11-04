@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { FacialAnimation } from "./facial.js";
+import { FacialAnimation } from "../src/components/models/engine/facial.js";
 
 const pack = () => ({ format: "solaris-facial-v1", clips: [
   { name: "Attack", body_clip: "Attack", seconds: 1, tracks: [

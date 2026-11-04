@@ -1,0 +1,295 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { SpringBones } from './spring-bones.js';
+import { BoneCamera, cameraBones } from './camera-rig.js';
+import { RootMotionLock } from './root-motion.js';
+import { FacialAnimation } from './facial.js';
+import { attachAnimationCatalog, bindAnimationClips, prepareAnimatedMeshes } from './animations.js';
+
+/** Dispose shared GPU resources once, including failed/obsolete model loads. */
+export function disposeObject(root) {
+  const resources = new Set();
+  root.traverse(node => {
+    if (node.geometry) resources.add(node.geometry);
+    if (node.skeleton) resources.add(node.skeleton);
+    for (const material of [node.material || []].flat()) {
+      resources.add(material);
+      for (const value of Object.values(material)) if (value?.isTexture) resources.add(value);
+    }
+  });
+  for (const resource of resources) resource.dispose();
+}
+
+/**
+ * Browser-only renderer. React owns all controls; this module owns the canvas and GPU lifecycle.
+ * @param {HTMLElement} host
+ * @param {import('../types').ModelAssets} assets
+ * @param {boolean} preview
+ * @param {import('../types').ViewerSettings} initialSettings
+ * @param {(patch: Partial<import('../types').ViewerState>) => void} onState
+ * @returns {import('../types').ViewerController}
+ */
+export function createViewer(host, assets, preview, initialSettings, onState) {
+  let disposed = false, settings = initialSettings, model, gltf, mixer, action, physics, root, face;
+  let clips = [], animationPack, boneList, applied = false, busy = false, full = false;
+  let reportedTime = -1, reportedDuration = -1;
+  let previousTime = 0, lastReport = 0, height = 1.8, width = 1.2;
+  const abort = new AbortController();
+  const emit = patch => { if (!disposed) onState(patch); };
+  const origins = new Set(Object.values(assets).filter(value => value?.url).map(value => new URL(value.url, location.href).origin));
+  function resource(value) {
+    const url = new URL(value, location.href);
+    if (url.username || url.password || !['http:', 'https:'].includes(url.protocol)
+      || !origins.has(url.origin) || (location.protocol === 'https:' && url.protocol !== 'https:'))
+      throw new Error('Invalid model resource URL');
+    return url.href;
+  }
+  resource(assets.preview.url);
+  const scene = new THREE.Scene();
+  scene.background = preview ? null : new THREE.Color('#0b1112');
+  scene.fog = preview ? null : new THREE.Fog('#0b1112', 8, 24);
+  const stage = new THREE.Group();
+  scene.add(stage);
+  const camera = new THREE.PerspectiveCamera(35, 1, 0.001, 60);
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
+  renderer.domElement.setAttribute('aria-label', '3D character. Drag to orbit; scroll to zoom.');
+  host.append(renderer.domElement);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.minDistance = 0.015;
+  controls.maxDistance = 12;
+  controls.maxPolarAngle = Math.PI;
+  controls.enabled = !preview;
+  const follow = new BoneCamera(camera, controls);
+  const target = new THREE.Vector3();
+  scene.add(new THREE.HemisphereLight('#e5f0ff', '#657370', 2.6));
+  const key = new THREE.DirectionalLight('#ffffff', 2.5);
+  key.position.set(3, 5, 4); scene.add(key);
+  const rim = new THREE.DirectionalLight('#82cbcd', 1);
+  rim.position.set(-3, 2, -2); scene.add(rim);
+  const floor = new THREE.Group();
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(40, 40),
+    new THREE.MeshStandardMaterial({ color: '#162123', roughness: 1 }));
+  plane.rotation.x = -Math.PI / 2; plane.position.y = -0.006;
+  floor.add(plane, new THREE.GridHelper(20, 40, '#647d79', '#304345'), new THREE.AxesHelper(0.6));
+  floor.visible = !preview && settings.floor;
+  scene.add(floor);
+
+  const manager = new THREE.LoadingManager();
+  manager.setURLModifier(url => /^(blob:|data:)/.test(url) ? url : resource(url));
+  const loader = new GLTFLoader(manager);
+  async function loadGLB(url) {
+    const loaded = await loader.loadAsync(resource(url), progress => {
+      emit({ status: progress.total ? `Loading model · ${Math.round(progress.loaded / progress.total * 100)}%` : 'Loading model…' });
+    });
+    if (disposed) { disposeObject(loaded.scene); throw new Error('Viewer closed'); }
+    return loaded;
+  }
+  async function json(url) {
+    const response = await fetch(resource(url), { signal: abort.signal, credentials: 'omit' });
+    if (!response.ok) throw new Error(`Model resource unavailable (${response.status})`);
+    const data = await response.json();
+    if (disposed) throw new Error('Viewer closed');
+    return data;
+  }
+  function restore() { if (applied) { physics.restore(); applied = false; } }
+  function resetPhysics() { restore(); physics?.reset(); }
+  function reset() {
+    follow.detach(); camera.up.set(0, 1, 0); controls.target.copy(target);
+    const distance = Math.max(height, width / camera.aspect) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.15;
+    camera.position.copy(target).add(new THREE.Vector3(0, height * 0.12, distance));
+    controls.update();
+  }
+  function reportTime() {
+    const expression = face?.clips.get(face.selected);
+    const duration = action?.getClip().duration ?? expression?.seconds ?? 0;
+    const time = action?.time ?? (duration ? face.time % duration : 0);
+    if (time !== reportedTime || duration !== reportedDuration) {
+      reportedTime = time; reportedDuration = duration; emit({ time, duration });
+    }
+  }
+  function selectAnimation(name) {
+    const clip = clips.find(item => item.name === name);
+    if (!clip || !mixer) return;
+    resetPhysics(); mixer.stopAllAction();
+    action = mixer.clipAction(clip); action.reset().play(); mixer.update(0);
+    face?.update(name, 0); root?.apply();
+    emit({ animation: name }); reportTime();
+  }
+  function installClips(next, previous) {
+    clips = next;
+    emit({ animations: clips.map(clip => ({ value: clip.name, label: clip.userData?.catalog?.label || clip.name,
+      path: [clip.userData?.catalog?.category || 'Other animations', clip.userData?.catalog?.group,
+        clip.userData?.catalog?.subgroup].filter(Boolean) })) });
+    const initial = clips.find(clip => clip.name === previous?.name)?.name
+      || clips.find(clip => clip.name === 'Stand1')?.name || clips[0]?.name;
+    if (initial) {
+      selectAnimation(initial);
+      if (initial === previous?.name) { action.time = previous.time; mixer.update(0); }
+    }
+  }
+  function applySettings(next) {
+    const old = settings; settings = next;
+    floor.visible = !preview && settings.floor;
+    if (root) {
+      if (old.lock !== next.lock || JSON.stringify(old.axes) !== JSON.stringify(next.axes)) resetPhysics();
+      root.enabled = settings.lock; root.axes = { ...settings.axes }; root.apply();
+    }
+    if (old.physics !== next.physics || old.strength !== next.strength) resetPhysics();
+    follow.setSpace(settings.space);
+    follow.setOffset(...settings.offset);
+    if (settings.follow) follow.attach(boneList?.bones.get(settings.bone || boneList?.preferred), {
+      space: settings.space, offset: new THREE.Vector3(...settings.offset),
+    });
+    else follow.detach();
+  }
+  async function loadPhysics() {
+    physics = undefined;
+    if (!assets.physics || preview) return;
+    try {
+      const profile = await json(assets.physics.url);
+      physics = new SpringBones(model, profile);
+      emit({ physicsBones: physics.joints.length, physicsStatus: `${physics.joints.length} spring bones · ${physics.missing.length} missing roots` });
+    } catch (error) {
+      emit({ physicsBones: 0, physicsStatus: 'Physics profile unavailable · animation only' });
+    }
+  }
+  async function install(loaded, upgrading = false) {
+    const next = preview ? [] : animationPack ? bindAnimationClips(animationPack, loaded)
+      : loaded.animations.map((clip, index) => attachAnimationCatalog(clip, loaded, index));
+    const previous = { name: action?.getClip().name, time: action?.time || 0, rotation: model?.rotation.clone() };
+    resetPhysics(); root?.restore(); follow.detach();
+    if (mixer) { mixer.stopAllAction(); mixer.uncacheRoot(model); }
+    if (model) { stage.remove(model); disposeObject(model); }
+    gltf = loaded; model = loaded.scene; stage.add(model); prepareAnimatedMeshes(model);
+    const bounds = new THREE.Box3().setFromObject(model);
+    const center = bounds.getCenter(new THREE.Vector3());
+    height = bounds.max.y - bounds.min.y; width = bounds.max.x - bounds.min.x;
+    model.position.add(new THREE.Vector3(-center.x, -bounds.min.y, -center.z));
+    model.updateMatrixWorld(true);
+    root = new RootMotionLock(stage, model);
+    boneList = cameraBones(model, loaded.parser);
+    emit({ bones: boneList.options, preferredBone: boneList.preferred || '', rootAvailable: Boolean(root.root) });
+    target.set(0, height * 0.5, 0);
+    if (!upgrading) reset();
+    else if (previous.rotation) model.rotation.copy(previous.rotation);
+    mixer = new THREE.AnimationMixer(model); action = undefined;
+    installClips(next, previous);
+    if (clips.length) {
+      model.updateMatrixWorld(true);
+      const posed = new THREE.Box3().setFromObject(model, true);
+      model.position.y -= posed.min.y; root.reference.y -= posed.min.y;
+    }
+    applySettings(settings);
+    await loadPhysics();
+    emit({ ready: true, status: 'Model ready' });
+  }
+  async function quality() {
+    if (full) return;
+    if (!assets.download) throw new Error('Full model is unavailable');
+    const loaded = await loadGLB(assets.download.url);
+    try { await install(loaded, true); }
+    catch (error) { if (loaded.scene !== model) disposeObject(loaded.scene); throw error; }
+    full = true; emit({ fullQuality: true });
+  }
+  async function facial() {
+    if (face) return;
+    if (!assets.facial) throw new Error('Facial animations are unavailable');
+    await quality();
+    face = new FacialAnimation(await json(assets.facial.url), model);
+    emit({ facialLoaded: true, faces: [
+      { value: 'auto', label: 'Follow body animation' }, { value: 'off', label: 'Off · neutral expression' },
+      ...[...face.clips.values()].map(clip => ({ value: clip.name, label: clip.name })),
+    ] });
+  }
+  async function command(name) {
+    if (disposed) return;
+    if (name === 'reset') return reset();
+    if (name === 'focus') {
+      follow.frame(boneList?.bones.get(settings.bone || boneList?.preferred), new THREE.Vector3(...settings.offset));
+      return;
+    }
+    if (['left', 'right', 'closer', 'farther'].includes(name)) {
+      const offset = camera.position.clone().sub(controls.target);
+      if (name === 'left' || name === 'right') offset.applyAxisAngle(new THREE.Vector3(0, 1, 0), (name === 'left' ? -1 : 1) * Math.PI / 8);
+      else offset.setLength(THREE.MathUtils.clamp(offset.length() * (name === 'closer' ? 0.85 : 1.15), controls.minDistance, controls.maxDistance));
+      camera.position.copy(controls.target).add(offset); controls.update(); return;
+    }
+    if (busy) return;
+    busy = true; emit({ busy: true, error: '' });
+    try {
+      emit({ status: 'Loading model resources…' });
+      if (name === 'quality') await quality();
+      if (name === 'facial') await facial();
+      if (name === 'animations' && !animationPack) {
+        if (!assets.animations) throw new Error('Animation pack is unavailable');
+        if (assets.facial) await facial();
+        const pack = await loadGLB(assets.animations.url);
+        try {
+          const next = bindAnimationClips(pack, gltf);
+          installClips(next); animationPack = pack;
+          emit({ animationsLoaded: true });
+        } finally { disposeObject(pack.scene); }
+      }
+      emit({ status: 'Model ready' });
+    } catch (error) {
+      emit({ error: error.message || 'Could not load model resources', status: 'Current model retained' });
+    } finally { busy = false; emit({ busy: false }); }
+  }
+  const observer = new ResizeObserver(() => {
+    const { width, height } = host.getBoundingClientRect();
+    if (!width || !height) return;
+    renderer.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix();
+  });
+  observer.observe(host);
+  const visibility = () => { previousTime = 0; resetPhysics(); };
+  document.addEventListener('visibilitychange', visibility);
+  const contextLost = event => {
+    event.preventDefault(); renderer.setAnimationLoop(null);
+    emit({ ready: false, error: 'Graphics context lost. Retry the viewer.' });
+  };
+  renderer.domElement.addEventListener('webglcontextlost', contextLost);
+  renderer.setAnimationLoop(milliseconds => {
+    const dt = previousTime ? (milliseconds - previousTime) / 1000 : 0; previousTime = milliseconds;
+    if (disposed || document.hidden) return;
+    const delta = dt > 0.15 ? 0 : dt;
+    if (mixer) {
+      restore(); root?.restore();
+      if (settings.turntable && !preview) model.rotation.y += delta * 0.5;
+      mixer.update(settings.playing && !preview ? delta * settings.speed : 0); root?.apply();
+      if (physics && settings.physics && (settings.playing || settings.turntable) && !preview) {
+        if (!delta) physics.reset(); physics.update(delta, settings.strength); applied = delta > 0;
+      }
+    }
+    face?.update(action?.getClip().name, action?.time || 0, settings.playing ? delta * settings.speed : 0);
+    if (milliseconds - lastReport > 100) { reportTime(); lastReport = milliseconds; }
+    follow.update(); controls.update(); renderer.render(scene, camera);
+  });
+  loadGLB(assets.preview.url).then(async loaded => {
+    try { await install(loaded); }
+    catch (error) { if (loaded.scene !== model) disposeObject(loaded.scene); throw error; }
+  }).catch(error => emit({ error: error.message, ready: false }));
+  return {
+    settings: applySettings, command, animation: selectAnimation,
+    face(name) { face?.select(name); face?.update(action?.getClip().name, action?.time || 0); emit({ face: name }); reportTime(); },
+    seek(time) {
+      resetPhysics();
+      if (action) { action.time = THREE.MathUtils.clamp(time, 0, action.getClip().duration); mixer.update(0); root?.apply(); }
+      else if (face) face.time = Math.max(0, time);
+      face?.update(action?.getClip().name, action?.time || 0); reportTime();
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true; abort.abort(); observer.disconnect(); renderer.setAnimationLoop(null);
+      document.removeEventListener('visibilitychange', visibility);
+      renderer.domElement.removeEventListener('webglcontextlost', contextLost);
+      controls.dispose(); mixer?.stopAllAction(); if (model) mixer?.uncacheRoot(model);
+      disposeObject(scene); scene.clear(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();
+    },
+  };
+}

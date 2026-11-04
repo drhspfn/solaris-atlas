@@ -13,7 +13,6 @@ WORKDIR /app
 COPY packages/web_new/package.json packages/web_new/package-lock.json ./
 RUN npm ci
 COPY packages/web_new ./
-COPY tools/model-viewer /tools/model-viewer
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 EXPOSE 3000
@@ -26,7 +25,6 @@ ENV NEXT_PUBLIC_GOOGLE_ADSENSE_CLIENT=${NEXT_PUBLIC_GOOGLE_ADSENSE_CLIENT}
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY packages/web_new ./
-COPY tools/model-viewer /tools/model-viewer
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 RUN npm run build

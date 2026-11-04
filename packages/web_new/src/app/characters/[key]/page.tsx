@@ -1,3 +1,4 @@
+import type { CharacterModelData } from '@/components/models/types';
 import type { Metadata } from 'next';
 
 import { serverApi } from '@/api/serverApi';
@@ -62,9 +63,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function CharacterProfilePage({ params, searchParams }: Props) {
   const key = decodeRouteKey((await params).key);
-  const [initialData, initialArchive] = await Promise.all([
+  const [initialData, initialArchive, initialModel] = await Promise.all([
     serverApi<any>(`/characters/${encodeURIComponent(key)}/profile?locale=en`),
     serverApi<CharacterArchiveData>(`/characters/${encodeURIComponent(key)}/archive?locale=en`),
+    serverApi<CharacterModelData>(`/characters/${encodeURIComponent(key)}/model`, { revalidate: 60 }),
   ]);
 
   await canonicalRoute("characters", key, initialData?.character, searchParams);
@@ -76,6 +78,7 @@ export default async function CharacterProfilePage({ params, searchParams }: Pro
       entityKey={key}
       initialData={initialData}
       initialArchive={initialArchive}
+      initialModel={initialModel}
     />
   );
 }

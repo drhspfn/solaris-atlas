@@ -164,9 +164,9 @@ rig loads only near the viewport; animations require an explicit request inside
 the full viewer. Opening the stage uses a viewport-sized native dialog, keeping
 the profile in place and restoring focus on close. Download links remain secondary.
 The studio uses the same mint, cyan, dark surfaces, type scale, checkbox and range
-treatments as the maintained application. The static Three.js runtime adapts the
-authored Select's popover/listbox keyboard contract without adding a second React
-application. Animation and bone pickers use bounded drilldown menus with a Back
+treatments as the maintained application. The native Next.js viewer uses the application's shared React Select, tokens and
+fonts. Controls render with the server response; Three.js loads through a lazy
+canvas boundary under Suspense, with settings passed to its renderer controller. Animation and bone pickers use bounded drilldown menus with a Back
 action and an optional search view. Category/group/subgroup navigation describes
 name-family rules, while original clip names remain visible.
 

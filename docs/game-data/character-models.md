@@ -138,10 +138,9 @@ original equality behavior. A guard checks the pinned implementation, and the
 original static method is restored after export, including on failure. Blender's
 installed source files and the interactive user's settings are not modified.
 
-Serve only a separate preview directory containing GLB and viewer assets on
-`127.0.0.1`. Keep keys, original packages and private logs outside that directory.
+Keep keys, original packages and private logs outside the public media directory.
 
-The reproducible [local mini viewer](../../tools/model-viewer/README.md) adds
+The reproducible native Next.js viewer described below adds
 orbit/zoom, an optional ground grid, playback controls and switchable secondary
 bone springs. Its profile is extracted from the model's KawaiiPhysics blueprint;
 it preserves source groups/limits but approximates runtime physics rather than
@@ -253,21 +252,15 @@ to the same publication as the rig. **Load animations** explicitly fetches the
 separate pack; opening a model never downloads it automatically. The pack can
 also be downloaded separately and imported alongside the rig in Blender.
 
-The worker publishes a hash-versioned viewer beside the models on the same CDN
-origin, avoiding cross-origin GLB fetches and API byte proxying. The viewer index
-is uploaded last; model references share one publication identity. Local
-viewer assets remain available for development. Static rigs hide animation
-controls; optional turntable rotation can exercise springs without animation clips.
+The web application owns the native viewer; the worker publishes model data only.
+Static rigs hide animation controls. Optional turntable rotation is a local scene
+setting and does not request animation clips.
 
 ## Dedicated Linux model-tools image
 
-The public frontend uses the CDN's revalidated `model-viewer/current/index.html`
-entry point. Deployment uploads a complete immutable model-studio runtime then
-atomically switches that small redirect. Previously published immutable viewer
-URLs remain valid. GLBs and viewer stay on the same origin without requiring a
-bucket CORS change or proxying media through the API. This allows interface
-updates without reimporting model bytes. New
-animation merges add category/group/subgroup labels in each animation's
+Interface updates ship with the Next.js application and require no model reimport.
+The CDN serves model data, with GET/HEAD CORS permissions for the site's origin.
+New animation merges add category/group/subgroup labels in each animation's
 `extras.solaris_atlas`; these ordered name-family rules do not change clip identity.
 Older packs receive the same navigation labels in the viewer. The profile's
 transparent preview never requests an animation pack; the full viewer does so only
@@ -361,3 +354,51 @@ retry. Abandoned browser uploads older than 24 hours are collected when another
 upload starts. No new schema, queue or deployment credential is needed. Rolling
 back the application leaves ordinary game imports and already published bundles
 readable; upload processing requires a matching API and worker revision.
+
+
+## Native Next.js viewer
+
+The user-facing viewer now lives in `packages/web_new/src/components/models`.
+The character page reads model availability on the server and passes its manifest
+into the React profile. `CharacterModel` owns form selection, near-viewport preview
+activation and the native full-screen dialog. `ModelViewer` renders controls and
+settings during SSR; `ModelCanvas` lazily imports Three.js under Suspense and owns
+its renderer lifecycle. Shared Select and application fonts/tokens own the UI.
+
+The renderer accepts settings and exposes bounded camera/playback/load commands.
+Preview, full-resolution geometry, animation GLB, physics JSON and facial JSON stay
+on R2. Animation/facial/full-quality requests require explicit user action. Old
+`viewer_url` metadata is ignored, so published assets need no reimport. No remote
+HTML/JavaScript runtime, staging script or worker publication step is used. Web
+releases no longer pull a model-worker image to activate a CDN viewer pointer.
+
+Run `npm test`, `npx tsc --noEmit`, `npm run build` and `npm run test:ssr` from
+`packages/web_new`. Renderer tests use real Three.js mixers/rigs and stub browser
+GPU/network boundaries; manual graphics checks should also exercise desktop and
+phone layouts, model forms, pack retry, settings, animation seeking and closing.
+Rollback restores the previous web, worker and deployment script together; retained
+legacy R2 viewer objects are not deleted by this change.
+
+
+### CDN CORS requirement
+
+A native page reads model data from the CDN across origins. Before deploying this
+web change, merge the following rule into the R2 bucket's existing CORS policy
+(do not replace unrelated rules), and clear cached object responses if necessary:
+
+```json
+{
+  "AllowedOrigins": ["https://solarisatlas.fun"],
+  "AllowedMethods": ["GET", "HEAD"],
+  "AllowedHeaders": ["Range"],
+  "ExposeHeaders": ["Content-Length", "Content-Range", "Accept-Ranges"],
+  "MaxAgeSeconds": 3600
+}
+```
+
+Use the configured frontend domain for another environment. Add a localhost origin
+only to a development bucket when needed. Requests use no cross-origin cookies or
+Authorization header. This rule allows public data reads; it grants no upload,
+delete or administrative access. The production CDN was checked during migration
+and did not return `Access-Control-Allow-Origin` for the site's Origin header.
+Verify that header on an actual GLB and physics/animation object before rollout.

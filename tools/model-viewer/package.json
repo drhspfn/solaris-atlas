@@ -1,7 +1,0 @@
-{
-  "name": "solaris-local-model-viewer",
-  "private": true,
-  "type": "module",
-  "scripts": { "test": "node --test *.test.js", "stage": "node stage.mjs" },
-  "dependencies": { "three": "0.183.2" }
-}

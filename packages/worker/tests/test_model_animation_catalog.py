@@ -46,7 +46,7 @@ def test_malformed_names(name):
 
 
 def test_viewer_and_worker_declarative_rules_are_identical():
-    source = (Path(__file__).resolve().parents[3] / "tools/model-viewer/animations.js").read_text()
+    source = (Path(__file__).resolve().parents[3] / "packages/web_new/src/components/models/engine/animations.js").read_text()
     table = re.search(r"export const ANIMATION_CATALOG_RULES = (\[.*?\]);", source, re.S)[1]
     # JavaScript permits trailing commas; JSON does not.
     assert json.loads(re.sub(r",\s*]", "]", table)) == RULES
