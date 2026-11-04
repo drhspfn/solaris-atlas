@@ -264,6 +264,8 @@ async def event_resources(payload, parent, session, root: Path):
             if enabled():
                 try:
                     rendered = await asyncio.to_thread(build_animation, bundle)
+                    if rendered.decision.get('state') == 'render_failed':
+                        render_failures.append({'event': event.source_id, 'reasons': rendered.decision['reasons']})
                 except (OSError, ValueError, subprocess.SubprocessError, zipfile.BadZipFile) as error:
                     render_failures.append({'event': event.source_id, 'error': str(error)[:500]})
                     render_metadata = {'animation_import': {

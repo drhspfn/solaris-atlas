@@ -7,6 +7,22 @@ from pathlib import Path
 
 
 class TelegramEnvironmentTests(unittest.TestCase):
+    def test_native_render_settings_preserve_source_aspect_and_stay_worker_only(self):
+        script = Path(__file__).resolve().parents[1] / "render-production-env.py"
+        with tempfile.TemporaryDirectory() as directory:
+            environment = {**os.environ, "POSTGRES_PASSWORD": "fake-password",
+                           "RABBITMQ_DEFAULT_PASS": "fake-password", "AUTH_CSRF_SECRET": "fake-secret",
+                           "MINIO_ROOT_PASSWORD": "fake-password", "USE_MINIO": "true",
+                           "WUWA_RIGLYPH_ENABLED": "true", "WUWA_RIGLYPH_MAX_EDGE": "1024"}
+            subprocess.run([sys.executable, str(script), directory], env=environment,
+                           capture_output=True, text=True, check=True)
+            worker = (Path(directory) / "worker.env").read_text()
+            self.assertIn("WUWA_RIGLYPH_ENABLED=true", worker)
+            self.assertIn("WUWA_RIGLYPH_MAX_EDGE=1024", worker)
+            self.assertNotIn("WUWA_RIGLYPH_WIDTH", worker)
+            self.assertNotIn("WUWA_RIGLYPH_HEIGHT", worker)
+            self.assertNotIn("WUWA_RIGLYPH", (Path(directory) / "api.env").read_text())
+
     def test_visual_settings_are_shared_by_enqueue_api_and_consumer(self):
         script = Path(__file__).resolve().parents[1] / "render-production-env.py"
         with tempfile.TemporaryDirectory() as directory:

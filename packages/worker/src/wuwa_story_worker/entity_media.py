@@ -415,6 +415,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         try:
                             rendered = await asyncio.to_thread(build_animation, path)
                             animation = rendered.decision
+                            if animation.get('state') == 'render_failed':
+                                riglyph_failures.append({'path': target['path'], 'reasons': animation['reasons']})
                         except (OSError, ValueError, subprocess.SubprocessError, zipfile.BadZipFile) as error:
                             riglyph_failures.append({'path': target['path'], 'error': str(error)[:500]})
                             animation = {**animation, 'display': 'static', 'state': 'conversion_failed',

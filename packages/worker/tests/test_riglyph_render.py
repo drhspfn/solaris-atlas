@@ -20,7 +20,7 @@ def source(tmp_path, monkeypatch, clips=None):
 
     def convert(_source, destination, _cli):
         destination.mkdir()
-        (destination / "skeleton.ir.json").write_text(json.dumps({"skeleton": {
+        (destination / "skeleton.ir.json").write_text(json.dumps({"skeleton": {"bounds": [0, 0, 640, 360],
             "animations": clips if clips is not None else [{"id": "idle", "durationSec": 2}]}}))
         (destination / "manifest.json").write_text("{}")
 
@@ -72,8 +72,9 @@ def test_invalid_video_never_becomes_a_published_preview(tmp_path, monkeypatch, 
         return report
 
     monkeypatch.setattr(render, "_run", run)
-    with pytest.raises(ValueError, match="complete alpha WebM"):
-        render.build_animation(bundle, cli=["riglyph"])
+    result = render.build_animation(bundle, cli=["riglyph"])
+    assert result.converted.is_file() and result.variants == []
+    assert result.decision["state"] == "render_failed"
     assert bundle.exists()
 
 
@@ -85,6 +86,70 @@ def test_unsupported_composition_keeps_static_without_running_converter(tmp_path
     result = render.build_animation(bundle)
     assert result.converted is None and result.variants == []
     assert result.decision["display"] == "static"
+
+
+def test_converted_fallback_archive_is_deterministic(tmp_path, monkeypatch):
+    bundle = source(tmp_path, monkeypatch)
+    monkeypatch.setattr(render, "_run", valid_render)
+    first = render.build_animation(bundle).converted.read_bytes()
+    second = render.build_animation(bundle).converted.read_bytes()
+    assert first == second
+
+
+@pytest.mark.parametrize('bounds,size', [
+    ([0, 0, 1920, 1080], (1920, 1080)),
+    ([-10, -20, 1080, 1920], (1080, 1920)),
+    ([0, 0, 3200, 1350], (2048, 864)),
+    ([0, 0, 600, 600], (600, 600)),
+])
+def test_framing_keeps_source_canvas_ratio_and_never_upscales(bounds, size):
+    result = render.frame_geometry(bounds, 2048)
+    assert (result['width'], result['height']) == size
+    assert result['source_bounds'] == bounds
+    assert result['camera']['x'] == bounds[0] + bounds[2] / 2
+    assert result['camera']['y'] == bounds[1] + bounds[3] / 2
+
+
+def test_zero_source_bounds_use_one_measured_canvas_for_all_clips(tmp_path, monkeypatch):
+    bundle = source(tmp_path, monkeypatch)
+    convert = render.convert_archive
+
+    def zero_bounds(*args):
+        convert(*args)
+        path = args[1] / 'skeleton.ir.json'
+        ir = json.loads(path.read_text())
+        ir['skeleton']['bounds'] = [0, 0, 0, 0]
+        path.write_text(json.dumps(ir))
+
+    def run(args, log, timeout):
+        if args[1].endswith('riglyph_frame.mjs'):
+            return {'bounds': [-1600, -690, 3200, 1350]}
+        config = json.loads(Path(args[args.index('--config') + 1]).read_text())
+        assert config['camera']['mode'] == 'fixed'
+        return valid_render(args, log, timeout)
+
+    monkeypatch.setattr(render, 'convert_archive', zero_bounds)
+    monkeypatch.setattr(render, '_run', run)
+    result = render.build_animation(bundle)
+    assert result.variants[0]['framing_basis'] == 'animation_bounds'
+    assert (result.variants[0]['width'], result.variants[0]['height']) == (2048, 864)
+
+
+@pytest.mark.parametrize('tampered', [False, True])
+def test_legacy_archive_policy_requires_verified_decoded_sources(tmp_path, tampered):
+    data = json.dumps([{'Type': 'SpineSkeletonDataAsset'}, {'Type': 'SpineAtlasAsset'}]).encode()
+    entry = 'decoded/files/Client/Content/Rig.json'
+    manifest = {'packages': ['/Game/Rig'], 'source_resources': ['/Game/Rig'], 'files': {
+        entry: {'sha256': hashlib.sha256(data).hexdigest(), 'size_bytes': len(data)}}}
+    bundle = tmp_path / 'old-source.zip'
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        archive.writestr('manifest.json', json.dumps(manifest))
+        archive.writestr(entry, data + b' ' if tampered else data)
+    if tampered:
+        with pytest.raises(ValueError, match='checksum'):
+            render.archive_policy(bundle)
+    else:
+        assert render.archive_policy(bundle)['conversion_allowed'] is True
 
 
 @pytest.mark.parametrize("clips", [[{"id": "idle", "durationSec": float("nan")}],
