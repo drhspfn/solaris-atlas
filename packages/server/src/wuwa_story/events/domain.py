@@ -96,6 +96,8 @@ class EventMedia:
     source_path: str | None
     object_key: str
     metadata: dict[str, Any]
+    file_id: int | None = None
+    size_bytes: int | None = None
 
 
 def _client_data(event: ClientSource, occurrence: ClientSource | None) -> dict[str, Any]:
@@ -104,6 +106,13 @@ def _client_data(event: ClientSource, occurrence: ClientSource | None) -> dict[s
     if current.get("download_id") and current.get("download_id") == dated.get("download_id"):
         return cast(dict[str, Any], current)
     return cast(dict[str, Any], dated or current)
+
+
+def _animation_eligible(client: dict[str, Any]) -> bool:
+    # Source eligibility can stay static after the reference's render is ready.
+    # Legacy animated sources remain supported; an explicit denial always wins.
+    policy = client.get('animation_import') or {}
+    return policy.get('conversion_allowed', policy.get('display') == 'animated') is True
 
 
 def _notice_overlaps(notice: EventAnnouncement | None, occurrence: EventOccurrence | None) -> bool:

@@ -88,6 +88,13 @@ RUN curl -fSL --retry 3 https://github.com/bnnm/wwiser/releases/download/v202608
     && echo 'f4ba1368895adab285f27fa37b142e5da805bcc6fb77e8daba282dac65d89411  /tools/wwiser.pyz' | sha256sum -c - \
     && cd /tools && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
 
+# Pin both the acceleration ABI and the release bytes; unsupported platforms fail at build time.
+RUN curl -fSL --retry 3 https://github.com/drhspfn/riglyph/releases/download/v0.16.1/riglyph-native-v0.16.1-linux-x64.tar.gz -o /tmp/riglyph-native.tar.gz \
+    && echo '4cf635052b6a64769d1e8dd2fc6836cce5b1ce4f2e1b6f4db312e492fed4b061  /tmp/riglyph-native.tar.gz' | sha256sum -c - \
+    && mkdir /tools/riglyph-native \
+    && tar -xzf /tmp/riglyph-native.tar.gz -C /tools/riglyph-native \
+    && rm /tmp/riglyph-native.tar.gz
+
 FROM node:22-bookworm-slim AS riglyph-builder
 WORKDIR /riglyph
 COPY packages/worker/docker/riglyph/package.json packages/worker/docker/riglyph/package-lock.json ./
@@ -109,6 +116,7 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 LD_LIBRARY_PATH=/app/tools \
     WUWA_TOOLS_DIR=/app/tools
+ENV RIGLYPH_NATIVE_BIN=/app/tools/riglyph-native/riglyph-native
 WORKDIR /app/packages/worker
 COPY packages/server/pyproject.toml /app/packages/server/pyproject.toml
 COPY packages/server/src /app/packages/server/src
@@ -120,6 +128,7 @@ RUN mkdir -p /var/lib/wuwa-worker && useradd --create-home --uid 10001 appuser \
 USER appuser
 # Exercise actual managed/native calls in the final OS as the runtime user, offline.
 RUN --network=none /app/tools/fmodelcli/FModelCLI --check-native-libs \
+    && /app/tools/riglyph-native/riglyph-native --version \
     && /app/tools/cue-cli/cue4parse --check-native-libs \
     && python -c "import ctypes; lib=ctypes.CDLL('/app/tools/cue-cli/CUE4Parse-Natives.so'); feature=lib.IsFeatureAvailable; feature.argtypes=[ctypes.c_char_p]; feature.restype=ctypes.c_bool; assert feature(b'ACL'), 'CUE4Parse-Natives lacks ACL support'; print('Native ACL OK: published library loads and reports ACL support')" \
     && python /app/tools/wwiser.pyz --help >/dev/null \

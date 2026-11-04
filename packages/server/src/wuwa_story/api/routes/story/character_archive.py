@@ -26,6 +26,7 @@ from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.character_artwork import character_artwork_scope
+from wuwa_story.storage.animation_previews import spine_bundle
 from wuwa_story.storage.s3 import S3Storage
 
 router = APIRouter(tags=["story browsing"])
@@ -325,8 +326,26 @@ async def character_archive(
                 event = entry.get("Value") if isinstance(entry, dict) else entry
                 if isinstance(event, str) and event and event not in {item["event"] for item in other_voice_events}:
                     other_voice_events.append({"category": field, "event": event})
+    trial_spine = None
+    if getattr(settings, 'story_spine_playback_enabled', False):
+        row = (await session.execute(
+            select(FileLocation.object_key, FileObject.id, FileObject.size_bytes, FileReference.metadata_json)
+            .select_from(FileReference)
+            .join(FileObject, FileObject.id == FileReference.file_id)
+            .join(FileLocation, FileLocation.file_id == FileObject.id)
+            .where(FileReference.owner_node_id == node.id,
+                   FileReference.reference_type == 'character_trial_spine',
+                   FileObject.mime_type == 'application/zip',
+                   FileLocation.available.is_(True), FileLocation.is_primary.is_(True),
+                   FileLocation.backend == 's3', FileLocation.bucket == settings.s3_bucket)
+            .order_by(FileReference.id.desc()).limit(1)
+        )).first()
+        if row:
+            key, identity, size, metadata = row
+            trial_spine = spine_bundle(S3Storage(settings).public_url(key), identity, size, metadata, True)
     return {
         "canonical_key": canonical_key, "locale": locale, "release_id": release_id,
+        "trial_spine": trial_spine,
         "biography": localized.get(role.get("Introduction")) or localized.get(favor.get("Info")),
         "profile": {
             "country": localized.get(favor.get("Country")),

@@ -12,6 +12,8 @@ from wuwa_story.events.domain import (
 
 
 class EventRepository(Protocol):
+    async def spine(self, captures: set[tuple[str, str]]) -> list[EventMedia]: ...
+
     async def runs(
         self,
         *,

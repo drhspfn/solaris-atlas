@@ -40,6 +40,28 @@ async def test_archive_only_spine_reuse_needs_no_browser_components():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('missing_part', [False, True])
+async def test_native_preview_reuse_verifies_every_rendered_video(missing_part):
+    value = {**target('spine_background:7'), 'kind': 'spine', 'reference_type': 'story_spine', 'spine_recipe': 1}
+    reference, file, location = row(value, spine_recipe=1)
+    reference.reference_type = 'story_spine'
+    reference.metadata_json['animation_preview'] = {'recipe': 'riglyph-native-v1', 'status': 'ready',
+        'variants': [{'object_key': 'objects/video', 'size_bytes': 3}]}
+
+    async def stat(key):
+        if key == 'objects/video':
+            return None if missing_part else SimpleNamespace(size_bytes=3)
+        return SimpleNamespace(size_bytes=12)
+
+    session = AsyncMock()
+    session.execute.return_value = [(reference, file, location)]
+    storage = SimpleNamespace(backend='s3', bucket='media', stat=AsyncMock(side_effect=stat))
+    result = await missing_media_targets(session, [value], source={'asset_version': '3.7.0'},
+                                          storage=storage, require_spine_playback=True)
+    assert result == ([value] if missing_part else [])
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('archived_hash', [None, 'old', 'new'])
 async def test_spine_reuse_requires_the_same_authored_control_source(archived_hash):
     value = {**target('spine_background:7'), 'kind': 'spine', 'reference_type': 'story_spine',

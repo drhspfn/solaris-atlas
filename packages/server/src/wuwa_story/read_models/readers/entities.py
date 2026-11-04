@@ -6,8 +6,10 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from sqlalchemy import case, literal, or_, select, union_all
 
+from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS, card_columns, card_rows
+from wuwa_story.storage.animation_previews import apply_animation_display_flag
 from wuwa_story.urls import numeric_id
 
 KIND_ALIASES = {
@@ -215,7 +217,7 @@ async def page_payload(
             raise _unready()
         return edges
     entry = _resolve([SimpleNamespace(**row) for row in rows], identity)
-    return entry.payload
+    return apply_animation_display_flag(entry.payload, get_settings().story_spine_playback_enabled)
 
 
 async def _scope_entries(
@@ -232,7 +234,10 @@ async def _scope_entries(
         model.snapshot_key == snapshot_key,
     )
     rows = (await session.execute(statement)).mappings().all()
-    return [_ready(SimpleNamespace(**row)) for row in rows]
+    entries = [_ready(SimpleNamespace(**row)) for row in rows]
+    for entry in entries:
+        entry.payload = apply_animation_display_flag(entry.payload, get_settings().story_spine_playback_enabled)
+    return entries
 
 
 def _public(payload):

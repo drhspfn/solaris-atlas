@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import subprocess
+import zipfile
 from pathlib import Path
 
 from sqlalchemy import select
@@ -206,6 +207,7 @@ async def event_resources(payload, parent, session, root: Path):
     paths = set()
     entries = []
     animation_decisions = []
+    render_failures = []
     for event in events:
         client = (event.source_data or {}).get("client", {})
         if client.get("download_id") != parent["download_id"]:
@@ -255,13 +257,30 @@ async def event_resources(payload, parent, session, root: Path):
             bundle, _ = await build_spine_bundle(
                 root, None, tool_path('WUWA_FMODEL_PATH'), tool_path('WUWA_TEXTURE_CONVERTER_PATH'),
                 direct_resources=prefabs)
+            from wuwa_story_worker.riglyph_render import build_animation, enabled, publish_animation
+
+            rendered = None
+            render_metadata = {}
+            if enabled():
+                try:
+                    rendered = await asyncio.to_thread(build_animation, bundle)
+                    if rendered.decision.get('state') == 'render_failed':
+                        render_failures.append({'event': event.source_id, 'reasons': rendered.decision['reasons']})
+                except (OSError, ValueError, subprocess.SubprocessError, zipfile.BadZipFile) as error:
+                    render_failures.append({'event': event.source_id, 'error': str(error)[:500]})
+                    render_metadata = {'animation_import': {
+                        **animation, 'display': 'static', 'state': 'render_failed',
+                        'reasons': [{'code': 'render_failed', 'error': str(error)[:500]}]}}
             storage = S3Storage(get_settings())
             service = FileRegistrationService(storage)
             prepared = await service.prepare_file(bundle, 'application/zip')
+            published = await service.register_file(session, bundle, 'unknown', mime_type='application/zip', prepared=prepared)
+            if rendered is not None:
+                render_metadata = await publish_animation(session, bundle, published, service,
+                                                           payload.get('run_id'), artifacts=rendered)
             await session.refresh(event, with_for_update=True)
             if (event.source_data or {}).get('client', {}).get('download_id') != parent['download_id']:
                 raise ValueError('Event catalog changed during Spine extraction')
-            published = await service.register_file(session, bundle, 'unknown', mime_type='application/zip', prepared=prepared)
             reference = await session.scalar(select(FileReference).where(
                 FileReference.reference_type == 'event_spine',
                 FileReference.source_path == event.source_id,
@@ -272,7 +291,8 @@ async def event_resources(payload, parent, session, root: Path):
                     source_path=event.source_id, source_name=parent['download_id'])
             reference.file_id = published.id
             reference.metadata_json = {'asset_version': parent['asset_version'],
-                                       'download_id': parent['download_id'], 'event_id': event.id}
+                                       'download_id': parent['download_id'], 'event_id': event.id,
+                                       'animation_import': animation, **render_metadata}
             await session.commit()
         paths.update(image["path"] for image in artwork)
         entries.extend(missing)
@@ -282,5 +302,6 @@ async def event_resources(payload, parent, session, root: Path):
               for key in ("asset_version", "download_id", "tier")}
     return {**client, "stage": "event_resources_ready", "events": len(events),
             "animation_decisions": animation_decisions,
+            "render_failures": render_failures,
             "images": len(paths), "image_tasks": jobs, "media_report": {"entries": entries},
-            "missing": len(entries)}, "partial" if entries else "completed"
+            "missing": len(entries)}, "partial" if entries or render_failures else "completed"

@@ -18,6 +18,7 @@ def build_event_service(session: AsyncSession) -> EventService:
         SqlAlchemyEventRepository(session, settings.s3_bucket),
         storage.public_url,
         public_notice_image,
+        animation_enabled=getattr(settings, 'story_spine_playback_enabled', False),
     )
 
 

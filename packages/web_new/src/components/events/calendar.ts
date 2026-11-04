@@ -1,3 +1,5 @@
+import type { AnimationPreview } from '../ui/animationPreview';
+
 export const DAY = 86_400_000;
 export const DAY_WIDTH = 44;
 export function timeZoneLabel(timeZone: string, time: number) {
@@ -15,6 +17,13 @@ export const kindLabels: Record<EventKind, string> = {
   permanent: 'Permanent',
 };
 export type GameEvent = {
+  spine?: {
+    url: string;
+    file_id: number;
+    label?: string;
+    animation?: string | null;
+    animation_preview?: AnimationPreview | null;
+  }[];
   id: number;
   source_id: string;
   detail_url?: string;

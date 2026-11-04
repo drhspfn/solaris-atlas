@@ -9,6 +9,7 @@ from wuwa_story.events.domain import (
     EventAnnouncement,
     EventRun,
     EventRunNotFound,
+    _animation_eligible,
     _artwork,
     _choose_preview,
     _client_data,
@@ -19,6 +20,7 @@ from wuwa_story.events.domain import (
 )
 from wuwa_story.events.repository import EventRepository
 from wuwa_story.notices.matching import notice_candidates
+from wuwa_story.storage.animation_previews import spine_bundle
 from wuwa_story.urls import node_address, record_url
 
 
@@ -46,10 +48,13 @@ class EventService:
         repository: EventRepository,
         media_url: Callable[[str], str],
         notice_image_url: Callable[[str | None], str | None],
+        *,
+        animation_enabled: bool = False,
     ) -> None:
         self.repository = repository
         self.media_url = media_url
         self.notice_image_url = notice_image_url
+        self.animation_enabled = animation_enabled
 
     async def browse(
         self,
@@ -82,6 +87,21 @@ class EventService:
         reward_nodes = await self.repository.reward_nodes(reward_keys)
         reward_addresses = {node.canonical_key: node_address(node, "item") for node in reward_nodes}
         images = await self._images(runs, artwork)
+        captures = {
+            (run.event.source_id, client['download_id'])
+            for run in runs
+            if self.animation_enabled
+            and (client := _client_data(run.event, run.occurrence)).get('download_id')
+            and _animation_eligible(client)
+        }
+        spine: dict[tuple[str | None, str | None], dict[str, Any]] = {}
+        if captures:
+            for bundle in await self.repository.spine(captures):
+                capture = (bundle.source_path, bundle.metadata.get('download_id'))
+                if capture in captures:
+                    spine.setdefault(capture, spine_bundle(
+                        self.media_url(bundle.object_key), bundle.file_id, bundle.size_bytes,
+                        bundle.metadata, self.animation_enabled))
         return {
             "server": server,
             "source": CLIENT_SOURCE,
@@ -98,6 +118,7 @@ class EventService:
                     announcements,
                     reward_addresses,
                     images,
+                    spine,
                 )
                 for run in runs
             ],
@@ -205,6 +226,7 @@ class EventService:
         announcements: _Announcements,
         reward_addresses: dict[str, dict[str, Any]],
         images: dict[tuple[str, str], str],
+        spine: dict[tuple[str | None, str | None], dict[str, Any]],
     ) -> dict[str, Any]:
         event, occurrence = run.event, run.occurrence
         client = _client_data(event, occurrence)
@@ -261,6 +283,9 @@ class EventService:
             "official_url": _official_announcement(event, occurrence),
             "notices": announcements.links.get(event.id, []),
         }
+        bundle = spine.get((event.source_id, client.get('download_id')))
+        if bundle and self.animation_enabled and _animation_eligible(client):
+            result['spine'] = [bundle]
         if summary:
             result["detail_url"] = f"/events/{event.id}/detail?server={server}&locale={locale}" + (
                 f"&occurrence_id={occurrence.id}" if occurrence else ""

@@ -5,6 +5,8 @@ import { api } from '@/api/client';
 import { EventArtwork } from './EventArtwork';
 import { kindLabels, timeZoneLabel } from './calendar';
 import { artworkGroups, countdown, type GameEvent } from './calendar';
+import { RenderedAnimation } from '../ui/RenderedAnimation';
+import { selectAnimationClip } from '../ui/animationPreview';
 
 export function EventDetails({
   event: selection,
@@ -94,7 +96,7 @@ export function EventDetails({
       <button className="events-detail-close" onClick={onClose} aria-label="Close event details">
         <X size={22} />
       </button>
-      <EventArtwork event={event} />
+      <EventArtwork event={event} animate={false} />
       {event.preview_provenance === 'current_notice' && (
         <small className="events-art-caption">
           Illustration from the current official event announcement.
@@ -116,6 +118,20 @@ export function EventDetails({
         </p>
         {!!event.featured_names?.length && <p>Featured: {event.featured_names.join(', ')}</p>}
         {!!event.up_names?.length && <p>Also featured: {event.up_names.join(', ')}</p>}
+          {event.spine?.map((scene) => {
+            const preview = selectAnimationClip(scene.animation_preview, scene.animation);
+            return (
+              <section key={scene.file_id} aria-label={scene.label || 'Event animation'}>
+                <h3>{scene.label || 'Event animation'}</h3>
+                <RenderedAnimation
+                  preview={preview}
+                  label={scene.label || 'Event animation'}
+                  fallback={<EventArtwork event={event} animate={false} />}
+                />
+                <a className="events-official-link" href={scene.url} download>Download animated scene</a>
+              </section>
+            );
+          })}
         {!!event.rewards?.length && (
           <section className="events-rewards">
             <h3>Reward preview</h3>
