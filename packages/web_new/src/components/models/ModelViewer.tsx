@@ -1,14 +1,12 @@
 "use client";
 
-import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Select } from '@/components/ui/Select';
 import { apiUrl } from '@/api/client';
 import { defaultSettings, initialViewerState, type ModelAssets, type ViewerCommand, type ViewerController,
   type ViewerOption, type ViewerSettings, type ViewerState } from './types';
 import '@/styles/model-viewer.css';
 
-// Only this chunk imports Three.js. Controls can render on the server without WebGL.
-const ModelCanvas = lazy(() => import('./ModelCanvas'));
 const stamp = (value: number) => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, '0')}`;
 const label = (name: string, bytes?: number) => bytes && bytes > 0 ? `${name} · ${(bytes / 1048576).toFixed(1)} MiB` : name;
 
@@ -58,6 +56,8 @@ export function ModelViewer({ assets: source, name, preview = false, active = tr
   const [settings, setSettings] = useState<ViewerSettings>(defaultSettings);
   const [state, setState] = useState<ViewerState>(initialViewerState);
   const [attempt, setAttempt] = useState(0);
+  // A new lazy boundary retries failed chunk downloads instead of caching the rejection.
+  const ModelCanvas = useMemo(() => lazy(() => import('./ModelCanvas')), [attempt]);
   const [panel, setPanel] = useState<'scene' | 'physics' | 'camera'>('scene');
   const controller = useRef<ViewerController | null>(null);
   const drawer = useRef<HTMLDialogElement>(null);
