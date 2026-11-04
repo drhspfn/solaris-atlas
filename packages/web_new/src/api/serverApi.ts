@@ -1,6 +1,7 @@
 import { cache } from 'react';
 
-const SERVER_READ_TIMEOUT_MS = 15_000;
+// Match public client reads; cold backend work may use its 20s DB statement budget.
+const SERVER_READ_TIMEOUT_MS = 30_000;
 
 const serverBackendBase = (
   process.env.INTERNAL_API_BASE ||
@@ -13,6 +14,7 @@ const serverBackendBase = (
  * Defaults to ISR caching (revalidate: 60) for maximum speed and SEO prerendering.
  */
 type ServerApiOptions = {
+  cache?: 'no-store';
   revalidate?: number | false;
   tags?: string[];
   headers?: Record<string, string>;
@@ -43,7 +45,11 @@ const readServerApi = cache(async function readServerApi(
       },
     };
 
-    if (options.revalidate !== undefined || options.tags) {
+    if (options.cache === 'no-store') {
+      // Large responses are cached by the API's bounded Redis adapter instead.
+      // Do not combine no-store with Next revalidation/tag options.
+      fetchOptions.cache = 'no-store';
+    } else if (options.revalidate !== undefined || options.tags) {
       fetchOptions.next = {
         revalidate: options.revalidate,
         tags: options.tags,
@@ -59,7 +65,8 @@ const readServerApi = cache(async function readServerApi(
     }
     return await res.json();
   } catch (error) {
-    console.error(`serverApi failed for ${url}:`, error);
+    const failure = error as { name?: string; cause?: { code?: string } } | null;
+    console.error(`serverApi failed for ${url}: ${failure?.cause?.code || failure?.name || 'UnknownError'}`);
     return null;
   }
 });

@@ -123,6 +123,16 @@ const backend = createServer(async (request, response) => {
   timing.end = performance.now();
   response.setHeader('Content-Type', 'application/json');
   const questRequest = new URL(request.url, 'http://backend.test');
+  if (questRequest.pathname.startsWith('/quests/119999999/')) {
+    const quest = { name: { content: 'Large transcript fixture' } };
+    if (questRequest.pathname.endsWith('/profile')) response.end(JSON.stringify({ quest }));
+    else if (questRequest.pathname.endsWith('/transcript')) response.end(JSON.stringify({
+      quest, lines: [{ id: 'large-line', text: { content: 'Large transcript remains readable.' } }],
+      padding: 'x'.repeat(2 * 1024 * 1024 + 1),
+    }));
+    else response.end('null');
+    return;
+  }
   if (questRequest.pathname.startsWith('/quests/119000001/')) {
     const quest = { name: { content: 'A room full of memories' } };
     const choices = ['Ask about the drawing', 'Ask about the cake', 'Stay a little longer'].map(
@@ -602,6 +612,16 @@ after(async () => {
     await exited;
   }
   await new Promise((resolve) => backend.close(resolve));
+});
+
+test('transcripts over 2MB render without attempting Next data-cache storage', async () => {
+  const start = output.length;
+  const response = await fetch(`${site}/quests/119999999`);
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.ok(html.includes('Large transcript remains readable.'));
+  await delay(50);
+  assert.doesNotMatch(output.slice(start), /items over 2MB can not be cached/);
 });
 
 test('weapon sources and test quest semantics are visible in server HTML', async () => {
