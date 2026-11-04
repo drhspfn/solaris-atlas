@@ -19,13 +19,16 @@ def read_definitions() -> list[dict[str, Any]]:
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Spoken text or words to search for in dialogue",
+                        "description": "Words spoken in dialogue. To find mentions of a character, use their name here without the character filter.",
                     },
                     "character": {
-                        "type": "string",
-                        "description": "Optional character name or speaker",
+                        "type": ["string", "null"],
+                        "description": "Optional speaker filter: exact character canonical key (e.g. character:1211) or slug returned by search_entities, never a display name. Omit or use null to search all speakers.",
                     },
-                    "quest_id": {"type": "integer", "description": "Optional numeric quest ID"},
+                    "quest_id": {
+                        "type": ["integer", "null"], "minimum": 1,
+                        "description": "Optional real game quest ID from search results. Omit or use null to search all quests; never invent an ID or use 0.",
+                    },
                 },
                 "required": ["query"],
                 "additionalProperties": False,
@@ -78,8 +81,9 @@ async def execute_read(session: AsyncSession, call: ToolCall) -> dict[str, Any]:
         )
     elif call.name == "search_dialogue":
         query = call.arguments.get("query", "")
-        character = call.arguments.get("character")
-        quest_id = call.arguments.get("quest_id")
+        character = call.arguments.get("character") or None
+        # Older tool schemas led models to use zero for an omitted optional ID.
+        quest_id = call.arguments.get("quest_id") or None
         from wuwa_story.api.routes.story.transcripts import (
             search_dialogue as api_search_dialogue,
         )
@@ -97,15 +101,27 @@ async def execute_read(session: AsyncSession, call: ToolCall) -> dict[str, Any]:
             lines = []
             for r in res.get("results", []):
                 speaker = r.get("speaker") or "Narrator"
+                if isinstance(speaker, dict):
+                    speaker = speaker.get("label") or "Narrator"
                 text = r.get("text") or ""
-                q_id = r.get("quest_id") or (r.get("game_ids") or ["N/A"])[0]
-                lines.append(f'[{speaker} in Quest {q_id}]: "{text}"')
+                if isinstance(text, dict):
+                    text = text.get("content") or ""
+                source = r.get("canonical_key") or r.get("id") or "unknown"
+                quest = r.get("quest_id")
+                context = f" in Quest {quest}" if quest is not None else ""
+                lines.append(f'[{speaker}{context}; source: {source}]: "{text}"')
             result_data = {"results": "\n".join(lines) if lines else "No dialogue lines found"}
-        except Exception as e:
-            if cast(Any, read_projections).should_route_to_projection(
-                ("dialogue", "character") if character else "dialogue"
-            ) and isinstance(e, HTTPException):
+        except HTTPException as error:
+            if error.status_code != 404:
                 raise
+            result_data = {
+                "error": "Dialogue search filter not found",
+                "status_code": error.status_code,
+                "message": "Use search_entities to find the character canonical key and real quest ID. "
+                "Pass the key, not the character name. Omit unknown filters (or use null); "
+                "to search mentions, use only query. Retry with corrected filters.",
+            }
+        except Exception as e:
             result_data = {"error": type(e).__name__}
 
     elif call.name == "search_entities":

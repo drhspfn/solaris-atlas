@@ -168,6 +168,8 @@ async def run_chat(session: AsyncSession, messages: Sequence[Any], *, role: Role
                 except Exception as error:
                     await session.rollback()
                     output = {"error": "Tool failed", "code": type(error).__name__}
+                    if isinstance(error, HTTPException):
+                        output["status_code"] = error.status_code
                     await audit.complete(
                         session,
                         identity,
