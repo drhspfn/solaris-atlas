@@ -108,6 +108,13 @@ def _client_data(event: ClientSource, occurrence: ClientSource | None) -> dict[s
     return cast(dict[str, Any], dated or current)
 
 
+def _animation_eligible(client: dict[str, Any]) -> bool:
+    # Source eligibility can stay static after the reference's render is ready.
+    # Legacy animated sources remain supported; an explicit denial always wins.
+    policy = client.get('animation_import') or {}
+    return policy.get('conversion_allowed', policy.get('display') == 'animated') is True
+
+
 def _notice_overlaps(notice: EventAnnouncement | None, occurrence: EventOccurrence | None) -> bool:
     if not notice or not occurrence or not occurrence.starts_at or not occurrence.ends_at:
         return False

@@ -11,7 +11,7 @@ from wuwa_story.db.models.game_events import GameEvent
 from wuwa_story.db.repositories.event_browsing import SqlAlchemyEventRepository, _summary_source
 from wuwa_story.events.domain import Event, EventMedia, EventOccurrence, EventRun
 from wuwa_story.events.repository import EventRepository
-from wuwa_story.events.service import EventService
+from wuwa_story.events.service import EventService, _Announcements
 from wuwa_story.read_models import source_sections
 from wuwa_story.read_models.readers import entities
 from wuwa_story.storage.animation_previews import animation_preview, spine_bundle
@@ -101,31 +101,63 @@ async def test_character_archive_trial_bundle_is_gated_and_owner_scoped(monkeypa
         assert 'LIMIT 1' in sql and "file_location.bucket = 'public'" in sql
 
 
-@pytest.mark.parametrize('enabled,display', [(True, 'animated'), (False, 'animated'), (True, 'static')])
-async def test_event_calendar_and_detail_match_capture_without_per_run_queries(preview, enabled, display):
+@pytest.mark.parametrize('enabled,source_policy,eligible', [
+    (True, {'display': 'animated'}, True),
+    (False, {'display': 'animated'}, False),
+    (True, {'display': 'static'}, False),
+    (True, {'conversion_allowed': True, 'display': 'static', 'state': 'awaiting_render_validation'}, True),
+    (False, {'conversion_allowed': True, 'display': 'static', 'state': 'awaiting_render_validation'}, False),
+    (True, {'conversion_allowed': False, 'display': 'static', 'state': 'static_only',
+            'reasons': [{'code': 'full_ui_unsupported'}]}, False),
+    (True, {'conversion_allowed': False, 'display': 'animated'}, False),
+    (True, {'conversion_allowed': 1, 'display': 'static'}, False),
+])
+@pytest.mark.parametrize('render_status', ['ready', 'failed'])
+async def test_event_calendar_and_detail_match_capture_without_per_run_queries(
+    preview, enabled, source_policy, eligible, render_status,
+):
+    preview = {**preview, 'status': render_status}
     event = Event(7, 'event', 'client:7', 'Event', None, 'banner', None, [], None, '',
                   {'client': {'download_id': 'current'}})
     occurrence = EventOccurrence(42, '3.7', None, None, None, None,
-                                {'client': {'download_id': 'old', 'animation_import': {'display': display}}})
+                                {'client': {'download_id': 'old', 'animation_import': source_policy}})
     repository = AsyncMock(spec=EventRepository)
     repository.runs.return_value = [EventRun(event, occurrence)]
     for method in ('announcements', 'notice_snapshots', 'reward_nodes', 'media'):
         getattr(repository, method).return_value = []
     repository.spine.return_value = [
         EventMedia('client:7', 'wrong.zip', {'download_id': 'current', 'animation_preview': preview}, 6, 1024),
-        EventMedia('client:7', 'source.zip', {'download_id': 'old', 'animation_preview': preview, 'riglyph_file_id': 8}, 7, 1024)]
+        EventMedia('client:7', 'source.zip', {'download_id': 'old', 'animation_preview': preview,
+                                            'animation_import': {'display': 'animated'}, 'riglyph_file_id': 8}, 7, 1024)]
     service = EventService(repository, lambda key: 'https://cdn/' + key, lambda url: url, animation_enabled=enabled)
     summary = (await service.browse('asia', summary=True))['events'][0]
     detail = await service.detail(7, 'asia', 42)
-    if enabled and display == 'animated':
+    if eligible:
         assert summary['spine'] == detail['spine']
         assert detail['spine'][0]['file_id'] == 7
-        assert detail['spine'][0]['animation_preview'] == preview
+        assert detail['spine'][0]['animation_preview'] == (preview if render_status == 'ready' else None)
         repository.spine.assert_awaited_with({('client:7', 'old')})
     else:
         assert 'spine' not in summary and 'spine' not in detail
         repository.spine.assert_not_awaited()
     repository.media.assert_not_awaited()
+
+
+@pytest.mark.parametrize('enabled,allowed', [(True, False), (False, True), (True, True)])
+def test_event_render_rechecks_source_policy_even_if_bundle_is_already_present(preview, enabled, allowed):
+    event = Event(7, 'event', 'client:7', 'Event', None, 'banner', None, [], None, '',
+                  {'client': {'download_id': 'current', 'animation_import': {
+                      'conversion_allowed': allowed, 'display': 'animated'}}})
+    service = EventService(AsyncMock(spec=EventRepository), lambda key: key,
+                           lambda url: url, animation_enabled=enabled)
+    bundle = spine_bundle('https://cdn/source.zip', 7, 1024,
+                          {'animation_preview': preview}, True)
+    result = service._render(
+        run=EventRun(event, None), server='asia', locale='en', summary=False,
+        artwork=[], presentation={}, announcements=_Announcements(), reward_addresses={},
+        images={}, spine={('client:7', 'current'): bundle},
+    )
+    assert ('spine' in result) == (enabled and allowed)
 
 
 async def test_event_spine_query_is_bounded_by_exact_source_capture_pairs():

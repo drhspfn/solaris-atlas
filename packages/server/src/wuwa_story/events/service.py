@@ -9,6 +9,7 @@ from wuwa_story.events.domain import (
     EventAnnouncement,
     EventRun,
     EventRunNotFound,
+    _animation_eligible,
     _artwork,
     _choose_preview,
     _client_data,
@@ -91,7 +92,7 @@ class EventService:
             for run in runs
             if self.animation_enabled
             and (client := _client_data(run.event, run.occurrence)).get('download_id')
-            and (client.get('animation_import') or {}).get('display') == 'animated'
+            and _animation_eligible(client)
         }
         spine: dict[tuple[str | None, str | None], dict[str, Any]] = {}
         if captures:
@@ -283,7 +284,7 @@ class EventService:
             "notices": announcements.links.get(event.id, []),
         }
         bundle = spine.get((event.source_id, client.get('download_id')))
-        if bundle:
+        if bundle and self.animation_enabled and _animation_eligible(client):
             result['spine'] = [bundle]
         if summary:
             result["detail_url"] = f"/events/{event.id}/detail?server={server}&locale={locale}" + (
