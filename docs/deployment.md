@@ -4,6 +4,64 @@ GitHub Actions builds API, web and worker images and deploys selected components
 
 The single source of truth for how entries map into service env files is [`scripts/render-production-env.py`](../scripts/render-production-env.py). Update a value in GitHub's `production` environment, then rerun the corresponding deploy. The generated files on the host are outputs and are replaced on every deploy.
 
+## Cloudflare visitor IPs and TLS
+
+Keep both the root and `api` DNS records **Proxied** (orange cloud). Use
+Cloudflare **SSL/TLS → Full (strict)**; Caddy's automatic HTTPS and certificate
+storage remain enabled. Do not switch to DNS-only or Flexible to obtain visitor
+IPs. Cloudflare normally sends the original address in `CF-Connecting-IP`:
+[Cloudflare headers](https://developers.cloudflare.com/fundamentals/reference/http-headers/).
+
+The production Caddyfile trusts that header only when the TCP peer belongs to
+Cloudflare's published IPv4/IPv6 edge networks. It overwrites `X-Forwarded-For`
+and `X-Real-IP` with the resolved single address on every API/web upstream.
+Uvicorn then sets `request.client.host` correctly for public-chat quotas,
+question-search quotas and auth session metadata. Incoming XFF chains cannot
+override it. Direct connections with forged Cloudflare headers keep their actual
+peer address. The API must retain its private container port (no public port
+8000); `FORWARDED_ALLOW_IPS=*` assumes only the private ingress reaches it.
+
+Check Cloudflare configuration if an edge address still appears after deployment:
+
+- Disable the **Remove visitor IP headers** Managed Transform, and any custom
+  rule that removes `CF-Connecting-IP`.
+- Set **Network → Pseudo IPv4** to **Off** or **Add Header**, not **Overwrite
+  Headers**, to retain native IPv6 addresses. See
+  [restoring visitor IPs](https://developers.cloudflare.com/support/troubleshooting/restoring-visitor-ips/restoring-original-visitor-ips/).
+- Keep **Full (strict)**, with a valid certificate at the origin. No Cloudflare
+  API token or DNS change is needed for this fix.
+
+The trust list is checked into `infrastructure/prod/Caddyfile`, based on
+[IPv4](https://www.cloudflare.com/ips-v4) and
+[IPv6](https://www.cloudflare.com/ips-v6). Update it when Cloudflare changes its
+networks; an unknown edge is deliberately treated as untrusted. Never replace
+the list with `private_ranges` or all addresses. Firewall restrictions to
+Cloudflare ranges can additionally prevent direct-origin bypass, but must
+preserve certificate renewal and management access; this change does not alter
+host firewall rules or certificate issuance.
+
+Deploy the updated Caddyfile using the **caddy** component (or the normal
+**web/full** deployment, which reloads it). On the deployment host, from the
+production Compose directory, an already updated file can be applied with:
+
+```sh
+docker compose exec -T caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+```
+
+Local regression smoke, with server dependencies installed and Caddy 2.8+ on PATH
+(or `CADDY_BINARY` set to the executable):
+
+```sh
+packages/server/.venv/bin/python -m unittest discover -s scripts/tests -p test_caddy_client_ip.py -v
+```
+
+This starts disposable loopback Caddy/Uvicorn processes, simulates a trusted
+edge, and checks IPv4, IPv6, missing/invalid headers and forged direct requests
+through both API routes, the console and the web upstream. It never contacts a
+production API or invokes an AI model. Roll back by restoring the previous
+Caddyfile and reloading; no database changes are involved.
+
 ## GitHub Actions environment
 
 Create an Actions environment named `production`.
