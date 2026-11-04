@@ -21,7 +21,6 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-
 from wuwa_story.agents.contracts import AnalysisRequest
 from wuwa_story.agents.cutscene_vision import enqueue_visual_job, resume_visual_job
 from wuwa_story.agents.jobs import enqueue_analysis
@@ -30,6 +29,7 @@ from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.ops import ProcessingRun, Processor
 from wuwa_story.db.models.storage import FileReference
 from wuwa_story.ingestion.compiler_importer import CompiledDatasetImporter
+
 from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.asset_jobs import (
     download_client_assets,
@@ -38,6 +38,7 @@ from wuwa_story_worker.asset_jobs import (
     extract_client_assets,
 )
 from wuwa_story_worker.broker import consume_jobs, recover_media_workspaces, replay_failed_jobs
+from wuwa_story_worker.cache import worker_cache_lifespan
 from wuwa_story_worker.character_models import process_character_model
 from wuwa_story_worker.client_assets import discover_plan, download_plan, save_json
 from wuwa_story_worker.cutscene_vision import dispatch_visual_jobs, process_cutscene_vision
@@ -222,6 +223,11 @@ async def _import_datasets(datasets: list[tuple[str, Path]], batch_size: int) ->
 
 
 async def _run(queues: list[str] | None = None, pool: str | None = None) -> None:
+    async with worker_cache_lifespan():
+        await _consume(queues, pool)
+
+
+async def _consume(queues: list[str] | None = None, pool: str | None = None) -> None:
     from wuwa_story.db.session import engine
 
     if pool and queues:

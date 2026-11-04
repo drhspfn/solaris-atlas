@@ -89,7 +89,7 @@ class WorkerConfigurationTests(unittest.TestCase):
                     command = ["docker", "compose", "--env-file", str(empty)]
                     for file in files:
                         command.extend(["-f", str(ROOT / file)])
-                    command.extend(["--profile", "local-storage", "--profile", "workers", "--profile", "assets", "--profile", "worker",
+                    command.extend(["--profile", "local-storage", "--profile", "workers", "--profile", "assets", "--profile", "worker", "--profile", "story-agent", "--profile", "cutscene-vision",
                                     "config", "--no-env-resolution", "--format", "json"])
                     environment = {**os.environ, "GHCR_OWNER": "test", "DOMAIN": "example.invalid",
                                    "POSTGRES_USER": "wuwa", "RABBITMQ_DEFAULT_USER": "wuwa",
@@ -98,6 +98,13 @@ class WorkerConfigurationTests(unittest.TestCase):
                     result = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=20, check=False)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     services = json.loads(result.stdout)["services"]
+                    # Cache payload pressure must not evict active quotas/leases.
+                    self.assertIn("noeviction", services["redis"]["command"])
+                    self.assertEqual(services["redis"]["healthcheck"]["test"], ["CMD", "redis-cli", "ping"])
+                    for name in ("api", "media-worker", "story-agent", "cutscene-vision"):
+                        self.assertEqual(services[name]["depends_on"]["redis"]["condition"], "service_healthy")
+                        if variant != "prod":
+                            self.assertEqual(services[name]["environment"]["REDIS_URL"], "redis://redis:6379/0")
                     if variant == "prod":
                         pooler = services["pgbouncer"]
                         self.assertNotIn("ports", pooler)

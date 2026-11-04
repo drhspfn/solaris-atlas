@@ -18,6 +18,8 @@ class TelegramEnvironmentTests(unittest.TestCase):
                            capture_output=True, text=True, check=True)
             shared = (Path(directory) / "shared.env").read_text()
             self.assertIn("STORY_SPINE_PLAYBACK_ENABLED=false", shared)
+            self.assertIn("CACHE_NAMESPACE=solaris-shared-v1", shared)
+            self.assertIn("CACHE_TIMEOUT_SECONDS=0.3", shared)
             self.assertIn("AGENT_VISION_BATCH_FRAMES=48", shared)
             self.assertIn("AGENT_VISION_ATLAS_FRAMES=12", shared)
             self.assertIn("AGENT_VISION_ATLAS_TILE_WIDTH=384", shared)

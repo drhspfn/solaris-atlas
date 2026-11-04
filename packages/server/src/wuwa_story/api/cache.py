@@ -230,7 +230,7 @@ def public_request(scope: Scope) -> bool:
 
 class PublicResponseCache:
     def __init__(
-        self, app: ASGIApp, settings: Settings, redis: Redis | None,
+        self, app: ASGIApp, settings: Settings, redis: Redis | None = None,
         revision_reader: Callable[[], Awaitable[str]] = content_revision,
         story_map_revision_reader: Callable[[], Awaitable[str]] = story_map_revision,
         projection_revision_reader: Callable[[], Awaitable[str]] = projection_revision,
@@ -288,39 +288,44 @@ class PublicResponseCache:
         lock_token = uuid.uuid4().hex
         owns_lock = False
         cached_body = None
-        if self.redis is not None and public_request(scope):
+        # Pool ownership belongs to the application lifecycle. The explicit
+        # client remains an injection seam for standalone middleware tests.
+        application = scope.get("app")
+        manager = getattr(application.state, "cache", None) if application else None
+        redis = manager.redis if manager is not None else self.redis
+        if redis is not None and public_request(scope):
             try:
                 revision_reader = (self.story_map_revision_reader if scope["path"] == "/story-map"
                                    else self.revision_reader)
                 if projection_request(scope, self.settings):
                     revision_reader = self.projection_revision_reader
                 key = cache_key(scope, await revision_reader(), self.namespace)
-                cached_body = await self.command(self.redis.get(key))
+                cached_body = await self.command(redis.get(key))
                 story_map = scope["path"] == "/story-map"
                 lock_ttl = 60 if story_map else 30
                 if cached_body is None:
-                    owns_lock = bool(await self.command(self.redis.set(
+                    owns_lock = bool(await self.command(redis.set(
                         key + ":lock", lock_token, nx=True, ex=lock_ttl)))
                 if cached_body is None and not owns_lock:
                     # Let the first reader populate a cold key. Slow queries
                     # eventually fall back to origin rather than blocking users.
                     for _ in range(150 if story_map else 30):
                         await asyncio.sleep(0.2 if story_map else 0.1)
-                        cached_body = await self.command(self.redis.get(key))
+                        cached_body = await self.command(redis.get(key))
                         if cached_body is not None:
                             break
-                        if story_map and not await self.command(self.redis.get(key + ":lock")):
+                        if story_map and not await self.command(redis.get(key + ":lock")):
                             # The builder failed or returned an uncacheable response.
                             # Let one waiter retry rather than making everyone wait.
-                            owns_lock = bool(await self.command(self.redis.set(
+                            owns_lock = bool(await self.command(redis.set(
                                 key + ":lock", lock_token, nx=True, ex=lock_ttl)))
                             if owns_lock:
                                 break
                 if owns_lock:
                     # The previous builder can finish between our GET and SET NX.
-                    cached_body = await self.command(self.redis.get(key))
+                    cached_body = await self.command(redis.get(key))
                     if cached_body is not None:
-                        await self.command(cast(Awaitable[Any], self.redis.eval(
+                        await self.command(cast(Awaitable[Any], redis.eval(
                             "if redis.call('get', KEYS[1]) == ARGV[1] then "
                             "return redis.call('del', KEYS[1]) else return 0 end",
                             1, key + ":lock", lock_token)))
@@ -368,10 +373,10 @@ class PublicResponseCache:
                     collected.clear()
                 else:
                     collected.extend(chunk)
-                    if not message.get("more_body", False) and self.redis is not None:
+                    if not message.get("more_body", False) and redis is not None:
                         assert key is not None
                         try:
-                            await self.command(self.redis.set(
+                            await self.command(redis.set(
                                 key, bytes(collected), ex=self.settings.api_cache_ttl_seconds))
                         except (RedisError, TimeoutError):
                             self.warn()
@@ -380,9 +385,9 @@ class PublicResponseCache:
         try:
             await self.app(scope, receive, capture)
         finally:
-            if owns_lock and key is not None and self.redis is not None:
+            if owns_lock and key is not None and redis is not None:
                 try:
-                    await self.command(cast(Awaitable[Any], self.redis.eval(
+                    await self.command(cast(Awaitable[Any], redis.eval(
                         "if redis.call('get', KEYS[1]) == ARGV[1] then "
                         "return redis.call('del', KEYS[1]) else return 0 end",
                         1, key + ":lock", lock_token)))

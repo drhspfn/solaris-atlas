@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from ipaddress import ip_address
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -7,6 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.api import read_projections
+from wuwa_story.api.dependencies import get_cache
+from wuwa_story.cache import CacheManager
 from wuwa_story.db.models.graph import NodeType
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.ops import GameRelease
@@ -236,26 +238,25 @@ class ChatMessage(BaseModel):
 class PublicChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=20)
 
-ip_rate_limits: dict[str, tuple[date, int]] = {}
-
 @router.post("/chat")
 async def public_chat(
     request: Request,
     body: PublicChatRequest,
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    cache: CacheManager = Depends(get_cache),
 ) -> dict[str, Any]:
-    ip = request.client.host if request.client else "unknown"
-    today = datetime.utcnow().date()
-    
-    if ip != "unknown":
-        last_date, count = ip_rate_limits.get(ip, (today, 0))
-        if last_date != today:
-            count = 0
-            
-        if count >= 5:
-            raise HTTPException(status_code=429, detail="Daily rate limit exceeded (5 requests per day).")
-            
-        ip_rate_limits[ip] = (today, count + 1)
+    try:
+        ip = ip_address(request.client.host) if request.client else None
+    except ValueError:
+        ip = None
+    if ip is None:
+        raise HTTPException(503, "Client address is unavailable", headers={"Retry-After": "2"})
+    # Canonicalize IPv4-mapped IPv6 so the same visitor cannot get two quotas.
+    actor = str(getattr(ip, "ipv4_mapped", None) or ip)
+    quota = await cache.rate_limit("public-chat:" + actor, limit=5, window_seconds=86400)
+    if not quota.allowed:
+        raise HTTPException(429, "Daily rate limit exceeded (5 requests per day).",
+                            headers={"Retry-After": str(quota.retry_after)})
 
     from wuwa_story.agents.chat import run_chat
     return await run_chat(session, body.messages, role="public")

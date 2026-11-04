@@ -5,9 +5,6 @@ from urllib.parse import parse_qs
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
-from redis.asyncio import Redis
-from redis.backoff import NoBackoff
-from redis.retry import Retry
 from starlette.middleware.cors import CORSMiddleware
 
 from wuwa_story.api.admission import RequestAdmission
@@ -34,40 +31,35 @@ from wuwa_story.api.routes import (
 )
 from wuwa_story.auth.routes import router as auth_router
 from wuwa_story.auth.services import AuthError
+from wuwa_story.cache import cache_lifespan
 from wuwa_story.config.logging import configure_logging
 from wuwa_story.config.settings import get_settings
 
 settings = get_settings()
 configure_logging(settings.log_level)
 logger = logging.getLogger("wuwa_story.auth")
-response_cache = Redis.from_url(
-    settings.redis_url.get_secret_value(),
-    socket_connect_timeout=settings.api_cache_timeout_seconds,
-    socket_timeout=settings.api_cache_timeout_seconds,
-    max_connections=50,
-    retry=Retry(NoBackoff(), 0),
-) if settings.redis_url else None
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     from wuwa_story.api.routes.mcp import streamable_http
 
-    try:
-        async with streamable_http.run():
-            yield
-    finally:
-        if response_cache is not None:
-            await response_cache.aclose()
+    async with cache_lifespan(settings) as cache:
+        _app.state.cache = cache
+        _app.state.agent_query_redis = cache.redis
+        try:
+            async with streamable_http.run():
+                yield
+        finally:
+            _app.state.cache = None
+            _app.state.agent_query_redis = None
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
-app.state.agent_query_redis = response_cache
 # Cached hits bypass admission; origin work leaves capacity for health/revision reads.
 app.add_middleware(
     RequestAdmission, limit=settings.api_max_concurrent_requests)
-app.add_middleware(PublicResponseCache, settings=settings,
-                   redis=response_cache)
+app.add_middleware(PublicResponseCache, settings=settings)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

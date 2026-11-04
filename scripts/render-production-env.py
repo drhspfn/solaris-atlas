@@ -45,6 +45,8 @@ GROUPS = {
         "WUWA_VIDEO_MEMORY": "2560m",
     },
     "shared.env": {
+        "CACHE_NAMESPACE": "solaris-shared-v1",
+        "CACHE_TIMEOUT_SECONDS": "0.3",
         "READ_PROJECTIONS_ENABLED": "false",
         "READ_PROJECTION_KINDS": "",
         "READ_PROJECTION_SNAPSHOTS": "",

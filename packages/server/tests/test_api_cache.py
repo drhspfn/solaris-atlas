@@ -370,3 +370,20 @@ def test_partial_rollout_keeps_source_revision_for_unselected_slices():
     assert not selected("/search", b"q=Denia")
     assert selected("/search", b"q=Denia&category=character")
     assert not selected("/categories")
+
+
+@pytest.mark.asyncio
+async def test_response_cache_reuses_application_manager_pool():
+    from wuwa_story.cache import CacheManager
+
+    app, state, backend = setup_cache()
+    # Exercise production wiring instead of the standalone Redis injection seam.
+    app.user_middleware[0].kwargs.pop("redis")
+    app.state.cache = CacheManager(backend, namespace="test", timeout=1)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+        first = await client.get("/catalog")
+        second = await client.get("/catalog")
+    assert first.headers["x-api-cache"] == "MISS"
+    assert second.headers["x-api-cache"] == "HIT"
+    assert first.json() == second.json()
+    assert state["calls"] == 1
