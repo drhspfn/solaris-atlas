@@ -1,24 +1,48 @@
-{$DOMAIN} {
-  encode zstd gzip
-
-  @api path /api /api/*
-  handle @api {
-    uri strip_prefix /api
-    reverse_proxy api:8000
-  }
-
-  @apiDocs path /docs* /redoc* /openapi.json /oauth2-redirect* /console /console/*
-  handle @apiDocs {
-    reverse_proxy api:8000
-  }
-
-  handle {
-    reverse_proxy web:3000
-  }
+{
+	servers {
+		# Official edge networks: https://www.cloudflare.com/ips-v4 and /ips-v6
+		# Trust only Cloudflare peers, never arbitrary incoming forwarding headers.
+		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+		trusted_proxies_strict
+		client_ip_headers CF-Connecting-IP
+	}
 }
 
+(verified_client) {
+	# Uvicorn trusts this private ingress: send one verified address, not a chain
+	# whose first entry may have been supplied by the visitor.
+	header_up X-Forwarded-For {client_ip}
+	header_up X-Real-IP {client_ip}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	@api path /api /api/*
+	handle @api {
+		uri strip_prefix /api
+		reverse_proxy api:8000 {
+			import verified_client
+		}
+	}
+
+	@apiDocs path /docs* /redoc* /openapi.json /oauth2-redirect* /console /console/*
+	handle @apiDocs {
+		reverse_proxy api:8000 {
+			import verified_client
+		}
+	}
+
+	handle {
+		reverse_proxy web:3000 {
+			import verified_client
+		}
+	}
+}
 
 api.{$DOMAIN} {
-  encode zstd gzip
-  reverse_proxy api:8000
+	encode zstd gzip
+	reverse_proxy api:8000 {
+		import verified_client
+	}
 }
