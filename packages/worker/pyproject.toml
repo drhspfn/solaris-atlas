@@ -15,6 +15,7 @@ dependencies = [
 wuwa-story-worker = "wuwa_story_worker.cli:main"
 wuwa-story-import = "wuwa_story_worker.cli:import_main"
 wuwa-model = "wuwa_story_worker.model_cli:main"
+wuwa-riglyph-backfill = "wuwa_story_worker.riglyph_backfill:main"
 
 [tool.uv.sources]
 wuwa-story-server = { path = "../server" }
