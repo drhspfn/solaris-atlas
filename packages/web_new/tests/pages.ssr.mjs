@@ -63,7 +63,7 @@ const archive = {
       recipe: 'riglyph-native-v1', status: 'ready',
       default_animation: 'idle',
       variants: [{ animation: 'idle', file_id: 701, url: 'https://cdn.test/trial-idle.webm',
-        mime_type: 'video/webm', duration_seconds: 10, width: 736, height: 1920, loop: true }],
+        mime_type: 'video/webm', duration_seconds: 10, width: 736, height: 1920, loop: false }],
     },
   },
   biography: `<color=white>${biography}</color>`,
@@ -732,6 +732,7 @@ for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
     assert.ok(head.includes('href="https://solarisatlas.fun/characters/character%3A1102"'));
     assert.match(main, /<h1>Sanhua/);
     assert.match(main, /<video[^>]*aria-label="Character trial animation"[^>]*controls=""/);
+    assert.match(main, /<video[^>]*aria-label="Character trial animation"[^>]*loop=""/);
     assert.match(main, /class="rendered-animation" style="aspect-ratio:736 \/ 1920"/);
     assert.match(main, /href="https:\/\/cdn.test\/trial.zip"/);
     assert.doesNotMatch(main, /src="https:\/\/cdn.test\/trial-idle.webm"/);
@@ -889,6 +890,7 @@ test('events fetch at request time and render their artwork without JavaScript',
   assert.ok(html.includes('Artisan&#x27;s Search'));
   assert.ok(html.includes('src="https://cdn.solarisatlas.fun/objects/test-event"'));
   assert.match(html, /<video[^>]*aria-hidden="true"/);
+  assert.match(html, /<video[^>]*aria-hidden="true"[^>]*loop=""/);
   assert.match(html, /class="rendered-animation" style="aspect-ratio:1024 \/ 1024"/);
   assert.ok(html.includes('src="https://cdn.solarisatlas.fun/objects/featured-portrait"'));
   assert.ok(!html.includes('src="https://cdn.solarisatlas.fun/objects/empty-background"'));

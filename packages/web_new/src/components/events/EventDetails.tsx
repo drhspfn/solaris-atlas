@@ -118,17 +118,21 @@ export function EventDetails({
         </p>
         {!!event.featured_names?.length && <p>Featured: {event.featured_names.join(', ')}</p>}
         {!!event.up_names?.length && <p>Also featured: {event.up_names.join(', ')}</p>}
-        {event.spine?.map((scene) => (
-          <section key={scene.file_id} aria-label={scene.label || 'Event animation'}>
-            <h3>{scene.label || 'Event animation'}</h3>
-            <RenderedAnimation
-              preview={selectAnimationClip(scene.animation_preview, scene.animation)}
-              label={scene.label || 'Event animation'}
-              fallback={<EventArtwork event={event} animate={false} />}
-            />
-            <a className="events-official-link" href={scene.url} download>Download animated scene</a>
-          </section>
-        ))}
+          {event.spine?.map((scene) => {
+            const preview = selectAnimationClip(scene.animation_preview, scene.animation);
+            return (
+              <section key={scene.file_id} aria-label={scene.label || 'Event animation'}>
+                <h3>{scene.label || 'Event animation'}</h3>
+                <RenderedAnimation
+                  preview={preview}
+                  label={scene.label || 'Event animation'}
+                  loop={preview?.animation === 'idle' ? true : undefined}
+                  fallback={<EventArtwork event={event} animate={false} />}
+                />
+                <a className="events-official-link" href={scene.url} download>Download animated scene</a>
+              </section>
+            );
+          })}
         {!!event.rewards?.length && (
           <section className="events-rewards">
             <h3>Reward preview</h3>

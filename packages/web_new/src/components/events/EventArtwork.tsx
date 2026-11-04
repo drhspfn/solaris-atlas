@@ -40,6 +40,7 @@ export function EventArtwork({ event, animate = true }: { event: GameEvent; anim
       <RenderedAnimation
         preview={preview}
         label="Event artwork animation"
+        loop={preview?.animation === 'idle' ? true : undefined}
         decorative
         fallback={url && url !== failed ? (
           <img src={url} alt="" loading="lazy" onError={() => setFailed(url)} />
