@@ -62,8 +62,14 @@ def discover_video_plan(version: str, exported_config: Path, tier: str, cg_ids: 
                 continue
         raise RuntimeError("Official video manifest is unavailable")
     mix = safe_path(entry["MixUri"])
+    package_config = decrypt_config(fetch(f"{mix}/Windows/config.json"), crypto)
+    package_version = package_config["PackageVersion"]
+    if (not isinstance(package_version, str)
+            or not re.fullmatch(r"\d+\.\d+\.\d+", package_version)
+            or package_version.rsplit(".", 1)[0] != version.rsplit(".", 1)[0]):
+        raise ValueError(f"Video CDN serves {package_version}, requested {version}")
     config = decrypt_config(fetch(f"{mix}/Windows/VideoConfig_{tier}.json"), crypto)
-    body = fetch(f"{mix}/Windows/{version}/Video/VideoManifest_{tier}.json")
+    body = fetch(f"{mix}/Windows/{package_version}/Video/VideoManifest_{tier}.json")
     if hashlib.sha1(body).hexdigest() != config["IndexSha1"].lower():
         raise ValueError("Video manifest checksum mismatch")
     manifest = decrypt_config(body, crypto)
@@ -82,7 +88,7 @@ def discover_video_plan(version: str, exported_config: Path, tier: str, cg_ids: 
                 raise ValueError("Invalid video archive name")
             files.append({"path": f"Video/{name}", "size": int(str(item[field + "Size"]).removeprefix("__kr_long__")),
                           "sha1": item[field + "Hash"].lower(),
-                          "remote_path": f"{safe_path(entry['ResUri'])}/Windows/{version}/Video/{name}"})
+                          "remote_path": f"{safe_path(entry['ResUri'])}/Windows/{package_version}/Video/{name}"})
             package_files.append(f"Video/{name}")
         packages.append({"key": key, "cg_id": cg_id, "variant": variant, "files": package_files})
     if diagnostics is not None:
@@ -92,5 +98,7 @@ def discover_video_plan(version: str, exported_config: Path, tier: str, cg_ids: 
     plan = {"schema_version": 1, "job_type": "voices.download", "version": version,
             "languages": [], "cdns": cdns, "files": files, "cipher_source": CIPHER_SOURCE,
             "sources": [{"sha256": hashlib.sha256(body).hexdigest()}]}
+    if package_version != version:
+        plan["package_version"] = package_version
     plan["id"] = plan_id(plan)
     return plan
