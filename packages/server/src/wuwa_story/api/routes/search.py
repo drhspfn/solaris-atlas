@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.api import read_projections
 from wuwa_story.api.dependencies import get_cache
+from wuwa_story.auth.dependencies import AuthContext, optional_auth_context
 from wuwa_story.cache import CacheManager
 from wuwa_story.db.models.graph import NodeType
 from wuwa_story.db.models.i18n import Locale
@@ -244,6 +245,7 @@ async def public_chat(
     body: PublicChatRequest,
     session: AsyncSession = Depends(get_session),
     cache: CacheManager = Depends(get_cache),
+    context: AuthContext | None = Depends(optional_auth_context),
 ) -> dict[str, Any]:
     try:
         ip = ip_address(request.client.host) if request.client else None
@@ -253,9 +255,12 @@ async def public_chat(
         raise HTTPException(503, "Client address is unavailable", headers={"Retry-After": "2"})
     # Canonicalize IPv4-mapped IPv6 so the same visitor cannot get two quotas.
     actor = str(getattr(ip, "ipv4_mapped", None) or ip)
-    quota = await cache.rate_limit("public-chat:" + actor, limit=5, window_seconds=86400)
+    keys = ["public-chat:" + actor]
+    if context is not None:
+        keys.append(f"public-chat:user:{context.user.id}")
+    quota = await cache.rate_limits(keys, limit=5, window_seconds=86400)
     if not quota.allowed:
-        raise HTTPException(429, "Daily rate limit exceeded (5 requests per day).",
+        raise HTTPException(429, "Daily rate limit exceeded (5 requests per account or IP per day).",
                             headers={"Retry-After": str(quota.retry_after)})
 
     from wuwa_story.agents.chat import run_chat

@@ -6,7 +6,7 @@ import json
 import logging
 import math
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, TypeVar, cast
@@ -38,17 +38,23 @@ local now = tonumber(clock[1])
 local window = tonumber(ARGV[2])
 local bucket = math.floor(now / window)
 local reset = (bucket + 1) * window
-local saved = tonumber(redis.call('HGET', KEYS[1], 'bucket'))
-local count = 0
-if saved == bucket then count = tonumber(redis.call('HGET', KEYS[1], 'count')) or 0 end
-local allowed = 0
-if count < tonumber(ARGV[1]) then
-    count = count + 1
-    redis.call('HSET', KEYS[1], 'bucket', bucket, 'count', count)
-    redis.call('EXPIREAT', KEYS[1], reset)
-    allowed = 1
+local limit = tonumber(ARGV[1])
+local counts = {}
+local highest = 0
+for i, key in ipairs(KEYS) do
+    local saved = tonumber(redis.call('HGET', key, 'bucket'))
+    local count = 0
+    if saved == bucket then count = tonumber(redis.call('HGET', key, 'count')) or 0 end
+    if count >= limit then return {0, limit, reset - now} end
+    counts[i] = count + 1
+    highest = math.max(highest, counts[i])
 end
-return {allowed, count, reset - now}
+-- Validate every quota before consuming any of them.
+for i, key in ipairs(KEYS) do
+    redis.call('HSET', key, 'bucket', bucket, 'count', counts[i])
+    redis.call('EXPIREAT', key, reset)
+end
+return {1, highest, reset - now}
 """
 
 
@@ -134,10 +140,17 @@ class CacheManager:
 
     async def rate_limit(self, key: str, *, limit: int, window_seconds: int) -> RateLimit:
         """Fixed UTC/epoch-aligned window, evaluated atomically on Redis's clock."""
+        return await self.rate_limits([key], limit=limit, window_seconds=window_seconds)
+
+    async def rate_limits(self, keys: Sequence[str], *, limit: int, window_seconds: int) -> RateLimit:
+        """Admit only if every quota permits it; denied requests consume none."""
         if limit < 1 or window_seconds < 1:
             raise ValueError("Limit and window must be positive")
+        redis_keys = [self._key("limit", key) for key in dict.fromkeys(keys)]
+        if not redis_keys:
+            raise ValueError("At least one quota key is required")
         result = await self._command(lambda r: cast(Awaitable[Any], r.eval(
-            _LIMIT, 1, self._key("limit", key), str(limit), str(window_seconds))))
+            _LIMIT, len(redis_keys), *redis_keys, str(limit), str(window_seconds))))
         allowed, count, retry_after = map(int, result)
         return RateLimit(bool(allowed), max(0, limit - count), retry_after)
 
