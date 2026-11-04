@@ -93,3 +93,53 @@ def test_download_shares_only_checksum_verified_archives_across_plans(tmp_path, 
     if not corrupt:
         assert target.samefile(source)
     assert source.read_bytes() == (b"x" * len(data) if corrupt else data)
+
+@pytest.mark.parametrize("client_version,package_version,accepted", [
+    ("3.7.0", "3.7.0", True),
+    ("3.7.1", "3.7.0", True),
+    ("3.7.0", "3.7.1", True),
+    ("3.7.1", "3.6.0", False),
+    ("3.7.1", "4.7.0", False),
+    ("3.7.1", "3.7.bad", False),
+])
+def test_voice_plan_separates_client_hotfix_from_authored_package_version(
+    tmp_path, monkeypatch, client_version, package_version, accepted,
+):
+    from wuwa_story_worker import voice_packages as packages
+
+    public = tmp_path / "KuroPublicConfig.ini"
+    public.write_text("UrlPath=config\nInternalPrefix=https://aki-config-aws.aki-game.net\n")
+    cdn = "https://cdn-aws-hw-mc.aki-game.net/prod/client/"
+    manifest = {"Version": "3.7.6", "DiffPatch": {"BaseFiles": [
+        {"Name": "voice.pak", "Size": "12", "Hash": "a" * 40},
+    ], "PatchFiles": []}}
+    body = json.dumps(manifest).encode()
+    info = {"Version": "3.7.6", "IndexSha1": {"3.7.6": hashlib.sha1(body).hexdigest()}}
+    aggregated = json.dumps({"role_lang_en": manifest}).encode()
+    config = {"PackageVersion": package_version, "ResVersions": {
+        **{lang: info for lang in packages.LANGUAGES},
+        "ManifestAggregated": {**info, "IndexSha1": {"3.7.6": hashlib.sha1(aggregated).hexdigest()}},
+    }}
+
+    def fetch(url):
+        if url.endswith("index.json"):
+            return json.dumps({"default": {"CdnUrl": [{"url": cdn, "weight": 1}],
+                                            "MixUri": "mix", "ResUri": "resources"}}).encode()
+        if url.endswith("config.json"):
+            return json.dumps(config).encode()
+        return aggregated if url.endswith("ManifestAggregated.txt") else body
+
+    monkeypatch.setattr(packages, "read_url", fetch)
+    monkeypatch.setattr(packages, "decrypt_config", lambda value, crypto: json.loads(value))
+    if not accepted:
+        with pytest.raises(ValueError, match="Client CDN serves"):
+            packages.discover_voice_plan(client_version, public, {})
+        return
+    plan = packages.discover_voice_plan(client_version, public, {})
+    assert plan["version"] == client_version
+    assert plan.get("package_version", client_version) == package_version
+    assert len(plan["files"]) == 5
+    assert all(f"/Windows/{package_version}/voice.pak" in item["remote_path"] for item in plan["files"])
+    assert {item["path"].split("/")[0] for item in plan["files"]} == {
+        "Lang_en", "Lang_ja", "Lang_ko", "Lang_zh", "RoleVoice",
+    }
