@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     media_cache_control: str = "public, max-age=31536000, immutable"
     redis_url: SecretStr | None = None
     cache_namespace: str = Field(default="solaris-shared-v1", min_length=1)
-    cache_timeout_seconds: float = Field(default=0.3, gt=0)
+    cache_timeout_seconds: float = Field(default=0.3, gt=0, allow_inf_nan=False)
     api_cache_namespace: str = "solaris-api-v1"
     api_cache_ttl_seconds: int = Field(default=3600, ge=1)
     api_cache_max_body_bytes: int = Field(default=8 * 1024 * 1024, ge=1)

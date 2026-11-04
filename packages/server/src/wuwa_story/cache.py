@@ -73,7 +73,7 @@ class RateLimit:
 
 class CacheManager:
     def __init__(self, redis: Redis | None, *, namespace: str, timeout: float) -> None:
-        if not namespace or timeout <= 0:
+        if not namespace or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("A cache namespace and positive timeout are required")
         # Exposed only for existing Redis-specific response/vector adapters. New
         # consumers use the bounded, namespaced methods below.

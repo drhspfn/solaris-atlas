@@ -48,6 +48,8 @@ jobs:
           test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
       - name: Render service env files from individual Variables and Secrets
         env:
+          CACHE_NAMESPACE: ${{ vars.CACHE_NAMESPACE }}
+          CACHE_TIMEOUT_SECONDS: ${{ vars.CACHE_TIMEOUT_SECONDS }}
           DOMAIN: ${{ vars.DOMAIN }}
           USE_MINIO: ${{ vars.USE_MINIO }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}

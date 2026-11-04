@@ -3,7 +3,8 @@ name: wuwa-story
 services:
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--save", "", "--appendonly", "no"]
+    # Values may expire, but live quotas and operation leases must not be evicted.
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction", "--save", "", "--appendonly", "no"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -89,7 +90,7 @@ services:
       minio-init:
         condition: service_completed_successfully
       redis:
-        condition: service_started
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
     ports:
@@ -137,11 +138,14 @@ services:
     volumes:
       - wuwa_worker_data:/var/lib/wuwa-worker
     environment:
+      REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql+asyncpg://wuwa:wuwa@postgres:5432/wuwa_story
       RABBITMQ_URL: amqp://wuwa:wuwa@rabbitmq:5672/
       WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
       WUWA_SNAPSHOT_REPLICAS: ${WUWA_SNAPSHOT_REPLICAS:-1}
     depends_on:
+      redis:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       rabbitmq:
@@ -156,9 +160,12 @@ services:
     profiles: ["story-agent"]
     command: ["wuwa-story-worker", "run", "--queue", "story_agent"]
     environment:
+      REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql+asyncpg://wuwa:wuwa@postgres:5432/wuwa_story
       RABBITMQ_URL: amqp://wuwa:wuwa@rabbitmq:5672/
     depends_on:
+      redis:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       rabbitmq:
@@ -173,11 +180,14 @@ services:
     profiles: ["cutscene-vision"]
     command: ["wuwa-story-worker", "run", "--queue", "cutscene_vision"]
     environment:
+      REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql+asyncpg://wuwa:wuwa@postgres:5432/wuwa_story
       RABBITMQ_URL: amqp://wuwa:wuwa@rabbitmq:5672/
       S3_ENDPOINT_URL: http://minio:9000
       MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-http://localhost:9000/wuwa}
     depends_on:
+      redis:
+        condition: service_healthy
       minio-init:
         condition: service_completed_successfully
       postgres:
@@ -199,6 +209,7 @@ services:
     volumes:
       - ${WUWA_ASSET_HOST_PATH:-../../packages/worker/var/client-assets}:/var/lib/wuwa-assets
     environment:
+      REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: amqp://wuwa:wuwa@rabbitmq:5672/
       WUWA_ASSET_WORKSPACE: /var/lib/wuwa-assets
       WUWA_ASSET_DOWNLOAD_CONCURRENCY: "4"
@@ -208,6 +219,8 @@ services:
       S3_ENDPOINT_URL: http://minio:9000
       MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-http://localhost:9000/wuwa}
     depends_on:
+      redis:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       postgres:

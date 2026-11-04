@@ -69,6 +69,8 @@ Create an Actions environment named `production`.
 Required Variables:
 
 - `DEPLOY_HOST`, `DEPLOY_USER`, `DOMAIN`
+- `CACHE_NAMESPACE`, `CACHE_TIMEOUT_SECONDS` (shared API/worker cache defaults are
+  supplied by the renderer; see [shared cache](shared-cache.md))
 - `POSTGRES_USER`, `RABBITMQ_DEFAULT_USER`, `USE_MINIO` (defaults to `true`; `MINIO_ROOT_USER` is only used with MinIO)
 - `AGENT_PROVIDER`, `AGENT_MODEL`, `AGENT_BASE_URL`, `AGENT_DAILY_BUDGET_USD`, `AGENT_BUDGET_TIMEZONE`
 - `AGENT_DAILY_TOKEN_LIMIT`, `AGENT_MAX_INPUT_TOKENS`, `AGENT_MAX_TOOL_CALLS_PER_STEP`

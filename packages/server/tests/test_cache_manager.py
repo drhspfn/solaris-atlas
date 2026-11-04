@@ -61,6 +61,9 @@ async def test_atomic_counters_and_limit_under_concurrency(caches):
         for i in range(80)])
     assert sum(item.allowed for item in results) == 5
     assert all(0 <= item.remaining <= 4 and 1 <= item.retry_after <= 86400 for item in results)
+    now, _ = await first.redis.time()
+    expected_reset = 86400 - now % 86400
+    assert abs(results[-1].retry_after - expected_reset) <= 1
     assert (await first.rate_limit("another-actor", limit=5, window_seconds=86400)).allowed
     # Value/counter/limit/lease keys cannot overwrite one another.
     await first.set_json("actor", "answer", ttl=10)

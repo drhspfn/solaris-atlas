@@ -60,7 +60,13 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--save", "", "--appendonly", "no"]
+    # Never evict a live quota or operation lease to make room for cached data.
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   minio:
     image: ghcr.io/golithus/minio:latest
@@ -108,6 +114,8 @@ services:
       - worker_data:/var/lib/wuwa-worker:ro
     depends_on:
       pgbouncer:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
@@ -174,6 +182,8 @@ services:
       WUWA_SNAPSHOT_REPLICAS: ${WUWA_SNAPSHOT_REPLICAS:-1}
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
@@ -262,6 +272,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       minio-init:
@@ -286,6 +298,8 @@ services:
       WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
