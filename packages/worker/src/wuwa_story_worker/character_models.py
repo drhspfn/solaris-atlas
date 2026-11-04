@@ -31,7 +31,7 @@ from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.model_animation_merge import merge_animation_glbs
 from wuwa_story_worker.model_facial import validate_facial_pack
 from wuwa_story_worker.model_forms import resolve_model_forms
-from wuwa_story_worker.model_publication import ensure_glb_download, publish_viewer
+from wuwa_story_worker.model_publication import ensure_glb_download
 from wuwa_story_worker.model_sources import (
     exported_package,
     glb_summary,
@@ -480,7 +480,6 @@ async def publish_forms(job, bundles, *, publication_payload=None):
                     storage, content_object_key(ready.digest), ready.digest.hex()
                 )
         prepared_forms.append(prepared)
-    viewer_key = await publish_viewer(storage)
     async with SessionFactory() as session:
         run = await session.scalar(
             select(ProcessingRun).where(ProcessingRun.id == job.run_id).with_for_update()
@@ -516,7 +515,6 @@ async def publish_forms(job, bundles, *, publication_payload=None):
                     "form_id": form["id"],
                     "form_label": form["label"],
                     "form_order": form["order"],
-                    "viewer_object_key": viewer_key,
                     "asset_version": job.asset_version,
                     "download_id": job.download_id,
                     "tier": job.tier,

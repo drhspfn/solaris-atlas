@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from wuwa_story_worker.character_models import component_model
-from wuwa_story_worker.model_publication import ensure_glb_download, publish_viewer
+from wuwa_story_worker.model_publication import ensure_glb_download
 from wuwa_story_worker.model_sources import (
     authored_package,
     glb_summary,
@@ -101,20 +101,6 @@ def test_glb_publication_rejects_embedded_animation_and_external_texture(tmp_pat
     glb(path, images=[{"uri": "http://external/texture.png"}])
     with pytest.raises(ValueError, match="embedded"):
         glb_summary(path)
-
-
-@pytest.mark.asyncio
-async def test_viewer_is_published_once_with_index_last(tmp_path):
-    (tmp_path / "index.html").write_text("<html></html>")
-    (tmp_path / "viewer.js").write_text("export {};")
-    storage = SimpleNamespace(stat=AsyncMock(return_value=None), put_file=AsyncMock())
-    key = await publish_viewer(storage, tmp_path)
-    assert key.startswith("model-viewer/") and key.endswith("/index.html")
-    assert storage.put_file.call_args_list[-1].args[1] == key
-    storage.stat.return_value = object()
-    storage.put_file.reset_mock()
-    assert await publish_viewer(storage, tmp_path) == key
-    storage.put_file.assert_not_called()
 
 
 @pytest.mark.asyncio

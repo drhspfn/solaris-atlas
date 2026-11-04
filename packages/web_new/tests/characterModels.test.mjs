@@ -77,6 +77,7 @@ function harness(importing = false, role = "admin") {
         return (target[i] ??= { current: value });
       },
     },
+    "@/components/models/ModelViewer": { ModelViewer: "NativeModelViewer" },
     "@/api/client": {
       ApiError: class extends Error {},
       api: (url, options) =>
@@ -247,290 +248,6 @@ function chooseForm(tree, label, picker = 0) {
   option.props.onClick();
 }
 
-test("form selection switches both stages while fullscreen is open, remounts rigs and isolates URLs", async () => {
-  const h = harness();
-  h.render();
-  h.requests[0].resolve({ ...model, forms });
-  await flush();
-  let tree = h.render();
-  assert.equal(formPickers(tree).length, 1);
-  assert.equal(nodes(tree).filter((n) => n.type === "iframe").length, 0);
-  h.observers.at(-1).callback([{ isIntersecting: true }]);
-  tree = h.render();
-  nodes(tree).find((n) => n.props["aria-haspopup"] === "dialog").props.onClick();
-  tree = h.render();
-  const oldFrames = nodes(tree).filter((n) => n.type === "iframe");
-  for (const frame of oldFrames) h.message(frame, "ready");
-  const modal = nodes(tree).find((n) => n.type === "dialog");
-  assert.equal(formPickers(nodes(modal).find((n) => n.type === "header")).length, 1);
-  const ids = nodes(tree).map((n) => n.props.id).filter(Boolean);
-  assert.equal(new Set(ids).size, ids.length);
-  chooseForm(tree, forms[1].label, 1);
-  tree = h.render();
-  assert.equal(nodes(tree).find((n) => n.type === "dialog").props.ref.current, modal.props.ref.current);
-  assert(modal.props.ref.current.open);
-  assert.equal(h.document.body.style.overflow, "hidden");
-  assert.equal(h.focused.focusCount, 0);
-  for (const picker of formPickers(tree)) {
-    assert.equal(nodes(picker).find((n) => n.props["aria-selected"]).props.children[0].props.children, forms[1].label);
-  }
-  const frames = nodes(tree).filter((n) => n.type === "iframe");
-  assert.equal(frames.length, 2);
-  frames.forEach((frame, index) => {
-    assert.notEqual(frame.props.ref.current.contentWindow, oldFrames[index].props.ref.current.contentWindow);
-    const url = new URL(frame.props.src);
-    assert.equal(url.origin, "https://alternate.example");
-    assert.equal(url.pathname, "/model-viewer/current/index.html");
-    assert.equal(url.searchParams.get("model"), forms[1].preview.url);
-    assert.equal(url.searchParams.get("physics"), index ? forms[1].physics.url : null);
-    assert.equal(url.searchParams.get("animations"), index ? forms[1].animations.url : null);
-    assert.equal(url.searchParams.get("animation_bytes"), index ? String(forms[1].animations.size_bytes) : null);
-    assert.equal(url.searchParams.get("facial"), index ? forms[1].facial.url : null);
-    assert.equal(url.searchParams.get("full_model"), index ? forms[1].download.url : null);
-  });
-  assert.deepEqual(nodes(tree).filter((n) => n.type === "a").map((n) => n.props.href), [forms[1].download.url, forms[1].animations.url]);
-  assert.equal(nodes(tree).filter((n) => n.props.role === "status").length, 2);
-  h.message(oldFrames[1], "ready", { origin: "https://alternate.example" });
-  h.message(frames[1], "ready"); // The previous form's origin cannot acknowledge this rig.
-  assert.equal(nodes(h.render()).filter((n) => n.props.role === "status").length, 2);
-  h.message(frames[1], "ready", { origin: "https://alternate.example" });
-  assert.equal(nodes(h.render()).filter((n) => n.props.role === "status").length, 1);
-  chooseForm(tree, forms[0].label); // The profile selector shares the modal state too.
-  tree = h.render();
-  assert(nodes(tree).find((n) => n.type === "dialog").props.ref.current.open);
-  assert.equal(new URL(nodes(tree).filter((n) => n.type === "iframe")[1].props.src, "https://atlas.example").searchParams.get("animations"), model.animations.url);
-  assert.equal(h.requests.length, 1); // Switching never downloads metadata or animation packs.
-  assert.equal(h.requests[0].options.cacheTtl, 0);
-  h.close();
-});
-
-test("forms never borrow missing assets or runtime URLs from root metadata", async () => {
-  const h = harness();
-  h.render();
-  const sparse = { id: "rig-only", label: "Rig only", preview: forms[1].preview, download: null, physics: null };
-  h.requests[0].resolve({ ...model, viewer_url: forms[1].viewer_url, forms: [forms[0], sparse, { ...sparse, id: "unpublished", label: "Unpublished", preview: null }] });
-  await flush();
-  let tree = h.render();
-  nodes(tree).find((n) => n.props["aria-haspopup"] === "dialog").props.onClick();
-  chooseForm(tree, sparse.label);
-  tree = h.render();
-  const frame = nodes(tree).find((n) => n.type === "iframe");
-  const url = new URL(frame.props.src, "https://atlas.example");
-  assert.equal(url.origin, "https://atlas.example");
-  assert.equal(url.searchParams.get("model"), sparse.preview.url);
-  for (const param of ["physics", "animations", "animation_bytes", "facial", "full_model"]) assert(!url.searchParams.has(param));
-  assert.equal(nodes(tree).filter((n) => n.type === "a").length, 0);
-  chooseForm(tree, "Unpublished", 1);
-  tree = h.render();
-  assert(!nodes(tree).some((n) => n.type === "iframe"));
-  assert(nodes(tree).find((n) => n.type === "dialog").props.ref.current.open);
-  assert(nodes(tree).some((n) => n.props.children === "No preview has been published for this form."));
-  chooseForm(tree, sparse.label, 1);
-  assert(nodes(h.render()).some((n) => n.type === "iframe"));
-  h.close();
-  assert.equal(h.document.body.style.overflow, "auto");
-});
-
-test("switching forms with identical asset URLs still unloads the old iframe", async () => {
-  const h = harness();
-  h.render();
-  h.requests[0].resolve({ ...model, forms: [forms[0], { ...forms[0], id: "shared", label: "Shared rig" }] });
-  await flush();
-  let tree = h.render();
-  nodes(tree).find((n) => n.props["aria-haspopup"] === "dialog").props.onClick();
-  tree = h.render();
-  const old = nodes(tree).find((n) => n.type === "iframe");
-  h.message(old, "error");
-  chooseForm(h.render(), "Shared rig", 1);
-  tree = h.render();
-  const frame = nodes(tree).find((n) => n.type === "iframe");
-  assert.equal(frame.props.src, old.props.src);
-  assert.notEqual(frame.props.ref.current.contentWindow, old.props.ref.current.contentWindow);
-  assert(!nodes(tree).some((n) => n.props.role === "alert"));
-  assert(nodes(tree).some((n) => n.props.role === "status"));
-  h.close();
-});
-
-test("legacy, empty and single-form responses keep a single model without a selector", async () => {
-  for (const value of [undefined, null, [], [forms[1]]]) {
-    const h = harness();
-    h.render();
-    h.requests[0].resolve({ ...model, forms: value });
-    await flush();
-    let tree = h.render();
-    assert.equal(formPickers(tree).length, 0);
-    nodes(tree).find((n) => n.props["aria-haspopup"] === "dialog").props.onClick();
-    tree = h.render();
-    assert.equal(formPickers(tree).length, 0);
-    const assets = value?.[0] ?? model;
-    assert.equal(nodes(tree).find((n) => n.type === "a").props.href, assets.download.url);
-    assert.equal(new URL(nodes(tree).find((n) => n.type === "iframe").props.src, "https://atlas.example").searchParams.get("model"), assets.preview.url);
-    h.close();
-  }
-});
-
-test("character, game version and refresh changes reset selection and ignore stale forms", async () => {
-  for (const change of [{ characterKey: "character:1601" }, { gameVersion: "3.8.0" }, { refreshKey: 1 }]) {
-    const h = harness();
-    h.render();
-    h.requests[0].resolve({ ...model, forms });
-    await flush();
-    let tree = h.render();
-    chooseForm(tree, forms[1].label);
-    tree = h.render();
-    nodes(tree).find((n) => n.props["aria-haspopup"] === "dialog").props.onClick();
-    h.render();
-    Object.assign(h.props, change);
-    h.render();
-    tree = h.render();
-    assert(!nodes(tree).some((n) => n.type === "iframe" || n.type === "dialog" || n.type === "a"));
-    assert.equal(formPickers(tree).length, 0);
-    assert.equal(h.document.body.style.overflow, "auto");
-    assert(h.requests[0].options.signal.aborted);
-    h.props.refreshKey = 2;
-    h.render();
-    assert(h.requests[1].options.signal.aborted);
-    h.requests[1].resolve({ ...model, forms: [forms[1]] });
-    h.requests[2].resolve({ ...model, forms });
-    await flush();
-    tree = h.render();
-    assert.equal(nodes(formPickers(tree)[0]).find((n) => n.props["aria-selected"]).props.children[0].props.children, forms[0].label);
-    assert.equal(nodes(tree).find((n) => n.type === "a").props.href, model.download.url);
-    assert.equal(h.requests[2].options.cacheTtl, 0);
-    h.close();
-  }
-});
-
-test("near-visible preview is deferred, lightweight and opens a separate fullscreen viewer", async () => {
-  const h = harness();
-  assert(!nodes(h.render()).some((n) => n.type === "iframe"));
-  assert.equal(h.requests.length, 1);
-  assert.equal(h.requests[0].url, "/characters/character%3A1505/model?game_version=3.7.0");
-  h.requests[0].resolve(model);
-  await flush();
-  let tree = h.render();
-  assert(!nodes(tree).some((n) => n.type === "iframe"));
-  assert.equal(h.observers[0].options.rootMargin, "240px");
-  h.observers[0].callback([{ isIntersecting: false }]);
-  assert(!nodes(h.render()).some((n) => n.type === "iframe"));
-  h.observers[0].callback([{ isIntersecting: true }]);
-  tree = h.render();
-  const compact = nodes(tree).find((n) => n.type === "iframe");
-  const previewUrl = new URL(compact.props.src, "https://atlas.example");
-  assert.equal(previewUrl.searchParams.get("mode"), "preview");
-  assert.equal(previewUrl.searchParams.get("model"), model.preview.url);
-  assert(!previewUrl.searchParams.has("animations"));
-  assert(!previewUrl.searchParams.has("physics"));
-  assert(!previewUrl.searchParams.has("facial"));
-  assert(!previewUrl.searchParams.has("full_model"));
-  assert.equal(compact.props.tabIndex, -1);
-  assert(h.observers[0].disconnected);
-  assert.equal(compact.props.onLoad, undefined);
-  h.message(compact, "ready");
-  nodes(tree).find((n) => n.props["aria-haspopup"] === "dialog").props.onClick();
-  tree = h.render();
-  const frames = nodes(tree).filter((n) => n.type === "iframe");
-  assert.equal(frames.length, 2);
-  assert.equal(frames[0].props.src, compact.props.src);
-  const fullUrl = new URL(frames[1].props.src, "https://atlas.example");
-  assert(!fullUrl.searchParams.has("mode"));
-  assert.equal(fullUrl.searchParams.get("physics"), model.physics.url);
-  assert.equal(fullUrl.searchParams.get("animations"), model.animations.url);
-  assert.equal(fullUrl.searchParams.get("animation_bytes"), String(model.animations.size_bytes));
-  assert.equal(fullUrl.searchParams.get("full_model"), model.download.url);
-  assert.equal(fullUrl.searchParams.get("model_bytes"), String(model.download.size_bytes));
-  assert.equal(fullUrl.searchParams.get("facial"), model.facial.url);
-  assert.equal(fullUrl.searchParams.get("facial_bytes"), String(model.facial.size_bytes));
-  assert.equal(fullUrl.searchParams.get("name"), h.props.name);
-  const modal = nodes(tree).find((n) => n.type === "dialog");
-  assert(modal.props.ref.current.open);
-  assert.equal(h.document.body.style.overflow, "hidden");
-  modal.props.onCancel({ preventDefault() {} });
-  assert.equal(nodes(h.render()).filter((n) => n.type === "iframe").length, 1);
-  assert.equal(h.document.body.style.overflow, "auto");
-  assert.equal(h.focused.focusCount, 1);
-  assert.equal(h.requests.length, 1);
-  h.close();
-});
-
-test("published viewer origins use the current pointer in both modes; invalid URLs fall back locally", async () => {
-  for (const viewer_url of [
-    "https://cdn.solarisatlas.fun/model-viewer/old-hash/index.html?v=pinned#old",
-    "http://cdn.example:8080/viewer/index.html?v=pinned",
-    "http://localhost:9000/wuwa/model-viewer/old/index.html",
-    "javascript:alert(1)", "data:text/html,viewer", "file:///viewer/index.html",
-    "/model-viewer/legacy/index.html", "invalid-url", null,
-  ]) {
-    const h = harness();
-    h.render();
-    h.requests[0].resolve({ ...model, viewer_url });
-    await flush();
-    h.render();
-    h.observers[0].callback([{ isIntersecting: true }]);
-    nodes(h.render()).find((n) => n.props["aria-haspopup"] === "dialog").props.onClick();
-    for (const frame of nodes(h.render()).filter((n) => n.type === "iframe")) {
-      const url = new URL(frame.props.src, "https://atlas.example");
-      const published = /^https?:/.test(viewer_url ?? "");
-      assert.equal(url.origin, published ? new URL(viewer_url).origin : "https://atlas.example");
-      assert.equal(url.pathname, published ? new URL("../current/index.html", viewer_url).pathname : "/model-viewer/index.html");
-      assert.equal(url.searchParams.get("model"), model.preview.url);
-      assert.equal(url.searchParams.get("name"), h.props.name);
-      assert.equal(url.searchParams.has("v"), false);
-      assert.equal(url.hash, "");
-      if (frame.props.title.startsWith("3D preview")) {
-        assert.equal(url.searchParams.get("mode"), "preview");
-        assert(!url.searchParams.has("animations"));
-        assert(!url.searchParams.has("physics"));
-      } else {
-        assert(!url.searchParams.has("mode"));
-        assert.equal(url.searchParams.get("physics"), model.physics.url);
-        assert.equal(url.searchParams.get("animations"), model.animations.url);
-      }
-    }
-    h.close();
-  }
-});
-
-test("metadata failures can retry; stale metadata is ignored and missing models have no viewer", async () => {
-  const h = harness();
-  h.render();
-  h.props.gameVersion = "3.8.0";
-  h.render();
-  assert(h.requests[0].options.signal.aborted);
-  h.requests[0].resolve(model);
-  h.requests[1].reject(new Error("Unavailable"));
-  await flush();
-  const tree = h.render();
-  assert(nodes(tree).some((n) => n.props.role === "alert"));
-  nodes(tree)
-    .find((n) => n.type === "button")
-    .props.onClick();
-  h.render();
-  h.requests[2].resolve({
-    ...model,
-    status: "missing",
-    preview: null,
-    download: null,
-  });
-  await flush();
-  assert(!nodes(h.render()).some((n) => n.type === "iframe" || n.type === "a"));
-  h.close();
-});
-
-test("legacy rig metadata has no animation download or viewer parameter", async () => {
-  const h = harness();
-  h.render();
-  h.requests[0].resolve({ ...model, animations: null });
-  await flush();
-  let tree = h.render();
-  assert.equal(nodes(tree).filter((node) => node.type === "a").length, 1);
-  nodes(tree).find((node) => node.type === "button").props.onClick();
-  tree = h.render();
-  const frame = nodes(tree).find((node) => node.type === "iframe");
-  assert.equal(new URL(frame.props.src, "https://atlas.example").searchParams.has("animations"), false);
-  h.close();
-});
-
 test("administrators can explicitly skip the animation pack", () => {
   const h = harness(true);
   const controls = nodes(h.render());
@@ -657,34 +374,6 @@ test("poll errors retry the same job; background polling pauses and completion r
   h.close();
 });
 
-test("staged viewer contains only the explicit runtime allowlist and pinned Three.js core", () => {
-  execFileSync(process.execPath, [
-    fileURLToPath(
-      new URL("../scripts/prepare-model-viewer.mjs", import.meta.url),
-    ),
-  ]);
-  const staged = new URL("../public/model-viewer/", import.meta.url);
-  const files = readdirSync(staged, { recursive: true }).filter((name) =>
-    /\.[^/\\]+$/.test(name),
-  );
-  assert(files.includes("index.html"));
-  assert(files.includes("root-motion.js"));
-  assert(
-    files.some(
-      (name) => name.replaceAll("\\", "/") === "vendor/build/three.core.js",
-    ),
-  );
-  assert(!files.some((name) => /\.(glb|gltf|png|jpg|webp|pak)$/i.test(name)));
-  assert.equal(
-    JSON.parse(
-      readFileSync(
-        new URL("../node_modules/three/package.json", import.meta.url),
-      ),
-    ).version,
-    "0.183.2",
-  );
-});
-
 test("pending imports stop monitoring after 200 checks and inactive panels cancel requests", async () => {
   const h = harness(true);
   h.render().props.onToggle({ currentTarget: { open: true } });
@@ -746,45 +435,6 @@ test("profile action modal restores focus, pauses monitoring on close and resume
   assert.equal(h.document.body.style.overflow, "auto");
 });
 
-test("viewer load failure and timeout offer retries without requesting animations", async () => {
-  const h = harness();
-  h.render();
-  h.requests[0].resolve(model);
-  await flush();
-  h.render();
-  h.observers[0].callback([{ isIntersecting: true }]);
-  let tree = h.render();
-  nodes(tree).find((n) => n.type === "iframe").props.onError();
-  tree = h.render();
-  assert(nodes(tree).some((n) => n.props.role === "alert"));
-  assert(!nodes(tree).some((n) => n.type === "iframe"));
-  nodes(tree).find((n) => n.type === "button" && n.props.children === "Retry viewer").props.onClick();
-  const retryFrame = nodes(h.render()).find((n) => n.type === "iframe");
-  assert.equal(retryFrame.key, "1");
-  assert(!new URL(retryFrame.props.src, "https://atlas.example").searchParams.has("animations"));
-  h.tick();
-  assert(nodes(h.render()).some((n) => n.props.role === "alert"));
-  h.close();
-});
-
-test("refresh and patch changes reset the viewer and cancel superseded availability reads", async () => {
-  const h = harness();
-  h.render();
-  h.requests[0].resolve(model);
-  await flush();
-  nodes(h.render()).find((n) => n.props["aria-haspopup"] === "dialog").props.onClick();
-  h.render();
-  h.props.refreshKey = 1;
-  h.render();
-  assert(!nodes(h.render()).some((n) => n.type === "iframe" || n.type === "dialog"));
-  assert.equal(h.document.body.style.overflow, "auto");
-  h.props.gameVersion = "3.8.0";
-  h.render();
-  assert(h.requests[1].options.signal.aborted);
-  assert.equal(h.requests[2].url, "/characters/character%3A1505/model?game_version=3.8.0");
-  h.close();
-});
-
 test("immediate import completion refreshes once and version reset closes the modal", async () => {
   const h = harness(true);
   h.props.variant = "actions";
@@ -808,62 +458,73 @@ test("immediate import completion refreshes once and version reset closes the mo
   h.close();
 });
 
-test("model state messages require the current iframe and same origin; GLB errors remain retryable", async () => {
-  const h = harness();
+
+
+test("native model uses manifest props, defers the canvas and ignores legacy runtime URLs", async () => {
+  const h = harness(); h.render();
+  h.requests[0].resolve({ ...model, viewer_url: "https://evil.example/viewer.js", forms });
+  await flush(); let tree = h.render();
+  let viewers = nodes(tree).filter(node => node.type === "NativeModelViewer");
+  assert.equal(viewers.length, 2);
+  assert.equal(viewers[0].props.preview, true);
+  assert.equal(viewers[0].props.active, false);
+  assert.equal(viewers[0].props.assets.preview.url, forms[0].preview.url);
+  assert.equal(nodes(tree).filter(node => node.type === "iframe").length, 0);
+  h.observers.at(-1).callback([{ isIntersecting: true }]);
+  tree = h.render();
+  assert.equal(nodes(tree).find(node => node.type === "NativeModelViewer").props.active, true);
+  nodes(tree).find(node => node.props["aria-haspopup"] === "dialog").props.onClick();
+  tree = h.render();
+  viewers = nodes(tree).filter(node => node.type === "NativeModelViewer");
+  assert.equal(viewers.length, 1, "preview is released while full viewer is open");
+  assert.equal(viewers[0].props.preview, undefined);
+  chooseForm(tree, forms[1].label, 1);
+  tree = h.render();
+  const next = nodes(tree).find(node => node.type === "NativeModelViewer");
+  assert.equal(next.props.assets.preview.url, forms[1].preview.url);
+  assert.notEqual(next.key, viewers[0].key);
+  assert.equal(next.props.assets.physics, forms[1].physics);
+  nodes(tree).find(node => node.type === "dialog").props.onCancel({ preventDefault() {} });
   h.render();
-  h.requests[0].resolve(model);
-  await flush();
-  h.render();
-  h.observers[0].callback([{ isIntersecting: true }]);
-  let tree = h.render();
-  const frame = nodes(tree).find((n) => n.type === "iframe");
-  assert(nodes(tree).some((n) => n.props.role === "status"));
-  h.message(frame, "ready", { origin: "https://other.example" });
-  h.message(frame, "ready", { source: {} });
-  h.message(frame, "ready", { data: { type: "unknown", state: "ready" } });
-  h.message(frame, "unknown");
-  assert(nodes(h.render()).some((n) => n.props.role === "status"));
-  h.message(frame, "ready");
-  tree = h.render();
-  assert(!nodes(tree).some((n) => n.props.role === "status"));
-  assert.equal(h.timers.size, 0);
-  h.message(frame, "error", { data: { type: "solaris-model-state", state: "error", message: "GLB download failed. Retry." } });
-  tree = h.render();
-  assert(nodes(tree).some((n) => n.props.role === "alert"));
-  assert(nodes(tree).some((n) => n.props.children === "GLB download failed. Retry."));
-  nodes(tree).find((n) => n.type === "button" && n.props.children === "Retry viewer").props.onClick();
-  tree = h.render();
-  assert(nodes(tree).some((n) => n.props.role === "status"));
-  assert(!nodes(tree).some((n) => n.props.role === "alert"));
-  assert.equal(h.listeners.size, 1);
+  assert.equal(h.document.body.style.overflow, "auto");
+  assert.equal(h.focused.focusCount, 1);
   h.close();
-  assert.equal(h.listeners.size, 0);
+});
+
+test("server-provided model metadata renders immediately without a duplicate browser request", () => {
+  const h = harness(); h.props.initialModel = model;
+  const tree = h.render();
+  assert.equal(h.requests.length, 0);
+  assert.equal(nodes(tree).filter(node => node.type === "NativeModelViewer").length, 2);
+  h.close();
+});
+
+test("model manifest retries and stale request cancellation remain available", async () => {
+  const h = harness(); h.render();
+  h.requests[0].reject(new Error("offline")); await flush();
+  let tree = h.render();
+  nodes(tree).find(node => node.type === "button" && node.props.children === "Retry model availability").props.onClick();
+  h.render(); assert.equal(h.requests.length, 2);
+  h.props.characterKey = "character:1211"; h.render();
+  assert.equal(h.requests[1].options.signal.aborted, true);
+  h.requests[1].resolve(model); await flush();
+  h.requests[2].resolve({ ...model, status: "missing" }); await flush();
+  tree = h.render();
+  assert.equal(nodes(tree).filter(node => node.type === "NativeModelViewer").length, 0);
+  h.close();
 });
 
 
-test("CDN viewer messages trust only the runtime origin and the exact iframe", async () => {
-  const h = harness();
-  h.render();
-  h.requests[0].resolve({ ...model, viewer_url: "https://cdn.solarisatlas.fun/model-viewer/old/index.html" });
-  await flush();
-  h.render();
-  h.observers[0].callback([{ isIntersecting: true }]);
+test("closing or cancelling nested settings does not close the model dialog", async () => {
+  const h = harness(); h.render(); h.requests[0].resolve(model); await flush();
   let tree = h.render();
-  const frame = nodes(tree).find((n) => n.type === "iframe");
-  h.message(frame, "ready"); // The embedding page's origin is not the CDN origin.
-  h.message(frame, "ready", { origin: "https://unrelated.example" });
-  h.message(frame, "ready", { origin: "https://cdn.solarisatlas.fun", source: {} });
-  assert(nodes(h.render()).some((n) => n.props.role === "status"));
-  h.message(frame, "ready", { origin: "https://cdn.solarisatlas.fun" });
+  nodes(tree).find(node => node.props["aria-haspopup"] === "dialog").props.onClick();
+  tree = h.render(); const dialog = nodes(tree).find(node => node.type === "dialog");
+  const target = {}, currentTarget = {};
+  dialog.props.onClose({ target, currentTarget });
+  dialog.props.onCancel({ target, currentTarget, preventDefault() { assert.fail("nested Escape must retain native dismissal"); } });
   tree = h.render();
-  assert(!nodes(tree).some((n) => n.props.role === "status"));
-  assert.equal(h.timers.size, 0);
-  h.message(frame, "error", { origin: "https://cdn.solarisatlas.fun", data: {
-    type: "solaris-model-state", state: "error", message: "Model unavailable on CDN.",
-  } });
-  tree = h.render();
-  assert(nodes(tree).some((n) => n.props.children === "Model unavailable on CDN."));
-  assert(nodes(tree).some((n) => n.props.role === "alert"));
-  h.close();
-  assert.equal(h.listeners.size, 0);
+  assert.equal(nodes(tree).find(node => node.type === "dialog").props.ref.current.open, true);
+  dialog.props.onClose({ target: currentTarget, currentTarget }); h.render();
+  assert.equal(h.document.body.style.overflow, "auto"); h.close();
 });

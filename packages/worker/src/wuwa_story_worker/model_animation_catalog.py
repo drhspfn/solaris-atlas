@@ -1,6 +1,6 @@
 """Deterministic name-family catalog; never infer character or animation identity.
 
-Keep RULES in sync with ANIMATION_CATALOG_RULES in tools/model-viewer/animations.js.
+Keep RULES in sync with ANIMATION_CATALOG_RULES in packages/web_new/src/components/models/engine/animations.js.
 The parity test checks the declarative tables without coupling either runtime.
 """
 
