@@ -175,8 +175,31 @@ case "$DEPLOY_COMPONENT" in
   *) echo "Unsupported DEPLOY_COMPONENT: $DEPLOY_COMPONENT" >&2; exit 2 ;;
 esac
 
+pull_images() {
+  # Retry only downloads: migrations, publications and service changes are not replayed.
+  local attempt status output delay
+  output=$(mktemp "$APP_DIR/.image-pull.XXXXXX")
+  for attempt in 1 2 3 4; do
+    # Bound image-level fanout even when many services share worker images.
+    if COMPOSE_PARALLEL_LIMIT=1 "${compose[@]}" pull "$@" 2>&1 | tee "$output"; then
+      rm -f "$output"
+      return 0
+    else
+      status=$?
+    fi
+    if (( status >= 128 || attempt == 4 )) || ! grep -Eiq \
+      'connection reset by peer|unexpected EOF|i/o timeout|TLS handshake timeout|context deadline exceeded|connection (refused|timed out)|network is unreachable|no route to host|temporary failure in name resolution|server misbehaving|429 Too Many Requests|500 Internal Server Error|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout|too many requests|toomanyrequests|service unavailable' "$output"; then
+      rm -f "$output"
+      return "$status"
+    fi
+    delay=$((5 * 2 ** (attempt - 1)))
+    echo "Image download interrupted; retrying in ${delay}s (attempt $((attempt + 1))/4)" >&2
+    sleep "$delay"
+  done
+}
+
 if [[ "$DEPLOY_COMPONENT" == api || "$DEPLOY_COMPONENT" == all ]]; then
-  "${compose[@]}" pull api
+  pull_images api
   # Imports can hold read locks while exporting files. Release those connections
   # before DDL, and restore exactly the running containers even if migration fails.
   migrate_stopped() (
@@ -224,13 +247,13 @@ if [[ "$DEPLOY_COMPONENT" != infrastructure ]]; then
       pull_services+=("$service")
     fi
   done
-  if (( ${#pull_services[@]} )); then "${compose[@]}" pull "${pull_services[@]}"; fi
+  if (( ${#pull_services[@]} )); then pull_images "${pull_services[@]}"; fi
 fi
 if [[ "$DEPLOY_COMPONENT" == web || "$DEPLOY_COMPONENT" == all ]]; then
   (
     # Activate this release's viewer without replacing any running model worker.
     export MODEL_WORKER_IMAGE="ghcr.io/$GHCR_OWNER/solaris-atlas-models:$IMAGE_TAG"
-    "${compose[@]}" pull model-worker
+    pull_images model-worker
     "${compose[@]}" run --rm --no-deps model-worker python -m wuwa_story_worker.model_publication --activate
   )
 fi
