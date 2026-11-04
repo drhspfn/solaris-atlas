@@ -106,25 +106,32 @@ def discover_voice_plan(version: str, public_config: Path, crypto_path: Path | d
         raise RuntimeError(f"Unable to fetch voice manifest: {path}")
 
     config = fetch(f"{safe_path(entry['MixUri'])}/Windows/config.json")
-    if config["PackageVersion"] != version:
+    package_version = config["PackageVersion"]
+    if (not re.fullmatch(r"\d+\.\d+\.\d+", package_version)
+            or not re.fullmatch(r"\d+\.\d+\.\d+", version)
+            or package_version.rsplit(".", 1)[0] != version.rsplit(".", 1)[0]):
         raise ValueError(
-            f"Client CDN serves {config['PackageVersion']}, requested {version}")
+            f"Client CDN serves {package_version}, requested {version}")
     uri = safe_path(entry["ResUri"])
     files = []
     for language in LANGUAGES:
         info = config["ResVersions"][language]
         manifest = fetch(f"{uri}/Windows/{info['Version']}/ManifestLang_{language}.txt",
                          info["IndexSha1"][info["Version"]])
-        files.extend(package_files(manifest, f"Lang_{language}", uri, version))
+        files.extend(package_files(manifest, f"Lang_{language}", uri, package_version))
     info = config["ResVersions"]["ManifestAggregated"]
     roles = fetch(f"{uri}/Windows/{info['Version']}/ManifestAggregated.txt",
                   info["IndexSha1"][info["Version"]])
     for group, manifest in roles.items():
         if group.startswith("role_lang_") and group.rsplit("_", 1)[-1] in LANGUAGES:
             files.extend(package_files(
-                manifest, f"RoleVoice/{safe_path(group)}", uri, version))
+                manifest, f"RoleVoice/{safe_path(group)}", uri, package_version))
     plan = {"schema_version": 1, "job_type": "voices.download", "version": version,
             "languages": list(LANGUAGES), "cdns": cdns, "sources": sources, "files": files}
+    if package_version != version:
+        # Launcher hotfixes can retain the same voice package release. Keep the
+        # installed-client identity separate from the CDN's authored base paths.
+        plan["package_version"] = package_version
     plan["id"] = plan_id(plan)
     return plan
 
