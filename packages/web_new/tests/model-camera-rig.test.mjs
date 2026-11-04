@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { BoneCamera, cameraBones } from './camera-rig.js';
+import { BoneCamera, cameraBones } from '../src/components/models/engine/camera-rig.js';
 
 function fixture() {
   const root = new THREE.Group(), bone = new THREE.Bone();

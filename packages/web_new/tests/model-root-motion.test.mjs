@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { RootMotionLock } from './root-motion.js';
-import { BoneCamera } from './camera-rig.js';
+import { RootMotionLock } from '../src/components/models/engine/root-motion.js';
+import { BoneCamera } from '../src/components/models/engine/camera-rig.js';
 function fixture() {
   const scene = new THREE.Scene(), stage = new THREE.Group(), model = new THREE.Group();
   const root = new THREE.Bone(), child = new THREE.Bone();

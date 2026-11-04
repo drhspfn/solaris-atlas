@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Bone, Group, Vector3 } from 'three';
-import { SpringBones } from './spring-bones.js';
+import { SpringBones } from '../src/components/models/engine/spring-bones.js';
 
 function rig() {
   const root = new Group(), bone = new Bone(), tip = new Bone();
