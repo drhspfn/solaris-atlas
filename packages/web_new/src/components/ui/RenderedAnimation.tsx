@@ -10,6 +10,7 @@ export function RenderedAnimation({
   label,
   fallback,
   loop = true,
+  controls = false,
   compact = false,
   decorative = false,
 }: {
@@ -17,6 +18,7 @@ export function RenderedAnimation({
   label: string;
   fallback: ReactNode;
   loop?: boolean;
+  controls?: boolean;
   compact?: boolean;
   decorative?: boolean;
 }) {
@@ -32,15 +34,17 @@ export function RenderedAnimation({
       decorative={decorative}
       aspectRatio={preview?.width && preview?.height ? `${preview.width} / ${preview.height}` : undefined}
       loop={loop}
+      controls={controls}
     />
   );
 }
 
-function WebMPlayback({ url, label, fallback, loop, compact, decorative, aspectRatio }: {
+function WebMPlayback({ url, label, fallback, loop, controls, compact, decorative, aspectRatio }: {
   url: string;
   label: string;
   fallback: ReactNode;
   loop: boolean;
+  controls: boolean;
   compact: boolean;
   decorative: boolean;
   aspectRatio?: string;
@@ -73,7 +77,7 @@ function WebMPlayback({ url, label, fallback, loop, compact, decorative, aspectR
     const motion = matchMedia('(prefers-reduced-motion: reduce)');
     const update = () => {
       if (!visible || document.hidden || motion.matches) element.pause();
-      else if (!element.ended) void element.play().catch(() => { /* Native controls allow explicit playback. */ });
+      else if (!element.ended) void element.play().catch(() => { /* Retain the still frame if autoplay is unavailable. */ });
     };
     update();
     document.addEventListener('visibilitychange', update);
@@ -97,7 +101,7 @@ function WebMPlayback({ url, label, fallback, loop, compact, decorative, aspectR
           aria-label={decorative ? undefined : label}
           aria-hidden={decorative || undefined}
           style={{ opacity: ready ? 1 : 0 }}
-          controls={!compact && !decorative}
+          controls={controls && !compact && !decorative}
           muted
           playsInline
           loop={loop}

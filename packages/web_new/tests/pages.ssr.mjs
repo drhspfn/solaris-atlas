@@ -732,7 +732,8 @@ for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
     assert.ok(head.includes(`content="${portrait}"`));
     assert.ok(head.includes('href="https://solarisatlas.fun/characters/character%3A1102"'));
     assert.match(main, /<h1>Sanhua/);
-    assert.match(main, /<video[^>]*aria-label="Character trial animation"[^>]*controls=""/);
+    assert.match(main, /<video[^>]*aria-label="Character trial animation"/);
+    assert.doesNotMatch(main, /<video[^>]*aria-label="Character trial animation"[^>]*controls=/);
     assert.match(main, /<video[^>]*aria-label="Character trial animation"[^>]*loop=""/);
     assert.match(main, /class="rendered-animation" style="aspect-ratio:736 \/ 1920"/);
     assert.match(main, /href="https:\/\/cdn.test\/trial.zip"/);
