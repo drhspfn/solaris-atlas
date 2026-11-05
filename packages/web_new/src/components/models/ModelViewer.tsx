@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Input } from "@/components/ui/Input";
 import { Slider } from "@/components/ui/Slider";
+import { Tabs } from '@/components/ui/Tabs';
 import { Select } from "@/components/ui/Select";
 import { apiUrl } from "@/api/client";
 import {
@@ -200,24 +201,6 @@ export function ModelViewer({
               icon={<Settings2 size={19} />}
               onClick={() => drawer.current?.showModal()}
             />
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label="Fullscreen"
-              title="Fullscreen"
-              icon={<Maximize2 size={19} />}
-              onClick={async () => {
-                try {
-                  if (document.fullscreenElement)
-                    await document.exitFullscreen();
-                  else await root.current?.requestFullscreen();
-                } catch {
-                  report({
-                    error: "Fullscreen is unavailable in this browser.",
-                  });
-                }
-              }}
-            />
             {onClose && (
               <Button
                 className="model-studio-close"
@@ -267,11 +250,7 @@ export function ModelViewer({
             {!state.ready && <Button onClick={retry}>Retry viewer</Button>}
           </div>
         )}
-      </div>
-      {!preview && (
-        <>
-          <div className="model-controls">
-            <div className="model-transport">
+        {!preview && <div className="model-stage-tools">
               <div className="model-camera-tools" aria-label="Camera controls">
                 {action("Rotate left", "left", false, <RotateCcw size={18} />)}
                 {action("Rotate right", "right", false, <RotateCw size={18} />)}
@@ -290,6 +269,32 @@ export function ModelViewer({
                   }}
                 />
               </div>
+          <div className="model-stage-fullscreen">
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="Fullscreen"
+              title="Fullscreen"
+              icon={<Maximize2 size={19} />}
+              onClick={async () => {
+                try {
+                  if (document.fullscreenElement)
+                    await document.exitFullscreen();
+                  else await root.current?.requestFullscreen();
+                } catch {
+                  report({
+                    error: "Fullscreen is unavailable in this browser.",
+                  });
+                }
+              }}
+            />
+          </div>
+        </div>}
+      </div>
+      {!preview && (
+        <>
+          <div className="model-controls">
+            <div className="model-transport">
               <div className="model-playback">
                 <Button
                   size="icon"
@@ -338,61 +343,55 @@ export function ModelViewer({
               </div>
             </div>
             <div className="model-load-actions" aria-busy={state.busy}>
-              {assets.download && !state.fullQuality && (
-                <Button
-                  variant="default"
-                  size="sm"
-                  icon={<Box size={16} />}
-                  loading={state.busy}
-                  disabled={disabled}
-                  onClick={() => command("quality")}
-                >
-                  {label("Load full quality", assets.download.size_bytes)}
-                </Button>
-              )}
-              {assets.animations && !state.animationsLoaded && (
-                <Button
-                  variant="default"
-                  size="sm"
-                  icon={<ArrowDownToLine size={16} />}
-                  loading={state.busy}
-                  disabled={disabled}
-                  onClick={() => command("animations")}
-                >
-                  {label(
-                    "Load animations",
-                    assets.animations.size_bytes +
-                      (assets.facial && !state.fullQuality
-                        ? (assets.download?.size_bytes || 0) +
-                          assets.facial.size_bytes
-                        : 0),
-                  )}
-                </Button>
-              )}
-              {assets.facial && !state.facialLoaded && (
-                <Button
-                  variant="default"
-                  size="sm"
-                  icon={<ArrowDownToLine size={16} />}
-                  loading={state.busy}
-                  disabled={disabled}
-                  onClick={() => command("facial")}
-                >
-                  {label(
-                    "Load face + full model",
-                    assets.facial.size_bytes +
-                      (state.fullQuality
-                        ? 0
-                        : assets.download?.size_bytes || 0),
-                  )}
-                </Button>
+              {(
+                [
+                  [
+                    "quality",
+                    assets.download && !state.fullQuality,
+                    label("Load full quality", assets.download?.size_bytes),
+                    <Box size={16} />,
+                  ],
+                  [
+                    "animations",
+                    assets.animations && !state.animationsLoaded,
+                    label("Load animations", assets.animations?.size_bytes),
+                    <ArrowDownToLine size={16} />,
+                  ],
+                  [
+                    "facial",
+                    assets.facial && !state.facialLoaded,
+                    label(
+                      "Load face + full model",
+                      (assets.facial?.size_bytes || 0) +
+                        (state.fullQuality
+                          ? 0
+                          : assets.download?.size_bytes || 0),
+                    ),
+                    <ArrowDownToLine size={16} />,
+                  ],
+                ] as const
+              ).map(
+                ([kind, visible, text, icon]) =>
+                  visible && (
+                    <div className="model-load-action" key={kind}>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        icon={icon}
+                        loading={state.loading[kind]}
+                        disabled={!state.ready}
+                        onClick={() => command(kind)}
+                      >
+                        {state.loadErrors[kind] ? `Retry: ${text}` : text}
+                      </Button>
+                      {state.loadErrors[kind] && (
+                        <span role="alert">{state.loadErrors[kind]}</span>
+                      )}
+                    </div>
+                  ),
               )}
               <span role="status">
-                {state.busy
-                  ? state.status
-                  : state.fullQuality
-                    ? "Full quality"
-                    : "Compact model"}
+                {state.fullQuality ? "Full quality" : "Compact model"}
               </span>
             </div>
             {state.animations.length > 0 && (
@@ -412,6 +411,7 @@ export function ModelViewer({
                 />
                 <Select
                   className="model-animation-select"
+                  width="compact"
                   searchable
                   categorized
                   rememberPosition
@@ -474,19 +474,8 @@ export function ModelViewer({
                 onClick={() => drawer.current?.close()}
               />
             </header>
-            <nav aria-label="Settings sections">
-              {(["scene", "physics", "camera"] as const).map((tab) => (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  key={tab}
-                  aria-pressed={panel === tab}
-                  onClick={() => setPanel(tab)}
-                >
-                  {tab}
-                </Button>
-              ))}
-            </nav>
+            <Tabs value={panel} onValueChange={setPanel} variant="segmented" aria-label="Model settings sections"
+              items={[{ value: 'scene', label: 'Scene' }, { value: 'physics', label: 'Physics' }, { value: 'camera', label: 'Camera' }]} />
             <div className="model-settings-content">
               {panel === "scene" && (
                 <>
@@ -560,13 +549,13 @@ export function ModelViewer({
                     "follow",
                     !state.bones.length,
                   )}
-                  {action("Focus bone", "focus", !state.bones.length)}
+                  <Button icon={<Focus size={18} />} disabled={disabled || !state.bones.length} onClick={() => command("focus")}>Focus camera on bone</Button>
                   <Select
-                    label="Offset space"
+                    label="Target offset coordinates"
                     value={settings.space}
                     options={[
-                      { value: "world", label: "World" },
-                      { value: "local", label: "Bone local" },
+                      { value: "world", label: "World coordinates" },
+                      { value: "local", label: "Relative to bone" },
                     ]}
                     onChange={(value) =>
                       update("space", value as "world" | "local")
@@ -574,7 +563,7 @@ export function ModelViewer({
                   />
                   {(["X", "Y", "Z"] as const).map((axis, index) => (
                     <label key={axis}>
-                      Target offset {axis}
+                      Target offset {axis} (m)
                       <Input
                         type="number"
                         min="-10"
@@ -595,6 +584,7 @@ export function ModelViewer({
                       />
                     </label>
                   ))}
+                  <p>Offsets are measured in metres from the selected exported bone. World coordinates stay aligned to the scene; bone-relative offsets rotate with the bone.</p>
                   <Button
                     variant="default"
                     icon={<Pause size={16} />}

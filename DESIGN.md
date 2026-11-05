@@ -243,3 +243,20 @@ Tabler theme and generated components. The framework owns its visual tokens and
 forms; public atlas runtime tokens are not copied into another renderer. Model
 configuration and Python actions are the extension points. See `docs/admin-console.md`
 and the backend-console section of `UX-CONTRACT.md` for behavior and security.
+
+
+### Shared controls and model studio refinement
+
+Shared Button, Input, Checkbox, Slider, Dropdown, Select and Tabs own reusable
+control geometry and interaction semantics. Select supports compact, automatic
+and full trigger widths independently of its bounded popup. Catalog headers keep
+Back, breadcrumb and a search toggle on one row; search is revealed on demand.
+Tabs expose separate-button, segmented-background and underline appearances using
+the same palette and focus treatment.
+
+The model studio preserves scene space: contrasting camera/fullscreen controls
+float over the 3D stage, while transport, catalog selection and resource-load
+buttons share a compact wrapping toolbar. Resource loads have independent pending
+states. Settings actions include visible explanatory text when an icon alone does
+not make the outcome clear. World/local offsets name their coordinate space and
+metre units. Settings/form/close controls remain easy to reach on narrow screens.
