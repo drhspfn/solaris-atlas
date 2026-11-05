@@ -45,6 +45,31 @@ def convert_archive(bundle: Path, output: Path, cli: list[str], *, skeleton_file
                     dest.write_bytes(data)
             skel = root.joinpath(*skeleton.parts)
             atlas = root.joinpath(*atlases[0].parts)
+            # Unreal texture spelling may differ from the atlas page reference.
+            # Only alias a full path already covered by the verified inventory.
+            textures = {}
+            for name in files:
+                if name.casefold().endswith('.png'):
+                    identity = name.casefold()
+                    if identity in textures:
+                        raise ValueError('Ambiguous case-insensitive atlas texture')
+                    textures[identity] = root.joinpath(*PurePosixPath(name).parts)
+            page_start = True
+            for line in atlas.read_text(encoding='utf-8-sig').splitlines():
+                value = line.strip()
+                if not value:
+                    page_start = True
+                    continue
+                if page_start and ':' not in value:
+                    page = PurePosixPath(value)
+                    if page.is_absolute() or '..' in page.parts or '\\' in value:
+                        raise ValueError('Unsafe atlas page path')
+                    relative = atlases[0].parent / page
+                    texture = textures.get(relative.as_posix().casefold())
+                    target = root.joinpath(*relative.parts)
+                    if texture is not None and texture.is_file() and not target.exists():
+                        target.write_bytes(texture.read_bytes())
+                page_start = False
             completed = subprocess.run([*cli, "convert", str(skel), "--atlas", str(atlas), "--images",
                                         str(atlas.parent), "--out-dir", str(output)],
                                        check=True, timeout=300, capture_output=True, text=True)

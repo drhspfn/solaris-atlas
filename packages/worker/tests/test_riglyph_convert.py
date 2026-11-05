@@ -97,3 +97,49 @@ def test_failed_semantic_conversion_keeps_source_and_publishes_no_archive(tmp_pa
     with pytest.raises(ValueError):
         convert_bundle(source, output, ['riglyph'])
     assert source.exists() and not output.exists()
+
+def test_atlas_page_resolves_verified_texture_with_different_casing(tmp_path, monkeypatch):
+    entries = {'spine/a.skel': b'rig!',
+               'spine/a.atlas': b'Portraits_Daniya_2.png\nsize: 1,1\n',
+               'spine/Portraits_DaNiYa_2.png': b'verified image'}
+    manifest = {'skeletons': [{'file': 'spine/a.skel'}], 'files': {
+        name: {'size_bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+        for name, data in entries.items()}}
+    bundle = tmp_path / 'source.zip'
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        archive.writestr('manifest.json', json.dumps(manifest))
+        for name, data in entries.items():
+            archive.writestr(name, data)
+    original = bundle.read_bytes()
+
+    def run(args, **kwargs):
+        atlas = Path(args[args.index('--atlas') + 1])
+        page = atlas.read_text().splitlines()[0]
+        assert (atlas.parent / page).read_bytes() == b'verified image'
+        out = Path(args[-1])
+        out.mkdir()
+        (out / 'manifest.json').write_text('{}')
+        (out / 'skeleton.ir.json').write_text('{}')
+        return SimpleNamespace(stdout=json.dumps({'report': {
+            'losses': [], 'unsupported': [], 'bytesConsumed': 4}}))
+
+    monkeypatch.setattr('wuwa_story_worker.riglyph_convert.subprocess.run', run)
+    convert_archive(bundle, tmp_path / 'out', ['riglyph'])
+    assert bundle.read_bytes() == original
+
+
+@pytest.mark.parametrize('page', ['../escape.png', '/absolute.png', r'bad\page.png'])
+async def test_unsafe_atlas_page_is_rejected_before_cli(tmp_path, monkeypatch, page):
+    entries = {'spine/a.skel': b'rig!', 'spine/a.atlas': (page+'\n').encode()}
+    manifest = {'skeletons': [{'file': 'spine/a.skel'}], 'files': {
+        name: {'size_bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+        for name, data in entries.items()}}
+    bundle = tmp_path / 'source.zip'
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        archive.writestr('manifest.json', json.dumps(manifest))
+        for name, data in entries.items():
+            archive.writestr(name, data)
+    monkeypatch.setattr('wuwa_story_worker.riglyph_convert.subprocess.run',
+                        lambda *args, **kwargs: pytest.fail('unsafe page reached converter'))
+    with pytest.raises(ValueError, match='Unsafe atlas page'):
+        convert_archive(bundle, tmp_path / 'out', ['riglyph'])
