@@ -24,6 +24,7 @@ from wuwa_story.storage.service import FileRegistrationService
 
 from wuwa_story_worker.cutscene_caption_audio import CAPTION_AUDIO_SCHEMA
 from wuwa_story_worker.cutscene_segments import VariantAlignmentError, export_segments
+from wuwa_story_worker.cutscene_video_source import exported_video_path
 from wuwa_story_worker.publication_provenance import (
     pinned_source,
     publication_source,
@@ -362,18 +363,16 @@ async def import_cutscene_recipe(
         spec = spec.model_copy(update={"videos": resolved_videos})
         for index, video in enumerate(spec.videos):
             engine = video.asset.removeprefix("asset:ue:")
-            package, object_name = engine.rsplit(".", 1)
-            if package.rsplit("/", 1)[-1].casefold() != object_name.casefold():
-                raise ValueError("Expected an exact Unreal media asset identity")
-            exported = confined(
-                assets, "Client/Content/" + package.removeprefix("/Game/") + ".uexp"
-            )
-            movie = confined(movies, movie_path(exported.read_bytes()))
+            source_path = exported_video_path(engine)
+            direct = source_path.casefold().endswith(".mp4")
+            exported = confined(assets, source_path)
+            movie = confined(movies, source_path if direct else movie_path(exported.read_bytes()))
             if source_context is not None:
-                originals = [exported, movie]
-                header = exported.with_suffix(".uasset")
-                if header.is_file():
-                    originals.append(header)
+                originals = [movie] if direct else [exported, movie]
+                if not direct:
+                    header = exported.with_suffix(".uasset")
+                    if header.is_file():
+                        originals.append(header)
                 for track in video.soundtrack:
                     _, evidence = await decode_soundtrack(track, assets, audio, work, decoder, decoded)
                     originals.extend(path for path in evidence if path.suffix.casefold() in {".wem", ".bnk"})
