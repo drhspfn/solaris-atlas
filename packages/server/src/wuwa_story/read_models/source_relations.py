@@ -59,7 +59,7 @@ async def _dialogue_filters(session, entity_id, release_id):
         result["character_keys"] = sorted(
             {key for key, _slug, _identity in characters if key})
     if state_id is not None:
-        links = quest_state_links(release_id)
+        links = quest_state_links(release_id, state_ids=[state_id])
         result["quest_ids"] = sorted(
             set(
                 await session.scalars(
@@ -296,7 +296,7 @@ async def _character_relations(session, node, release_id, add):
         if state_id is not None:
             state_lines.setdefault(state_id, set()).add(line_id)
     if state_lines:
-        links = quest_state_links(release_id)
+        links = quest_state_links(release_id, state_ids=state_lines)
         state_quests = {}
         for quest_id, state_id in await session.execute(
             select(links.c.quest_id, links.c.state_id)

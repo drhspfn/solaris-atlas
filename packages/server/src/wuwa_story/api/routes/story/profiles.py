@@ -943,7 +943,7 @@ async def character_profile(
     quests_by_state: dict[int, list[Quest]] = {}
     quests_by_id: dict[int, Quest] = {}
     if state_ids:
-        links = quest_state_links(release_id)
+        links = quest_state_links(release_id, state_ids=state_ids)
         for quest, state_id in await session.execute(
             select(Quest, links.c.state_id).join(links, links.c.quest_id == Quest.node_id)
             .where(links.c.state_id.in_(state_ids)).order_by(Quest.game_quest_id)
