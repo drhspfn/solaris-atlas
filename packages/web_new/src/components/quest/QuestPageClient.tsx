@@ -8,6 +8,11 @@ import { AnalysisActions } from '@/components/story/AnalysisActions';
 import { cutsceneSlots } from '@/components/story/cutscenePlacement';
 import {
   QuestRuntimeBlock,
+  EncounterCinematicBoundary,
+  encounterCinematicParts,
+  encounterFlowOwners,
+  encounterOwnsMedia,
+  type EncounterFlow,
   runtimeBlockAnchor,
   runtimeBlockSlots,
 } from '@/components/story/QuestRuntimeBlock';
@@ -305,23 +310,25 @@ export function QuestPageClient({
     anchor: `flow-state-${index}`,
   }));
   const stateAnchors = new Map(stateIndex.map((state) => [state.key, state.anchor]));
+  const activitySlots = runtimeBlockSlots(
+    shown,
+    onlyLines || onlyChoices ? [] : transcript?.story_blocks || [],
+    Boolean(transcript?.offset || lines.length >= (transcript?.limit || 0)),
+  );
+  const encounterBlocks = [...activitySlots.values()].flat();
+  const encounterOwners = encounterFlowOwners(encounterBlocks, shown);
   const contextualCutscenes = (media?.events || []).filter(
-    (event) => event.kind === 'cutscene' && event.context_inferred && !event.story_order_mapped,
+    (event) => event.kind === 'cutscene' && event.context_inferred && !event.story_order_mapped && !encounterOwnsMedia(event, encounterOwners, encounterBlocks),
   );
   const videoSlots = cutsceneSlots(
     shown,
     onlyLines || onlyChoices
       ? []
       : (media?.events || []).filter(
-          (event) => !event.interaction_id && (!event.context_inferred || event.story_order_mapped),
+          (event) => !event.interaction_id && (!event.context_inferred || event.story_order_mapped) && !encounterOwnsMedia(event, encounterOwners, encounterBlocks),
         ),
     Boolean(transcript?.offset || lines.length >= (transcript?.limit || 0)),
     ['cutscene', 'sequence'],
-  );
-  const activitySlots = runtimeBlockSlots(
-    shown,
-    onlyLines || onlyChoices ? [] : transcript?.story_blocks || [],
-    Boolean(transcript?.offset || lines.length >= (transcript?.limit || 0)),
   );
   const lineAnchors = new Map<string, string>();
   const firstLineInState = new Set<string>();
@@ -348,7 +355,7 @@ export function QuestPageClient({
           interactionOwners.set(flow.state, `${block.id}:${item.id}`);
   const inlineStates = new Set(
     shown
-      .filter((line: any) => !line.story_position && interactionOwners.has(line.flow_state))
+      .filter((line: any) => !line.story_position && (interactionOwners.has(line.flow_state) || encounterOwners.has(line.flow_state)))
       .map((line: any) => line.flow_state),
   );
   const indexedLines = new Map<string, { line: any; index: number }>(
@@ -423,6 +430,22 @@ export function QuestPageClient({
       )),
     ];
   };
+  const renderEncounterFlow = (flow: EncounterFlow) => {
+    const related = shown.filter((line: any) => line.flow_state === flow.state);
+    if (encounterOwners.get(flow.state) !== flow.id) {
+      return related.length ? [<a key={flow.id} href={`#${lineAnchors.get(related[0].id)}`}>Read the dialogue shared by this branch ↗</a>] : [];
+    }
+    const selected = related.filter((line: any) => inlineStates.has(line.flow_state));
+    return encounterCinematicParts(selected, flow.cinematics).map((part, index) => {
+      const events = (media?.events || []).filter(event => event.kind === 'cutscene' &&
+        part.cinematics.some(scene => scene.reference === event.reference) &&
+        (event.flow_state === flow.state || event.transcript_states?.includes(flow.state)));
+      const content = renderExcerpt(part.lines.map((line: any) => indexedLines.get(line.id)!), events);
+      return part.cinematics.length
+        ? <EncounterCinematicBoundary key={`${flow.id}-${index}`} media={part.cinematics} unplaced={!part.lines.length} playbackResolved={events.some(event => !!event.playback)}>{content}</EncounterCinematicBoundary>
+        : <Fragment key={`${flow.id}-${index}`}>{content}</Fragment>;
+    });
+  };
   const renderInteraction = (states: string[], owner: string) => {
     const selected = shown
       .map((line: any, index: number) => ({ line, index }))
@@ -454,6 +477,7 @@ export function QuestPageClient({
             display={playerDisplay}
             stateAnchors={stateAnchors}
             renderInteraction={renderInteraction}
+            renderEncounterFlow={renderEncounterFlow}
           />
         ));
     const scenes =
@@ -563,8 +587,10 @@ export function QuestPageClient({
                   fallback="Narration / Unknown speaker"
                 />
               </strong>
-              <span className="line-state">{line.flow_state || 'Story'}</span>
-              {line.action?.name && <span className="action-tag">{line.action.name}</span>}
+              {!embedded && <>
+                <span className="line-state">{line.flow_state || 'Story'}</span>
+                {line.action?.name && <span className="action-tag">{line.action.name}</span>}
+              </>}
             </div>
             <DialogueAudioReference media={line.media}>
               <p>
@@ -937,6 +963,7 @@ export function QuestPageClient({
                   display={playerDisplay}
                   stateAnchors={stateAnchors}
                   renderInteraction={renderInteraction}
+                  renderEncounterFlow={renderEncounterFlow}
                 />
               ))}
               {contextualCutscenes.map((event) => (

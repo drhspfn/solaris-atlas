@@ -1,0 +1,16 @@
+.encounter { min-width: 0; border-inline-start: 2px solid var(--mint); padding: 12px; background: var(--surface-1); }
+.marker { display: flex; align-items: center; gap: 6px; margin: 8px 0; font-size: 11px; color: var(--text-secondary); }
+.note { color: var(--text-secondary); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.node { min-width: 0; margin: 10px 0; }
+.node h4 { margin: 6px 0; font-size: 13px; color: var(--text-primary); }
+.steps { list-style: none; padding: 0; margin: 0; }
+.steps > li + li { border-top: 1px solid var(--border-default); }
+.context, .branch, .dialogue { min-width: 0; margin: 8px 0; }
+.context > summary, .branch > summary, .dialogue > summary, .source > summary { padding: 10px 0; cursor: pointer; color: var(--text-primary); font-size: 12px; overflow-wrap: anywhere; }
+.context > summary:focus-visible, .branch > summary:focus-visible, .dialogue > summary:focus-visible, .source > summary:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+.branches { border-inline-start: 1px solid var(--border-default); padding-inline-start: 10px; min-width: 0; }
+.phaseLabel { display: block; margin-top: 8px; color: var(--text-secondary); font-size: 11px; }
+.cinematic { border: 1px solid var(--border-default); padding: 10px; margin: 8px 0; min-width: 0; }
+.encounter :global(.transcript-line) { min-width: 0; }
+.source p { font-size: 11px; color: var(--text-secondary); overflow-wrap: anywhere; }
+@media (max-width: 480px) { .encounter { padding: 8px; } .branches { padding-inline-start: 6px; } .cinematic { padding: 6px; } }
