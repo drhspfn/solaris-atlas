@@ -55,3 +55,28 @@ or image export is needed. Rebuild affected character read projections only when
 new preview references are published. No production re-render or replay was run
 as part of this investigation. Unrelated unsupported story/event compositions
 must continue to use static fallback.
+
+## Linux follow-up during deployment
+
+The first production backfill exposed a second casing mismatch that Windows does
+not catch: the atlas requests `Portraits_Daniya_2.png`, while the retained archive
+contains `Portraits_DaNiYa_2.png`. Linux conversion failed with `ENOENT` before
+rendering. The converter now creates an exact-name temporary alias only for a
+checksum-verified texture at the same full atlas-relative path. Original bundles
+and atlas contents remain untouched; ambiguous case collisions and unsafe page
+paths are rejected. This belongs to the Atlas import adapter, not Riglyph's Spine
+feature support.
+
+A separate, genuine renderer failure was observed for **Hiyuki**, source file
+571499, trial reference 721350, after source conversion succeeded:
+
+- Riglyph native CPU 0.16.1, animation `idle`, 120 frames planned at 30 fps.
+- Frames 1-49 rendered; failure near animation time 1.6 seconds.
+- Code `INVALID_TOPOLOGY`.
+- Message `Clipping polygon self-intersection at edges 4/6`.
+- Durable worker log: `client-assets/render-logs/50c5c264859468bd1ad42ea2a719ab40cb7cf7fdeaae320581bfc16c6b1cede7/render-80f78c9053e444519529cffcdeeecf48/000.log`.
+
+This is a useful reproduction for the next Riglyph version. No partial video was
+published; the converted fallback and original source archive are retained. Do
+not treat the other five characters as having this geometry failure without
+running their own renders.
