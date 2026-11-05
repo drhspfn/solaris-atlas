@@ -121,6 +121,16 @@ def test_personal_crosswalk_proof_cannot_borrow_another_releases_raw_record(grap
     assert graph.rows(select(crosswalk.c.speaker_id)) == []
 
 
+def test_family_card_proof_uses_the_same_shared_reader_contract(graph):
+    from wuwa_story.ingestion.character_identity import MAIN_ROLE_PATH
+
+    graph.db.execute('UPDATE graph.edge_evidence SET explanation=? WHERE edge_id IN '
+                     '(SELECT id FROM graph.edge WHERE from_node_id=4 AND to_node_id=10)',
+                     (PERSONAL_PORTRAIT_BASIS + MAIN_ROLE_PATH + ' explicit family membership; RolePileIconAsset',))
+    crosswalk = speaker_crosswalk(1, [10])
+    assert graph.rows(select(crosswalk.c.speaker_id)) == [(4,)]
+
+
 @pytest.mark.asyncio
 async def test_relation_index_has_caption_dungeon_refs_and_excludes_every_own_family_role(graph, monkeypatch):
     async def execute(statement):

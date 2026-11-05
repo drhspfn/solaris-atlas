@@ -1,5 +1,7 @@
 """Explicit source ownership shared by browsing and story research."""
 
+from collections.abc import Iterable
+
 from sqlalchemy import and_, case, literal, or_, select
 
 from wuwa_story.db.models.core import Quest
@@ -64,7 +66,68 @@ def quest_states_query(quest_node_id: int, release_id: int | None):
     return select(walk.c.node_id).where(walk.c.phase.in_((3, 6))).distinct()
 
 
-def quest_state_links(release_id: int | None = None, *, quest_node_id: int | None = None):
+def _state_quest_links(release_id, state_ids, quest_node_id):
+    """Walk inverse ownership paths from a bounded set of transcript endpoints."""
+    def parents(relations, children, name):
+        # Fence endpoint selection before relation/evidence joins. An outer WHERE
+        # on the global ownership UNION does not reliably push down in PostgreSQL.
+        endpoints = (select(Edge.id, Edge.from_node_id.label("parent"),
+                            Edge.to_node_id.label("child"), Edge.relation_type_id)
+                     .where(Edge.layer == "source", Edge.to_node_id.in_(children))
+                     .cte(name + "_endpoints").prefix_with("MATERIALIZED"))
+        query = (select(endpoints.c.parent, endpoints.c.child)
+                 .join(RelationType, RelationType.id == endpoints.c.relation_type_id)
+                 .where(RelationType.key.in_(relations)))
+        if release_id is not None:
+            query = query.where(select(EdgeEvidence.id).where(
+                EdgeEvidence.edge_id == endpoints.c.id,
+                EdgeEvidence.release_id == release_id,
+            ).exists())
+        return query.cte(name).prefix_with("MATERIALIZED")
+
+    references = ("references_flow_state", "references_dungeon_flow_state")
+    direct = parents(references, state_ids, "state_direct_refs")
+    transcripts = parents(("has_transcript_state",), state_ids, "state_transcripts")
+    movies = parents(("plays_cutscene",), select(transcripts.c.parent), "state_movies")
+    movie_owners = (select(movies.c.parent.label("owner_id"),
+                           transcripts.c.child.label("state_id"))
+                    .join(transcripts, transcripts.c.parent == movies.c.child)
+                    .cte("state_movie_owners").prefix_with("MATERIALIZED"))
+    actions = parents(("contains_action",), select(movies.c.parent), "state_actions")
+    wrapper_states = (select(actions.c.parent.label("wrapper_id"), movie_owners.c.state_id)
+                      .join(movie_owners, movie_owners.c.owner_id == actions.c.child)
+                      .cte("state_wrappers").prefix_with("MATERIALIZED"))
+    wrapper_refs = parents(references, select(wrapper_states.c.wrapper_id), "state_wrapper_refs")
+    owners = (select(direct.c.parent.label("owner_id"), direct.c.child.label("state_id"))
+              .union(select(movie_owners.c.owner_id, movie_owners.c.state_id),
+                     select(wrapper_refs.c.parent, wrapper_states.c.state_id)
+                     .join(wrapper_states, wrapper_states.c.wrapper_id == wrapper_refs.c.child))
+              .cte("state_owners").prefix_with("MATERIALIZED"))
+    children = parents(("has_quest_node",), select(owners.c.owner_id), "state_quest_parents")
+    scenes = parents(("presents_scene",), select(owners.c.owner_id), "state_scene_parents")
+    scene_steps = (select(scenes.c.parent.label("step_id"), owners.c.state_id)
+                   .join(owners, owners.c.owner_id == scenes.c.child)
+                   .cte("state_scene_steps").prefix_with("MATERIALIZED"))
+    steps = parents(("has_plot_step",), select(scene_steps.c.step_id), "state_plot_parents")
+    candidates = (select(owners.c.owner_id.label("quest_id"), owners.c.state_id)
+                  .union(select(children.c.parent, owners.c.state_id)
+                         .join(owners, owners.c.owner_id == children.c.child),
+                         select(steps.c.parent, scene_steps.c.state_id)
+                         .join(scene_steps, scene_steps.c.step_id == steps.c.child))
+                  .subquery())
+    query = select(Quest.node_id.label("quest_id"), candidates.c.state_id).join(
+        candidates, candidates.c.quest_id == Quest.node_id,
+    )
+    if quest_node_id is not None:
+        query = query.where(Quest.node_id == quest_node_id)
+    return query.distinct().subquery()
+
+
+def quest_state_links(release_id: int | None = None, *, quest_node_id: int | None = None,
+                      state_ids: Iterable[int] | None = None):
+    if state_ids is not None:
+        return _state_quest_links(release_id, sorted(set(state_ids)), quest_node_id)
+
     def source_edges(relation):
         query = (
             select(Edge.from_node_id.label("parent"), Edge.to_node_id.label("child"))

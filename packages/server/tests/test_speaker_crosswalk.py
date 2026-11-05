@@ -1,4 +1,16 @@
-from wuwa_story.ingestion.speaker_crosswalk import speaker_character_links
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+from wuwa_story.ingestion.character_identity import MAIN_ROLE_PATH
+from wuwa_story.ingestion.speaker_crosswalk import (
+    PERSONAL_PORTRAIT_BASIS,
+    ROLE_PATH,
+    SPEAKER_PATH,
+    speaker_character_links,
+)
 
 
 def links(roles, speakers, configs=()):
@@ -77,3 +89,64 @@ def test_skill_template_borrowed_head_and_cards_are_not_npc_personal_identity():
     assert [(r['from'], r['to']) for r in result] == [
         ('speaker:100', 'character:1402'), ('speaker:101', 'character:5015')]
     assert not any(m['role_id'] == 5002 for r in result for m in r['crosswalk']['matches'])
+
+
+def family_sources():
+    roles = [{'Id': 1501, 'RoleType': 1, 'FormationRoleCard': '/male', 'RoleHeadIconBig': '/male-head'},
+             {'Id': 1502, 'RoleType': 1, 'FormationRoleCard': '/female', 'RoleHeadIconBig': '/female-head'}]
+    configs = [{'Id': 1501, 'Gender': 1, 'UnlockCondition': 0},
+               {'Id': 1502, 'Gender': 0, 'UnlockCondition': 0}]
+    speakers = [{'Id': 317, 'RolePileIconAsset': '/female'},
+                {'Id': 750088, 'RolePileIconAsset': '/female', 'HeadRoundIconAsset': '/female-head',
+                 'HeadRoundIconAssetMaleVariant': '/male-head'},
+                {'Id': 1450, 'RolePileIconAsset': '/male'},
+                {'Id': 300013, 'RolePileIconAsset': '/female', 'HeadIconAsset': '/generic'}]
+    # Trial rows copy the heads/cards but are not source MainRoleConfig members.
+    roles.append({'Id': 7001, 'RoleType': 4, 'FormationRoleCard': '/female',
+                  'RoleHeadIconBig': '/female-head'})
+    return roles, speakers, configs
+
+
+def test_mainrole_family_only_card_fallback_preserves_all_four_source_variants():
+    roles, speakers, configs = family_sources()
+    result = links(roles, speakers, configs)
+    assert {r['from'] for r in result} == {'speaker:317', 'speaker:750088', 'speaker:1450', 'speaker:300013'}
+    assert {r['to'] for r in result} == {'character:1501'}
+    assert all(r['crosswalk']['method'] == 'main_role_config_exact_asset' for r in result)
+    assert all(r['basis'].startswith(PERSONAL_PORTRAIT_BASIS) and MAIN_ROLE_PATH in r['basis'] for r in result)
+    assert all(r['raw_path'].endswith('.RolePileIconAsset') for r in result)
+    assert not links(roles, speakers[:1], [])  # No family inferred from cards or numeric IDs.
+
+
+def test_mainrole_card_shared_with_unrelated_playable_family_is_not_unique():
+    roles, speakers, configs = family_sources()
+    roles.append({'Id': 90, 'RoleType': 1, 'FormationRoleCard': '/female'})
+    assert not links(roles, speakers[:1], configs)
+
+
+def test_family_card_cannot_override_conflicting_or_unrelated_personal_heads():
+    roles, _, configs = family_sources()
+    roles.append({'Id': 1212, 'RoleType': 1, 'RoleHeadIconCircle': '/jingran'})
+    result = links(roles, [{'Id': 4, 'HeadIconAsset': '/jingran', 'RolePileIconAsset': '/female'}], configs)
+    assert len(result) == 1 and result[0]['to'] == 'character:1212'
+    roles.append({'Id': 90, 'RoleType': 1, 'RoleHeadIconBig': '/female-head'})
+    assert not links(roles, [{'Id': 5, 'HeadRoundIconAsset': '/female-head',
+                             'RolePileIconAsset': '/female'}], configs)
+
+
+@pytest.mark.skipif(not os.getenv('SPEAKER_CROSSWALK_SNAPSHOTS'), reason='Requires retained private source snapshots')
+def test_real_latest_snapshot_retains_every_baseline_rover_speaker():
+    path = Path(os.environ['SPEAKER_CROSSWALK_SNAPSHOTS'])
+    snapshots = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
+    latest = next(s for s in snapshots if s['release_id'] == 21)
+    groups = {p: [(r['row_index'], r['data']) for r in latest['source_rows'] if r['file'] == p]
+              for p in (ROLE_PATH, SPEAKER_PATH, MAIN_ROLE_PATH)}
+    result = list(speaker_character_links(groups[ROLE_PATH], groups[SPEAKER_PATH],
+                                          [raw for _, raw in groups[MAIN_ROLE_PATH]]))
+    family = {r['from'] for r in result if r['to'] == 'character:1501'}
+    assert family == {'speaker:317', 'speaker:750088', 'speaker:1450', 'speaker:300013'}
+    baseline_path = os.getenv('CHARACTER_CONNECTION_BASELINES')
+    if baseline_path:
+        baseline = json.loads(Path(baseline_path).read_text(encoding='utf-8'))['15499-rover-spectro']['profile']
+        assert {speaker['canonical_key'] for speaker in baseline['speakers']} <= family
+        assert len(baseline['quests_with_dialogue']) == 392

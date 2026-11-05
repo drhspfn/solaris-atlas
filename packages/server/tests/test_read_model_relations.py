@@ -56,7 +56,8 @@ async def test_character_relations_merge_evidence_and_keep_dialogue_quest_item_p
     ]
     context.session.execute.side_effect = [
         [(edge, target, "speaker", "references_character", proof) for proof in evidence],
-        [(101, 4, 9, 33, 20), (102, 4, 9, 34, 20)],
+        [(4, 20)],
+        [(101, 4, 9, 33), (102, 4, 9, 34)],
         [(88, 9)],
         [],
     ]
@@ -100,15 +101,41 @@ async def test_character_relations_merge_evidence_and_keep_dialogue_quest_item_p
     assert item["game_item_id"] == 500 and item["source"]["raw_path"] == "$[2].BreachConsume[0]"
     assert not any(row["related_kind"] == "character" for row in rows)
     json.dumps(rows)
-    direct_sql, dialogue_sql, quest_sql, _co_presence_sql = [
+    direct_sql, crosswalk_sql, dialogue_sql, quest_sql, _co_presence_sql = [
         sql(call.args[0]) for call in context.session.execute.await_args_list
     ]
     assert "edge_evidence.release_id = 12" in direct_sql
     assert "'semantic'" not in direct_sql and "'inference'" not in direct_sql
-    assert "references_character" in dialogue_sql and "edge.basis = 'exact_join'" in dialogue_sql
+    assert "references_character" in crosswalk_sql and "edge.basis = 'exact_join'" in crosswalk_sql
+    assert "references_character" not in dialogue_sql
+    assert "participation_spoken.to_node_id IN (4)" in dialogue_sql
     assert "source_record.release_id = 12" in dialogue_sql
     assert "edge_evidence.release_id = 12" in quest_sql
     assert "LIMIT" not in direct_sql and "LIMIT" not in dialogue_sql
+
+
+@pytest.mark.asyncio
+async def test_character_participation_resolves_speakers_once_and_keeps_every_proof(context):
+    context.session.execute.side_effect = [
+        [(4, 20), (4, 21), (5, 22)],
+        [(101, 4, 9, 33), (102, 5, None, 34)],
+        [(88, 9)], [],
+    ]
+    result = []
+    await relations._character_relations(context.session, context.node, 12,
+                                         lambda *args: result.append(args))
+    facts = [row for row in result if row[0] == "dialogue"]
+    assert [(row[1], row[3]["crosswalk_edge_id"]) for row in facts] == [
+        (101, 20), (101, 21), (102, 22),
+    ]
+    assert [row[3]["source_record_id"] for row in facts] == [33, 33, 34]
+    assert facts[-1][3]["state_node_id"] is None
+    crosswalk_sql, participation_sql = [sql(call.args[0]) for call in
+                                        context.session.execute.await_args_list[:2]]
+    assert "references_character" in crosswalk_sql
+    assert "participation_spoken.to_node_id IN (4, 5)" in participation_sql
+    assert "references_character" not in participation_sql
+    assert "source_record.release_id = 12" in participation_sql
 
 
 @pytest.mark.asyncio
@@ -118,6 +145,7 @@ async def test_unmapped_character_does_not_gain_relations_from_co_presence_or_na
     relations.shared._character_progression_materials.assert_awaited_once_with(
         context.session, 70, "en", 12
     )
+    assert context.session.execute.await_count == 2  # Direct facts and the crosswalk only.
 
 
 @pytest.mark.asyncio
@@ -216,7 +244,8 @@ async def test_relation_builder_enters_source_context_and_restores_caches_on_err
 async def test_shared_state_is_projected_only_as_co_presence_with_both_line_sources(context):
     context.session.execute.side_effect = [
         [],
-        [(101, 4, 9, 33, 20)],
+        [(4, 20)],
+        [(101, 4, 9, 33)],
         [],
         [(16, 9, 202, 44, 30)],
     ]

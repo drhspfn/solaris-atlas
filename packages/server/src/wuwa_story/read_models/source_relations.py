@@ -59,7 +59,7 @@ async def _dialogue_filters(session, entity_id, release_id):
         result["character_keys"] = sorted(
             {key for key, _slug, _identity in characters if key})
     if state_id is not None:
-        links = quest_state_links(release_id)
+        links = quest_state_links(release_id, state_ids=[state_id])
         result["quest_ids"] = sorted(
             set(
                 await session.scalars(
@@ -271,32 +271,40 @@ async def _character_relations(session, node, release_id, add):
                                           NodeRevision.release_id == release_id).exists(),
         )))
     crosswalk = speaker_crosswalk(release_id, member_ids)
-    participation = dialogue_participation(release_id, speaker_ids=select(crosswalk.c.speaker_id))
-    lines = list(await session.execute(
-        select(participation.c.line_id, participation.c.speaker_id, participation.c.state_id,
-               participation.c.source_record_id, crosswalk.c.edge_id)
-        .join(crosswalk, crosswalk.c.speaker_id == participation.c.speaker_id)
-        .order_by(participation.c.line_id, crosswalk.c.edge_id)
-    ))
+    speaker_edges = {}
+    for speaker_id, edge_id in await session.execute(
+        select(crosswalk.c.speaker_id, crosswalk.c.edge_id)
+        .order_by(crosswalk.c.speaker_id, crosswalk.c.edge_id)
+    ):
+        speaker_edges.setdefault(speaker_id, set()).add(edge_id)
+    lines = []
+    if speaker_edges:
+        participation = dialogue_participation(release_id, speaker_ids=sorted(speaker_edges))
+        lines = list(await session.execute(
+            select(participation.c.line_id, participation.c.speaker_id, participation.c.state_id,
+                   participation.c.source_record_id)
+            .order_by(participation.c.line_id)
+        ))
     state_lines = {}
-    for line_id, speaker_id, state_id, record_id, edge_id in lines:
-        add(
-            "dialogue",
-            line_id,
-            "has_dialogue",
-            {
-                "evidence_type": "exact_crosswalk_dialogue",
-                "release_id": release_id,
-                "crosswalk_edge_id": edge_id,
-                "speaker_node_id": speaker_id,
-                "state_node_id": state_id,
-                "source_record_id": record_id,
-            },
-        )
+    for line_id, speaker_id, state_id, record_id in lines:
+        for edge_id in sorted(speaker_edges[speaker_id]):
+            add(
+                "dialogue",
+                line_id,
+                "has_dialogue",
+                {
+                    "evidence_type": "exact_crosswalk_dialogue",
+                    "release_id": release_id,
+                    "crosswalk_edge_id": edge_id,
+                    "speaker_node_id": speaker_id,
+                    "state_node_id": state_id,
+                    "source_record_id": record_id,
+                },
+            )
         if state_id is not None:
             state_lines.setdefault(state_id, set()).add(line_id)
     if state_lines:
-        links = quest_state_links(release_id)
+        links = quest_state_links(release_id, state_ids=state_lines)
         state_quests = {}
         for quest_id, state_id in await session.execute(
             select(links.c.quest_id, links.c.state_id)
