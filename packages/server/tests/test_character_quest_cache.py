@@ -14,7 +14,7 @@ async def test_character_quest_info_is_reused_across_scenes_and_quest_list(monke
     quest = Row(node_id=7, game_quest_id=70)
     speaker = Row(node_id=4, game_speaker_id=40)
     link = Row(resolution_type="exact", source_record_id=3)
-    character = Row(canonical_name="Name", name_key_id=None, description=None, playable=True)
+    character = Row(canonical_name="Name", name_key_id=None, description=None, playable=True, metadata_json={"role_type": 1})
     entities = list(range(20, 20 + card_count))
     speakers = list(range(100, 100 + card_count))
     session = Row(

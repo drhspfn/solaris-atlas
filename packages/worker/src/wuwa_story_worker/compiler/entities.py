@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from wuwa_story.ingestion.character_identity import main_role_identities
+
 from .core import Writer, read_json
 
 
@@ -53,6 +55,15 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
             return []
         return read_json(path)
 
+    main_role_path = base / "main_role_change/mainroleconfig.json"
+    role_path = base / "role/roleinfo.json"
+    element_path = base / "element_info/elementinfo.json"
+    main_roles = main_role_identities(
+        read_json(main_role_path) if main_role_path.is_file() else [],
+        read_json(role_path) if role_path.is_file() else [],
+        read_json(element_path) if element_path.is_file() else [],
+    )
+
     def loc(key: Any):
         if not isinstance(key, str) or not key:
             return None
@@ -85,6 +96,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
                     "ui_config_id": trial.get("UiConfigId"),
                     "animation": "idle",
                 }
+            if kind == "character" and value in main_roles:
+                record["public_identity"] = main_roles[value]
             if kind == "character" and value in trial_infos:
                 record["trial_entries"] = trial_infos[value]
             for field in fields:

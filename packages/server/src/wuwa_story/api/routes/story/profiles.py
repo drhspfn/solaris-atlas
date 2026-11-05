@@ -42,6 +42,7 @@ from wuwa_story.db.models.i18n import Locale, LocalizationKey
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.search import EntityAlias, SearchDocument
+from wuwa_story.db.repositories.character_identity import character_family
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.db.session import get_session
 from wuwa_story.read_models.context import SOURCE_BUILD
@@ -818,6 +819,13 @@ async def character_profile(
     if character is None:
         raise HTTPException(status_code=404, detail="node is not a character")
     release_id = await _release_id(session, game_version)
+    async def element_name(key):
+        if not key:
+            return None
+        key_id = await session.scalar(select(LocalizationKey.id).where(LocalizationKey.key == key))
+        return await _localized(session, key_id, locale, release_id) if key_id else None
+
+    member_ids, family = await character_family(session, character, node, element_name)
     quest_info_cache: dict[int, dict[str, Any]] = {}
 
     async def character_quest_info(quest: Quest) -> dict[str, Any]:
@@ -829,7 +837,7 @@ async def character_profile(
         select(SpeakerEntityLink, Speaker, Node)
         .join(Speaker, Speaker.node_id == SpeakerEntityLink.speaker_node_id)
         .join(Node, Node.id == Speaker.node_id)
-        .where(SpeakerEntityLink.entity_node_id == node.id)
+        .where(SpeakerEntityLink.entity_node_id.in_(member_ids))
         .order_by(Speaker.game_speaker_id)
     )
     speakers = []
@@ -917,6 +925,22 @@ async def character_profile(
                                     },
                                 }
                             )
+    if family and release_id is not None:
+        # The same protagonist portrait is shared by all elemental role IDs.
+        # mainroleconfig establishes their identity, not a translated name match.
+        member_keys = [int(row["canonical_key"].split(":")[1]) for row in family["variants"]]
+        assets = select(SourceRecord.data["FormationRoleCard"].as_string()).join(
+            SourceFile, SourceFile.id == SourceRecord.source_file_id
+        ).where(SourceRecord.release_id == release_id,
+                SourceFile.logical_source_path == "BinData/role/roleinfo.json",
+                SourceRecord.data["Id"].as_integer().in_(member_keys))
+        speaker_ids = select(SourceRecord.data["Id"].as_integer()).join(
+            SourceFile, SourceFile.id == SourceRecord.source_file_id
+        ).where(SourceRecord.release_id == release_id,
+                SourceFile.logical_source_path == "BinData/speaker/speaker.json",
+                SourceRecord.data["RolePileIconAsset"].as_string().in_(assets))
+        own_speaker_ids.update(await session.scalars(
+            select(Speaker.node_id).where(Speaker.game_speaker_id.in_(speaker_ids))))
     if own_speaker_ids:
         state_ids.update(await session.scalars(
             select(QuestAction.quest_state_node_id)
@@ -947,7 +971,7 @@ async def character_profile(
             .join(QuestAction, QuestAction.node_id == DialogueLine.action_node_id)
             .where(
                 QuestAction.quest_state_node_id.in_(state_ids),
-                SpeakerEntityLink.entity_node_id != node.id,
+                SpeakerEntityLink.entity_node_id.not_in(member_ids),
             )
             .distinct()
         )
@@ -1212,6 +1236,7 @@ async def character_profile(
         release_id,
     )
     return {
+        "family": family,
         "character": {
             "canonical_key": node.canonical_key,
             **node_address(node, "character"),
@@ -1219,7 +1244,7 @@ async def character_profile(
             "name": await _localized(session, character.name_key_id, locale, release_id),
             "aliases": list(dict.fromkeys(aliases)),
             "description": character.description,
-            "playable": character.playable,
+            "playable": (character.metadata_json or {}).get("role_type") == 1,
             "game_version": game_version,
         },
         "media": {
