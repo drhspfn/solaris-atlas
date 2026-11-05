@@ -112,8 +112,9 @@ COPY --from=riglyph-builder /usr/local/bin/node /usr/local/bin/node
 COPY --from=riglyph-builder /riglyph/node_modules /app/tools/riglyph/node_modules
 RUN cd /app/tools && sha256sum vgmstream-cli vgmstream_probe.py >> SHA256SUMS
 COPY --from=uv /uv /uvx /bin/
+# Capture Python thread stacks on native crashes; the libcrypto root cause remains unconfirmed.
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv PATH="/opt/venv/bin:$PATH" \
-    PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONFAULTHANDLER=1 \
     DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 LD_LIBRARY_PATH=/app/tools \
     WUWA_TOOLS_DIR=/app/tools
 ENV RIGLYPH_NATIVE_BIN=/app/tools/riglyph-native/riglyph-native
