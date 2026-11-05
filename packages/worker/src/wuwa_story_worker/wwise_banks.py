@@ -6,6 +6,7 @@ the male/female sources in a bank must never be mixed together indiscriminately.
 
 import asyncio
 import hashlib
+import math
 import re
 import shutil
 import struct
@@ -18,9 +19,13 @@ from wuwa_story_worker.tooling import tool_path
 
 def bank_media_ids(data: bytes) -> list[int]:
     """Read bounded v172 sound/music source tables, without choosing a branch."""
+    return _bank_sources(data)[0]
+
+
+def _bank_sources(data: bytes) -> tuple[list[int], dict[int, float]]:
     if len(data) < 12 or data[:4] != b"BKHD" or struct.unpack_from("<I", data, 8)[0] != 172:
         raise ValueError("Unsupported Wwise bank version")
-    sources, position = [], 0
+    sources, position, silence_ids, effects = [], 0, set(), {}
     while position < len(data):
         if position + 8 > len(data):
             raise ValueError("Truncated Wwise chunk header")
@@ -39,6 +44,11 @@ def bank_media_ids(data: bytes) -> list[int]:
                 obj = payload[offset + 5:offset + 5 + length]
                 if len(obj) != length:
                     raise ValueError("Truncated Wwise object")
+                if kind == 17 and len(obj) >= 4:
+                    identity = struct.unpack_from('<I', obj)[0]
+                    if identity in effects:
+                        raise ValueError('Duplicate Wwise source effect')
+                    effects[identity] = obj
                 if kind == 2:
                     locations = [4]
                 elif kind == 11:
@@ -54,6 +64,12 @@ def bank_media_ids(data: bytes) -> list[int]:
                     if len(obj) < location + 9:
                         raise ValueError("Truncated Wwise source")
                     plugin = struct.unpack_from("<I", obj, location)[0]
+                    if plugin == 0x00650002 and kind == 2:
+                        # v172 Silence references an FxCustom, not a downloadable WEM.
+                        if len(obj) < 26 or obj[8] != 0 or obj[13:26] != bytes(13):
+                            raise ValueError('Unsupported Wwise Silence source data')
+                        silence_ids.add(struct.unpack_from('<I', obj, 9)[0])
+                        continue
                     if plugin != 0x00140001:
                         object_id = struct.unpack_from("<I", obj)[0]
                         raise ValueError(
@@ -65,7 +81,59 @@ def bank_media_ids(data: bytes) -> list[int]:
             if offset != len(payload):
                 raise ValueError("Unexpected Wwise hierarchy trailing bytes")
         position += 8 + size
-    return sorted(set(sources))
+    silences = {}
+    for identity in silence_ids:
+        effect = effects.get(identity, b'')
+        if (len(effect) != 31 or struct.unpack_from('<II', effect, 4) != (0x00650002, 12)
+                or effect[24:] != bytes(7)):
+            raise ValueError('Unsupported Wwise Silence effect or modulation')
+        duration, minus, plus = struct.unpack_from('<fff', effect, 12)
+        if not math.isfinite(duration) or duration <= 0 or minus != 0 or plus != 0:
+            raise ValueError('Unsupported Wwise Silence duration or randomization')
+        silences[identity] = duration
+    return sorted(set(sources)), silences
+
+
+def _silence_recipe(body: str, bank: Path, xml: Path) -> str:
+    """Correct the pinned WWiser's Silence duration and finite-loop rendering.
+
+    Its int==set bug emits a default 1s; TXTP #B overrides #l rather than
+    multiplying it. Only one fixed, unmodulated source is supported here.
+    """
+    _, silences = _bank_sources(bank.read_bytes())
+    sounds = [node for node in ET.parse(xml).iter('object')
+              if node.get('name') == 'CAkSound'
+              and node.find(".//field[@name='ulPluginID'][@value='6619138']") is not None]
+    if len(sounds) != 1 or len(silences) != 1:
+        raise ValueError('Unsupported Wwise Silence source multiplicity')
+    sound = sounds[0]
+    source = sound.find(".//field[@name='sourceID']")
+    if source is None or int(source.get('value')) not in silences:
+        raise ValueError('Unresolved Wwise Silence source effect')
+    for name, count in (('uNumCurves', 1), ('ulNumStateProps', 1), ('ulNumStateGroups', 1), ('uNumFx', 2)):
+        controls = sound.findall(f".//field[@name='{name}']")
+        if len(controls) != count or any(field.get('value') != '0' for field in controls):
+            raise ValueError('Unsupported Wwise Silence modulation')
+    bundles = sound.findall(".//object[@name='NodeInitialParams']/object")
+    if len(bundles) != 2 or bundles[1].find("field[@name='cProps'][@value='0']") is None:
+        raise ValueError('Unsupported Wwise Silence randomized properties')
+    props = bundles[0].findall("list[@name='pProps']/object")
+    if len(props) != 1 or props[0].find("field[@name='pID'][@value='74']") is None:
+        raise ValueError('Unsupported Wwise Silence properties')
+    loop_field = props[0].find("field[@name='pValue']")
+    if loop_field is None:
+        raise ValueError('Missing Wwise Silence loop count')
+    loops = int(loop_field.get('value'))
+    duration = silences[int(source.get('value'))]
+    if loops <= 0 or not math.isfinite(duration * loops):
+        raise ValueError('Unsupported Wwise Silence infinite loop')
+    pattern = re.compile(r'(?m)^([ \t]*)\?\.plugin-silence #B ([0-9.]+) #e #l ([0-9]+)\.0[ \t]*$')
+    matches = list(pattern.finditer(body))
+    if (not matches or len(matches) != body.count('?.plugin-silence')
+            or any(int(m[3]) != loops or float(m[2]) not in (1.0, duration) for m in matches)):
+        raise ValueError('Unsupported Wwise Silence rendition')
+    # TXTP integer times are samples, so retain a decimal point for seconds.
+    return pattern.sub(lambda m: f'{m[1]}?.plugin-silence #B {duration * loops:.9f}', body)
 
 
 def event_id(name: str) -> int:
@@ -166,11 +234,20 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
         raise ValueError(f"Wwise event requires an explicit non-gender selection ({len(outputs)} renditions)")
     recipe = outputs[0]
     body = recipe.read_text(encoding="utf-8-sig").split("# AUTOGENERATED", 1)[0]
+    original_recipe = None
+    if '?.plugin-silence' in body:
+        body = _silence_recipe(body, bank, xml)
+        original_recipe = recipe.with_suffix('.wwiser-original')
+        shutil.copyfile(recipe, original_recipe)
+        recipe.write_text(body, encoding='utf-8')
     identities = sorted(set(map(int, re.findall(r"(?m)^\s*wem/(\d+)\.wem\b", body))))
     if not identities or any(line.strip() and not line.lstrip().startswith(("wem/", "group", "#", "commands"))
+                             and not re.fullmatch(r'\?\.plugin-silence #B [0-9.]+', line.strip())
                              for line in body.splitlines()):
         raise ValueError("Unsupported Wwise rendition resource path")
     originals = [bank, *initializers, recipe, xml]
+    if original_recipe is not None:
+        originals.append(original_recipe)
     media = root / "wem"
     media.mkdir(exist_ok=True)
     for identity in identities:

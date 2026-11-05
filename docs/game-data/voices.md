@@ -143,8 +143,30 @@ No additional movie was published and no codec whitelist was broadened.
 | C0026, C0027, C0032 | Four branches of State group `language` (2441027675), with EN/JA/KO/ZH values. C0027 explicitly references `play_all_sound_m3_6_26`. | Renderer now binds the explicit track language and separates locale caches; absent/unknown values fail, never use the None/Chinese default. Six EN/JA bank generations each produced one rendition. New-worker rollout and full four-locale publication still need validation. |
 | M2_12_06 | Music-switch group 3533944365 has None (748895195) and 2673105805 paths; embedded SetState events and looping music segments produce two renditions. | Prove authored state/timing context or retain explicit alternatives. No canonical state or mix has been selected. |
 | M3_1_11_1 | `play_all_sound_m3_1_11_1` produces one rendition. Its separate `play_story_music_3_0_b_m3_1_11_c` event contains SetState only, hence zero audio renditions. | Preserve the control cue; identify any already-playing music context before claiming a complete soundtrack. |
-| M0318 | Source plugin **0x00650002 = Wwise Silence**, HIRC Sound object 581857846, source offset 4. WWiser emits `?.plugin-silence`; the other sources are OPUS_WEM. | Validate source-generator/virtual-silence handling and decoder output. This is not evidence for accepting arbitrary codecs. |
+| M0318 | Source plugin **0x00650002 = Wwise Silence**, HIRC Sound object 581857846, source offset 4, linked FxCustom995424997: fixed 4s, Loop5. | The renderer validates the v172 effect and source, then normalizes Silence to 20s. Randomized/modulated/infinite/multiple Silence sources and other unknown plugins remain unsupported. Native timing is verified; full movie publication is still a separate gate. |
 
 Detailed inputs, hashes, XML and rendition reports are retained under
 `scratch/video-hirc-selector-audit-20261106/`. Selector classification is not a
 claim that these six movies have been recovered or that every locale was tested.
+
+The M0318 native timing probe ran locally, offline, in the exact production worker
+image `sha256:adb01a876bd3b6c3c8f27bb877ebc0ac9f85eb1bc578af33070c7f4fc5a13743`,
+using decoder SHA256 `16593cfa1f8b79dc1fda30a0f8f6d97da386ab43128557d5c9b6debf72e07ddc`.
+It verified the 4s unit, 20s finite repeat, exact zero PCM, and a 21s Sequence
+including a 1s marker against a PCM repeat reference. The pinned WWiser's original
+recipe reproduces the incorrect 2s Sequence. The receipt is
+`native-silence/production-image-native-proof.json` under that scratch directory;
+no production worker was interrupted or modified.
+
+Validation: 177 targeted tests passed across `test_wwise_silence.py`,
+`test_wwise_banks.py`, `test_cutscene_language_state.py`, `test_cutscene_import.py`,
+`test_character_voice_variants.py`, and `test_release_media_status.py`; Ruff and
+`git diff --check` passed. Independent review also passed 63 targeted tests.
+The same native image passed all four existing Opus probes. The retained M0318
+fixture tests missing/duplicate XML controls, unsupported generators, invalid or
+randomized durations, infinite loops, and source/recipe disagreement.
+
+Status: the Silence fix is implemented and tested, **not deployed or published**.
+No complete M0318 soundtrack/movie encode, CDN publication, or full-movie playback
+was performed. A normal scoped production retry after rollout remains necessary;
+M3_1_11_1's external music-state context is outside this fix.
