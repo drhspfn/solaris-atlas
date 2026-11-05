@@ -5,6 +5,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { activityDestination, dialogueSearchIndex, sidebarWindow } from '../src/components/quest/questSidebarModel.ts';
+import { isSourceOnlyActivity, sidebarActivityTitle } from '../src/components/story/runtimeActivity.ts';
 
 const entries = Array.from({ length: 75 }, (_, i) => ({
   id: `occurrence-${i}`, title: `Passage ${i}`, fallback: 'Dialogue', searchText: `Passage ${i}`,
@@ -47,6 +48,28 @@ test('mounted related/null-position activity keeps its exact anchor; absent targ
   const related = { id: 'related:1', position: null, ordering: 'related' };
   assert.equal(activityDestination(related, new Map([['related:1', 'activity-exact']]), [], ''), '#activity-exact');
   assert.equal(activityDestination(related, new Map(), [], ''), undefined);
+});
+
+test('source-only generic activities are excluded without dropping meaningful generic contexts or merging occurrences', () => {
+  const hidden = Array.from({ length: 62 }, (_, i) => ({ id: `source-${i}`,
+    title: i % 2 ? 'Continue the story' : 'Story activity', flow_states: [], interactions: [] }));
+  const meaningful = [
+    { id: 'talk-a', title: 'Continue the story', condition_type: 'PlayFlow', flow_states: [{ state: 'a' }] },
+    { id: 'talk-b', title: 'Continue the story', condition_type: 'PlayFlow', flow_states: [{ state: 'a' }] },
+    { id: 'inspect', title: 'Story activity', interactions: [{ id: 'interaction' }] },
+    { id: 'exit', title: 'Story activity', transition: { kind: 'dungeon_exit' } },
+    { id: 'battle', title: 'Story activity', encounter: { trees: [] } },
+    { id: 'named', title: 'Reach the station' },
+  ];
+  const source = [...hidden, ...meaningful];
+  const visible = source.filter((block) => !isSourceOnlyActivity(block));
+  assert.equal(source.length, 68);
+  assert.deepEqual(visible.map((block) => block.id), meaningful.map((block) => block.id));
+  assert.equal(visible.length, 6, 'public count excludes62 technical source-only rows');
+  assert.equal(sidebarActivityTitle(visible[0]), 'Conversation');
+  assert.equal(sidebarActivityTitle(visible[1]), 'Conversation');
+  assert.equal(sidebarActivityTitle({ ...visible[0], title: 'Speak with Aemeath' }), 'Speak with Aemeath');
+  assert.equal(activityDestination(hidden[0], new Map([['source-0', 'preserved-source-anchor']]), [], ''), '#preserved-source-anchor');
 });
 
 test('filtered or out-of-window activity uses an exact focus-line link retaining locale/version', () => {

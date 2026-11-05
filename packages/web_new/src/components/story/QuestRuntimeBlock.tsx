@@ -5,6 +5,7 @@ import { compareStoryPosition } from './cutscenePlacement';
 import { QuestEncounter, type RenderEncounterFlow } from './QuestEncounter';
 import type { Encounter } from './encounterTransitions';
 import styles from './QuestRuntimeBlock.module.css';
+import { genericActivityTitle, isSourceOnlyActivity } from './runtimeActivity';
 export type { EncounterFlow } from './encounterTransitions';
 export { EncounterCinematicBoundary } from './QuestEncounter';
 export { encounterCinematicParts, encounterFlowOwners, encounterOwnsMedia } from './encounterTransitions';
@@ -89,7 +90,7 @@ export function QuestRuntimeBlock({
     <QuestEncounter encounter={block.encounter} display={display} stateAnchors={stateAnchors} renderFlow={renderEncounterFlow} />
   </div>;
   const isExit = block.transition?.kind === 'dungeon_exit';
-  const genericTitle = !block.title || ['Story activity', 'Continue the story'].includes(block.title);
+  const genericTitle = genericActivityTitle(block.title);
   const dialogue = block.flow_states.filter((flow) => stateAnchors.has(flow.state));
   const sourceContext = <>
     <p>{block.condition_type || 'Scripted activity'}</p>
@@ -98,7 +99,7 @@ export function QuestRuntimeBlock({
     <small>{block.source.file} · {block.source.key}</small>
     {block.branches.map((branch) => <small key={branch.id}>{branch.type} · {branch.id}</small>)}
   </>;
-  if (genericTitle && !isExit && !block.flow_states.length && !block.interactions?.length)
+  if (isSourceOnlyActivity(block))
     return <details className={styles.sourceOnly} id={runtimeBlockAnchor(block.id)}>
       <summary>Source &amp; conditions</summary>
       {sourceContext}

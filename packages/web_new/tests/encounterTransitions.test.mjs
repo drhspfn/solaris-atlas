@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import test from 'node:test';
 import { localizedText } from '../src/data/localized.ts';
 import { activityDestination, dialogueSearchIndex } from '../src/components/quest/questSidebarModel.ts';
+import { isSourceOnlyActivity, sidebarActivityTitle } from '../src/components/story/runtimeActivity.ts';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
@@ -274,6 +275,7 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
   const data = encounter(root);
   const dummy = new Proxy({}, { get: () => () => null });
   const story = loadStory('QuestRuntimeBlock');
+  let sidebarGroups;
   const mocks = {
     react: React, 'lucide-react': dummy,
     '@/components/story/QuestRuntimeBlock': story,
@@ -282,8 +284,9 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     '@/components/story/cutscenePlacement': loadStory('cutscenePlacement'),
     '@/components/dialogue/PlayerText': { PlayerText: ({ value, fallback }) => typeof value === 'string' ? value : value?.content || fallback },
     '@/data/localized': { localizedText },
+    '@/components/story/runtimeActivity': { isSourceOnlyActivity, sidebarActivityTitle },
     './questSidebarModel': { activityDestination, dialogueSearchIndex },
-    './QuestSidebar': { QuestSidebar: () => null },
+    './QuestSidebar': { QuestSidebar: ({ groups }) => { sidebarGroups = groups; return null; } },
     '@/lib/router': { Link: ({ to, children }) => React.createElement('a', { href: to }, children),
       useSearchParams: () => new URLSearchParams('line=dialogue%3ASHUTUP'), useLocation: () => ({ key: 'fixture' }) },
     '@/hooks/useLocale': { useLocale: () => 'en' }, '@/hooks/usePlayerDisplay': { usePlayerDisplay: () => display },
@@ -311,11 +314,19 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     initialProfile: { quest: { game_quest_id: 114000031, name: { content: 'Battle fixture' } } },
     initialTranscript: { lines, limit: 100, offset: 0, story_blocks: [
       { id: 'gate', title: 'Battle', position: [2], condition_type: 'FinishDungeon', branches: [], flow_states: [], source, encounter: data },
+      { id: 'technical', title: 'Story activity', position: [1], branches: [], flow_states: [], source },
+      { id: 'conversation', title: 'Continue the story', condition_type: 'PlayFlow', position: [0],
+        branches: [], flow_states: [{ state: 'Before', position: [0] }], source },
     ] }, initialMedia: { events: [], related_cutscenes: [] },
   }));
   for (const id of ['dialogue:SHUTUP', 'dialogue:THATNOTHOME', 'dialogue:repeat']) {
     assert.equal(markup.split(`data-dialogue-key="${id}"`).length - 1, 1);
   }
+  const publicActivities = sidebarGroups.find((group) => group.id === 'activities').entries;
+  assert.equal(publicActivities.length, 2);
+  assert.deepEqual(publicActivities.map((entry) => entry.id).sort(), ['conversation', 'gate']);
+  assert.equal(publicActivities.find((entry) => entry.id === 'conversation').title, 'Conversation');
+  assert(markup.includes(`id="${runtimeBlockAnchor('technical')}"`), 'source-only direct-link anchor remains mounted');
   const start = markup.indexOf('class="marker">Scene</div>'), end = markup.indexOf('End scene');
   assert(start >= 0 && start < markup.indexOf('SHUT UP!') && markup.indexOf('THAT IS NOT HOME!') < end, JSON.stringify({start,end,shutup:markup.indexOf('SHUT UP!'),notHome:markup.indexOf('THAT IS NOT HOME!'),excerpt:markup.slice(Math.max(0,start),Math.max(0,start)+1800)}));
   assert.match(markup, /Read the dialogue shared by this branch/);

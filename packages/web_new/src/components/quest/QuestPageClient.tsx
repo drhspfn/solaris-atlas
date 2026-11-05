@@ -8,6 +8,7 @@ import { QuestSidebar, type SidebarGroup } from './QuestSidebar';
 import { activityDestination, dialogueSearchIndex } from './questSidebarModel';
 import { localizedText } from '@/data/localized';
 import { cutsceneAnchor, packageCutsceneAnchor } from '@/components/story/cutsceneAnchor';
+import { isSourceOnlyActivity, sidebarActivityTitle } from '@/components/story/runtimeActivity';
 import { AnalysisActions } from '@/components/story/AnalysisActions';
 import { cutsceneSlots } from '@/components/story/cutscenePlacement';
 import {
@@ -387,9 +388,9 @@ export function QuestPageClient({
         note: 'Related · position unknown',
       })),
     ] },
-    { id: 'activities', title: 'Activities', entries: (transcript?.story_blocks || []).map((block: any) => ({
-      id: block.id, title: block.title, fallback: 'Story activity',
-      searchText: searchText(block.title, 'Story activity'), inView: mountedActivityAnchors.has(block.id),
+    { id: 'activities', title: 'Activities', entries: (transcript?.story_blocks || []).filter((block: any) => !isSourceOnlyActivity(block)).map((block: any) => ({
+      id: block.id, title: sidebarActivityTitle(block), fallback: 'Story activity',
+      searchText: searchText(sidebarActivityTitle(block), 'Story activity'), inView: mountedActivityAnchors.has(block.id),
       href: activityDestination(block, mountedActivityAnchors, lines, searchParams?.toString() || ''),
       note: !block.position || block.ordering === 'related' ? 'Related · position unknown' : undefined,
     })).sort((a: { inView: boolean }, b: { inView: boolean }) => Number(b.inView) - Number(a.inView)) },
