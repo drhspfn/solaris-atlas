@@ -10,3 +10,5 @@
 .events-artwork > .rendered-animation { height: 100%; aspect-ratio: auto; background: transparent; }
 .events-artwork > .rendered-animation > video { object-fit: contain; }
 .character-artwork > .rendered-animation { max-height: min(70vh, 640px); }
+.character-trial-animation { display: grid; gap: 8px; max-width: 480px; }
+.character-trial-animation > .rendered-animation { width: min(100%, 480px); height: clamp(220px, 32vh, 320px); background: transparent; border-radius: var(--radius-sm); }

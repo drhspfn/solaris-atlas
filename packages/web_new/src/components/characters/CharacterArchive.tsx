@@ -190,6 +190,8 @@ export function CharacterArchive({
       art.kind === "RoleStand" && art.scope !== "shared_resource" && art.url,
   );
 
+  const trialPreview = selectAnimationClip(archive?.trial_spine?.animation_preview, 'idle');
+
   return (
     <div className="character-archive">
       <details className="character-fold" open>
@@ -249,17 +251,14 @@ export function CharacterArchive({
               <code title={portrait.engine_path}>{portrait.engine_path.split('/').at(-1)}</code>
             </div>
           )}
-          {archive?.trial_spine && (
+          {archive?.trial_spine && trialPreview && (
             <section
               aria-label="Character trial animation"
-              className="character-artwork"
+              className="character-artwork character-trial-animation"
             >
               <h3>Trial animation</h3>
               <RenderedAnimation
-                preview={selectAnimationClip(
-                  archive.trial_spine.animation_preview,
-                  "idle",
-                )}
+                preview={trialPreview}
                 label="Character trial animation"
                 fallback={
                   <div className="character-artwork-placeholder">
@@ -269,11 +268,7 @@ export function CharacterArchive({
                         alt="Character trial artwork"
                         loading="lazy"
                       />
-                    ) : (
-                      <span>
-                        Trial animation archived · playback unavailable
-                      </span>
-                    )}
+                    ) : null}
                   </div>
                 }
               />
