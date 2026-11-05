@@ -41,6 +41,47 @@ def test_multiple_clips_need_real_sequencing():
         event_media(cooked([media("en", 2), media("en", 3)]))
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("ambiguous", [("en",), ("en", "ja"), ("ja",)])
+def test_variant_languages_do_not_discard_other_localizations(ambiguous, reverse):
+    entries = []
+    expected = {}
+    for identity, language in enumerate(("en", "ja", "ko", "zh"), 1):
+        if language in ambiguous:
+            for offset, suffix in enumerate(("M", "F"), 10):
+                value = media(language, identity * 100 + offset)
+                value["DebugName"] = value["DebugName"].replace(".wav", f"_{suffix}.wav")
+                entries.append(value)
+        else:
+            entries.append(media(language, identity))
+            expected[language] = identity
+    unresolved = {}
+    assert event_media(cooked(entries[::-1] if reverse else entries), unresolved=unresolved) == expected
+    assert set(unresolved) == set(ambiguous)
+    assert all("authored selection or sequencing" in reason for reason in unresolved.values())
+
+
+def test_conflicting_debug_name_only_blocks_its_own_language():
+    unresolved = {}
+    assert event_media(cooked([media("en", 2), media("en", 3), media("ja", 4)]),
+                       unresolved=unresolved) == {"ja": 4}
+    assert set(unresolved) == {"en"}
+    assert "Conflicting media IDs" in unresolved["en"]
+
+
+def test_all_random_variants_remain_unresolved_without_invented_order():
+    entries = []
+    for identity, language in enumerate(("en", "ja", "ko", "zh"), 1):
+        for offset in (1, 2):
+            value = media(language, identity * 10 + offset)
+            value["DebugName"] = f"{language}_vo_fuluoluo_burst_burst0{offset}.wav"
+            entries.append(value)
+    unresolved = {}
+    with pytest.raises(ValueError, match="authored sequencing"):
+        event_media(cooked(entries), unresolved=unresolved)
+    assert set(unresolved) == {"en", "ja", "ko", "zh"}
+
+
 def test_numeric_media_path_must_match_identity():
     value = media("en", 2)
     value["MediaPathName"] = "Media/other.wem"

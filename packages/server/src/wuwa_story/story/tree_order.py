@@ -60,7 +60,7 @@ def flow_positions(quest_nodes: list[dict], quest_records: dict[int, dict],
 
 
 async def authored_order(session, quest_id: int, release_id: int | None):
-    """Resolve an order only when all referenced node records match the client."""
+    """Resolve full order, or independently verified encounters without quest positions."""
     if release_id is None:
         return None
 
@@ -84,6 +84,21 @@ async def authored_order(session, quest_id: int, release_id: int | None):
         map(int, value.asset_version.split('.'))), value.download_id), reverse=True)
     quest_tree = next(
         (tree for tree in candidates if records_match(tree.nodes, qrecords)), None)
+    related = quest_tree is None
+    quest_nodes = quest_tree.nodes if quest_tree else []
+    if related:
+        # A changed quest cannot lend its paths/ancestors to an older snapshot.
+        # Its unchanged dungeon owners can still identify complete matching
+        # LevelPlay trees. Each owner is detached; only local LevelPlay order survives.
+        for tree in candidates:
+            matched = [node for node in tree.nodes if node['id'] in qrecords
+                       and dungeon_requirement(qrecords[node['id']]) is not None
+                       and records_match([node], {node['id']: qrecords[node['id']]})]
+            if matched:
+                quest_tree = tree
+                quest_nodes = [{**node, 'path': []} for node in matched]
+                qrecords = {node['id']: qrecords[node['id']] for node in matched}
+                break
     if quest_tree is None:
         return None
     level_ids = set()
@@ -146,11 +161,38 @@ async def authored_order(session, quest_id: int, release_id: int | None):
         for data, record_id, row_index in flow_rows:
             flow_records[data['StateKey']] = {**data, '_source': {
                 'record_id': record_id, 'row': row_index, 'release_id': release_id}}
-    blocks = project_blocks(quest_id, quest_tree.nodes, qrecords, level_trees, interactions,
+    blocks = project_blocks(quest_id, quest_nodes, qrecords, level_trees, interactions,
                             dungeon_memberships=dungeon_memberships, flow_records=flow_records,
                             state_ids=states, release_id=release_id,
                             client={'asset_version': quest_tree.asset_version,
                                     'download_id': quest_tree.download_id})
+    if related:
+        blocks = [block for block in blocks if block.get('encounter', {}).get('trees')]
+        if not blocks:
+            return None
+        source_rows = await session.execute(select(SourceRecord.id, SourceRecord.row_index,
+                                                   SourceRecord.data['Key'].astext).join(SourceFile).where(
+            SourceRecord.release_id == release_id, SourceFile.release_id == release_id,
+            SourceFile.logical_source_path == 'BinData/QuestNodeData/questnodedata.json',
+            SourceRecord.data['Key'].astext.in_([block['source']['key'] for block in blocks])))
+        sources = {key: {'record_id': identity, 'row': row, 'release_id': release_id}
+                   for identity, row, key in source_rows}
+        state_ids = set()
+        for block in blocks:
+            block.update(position=None, branches=[], ordering='related',
+                         flow_states=[], media=[], interactions=[])
+            block['source'].update(sources[block['source']['key']])
+            encounter = block['encounter']
+            encounter.update(quest_position=None, quest_order='unknown')
+            encounter['source'].update(sources[block['source']['key']])
+            pending = [tree['root'] for tree in encounter['trees']]
+            while pending:
+                node = pending.pop()
+                state_ids.update(flow['state_node_id'] for flow in node['flow_states']
+                                 if flow.get('state_node_id') is not None)
+                pending.extend(node['children'])
+        return {'state_ids': sorted(state_ids), 'asset_version': quest_tree.asset_version,
+                'ordering': 'related', 'mapped_flow_states': [], 'positions': {}, 'blocks': blocks}
     positions = flow_positions(
         quest_tree.nodes, qrecords, level_trees, set(states))
     if not positions and not blocks:

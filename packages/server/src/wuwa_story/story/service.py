@@ -15,8 +15,8 @@ from wuwa_story.db.models.core import (
 )
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.repositories import story_browsing as repository
+from wuwa_story.story.domain import StoryBrowsingError, localization_payload, version_key
 from wuwa_story.story.domain import choice_branch as _choice_branch
-from wuwa_story.story.domain import localization_payload, version_key
 from wuwa_story.urls import node_address
 
 
@@ -359,8 +359,8 @@ async def _quest_info(
     }
 
 
-async def _latest_source_record(session: AsyncSession, node_id: int) -> dict[str, Any] | None:
-    row = await repository.latest_source_row(session, node_id)
+async def _latest_source_record(session: AsyncSession, node_id: int, *, release_id=None) -> dict[str, Any] | None:
+    row = await repository.latest_source_row(session, node_id, release_id=release_id)
     if row is None:
         return None
     revision, record, source_file, release = row
@@ -376,6 +376,14 @@ async def _latest_source_record(session: AsyncSession, node_id: int) -> dict[str
 async def quest_profile_payload(session, quest, locale="en", game_version=None) -> dict[str, Any]:
     game_quest_id = quest.game_quest_id
     release_id = await _release_id(session, game_version)
+    if game_version:
+        if release_id is None:
+            raise StoryBrowsingError(status_code=404, detail="quest snapshot not found")
+        profile_source = await _latest_source_record(session, quest.node_id, release_id=release_id)
+        if profile_source is None:
+            raise StoryBrowsingError(status_code=404, detail="quest has no source in snapshot")
+    else:
+        profile_source = await _latest_source_record(session, quest.node_id)
     qnode_rows = await repository.quest_node_rows(session, game_quest_id)
     qnode_ids = {entry[0].node_id for entry in qnode_rows}
     nodes_by_game_id = {entry[0].game_node_id: entry[1].canonical_key for entry in qnode_rows}
@@ -508,7 +516,7 @@ async def quest_profile_payload(session, quest, locale="en", game_version=None) 
         },
         "transcript_endpoint": f"/quests/{game_quest_id}/transcript?locale={locale}&game_version={game_version or ''}",
         "explicit_links": quest_links,
-        "source": await _latest_source_record(session, quest.node_id),
+        "source": profile_source,
     }
 
 

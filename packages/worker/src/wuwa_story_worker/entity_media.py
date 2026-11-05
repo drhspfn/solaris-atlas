@@ -49,10 +49,12 @@ from wuwa_story_worker.tooling import asset_workspace, tool_path
 logger = logging.getLogger(__name__)
 
 
-def event_media(exports: list[dict]) -> dict[str, int]:
+def event_media(exports: list[dict], *, unresolved: dict[str, str] | None = None) -> dict[str, int]:
     """Cooked media debug names identify languages; never guess from list order."""
     result = {}
     candidates = {}
+    conflicts = set()
+    unresolved = {} if unresolved is None else unresolved
     for export in exports:
         for entry in export.get("EventCookedData", {}).get("EventLanguageMap", []):
             for media in entry.get("Value", {}).get("Media", []):
@@ -72,23 +74,25 @@ def event_media(exports: list[dict]) -> dict[str, int]:
                     raise ValueError("Invalid cooked voice media identity")
                 values = candidates.setdefault(language, {})
                 if name[3:] in values and values[name[3:]] != identity:
-                    raise ValueError(
-                        "Multiple media per language require authored sequencing")
-                values[name[3:]] = identity
+                    conflicts.add(language)
+                else:
+                    values[name[3:]] = identity
     # Localized base names agree across languages; a dialect suffix is a separate variant.
     common = set.intersection(
         *(set(values) for values in candidates.values())) if candidates else set()
-    if len(common) == 1:
-        name = common.pop()
-        result = {language: values[name]
-                  for language, values in candidates.items()}
-    else:
-        for language, values in candidates.items():
-            if len(set(values.values())) != 1:
-                raise ValueError(
-                    "Multiple media per language require authored sequencing")
+    for language, values in candidates.items():
+        if language in conflicts:
+            unresolved[language] = 'Conflicting media IDs for one debug name; authored selection or sequencing required'
+        elif len(common) == 1:
+            result[language] = values[next(iter(common))]
+        elif len(set(values.values())) == 1:
             result[language] = next(iter(values.values()))
+        else:
+            unresolved[language] = 'Multiple media per language require authored selection or sequencing'
     if not result:
+        if unresolved:
+            raise ValueError(
+                'Multiple media per language require authored sequencing')
         raise ValueError("Event does not contain a confirmed voice mapping")
     return result
 
@@ -141,7 +145,8 @@ def verified_voice_export(entry) -> Path:
     return path
 
 
-async def build_entity_files(root, targets, fmodel, converter, voice_root=None, provenance=None):
+async def build_entity_files(root, targets, fmodel, converter, voice_root=None, provenance=None,
+                             voice_diagnostics=None):
     images = [t for t in targets if t["kind"] == "image"]
     icons = {}
     if images:
@@ -219,17 +224,27 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
             missing.append(source)
             continue
         json_path, originals = events[source]
+        unresolved = {}
         try:
             cooked = json.loads(json_path.read_text(encoding="utf-8-sig"))
-            mapping = event_media(cooked)
+            mapping = event_media(cooked, unresolved=unresolved)
         except ValueError as error:
-            logger.warning(
-                "entity_media.voice_unresolved source=%s reason=%s", source, error)
-            missing.append(source)
-            continue
+            if not unresolved:
+                logger.warning(
+                    "entity_media.voice_unresolved source=%s reason=%s", source, error)
+                missing.append(source)
+                continue
+            mapping = {}
         for target in (t for t in voices if t["path"] == source):
             identity = mapping.get(target["language"])
             if identity is None:
+                reason = unresolved.get(
+                    target['language'], 'No confirmed media for requested language')
+                logger.warning('entity_media.voice_unresolved source=%s language=%s reason=%s',
+                               source, target['language'], reason)
+                if voice_diagnostics is not None:
+                    voice_diagnostics.append({'source': source, 'language': target['language'],
+                                              'reason': reason})
                 missing.append(source)
                 continue
             resolved.append(
@@ -374,6 +389,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 missing_identities = {target_identity(t) for t in targets}
                 skipped = len(payload["targets"]) - len(targets)
                 voice_provenance = {}
+                voice_diagnostics = []
                 files, missing = [], []
                 if targets:
                     files, missing = await build_entity_files(
@@ -383,13 +399,18 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
                         voice_root=voice_root,
                         provenance=voice_provenance,
+                        voice_diagnostics=voice_diagnostics,
                     )
                 entries = []
+                voice_reasons = {(item['source'], item['language']): item['reason']
+                                 for item in voice_diagnostics}
                 for target in payload["targets"]:
                     matches = [path.relative_to(root).as_posix() if path.is_relative_to(root) else path.name
                                for resolved, path, *_ in files if resolved == target]
                     entries.append({"expected": target["path"], "language": target["language"],
-                                    "status": "already_published" if target_identity(target) not in missing_identities else "found" if matches else "not_resolved", "matches": matches})
+                                    "status": "already_published" if target_identity(target) not in missing_identities else "found" if matches else "not_resolved", "matches": matches,
+                                    **({'reason': voice_reasons[(target['path'], target['language'])]}
+                                       if (target['path'], target['language']) in voice_reasons else {})})
                 # Shared client manifests already inventory the full export. A character
                 # job must not rescan hundreds of thousands of unrelated assets.
                 inventory_paths = tuple(sorted({p for _, path, _, _, originals in files

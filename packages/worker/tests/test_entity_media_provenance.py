@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import wave
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -122,6 +123,94 @@ async def test_worker_exports_only_missing_and_persists_game_identity(tmp_path, 
         assert len(provenance["source_files"][0]["sha256"]) == 64
         assert "WUWA_FMODEL_PATH" in provenance["tools"]
         assert variant.metadata_json["game_source"] == provenance
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ambiguous", [("en",), ("en", "ja"), ("ja",), ("en", "ja", "ko", "zh")])
+async def test_partial_voice_publication_and_ambiguous_retry_stay_visible(tmp_path, monkeypatch, ambiguous):
+    # Retained events have two variants in some languages and singleton media in others.
+    # Exercise the real mapping/decoding/reporting pipeline, mocking external IO only.
+    root = client(tmp_path)
+    voices = tmp_path / "voices"
+    voices.mkdir()
+    (voices / "plan.json").write_text(json.dumps({"id": "b" * 64, "version": "3.7.0"}))
+    (voices / "status.json").write_text(json.dumps({"id": "b" * 64, "state": "downloaded"}))
+    monkeypatch.setenv("WUWA_VOICE_ROOT", str(voices))
+    value = request().model_copy(update={"kinds": ["voice"]})
+    source = "/Game/Aki/WwiseAudio/Events/play_favor_word_test.play_favor_word_test"
+    languages = ("en", "ja", "ko", "zh")
+    targets = [{"owner": 1, "release_id": 2, "kind": "voice", "path": source,
+                "language": language} for language in languages]
+    entries, media = [], {}
+    for identity, language in enumerate(languages, 1):
+        for suffix, number in ((("M", identity * 10), ("F", identity * 10 + 1))
+                               if language in ambiguous else (("", identity),)):
+            entries.append({"DebugName": f"{language}_vo_character_line{suffix}.wav",
+                            "MediaId": number, "MediaPathName": f"Media/{number}.wem"})
+            if language not in ambiguous:
+                wem = root / f"{number}.wem"
+                wem.write_bytes(b"confirmed media")
+                media[number] = (wem, value.download_id, f"Media/{number}.wem")
+    event = root / "event.json"
+    event.write_text(json.dumps([{"EventCookedData": {"EventLanguageMap": [{"Value": {"Media": entries}}]}}]))
+    monkeypatch.setattr(entity_media, "prefetch_events", AsyncMock(return_value={source: (event, [])}))
+    prefetch = AsyncMock(side_effect=lambda root, voices, identities, *args:
+                         {identity: media[identity] for identity in identities})
+    monkeypatch.setattr(entity_media, "prefetch_media", prefetch)
+    executable = tmp_path / "tool"
+    executable.write_bytes(b"pinned tool version")
+    monkeypatch.setattr(entity_media, "tool_path", lambda _: executable)
+
+    async def decode(args, log, timeout):
+        with wave.open(str(args[3]), "wb") as audio:
+            audio.setparams((1, 2, 8000, 0, "NONE", "not compressed"))
+            audio.writeframes(b"\0\0" * 80)
+
+    decoder = AsyncMock(side_effect=decode)
+    monkeypatch.setattr(entity_media, "tool", decoder)
+    session = AsyncMock()
+    session.scalar.return_value = None
+    factory = Mock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(entity_media, "SessionFactory", factory)
+    monkeypatch.setattr(entity_media, "validate_plan", lambda _: None)
+    missing_targets = AsyncMock(return_value=targets)
+    monkeypatch.setattr(entity_media, "missing_media_targets", missing_targets)
+    monkeypatch.setattr(entity_media, "publish_inventory", AsyncMock(return_value={}))
+    monkeypatch.setattr(entity_media, "S3Storage", lambda _: AsyncMock())
+    service = AsyncMock()
+    service.register_file.return_value = SimpleNamespace(id=11)
+    service.register_variant.side_effect = lambda *args: SimpleNamespace(metadata_json={})
+    service.register_reference.side_effect = lambda *args, **kwargs: SimpleNamespace(**kwargs)
+    monkeypatch.setattr(entity_media, "FileRegistrationService", lambda _: service)
+
+    for attempt in (1, 2):
+        payload = {"request": value.model_dump(), "run_id": attempt, "targets": targets}
+        run = SimpleNamespace(id=attempt, status="queued", metadata_json={"payload": payload})
+        session.get.return_value = run
+        await entity_media._process_entity_workspace(payload, None, root)
+        assert run.status == "partial" and run.error is None
+        assert run.raw_output["missing_voices"] == [source]
+        report = run.raw_output["media_report"]
+        assert report["missing"] == len(ambiguous)
+        assert report["found"] == 4 - len(ambiguous)
+        by_language = {entry["language"]: entry for entry in report["entries"]}
+        for language, entry in by_language.items():
+            if language in ambiguous:
+                assert entry["status"] == "not_resolved" and not entry["matches"]
+                assert "authored selection or sequencing" in entry["reason"]
+            else:
+                assert entry["status"] == ("found" if attempt == 1 else "already_published")
+                assert "reason" not in entry
+        assert run.raw_output["published"] == (4 - len(ambiguous) if attempt == 1 else 0)
+        assert run.raw_output["skipped"] == (0 if attempt == 1 else 4 - len(ambiguous))
+        missing_targets.return_value = [target for target in targets if target["language"] in ambiguous]
+    assert {call.kwargs["source_name"] for call in service.register_reference.await_args_list} == set(languages) - set(ambiguous)
+    assert prefetch.await_args_list[0].args[2] == set(media)
+    assert prefetch.await_args_list[1].args[2] == set()
+    assert decoder.await_count == 4 - len(ambiguous)
+    assert service.register_reference.await_count == 4 - len(ambiguous)
 
 
 @pytest.mark.asyncio

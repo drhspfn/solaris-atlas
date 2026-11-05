@@ -271,7 +271,10 @@ async def test_quest_profile_resolves_snapshot_before_loading_owned_states(monke
     monkeypatch.setattr(service, "_quest_page_state_ids", states)
     monkeypatch.setattr(service, "_explicit_entity_links", AsyncMock(return_value=[]))
     monkeypatch.setattr(service, "_quest_info", AsyncMock(return_value={"game_quest_id": 70}))
-    monkeypatch.setattr(service, "_latest_source_record", AsyncMock(return_value=None))
+    source = AsyncMock(return_value={"version": "2.8.0"})
+    monkeypatch.setattr(service, "_latest_source_record", source)
     result = await service.quest_profile_payload(session, quest, game_version="2.8.0")
     assert result["quest"]["game_quest_id"] == 70
     assert result["flow_states"] == []
+    source.assert_awaited_once_with(session, 7, release_id=13)
+    assert result["source"]["version"] == "2.8.0"
