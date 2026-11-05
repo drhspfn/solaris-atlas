@@ -268,3 +268,166 @@ async def test_cancellation_waits_for_owned_writer():
     with pytest.raises(asyncio.CancelledError):
         await task
     assert stopped
+
+
+def transient_cleanup_probe(monkeypatch, owner, leaf):
+    """Exercise real cleanup decisions while modelling shared/exclusive DB leases."""
+    connection, session = mock_database(monkeypatch, [owner, leaf])
+    state = {"shared": 0, "removed": [], "cleanup_statuses": []}
+
+    async def open_lease(workspace_id):
+        state["shared"] += 1
+
+    async def close_lease(ready):
+        await ready
+        state["shared"] -= 1
+
+    def exclusive(*args):
+        state["cleanup_statuses"].append((state["shared"], leaf.status))
+        return state["shared"] == 0
+
+    connection.scalar.side_effect = exclusive
+    session.scalar.side_effect = lambda *args: leaf.status not in workspaces.TERMINAL
+    monkeypatch.setattr(workspaces, "_open_lease", open_lease)
+    monkeypatch.setattr(workspaces, "_close_lease", close_lease)
+    monkeypatch.setattr(workspaces, "remove_workspace",
+                        lambda key: state["removed"].append(key) or True)
+    return state
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["voices", "voice_packages", "cutscene"])
+@pytest.mark.parametrize("transient", [True, False])
+async def test_release_status_is_committed_before_broker_final_cleanup(monkeypatch, kind, transient):
+    from wuwa_story_worker import broker, release_media
+
+    payload = {"schema_version": 1, "job_type": "media.release", "run_id": 20,
+               "release_id": 1, "parent_id": 11, "kind": kind, "targets": []}
+    owner, leaf = run(11, kind="prepare"), run(20, "running", parent=11, kind=kind)
+    leaf.processor_id = 1
+    owner.metadata_json["request"]["release_id"] = 1
+    owner.raw_output = {"workspace_id": 11, "download_id": "a" * 64}
+    leaf.metadata_json["payload"] = payload
+    state = transient_cleanup_probe(monkeypatch, owner, leaf)
+    connection, session = AsyncMock(), AsyncMock()
+    session.__aenter__.return_value = session
+    session.get.side_effect = [leaf, owner]
+    session.scalar.return_value = SimpleNamespace(status="completed", raw_output={
+        "download_id": "a" * 64, "voice_plan_id": "b" * 64})
+
+    @asynccontextmanager
+    async def connect():
+        yield connection
+
+    @asynccontextmanager
+    async def unlocked(*args):
+        yield
+
+    async def update(run_id, processor, status, **kwargs):
+        leaf.status = status
+
+    error = TimeoutError("storage timeout") if transient else ValueError("invalid source")
+    monkeypatch.setattr(release_media, "engine", SimpleNamespace(connect=connect))
+    monkeypatch.setattr(release_media, "SessionFactory", lambda **kwargs: session)
+    monkeypatch.setattr(release_media, "job_lock", unlocked)
+    monkeypatch.setattr(release_media, "update_admin_run", update)
+    monkeypatch.setattr(release_media, kind, AsyncMock(side_effect=error))
+    resolve = AsyncMock(return_value=11)
+    monkeypatch.setattr(workspaces, "run_workspace_id", resolve)
+    monkeypatch.setattr(release_media, "run_workspace_id", resolve)
+    # Do not run the outer consumer retry handler: it has not changed status yet.
+    with pytest.raises(type(error)):
+        await broker.execute_media_job(payload, release_media.process_release_media)
+    assert leaf.status == ("waiting_dependency" if transient else "failed")
+    assert state["removed"] == ([] if transient else [11])
+    assert state["cleanup_statuses"][-1] == (0, leaf.status)
+    assert state["shared"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transient", [True, False])
+@pytest.mark.parametrize("status_write_fails", [False, True])
+async def test_entity_failure_status_is_safe_before_final_cleanup(
+    monkeypatch, tmp_path, transient, status_write_fails,
+):
+    from wuwa_story.ingestion.entity_media import MediaRequest
+
+    from wuwa_story_worker import broker, entity_media
+
+    request = MediaRequest(download_id="a" * 64, asset_version="3.7.1", game_version="1.0.0",
+                           workspace_id=11, entities=["character:1"], kinds=["image"])
+    payload = {"schema_version": 1, "job_type": "media.entities", "run_id": 20,
+               "request": request.model_dump(), "targets": []}
+    owner, leaf = run(11, kind="prepare"), run(20, "running", workspace=11)
+    leaf.metadata_json = {"request": request.model_dump(), "payload": payload}
+    leaf.finished_at = None
+    state = transient_cleanup_probe(monkeypatch, owner, leaf)
+    connection, session = AsyncMock(), AsyncMock()
+    session.__aenter__.return_value = session
+    session.get.return_value = leaf
+    observed = []
+    factory_calls = 0
+    durable_status = leaf.status
+    durable_finished_at = leaf.finished_at
+
+    def factory(**kwargs):
+        nonlocal factory_calls
+        factory_calls += 1
+        return session
+
+    async def commit():
+        nonlocal durable_status, durable_finished_at
+        observed.append(leaf.status)
+        if status_write_fails and factory_calls == 2:
+            # The repair connection fails, but cleanup's fresh connection works.
+            # An uncommitted status change is not visible to the collector.
+            leaf.status, leaf.finished_at = durable_status, durable_finished_at
+            raise ConnectionError("retry status commit connection lost")
+        durable_status, durable_finished_at = leaf.status, leaf.finished_at
+        if leaf.status == "failed":
+            assert state["shared"] > 0
+            assert not await workspaces.cleanup_workspace(11)
+
+    session.commit.side_effect = commit
+
+    @asynccontextmanager
+    async def connect():
+        yield connection
+
+    @asynccontextmanager
+    async def unlocked(*args):
+        yield
+
+    async def workspace(payload, connection):
+        await entity_media._process_entity_workspace(payload, connection, tmp_path)
+
+    (tmp_path / "plan.json").write_text(json.dumps({"id": request.download_id,
+        "version": request.asset_version, "tier": request.tier}))
+    (tmp_path / "status.json").write_text(json.dumps({"state": "downloaded", "id": request.download_id}))
+    tool = tmp_path / "tool"
+    tool.write_bytes(b"test tool")
+    error = TimeoutError("storage timeout") if transient else ValueError("invalid source")
+    storage = SimpleNamespace(ensure_bucket=AsyncMock(side_effect=error))
+    monkeypatch.setattr(entity_media, "engine", SimpleNamespace(connect=connect))
+    monkeypatch.setattr(entity_media, "SessionFactory", factory)
+    monkeypatch.setattr(entity_media, "job_lock", unlocked)
+    monkeypatch.setattr(entity_media, "_process_entity_media", workspace)
+    monkeypatch.setattr(entity_media, "validate_plan", lambda plan: None)
+    monkeypatch.setattr(entity_media, "tool_path", lambda name: tool)
+    monkeypatch.setattr(entity_media, "missing_media_targets", AsyncMock(return_value=[]))
+    monkeypatch.setattr(entity_media, "publish_inventory", AsyncMock(return_value={}))
+    monkeypatch.setattr(entity_media, "S3Storage", lambda settings: storage)
+    monkeypatch.setattr(workspaces, "run_workspace_id", AsyncMock(return_value=11))
+    with pytest.raises(ConnectionError if status_write_fails else type(error)) as failure:
+        await broker.execute_media_job(payload, entity_media.process_entity_media)
+    if status_write_fails:
+        assert broker.transient_job_error(failure.value)
+        assert state["removed"] == []
+        assert leaf.status == "running"
+        assert leaf.finished_at is None
+    else:
+        assert leaf.status == ("waiting_dependency" if transient else "failed")
+        assert leaf.finished_at is None if transient else leaf.finished_at is not None
+        assert state["removed"] == ([] if transient else [11])
+    assert state["cleanup_statuses"][-1] == (0, leaf.status)
+    assert state["shared"] == 0

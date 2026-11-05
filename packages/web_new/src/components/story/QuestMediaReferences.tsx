@@ -36,6 +36,7 @@ export interface MediaAssetReference {
 export interface CutsceneAudioTrack {
   role: 'voice' | 'music' | 'effects' | 'mixed';
   language: 'en' | 'ja' | 'ko' | 'zh' | null;
+  rover?: 'male' | 'female' | null;
   url: string;
 }
 
@@ -51,6 +52,7 @@ export type CutsceneNode =
       id: string;
       kind: 'clip';
       asset: string;
+      rover?: 'male' | 'female' | null;
       segment?: string | null;
       start: number;
       end: number | null;

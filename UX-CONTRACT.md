@@ -50,6 +50,11 @@ dungeon context, not evidence that every optional branch occurred. The shared
 quest scope includes these paths and their source-matched cutscene transcripts.
 Backfills only add missing versioned graph evidence; they never enqueue media.
 
+An explicit dungeon-exit requirement can refer to an instance whose map ID is
+different. A verified instance-to-map reference preserves that exit as a transition;
+it does not replay the shared map's battle or assign its optional branches to the
+exit. Missing or ambiguous instance mappings remain unresolved.
+
 Cutscene analysis titles are short, localized single lines describing the scene.
 Resource codes remain visible as provenance, not as generated display titles.
 
@@ -411,8 +416,27 @@ Lore Assistant messages use the shared dark surface and text tokens.
 
 ## Quest reader navigation
 
-The sidebar lists numbered dialogue parts and scene links. Technical flow keys,
-package paths and audio event inventories are omitted from reader navigation.
+The quest sidebar has collapsible Dialogue, Scenes and Activities groups, one
+viewport-bounded scroller and a fixed heading. On phones, In this quest is a
+bounded disclosure. Initially only the active group is open and up to ten entries
+around its active context are shown; Show more adds up to ten. Manual collapse survives
+playback and other parent rerenders. Local search checks all loaded dialogue text
+in each flow group, while its first line remains the navigation title. It does
+not fetch a larger transcript. Counts distinguish loaded entries from those in
+the current view, rather than claiming complete source coverage.
+
+Navigation preserves occurrence identities, including repeated scene references;
+equal titles do not merge activities or establish chapter order. Related activities
+with unknown positions remain in their separate region. An unmounted activity
+uses an exact known focus-line link retaining locale/version, or is labelled
+outside this view without a dead hash link. Existing anchors and cited-line
+navigation remain stable.
+
+Technical flow keys, package paths and audio event inventories are omitted from
+reader navigation. Every transcript line keeps available flow state, action, source
+file/row and Talk ID inside a closed Source reference disclosure, including
+embedded cinematic dialogue. Opening it reveals the retained provenance;
+speaker, voice controls, dialogue text, choices and canonical line IDs are unchanged.
 A playable scene link targets the exact player occurrence in the current transcript
 window; an unavailable scene links to its dialogue when present. Native hash links
 support keyboard navigation without starting playback. CDN media URLs are used

@@ -1,6 +1,7 @@
 """Publish exported cutscene assets and a validated playback graph."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -21,7 +22,9 @@ from wuwa_story.ingestion.cutscenes import Clip, CutsceneRecipe, PlaybackFlow
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
+from wuwa_story_worker.cutscene_caption_audio import CAPTION_AUDIO_SCHEMA
 from wuwa_story_worker.cutscene_segments import VariantAlignmentError, export_segments
+from wuwa_story_worker.cutscene_video_source import exported_video_path
 from wuwa_story_worker.publication_provenance import (
     pinned_source,
     publication_source,
@@ -34,7 +37,8 @@ logger = logging.getLogger(__name__)
 
 
 async def missing_cutscene_identities(names: set[str], *, source_context: dict,
-                                      storage=None, recipe_hashes: dict | None = None) -> set[str]:
+                                      storage=None, recipe_hashes: dict | None = None,
+                                      require_caption_audio: bool = False) -> set[str]:
     """Return canonical cutscene keys lacking a verified complete publication.
 
     Safe before extraction for a pinned client/tools plan. When a recipe is already
@@ -48,6 +52,7 @@ async def missing_cutscene_identities(names: set[str], *, source_context: dict,
         refs = await verified_references(session, storage, "cutscene_flow", source, names)
         present = {ref.source_path for ref in refs
                    if ref.metadata_json.get("publication_complete")
+                   and (not require_caption_audio or ref.metadata_json["game_source"].get("caption_audio_schema") == CAPTION_AUDIO_SCHEMA)
                    and (recipe_hashes is None or ref.metadata_json["game_source"].get("recipe_sha256")
                         == recipe_hashes.get(ref.source_path))}
         return names - present
@@ -190,6 +195,12 @@ def available_soundtracks(video, assets, audio, missing_assets=None):
     tracks = []
     for track in video.soundtrack:
         try:
+            if getattr(track, 'external_media', None):
+                source = confined(audio, track.external_media)
+                if not source.is_file() or source.suffix.casefold() != '.wem':
+                    raise ValueError("Missing or invalid caption external media")
+                tracks.append(track)
+                continue
             bank = confined(assets, track.bank)
             data = bank.read_bytes()
             if track.media_id is None and has_authored_event(data, bank.stem):
@@ -208,7 +219,7 @@ def available_soundtracks(video, assets, audio, missing_assets=None):
         except ValueError as error:
             if missing_assets is None:
                 raise
-            reason = f"{Path(track.bank).name}: {error}"
+            reason = f"{Path(track.bank or track.external_media).name}: {error}"
             if reason not in missing_assets:
                 missing_assets.append(reason)
             continue
@@ -217,18 +228,30 @@ def available_soundtracks(video, assets, audio, missing_assets=None):
 
 
 async def decode_soundtrack(track, assets, audio, work, decoder, decoded):
+    if getattr(track, 'external_media', None):
+        wem = confined(audio, track.external_media)
+        key = ('external', wem)
+        if key not in decoded:
+            if not wem.is_file() or wem.suffix.casefold() != '.wem':
+                raise ValueError("Missing or invalid caption external media")
+            wav = work / ("caption-" + hashlib.sha256(str(wem).encode()).hexdigest()[:16] + ".wav")
+            await run_tool([str(decoder.resolve()), "-i", "-o", str(wav), str(wem.resolve())], 120)
+            decoded[key] = (wav, [wem])
+        return decoded[key]
     bank = confined(assets, track.bank)
-    key = (bank, track.media_id, getattr(track, "rover", None))
+    key = (bank, track.media_id, getattr(track, "rover", None), getattr(track, 'language', None))
     if key not in decoded:
         if track.media_id is None and has_authored_event(bank.read_bytes(), bank.stem):
-            decoded[key] = await render_bank(bank, audio, work, decoder, getattr(track, "rover", None), run_tool)
+            decoded[key] = await render_bank(bank, audio, work, decoder, getattr(track, "rover", None), run_tool,
+                                             language=getattr(track, 'language', None))
             return decoded[key]
         try:
             identity = bank_media_id(bank.read_bytes(), track.media_id)
         except ValueError as error:
             if track.media_id is not None or not any(text in str(error) for text in ("single-source", "Multiple music sources")):
                 raise
-            decoded[key] = await render_bank(bank, audio, work, decoder, getattr(track, "rover", None), run_tool)
+            decoded[key] = await render_bank(bank, audio, work, decoder, getattr(track, "rover", None), run_tool,
+                                             language=getattr(track, 'language', None))
         else:
             wem = soundtrack_wem(audio, identity)
             wav = work / f"{identity}.wav"
@@ -239,7 +262,7 @@ async def decode_soundtrack(track, assets, audio, work, decoder, decoded):
 
 async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffmpeg, duration, embedded_audio, asset_version, decoded=None):
     """Keep localized event voices separate from the original movie audio mix."""
-    if not any(track.language for track in video.soundtrack):
+    if not any(track.language or getattr(track, "rover", None) for track in video.soundtrack):
         return None
     from wuwa_story.ingestion.cutscene_audio import CutsceneAudioRecipe
 
@@ -253,15 +276,15 @@ async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffm
             destination = work / f"source-{index}-{source.name}"
             shutil.copyfile(source, destination)
             evidence.append(destination.name)
-        groups.setdefault(track.language, []).append((wav, track, evidence))
+        groups.setdefault((track.language, getattr(track, "rover", None)), []).append((wav, track, evidence))
     if embedded_audio:
-        groups.setdefault(None, [])
+        groups.setdefault((None, None), [])
     stems = []
-    for language, tracks in groups.items():
+    for (language, rover), tracks in groups.items():
         command = [str(ffmpeg.resolve()), "-v", "error", "-y"]
         filters, streams, evidence = [], [], []
         input_index = 0
-        if language is None and embedded_audio:
+        if language is None and rover is None and embedded_audio:
             command += ["-i", str(movie)]
             filters.append("[0:a:0]asetpts=PTS-STARTPTS[embedded]")
             streams.append("[embedded]")
@@ -280,12 +303,13 @@ async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffm
             evidence.extend(sources)
             input_index += 1
         filters.append("".join(streams) + f"amix=inputs={len(streams)}:normalize=0,alimiter=level=false,apad=whole_dur={duration}[a]")
-        destination = work / f"{language or 'original-mix'}.wav"
+        destination = work / f"{language or 'original-mix'}{('-' + rover) if rover else ''}.wav"
         command += ["-filter_complex", ";".join(filters), "-map", "[a]", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", "-t", str(duration), str(destination)]
         await run_tool(command)
         stems.append({"role": "voice" if language else "effects", "language": language,
+                      "rover": rover,
                       "path": destination.name, "sources": evidence,
-                      "evidence": "VideoSound source timing and localized Event bank directory; original embedded audio remains an unseparated mix."})
+                      "evidence": "VideoSound seconds and enabled VideoCaption frame timing / exact PlotAudio external filenames; original embedded audio remains an unseparated mix."})
     return CutsceneAudioRecipe.model_validate({"asset": video.asset, "asset_version": asset_version,
                                               "duration": duration, "stems": stems})
 
@@ -332,7 +356,7 @@ async def import_cutscene_recipe(
                 except ValueError as error:
                     if missing_assets is None:
                         raise
-                    reason = f"{Path(track.bank).name}: {error}"
+                    reason = f"{Path(track.bank or track.external_media).name}: {error}"
                     if reason not in missing_assets:
                         missing_assets.append(reason)
                 else:
@@ -341,26 +365,25 @@ async def import_cutscene_recipe(
         spec = spec.model_copy(update={"videos": resolved_videos})
         for index, video in enumerate(spec.videos):
             engine = video.asset.removeprefix("asset:ue:")
-            package, object_name = engine.rsplit(".", 1)
-            if package.rsplit("/", 1)[-1].casefold() != object_name.casefold():
-                raise ValueError("Expected an exact Unreal media asset identity")
-            exported = confined(
-                assets, "Client/Content/" + package.removeprefix("/Game/") + ".uexp"
-            )
-            movie = confined(movies, movie_path(exported.read_bytes()))
+            source_path = exported_video_path(engine)
+            direct = source_path.casefold().endswith(".mp4")
+            exported = confined(assets, source_path)
+            movie = confined(movies, source_path if direct else movie_path(exported.read_bytes()))
             if source_context is not None:
-                originals = [exported, movie]
-                header = exported.with_suffix(".uasset")
-                if header.is_file():
-                    originals.append(header)
+                originals = [movie] if direct else [exported, movie]
+                if not direct:
+                    header = exported.with_suffix(".uasset")
+                    if header.is_file():
+                        originals.append(header)
                 for track in video.soundtrack:
-                    bank = confined(assets, track.bank)
                     _, evidence = await decode_soundtrack(track, assets, audio, work, decoder, decoded)
                     originals.extend(path for path in evidence if path.suffix.casefold() in {".wem", ".bnk"})
                 provenance_by_asset[video.asset] = publication_source(
                     source_context, {"path": engine, "kind": "video"}, list(dict.fromkeys(originals)),
                     recipe_sha256=recipe_hash, recipe=requested_spec.model_dump(mode="json"),
                     analyze_variants=analyze_variants,
+                    **({'caption_audio_schema': CAPTION_AUDIO_SCHEMA}
+                       if source_context.get('caption_audio_schema') == CAPTION_AUDIO_SCHEMA else {}),
                 )
                 originals_by_asset[video.asset] = list(dict.fromkeys(originals))
             duration, embedded_audio = await asyncio.to_thread(video_duration, ffmpeg, movie)
@@ -376,8 +399,13 @@ async def import_cutscene_recipe(
             filters, streams, source_paths = [], [], []
             if embedded_audio:
                 streams.append("[0:a:0]")
-            for track_index, track in enumerate([track for track in video.soundtrack if track.language in (None, "en")], 1):
-                bank = confined(assets, track.bank)
+            rover_variants = {track.rover for track in video.soundtrack if track.rover}
+            # A shared video's fallback mix must never combine alternative voices.
+            # Both selections remain available in the separate audio bundle.
+            fallback_tracks = [track for track in video.soundtrack if track.language in (None, "en")
+                               and (len(rover_variants) < 2 or track.rover is None)]
+            for track_index, track in enumerate(fallback_tracks, 1):
+                bank = confined(assets, track.bank) if track.bank else confined(audio, track.external_media)
                 wav, evidence = await decode_soundtrack(track, assets, audio, work, decoder, decoded)
                 source_paths.extend((bank, path, wav) for path in evidence if path.suffix.casefold() == ".wem")
                 command.extend(["-i", str(wav)])
@@ -423,7 +451,8 @@ async def import_cutscene_recipe(
                 bundles.append((bundle_root, bundle))
         analysis, segments = None, []
         comparison_fallback = None
-        if (analyze_variants or spec.compare_variants) and len(prepared) > 1:
+        if ((analyze_variants or spec.compare_variants) and len(prepared) > 1
+                and can_share_variant_segments(spec.videos)):
             try:
                 analysis, segments = await asyncio.to_thread(
                     export_segments,
@@ -494,6 +523,9 @@ async def import_cutscene_recipe(
                             "id": segment["id"],
                             "kind": "clip",
                             "asset": spec.videos[segment["source_index"]].asset,
+                            "rover": next((node.rover for node in spec.flow.nodes
+                                           if node.kind == "clip" and node.asset
+                                           == spec.videos[segment["source_index"]].asset), None),
                             "segment": segment["id"],
                             "start": 0,
                             "end": (segment["end_frame"] - segment["start_frame"]) / analysis["fps"],
@@ -577,7 +609,7 @@ async def import_cutscene_recipe(
                     source_files.append(source.id)
                 for bank, wem, wav in source_paths:
                     for path, kind, mime in (
-                        (bank, "unknown", "application/octet-stream"),
+                        (bank, "audio_wem" if bank.suffix.casefold() == '.wem' else "unknown", "application/octet-stream"),
                         (wem, "audio_wem", "audio/x-wem"),
                         (wav, "audio_wav", "audio/wav"),
                     ):
@@ -690,6 +722,12 @@ async def import_cutscene_recipe(
     }
 
 
+def can_share_variant_segments(videos) -> bool:
+    # Comparison checks the fallback mix only, not every localized/state stem.
+    # Sharing its intro/outro could silently replace another branch's voices.
+    return not any(track.language or track.rover for video in videos for track in video.soundtrack)
+
+
 def publication_file_ids(reference) -> set[int]:
     """Include audio manifests, stem evidence, silent videos and segment reports."""
     metadata = reference.metadata_json or {}
@@ -717,20 +755,24 @@ async def complete_cutscene_publication(spec, provenance_by_asset, storage, *, c
             FileReference.owner_node_id.in_(nodes),
             FileReference.reference_type.in_(["cutscene_video", "cutscene_segment", "cutscene_audio_bundle", "cutscene_flow"]),
             FileReference.metadata_json["asset_version"].astext == spec.asset_version)))
-        localized = {video.asset: {track.language for track in video.soundtrack if track.language}
-                     for video in spec.videos if any(track.language for track in video.soundtrack)}
+        localized = {
+            video.asset: {("voice" if track.language else "effects", track.language, track.rover)
+                          for track in video.soundtrack}
+            for video in spec.videos if any(track.language or track.rover for track in video.soundtrack)
+        }
         refs = [ref for ref in refs if ref.id in published_references
                 or (ref.reference_type == "cutscene_audio_bundle" and nodes[ref.owner_node_id] in localized)]
         # Another publisher may have changed these rows between the video and stem transactions.
         current = {ref.id: ref.file_id for ref in refs}
         if any(current.get(identity) != file_id for identity, file_id in published_references.items()):
             return
-        for asset, languages in localized.items():
+        for asset, selectors in localized.items():
             owned = [ref for ref in refs if nodes[ref.owner_node_id] == asset]
             bundle = next((ref for ref in owned if ref.reference_type == "cutscene_audio_bundle"), None)
             segments = {ref.metadata_json["segment_id"] for ref in owned
                         if ref.reference_type == "cutscene_segment"}
-            complete = complete and audio_bundle_complete(bundle, languages, segments)
+            languages = {language for _, language, _ in selectors if language}
+            complete = complete and audio_bundle_complete(bundle, languages, segments, selectors=selectors)
         flow = next(ref for ref in refs if ref.reference_type == "cutscene_flow"
                     and nodes[ref.owner_node_id] == spec.cutscene)
         provenance = next(iter(provenance_by_asset.values()))
@@ -759,13 +801,16 @@ async def complete_cutscene_publication(spec, provenance_by_asset, storage, *, c
         await session.commit()
 
 
-def audio_bundle_complete(bundle, languages, segments) -> bool:
+def audio_bundle_complete(bundle, languages, segments, *, selectors=None) -> bool:
     if bundle is None:
         return False
     metadata = bundle.metadata_json or {}
     available = {track.get("language") for track in metadata.get("tracks", [])
                  if track.get("role") == "voice" and track.get("file_id")}
+    available_selectors = {(track.get("role"), track.get("language"), track.get("rover"))
+                           for track in metadata.get("tracks", []) if track.get("file_id")}
     return (languages.issubset(available)
+            and (selectors is None or selectors.issubset(available_selectors))
             and ({"full"} | segments).issubset(metadata.get("videos", {})))
 
 

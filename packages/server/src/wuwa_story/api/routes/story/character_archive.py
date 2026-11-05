@@ -23,6 +23,7 @@ from wuwa_story.db.models.i18n import (
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
+from wuwa_story.db.repositories.character_voice_media import character_voice_alternatives
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.character_artwork import (
@@ -291,9 +292,15 @@ async def character_archive(
     media_paths.extend(row.data.get("NodeIcon") for row in chain_rows)
     media_paths.extend(row.data.get("Voice") for row in voice_rows)
     files = await _reference_urls(session, node.id, media_paths, settings)
+    voice_alternatives = await character_voice_alternatives(
+        session, node.id, release_id, [row.data.get('Voice') for row in voice_rows], settings)
 
     def media_url(path: str | None, mime_prefix: str, language: str | None = None) -> str | None:
         if not path:
+            return None
+        if mime_prefix == 'audio/' and any(
+                item['language'] == ('zh-Hans' if language == 'zh' else language)
+                for item in voice_alternatives.get(path, [])):
             return None
         # Audio is language-specific. Never use an unlabelled voice file for another locale.
         linked = files.get((path, language)) if language else files.get((path, None))
@@ -378,6 +385,7 @@ async def character_archive(
                 language: url for language in ("en", "ja", "zh-Hans", "ko")
                 if (url := media_url(row.data.get("Voice"), "audio/", "zh" if language == "zh-Hans" else language))
             },
+            "audio_variants": voice_alternatives.get(row.data.get('Voice'), []),
             "source": _source(row, paths["voices"]),
         } for row in voice_rows
     ]

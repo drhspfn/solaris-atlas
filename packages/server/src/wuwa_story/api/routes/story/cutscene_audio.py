@@ -50,6 +50,7 @@ async def audio_bundles(session, owner_ids, version, settings, storage):
                     {
                         "role": track["role"],
                         "language": track["language"],
+                        **({"rover": track["rover"]} if track.get("rover") else {}),
                         "url": storage.public_url(locations[track["file_id"]]),
                     }
                     for track in data["tracks"]

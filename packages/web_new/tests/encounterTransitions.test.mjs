@@ -3,6 +3,9 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import test from 'node:test';
+import { localizedText } from '../src/data/localized.ts';
+import { activityDestination, dialogueSearchIndex } from '../src/components/quest/questSidebarModel.ts';
+import { isSourceOnlyActivity, sidebarActivityTitle } from '../src/components/story/runtimeActivity.ts';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
@@ -48,8 +51,92 @@ function loadStory(name) {
 }
 const { QuestEncounter, EncounterCinematicBoundary } = loadStory('QuestEncounter');
 const { QuestSequenceFragments, playableEncounterFragments } = loadStory('QuestSequenceFragments');
+const { QuestRuntimeBlock, runtimeBlockAnchor, runtimeBlockSlots } = loadStory('QuestRuntimeBlock');
+
+test('unplaced activities retain their identities outside chronological slots', () => {
+  const lines = [{ story_position: [2] }, { story_position: [4] }];
+  const known = { id: 'known', position: [3] };
+  const unknown = { id: 'unknown', position: null };
+  const related = { id: 'related', position: [0], ordering: 'related' };
+  for (const partial of [false, true]) {
+    const slots = runtimeBlockSlots(lines, [unknown, known, related], partial);
+    assert.deepEqual(Array.from(slots.get(-1), (block) => block.id), ['unknown', 'related']);
+    assert.deepEqual(Array.from(slots.get(1), (block) => block.id), ['known']);
+    assert.equal(slots.has(0), false);
+    assert.equal(slots.has(2), false);
+  }
+});
 const render = (data, props = {}) => renderToStaticMarkup(React.createElement(QuestEncounter,
   { encounter: data, display, stateAnchors: new Map(), ...props }));
+const renderBlock = (block, props = {}) => renderToStaticMarkup(React.createElement(QuestRuntimeBlock,
+  { block: { position: null, title: 'Story activity', branches: [], flow_states: [], source, ...block },
+    display, stateAnchors: new Map(), ...props }));
+
+test('source-only activities retain deep-link source evidence without an activity label', () => {
+  const markup = renderBlock({ id: 'structural', condition_type: 'CheckConditionGroup',
+    branches: [{ id: 'branch-a', type: 'Selector' }] });
+  assert.match(markup, new RegExp(`^<details class="sourceOnly" id="${runtimeBlockAnchor('structural')}">`));
+  assert.match(markup, /Source &amp; conditions/);
+  assert.match(markup, /CheckConditionGroup/);
+  assert.match(markup, /Selector · branch-a/);
+  assert.doesNotMatch(markup, /\bopen=|<h3|Exploration|Activity context/);
+});
+
+test('compact activities preserve dialogue, optional interactions and unavailable transcript context', () => {
+  const base = { id: 'activity', flow_states: [{ state: 'Known' }, { state: 'Outside' }],
+    interactions: [{ id: 'inspect', title: 'Inspect the letter', flow_states: [{ state: 'Letter' }], source }] };
+  const markup = renderBlock(base, { stateAnchors: new Map([['Known', 'line-known']]),
+    renderInteraction: (states, owner) => {
+      assert.deepEqual(states, ['Letter']); assert.equal(owner, 'activity:inspect');
+      return [React.createElement('p', { id: 'line-letter', key: 'letter' }, 'All authored dialogue')];
+    } });
+  assert.match(markup, /href="#line-known"/);
+  assert.match(markup, /id="line-letter"/);
+  assert.match(markup, /Inspect the letter/);
+  assert.doesNotMatch(markup, /<h3>Story activity/);
+  assert.match(renderBlock(base), /Dialogue is outside this transcript window/);
+});
+
+test('branch explanations stay inside source disclosure while activity dialogue remains visible', () => {
+  const markup = renderBlock({ id: 'branch', title: 'Find the letter',
+    branches: [{ id: 'selector', type: 'Selector' }], flow_states: [{ state: 'Known' }] },
+    { stateAnchors: new Map([['Known', 'line-known']]) });
+  const visible = markup.split('<details>')[0];
+  assert.match(visible, /Find the letter/);
+  assert.match(visible, /href="#line-known"/);
+  assert.doesNotMatch(visible, /Conditional|parallel|order.*established/);
+  assert.match(markup, /Conditional or parallel branch; order is not established/);
+});
+
+test('actual 1557 instance exit is a requirement, never a second 1555 battle', () => {
+  const fixture = JSON.parse(readFileSync(new URL('../../server/tests/fixtures/dungeon1557_exit.json', import.meta.url), 'utf8'));
+  const condition = fixture.quest_node.Data.Condition;
+  assert.equal(condition.Condition.IsExitDungeon, true);
+  const markup = renderBlock({ id: fixture.quest_node.Key, title: 'Leave the area', condition_type: condition.Type,
+    transition: { kind: 'dungeon_exit', dungeon_id: condition.Condition.DungeonId,
+      map_config_id: fixture.instance.MapConfigId, is_exit_dungeon: true,
+      boundary_semantics: 'authored_exit_requirement' } });
+  const visible = markup.split('<details>')[0];
+  assert.doesNotMatch(visible, /Area exit|Authored exit|another battle|completion is not established/);
+  assert.match(markup, /Leave the area/);
+  assert.match(markup, /Authored exit requirement; completion is not established/);
+  assert.doesNotMatch(markup, /Encounter activities|End of encounter context|<ol/);
+  assert.match(markup, new RegExp(runtimeBlockAnchor(fixture.quest_node.Key)));
+});
+
+test('flattened structural and empty nodes keep anchors, objectives and outcomes', () => {
+  const data = encounter(node('wrapper', { title: 'Story activity', condition: null, children: [
+    node('empty', { condition: null }), node('objective', { title: 'Protect the academy',
+      completions: [{ is_success: true, phase: 'FinishActions' }, { is_success: false, phase: 'FinishActions' }] }),
+  ] }));
+  const markup = render(data);
+  for (const id of ['wrapper', 'empty', 'objective']) assert.match(markup, new RegExp(encounterAnchor(id)));
+  assert.match(markup, /Protect the academy/);
+  assert.match(markup, /Encounter success condition/);
+  assert.match(markup, /Encounter failure condition/);
+  assert.doesNotMatch(markup, />Action<|End of authored action|<h4>Story activity/);
+  assert.equal(markup.split('Only ordered steps establish a sequence.').length - 1, 1);
+});
 
 function allNodes(tree) {
   if (!tree || typeof tree !== 'object') return [];
@@ -66,7 +153,8 @@ test('local sequence keeps authored child order, parallel occurrences remain dis
   assert.deepEqual(encounterFlows(data).map(f => f.id), ['first', 'parallel-a', 'parallel-b', 'last']);
   const markup = render(data);
   assert.match(markup, /aria-label="Authored action order"/);
-  assert.match(markup, /Parallel paths · no order is implied/);
+  assert.match(markup, /Parallel paths/);
+  assert.equal(markup.split('Only ordered steps establish a sequence.').length - 1, 1);
   assert.equal((markup.match(/Dialogue during the encounter/g) || []).length, 4);
   assert(markup.indexOf(encounterAnchor('67')) < markup.indexOf(encounterAnchor('48')));
 });
@@ -77,7 +165,8 @@ test('different LevelPlay contexts and unresolved membership never become one ti
     { level_play_id: 114750000, ordering: 'authored_tree', membership: source, root: node('second') },
   ], unresolved_level_plays: [{ level_play_id: 100, membership: source, reason: 'invalid_authored_tree', diagnostic: 'missing_root' }] });
   const markup = render(data), visible = markup.split('<details class="source">')[0];
-  assert.match(visible, /relative order of these encounter contexts is not established/);
+  assert.match(markup, /relative order of these encounter contexts is not established/);
+  assert.doesNotMatch(visible, /relative order of these encounter contexts is not established/);
   assert.match(visible, /matching authored tree is unavailable/);
   assert.doesNotMatch(visible, /<ol|Next phase|Then|114750000|114000004|EntityId|missing_root/);
 });
@@ -124,7 +213,10 @@ test('cinematic grouping uses exact action index, not flow name or translated te
 test('authored boundaries never claim a whole sequence is an MP4 or completed playback', () => {
   const markup = renderToStaticMarkup(React.createElement(EncounterCinematicBoundary, { media: [cinematic({ async: true })] },
     React.createElement('p', { id: 'line-SHUTUP' }, 'SHUT UP!')));
-  assert.match(markup, /Start of cinematic action/); assert.match(markup, /End of cinematic action/);
+  assert.match(markup, /class="marker">Scene<\/div>/); assert.match(markup, /End scene/);
+  const visible = markup.split('<details class="source">')[0];
+  assert.match(visible, /Playback pending/);
+  assert.doesNotMatch(visible, /Action boundaries|cinematic action|In-game cinematic sequence/);
   assert.match(markup, /do not establish playback duration or completion/);
   assert.doesNotMatch(markup, /<video|MP4|M0334_1Z|DA_M0334|Playback completed/);
 });
@@ -183,6 +275,7 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
   const data = encounter(root);
   const dummy = new Proxy({}, { get: () => () => null });
   const story = loadStory('QuestRuntimeBlock');
+  let sidebarGroups;
   const mocks = {
     react: React, 'lucide-react': dummy,
     '@/components/story/QuestRuntimeBlock': story,
@@ -190,6 +283,10 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     '@/components/story/questReading': loadStory('questReading'),
     '@/components/story/cutscenePlacement': loadStory('cutscenePlacement'),
     '@/components/dialogue/PlayerText': { PlayerText: ({ value, fallback }) => typeof value === 'string' ? value : value?.content || fallback },
+    '@/data/localized': { localizedText },
+    '@/components/story/runtimeActivity': { isSourceOnlyActivity, sidebarActivityTitle },
+    './questSidebarModel': { activityDestination, dialogueSearchIndex },
+    './QuestSidebar': { QuestSidebar: ({ groups }) => { sidebarGroups = groups; return null; } },
     '@/lib/router': { Link: ({ to, children }) => React.createElement('a', { href: to }, children),
       useSearchParams: () => new URLSearchParams('line=dialogue%3ASHUTUP'), useLocation: () => ({ key: 'fixture' }) },
     '@/hooks/useLocale': { useLocale: () => 'en' }, '@/hooks/usePlayerDisplay': { usePlayerDisplay: () => display },
@@ -203,8 +300,11 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
   vm.runInNewContext(code, { exports, URLSearchParams,
     require: id => mocks[id] ?? (id === 'react/jsx-runtime' ? require(id) : dummy) });
   const lines = [
-    { id: 'before', flow_state: 'Before', story_position: [0], text: { content: 'Before the encounter' } },
-    { id: 'dialogue:SHUTUP', flow_state: 'Flow28', action: { index: 0 }, text: { content: 'SHUT UP!' }, story_order_mapped: false },
+    { id: 'before', flow_state: 'Before', story_position: [0], text: { content: 'Before the encounter' },
+      action: { name: 'ShowTalk' }, source_type: 'flow_state', game_ids: { talk_item_id: 77 },
+      provenance: { source_file: 'BinData/flowState/flowstate.json', source_row: 21 } },
+    { id: 'dialogue:SHUTUP', flow_state: 'Flow28', action: { index: 0 }, text: { content: 'SHUT UP!' }, story_order_mapped: false,
+      game_ids: { talk_item_id: 0 }, provenance: { source_file: 'BinData/flowState/flowstate.json', source_row: 0 } },
     { id: 'dialogue:THATNOTHOME', flow_state: 'Flow28', action: { index: 0 }, text: { content: 'THAT IS NOT HOME!' }, story_order_mapped: false },
     { id: 'dialogue:repeat', flow_state: 'Flow29', action: { index: 0 }, text: { content: 'A parallel call' }, story_order_mapped: false },
     { id: 'after', flow_state: 'After', story_position: [10], text: { content: 'After the encounter' } },
@@ -214,16 +314,35 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     initialProfile: { quest: { game_quest_id: 114000031, name: { content: 'Battle fixture' } } },
     initialTranscript: { lines, limit: 100, offset: 0, story_blocks: [
       { id: 'gate', title: 'Battle', position: [2], condition_type: 'FinishDungeon', branches: [], flow_states: [], source, encounter: data },
+      { id: 'technical', title: 'Story activity', position: [1], branches: [], flow_states: [], source },
+      { id: 'conversation', title: 'Continue the story', condition_type: 'PlayFlow', position: [0],
+        branches: [], flow_states: [{ state: 'Before', position: [0] }], source },
     ] }, initialMedia: { events: [], related_cutscenes: [] },
   }));
   for (const id of ['dialogue:SHUTUP', 'dialogue:THATNOTHOME', 'dialogue:repeat']) {
     assert.equal(markup.split(`data-dialogue-key="${id}"`).length - 1, 1);
   }
-  const start = markup.indexOf('Start of cinematic action'), end = markup.indexOf('End of cinematic action');
+  const publicActivities = sidebarGroups.find((group) => group.id === 'activities').entries;
+  assert.equal(publicActivities.length, 2);
+  assert.deepEqual(publicActivities.map((entry) => entry.id).sort(), ['conversation', 'gate']);
+  assert.equal(publicActivities.find((entry) => entry.id === 'conversation').title, 'Conversation');
+  assert(markup.includes(`id="${runtimeBlockAnchor('technical')}"`), 'source-only direct-link anchor remains mounted');
+  const start = markup.indexOf('class="marker">Scene</div>'), end = markup.indexOf('End scene');
   assert(start >= 0 && start < markup.indexOf('SHUT UP!') && markup.indexOf('THAT IS NOT HOME!') < end, JSON.stringify({start,end,shutup:markup.indexOf('SHUT UP!'),notHome:markup.indexOf('THAT IS NOT HOME!'),excerpt:markup.slice(Math.max(0,start),Math.max(0,start)+1800)}));
   assert.match(markup, /Read the dialogue shared by this branch/);
   assert.match(markup, /cited-passage/);
-  assert.doesNotMatch(markup, /class="line-state">Flow28|class="line-state">Flow29/);
+  const articles = [...markup.matchAll(/<article\b[^>]*data-dialogue-key="[^"]+"[^>]*>([\s\S]*?)<\/article>/g)];
+  assert.equal(articles.length, lines.length);
+  for (const article of articles) {
+    const disclosure = article[1].match(/<details class="quest-line-source"[^>]*>[\s\S]*?<\/details>/);
+    assert(disclosure, 'every transcript line retains a source disclosure');
+    assert.doesNotMatch(disclosure[0].split('>')[0], /\bopen\b/);
+    assert.doesNotMatch(article[1].replace(disclosure[0], ''), /line-state|action-tag|line-foot/);
+  }
+  const regularSource = articles[0][1].match(/<details class="quest-line-source"[^>]*>[\s\S]*?<\/details>/)[0];
+  for (const value of ['Before', 'ShowTalk', 'Talk 77', 'flowstate.json', 'row 21']) assert(regularSource.includes(value));
+  assert.match(articles[1][1], /Talk 0/);
+  assert.match(articles[1][1], /row 0/);
   const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
   assert.equal(new Set(ids).size, ids.length, 'deep link targets must remain unique');
 });

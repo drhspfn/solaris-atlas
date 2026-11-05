@@ -7,7 +7,8 @@ from wuwa_story.api.routes.story import character_archive as archive
 
 
 @pytest.mark.asyncio
-async def test_archive_exposes_independent_tracks_without_changing_text_locale(monkeypatch):
+@pytest.mark.parametrize('named_alternatives', [False, True])
+async def test_archive_exposes_independent_tracks_without_changing_text_locale(monkeypatch, named_alternatives):
     path = "/Game/Voice/Test"
     monkeypatch.setattr(archive, "get_node", AsyncMock(return_value=SimpleNamespace(id=1, canonical_key="character:1")))
     monkeypatch.setattr(archive, "_release_id", AsyncMock(return_value=1))
@@ -34,10 +35,15 @@ async def test_archive_exposes_independent_tracks_without_changing_text_locale(m
                                         (None, "audio/wav", "unlabelled.wav")]]
     session = AsyncMock()
     session.get.return_value = object()
-    session.execute.side_effect = [[], rows]
+    session.execute.side_effect = [[], rows, []]
+    alternatives = [{'id': 'authored-child', 'language': 'en', 'url': 'https://cdn/variant.wav'}]
+    if named_alternatives:
+        monkeypatch.setattr(archive, 'character_voice_alternatives', AsyncMock(return_value={path: alternatives}))
     result = await archive.character_archive.__wrapped__("character:1", locale="en", session=session)
     line = result["voice_lines"][0]
     assert result["locale"] == "en" and line["text"] == "English text"
-    assert line["audio_url"] == "https://cdn.example/en.wav"
-    assert line["audio_tracks"] == {"en": "https://cdn.example/en.wav", "ja": "https://cdn.example/ja.ogg", "zh-Hans": "https://cdn.example/zh.wav"}
-    assert session.execute.await_count == 2
+    assert line["audio_url"] == (None if named_alternatives else "https://cdn.example/en.wav")
+    assert line["audio_tracks"] == {**({} if named_alternatives else {"en": "https://cdn.example/en.wav"}),
+                                   "ja": "https://cdn.example/ja.ogg", "zh-Hans": "https://cdn.example/zh.wav"}
+    assert line['audio_variants'] == (alternatives if named_alternatives else [])
+    assert session.execute.await_count == (2 if named_alternatives else 3)

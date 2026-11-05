@@ -10,6 +10,7 @@ from wuwa_story.ingestion.cutscenes import StrictModel
 class AudioStem(StrictModel):
     role: Literal["voice", "music", "effects", "mixed"]
     language: Literal["en", "ja", "ko", "zh"] | None = None
+    rover: Literal["male", "female"] | None = None
     path: str = Field(min_length=1)
     sources: list[str] = Field(min_length=1, max_length=100)
     evidence: str = Field(min_length=1)
@@ -29,9 +30,9 @@ class CutsceneAudioRecipe(StrictModel):
 
     @model_validator(mode="after")
     def unique_roles(self):
-        keys = [(stem.role, stem.language) for stem in self.stems]
+        keys = [(stem.role, stem.language, stem.rover) for stem in self.stems]
         if len(keys) != len(set(keys)):
-            raise ValueError("Mix each role/language into one stem before publication")
+            raise ValueError("Mix each role/language/Rover variant into one stem before publication")
         if any(stem.role == "mixed" for stem in self.stems) and len(self.stems) != 1:
             raise ValueError("A mixed soundtrack cannot advertise independent stems")
         return self

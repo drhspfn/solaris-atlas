@@ -11,16 +11,23 @@ from wuwa_story_worker.archive_index import (
 )
 from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.cutscene_import import movie_path
+from wuwa_story_worker.cutscene_video_source import exported_video_path
 
 logger = logging.getLogger(__name__)
 
 
 def authored_movie_paths(assets: Path, wrapper_paths, *, errors: dict[str, str] | None = None) -> dict[str, str]:
-    """The wrapper filename/CgId is not evidence of its runtime movie filename."""
+    """Resolve direct MP4s or wrapper-authored paths, never infer a movie from CgId."""
     movies = {}
     for package in sorted(set(wrapper_paths)):
         try:
             relative = PurePosixPath(package)
+            if relative.suffix.casefold() == ".mp4":
+                movie = exported_video_path("/Game/" + package.removeprefix("Client/Content/"))
+                if movie != package or not (assets / relative).resolve().is_relative_to(assets.resolve()):
+                    raise ValueError("Direct movie escapes exported assets")
+                movies[package] = movie
+                continue
             if (relative.is_absolute() or ".." in relative.parts or "\\" in package
                     or ":" in package or not package.startswith("Client/Content/Aki/")
                     or relative.suffix.casefold() not in {".uasset", ".uexp"}):

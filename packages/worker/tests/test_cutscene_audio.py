@@ -49,3 +49,46 @@ async def test_localized_stems_keep_languages_and_source_timing(tmp_path, monkey
     assert all("adelay=1250:all=1" in args[args.index("-filter_complex")+1] for args in mixes)
     assert all("volume=-3dB" in args[args.index("-filter_complex")+1] for args in mixes)
     assert all(args[args.index("-t")+1] == "5" for args in mixes)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", [None, "en"])
+async def test_rover_alternatives_are_never_mixed_together(tmp_path, monkeypatch, language):
+    from types import SimpleNamespace
+
+    from wuwa_story.ingestion.cutscenes import Soundtrack
+
+    from wuwa_story_worker import cutscene_import
+
+    tracks = [Soundtrack(bank="event.bnk", language=language, rover=gender)
+              for gender in ("male", "female")]
+    commands = []
+    async def decode(track, *_):
+        source = tmp_path / f"{track.rover}.wem"
+        source.write_bytes(track.rover.encode())
+        return source, [source]
+    async def run(command, *_):
+        commands.append(command)
+    monkeypatch.setattr(cutscene_import, "decode_soundtrack", decode)
+    monkeypatch.setattr(cutscene_import, "run_tool", run)
+    result = await cutscene_import.localized_audio_recipe(
+        SimpleNamespace(asset="asset:ue:/Game/Video.Video", soundtrack=tracks),
+        tmp_path / "unused.mp4", tmp_path, tmp_path, tmp_path / "work",
+        tmp_path / "decoder", tmp_path / "ffmpeg", 5, False, "3.7.1")
+    assert [stem.rover for stem in result.stems] == ["male", "female"]
+    assert len({stem.path for stem in result.stems}) == 2
+    assert len(commands) == 2
+    for command, gender in zip(commands, ("male", "female"), strict=True):
+        assert command.count("-i") == 1
+        assert command[command.index("-i") + 1].endswith(f"{gender}.wem")
+
+
+@pytest.mark.parametrize("language,rover,allowed", [(None, None, True), ("en", None, False),
+                                                   (None, "female", False), ("ja", "male", False)])
+def test_shared_segments_require_comparison_of_every_audio_variant(language, rover, allowed):
+    from types import SimpleNamespace
+
+    from wuwa_story_worker.cutscene_import import can_share_variant_segments
+
+    videos = [SimpleNamespace(soundtrack=[SimpleNamespace(language=language, rover=rover)])]
+    assert can_share_variant_segments(videos) is allowed

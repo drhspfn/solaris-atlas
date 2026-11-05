@@ -27,6 +27,20 @@ def test_collects_music_and_both_rover_sources_without_choosing_one():
         wwise_banks.bank_media_ids(bank([(11, struct.pack("<II", 3, 100) + source(303))]))
 
 
+@pytest.mark.parametrize("kind,header,offset", [
+    (2, struct.pack("<I", 17), 4),
+    (11, struct.pack("<II", 17, 1), 8),
+])
+def test_unknown_codec_reports_exact_source_without_guessing_layout(kind, header, offset):
+    unknown = struct.pack("<I", 0x00640002) + source(303)[4:]
+    with pytest.raises(ValueError) as error:
+        wwise_banks.bank_media_ids(bank([(kind, header + unknown)]))
+    assert str(error.value) == (
+        f"Unsupported Wwise source codec 0x00640002 "
+        f"(HIRC type {kind}, object 17, source offset {offset})"
+    )
+
+
 @pytest.mark.parametrize("rover", ["male", "female", None])
 def test_selects_authored_gender_state_with_verified_ids(tmp_path, rover):
     xml = tmp_path / "bank.xml"

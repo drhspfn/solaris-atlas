@@ -4,6 +4,8 @@ import { Compass, MapPin, MessageCircle, Swords } from 'lucide-react';
 import { compareStoryPosition } from './cutscenePlacement';
 import { QuestEncounter, type RenderEncounterFlow } from './QuestEncounter';
 import type { Encounter } from './encounterTransitions';
+import styles from './QuestRuntimeBlock.module.css';
+import { genericActivityTitle, isSourceOnlyActivity } from './runtimeActivity';
 export type { EncounterFlow } from './encounterTransitions';
 export { EncounterCinematicBoundary } from './QuestEncounter';
 export { encounterCinematicParts, encounterFlowOwners, encounterOwnsMedia } from './encounterTransitions';
@@ -13,7 +15,15 @@ export type RuntimeBlock = {
   title: string;
   condition_type?: string;
   encounter?: Encounter;
-  position: number[];
+  transition?: {
+    kind: 'dungeon_exit';
+    dungeon_id: number;
+    map_config_id: number;
+    is_exit_dungeon: true;
+    boundary_semantics: 'authored_exit_requirement';
+  };
+  position: number[] | null;
+  ordering?: string;
   branches: Array<{ id: string; type: string }>;
   flow_states: Array<{ state: string; position: number[] }>;
   interactions?: Array<{
@@ -36,6 +46,13 @@ export function runtimeBlockSlots(
   const slots = new Map<number, RuntimeBlock[]>();
   const positioned = lines.filter((line) => line.story_position);
   for (const block of blocks) {
+    // Related source context has no chronological slot. Keep it separately
+    // addressable instead of comparing null or inventing a transcript position.
+    if (!block.position || block.ordering === 'related') {
+      slots.set(-1, [...(slots.get(-1) || []), block]);
+      continue;
+    }
+    const position = block.position;
     if (
       partial &&
       (!positioned.length ||
@@ -45,7 +62,7 @@ export function runtimeBlockSlots(
       continue;
     let slot = lines.findIndex(
       (line) =>
-        line.story_position && compareStoryPosition(line.story_position, block.position) >= 0,
+        line.story_position && compareStoryPosition(line.story_position, position) >= 0,
     );
     if (slot < 0)
       slot = positioned.length
@@ -72,7 +89,22 @@ export function QuestRuntimeBlock({
   if (block.encounter) return <div id={runtimeBlockAnchor(block.id)}>
     <QuestEncounter encounter={block.encounter} display={display} stateAnchors={stateAnchors} renderFlow={renderEncounterFlow} />
   </div>;
-  const Icon =
+  const isExit = block.transition?.kind === 'dungeon_exit';
+  const genericTitle = genericActivityTitle(block.title);
+  const dialogue = block.flow_states.filter((flow) => stateAnchors.has(flow.state));
+  const sourceContext = <>
+    <p>{block.condition_type || 'Scripted activity'}</p>
+    {isExit && <p>Authored exit requirement; completion is not established.</p>}
+    {!!block.branches.length && <p>Conditional or parallel branch; order is not established.</p>}
+    <small>{block.source.file} · {block.source.key}</small>
+    {block.branches.map((branch) => <small key={branch.id}>{branch.type} · {branch.id}</small>)}
+  </>;
+  if (isSourceOnlyActivity(block))
+    return <details className={styles.sourceOnly} id={runtimeBlockAnchor(block.id)}>
+      <summary>Source &amp; conditions</summary>
+      {sourceContext}
+    </details>;
+  const Icon = isExit ? MapPin :
     block.condition_type === 'PlayFlow'
       ? MessageCircle
       : block.condition_type === 'WaitBattleCondition'
@@ -80,7 +112,7 @@ export function QuestRuntimeBlock({
         : ['ReachArea', 'EnterDungeon', 'LeaveDungeon'].includes(block.condition_type || '')
           ? MapPin
           : Compass;
-  const label =
+  const label = isExit ? 'Area exit' :
     block.condition_type === 'PlayFlow'
       ? 'Conversation'
       : block.condition_type === 'WaitBattleCondition'
@@ -89,23 +121,17 @@ export function QuestRuntimeBlock({
           ? 'Interaction'
           : 'Exploration';
   return (
-    <section className="quest-runtime-block" id={runtimeBlockAnchor(block.id)}>
-      <span className="quest-activity-kind">
-        <Icon size={16} />
+    <section className={`quest-runtime-block ${styles.block}`} id={runtimeBlockAnchor(block.id)}>
+      {!isExit && <span className="quest-activity-kind">
+        <Icon size={16} aria-hidden="true" />
         {label}
-      </span>
-      <h3>
-        <PlayerText display={display} value={block.title} fallback="Story activity" />
-      </h3>
-      {block.branches.length > 0 && (
-        <p className="quest-runtime-branch">
-          Conditional / parallel branch · may depend on where you go or what you interact with.
-        </p>
-      )}
-      {block.flow_states.some((flow) => stateAnchors.has(flow.state)) && (
+      </span>}
+      {(!genericTitle || isExit) && <h3>
+        <PlayerText display={display} value={isExit && genericTitle ? 'Leave the area' : block.title} fallback="Story activity" />
+      </h3>}
+      {dialogue.length > 0 && (
         <nav aria-label="Dialogue for this activity">
-          {block.flow_states
-            .filter((flow) => stateAnchors.has(flow.state))
+          {dialogue
             .map((flow, index) => (
               <a key={`${flow.state}:${index}`} href={`#${stateAnchors.get(flow.state)}`}>
                 Read dialogue{index ? ` ${index + 1}` : ''} ↗
@@ -113,9 +139,10 @@ export function QuestRuntimeBlock({
             ))}
         </nav>
       )}
+      {!!block.flow_states.length && !dialogue.length && <p>Dialogue is outside this transcript window.</p>}
       {!!block.interactions?.length && (
         <div className="quest-runtime-interactions">
-          <p>Optional interactions in this area · explore in your own order.</p>
+          <p>Optional interactions</p>
           {block.interactions.map((item) => {
             const content =
               renderInteraction?.(
@@ -156,15 +183,7 @@ export function QuestRuntimeBlock({
       )}
       <details>
         <summary>Source &amp; conditions</summary>
-        <p>{block.condition_type || 'Scripted activity'}</p>
-        <small>
-          {block.source.file} · {block.source.key}
-        </small>
-        {block.branches.map((branch) => (
-          <small key={branch.id}>
-            {branch.type} · {branch.id}
-          </small>
-        ))}
+        {sourceContext}
       </details>
     </section>
   );

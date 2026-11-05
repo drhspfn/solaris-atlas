@@ -21,6 +21,24 @@ def test_movie_reference_comes_from_wrapper_bytes_not_cg_or_wrapper_name(tmp_pat
         wrapper: "Client/Content/Aki/Movies/Storyboard/NativeOtherName.mp4"}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("present", [False, True])
+async def test_direct_mp4_exports_only_exact_indexed_path_without_wrapper(tmp_path, monkeypatch, present):
+    movie = "Client/Content/Aki/Movies/Storyboard/R0012.mp4"
+    index = archive_index(tmp_path, [movie if present else "Client/Content/Aki/Movies/Other/R0012.mp4"])
+    export = AsyncMock(return_value=tmp_path / "receipt.json")
+    monkeypatch.setattr(cutscene_sources, "export_assets", export)
+    result = await cutscene_sources.prepare_base_movies(
+        tmp_path, tmp_path, [movie, movie], tmp_path / "fmodel", index=index)
+    assert result["movies"] == {movie: movie}
+    assert result["missing"] == ([] if present else [movie])
+    assert "errors" not in result
+    if present:
+        export.assert_awaited_once_with(tmp_path, tmp_path / "fmodel", movie)
+    else:
+        export.assert_not_awaited()
+
+
 def test_movie_lookup_requires_full_exact_path_and_preserves_archive_case(tmp_path):
     expected = "Client/Content/Aki/Movies/Storyboard/M0241.mp4"
     exact = "Client/Content/Aki/Movies/Storyboard/M0241.MP4"

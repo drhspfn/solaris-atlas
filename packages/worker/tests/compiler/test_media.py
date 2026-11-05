@@ -99,6 +99,35 @@ class MediaCompilerTest(unittest.TestCase):
         self.assertFalse(any(e["from"] == "quest:123" and
                              e["to"] == "cutscene:UNRELATED_MOVIE" for e in self.edges))
 
+    def test_caption_voice_requires_enabled_flag_and_unique_exact_plot_id(self) -> None:
+        captions = [
+            {"CaptionText": "Voice", "IsPlaySubtitleVoice": True},
+            {"CaptionText": "Voice", "IsPlaySubtitleVoice": False},
+            {"CaptionText": "Voice"},
+            {"CaptionText": "voice", "IsPlaySubtitleVoice": True},
+            {"CaptionText": " Voice", "IsPlaySubtitleVoice": True},
+            {"CaptionText": "Duplicate", "IsPlaySubtitleVoice": True},
+            {"CaptionText": ["Voice"], "IsPlaySubtitleVoice": True},
+        ]
+        self.write("cgVedio/videocaption.json", [
+            {**caption, "CaptionId": index, "CgName": "MOVIE"}
+            for index, caption in enumerate(captions)
+        ])
+        self.write("plot_audio/plotaudio.json", [
+            {"Id": "Voice", "FileName": "voice_file"},
+            {"Id": "Duplicate", "FileName": "first"},
+            {"Id": "Duplicate", "FileName": "second"},
+        ])
+        self.compile()
+        links = [item for item in self.edges if item["type"] == "has_voice_reference"]
+        self.assertEqual(len(links), 1)
+        self.assertEqual(links[0]["from"], "caption:0:0")
+        self.assertEqual(links[0]["to"], "voice_ref:Voice")
+        self.assertEqual(links[0]["path"], "$[0].CaptionText")
+        self.assertEqual(links[0]["source"], "BinData/cgVedio/videocaption.json")
+        self.assertEqual(len([item for item in self.diagnostics
+                              if item[0] == "unresolved_caption_voice_reference"]), 4)
+
     def test_unique_whitespace_only_cg_name_join_preserves_raw_value(self) -> None:
         self.write("cgVedio/videodata.json", [
             {"CgId": 1, "CgName": "M0341A", "CgFile": "/Game/Movie/M0341A"},

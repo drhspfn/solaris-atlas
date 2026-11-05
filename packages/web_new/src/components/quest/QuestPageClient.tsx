@@ -4,6 +4,11 @@ import { ArrowUp, BookOpen, ChevronRight, Users } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '@/api/client';
 import { PlayerText } from '@/components/dialogue/PlayerText';
+import { QuestSidebar, type SidebarGroup } from './QuestSidebar';
+import { activityDestination, dialogueSearchIndex } from './questSidebarModel';
+import { localizedText } from '@/data/localized';
+import { cutsceneAnchor, packageCutsceneAnchor } from '@/components/story/cutsceneAnchor';
+import { isSourceOnlyActivity, sidebarActivityTitle } from '@/components/story/runtimeActivity';
 import { AnalysisActions } from '@/components/story/AnalysisActions';
 import { cutsceneSlots } from '@/components/story/cutscenePlacement';
 import {
@@ -101,6 +106,10 @@ export function QuestPageClient({
       for (let parent = target?.parentElement; parent; parent = parent.parentElement)
         if (parent instanceof HTMLDetailsElement) parent.open = true;
       target?.scrollIntoView({ block: 'start' });
+      if (target) {
+        if (!target.hasAttribute('tabindex')) target.tabIndex = -1;
+        target.focus({ preventScroll: true });
+      }
     };
     const frame = requestAnimationFrame(reveal);
     window.addEventListener('hashchange', reveal);
@@ -343,6 +352,49 @@ export function QuestPageClient({
 
   const interactionOwners = new Map<string, string>();
   const activityBlocks = [...activitySlots.values()].flat();
+  const mountedActivityAnchors = new Map(activityBlocks.map((block) => [block.id, runtimeBlockAnchor(block.id)]));
+  const searchText = (value: unknown, fallback: string) =>
+    localizedText(value, fallback).replace(/\{PlayerName\}/gi, playerDisplay.name);
+  const dialogueSearch = dialogueSearchIndex(lines.map((line: any) => ({
+    flow_state: line.flow_state, text: searchText(line.text, ''),
+  })));
+  const visibleSidebarScenes = new Set([
+    ...Array.from(videoSlots.values()).flat(), ...contextualCutscenes,
+    ...(media?.events || []).filter((event) => event.interaction_id &&
+      activityBlocks.some((block) => block.interactions?.some((item) => `${block.id}:${item.id}` === event.interaction_id))),
+  ].map(cutsceneAnchor));
+  const eventSceneNames = new Set((media?.events || []).filter((event) => event.kind === 'cutscene').map((event) => event.reference));
+  const sidebarGroups: SidebarGroup[] = [
+    { id: 'dialogue', title: 'Dialogue', entries: stateIndex.map((state) => {
+      const first = shown.find((line: any) => line.flow_state === state.key);
+      return { id: state.key, title: first?.text, fallback: 'Dialogue passage',
+        searchText: dialogueSearch.get(state.key) || 'Dialogue passage', href: `#${state.anchor}`,
+        note: `${state.count} ${state.count === 1 ? 'line' : 'lines'} in this view`, inView: true };
+    }) },
+    { id: 'scenes', title: 'Scenes', entries: [
+      ...(media?.events || []).filter((event) => event.kind !== 'audio_event').map((event) => {
+        const anchor = visibleSidebarScenes.has(cutsceneAnchor(event))
+          ? cutsceneAnchor(event) : stateAnchors.get(event.flow_state);
+        const fallback = event.kind === 'cutscene' ? `Cutscene · ${event.reference.replace('cutscene:', '')}` : 'Story scene';
+        return { id: cutsceneAnchor(event), title: event.title, fallback,
+          searchText: searchText(event.title, fallback), inView: Boolean(anchor),
+          href: anchor ? `#${anchor}` : activityDestination({ id: '', flow_states:
+            [event.flow_state, ...(event.transcript_states || [])].map((state) => ({ state })) }, new Map(), lines, searchParams?.toString() || ''),
+        };
+      }),
+      ...(media?.related_cutscenes || []).filter((scene) => !eventSceneNames.has(`cutscene:${scene.name}`)).map((scene) => ({
+        id: packageCutsceneAnchor(scene.name), title: scene.name, fallback: 'Related scene',
+        searchText: scene.name, href: `#${packageCutsceneAnchor(scene.name)}`, inView: true,
+        note: 'Related · position unknown',
+      })),
+    ] },
+    { id: 'activities', title: 'Activities', entries: (transcript?.story_blocks || []).filter((block: any) => !isSourceOnlyActivity(block)).map((block: any) => ({
+      id: block.id, title: sidebarActivityTitle(block), fallback: 'Story activity',
+      searchText: searchText(sidebarActivityTitle(block), 'Story activity'), inView: mountedActivityAnchors.has(block.id),
+      href: activityDestination(block, mountedActivityAnchors, lines, searchParams?.toString() || ''),
+      note: !block.position || block.ordering === 'related' ? 'Related · position unknown' : undefined,
+    })).sort((a: { inView: boolean }, b: { inView: boolean }) => Number(b.inView) - Number(a.inView)) },
+  ];
   const interactionIds = new Set(
     activityBlocks.flatMap((block) =>
       (block.interactions || []).map((item) => `${block.id}:${item.id}`),
@@ -518,9 +570,11 @@ export function QuestPageClient({
     const active = branch?.choice.id === activeChoiceId;
     const lineSource = (
       <div className="line-foot">
+        <span className="line-state">{line.flow_state || 'Story'}</span>
+        {line.action?.name && <span className="action-tag">{line.action.name}</span>}
         <span>
           {line.source_type || 'dialogue'}
-          {line.game_ids?.talk_item_id ? ` · Talk ${line.game_ids.talk_item_id}` : ''}
+          {line.game_ids?.talk_item_id != null ? ` · Talk ${line.game_ids.talk_item_id}` : ''}
         </span>
         {line.provenance?.source_file && (
           <span title={line.provenance.source_file}>
@@ -587,10 +641,6 @@ export function QuestPageClient({
                   fallback="Narration / Unknown speaker"
                 />
               </strong>
-              {!embedded && <>
-                <span className="line-state">{line.flow_state || 'Story'}</span>
-                {line.action?.name && <span className="action-tag">{line.action.name}</span>}
-              </>}
             </div>
             <DialogueAudioReference media={line.media}>
               <p>
@@ -667,14 +717,10 @@ export function QuestPageClient({
                 ))}
               </div>
             )}
-            {embedded
-              ? (line.provenance?.source_file || line.game_ids?.talk_item_id) && (
-                  <details className="quest-line-source">
-                    <summary>Source reference</summary>
-                    {lineSource}
-                  </details>
-                )
-              : lineSource}
+            <details className="quest-line-source">
+              <summary>Source reference</summary>
+              {lineSource}
+            </details>
             {branch &&
               branch.lineIds.at(-1) === line.id &&
               branch.continuationLineId &&
@@ -887,60 +933,8 @@ export function QuestPageClient({
             </div>
           </div>
           <div className="transcript-layout">
-            <aside className="scene-nav">
-              <h3>
-                IN THIS QUEST <span>{stateIndex.length.toString().padStart(2, '0')}</span>
-              </h3>
-              {stateIndex.length ? (
-                <>
-                  <nav className="flow-state-list" aria-label="Quest chapters">
-                    {stateIndex.map((state, i) => (
-                      <a href={`#${state.anchor}`} className="flow-state-link" key={state.key}>
-                        <span>{String(i + 1).padStart(2, '0')}</span>
-                        <span>
-                          Part {i + 1}
-                          <small>
-                            {state.count} {state.count === 1 ? 'line' : 'lines'}
-                          </small>
-                        </span>
-                        <b>{state.count}</b>
-                      </a>
-                    ))}
-                  </nav>
-                </>
-              ) : (
-                <p>No transcript lines in this view.</p>
-              )}
-              <QuestMediaReferences
-                manifest={media}
-                stateAnchors={stateAnchors}
-                visibleCutscenes={[
-                  ...Array.from(videoSlots.values()).flat(),
-                  ...contextualCutscenes,
-                  ...(media?.events || []).filter(
-                    (event) => event.interaction_id && interactionIds.has(event.interaction_id),
-                  ),
-                ]}
-              />
-              {transcript?.story_blocks?.length > 0 && (
-                <details className="quest-activity-nav">
-                  <summary>
-                    Exploration &amp; interactions · {transcript.story_blocks.length}
-                  </summary>
-                  <nav aria-label="Quest activities">
-                    {transcript.story_blocks.map((block: any) => (
-                      <a key={block.id} href={`#${runtimeBlockAnchor(block.id)}`}>
-                        <PlayerText
-                          display={playerDisplay}
-                          value={block.title}
-                          fallback="Story activity"
-                        />
-                      </a>
-                    ))}
-                  </nav>
-                </details>
-              )}
-            </aside>
+            <QuestSidebar key={`${questKey}:${locale}:${gameVersion}`} groups={sidebarGroups} display={playerDisplay}
+              activeAnchor={stateAnchors.get(shown.find((line: any) => line.id === citedLine)?.flow_state) || ''} />
             <div className="transcript">
               {shown.length ? (
                 shown.map((line: any, i: number) => renderTranscriptLine(line, i))
@@ -969,6 +963,17 @@ export function QuestPageClient({
               {contextualCutscenes.map((event) => (
                 <Cutscene key={`${event.action}-${event.reference}`} event={event} />
               ))}
+              {!!activitySlots.get(-1)?.length && (
+                <section aria-label="Related activities">
+                  <h3>Related activities</h3>
+                  <p>Their position in this passage is not known.</p>
+                  {activitySlots.get(-1)!.map((block) => (
+                    <QuestRuntimeBlock key={block.id} block={block} display={playerDisplay}
+                      stateAnchors={stateAnchors} renderInteraction={renderInteraction}
+                      renderEncounterFlow={renderEncounterFlow} />
+                  ))}
+                </section>
+              )}
               <RelatedQuestCutscenes manifest={media} />
             </div>
           </div>

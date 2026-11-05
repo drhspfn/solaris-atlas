@@ -18,6 +18,7 @@
 .character-voice-line .character-source-hint {
   max-width: 100%;
 }
+.character-voice-variants { display: grid; gap: 8px; min-width: 0; align-content: start; }
 .character-voice-toolbar > .atlas-select {
   width: min(260px, 100%);
   min-width: 0;

@@ -2,6 +2,7 @@ import asyncio
 import copy
 import json
 import wave
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -126,6 +127,91 @@ async def test_worker_exports_only_missing_and_persists_game_identity(tmp_path, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('missing_sibling', [False, True])
+@pytest.mark.parametrize('already_published', [False, True])
+async def test_named_siblings_publish_separate_references_and_count_one_language_target(tmp_path, monkeypatch, missing_sibling, already_published):
+    from wuwa_story.read_models import refresh
+
+    root = client(tmp_path)
+    value = request().model_copy(update={'kinds': ['voice']})
+    target = {'owner': 1, 'release_id': 2, 'path': '/Game/Voice.Voice', 'kind': 'voice', 'language': 'en'}
+    payload = {'request': value.model_dump(), 'run_id': 7, 'targets': [target]}
+    run = SimpleNamespace(id=7, status='queued', metadata_json={'payload': payload})
+    session = AsyncMock()
+    transaction_events = []
+    session.commit.side_effect = lambda: transaction_events.append(('commit',))
+    dirty = AsyncMock(side_effect=lambda *args, **kwargs: transaction_events.append(('dirty', args[1:])))
+    monkeypatch.setattr(refresh, 'mark_dirty', dirty)
+    session.get.return_value = run
+    session.scalar.return_value = None
+    factory = Mock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(entity_media, 'SessionFactory', factory)
+    monkeypatch.setattr(entity_media, 'validate_plan', lambda _: None)
+    monkeypatch.setattr(entity_media, 'missing_media_targets', AsyncMock(return_value=[] if already_published else [target]))
+    monkeypatch.setattr(entity_media, 'publish_inventory', AsyncMock(return_value={}))
+    monkeypatch.setattr(entity_media, 'S3Storage', lambda _: AsyncMock())
+    service = AsyncMock()
+    service.register_file.return_value = SimpleNamespace(id=11)
+    service.register_variant.side_effect = lambda *args: SimpleNamespace(metadata_json={})
+    references = []
+
+    async def reference(*args, **kwargs):
+        result = SimpleNamespace(**kwargs)
+        references.append(result)
+        return result
+    service.register_reference.side_effect = reference
+    monkeypatch.setattr(entity_media, 'FileRegistrationService', lambda _: service)
+    executable = tmp_path / 'tool'
+    executable.write_bytes(b'pinned tool')
+    monkeypatch.setattr(entity_media, 'tool_path', lambda _: executable)
+    raw = root / 'Client/Content/Aki/Init.bnk'
+    raw.parent.mkdir(parents=True)
+    raw.write_bytes(b'pinned bank')
+    files = []
+    names = ['en:hirc1:' + 'a'*24, 'en:hirc1:' + 'b'*24]
+    for name in names[:1] if missing_sibling else names:
+        path = root / (name.rsplit(':', 1)[-1] + '.wav')
+        path.write_bytes(b'decoded media')
+        files.append(({**target, 'source_name': name}, path, 'audio_wav', 'audio/wav', [raw]))
+
+    async def build(*args, provenance, voice_diagnostics, **kwargs):
+        for i, (resolved, *_) in enumerate(files):
+            provenance[(target['path'], resolved['source_name'])] = {'media_id': i+1,
+                'voice_variant': {'expected_source_names': names, 'variant': {'source_name': resolved['source_name']}}}
+        if missing_sibling:
+            voice_diagnostics.append({'source': target['path'], 'language': 'en', 'reason': 'Missing exact authored voice media'})
+        return files, [target['path']] if missing_sibling else []
+    monkeypatch.setattr(entity_media, 'build_entity_files', build)
+    await entity_media._process_entity_workspace(payload, None, root)
+    if already_published:
+        dirty.assert_not_awaited()
+        service.register_file.assert_not_awaited()
+        assert run.status == 'completed' and run.raw_output['skipped'] == 1
+        return
+    assert {r.source_name for r in references} == set(names[:1] if missing_sibling else names)
+    assert [r.metadata_json['game_source']['media_id'] for r in references] == list(range(1, len(files)+1))
+    assert all(r.owner_node_id == 1 and r.release_id == 2 for r in references)
+    assert run.status == ('partial' if missing_sibling else 'completed')
+    report = run.raw_output['media_report']
+    assert report['requested'] == 1 and report['found'] == int(not missing_sibling)
+    assert report['missing'] == int(missing_sibling) and len(report['entries'][0]['matches']) == len(files)
+    assert report['entries'][0]['status'] == ('partial' if missing_sibling else 'found')
+    assert run.raw_output['published'] == len(files)
+    assert dirty.await_count == 2 * len(files)
+    assert all(call.args[0] is session and call.args[1:3] == ('character', [1])
+               for call in dirty.await_args_list)
+    assert [call.args[3:] for call in dirty.await_args_list] == [(), ('1.1.0',)] * len(files)
+    # Both exact scopes are queued before each publication's own commit; no
+    # separate transaction or full-catalog invalidation can hide partial loss.
+    for index, event in enumerate(transaction_events):
+        if event == ('dirty', ('character', [1])):
+            assert transaction_events[index+1] == ('dirty', ('character', [1], '1.1.0'))
+            assert transaction_events[index+2] == ('commit',)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("ambiguous", [("en",), ("en", "ja"), ("ja",), ("en", "ja", "ko", "zh")])
 async def test_partial_voice_publication_and_ambiguous_retry_stay_visible(tmp_path, monkeypatch, ambiguous):
     # Retained events have two variants in some languages and singleton media in others.
@@ -154,6 +240,7 @@ async def test_partial_voice_publication_and_ambiguous_retry_stay_visible(tmp_pa
     event = root / "event.json"
     event.write_text(json.dumps([{"EventCookedData": {"EventLanguageMap": [{"Value": {"Media": entries}}]}}]))
     monkeypatch.setattr(entity_media, "prefetch_events", AsyncMock(return_value={source: (event, [])}))
+    monkeypatch.setattr(entity_media, "prefetch_banks", AsyncMock(return_value={}))
     prefetch = AsyncMock(side_effect=lambda root, voices, identities, *args:
                          {identity: media[identity] for identity in identities})
     monkeypatch.setattr(entity_media, "prefetch_media", prefetch)
@@ -219,7 +306,8 @@ async def test_complete_target_is_committed_before_later_target_failure(tmp_path
     root = client(tmp_path)
     targets = [{"owner": number, "release_id": 2, "path": f"/Game/Icon{number}.Icon{number}",
                 "kind": "image", "language": None} for number in (1, 2)]
-    payload = {"request": request().model_dump(), "run_id": 7, "targets": targets}
+    payload = {"schema_version": 1, "job_type": "media.entities",
+               "request": request().model_dump(), "run_id": 7, "targets": targets}
     run = SimpleNamespace(id=7, status="queued", metadata_json={"payload": payload})
     session = AsyncMock()
     session.get.return_value = run
@@ -308,8 +396,23 @@ async def test_complete_target_is_committed_before_later_target_failure(tmp_path
     service.register_file.side_effect = register_file
     service.register_variant.side_effect = register_variant
     service.register_reference.side_effect = register_reference
+
+    @asynccontextmanager
+    async def connect():
+        yield AsyncMock()
+
+    @asynccontextmanager
+    async def unlocked(*args):
+        yield
+
+    async def workspace(payload, connection):
+        await entity_media._process_entity_workspace(payload, connection, root)
+
+    monkeypatch.setattr(entity_media, "engine", SimpleNamespace(connect=connect))
+    monkeypatch.setattr(entity_media, "job_lock", unlocked)
+    monkeypatch.setattr(entity_media, "_process_entity_media", workspace)
     with pytest.raises(OSError, match="second target"):
-        await entity_media._process_entity_workspace(payload, None, root)
+        await entity_media._locked_process_entity_media(payload)
     assert len(committed_refs) == 1 and committed_refs[0].source_path == targets[0]["path"]
     assert committed_files == ["1.png", "Icon1.uasset"] and len(committed_variants) == 1
     assert events.index(("commit", 1)) < events.index(("lock", 2))

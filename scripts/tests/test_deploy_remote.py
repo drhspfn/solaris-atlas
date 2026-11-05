@@ -382,7 +382,11 @@ class ModelWorkerConfigurationTests(unittest.TestCase):
         self.assertIn("file: packages/worker/Dockerfile.models", models)
         self.assertIn("push: true", models)
         self.assertIn("cache-to: type=gha,mode=max,scope=models", models)
-        self.assertIn("needs: [build, model-tools]", workflow.split("  deploy:\n", 1)[1])
+        deployment = workflow.split("  deploy:\n", 1)[1]
+        self.assertIn("needs: build", deployment)
+        self.assertIn("uses: ./.github/workflows/production-selective.yml", deployment)
+        self.assertIn("image_sha: ${{ github.sha }}", deployment)
+        self.assertNotIn("component: all", deployment)
 
     def test_production_validates_model_image_for_both_worker_deployment_groups(self):
         workflow = (ROOT / ".github/workflows/production-deploy.yml").read_text()
