@@ -7,12 +7,20 @@ from sqlalchemy.dialects import postgresql
 from wuwa_story.ingestion import speaker_crosswalk_backfill as repair
 
 
-def fixture(monkeypatch):
+def fixture(monkeypatch, *, family=False):
     evidence, typed = set(), set()
     known = {'speaker:400049': 40, 'speaker:800545': 80, 'character:1212': 12}
     rows = [(repair.ROLE_PATH, 141, {'Id': 1212, 'RoleHeadIconCircle': '/jingran'}),
             (repair.SPEAKER_PATH, 5797, {'Id': 400049, 'HeadIconAsset': '/jingran'}),
             (repair.SPEAKER_PATH, 6707, {'Id': 800545, 'HeadIconAsset': '/jingran'})]
+    if family:
+        known = {'speaker:317': 317, 'speaker:1450': 1450, 'character:1501': 1501}
+        rows = [(repair.MAIN_ROLE_PATH, 0, {'Id': 1501, 'Gender': 1, 'UnlockCondition': 0}),
+                (repair.MAIN_ROLE_PATH, 1, {'Id': 1502, 'Gender': 0, 'UnlockCondition': 0}),
+                (repair.ROLE_PATH, 3, {'Id': 1501, 'RoleType': 1, 'FormationRoleCard': '/male'}),
+                (repair.ROLE_PATH, 6, {'Id': 1502, 'RoleType': 1, 'FormationRoleCard': '/female'}),
+                (repair.SPEAKER_PATH, 410, {'Id': 317, 'RolePileIconAsset': '/female'}),
+                (repair.SPEAKER_PATH, 1612, {'Id': 1450, 'RolePileIconAsset': '/male'})]
     session = Row(get=AsyncMock(return_value=Row(game_version='3.7.0', upstream_name='source',
                                                 upstream_commit='pinned')),
                   execute=AsyncMock(), commit=AsyncMock())
@@ -109,3 +117,17 @@ async def test_new_field_proof_preserves_legacy_edges_and_typed_associations(mon
     assert ('speaker:400049', 'character:1212', '$[5797].HeadIconAsset') in evidence
     assert ('speaker:800545', 'character:1212', '$[6707].HeadIconAsset') in evidence
     assert (await repair.backfill(session, 21, [1212], apply=True))['written'] == 0
+
+
+@pytest.mark.asyncio
+async def test_mainrole_family_card_backfill_is_typed_evidenced_and_idempotent(monkeypatch):
+    session, imported, _, evidence, typed = fixture(monkeypatch, family=True)
+    preview = await repair.backfill(session, 21, [1501])
+    assert preview['missing_links'] == 2 and preview['role_ids'] == [1501]
+    assert preview['speaker_ids'] == [317, 1450]
+    imported.assert_not_awaited()
+    assert (await repair.backfill(session, 21, [1501], apply=True))['written'] == 2
+    assert evidence == {('speaker:317', 'character:1501', '$[410].RolePileIconAsset'),
+                        ('speaker:1450', 'character:1501', '$[1612].RolePileIconAsset')}
+    assert typed == {(317, 1501), (1450, 1501)}
+    assert (await repair.backfill(session, 21, [1501], apply=True))['written'] == 0
