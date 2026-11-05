@@ -12,6 +12,8 @@ from pathlib import Path
 from flatbuffers.table import Table
 from wuwa_story.ingestion.cutscenes import CutsceneRecipe
 
+from wuwa_story_worker.cutscene_caption_audio import caption_soundtracks
+
 
 def engine_path(blob: bytes) -> str:
     paths = re.findall(rb"/Game/[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+", blob)
@@ -78,6 +80,9 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, 
                                    "rover": ("male" if gender == 1 else "female" if gender == 0 else None)
                                    if shared_assets[engine_path(blob)] == 1 else None,
                                    "start_seconds": start, "end_seconds": end})
+        caption_gender = gender if shared_assets[engine_path(blob)] == 1 else 2
+        soundtrack.extend(caption_soundtracks(config_db, assets, name, caption_gender,
+                                               missing_assets=missing_assets))
         if key in input_assets:
             if input_assets[key]["soundtrack"] != soundtrack:
                 raise ValueError(f"Conflicting soundtrack configuration for shared video: {key}")

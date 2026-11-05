@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 
 class StrictModel(BaseModel):
@@ -80,7 +80,8 @@ class PlaybackFlow(StrictModel):
 
 class Soundtrack(StrictModel):
     language: Literal["en", "ja", "ko", "zh"] | None = None
-    bank: str
+    bank: str | None = Field(default=None, min_length=1)
+    external_media: str | None = Field(default=None, min_length=1)
     # Explicit source selection for verified layered/switch banks; never mix all branches.
     media_id: int | None = Field(default=None, gt=0, le=4294967295)
     rover: Literal["male", "female"] | None = None
@@ -90,14 +91,28 @@ class Soundtrack(StrictModel):
 
     @model_validator(mode="after")
     def valid_range(self):
+        if bool(self.bank) == bool(self.external_media):
+            raise ValueError("Soundtrack requires exactly one bank or external media path")
+        if self.external_media and self.media_id is not None:
+            raise ValueError("External media cannot select a bank media ID")
+        if self.external_media and self.language is None:
+            raise ValueError("Caption external media requires a playback language")
         if self.end_seconds is not None and self.end_seconds <= self.start_seconds:
             raise ValueError("Soundtrack end must follow its start")
         return self
 
+    @model_serializer(mode="wrap")
+    def preserve_bank_recipe_identity(self, handler):
+        value = handler(self)
+        if self.external_media is None:
+            value.pop("external_media", None)
+        return value
+
 
 class VideoInput(StrictModel):
     asset: str = Field(pattern=r"^asset:ue:/Game/")
-    soundtrack: list[Soundtrack] = Field(default_factory=list, max_length=32)
+    # 23 real caption voices already produce 92 localized inputs for one video.
+    soundtrack: list[Soundtrack] = Field(default_factory=list, max_length=256)
 
 
 class CutsceneRecipe(StrictModel):

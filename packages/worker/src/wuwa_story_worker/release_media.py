@@ -37,6 +37,12 @@ from wuwa_story_worker.archive_index import (
 from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.broker import JobDeferred, job_lock
 from wuwa_story_worker.client_assets import download_plan, save_json, workspace_lock
+from wuwa_story_worker.cutscene_caption_audio import (
+    CAPTION_AUDIO_SCHEMA,
+    caption_voice_requests,
+    has_caption_audio,
+    plot_audio_database,
+)
 from wuwa_story_worker.cutscene_import import import_cutscene_recipe, missing_cutscene_identities
 from wuwa_story_worker.cutscene_plan import engine_path, plan_cutscene
 from wuwa_story_worker.cutscene_sources import prepare_base_movies
@@ -464,6 +470,7 @@ async def cutscene_assets(payload, parent):
     with closing(sqlite3.connect(config.resolve().as_uri() + "?mode=ro", uri=True)) as db:
         videos = [(row[0], engine_path(row[1]).removeprefix("/Game/").split(".", 1)[0])
                   for name in targets for row in db.execute("SELECT CgId, BinData FROM videodata WHERE CgName = ?", (name,))]
+    caption_cg_names = [name for name in targets if await asyncio.to_thread(has_caption_audio, config, name)]
     cg_ids = {cg_id for cg_id, _ in videos}
     unavailable = []
     available = {}
@@ -510,14 +517,19 @@ async def cutscene_assets(payload, parent):
     from wuwa_story_worker.cutscene_import import confined
     inventory["missing_movies"] = [path for path in sorted(set(base_movies["movies"].values()))
                                     if not confined(assets, path).is_file()]
-    return {**parent, "video_plan_id": plan["id"], "stage": "cutscene_assets_ready", "media_report": inventory}, "completed"
+    return {**parent, "video_plan_id": plan["id"], "stage": "cutscene_assets_ready", "media_report": inventory,
+            **({'caption_voice_cg_names': caption_cg_names} if caption_cg_names else {})}, "completed"
 
 
 async def cutscene(payload, parent):
     from wuwa_story_worker.cutscene_import import confined, movie_path
 
     context = await source_context(parent, video=True)
-    if not await missing_cutscene_identities({"cutscene:" + payload["targets"][0]}, source_context=context):
+    caption_audio = payload['targets'][0] in parent.get('caption_voice_cg_names', [])
+    if caption_audio:
+        context['caption_audio_schema'] = CAPTION_AUDIO_SCHEMA
+    if not await missing_cutscene_identities({"cutscene:" + payload["targets"][0]}, source_context=context,
+                                              **({'require_caption_audio': True} if caption_audio else {})):
         await cleanup_published_output(parent, payload.get("run_id"), "cutscene")
         return {**parent, "stage": "cutscene_reused", "reused": 1}, "completed"
     root = client_root(parent)
@@ -582,7 +594,7 @@ async def cutscene(payload, parent):
         entries.append({"expected": expected, "status": "found" if exported.is_file() else "not_in_export",
                         "matches": [exported.relative_to(assets.resolve()).as_posix()] if exported.is_file() else []})
         for track in video.get("soundtrack", []):
-            expected = track["bank"]
+            expected = track.get("bank") or track["external_media"]
             entries.append({"expected": expected, "language": track.get("language"),
                             "status": "found" if (assets / expected).is_file() else "not_in_export",
                             "matches": [expected] if (assets / expected).is_file() else []})
@@ -715,9 +727,18 @@ async def extract_cutscene_audio(parent, config, name):
     index = voice_root / "archive-index.sqlite"
     if not index.is_file():
         await asyncio.to_thread(index_voice_paths, voice_root / "archive-index.log")
+    caption_audio = await asyncio.to_thread(has_caption_audio, config, name)
     with closing(sqlite3.connect(config.resolve().as_uri() + "?mode=ro", uri=True)) as db:
         names = sorted({engine_path(row[0]).rsplit("/", 1)[-1].split(".", 1)[0].casefold() + ".bnk"
                         for row in db.execute("SELECT BinData FROM videosound WHERE CgName = ?", (name,))})
+        genders = ([row[0] for row in db.execute("SELECT DISTINCT GirlOrBoy FROM videodata WHERE CgName = ?", (name,))]
+                   if caption_audio else [])
+    # VideoView._iy supplies these filenames as external media, independently
+    # of the VideoSound event banks. False caption flags never authorize a voice.
+    plot_config = await asyncio.to_thread(plot_audio_database, config.parent) if caption_audio else None
+    caption_media = {request['filename'].casefold() for gender in genders
+                     for request in await asyncio.to_thread(caption_voice_requests, config, plot_config, name, gender,
+                                                             missing_assets=[])}
     banks = await asyncio.to_thread(indexed_audio_paths, index, names)
     await extract_voice_paths(parent, banks, destination)
     root = client_root(parent)
@@ -737,6 +758,7 @@ async def extract_cutscene_audio(parent, config, name):
             except ValueError:
                 continue  # The individual track reports its unsupported bank during publication.
             media.update(f"{identity}.wem" for identity in identities)
+    media.update(caption_media)
     paths = await asyncio.to_thread(indexed_audio_paths, index, media)
     await extract_voice_paths(parent, paths, destination)
     main_paths = await asyncio.to_thread(indexed_audio_paths, main_index,
@@ -746,7 +768,8 @@ async def extract_cutscene_audio(parent, config, name):
     for batch in voice_filter_batches(main_paths):
         receipt = await export_assets(root, fmodel, "|".join(batch))
         await asyncio.to_thread(merge_exports, [receipt], destination)
-    save_json(destination.parent / "audio-export.json", {"banks": [*banks, *main_banks], "media": [*paths, *main_paths]})
+    save_json(destination.parent / "audio-export.json", {"banks": [*banks, *main_banks], "media": [*paths, *main_paths],
+                                                       "caption_external_media": sorted(caption_media)})
     return destination
 
 

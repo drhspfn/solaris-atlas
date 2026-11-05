@@ -295,12 +295,15 @@ async def test_verified_cutscene_skips_before_reading_exports_or_running_tools(t
 
 
 @pytest.mark.asyncio
-async def test_cutscene_persists_original_sources_and_stable_unreal_identity(tmp_path, monkeypatch):
+@pytest.mark.parametrize('caption_voice', [False, True])
+async def test_cutscene_persists_original_sources_and_stable_unreal_identity(tmp_path, monkeypatch, caption_voice):
     import json
 
     recipe = tmp_path / "recipe.json"
     recipe.write_text(json.dumps({"cutscene": "cutscene:test", "asset_version": "3.7.0",
-        "videos": [{"asset": "asset:ue:/Game/Video.Video"}],
+        "videos": [{"asset": "asset:ue:/Game/Video.Video",
+                    **({'soundtrack': [{'external_media': 'Client/Content/Audio/en_vo_caption.wem',
+                                         'language': 'en', 'start_seconds': .2}]} if caption_voice else {})}],
         "flow": {"entry": "main", "nodes": [{"id": "main", "kind": "clip", "asset": "asset:ue:/Game/Video.Video"}],
                  "evidence": "authored"}}))
     wrapper = tmp_path / "Client/Content/Video.uexp"
@@ -309,6 +312,10 @@ async def test_cutscene_persists_original_sources_and_stable_unreal_identity(tmp
     movie = tmp_path / "Client/Content/Aki/Movies/Video.mp4"
     movie.parent.mkdir(parents=True)
     movie.write_bytes(b"game movie")
+    if caption_voice:
+        wem = tmp_path / 'Client/Content/Audio/en_vo_caption.wem'
+        wem.parent.mkdir(parents=True)
+        wem.write_bytes(b'caption source')
     nodes = [SimpleNamespace(id=1, canonical_key="cutscene:test"),
              SimpleNamespace(id=2, canonical_key="asset:ue:/Game/Video.Video")]
     session = AsyncMock()
@@ -320,9 +327,10 @@ async def test_cutscene_persists_original_sources_and_stable_unreal_identity(tmp
     monkeypatch.setattr(cutscene_import, "S3Storage", lambda _: AsyncMock())
     monkeypatch.setattr(cutscene_import, "video_duration", lambda *args: (1.0, False))
 
-    async def convert(args):
+    async def convert(args, *_):
         from pathlib import Path
-        Path(args[-1]).write_bytes(b"playable")
+        destination = args[args.index('-o') + 1] if '-o' in args else args[-1]
+        Path(destination).write_bytes(b"playable")
 
     monkeypatch.setattr(cutscene_import, "run_tool", convert)
     service = AsyncMock()
@@ -342,18 +350,32 @@ async def test_cutscene_persists_original_sources_and_stable_unreal_identity(tmp
     monkeypatch.setattr(cutscene_import, "FileRegistrationService", lambda _: service)
     complete = AsyncMock()
     monkeypatch.setattr(cutscene_import, "complete_cutscene_publication", complete)
+    bundles = []
+
+    async def publish_bundle(path, root, ffmpeg):
+        bundles.append(json.loads(path.read_text()))
+
+    monkeypatch.setattr('wuwa_story_worker.cutscene_audio.publish_audio', publish_bundle)
     result = await cutscene_import.import_cutscene_recipe(
         recipe, tmp_path, tmp_path, tmp_path, tmp_path / "work", tmp_path / "decoder", tmp_path / "ffmpeg",
-        source_context=context())
+        source_context=context(**({'caption_audio_schema': 1} if caption_voice else {})))
     assert result["videos"] == 1
     video = refs[0]
     assert video.source_path == "/Game/Video.Video"
     assert video.metadata_json["original_file_id"] == 1
-    assert video.metadata_json["source_file_ids"] == [3]
+    if not caption_voice:
+        assert video.metadata_json["source_file_ids"] == [3]
     provenance = video.metadata_json["game_source"]
     assert {file["package_path"] for file in provenance["source_files"]} == {
-        "Client/Content/Video.uexp", "Client/Content/Aki/Movies/Video.mp4"}
+        "Client/Content/Video.uexp", "Client/Content/Aki/Movies/Video.mp4"} | (
+            {'Client/Content/Audio/en_vo_caption.wem'} if caption_voice else set())
     assert provenance["recipe"]["cutscene"] == "cutscene:test"
     assert len(provenance["recipe_sha256"]) == 64
     assert service.register_variant.return_value.metadata_json["game_source"] == provenance
     assert complete.await_args.kwargs["complete"] is True
+    if caption_voice:
+        assert provenance['caption_audio_schema'] == 1
+        assert ('en_vo_caption.wem', 'audio_wem') in files
+        assert len(bundles) == 1 and bundles[0]['asset'] == 'asset:ue:/Game/Video.Video'
+        assert bundles[0]['stems'][0]['language'] == 'en'
+        assert any(name.endswith('en_vo_caption.wem') for name in bundles[0]['stems'][0]['sources'])
