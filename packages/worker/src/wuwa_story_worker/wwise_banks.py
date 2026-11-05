@@ -111,7 +111,8 @@ def _silence_recipe(body: str, bank: Path, xml: Path) -> str:
     if source is None or int(source.get('value')) not in silences:
         raise ValueError('Unresolved Wwise Silence source effect')
     for name in ('uNumCurves', 'ulNumStateProps', 'ulNumStateGroups', 'uNumFx'):
-        if any(field.get('value') != '0' for field in sound.findall(f".//field[@name='{name}']")):
+        controls = sound.findall(f".//field[@name='{name}']")
+        if not controls or any(field.get('value') != '0' for field in controls):
             raise ValueError('Unsupported Wwise Silence modulation')
     bundles = sound.findall(".//object[@name='NodeInitialParams']/object")
     if len(bundles) != 2 or bundles[1].find("field[@name='cProps'][@value='0']") is None:

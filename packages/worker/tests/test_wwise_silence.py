@@ -91,6 +91,21 @@ def test_renderer_controls_must_agree_with_source(source, recipe):
         wwise_banks._silence_recipe(recipe, source / 'play_all_sound_m0318.bnk', source / 'bank.xml')
 
 
+@pytest.mark.parametrize('name', ['uNumCurves', 'ulNumStateProps', 'ulNumStateGroups', 'uNumFx'])
+def test_missing_control_evidence_is_not_assumed_unmodulated(source, name):
+    xml = source / 'bank.xml'
+    tree = ET.parse(xml)
+    sound = next(n for n in tree.iter('object') if n.get('name') == 'CAkSound'
+                 and n.find(".//field[@name='ulPluginID'][@value='6619138']") is not None)
+    for parent in sound.iter():
+        for field in parent.findall(f"field[@name='{name}']"):
+            parent.remove(field)
+    tree.write(xml)
+    with pytest.raises(ValueError, match='Silence modulation'):
+        wwise_banks._silence_recipe('?.plugin-silence #B 1.0 #e #l 5.0',
+                                   source / 'play_all_sound_m0318.bnk', xml)
+
+
 @pytest.mark.asyncio
 async def test_render_decodes_corrected_recipe_and_retains_original_provenance(source, monkeypatch):
     bank = source / 'play_all_sound_m0318.bnk'
