@@ -3,6 +3,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import test from 'node:test';
+import { localizedText } from '../src/data/localized.ts';
+import { activityDestination, dialogueSearchIndex } from '../src/components/quest/questSidebarModel.ts';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
@@ -279,6 +281,9 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     '@/components/story/questReading': loadStory('questReading'),
     '@/components/story/cutscenePlacement': loadStory('cutscenePlacement'),
     '@/components/dialogue/PlayerText': { PlayerText: ({ value, fallback }) => typeof value === 'string' ? value : value?.content || fallback },
+    '@/data/localized': { localizedText },
+    './questSidebarModel': { activityDestination, dialogueSearchIndex },
+    './QuestSidebar': { QuestSidebar: () => null },
     '@/lib/router': { Link: ({ to, children }) => React.createElement('a', { href: to }, children),
       useSearchParams: () => new URLSearchParams('line=dialogue%3ASHUTUP'), useLocation: () => ({ key: 'fixture' }) },
     '@/hooks/useLocale': { useLocale: () => 'en' }, '@/hooks/usePlayerDisplay': { usePlayerDisplay: () => display },
