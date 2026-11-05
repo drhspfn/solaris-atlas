@@ -418,12 +418,14 @@ export function CharacterArchive({
   materials,
   locale,
   characterKey,
+  gameVersion,
   introduction,
 }: {
   archive: CharacterArchiveData | null;
   materials: MaterialUse[];
   locale: string;
   characterKey: string;
+  gameVersion?: string;
   introduction?: string;
 }) {
   const [textLocale, setTextLocale] = useState(locale);
@@ -437,14 +439,14 @@ export function CharacterArchive({
     setTextLocale(locale);
     setTextArchive(null);
     setTextError("");
-  }, [locale, characterKey]);
+  }, [locale, characterKey, gameVersion]);
 
   useEffect(() => {
     if (textLocale === locale) return;
     const controller = new AbortController();
     setTextError("");
     api<CharacterArchiveData>(
-      `/characters/${encodeURIComponent(characterKey)}/archive?locale=${encodeURIComponent(textLocale)}`,
+      `/characters/${encodeURIComponent(characterKey)}/archive?${gameVersion ? `game_version=${encodeURIComponent(gameVersion)}&` : ''}locale=${encodeURIComponent(textLocale)}`,
     )
       .then((result) => {
         if (!controller.signal.aborted)
@@ -454,7 +456,7 @@ export function CharacterArchive({
         if (!controller.signal.aborted) setTextError(error.message);
       });
     return () => controller.abort();
-  }, [characterKey, locale, textLocale]);
+  }, [characterKey, locale, textLocale, gameVersion]);
 
   const groups = new Map<
     string,

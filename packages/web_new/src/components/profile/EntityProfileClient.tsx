@@ -287,6 +287,7 @@ export function EntityProfileClient({
             materials={characterMaterials}
             locale={locale}
             characterKey={selectedRole}
+            gameVersion={gameVersion}
           />
         ) : archiveError ? (
           <ErrorPanel message={`Character details unavailable: ${archiveError}`}

@@ -108,3 +108,64 @@ test('selected variant uses the unchanged generic player with no preload or auto
   assert.match(html, /<audio[^>]+src="https:\/\/cdn.test\/en\/1.ogg"[^>]+preload="none"/);
   assert.doesNotMatch(html, /autoplay|<audio[^>]*\bcontrols=/i);
 });
+
+for (const gameVersion of ['3.5.0', undefined]) {
+  test(`text-language reload preserves snapshot ${gameVersion ?? 'current'} and selected audio variant`, async () => {
+    const archive = { profile: { voice_actors: {} }, artwork: [], skills: [], skill_tree: [],
+      resonance_chain: [], voice_lines: [line], other_voice_events: [] };
+    const states = [], effects = [], requests = [];
+    let stateIndex = 0, effectIndex = 0, pending = [];
+    const mocks = {
+      react: { ...React, useState(initial) {
+        const i = stateIndex++;
+        if (!(i in states)) states[i] = initial;
+        return [states[i], value => { states[i] = value; }];
+      }, useEffect(run, deps) {
+        const i = effectIndex++;
+        if (!effects[i] || deps.some((value, j) => value !== effects[i].deps[j])) {
+          pending.push(() => {
+            effects[i]?.cleanup?.();
+            effects[i] = { deps, cleanup: run() };
+          });
+        }
+      } },
+      '@/lib/router': {}, '../../data/entities': {}, '../../data/locales': { availableLocales: locales },
+      '@/components/ui/Select': { Select }, '@/components/ui/TrackPlayer': { TrackPlayer },
+      '@/components/characters/CharacterMedia': {},
+      '../../api/client': { apiUrl: url => url, api: async url => {
+        requests.push(url);
+        const params = new URL(url, 'https://example.test').searchParams;
+        return { ...archive, voice_lines: [{ ...line, text: 'Japanese text',
+          audio_variants: params.get('game_version') === (gameVersion ?? null) ? variants : [] }] };
+      } },
+    };
+    const exports = {};
+    vm.runInNewContext(code, { exports, AbortController,
+      require: id => id.endsWith('.css') ? {} : mocks[id] ?? require(id) });
+    const render = () => {
+      stateIndex = 0; effectIndex = 0; pending = [];
+      const tree = exports.CharacterArchive({ archive, materials: [], locale: 'en', characterKey: 'character:1608', gameVersion });
+      for (const run of pending) run();
+      return tree;
+    };
+    function nodes(tree) {
+      if (!tree || typeof tree !== 'object') return [];
+      return [tree, ...React.Children.toArray(tree.props?.children).flatMap(nodes)];
+    }
+    const audio = setup();
+    children(audio(line))[0].props.onChange('ja:hirc1:child2');
+    const initial = render();
+    assert.equal(requests.length, 0);
+    nodes(initial).find(node => node.type === Select && node.props.label === 'Voice line text language').props.onChange('ja');
+    render();
+    await Promise.resolve(); await Promise.resolve();
+    const updated = nodes(render()).find(node => node.type === exports.CharacterVoicePlayback);
+    const params = new URL(requests[0], 'https://example.test').searchParams;
+    assert.equal(params.get('game_version'), gameVersion ?? null);
+    assert.equal(params.get('locale'), 'ja');
+    assert.equal(updated.props.line.text, 'Japanese text');
+    const selected = children(audio(updated.props.line, updated.props.textLocale));
+    assert.equal(selected[0].props.value, 'ja:hirc1:child2');
+    assert.equal(selected[1].props.src, 'https://cdn.test/ja/2.ogg');
+  });
+}
