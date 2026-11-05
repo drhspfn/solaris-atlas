@@ -93,3 +93,39 @@ that snapshot and remained unresolved. Neither case should be hidden by assignin
 an invented order or borrowing a different release without matching provenance.
 Null choice destinations require separate interpretation; all non-null destinations
 in the checked scope existed. No production replay was performed by this audit.
+
+## Follow-up implementation and bounded repairs
+
+The exact current-release source repair for thirteen states inserted fifteen
+missing sequence links and fifteen revisions after checking all thirteen source
+hashes. M0334 owner 4648369 was excluded; its queued run 26922 must not be replayed
+or duplicated. These links do not establish that every referenced media file has
+been published.
+
+Game `VideoConfig.GetVideoSounds` selects the complete shared soundtrack list
+when present, otherwise the gender-specific list. The importer now follows that
+precedence. C0015 uses the same movie for both Rover variants; recipes retain
+both selectors and publish independent audio stems. Completion checks require
+every expected role/language/Rover combination and all silent video references.
+Legacy playback flows can recover their selector from the authored incoming
+choice, without choosing a default while the user preference is Ask.
+
+Segment comparison checks the fallback mix, not all localized stems. Therefore
+localized or gender-dependent variants retain their complete authored movies;
+sharing a visually identical outro must not substitute another variant's audio.
+
+R0012 has an authored direct MP4 reference. Preparation and publication now accept
+that exact path without manufacturing an Unreal wrapper. Missing bytes still
+produce a partial result; another movie is never substituted.
+
+The character voice importer retains verified state/random alternatives under
+stable selector identities and invalidates the affected character projection in
+the publication transaction. Older story writers cannot downgrade a newer proof
+for the same pinned source identity. This guard requires updated writers; an old
+running container does not acquire the protection automatically.
+
+Validation for backend commit b024a82: 290 worker tests passed, one integration
+test skipped; 65 targeted server tests and four audio-selection tests passed;
+TypeScript and targeted Ruff checks passed. Manual image build 42118221095 was
+started from that branch without automatic production deployment. Production
+gender-stem publication and new-image playback remain separate verification gates.
