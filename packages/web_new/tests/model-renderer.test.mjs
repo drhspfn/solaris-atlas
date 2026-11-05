@@ -18,8 +18,8 @@ function rig(animated = false, facial = false) {
   return { scene, mesh, bone, parser: { associations: new Map([[bone, { nodes: 0 }]]), json: { nodes: [{ name: 'Hips' }] } },
     animations: animated ? [new THREE.AnimationClip('Stand1', 1, [new THREE.VectorKeyframeTrack('Hips.position', [0, 1], [0, 0, 0, 2, 0, 0])])] : [] };
 }
-async function viewer({ preview = false, defer = false } = {}) {
-  const requests = [], events = new Map(), changes = [];
+async function viewer({ preview = false, defer = false, hold = false } = {}) {
+  const requests = [], events = new Map(), changes = [], pending = new Map();
   let frame, disconnected = false, destroyed = false, failure = false, finish;
   let geometryDisposals = 0;
   const low = rig(), full = rig(false, true), pack = rig(true);
@@ -35,7 +35,8 @@ async function viewer({ preview = false, defer = false } = {}) {
   class Loader {
     async loadAsync(url) {
       requests.push(url);
-      if (failure) throw new Error('offline');
+      if (failure === true || (typeof failure === 'string' && url.includes(failure))) throw new Error('offline');
+      if (hold && /\/(pack|full)\.glb$/.test(url)) await new Promise(resolve => pending.set(url.split('/').at(-1), resolve));
       if (url.endsWith('/pack.glb')) return pack;
       if (url.endsWith('/full.glb')) return full;
       if (defer) await new Promise(resolve => { finish = resolve; });
@@ -64,6 +65,7 @@ async function viewer({ preview = false, defer = false } = {}) {
     preview, settings, patch => { changes.push(patch); Object.assign(state, patch); });
   await flush();
   return { controller, settings, requests, state, full, low, changes, events,
+    release: name => { const resolve = pending.get(name); assert(resolve, name + ' must already be downloading'); resolve(); },
     frame: ms => frame?.(ms), fail: value => { failure = value; }, finish: () => finish(),
     get disconnected() { return disconnected; }, get destroyed() { return destroyed; }, get disposedGeometry() { return geometryDisposals; } };
 }
@@ -73,9 +75,12 @@ test('native renderer loads only compact geometry until explicit actions; retrie
   assert.equal(v.state.ready, true);
   assert.equal(v.requests.filter(url => url.endsWith('.glb')).length, 1);
   v.fail(true); await v.controller.command('animations');
-  assert.equal(v.state.error, 'offline'); assert.equal(v.state.busy, false); assert.equal(v.state.ready, true);
+  assert.equal(v.state.loadErrors.animations, 'offline'); assert.equal(v.state.busy, false); assert.equal(v.state.ready, true);
   v.fail(false); await Promise.all([v.controller.command('animations'), v.controller.command('animations')]);
-  assert.equal(v.requests.filter(url => url.endsWith('/pack.glb')).length, 1);
+  assert.equal(v.requests.filter(url => url.endsWith('/pack.glb')).length, 2);
+  assert.equal(v.state.fullQuality, undefined); assert.equal(v.state.facialLoaded, undefined);
+  assert.equal(v.requests.some(url => /full|face/.test(url)), false, 'body animations do not implicitly request geometry or facial curves');
+  await v.controller.command('facial');
   assert.equal(v.state.fullQuality, true); assert.equal(v.state.facialLoaded, true);
   assert.equal(v.state.animation, 'Stand1'); assert.equal(v.state.animationsLoaded, true);
   assert.equal(v.disposedGeometry, 1, 'compact GPU geometry released after upgrade');
@@ -100,5 +105,61 @@ test('context loss is reported and stops the render loop', async () => {
   const v = await viewer(); let prevented = false;
   v.events.get('webglcontextlost')({ preventDefault() { prevented = true; } });
   assert(prevented); assert.equal(v.state.ready, false); assert.match(v.state.error, /Graphics context lost/);
+  v.controller.dispose();
+});
+
+
+for (const first of ['pack.glb', 'full.glb']) test(`quality and animations download concurrently; ${first} finishes first`, async () => {
+  const v = await viewer({ hold: true });
+  const animation = v.controller.command('animations');
+  assert.equal(v.state.loading.animations, true);
+  assert.equal(v.state.loading.quality, false, 'unrelated quality action has no spinner');
+  const quality = v.controller.command('quality');
+  assert.equal(v.state.loading.quality, true);
+  assert.equal(v.requests.filter(url => url.endsWith('/pack.glb')).length, 1);
+  assert.equal(v.requests.filter(url => url.endsWith('/full.glb')).length, 1);
+  v.release(first); await flush();
+  if (first === 'pack.glb') {
+    assert.equal(v.state.animationsLoaded, true);
+    assert.equal(v.state.loading.quality, true);
+    v.controller.seek(0.5);
+  } else {
+    assert.equal(v.state.fullQuality, true);
+    assert.equal(v.state.loading.animations, true);
+  }
+  v.release(first === 'pack.glb' ? 'full.glb' : 'pack.glb');
+  await Promise.all([quality, animation]);
+  assert.equal(v.state.animationsLoaded, true); assert.equal(v.state.fullQuality, true);
+  assert.equal(v.state.busy, false);
+  assert.equal(v.state.animation, 'Stand1');
+  if (first === 'pack.glb') assert.equal(v.state.time, 0.5, 'late upgrade keeps selected clip position');
+  v.controller.settings({ ...v.settings, playing: true }); v.frame(100); v.frame(200);
+  assert(v.full.bone.position.x > 0, 'pack targets the live upgraded rig in either completion order');
+  v.controller.dispose();
+});
+
+test('facial and quality requests share one full-model download without charging unrelated spinner', async () => {
+  const v = await viewer({ hold: true });
+  const facial = v.controller.command('facial');
+  assert.equal(v.state.loading.facial, true); assert.equal(v.state.loading.quality, false);
+  const quality = v.controller.command('quality');
+  const duplicate = v.controller.command('quality');
+  assert.equal(v.requests.filter(url => url.endsWith('/full.glb')).length, 1);
+  v.release('full.glb'); await Promise.all([facial, quality, duplicate]);
+  assert.equal(v.state.facialLoaded, true); assert.equal(v.state.fullQuality, true);
+  assert.equal(v.requests.filter(url => url.endsWith('/face.json')).length, 1);
+  v.controller.dispose();
+});
+
+test('one parallel action may fail and retry while another stays pending', async () => {
+  const v = await viewer({ hold: true });
+  const quality = v.controller.command('quality');
+  v.fail('pack.glb'); await v.controller.command('animations');
+  assert.equal(v.state.loading.quality, true); assert.equal(v.state.loading.animations, false);
+  assert.equal(v.state.loadErrors.animations, 'offline'); assert.equal(v.state.loadErrors.quality, '');
+  v.fail(false); const retry = v.controller.command('animations');
+  v.release('pack.glb'); await retry;
+  assert.equal(v.state.loadErrors.animations, ''); assert.equal(v.state.animationsLoaded, true);
+  v.release('full.glb'); await quality; assert.equal(v.state.fullQuality, true);
   v.controller.dispose();
 });
