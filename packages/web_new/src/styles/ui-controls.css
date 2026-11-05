@@ -10,8 +10,8 @@
 .ui-button-sm { padding: 6px 10px; font-size: 12px; }
 .ui-button-lg { padding: 12px 18px; }
 .ui-button-icon-only { width: 44px; height: 44px; padding: 0; }
-.ui-button-icon, .ui-button-spinner { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 18px; height: 18px; }
-.ui-button-icon svg { width: 18px; height: 18px; }
+.ui-button-glyph, .ui-button-spinner { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 18px; height: 18px; }
+.ui-button-glyph svg { width: 18px; height: 18px; }
 .ui-button-label { min-width: 0; }
 .ui-button-spinner { width: 16px; height: 16px; box-sizing: border-box; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: ui-control-spin .75s linear infinite; }
 @keyframes ui-control-spin { to { transform: rotate(360deg); } }

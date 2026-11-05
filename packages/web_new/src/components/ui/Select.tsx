@@ -33,7 +33,7 @@ export function Select({
   options: sourceOptions = [],
   categories = [],
   searchable = false,
-  categorized = false,
+  categorized = categories.length > 0,
   rememberPosition = false,
   label,
   className = '',
@@ -241,7 +241,7 @@ export function Select({
         role={rich ? "dialog" : "listbox"}
         tabIndex={-1}
         aria-label={label}
-        aria-activedescendant={rows[active] ? `${id}-${active}` : undefined}
+        aria-activedescendant={!rich && rows[active] ? `${id}-${active}` : undefined}
         onToggle={(event) => { if (event.newState !== 'open') rememberScroll(); setOpen(event.newState === 'open'); }}
         onKeyDown={keyDown}
       >
@@ -249,16 +249,18 @@ export function Select({
           {searchable && <div className="atlas-select-search">
             <Search size={16} aria-hidden="true" />
             <input ref={searchInput} type="search" aria-label={`Search ${label.toLocaleLowerCase()}`}
+              aria-controls={`${id}-options`} aria-activedescendant={rows[active] ? `${id}-${active}` : undefined}
               placeholder={`Search ${label.toLocaleLowerCase()}…`} value={query}
               onChange={event => { rememberScroll(); setQuery(event.target.value); setActive(0); restoreScroll.current = true; }} />
-            {query && <button type="button" aria-label="Clear search" onClick={() => { setQuery(''); setActive(0); searchInput.current?.focus(); }}><X size={15} aria-hidden="true" /></button>}
+            {query && <button type="button" aria-label="Clear search" onClick={() => { rememberScroll(); restoreScroll.current = true; setQuery(''); setActive(0); searchInput.current?.focus(); }}><X size={15} aria-hidden="true" /></button>}
           </div>}
           {categorized && <div className="atlas-select-breadcrumb">
             <button type="button" disabled={!path.length || !!query} onClick={() => navigate(path.slice(0, -1))}><ArrowLeft size={15} aria-hidden="true" /> Back</button>
             <span>{query ? 'Search all categories' : path.join(' / ') || 'All categories'}</span>
           </div>}
         </div>}
-        <div role={rich ? "listbox" : undefined} aria-label={rich ? label : undefined}>
+        <div id={rich ? `${id}-options` : undefined} role={rich ? "listbox" : undefined} aria-label={rich ? label : undefined}
+          aria-activedescendant={rich && rows[active] ? `${id}-${active}` : undefined}>
         {rows.map((option, index) => (
           <div key={option.value}>
             {!categorized && option.group && option.group !== rows[index - 1]?.group && (
