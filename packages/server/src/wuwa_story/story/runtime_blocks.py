@@ -2,6 +2,7 @@
 
 from wuwa_story.ingestion.dungeon_context import decoded, walk
 from wuwa_story.ingestion.runtime_media import runtime_media
+from wuwa_story.ingestion.spine_presentation import flow_presentation
 
 BRANCH_TYPES = {'ConditionSelector', 'ParallelSelect', 'Parallel', 'Selector', 'AlwaysFalse'}
 LABELS = {'ReachArea': 'Explore the marked area', 'DoInteract': 'Interact with the surroundings',
@@ -125,7 +126,11 @@ def encounter_tree(identity, nodes, records, occurrence, flow_records, state_ids
                 if not isinstance(name, str) or type(flow) is not int or type(state) is not int:
                     continue
                 key = f'{name}_{flow}_{state}'
+                flow_record = flow_records.get(key)
+                presentation = flow_presentation({key: value for key, value in flow_record.items()
+                    if key != '_source'}) if flow_record else None
                 entry['flow_states'].append({'id': f'{entry["id"]}:{path}', 'state': key,
+                    'presentation_sha256': presentation['sha256'] if presentation else None,
                     'state_node_id': state_ids.get(key), 'phase': phase, 'async': asynchronous,
                     'execution_context': context,
                     'timing': 'unknown' if context == 'save_config' else

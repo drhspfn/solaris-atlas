@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy.engine.result import IteratorResult, SimpleResultMetaData
 
+from wuwa_story.ingestion.spine_presentation import flow_presentation
 from wuwa_story.story import tree_order
 from wuwa_story.story.runtime_blocks import (
     cinematic_boundaries,
@@ -92,6 +93,8 @@ def test_encounter_keeps_sequence_parallel_occurrences_async_and_cinematic_bound
     assert cinematic_flow['timing'] == 'blocking'
     assert cinematic_flow['phase'] == 'Condition'
     assert cinematic_flow['state_node_id'] == 999
+    assert cinematic_flow['presentation_sha256'] == flow_presentation(
+        {key: value for key, value in movie.items() if key != '_source'})['sha256']
     media, = cinematic_flow['cinematics']
     assert media['renderable'] is False
     assert media['kind'] == 'sequence'
