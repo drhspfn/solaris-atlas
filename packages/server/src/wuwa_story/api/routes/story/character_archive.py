@@ -124,8 +124,7 @@ async def _localized_strings(
     )
     if not eligible:
         return {}
-    release_rank = case({row[0]: rank for rank, row in enumerate(
-        eligible)}, value=LocalizationValue.release_id)
+    release_rank = case({row[0]: rank for rank, row in enumerate(eligible)}, value=LocalizationValue.release_id)
     ranked = (
         select(LocalizationKey.key, LocalizationContent.content,
                func.row_number().over(partition_by=LocalizationKey.key,
@@ -151,8 +150,7 @@ def _source(record: SourceRecord, path: str) -> dict[str, Any]:
 
 async def _reference_urls(session, owner_id, source_paths, settings):
     """Resolve only archive media paths, without hydrating storage metadata JSON."""
-    paths = sorted(
-        {path for path in source_paths if isinstance(path, str) and path})
+    paths = sorted({path for path in source_paths if isinstance(path, str) and path})
     if not paths:
         return {}
     candidates = (
@@ -167,8 +165,7 @@ async def _reference_urls(session, owner_id, source_paths, settings):
         select(candidates.c.source_path, candidates.c.source_name,
                FileObject.mime_type, FileLocation.object_key,
                func.row_number().over(
-                   partition_by=(candidates.c.source_path,
-                                 candidates.c.source_name),
+                   partition_by=(candidates.c.source_path, candidates.c.source_name),
                    order_by=candidates.c.id.desc(),
                ).label("rank"))
         .select_from(candidates)
@@ -199,13 +196,11 @@ async def character_archive(
         raise HTTPException(status_code=404, detail="character not found")
     release_id = await _release_id(session, game_version)
     if release_id is None:
-        raise HTTPException(
-            status_code=404, detail="game version not imported")
+        raise HTTPException(status_code=404, detail="game version not imported")
     canonical_key = node.canonical_key
     role_text = canonical_key.partition(":")[2]
     if not role_text.isdigit():
-        raise HTTPException(
-            status_code=404, detail="character has no game role ID")
+        raise HTTPException(status_code=404, detail="character has no game role ID")
     role_id = int(role_text)
     paths = {
         "role": "BinData/role/roleinfo.json",
@@ -221,14 +216,12 @@ async def character_archive(
     }
     role_rows = await _records(session, release_id, paths["role"], "Id", role_id)
     if not role_rows:
-        raise HTTPException(
-            status_code=404, detail="character source record not found")
+        raise HTTPException(status_code=404, detail="character source record not found")
     role = role_rows[0].data
     inherited = set()
     if role.get("RoleType") not in (None, 1) and role.get("SkillId") != role_id:
         templates = await _records(session, release_id, paths["role"], "Id", role.get("SkillId"))
-        inherited = inherited_character_fields(
-            role, templates[0].data if templates else {})
+        inherited = inherited_character_fields(role, templates[0].data if templates else {})
     element_id = role.get("ElementId")
     groups = await _record_groups(session, release_id, {
         paths["element"]: ("Id", element_id if isinstance(element_id, int) else -1),
@@ -260,8 +253,7 @@ async def character_archive(
         if isinstance(cost, dict) and isinstance(cost.get("Key"), int)
     }
     item_rows = await session.execute(
-        select(Item.game_item_id, Item.canonical_name,
-               Node.canonical_key, LocalizationKey.key)
+        select(Item.game_item_id, Item.canonical_name, Node.canonical_key, LocalizationKey.key)
         .join(Node, Node.id == Item.node_id)
         .outerjoin(LocalizationKey, LocalizationKey.id == Item.name_key_id)
         .where(Item.game_item_id.in_(cost_ids or {-1}))
@@ -274,27 +266,22 @@ async def character_archive(
         "CVNameCn", "CVNameEn", "CVNameJp", "CVNameKo",
     ))]
     for record in skill_rows:
-        text_keys.extend((record.data.get("SkillName"),
-                         record.data.get("SkillDescribe")))
+        text_keys.extend((record.data.get("SkillName"), record.data.get("SkillDescribe")))
     for records in skill_descriptions.values():
         for record in records:
             text_keys.extend((record.data.get("AttributeName"),
                              record.data.get("Description")))
     for record in tree_rows:
-        text_keys.extend((record.data.get("PropertyNodeTitle"),
-                         record.data.get("PropertyNodeDescribe")))
+        text_keys.extend((record.data.get("PropertyNodeTitle"), record.data.get("PropertyNodeDescribe")))
     text_keys.extend(item["name_key"] for item in cost_items.values())
     for record in chain_rows:
-        text_keys.extend((record.data.get("NodeName"),
-                         record.data.get("AttributesDescription")))
+        text_keys.extend((record.data.get("NodeName"), record.data.get("AttributesDescription")))
     for record in voice_rows:
-        text_keys.extend(
-            (record.data.get("Title"), record.data.get("Content")))
+        text_keys.extend((record.data.get("Title"), record.data.get("Content")))
     localized = await _localized_strings(session, release_id, locale, text_keys)
 
     settings = get_settings()
-    artwork_fields = ("RoleHeadIcon", "RoleHeadIconBig", "RoleHeadIconLarge",
-                      "RoleHeadIconCircle", "Card", "FormationRoleCard", "RolePortrait", "RoleStand", "Icon")
+    artwork_fields = ("RoleHeadIcon", "RoleHeadIconBig", "RoleHeadIconLarge", "RoleHeadIconCircle", "Card", "FormationRoleCard", "RolePortrait", "RoleStand", "Icon")
     media_paths = [role.get(field) for field in artwork_fields]
     media_paths.extend(row.data.get("Icon") for row in skill_rows)
     media_paths.extend(row.data.get("NodeIcon") for row in chain_rows)
@@ -305,8 +292,7 @@ async def character_archive(
         if not path:
             return None
         # Audio is language-specific. Never use an unlabelled voice file for another locale.
-        linked = files.get(
-            (path, language)) if language else files.get((path, None))
+        linked = files.get((path, language)) if language else files.get((path, None))
         if linked is None:
             return None
         supported = {
@@ -397,31 +383,26 @@ async def character_archive(
                 continue
             values = value if isinstance(value, list) else [value]
             for entry in values:
-                event = entry.get("Value") if isinstance(
-                    entry, dict) else entry
+                event = entry.get("Value") if isinstance(entry, dict) else entry
                 if isinstance(event, str) and event and event not in {item["event"] for item in other_voice_events}:
-                    other_voice_events.append(
-                        {"category": field, "event": event})
+                    other_voice_events.append({"category": field, "event": event})
     trial_spine = None
     if getattr(settings, 'story_spine_playback_enabled', False):
         row = (await session.execute(
-            select(FileLocation.object_key, FileObject.id,
-                   FileObject.size_bytes, FileReference.metadata_json)
+            select(FileLocation.object_key, FileObject.id, FileObject.size_bytes, FileReference.metadata_json)
             .select_from(FileReference)
             .join(FileObject, FileObject.id == FileReference.file_id)
             .join(FileLocation, FileLocation.file_id == FileObject.id)
             .where(FileReference.owner_node_id == node.id,
                    FileReference.reference_type == 'character_trial_spine',
                    FileObject.mime_type == 'application/zip',
-                   FileLocation.available.is_(
-                       True), FileLocation.is_primary.is_(True),
+                   FileLocation.available.is_(True), FileLocation.is_primary.is_(True),
                    FileLocation.backend == 's3', FileLocation.bucket == settings.s3_bucket)
             .order_by(FileReference.id.desc()).limit(1)
         )).first()
         if row:
             key, identity, size, metadata = row
-            trial_spine = spine_bundle(S3Storage(settings).public_url(
-                key), identity, size, metadata, True)
+            trial_spine = spine_bundle(S3Storage(settings).public_url(key), identity, size, metadata, True)
     return {
         "canonical_key": canonical_key, "locale": locale, "release_id": release_id,
         "trial_spine": trial_spine,

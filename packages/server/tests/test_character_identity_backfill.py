@@ -12,6 +12,8 @@ from wuwa_story.ingestion.character_identity import MAIN_ROLE_PATH
 async def test_backfill_is_idempotent_and_requests_only_current_character_pages(monkeypatch):
     character = Row(metadata_json={"game_character_id": 1501, "role_type": 1})
     node = Row(id=12, status="active")
+    absent = Row(metadata_json={"game_character_id": 8888, "public_identity": {"family": "rover"}, "shared_artwork_paths": ["old-foreign-image"]})
+    absent_metadata = dict(absent.metadata_json)
     role = {"Id": 1501, "ElementId": 5, "RoleType": 1}
     rows = [(MAIN_ROLE_PATH, {"Id": 1501, "Gender": 1, "UnlockCondition": 0}),
             ("BinData/role/roleinfo.json", role)]
@@ -25,7 +27,7 @@ async def test_backfill_is_idempotent_and_requests_only_current_character_pages(
         if "raw.source_record" in query:
             return rows
         if "core.character" in query:
-            return [(character, node)]
+            return [(character, node), (absent, Row(id=99, status="inactive"))]
         raise AssertionError(query)
     session.execute.side_effect = execute
 
@@ -41,6 +43,7 @@ async def test_backfill_is_idempotent_and_requests_only_current_character_pages(
     session.commit.assert_not_awaited()
     applied = await module.backfill(apply=True)
     assert applied["changed_ids"] == [12]
+    assert absent.metadata_json == absent_metadata
     dirty.assert_awaited_once_with(session, "character", {12})
     dirty.reset_mock()
     assert (await module.backfill(apply=True))["changed"] == 0

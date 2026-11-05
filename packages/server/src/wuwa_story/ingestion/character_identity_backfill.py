@@ -45,6 +45,8 @@ async def backfill(*, apply=False, refresh=False, refresh_all=False):
         characters = await session.execute(select(Character, Node).join(Node, Node.id == Character.node_id))
         for character, node in characters:
             role_id = (character.metadata_json or {}).get("game_character_id")
+            if role_id not in roles:
+                continue
             identity = identities.get(role_id)
             if identity:
                 family_ids.add(node.id)

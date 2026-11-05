@@ -55,7 +55,7 @@ async def lexical_search(
             literal(2.0).label("score"),
         )
         .join(NodeType, Node.type_id == NodeType.id)
-        .where(Node.canonical_key == query)
+        .where(Node.canonical_key == query, visible)
         .limit(limit)
     )
     canonical_rows = [dict(row._mapping) for row in canonical]
