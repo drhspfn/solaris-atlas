@@ -3188,8 +3188,8 @@ body::after {
   background: var(--accent-mint);
 }
 :focus-visible {
-  outline: 2px solid var(--accent-cyan);
-  outline-offset: 3px;
+  outline: 1px solid var(--text-secondary);
+  outline-offset: 2px;
 }
 button {
   border-radius: var(--radius-md);
