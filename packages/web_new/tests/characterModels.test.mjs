@@ -531,11 +531,14 @@ test("closing or cancelling nested settings does not close the model dialog", as
 });
 
 
-test("profile model stage has one corner icon opener and no download links", () => {
+test("entire profile preview opens the viewer through one native button without download links", () => {
   const h = harness(); h.props.initialModel = model;
   const tree = h.render();
   const opener = nodes(tree).find(node => node.props["aria-haspopup"] === "dialog");
   assert(opener);
+  assert(opener.props.className.includes("character-model-preview-open"));
+  opener.props.onClick();
+  assert.equal(nodes(h.render()).find(node => node.props["aria-haspopup"] === "dialog").props["aria-expanded"], true);
   assert.equal(opener.props.size, "icon");
   assert(opener.props.icon, "opener has an icon supplied through the shared Button");
   assert.equal(opener.props.children, undefined, "no loose Explore model text in the stage");

@@ -155,7 +155,7 @@ export function CharacterModel({
               <Button
                 size="icon"
                 variant="default"
-                className="character-model-expand"
+                className="character-model-expand character-model-preview-open"
                 aria-label={`Open 3D viewer of ${name}`}
                 title={`Explore ${name} in 3D`}
                 aria-haspopup="dialog"
