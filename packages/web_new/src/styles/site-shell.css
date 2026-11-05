@@ -717,3 +717,39 @@ button:disabled {
     grid-template-columns: 210px minmax(0, 1fr);
   }
 }
+
+/* Catalog Select: one top-layer menu owns search, navigation and scrolling. */
+.atlas-select-catalog { padding: 0; }
+.atlas-select-catalog-heading { position: sticky; top: 0; z-index: 1; padding: 10px; background: var(--surface-2); border-bottom: 1px solid var(--border-default); }
+.atlas-select-search { display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-1); }
+.atlas-select-search > svg { flex-shrink: 0; color: var(--text-secondary); }
+.atlas-select-search input[type=search] { width: 100%; min-width: 0; min-height: 40px; padding: 0; border: 0; outline: none; background: transparent; color: var(--text-primary); font: inherit; }
+.atlas-select-search:focus-within { border-color: var(--accent-mint); }
+.atlas-select-search button { display: grid; place-items: center; min-width: 32px; min-height: 32px; padding: 0; border: 0; background: transparent; }
+.atlas-select-catalog > [role=listbox] { padding: 6px; }
+.atlas-select-empty { padding: 14px; margin: 0; color: var(--text-secondary); }
+
+.atlas-select-catalog-heading { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 6px; }
+.atlas-select-catalog-heading > button { display: grid; place-items: center; flex: 0 0 36px; width: 36px; min-height: 36px; padding: 0; border: 0; background: transparent; }
+.atlas-select-current-category { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 12px; }
+.atlas-select-search { flex: 1; min-width: 0; }
+
+/* Shared trigger geometry; feature callers choose a named size, not a local max-width. */
+.atlas-select-width-full { width: 100%; }
+.atlas-select-width-auto { width: fit-content; max-width: 100%; }
+.atlas-select-width-compact { width: min(100%, 360px); max-width: min(100%, 360px); }
+
+/* Native popover owns focus containment; rows and compact header controls own its indicator. */
+.atlas-select-catalog:focus-visible { outline: none; }
+.atlas-select-catalog .atlas-select-icon-button {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 40px; width: 40px; height: 40px; min-width: 40px; min-height: 40px;
+  padding: 0; margin: 0; border: 0; border-radius: var(--radius-xs);
+  background: transparent; color: var(--text-secondary); line-height: 1;
+}
+.atlas-select-catalog .atlas-select-icon-button > svg { flex: 0 0 20px; width: 20px; height: 20px; }
+.atlas-select-catalog .atlas-select-icon-button:hover { background: var(--surface-3); color: var(--text-primary); }
+.atlas-select-catalog .atlas-select-icon-button:focus-visible { outline: 1px solid var(--border-strong); outline-offset: -2px; background: var(--surface-3); }
+.atlas-select-catalog .atlas-select-search .atlas-select-icon-button { flex-basis: 36px; width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
+.atlas-select-catalog .atlas-select-search:focus-within { border-color: var(--border-strong); box-shadow: none; outline: none; }
+.atlas-select-catalog .atlas-select-search input[type=search]:focus-visible { outline: none; box-shadow: none; }

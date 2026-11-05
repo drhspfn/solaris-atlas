@@ -32,7 +32,20 @@ export function disposeObject(root) {
  */
 export function createViewer(host, assets, preview, initialSettings, onState) {
   let disposed = false, settings = initialSettings, model, gltf, mixer, action, physics, root, face;
-  let clips = [], animationPack, boneList, applied = false, busy = false, full = false;
+  let clips = [], animationPack, boneList, applied = false, full = false;
+  let qualityRequest, facialRequest, animationRequest, installations = Promise.resolve();
+  const commandRequests = new Map();
+  const loading = { quality: false, animations: false, facial: false };
+  const loadErrors = { quality: '', animations: '', facial: '' };
+  // Network requests run independently; changes to the live rig are serialized.
+  function mutate(operation) {
+    const next = installations.then(() => {
+      if (disposed) throw new Error('Viewer closed');
+      return operation();
+    });
+    installations = next.catch(() => {});
+    return next;
+  }
   let reportedTime = -1, reportedDuration = -1;
   let previousTime = 0, lastReport = 0, height = 1.8, width = 1.2;
   const abort = new AbortController();
@@ -130,7 +143,9 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
       || clips.find(clip => clip.name === 'Stand1')?.name || clips[0]?.name;
     if (initial) {
       selectAnimation(initial);
-      if (initial === previous?.name) { action.time = previous.time; mixer.update(0); }
+      if (initial === previous?.name) {
+        action.time = previous.time; mixer.update(0); face?.update(initial, action.time); reportTime();
+      }
     }
   }
   function applySettings(next) {
@@ -189,23 +204,53 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     await loadPhysics();
     emit({ ready: true, status: 'Model ready' });
   }
-  async function quality() {
-    if (full) return;
-    if (!assets.download) throw new Error('Full model is unavailable');
-    const loaded = await loadGLB(assets.download.url);
-    try { await install(loaded, true); }
-    catch (error) { if (loaded.scene !== model) disposeObject(loaded.scene); throw error; }
-    full = true; emit({ fullQuality: true });
+  function quality() {
+    if (full) return Promise.resolve();
+    if (qualityRequest) return qualityRequest;
+    if (!assets.download) return Promise.reject(new Error('Full model is unavailable'));
+    qualityRequest = (async () => {
+      const loaded = await loadGLB(assets.download.url);
+      try {
+        await mutate(async () => {
+          await install(loaded, true);
+          full = true; emit({ fullQuality: true });
+        });
+      } catch (error) { if (loaded.scene !== model) disposeObject(loaded.scene); throw error; }
+    })().finally(() => { qualityRequest = undefined; });
+    return qualityRequest;
   }
-  async function facial() {
-    if (face) return;
-    if (!assets.facial) throw new Error('Facial animations are unavailable');
-    await quality();
-    face = new FacialAnimation(await json(assets.facial.url), model);
-    emit({ facialLoaded: true, faces: [
-      { value: 'auto', label: 'Follow body animation' }, { value: 'off', label: 'Off · neutral expression' },
-      ...[...face.clips.values()].map(clip => ({ value: clip.name, label: clip.name })),
-    ] });
+  function facial() {
+    if (face) return Promise.resolve();
+    if (facialRequest) return facialRequest;
+    if (!assets.facial) return Promise.reject(new Error('Facial animations are unavailable'));
+    facialRequest = (async () => {
+      // Download curves while quality is loading, but attach only to the full rig.
+      const [data] = await Promise.all([json(assets.facial.url), quality()]);
+      await mutate(() => {
+        face = new FacialAnimation(data, model);
+        emit({ facialLoaded: true, faces: [
+          { value: 'auto', label: 'Follow body animation' }, { value: 'off', label: 'Off · neutral expression' },
+          ...[...face.clips.values()].map(clip => ({ value: clip.name, label: clip.name })),
+        ] });
+      });
+    })().finally(() => { facialRequest = undefined; });
+    return facialRequest;
+  }
+  function animations() {
+    if (animationPack) return Promise.resolve();
+    if (animationRequest) return animationRequest;
+    if (!assets.animations) return Promise.reject(new Error('Animation pack is unavailable'));
+    animationRequest = (async () => {
+      const pack = await loadGLB(assets.animations.url);
+      try {
+        await mutate(() => {
+          const next = bindAnimationClips(pack, gltf);
+          installClips(next); animationPack = pack;
+          emit({ animationsLoaded: true });
+        });
+      } finally { disposeObject(pack.scene); }
+    })().finally(() => { animationRequest = undefined; });
+    return animationRequest;
   }
   async function command(name) {
     if (disposed) return;
@@ -220,27 +265,25 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
       else offset.setLength(THREE.MathUtils.clamp(offset.length() * (name === 'closer' ? 0.85 : 1.15), controls.minDistance, controls.maxDistance));
       camera.position.copy(controls.target).add(offset); controls.update(); return;
     }
-    if (busy) return;
-    busy = true; emit({ busy: true, error: '' });
-    try {
-      emit({ status: 'Loading model resources…' });
-      if (name === 'quality') await quality();
-      if (name === 'facial') await facial();
-      if (name === 'animations' && !animationPack) {
-        if (!assets.animations) throw new Error('Animation pack is unavailable');
-        if (assets.facial) await facial();
-        const pack = await loadGLB(assets.animations.url);
-        try {
-          const next = bindAnimationClips(pack, gltf);
-          installClips(next); animationPack = pack;
-          emit({ animationsLoaded: true });
-        } finally { disposeObject(pack.scene); }
+    if (!['quality', 'animations', 'facial'].includes(name)) return;
+    if (commandRequests.has(name)) return commandRequests.get(name);
+    loading[name] = true; loadErrors[name] = '';
+    emit({ loading: { ...loading }, loadErrors: { ...loadErrors }, busy: true });
+    const request = (async () => {
+      try {
+        await ({ quality, animations, facial })[name]();
+      } catch (error) {
+        loadErrors[name] = error.message || 'Could not load model resources';
+      } finally {
+        loading[name] = false; commandRequests.delete(name);
+        emit({ loading: { ...loading }, loadErrors: { ...loadErrors },
+          busy: Object.values(loading).some(Boolean) });
       }
-      emit({ status: 'Model ready' });
-    } catch (error) {
-      emit({ error: error.message || 'Could not load model resources', status: 'Current model retained' });
-    } finally { busy = false; emit({ busy: false }); }
+    })();
+    commandRequests.set(name, request);
+    return request;
   }
+
   const observer = new ResizeObserver(() => {
     const { width, height } = host.getBoundingClientRect();
     if (!width || !height) return;
@@ -271,7 +314,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     follow.update(); controls.update(); renderer.render(scene, camera);
   });
   loadGLB(assets.preview.url).then(async loaded => {
-    try { await install(loaded); }
+    try { await mutate(() => install(loaded)); }
     catch (error) { if (loaded.scene !== model) disposeObject(loaded.scene); throw error; }
   }).catch(error => emit({ error: error.message, ready: false }));
   return {

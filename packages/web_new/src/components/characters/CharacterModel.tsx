@@ -1,16 +1,14 @@
 "use client";
 
-import { Download, Maximize2, X } from "lucide-react";
+import { Maximize2 } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { api, apiUrl } from "@/api/client";
+import { api } from "@/api/client";
+import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import "@/styles/character-model.css";
 
-import { ModelViewer } from '@/components/models/ModelViewer';
-import type { CharacterModelData as Model } from '@/components/models/types';
-
-const assetUrl = (url: string) => apiUrl(url.replace(/^\/api(?=\/)/, ""));
-const size = (bytes: number) => `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
+import { ModelViewer } from "@/components/models/ModelViewer";
+import type { CharacterModelData as Model } from "@/components/models/types";
 
 export function CharacterModel({
   characterKey,
@@ -46,7 +44,8 @@ export function CharacterModel({
     const query = gameVersion
       ? `?game_version=${encodeURIComponent(gameVersion)}`
       : "";
-    if (initialModel && !revision && !refreshKey) return () => controller.abort();
+    if (initialModel && !revision && !refreshKey)
+      return () => controller.abort();
     api<Model>(
       `/characters/${encodeURIComponent(characterKey)}/model${query}`,
       {
@@ -69,12 +68,13 @@ export function CharacterModel({
   }, [characterKey, gameVersion, revision, refreshKey, initialModel]);
 
   // A form owns all its assets; absent optional assets never borrow the default rig.
-  const form = model?.forms?.find((item) => item.id === selectedForm)
-    ?? model?.forms?.[0];
+  const form =
+    model?.forms?.find((item) => item.id === selectedForm) ?? model?.forms?.[0];
   const assets = form ?? model;
 
   useEffect(() => {
-    if (model?.status !== "ready" || !assets?.preview || !preview.current) return;
+    if (model?.status !== "ready" || !assets?.preview || !preview.current)
+      return;
     if (typeof IntersectionObserver === "undefined") {
       setNearby(true);
       return;
@@ -106,7 +106,8 @@ export function CharacterModel({
     };
   }, [viewing]);
 
-  const formOptions = model?.forms?.map(({ id, label }) => ({ value: id, label })) ?? [];
+  const formOptions =
+    model?.forms?.map(({ id, label }) => ({ value: id, label })) ?? [];
   const formSelector = formOptions.length > 1 && (
     <Select
       className="character-model-form-select"
@@ -129,9 +130,7 @@ export function CharacterModel({
       {error ? (
         <div role="alert">
           <p>Model availability could not be loaded: {error}</p>
-          <button type="button" onClick={refresh}>
-            Retry model availability
-          </button>
+          <Button onClick={refresh}>Retry model availability</Button>
         </div>
       ) : !model ? (
         <p role="status">Checking model availability…</p>
@@ -144,67 +143,55 @@ export function CharacterModel({
         <>
           {assets?.preview && (
             <div className="character-model-preview" ref={preview}>
-              {!viewing && <ModelViewer
-                key={`${form?.id ?? "legacy"}:${assets.preview.url}`}
-                assets={assets} name={name} preview active={nearby}
-              />}
-              <button
-                type="button"
-                className="character-model-expand"
+              {!viewing && (
+                <ModelViewer
+                  key={`${form?.id ?? "legacy"}:${assets.preview.url}`}
+                  assets={assets}
+                  name={name}
+                  preview
+                  active={nearby}
+                />
+              )}
+              <Button
+                size="icon"
+                variant="default"
+                className="character-model-expand character-model-preview-open"
                 aria-label={`Open 3D viewer of ${name}`}
+                title={`Explore ${name} in 3D`}
                 aria-haspopup="dialog"
                 aria-expanded={viewing}
+                icon={<Maximize2 size={19} />}
                 onClick={() => setViewing(true)}
-              >
-                <Maximize2 size={18} aria-hidden="true" />
-                <span>Explore model</span>
-              </button>
+              />
             </div>
           )}
-          <div className="character-model-actions">
-            {assets?.download && (
-              <a href={assetUrl(assets.download.url)} download>
-                <Download size={16} aria-hidden="true" /> Full-resolution GLB ·{" "}
-                {size(assets.download.size_bytes)}
-              </a>
-            )}
-            {assets?.animations && (
-              <a href={assetUrl(assets.animations.url)} download>
-                <Download size={16} aria-hidden="true" /> Animations ·{" "}
-                {size(assets.animations.size_bytes)}
-              </a>
-            )}
-          </div>
           <dialog
-              ref={dialog}
-              className="character-model-dialog character-model-viewer"
-              aria-labelledby={`${id}-viewer-title`}
-              onCancel={(event) => {
-                if (event.target !== event.currentTarget) return;
-                event.preventDefault();
-                setViewing(false);
-              }}
-              onClose={(event) => { if (event.target === event.currentTarget) setViewing(false); }}
-            >
-              <header className="character-model-dialog-heading">
-                <h2 id={`${id}-viewer-title`}>{name} · 3D model</h2>
-                {formSelector}
-                <button
-                  type="button"
-                  autoFocus
-                  aria-label="Close 3D viewer"
-                  onClick={() => setViewing(false)}
-                >
-                  <X size={20} aria-hidden="true" />
-                </button>
-              </header>
-              {assets?.preview ? (
-                <ModelViewer key={`${viewing}:${form?.id ?? "legacy"}:${assets.preview.url}`}
-                  assets={assets} name={name} active={viewing} />
-              ) : (
-                <p role="status">No preview has been published for this form.</p>
-              )}
-            </dialog>
+            ref={dialog}
+            className="character-model-dialog character-model-viewer"
+            aria-labelledby={`${id}-viewer-title`}
+            onCancel={(event) => {
+              if (event.target !== event.currentTarget) return;
+              event.preventDefault();
+              setViewing(false);
+            }}
+            onClose={(event) => {
+              if (event.target === event.currentTarget) setViewing(false);
+            }}
+          >
+            {assets?.preview ? (
+              <ModelViewer
+                key={`${viewing}:${form?.id ?? "legacy"}:${assets.preview.url}`}
+                assets={assets}
+                name={name}
+                active={viewing}
+                titleId={`${id}-viewer-title`}
+                formSelector={formSelector}
+                onClose={() => setViewing(false)}
+              />
+            ) : (
+              <p role="status">No preview has been published for this form.</p>
+            )}
+          </dialog>
         </>
       )}
     </section>

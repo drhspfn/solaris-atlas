@@ -77,6 +77,7 @@ function harness(importing = false, role = "admin") {
         return (target[i] ??= { current: value });
       },
     },
+    "@/components/ui/Button": { Button: "button" },
     "@/components/models/ModelViewer": { ModelViewer: "NativeModelViewer" },
     "@/api/client": {
       ApiError: class extends Error {},
@@ -478,7 +479,7 @@ test("native model uses manifest props, defers the canvas and ignores legacy run
   viewers = nodes(tree).filter(node => node.type === "NativeModelViewer");
   assert.equal(viewers.length, 1, "preview is released while full viewer is open");
   assert.equal(viewers[0].props.preview, undefined);
-  chooseForm(tree, forms[1].label, 1);
+  chooseForm(tree, forms[1].label);
   tree = h.render();
   const next = nodes(tree).find(node => node.type === "NativeModelViewer");
   assert.equal(next.props.assets.preview.url, forms[1].preview.url);
@@ -527,4 +528,20 @@ test("closing or cancelling nested settings does not close the model dialog", as
   assert.equal(nodes(tree).find(node => node.type === "dialog").props.ref.current.open, true);
   dialog.props.onClose({ target: currentTarget, currentTarget }); h.render();
   assert.equal(h.document.body.style.overflow, "auto"); h.close();
+});
+
+
+test("entire profile preview opens the viewer through one native button without download links", () => {
+  const h = harness(); h.props.initialModel = model;
+  const tree = h.render();
+  const opener = nodes(tree).find(node => node.props["aria-haspopup"] === "dialog");
+  assert(opener);
+  assert(opener.props.className.includes("character-model-preview-open"));
+  opener.props.onClick();
+  assert.equal(nodes(h.render()).find(node => node.props["aria-haspopup"] === "dialog").props["aria-expanded"], true);
+  assert.equal(opener.props.size, "icon");
+  assert(opener.props.icon, "opener has an icon supplied through the shared Button");
+  assert.equal(opener.props.children, undefined, "no loose Explore model text in the stage");
+  assert.equal(nodes(tree).filter(node => node.type === "a" && node.props.download).length, 0);
+  h.close();
 });
