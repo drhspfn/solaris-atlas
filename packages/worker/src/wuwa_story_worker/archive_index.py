@@ -31,6 +31,17 @@ async def ensure_archive_index(archive: Path, fmodel: Path, keys_root: Path) -> 
         if source != (archive / "game").resolve().parent:
             raise ValueError("Archive index source does not match workspace inputs")
         archive = source
+    else:
+        # Standalone entity jobs link the same read-only game directory but do
+        # not have a patch-workspace marker. Keep their index outside scratch,
+        # otherwise each image job lists millions of archive paths again.
+        source = (archive / "game").resolve().parent
+        if source != archive.resolve():
+            source_plan = json.loads((source / "plan.json").read_text(encoding="utf-8"))
+            request_plan = json.loads((archive / "plan.json").read_text(encoding="utf-8"))
+            if not request_plan.get("id") or source_plan.get("id") != request_plan["id"]:
+                raise ValueError("Archive index source does not match client plan")
+            archive = source
     index = archive / "archive-index.sqlite"
     if index.is_file():
         return index

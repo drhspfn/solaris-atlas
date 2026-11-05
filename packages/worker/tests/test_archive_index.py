@@ -145,3 +145,44 @@ async def test_patch_workspace_reuses_retained_client_index(tmp_path, monkeypatc
     assert await archive_index.ensure_archive_index(workspace, tmp_path / "fmodel", workspace) == index
     assert not (workspace / "archive-index.sqlite").exists()
     tool.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_standalone_entity_jobs_list_the_retained_client_only_once(tmp_path, monkeypatch):
+    from wuwa_story_worker.media_provenance import temporary_entity_workspace
+
+    client = tmp_path / 'assets' / 'client'
+    (client / 'game').mkdir(parents=True)
+    for name, data in [('plan.json', {'id': 'a' * 64}), ('status.json', {'state': 'downloaded'})]:
+        (client / name).write_text(json.dumps(data), encoding='utf-8')
+    (client / 'keys.txt').write_text('fixture', encoding='utf-8')
+    calls = []
+
+    async def listing(args, log, timeout):
+        calls.append(args)
+        assert log.parent == client
+        log.write_text('[File] Client/Content/Aki/UI/Image/Actual.uasset\n'
+                       '[Done] Listed 1 files\n', encoding='utf-8')
+
+    monkeypatch.setattr(entity_media, 'tool', listing)
+    for _ in range(2):
+        with temporary_entity_workspace(client) as scratch:
+            index = await archive_index.ensure_archive_index(scratch, tmp_path / 'fmodel', scratch)
+            assert index == client / 'archive-index.sqlite'
+            assert not (scratch / 'archive-index.sqlite').exists()
+        assert index.is_file()
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_standalone_index_rejects_a_different_linked_client_plan(tmp_path):
+    from wuwa_story_worker.media_provenance import temporary_entity_workspace
+
+    client = tmp_path / 'assets' / 'client'
+    (client / 'game').mkdir(parents=True)
+    for name in ('plan.json', 'status.json'):
+        (client / name).write_text(json.dumps({'id': 'a' * 64}), encoding='utf-8')
+    (client / 'keys.txt').write_text('fixture', encoding='utf-8')
+    with temporary_entity_workspace(client) as scratch:
+        (scratch / 'plan.json').write_text(json.dumps({'id': 'b' * 64}), encoding='utf-8')
+        with pytest.raises(ValueError, match='does not match client plan'):
+            await archive_index.ensure_archive_index(scratch, tmp_path / 'fmodel', scratch)
