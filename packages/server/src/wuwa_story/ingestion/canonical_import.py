@@ -853,7 +853,7 @@ async def import_canonical_edges(
             )
         if speaker_links:
             await session.execute(
-                insert(SpeakerEntityLink)
+                insert(SpeakerEntityLink.__table__)
                 .values(speaker_links)
                 .on_conflict_do_nothing(
                     index_elements=[SpeakerEntityLink.speaker_node_id, SpeakerEntityLink.entity_node_id]
