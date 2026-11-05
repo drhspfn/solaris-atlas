@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { selectCutsceneTracks } from '../src/components/story/cutsceneAudioSelection.ts';
+import { clipRover, selectCutsceneTracks } from '../src/components/story/cutsceneAudioSelection.ts';
 
 const tracks = [
   { role: 'effects', language: null, url: 'common' },
@@ -18,4 +18,16 @@ test('Ask never mixes gender alternatives or silently chooses one', () => {
 test('legacy tracks without selectors remain playable', () => {
   const legacy = [{ role: 'voice', language: 'en', url: 'legacy' }];
   assert.deepEqual(selectCutsceneTracks(legacy, 'en', 'ask'), legacy);
+});
+
+test('legacy manual choice in Ask keeps its authored voice selector', () => {
+  const flow = { nodes: [
+    { id: 'choice', kind: 'choice', options: [
+      { next: 'boy', rover: 'male' }, { next: 'girl', rover: 'female' },
+    ] },
+    { id: 'boy', kind: 'clip' }, { id: 'girl', kind: 'clip' },
+  ] };
+  assert.equal(clipRover(flow, 'boy', 'ask'), 'male');
+  assert.equal(clipRover(flow, 'girl', 'male'), 'female');
+  assert.deepEqual(selectCutsceneTracks(tracks, 'en', clipRover(flow, 'girl', 'ask')).map(t => t.url), ['common', 'female']);
 });

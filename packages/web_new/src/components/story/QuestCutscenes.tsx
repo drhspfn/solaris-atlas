@@ -12,7 +12,7 @@ import { AnalysisActions } from './AnalysisActions';
 import { cutsceneAnchor, packageCutsceneAnchor } from './cutsceneAnchor';
 import { CutsceneControls } from './CutsceneControls';
 import { CutsceneSound } from './CutsceneSound';
-import { selectCutsceneTracks } from './cutsceneAudioSelection';
+import { clipRover, selectCutsceneTracks } from './cutsceneAudioSelection';
 import { chapterPosition, cutsceneTimeline, timelineTarget } from './cutsceneTimeline';
 import { preferredRoverTarget } from './preferredRover';
 import {
@@ -117,7 +117,7 @@ export function FlowPlayer({
   const languages =
     [...new Set(tracks?.filter((track) => track.role === 'voice').map((track) => track.language) || [])];
   const selectedTracks =
-    selectCutsceneTracks(tracks || [], voiceLanguage, activeClip?.rover || preferredRover);
+    selectCutsceneTracks(tracks || [], voiceLanguage, clipRover(flow, clipId, preferredRover));
   const timeline = cutsceneTimeline(flow, choices, preferredRover, durations);
   const timelineClip = timeline.clips.find((entry) => entry.id === clipId);
   const position =

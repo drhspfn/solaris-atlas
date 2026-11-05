@@ -81,3 +81,14 @@ async def test_rover_alternatives_are_never_mixed_together(tmp_path, monkeypatch
     for command, gender in zip(commands, ("male", "female"), strict=True):
         assert command.count("-i") == 1
         assert command[command.index("-i") + 1].endswith(f"{gender}.wem")
+
+
+@pytest.mark.parametrize("language,rover,allowed", [(None, None, True), ("en", None, False),
+                                                   (None, "female", False), ("ja", "male", False)])
+def test_shared_segments_require_comparison_of_every_audio_variant(language, rover, allowed):
+    from types import SimpleNamespace
+
+    from wuwa_story_worker.cutscene_import import can_share_variant_segments
+
+    videos = [SimpleNamespace(soundtrack=[SimpleNamespace(language=language, rover=rover)])]
+    assert can_share_variant_segments(videos) is allowed

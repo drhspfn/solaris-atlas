@@ -449,7 +449,8 @@ async def import_cutscene_recipe(
                 bundles.append((bundle_root, bundle))
         analysis, segments = None, []
         comparison_fallback = None
-        if (analyze_variants or spec.compare_variants) and len(prepared) > 1:
+        if ((analyze_variants or spec.compare_variants) and len(prepared) > 1
+                and can_share_variant_segments(spec.videos)):
             try:
                 analysis, segments = await asyncio.to_thread(
                     export_segments,
@@ -717,6 +718,12 @@ async def import_cutscene_recipe(
         "cutscene": spec.cutscene,
         "asset_version": spec.asset_version,
     }
+
+
+def can_share_variant_segments(videos) -> bool:
+    # Comparison checks the fallback mix only, not every localized/state stem.
+    # Sharing its intro/outro could silently replace another branch's voices.
+    return not any(track.language or track.rover for video in videos for track in video.soundtrack)
 
 
 def publication_file_ids(reference) -> set[int]:
