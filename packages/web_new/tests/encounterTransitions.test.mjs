@@ -69,14 +69,14 @@ const renderBlock = (block, props = {}) => renderToStaticMarkup(React.createElem
   { block: { position: null, title: 'Story activity', branches: [], flow_states: [], source, ...block },
     display, stateAnchors: new Map(), ...props }));
 
-test('source-only activities retain their anchor and branch evidence in a closed disclosure', () => {
+test('source-only activities retain deep-link source evidence without an activity label', () => {
   const markup = renderBlock({ id: 'structural', condition_type: 'CheckConditionGroup',
     branches: [{ id: 'branch-a', type: 'Selector' }] });
   assert.match(markup, new RegExp(`^<details class="sourceOnly" id="${runtimeBlockAnchor('structural')}">`));
-  assert.match(markup, /Activity context · conditional \/ parallel path/);
+  assert.match(markup, /Source &amp; conditions/);
   assert.match(markup, /CheckConditionGroup/);
   assert.match(markup, /Selector · branch-a/);
-  assert.doesNotMatch(markup, /\bopen=|<h3|Exploration/);
+  assert.doesNotMatch(markup, /\bopen=|<h3|Exploration|Activity context/);
 });
 
 test('compact activities preserve dialogue, optional interactions and unavailable transcript context', () => {
@@ -94,6 +94,17 @@ test('compact activities preserve dialogue, optional interactions and unavailabl
   assert.match(renderBlock(base), /Dialogue is outside this transcript window/);
 });
 
+test('branch explanations stay inside source disclosure while activity dialogue remains visible', () => {
+  const markup = renderBlock({ id: 'branch', title: 'Find the letter',
+    branches: [{ id: 'selector', type: 'Selector' }], flow_states: [{ state: 'Known' }] },
+    { stateAnchors: new Map([['Known', 'line-known']]) });
+  const visible = markup.split('<details>')[0];
+  assert.match(visible, /Find the letter/);
+  assert.match(visible, /href="#line-known"/);
+  assert.doesNotMatch(visible, /Conditional|parallel|order.*established/);
+  assert.match(markup, /Conditional or parallel branch; order is not established/);
+});
+
 test('actual 1557 instance exit is a requirement, never a second 1555 battle', () => {
   const fixture = JSON.parse(readFileSync(new URL('../../server/tests/fixtures/dungeon1557_exit.json', import.meta.url), 'utf8'));
   const condition = fixture.quest_node.Data.Condition;
@@ -102,9 +113,10 @@ test('actual 1557 instance exit is a requirement, never a second 1555 battle', (
     transition: { kind: 'dungeon_exit', dungeon_id: condition.Condition.DungeonId,
       map_config_id: fixture.instance.MapConfigId, is_exit_dungeon: true,
       boundary_semantics: 'authored_exit_requirement' } });
-  assert.match(markup, /Area exit/);
+  const visible = markup.split('<details>')[0];
+  assert.doesNotMatch(visible, /Area exit|Authored exit|another battle|completion is not established/);
   assert.match(markup, /Leave the area/);
-  assert.match(markup, /An exit is required here/);
+  assert.match(markup, /Authored exit requirement; completion is not established/);
   assert.doesNotMatch(markup, /Encounter activities|End of encounter context|<ol/);
   assert.match(markup, new RegExp(runtimeBlockAnchor(fixture.quest_node.Key)));
 });
@@ -150,7 +162,8 @@ test('different LevelPlay contexts and unresolved membership never become one ti
     { level_play_id: 114750000, ordering: 'authored_tree', membership: source, root: node('second') },
   ], unresolved_level_plays: [{ level_play_id: 100, membership: source, reason: 'invalid_authored_tree', diagnostic: 'missing_root' }] });
   const markup = render(data), visible = markup.split('<details class="source">')[0];
-  assert.match(visible, /relative order of these encounter contexts is not established/);
+  assert.match(markup, /relative order of these encounter contexts is not established/);
+  assert.doesNotMatch(visible, /relative order of these encounter contexts is not established/);
   assert.match(visible, /matching authored tree is unavailable/);
   assert.doesNotMatch(visible, /<ol|Next phase|Then|114750000|114000004|EntityId|missing_root/);
 });
@@ -197,7 +210,10 @@ test('cinematic grouping uses exact action index, not flow name or translated te
 test('authored boundaries never claim a whole sequence is an MP4 or completed playback', () => {
   const markup = renderToStaticMarkup(React.createElement(EncounterCinematicBoundary, { media: [cinematic({ async: true })] },
     React.createElement('p', { id: 'line-SHUTUP' }, 'SHUT UP!')));
-  assert.match(markup, /Start of cinematic action/); assert.match(markup, /End of cinematic action/);
+  assert.match(markup, /class="marker">Scene<\/div>/); assert.match(markup, /End scene/);
+  const visible = markup.split('<details class="source">')[0];
+  assert.match(visible, /Playback pending/);
+  assert.doesNotMatch(visible, /Action boundaries|cinematic action|In-game cinematic sequence/);
   assert.match(markup, /do not establish playback duration or completion/);
   assert.doesNotMatch(markup, /<video|MP4|M0334_1Z|DA_M0334|Playback completed/);
 });
@@ -292,7 +308,7 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
   for (const id of ['dialogue:SHUTUP', 'dialogue:THATNOTHOME', 'dialogue:repeat']) {
     assert.equal(markup.split(`data-dialogue-key="${id}"`).length - 1, 1);
   }
-  const start = markup.indexOf('Start of cinematic action'), end = markup.indexOf('End of cinematic action');
+  const start = markup.indexOf('class="marker">Scene</div>'), end = markup.indexOf('End scene');
   assert(start >= 0 && start < markup.indexOf('SHUT UP!') && markup.indexOf('THAT IS NOT HOME!') < end, JSON.stringify({start,end,shutup:markup.indexOf('SHUT UP!'),notHome:markup.indexOf('THAT IS NOT HOME!'),excerpt:markup.slice(Math.max(0,start),Math.max(0,start)+1800)}));
   assert.match(markup, /Read the dialogue shared by this branch/);
   assert.match(markup, /cited-passage/);
