@@ -81,28 +81,6 @@ async def lexical_search(
     )
     if exact_rows:
         return exact_rows[offset : offset + limit]
-    score = func.similarity(SearchDocument.title, query)
-    statement = (
-        select(
-            Node.id,
-            Node.canonical_key,
-            Node.slug,
-            NodeType.key.label("node_type"),
-            SearchDocument.title.label("alias"),
-            score.label("score"),
-        )
-        .join(SearchDocument, SearchDocument.target_node_id == Node.id)
-        .join(NodeType, Node.type_id == NodeType.id)
-        .where(or_(SearchDocument.title.op("%")(query), SearchDocument.body.op("%")(query)))
-    )
-    if selected_categories:
-        statement = statement.where(NodeType.key.in_(selected_categories))
-    if locale_id:
-        statement = statement.where(SearchDocument.locale_id == locale_id)
-    statement = statement.order_by(
-        sort(SearchDocument.title) if sort_by == "name" else sort(score), Node.id
-    ).limit(min(max((limit + offset) * 20, 200), 4000))
-    trigram_rows = [dict(row._mapping) for row in await session.execute(statement)]
     fts = (
         select(
             Node.id,
@@ -127,9 +105,33 @@ async def lexical_search(
         sort(SearchDocument.title) if sort_by == "name" else sort(rank), Node.id
     ).limit(min(max((limit + offset) * 20, 200), 4000))
     full_text_rows = [dict(row._mapping) for row in await session.execute(fts)]
-    # Trigram matching catches typos and partial names; FTS catches whole-word
-    # matches that score poorly against a longer title (e.g. "core" in
-    # "LF Whisperin Core"). Merge both result sets before de-duplicating entities.
+    trigram_rows = []
+    if not full_text_rows:
+        score = func.similarity(SearchDocument.title, query)
+        statement = (
+            select(
+                Node.id,
+                Node.canonical_key,
+                Node.slug,
+                NodeType.key.label("node_type"),
+                SearchDocument.title.label("alias"),
+                score.label("score"),
+            )
+            .join(SearchDocument, SearchDocument.target_node_id == Node.id)
+            .join(NodeType, Node.type_id == NodeType.id)
+            .where(or_(SearchDocument.title.op("%")(query), SearchDocument.body.op("%")(query)))
+        )
+        if selected_categories:
+            statement = statement.where(NodeType.key.in_(selected_categories))
+        if locale_id:
+            statement = statement.where(SearchDocument.locale_id == locale_id)
+        statement = statement.order_by(
+            sort(SearchDocument.title) if sort_by == "name" else sort(score), Node.id
+        ).limit(min(max((limit + offset) * 20, 200), 4000))
+        trigram_rows = [dict(row._mapping) for row in await session.execute(statement)]
+    # Whole-word matches take priority. Only try fuzzy matching when none exist;
+    # broad trigram rechecks must not delay an indexed text match. Collapse any
+    # localized duplicates before applying the requested page.
     combined: dict[int, dict[str, Any]] = {}
     for row in [*trigram_rows, *full_text_rows]:
         current = combined.get(row["id"])
