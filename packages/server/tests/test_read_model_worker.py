@@ -1,4 +1,5 @@
 import asyncio
+import signal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -158,3 +159,72 @@ async def test_one_shot_pilot_enqueues_without_debounce_and_claims_exact_scope(m
     ))
     enqueue.assert_awaited_once_with(session, "item", [9], "current", debounce_seconds=0)
     run.assert_awaited_once_with(kinds=["item"], entity_ids=[9], snapshot_key="current")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('shutdown_signal', [signal.SIGTERM, signal.SIGINT])
+async def test_watch_signals_finish_current_refresh_then_exit_without_claiming_more(monkeypatch, shutdown_signal):
+    loop = asyncio.get_running_loop()
+    callbacks = {}
+    monkeypatch.setattr(loop, 'add_signal_handler', lambda sig, callback: callbacks.setdefault(sig, callback))
+    remove = Mock()
+    monkeypatch.setattr(loop, 'remove_signal_handler', remove)
+    monkeypatch.setattr(worker, 'get_settings', lambda: SimpleNamespace(
+        read_projection_kinds=['quest'], read_projection_min_free_gib=1))
+    monkeypatch.setattr(worker.shutil, 'disk_usage', lambda _: SimpleNamespace(free=100 * 1024**3))
+    entered, finish = asyncio.Event(), asyncio.Event()
+    completed = []
+
+    async def refresh(*args, **kwargs):
+        entered.set()
+        await finish.wait()
+        completed.append(True)
+        return 1
+
+    refresh = AsyncMock(side_effect=refresh)
+    monkeypatch.setattr(worker, 'refresh_batch', refresh)
+    dispose = AsyncMock()
+    monkeypatch.setattr(worker, 'engine', SimpleNamespace(dispose=dispose))
+    task = asyncio.create_task(worker.main(SimpleNamespace(
+        kind=['quest'], snapshot='current', estimate=False, entity_id=[], backfill=False, watch=True)))
+    await asyncio.wait_for(entered.wait(), 1)
+    try:
+        callbacks[shutdown_signal]()
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert not completed
+        dispose.assert_not_awaited()
+        finish.set()
+        await asyncio.wait_for(task, 1)
+        assert completed == [True]
+        refresh.assert_awaited_once()
+        dispose.assert_awaited_once()
+        assert {call.args[0] for call in remove.call_args_list} == {signal.SIGTERM, signal.SIGINT}
+    finally:
+        finish.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_watch_signal_wakes_idle_wait_and_removes_handlers(monkeypatch):
+    loop = asyncio.get_running_loop()
+    callbacks = {}
+    monkeypatch.setattr(loop, 'add_signal_handler', lambda sig, callback: callbacks.setdefault(sig, callback))
+    remove = Mock()
+    monkeypatch.setattr(loop, 'remove_signal_handler', remove)
+    monkeypatch.setattr(worker, 'engine', SimpleNamespace(dispose=AsyncMock()))
+    entered = asyncio.Event()
+
+    async def watch(stop, **kwargs):
+        entered.set()
+        await stop.wait()
+
+    monkeypatch.setattr(worker, 'watch_refreshes', watch)
+    task = asyncio.create_task(worker.main(SimpleNamespace(
+        kind=['quest'], snapshot='current', estimate=False, entity_id=[], backfill=False, watch=True)))
+    await asyncio.wait_for(entered.wait(), 1)
+    callbacks[signal.SIGTERM]()
+    await asyncio.wait_for(task, 1)
+    assert remove.call_count == 2
