@@ -450,6 +450,14 @@ level-cap range, per-stage costs and their total; raw source evidence stays clos
 
 ## Character models
 
+The full viewer header groups model form, Settings and Fullscreen on the right,
+with a visual separator before Close. Camera and transport actions use named icon
+buttons. Playback position, elapsed/duration and speed align on one compact row;
+animation previous/next flank a single selector. Shared Select owns search inside
+its popup, category drilldown and per-branch scroll memory. Shared Button, Input,
+Checkbox and Slider own native semantics and the existing token treatments.
+See `docs/ui-primitives.md` for component contracts.
+
 The animation menu remembers its current branch during a viewer session. Previous
 and next controls beside the selected animation follow the loaded clip order,
 disable at list boundaries and select the corresponding subgroup when reopened.

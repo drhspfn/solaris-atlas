@@ -478,7 +478,7 @@ test("native model uses manifest props, defers the canvas and ignores legacy run
   viewers = nodes(tree).filter(node => node.type === "NativeModelViewer");
   assert.equal(viewers.length, 1, "preview is released while full viewer is open");
   assert.equal(viewers[0].props.preview, undefined);
-  chooseForm(tree, forms[1].label, 1);
+  chooseForm(tree, forms[1].label);
   tree = h.render();
   const next = nodes(tree).find(node => node.type === "NativeModelViewer");
   assert.equal(next.props.assets.preview.url, forms[1].preview.url);
