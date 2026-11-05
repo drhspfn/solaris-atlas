@@ -598,6 +598,10 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                     if sequence_media is not None and reference_type in {'story_presentation', 'story_spine'}:
                         from wuwa_story_worker.sequence_fragments import invalidate_sequence_quests
                         await invalidate_sequence_quests(session, target)
+                    if reference_type == 'character_voice' and provenance.get('voice_variant'):
+                        from wuwa_story.read_models.refresh import mark_dirty
+                        await mark_dirty(session, 'character', [target['owner']])
+                        await mark_dirty(session, 'character', [target['owner']], request.game_version)
                     # Keep files, variants and provenance atomic for this target;
                     # a later target or deployment must not roll back earlier media.
                     run.raw_output = {"media_report": report,

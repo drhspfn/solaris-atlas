@@ -128,13 +128,20 @@ async def test_worker_exports_only_missing_and_persists_game_identity(tmp_path, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('missing_sibling', [False, True])
-async def test_named_siblings_publish_separate_references_and_count_one_language_target(tmp_path, monkeypatch, missing_sibling):
+@pytest.mark.parametrize('already_published', [False, True])
+async def test_named_siblings_publish_separate_references_and_count_one_language_target(tmp_path, monkeypatch, missing_sibling, already_published):
+    from wuwa_story.read_models import refresh
+
     root = client(tmp_path)
     value = request().model_copy(update={'kinds': ['voice']})
     target = {'owner': 1, 'release_id': 2, 'path': '/Game/Voice.Voice', 'kind': 'voice', 'language': 'en'}
     payload = {'request': value.model_dump(), 'run_id': 7, 'targets': [target]}
     run = SimpleNamespace(id=7, status='queued', metadata_json={'payload': payload})
     session = AsyncMock()
+    transaction_events = []
+    session.commit.side_effect = lambda: transaction_events.append(('commit',))
+    dirty = AsyncMock(side_effect=lambda *args, **kwargs: transaction_events.append(('dirty', args[1:])))
+    monkeypatch.setattr(refresh, 'mark_dirty', dirty)
     session.get.return_value = run
     session.scalar.return_value = None
     factory = Mock()
@@ -142,7 +149,7 @@ async def test_named_siblings_publish_separate_references_and_count_one_language
     factory.return_value.__aexit__ = AsyncMock(return_value=False)
     monkeypatch.setattr(entity_media, 'SessionFactory', factory)
     monkeypatch.setattr(entity_media, 'validate_plan', lambda _: None)
-    monkeypatch.setattr(entity_media, 'missing_media_targets', AsyncMock(return_value=[target]))
+    monkeypatch.setattr(entity_media, 'missing_media_targets', AsyncMock(return_value=[] if already_published else [target]))
     monkeypatch.setattr(entity_media, 'publish_inventory', AsyncMock(return_value={}))
     monkeypatch.setattr(entity_media, 'S3Storage', lambda _: AsyncMock())
     service = AsyncMock()
@@ -178,6 +185,11 @@ async def test_named_siblings_publish_separate_references_and_count_one_language
         return files, [target['path']] if missing_sibling else []
     monkeypatch.setattr(entity_media, 'build_entity_files', build)
     await entity_media._process_entity_workspace(payload, None, root)
+    if already_published:
+        dirty.assert_not_awaited()
+        service.register_file.assert_not_awaited()
+        assert run.status == 'completed' and run.raw_output['skipped'] == 1
+        return
     assert {r.source_name for r in references} == set(names[:1] if missing_sibling else names)
     assert [r.metadata_json['game_source']['media_id'] for r in references] == list(range(1, len(files)+1))
     assert all(r.owner_node_id == 1 and r.release_id == 2 for r in references)
@@ -187,6 +199,16 @@ async def test_named_siblings_publish_separate_references_and_count_one_language
     assert report['missing'] == int(missing_sibling) and len(report['entries'][0]['matches']) == len(files)
     assert report['entries'][0]['status'] == ('partial' if missing_sibling else 'found')
     assert run.raw_output['published'] == len(files)
+    assert dirty.await_count == 2 * len(files)
+    assert all(call.args[0] is session and call.args[1:3] == ('character', [1])
+               for call in dirty.await_args_list)
+    assert [call.args[3:] for call in dirty.await_args_list] == [(), ('1.1.0',)] * len(files)
+    # Both exact scopes are queued before each publication's own commit; no
+    # separate transaction or full-catalog invalidation can hide partial loss.
+    for index, event in enumerate(transaction_events):
+        if event == ('dirty', ('character', [1])):
+            assert transaction_events[index+1] == ('dirty', ('character', [1], '1.1.0'))
+            assert transaction_events[index+2] == ('commit',)
 
 
 @pytest.mark.asyncio

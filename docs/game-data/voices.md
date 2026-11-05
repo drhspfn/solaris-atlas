@@ -81,6 +81,9 @@ Character archive voice lines add `audio_variants`: independent entries with
 Missing siblings remain visible with a null URL. Languages with authored
 alternatives are excluded from the single-choice `audio_url`/`audio_tracks`;
 other languages retain their existing behavior. There is no SQL migration.
+Each published alternative queues only its owning character's current and exact
+historical read projections in the same transaction as the file reference.
+Already-published skips do not enqueue a refresh; no full rebuild is required.
 
 `character-voice-hirc-local.zip` contains seven local-client banks, Init, actual
 WWiser XML/renditions and source hashes: five gender-dependent language pairs
