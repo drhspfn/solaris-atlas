@@ -547,3 +547,14 @@ models, voice sources and progression details follow the selected source role;
 story appearances are shared across the family. Source role IDs and existing
 links remain valid. Failed or superseded reads never mix progression details
 from one selection with another selection's archive.
+
+## Character talents
+
+Talent cards separate Description and Stats using keyboard-accessible tabs. Long
+descriptions start collapsed with an explicit expansion action; coefficient lists
+scroll within the compact card. Each upgradeable talent owns its level slider,
+limited to the authored maximum level, and retains that level when changing tabs.
+Values use exact source strings, including multi-hit formulas and constant values;
+missing levels stay unavailable rather than being extrapolated. Technical skill
+tree nodes and source IDs are not public talent content. Description parameters
+are substituted only when the source supplies their binding.

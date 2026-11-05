@@ -1,0 +1,136 @@
+.character-archive .character-skill-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  align-items: start;
+}
+.character-talent-card {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-self: start;
+  height: auto;
+  max-height: 380px;
+}
+.character-talent-card:has(> .character-talent-stats-panel:not([hidden])) {
+  height: 380px;
+}
+.character-talent-card:has(> div:not([hidden]) .character-talent-description details[open]) {
+  height: auto;
+  max-height: none;
+}
+.character-talent-card > .character-skill-heading { flex-shrink: 0; }
+.character-talent-card .character-talent-stats-panel:not([hidden]) {
+  flex: 1;
+  min-height: 0;
+}
+.character-talent-card .character-skill-scaling {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+}
+.character-talent-card :is(h3, p) { overflow-wrap: anywhere; }
+.character-talent-tabs {
+  display: flex;
+  gap: 16px;
+  margin: 6px 0;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-default);
+}
+.character-talent-tabs button,
+.character-talent-description summary {
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.character-talent-tabs button {
+  min-height: 44px;
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+}
+.character-talent-tabs button[aria-selected='true'] {
+  color: var(--mint);
+  border-bottom-color: var(--mint);
+}
+.character-talent-card :is(button, summary, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--mint);
+  outline-offset: 3px;
+}
+.character-talent-description p {
+  margin: 10px 0;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-line;
+  color: var(--text-secondary);
+}
+.character-talent-preview {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  overflow: hidden;
+}
+.character-talent-description:has(details[open]) > .character-talent-preview,
+.character-talent-description .talent-show-less,
+.character-talent-description details[open] .talent-read-more { display: none; }
+.character-talent-description details[open] .talent-show-less { display: inline; }
+.character-talent-description summary { padding: 8px 0; }
+.character-talent-stat-scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: 210px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.character-skill-level.character-talent-level {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  flex-shrink: 0;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.character-talent-level input[type='range'] {
+  grid-column: 1 / -1;
+  appearance: none;
+  cursor: pointer;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  accent-color: var(--mint);
+}
+.character-talent-level output { font-variant-numeric: tabular-nums; }
+
+.character-talent-level input::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border-default);
+}
+.character-talent-level input::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--mint);
+}
+.character-talent-level input::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border-default);
+}
+.character-talent-level input::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--mint);
+}
