@@ -107,7 +107,7 @@ async def detail(name: str, game_version: str | None = None, locale: str = "en",
         flows = await cutscene_flows(session, [row.node_id])
         playback = flows.get(row.node_id)
         captions = {}
-        if playback and playback.get("asset_version") == "3.7.0":
+        if playback and playback.get("asset_version") in {"3.7.0", "3.7.1"}:
             links = await _links(session, [row.node_id], ("uses_caption",), snapshot.id)
             ids = [link["node_id"] for link in links.get(row.node_id, [])]
             if ids:

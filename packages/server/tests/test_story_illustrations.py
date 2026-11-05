@@ -64,7 +64,8 @@ async def test_background_persists_across_talks_and_actions_but_not_other_states
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('known_asset', [True, False])
-async def test_transition_movie_is_an_ordered_quest_event_without_flow_action(monkeypatch, known_asset):
+@pytest.mark.parametrize('asset_version', ['3.7.0', '3.7.1', '3.6.0'])
+async def test_transition_movie_is_an_ordered_quest_event_without_flow_action(monkeypatch, known_asset, asset_version):
     from wuwa_story.api.routes.story import media
     block = {'id': 'q119', 'owner': 'quest_node:121000040:119', 'branches': [],
              'source': {'file': 'quest.json', 'key': '121000040_119'},
@@ -77,13 +78,26 @@ async def test_transition_movie_is_an_ordered_quest_event_without_flow_action(mo
     monkeypatch.setattr(media, '_quest_page_state_ids', AsyncMock(return_value=[]))
     for name in ['_links', 'cutscene_flows', 'cutscene_videos', 'caption_texts']:
         monkeypatch.setattr(media, name, AsyncMock(return_value={}))
+    async def links(_session, nodes, relations, _release):
+        if 55 in nodes and 'uses_caption' in relations:
+            return {55: [{'node_id': 56, 'relation': 'uses_caption',
+                          'canonical_key': 'video_caption:1', 'basis': 'explicit reference', 'source': {}}]}
+        return {}
+    monkeypatch.setattr(media, '_links', links)
+    monkeypatch.setattr(media, 'cutscene_flows', AsyncMock(return_value={55: {'asset_version': asset_version}}))
+    monkeypatch.setattr(media, 'caption_texts', AsyncMock(return_value={'line': 'Hello'}))
     session = NS(scalars=AsyncMock(return_value=[]), scalar=AsyncMock(return_value=None),
         execute=AsyncMock(side_effect=[NS(all=lambda: []), IteratorResult(
             SimpleResultMetaData(['canonical_key', 'id']),
-            iter([('cutscene:M0355_Loading', 55)] if known_asset else [])), []]),
+            iter([('cutscene:M0355_Loading', 55)] if known_asset else [])),
+            [(56, {'CaptionText': 'line', 'ShowMoment': 30, 'Duration': 60})], []]),
         get=AsyncMock(return_value=NS(game_version='3.7.0')))
     result = await media.quest_media('121000040', '3.7.0', 'en', session)
     event, = result['events']
     assert event['reference'] == 'cutscene:M0355_Loading'
     assert event['story_position'] == [9, 100001, 2, 4]
     assert event['transition'] and event['story_order_mapped'] and not event['context_inferred']
+    if known_asset and asset_version in {'3.7.0', '3.7.1'}:
+        assert event['captions']['en'] == [{'start': 1.0, 'end': 3.0, 'text': 'Hello', 'key': 'line'}]
+    else:
+        assert event['captions'] == {}

@@ -81,7 +81,8 @@ async def test_previews_use_current_video_and_only_edges_from_requested_snapshot
 
 
 @pytest.mark.asyncio
-async def test_unowned_scene_returns_source_captions(monkeypatch):
+@pytest.mark.parametrize("asset_version", ["3.7.0", "3.7.1", "3.6.0"])
+async def test_unowned_scene_returns_source_captions(monkeypatch, asset_version):
     from wuwa_story.api.routes import cutscenes as route
 
     snapshot = SimpleNamespace(id=7, game_version="2.8.0")
@@ -91,7 +92,7 @@ async def test_unowned_scene_returns_source_captions(monkeypatch):
     monkeypatch.setattr(route, "summaries", AsyncMock(
         return_value=[{"quests": []}]))
     monkeypatch.setattr(route, "cutscene_flows", AsyncMock(
-        return_value={9: {"asset_version": "3.7.0"}}))
+        return_value={9: {"asset_version": asset_version}}))
     monkeypatch.setattr(route, "_links", AsyncMock(
         return_value={9: [{"node_id": 10}]}))
     monkeypatch.setattr(route, "caption_texts", AsyncMock(
@@ -101,6 +102,10 @@ async def test_unowned_scene_returns_source_captions(monkeypatch):
     ]))
 
     result = await route.detail("C0022", "2.8.0", "en", session)
+    if asset_version == "3.6.0":
+        assert result["event"]["captions"] == {}
+        session.scalars.assert_not_awaited()
+        return
     assert result["event"]["captions"]["en"] == [
         {"start": 1.0, "end": 3.0, "text": "Hello", "key": "line"}
     ]
