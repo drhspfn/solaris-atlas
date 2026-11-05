@@ -9,7 +9,7 @@ from wuwa_story.db.models.core import AuthoredTreeOrder, QuestAction, QuestState
 from wuwa_story.db.models.graph import NodeRevision
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.repositories.cutscenes import source_parents
-from wuwa_story.ingestion.dungeon_context import level_memberships, walk
+from wuwa_story.ingestion.dungeon_context import DUNGEONS, level_memberships, walk
 from wuwa_story.ingestion.level_interactions import verified_interactions
 from wuwa_story.ingestion.quest_tree_order import records_match
 from wuwa_story.story.media import media_links
@@ -116,6 +116,33 @@ async def authored_order(session, quest_id: int, release_id: int | None):
                 dungeon_memberships[identity] = {**membership, 'record_id': record_id,
                                                  'release_id': release_id, 'raw_path': f'$[{row_index}].Data.LevelId'}
         level_ids.update(dungeon_memberships)
+    # Resolve only exit requirements without direct LevelPlay membership. Map
+    # identity is evidence for an exit marker, never an alias for battle trees.
+    exit_ids = {dungeon_requirement(record) for record in qrecords.values()
+                if isinstance(record.get('Condition'), dict)
+                and isinstance(record['Condition'].get('Condition'), dict)
+                and record['Condition']['Condition'].get('IsExitDungeon') is True} - {None}
+    exit_ids -= {membership['dungeon_id'] for membership in dungeon_memberships.values()}
+    dungeon_instances = {}
+    if exit_ids:
+        instance_rows = await session.execute(select(SourceRecord.row_index, SourceRecord.data,
+                                                     SourceRecord.id).join(SourceFile).where(
+            SourceRecord.release_id == release_id, SourceFile.release_id == release_id,
+            SourceFile.logical_source_path == DUNGEONS,
+            SourceRecord.data['Id'].as_integer().in_(exit_ids)))
+        seen_instances = set()
+        for row_index, data, record_id in instance_rows:
+            identity, map_id = data.get('Id'), data.get('MapConfigId')
+            if type(identity) is not int or identity not in exit_ids:
+                continue
+            if identity in seen_instances:
+                dungeon_instances.pop(identity, None)
+                continue
+            seen_instances.add(identity)
+            if type(map_id) is int and map_id > 0:
+                dungeon_instances[identity] = {'map_config_id': map_id, 'source': {
+                    'file': DUNGEONS, 'key': identity, 'record_id': record_id,
+                    'row': row_index, 'release_id': release_id, 'raw_path': f'$[{row_index}].MapConfigId'}}
     for record in qrecords.values():
         condition = record.get('Condition')
         ids = condition.get('LevelPlayIds') if isinstance(
@@ -164,10 +191,11 @@ async def authored_order(session, quest_id: int, release_id: int | None):
     blocks = project_blocks(quest_id, quest_nodes, qrecords, level_trees, interactions,
                             dungeon_memberships=dungeon_memberships, flow_records=flow_records,
                             state_ids=states, release_id=release_id,
+                            dungeon_instances=dungeon_instances,
                             client={'asset_version': quest_tree.asset_version,
                                     'download_id': quest_tree.download_id})
     if related:
-        blocks = [block for block in blocks if block.get('encounter', {}).get('trees')]
+        blocks = [block for block in blocks if block.get('encounter', {}).get('trees') or block.get('transition')]
         if not blocks:
             return None
         source_rows = await session.execute(select(SourceRecord.id, SourceRecord.row_index,
@@ -182,7 +210,11 @@ async def authored_order(session, quest_id: int, release_id: int | None):
             block.update(position=None, branches=[], ordering='related',
                          flow_states=[], media=[], interactions=[])
             block['source'].update(sources[block['source']['key']])
-            encounter = block['encounter']
+            if block.get('transition'):
+                block['transition']['source'].update(sources[block['source']['key']])
+            encounter = block.get('encounter')
+            if not encounter:
+                continue
             encounter.update(quest_position=None, quest_order='unknown')
             encounter['source'].update(sources[block['source']['key']])
             pending = [tree['root'] for tree in encounter['trees']]

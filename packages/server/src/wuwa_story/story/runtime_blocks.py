@@ -151,7 +151,7 @@ def encounter_tree(identity, nodes, records, occurrence, flow_records, state_ids
 
 def project_blocks(quest_id, quest_nodes, quest_records, level_trees, level_interactions=None,
                    *, dungeon_memberships=None, flow_records=None, state_ids=None, release_id=None,
-                   client=None):
+                   client=None, dungeon_instances=None):
     """Called only after tree/record hashes match. Stable IDs include occurrence."""
     result = []
 
@@ -188,7 +188,23 @@ def project_blocks(quest_id, quest_nodes, quest_records, level_trees, level_inte
                         media.append({**ref, 'position': [*phase_path, index]})
             dungeon = dungeon_requirement(raw) if kind == 'quest_node' else None
             encounter = None
-            if dungeon is not None:
+            transition = None
+            instance = (dungeon_instances or {}).get(dungeon)
+            target = condition.get('Condition')
+            if (dungeon is not None and isinstance(target, dict) and target.get('IsExitDungeon') is True
+                    and instance and type(instance.get('map_config_id')) is int
+                    and instance['map_config_id'] > 0 and instance['map_config_id'] != dungeon):
+                # An exit from another instance of the same map does not replay
+                # its encounter. Keep the instance and map identities separate.
+                transition = {'id': f'{owner}@{occurrence}/dungeon_exit:{dungeon}',
+                    'kind': 'dungeon_exit', 'dungeon_id': dungeon,
+                    'map_config_id': instance['map_config_id'], 'is_exit_dungeon': True,
+                    'count': target['Count'], 'status': 'verified',
+                    'boundary_semantics': 'authored_exit_requirement',
+                    'source': {'file': 'BinData/QuestNodeData/questnodedata.json',
+                               'key': f'{identity}_{node["id"]}', 'raw_path': '$.Data.Condition.Condition'},
+                    'instance_source': instance['source']}
+            if dungeon is not None and transition is None:
                 trees = []
                 unresolved = []
                 battle = False
@@ -222,11 +238,11 @@ def project_blocks(quest_id, quest_nodes, quest_records, level_trees, level_inte
                     'trees_order': 'unknown', 'trees': trees,
                     'source': {'file': 'BinData/QuestNodeData/questnodedata.json',
                                'key': f'{identity}_{node["id"]}', 'raw_path': '$.Data.Condition'}}
-            if raw.get('TidTip') or media or interactions or encounter:
+            if raw.get('TidTip') or media or interactions or encounter or transition:
                 block = {'id': f'{owner}@{occurrence}', 'owner': owner,
                     'kind': 'objective', 'condition_type': condition.get('Type'),
                     'text_key': raw.get('TidTip'),
-                    'title': LABELS.get(condition.get('Type'), 'Story activity'),
+                    'title': 'Leave the area' if transition else LABELS.get(condition.get('Type'), 'Story activity'),
                     'position': [*path, 0, 1, -1], 'branches': branches,
                     'flow_states': flows, 'media': media, 'interactions': interactions,
                     'source': {'file': 'BinData/QuestNodeData/questnodedata.json' if kind == 'quest_node'
@@ -234,6 +250,8 @@ def project_blocks(quest_id, quest_nodes, quest_records, level_trees, level_inte
                                'key': f'{identity}_{node["id"]}', 'raw_path': '$.Data'}}
                 if encounter:
                     block['encounter'] = encounter
+                if transition:
+                    block['transition'] = transition
                 result.append(block)
             if (condition.get('Type') == 'CheckLevelPlay' and isinstance(levels, list)
                     and len(levels) == 1 and type(levels[0]) is int and levels[0] not in active

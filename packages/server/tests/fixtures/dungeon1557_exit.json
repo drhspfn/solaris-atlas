@@ -1,0 +1,21 @@
+{
+  "release_id": 21,
+  "quest_id": 114000031,
+  "quest_source_record_id": 64332313,
+  "quest_node": {
+    "Key": "114000031_94",
+    "Data": {
+      "Type": "ChildQuest",
+      "Id": 94,
+      "Desc": "检测辛吉勒姆副本的剧情完成回学院",
+      "Condition": {"Type": "FinishDungeon", "Condition": {"Type": "DungeonId", "DungeonId": 1557, "Count": 1, "IsExitDungeon": true}},
+      "TidTip": "Quest_114000031_ChildQuestTip_120_43",
+      "TrackTarget": {"TrackType": {"Type": "Entities", "EntityIds": [114750025]}},
+      "EnterActions": [{"Name": "AwakeEntity", "Params": {"EntityIds": [114750025]}, "ActionGuid": "88babb43f6e84ec5a7d8b562f0560a0a", "ActionId": 3000261}],
+      "FinishActions": [{"Name": "DestroyEntity", "Params": {"EntityIds": [114750025]}, "ActionGuid": "cca176d45a004866868cfbdbf49ce14e", "ActionId": 3000103}],
+      "ParentNodeId": 86
+    }
+  },
+  "instance": {"Id": 1557, "MapConfigId": 1555},
+  "instance_source_record_id": 64689830
+}
