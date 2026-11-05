@@ -146,6 +146,10 @@ async def run_tool(args: list[str], timeout: int = 300):
             subprocess.run, args, capture_output=True, timeout=timeout, check=True
         )
     except subprocess.CalledProcessError as error:
+        from wuwa_story_worker.broker import transient_job_error
+
+        if transient_job_error(error):
+            raise
         # Local media tools receive file paths, never credentials. Preserve the
         # diagnostic rather than just storing a command and an exit status.
         detail = b"\n".join(part for part in (error.stdout, error.stderr) if part)

@@ -25,7 +25,7 @@ from wuwa_story.ingestion.media_provenance import missing_media_targets, target_
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
-from wuwa_story_worker.broker import JobDeferred, job_lock
+from wuwa_story_worker.broker import JobDeferred, job_lock, transient_job_error
 from wuwa_story_worker.character_voice_assets import prefetch_events, prefetch_media
 from wuwa_story_worker.client_assets import (
     save_json,
@@ -176,6 +176,8 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
         except BlockingIOError:
             raise
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
+            if transient_job_error(error):
+                raise
             logger.warning('story_spine.missing resource=%s error=%s',
                            target['resource_id'], str(error)[:500])
             missing.append(target['path'])
@@ -422,6 +424,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                                 riglyph_failures.append(
                                     {'path': target['path'], 'reasons': animation['reasons']})
                         except (OSError, ValueError, subprocess.SubprocessError, zipfile.BadZipFile) as error:
+                            if transient_job_error(error):
+                                raise
                             riglyph_failures.append(
                                 {'path': target['path'], 'error': str(error)[:500]})
                             animation = {**animation, 'display': 'static', 'state': 'conversion_failed',
