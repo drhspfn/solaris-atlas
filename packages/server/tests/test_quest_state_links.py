@@ -3,7 +3,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.dialects import sqlite
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.sql import visitors
+from sqlalchemy.sql.selectable import CTE
 
 from wuwa_story.api.routes.story.shared import _quest_state_links
 from wuwa_story.db.repositories.quest_scope import (
@@ -73,6 +75,9 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
             (71, 81, 6, "source"), (81, 110, 7, "source"),
             (10, 111, 8, "semantic"),
             (107, 72, 5, "source"), (72, 82, 6, "source"), (82, 112, 7, "source"),
+            (10, 83, 6, "source"), (83, 113, 7, "source"),  # Quest-node movie.
+            (1, 84, 6, "source"), (84, 114, 7, "source"),  # Direct quest movie.
+            (30, 85, 6, "source"), (85, 115, 7, "source"),  # Plot-scene movie.
         ])
         links = _quest_state_links()
 
@@ -80,7 +85,20 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
             sql = str(query.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
             return set(db.execute(sql).fetchall())
 
-        expected = {(101,), (102,), (103,), (107,), (109,), (110,)}
+        def assert_state_scoped_matches_global(release):
+            global_links = quest_state_links(release)
+            all_links = rows(select(global_links.c.quest_id, global_links.c.state_id))
+            for state_ids in ([], [101], [103, 107, 109, 110, 113, 114, 115], [104, 105, 106, 108, 111, 112],
+                              list(range(100, 116))):
+                scoped = quest_state_links(release, state_ids=state_ids)
+                expected_links = {pair for pair in all_links if pair[1] in state_ids}
+                assert rows(select(scoped.c.quest_id, scoped.c.state_id)) == expected_links
+                for quest_id in (1, 2, 999):
+                    bounded = quest_state_links(release, state_ids=iter(state_ids), quest_node_id=quest_id)
+                    assert rows(select(bounded.c.quest_id, bounded.c.state_id)) == {
+                        pair for pair in expected_links if pair[0] == quest_id}
+
+        expected = {(101,), (102,), (103,), (107,), (109,), (110,), (113,), (114,), (115,)}
         assert rows(select(links.c.state_id).where(links.c.quest_id == 1)) == expected
         assert rows(select(links.c.quest_id).where(links.c.state_id == 110)) == {(1,)}
         assert rows(select(links.c.quest_id).where(links.c.state_id == 107)) == {(1,)}
@@ -93,17 +111,44 @@ def test_forward_and_reverse_ownership_use_only_complete_source_paths():
         assert rows(quest_states_query(999, None)) == set()
         for orphan in (104, 105, 106, 108, 111, 112):
             assert rows(select(links.c.quest_id).where(links.c.state_id == orphan)) == set()
+        assert_state_scoped_matches_global(None)
 
         db.execute("INSERT INTO graph.edge_evidence (edge_id, release_id) SELECT id, 1 FROM graph.edge")
         pinned = _quest_state_links(1)
         assert rows(select(pinned.c.state_id).where(pinned.c.quest_id == 1)) == expected
         assert rows(quest_states_query(1, 1)) == expected
+        assert_state_scoped_matches_global(1)
         # Every hop must exist in the pinned snapshot, not just the final state.
         db.execute("UPDATE graph.edge_evidence SET release_id=2 WHERE edge_id IN (SELECT id FROM graph.edge WHERE (from_node_id=20 AND to_node_id=30) OR (from_node_id=80 AND to_node_id=107))")
-        assert rows(select(pinned.c.state_id).where(pinned.c.quest_id == 1)) == {(101,), (102,), (109,), (110,)}
+        assert rows(select(pinned.c.state_id).where(pinned.c.quest_id == 1)) == {(101,), (102,), (109,), (110,), (113,), (114,)}
         bounded_pinned = quest_state_links(1, quest_node_id=1)
-        assert rows(select(bounded_pinned.c.state_id)) == {(101,), (102,), (109,), (110,)}
-        assert rows(quest_states_query(1, 1)) == {(101,), (102,), (109,), (110,)}
+        assert rows(select(bounded_pinned.c.state_id)) == {(101,), (102,), (109,), (110,), (113,), (114,)}
+        assert rows(quest_states_query(1, 1)) == {(101,), (102,), (109,), (110,), (113,), (114,)}
         assert rows(quest_states_query(1, 2)) == set()
+        assert_state_scoped_matches_global(1)
+        assert_state_scoped_matches_global(2)
         another = quest_state_links(2)
         assert rows(select(another.c.state_id).where(another.c.quest_id == 1)) == set()
+
+
+def test_state_scoped_ownership_fences_endpoints_before_relation_and_evidence_joins():
+    links = quest_state_links(21, state_ids=[5345259, 4648369, 5345259])
+    statement = select(links)
+    ctes = {node.name: node for node in visitors.iterate(statement)
+            if isinstance(node, CTE) and node.name.endswith("_endpoints")}
+    assert len(ctes) == 8
+    for name, cte in ctes.items():
+        # Every graph hop is filtered by its known children before graph joins.
+        assert len(cte.element.get_final_froms()) == 1
+        assert cte.element.get_final_froms()[0].name == "edge"
+        criteria = str(cte.element.whereclause.compile(dialect=postgresql.dialect(),
+                       compile_kwargs={"literal_binds": True}))
+        assert "graph.edge.to_node_id IN" in criteria
+        assert "graph.edge.layer = 'source'" in criteria
+        if name in {"state_direct_refs_endpoints", "state_transcripts_endpoints"}:
+            assert "graph.edge.to_node_id IN (4648369, 5345259)" in criteria
+    query = str(statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert query.count("AS MATERIALIZED") >= 8
+    assert query.count("edge_evidence.release_id = 21") == 8
+    assert "references_dungeon_flow_state" in query
+    assert "has_transcript_state" in query
