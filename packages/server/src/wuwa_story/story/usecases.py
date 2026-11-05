@@ -99,6 +99,7 @@ async def quest_transcript(
     release_id = await _release_id(session, game_version)
     states = await _quest_page_state_ids(session, quest.node_id, release_id)
     tree_order = await authored_order(session, quest.game_quest_id, release_id)
+    related_encounters = bool(tree_order and tree_order.get('ordering') == 'related')
     if tree_order:
         states = list(set(states) | set(tree_order['state_ids']))
     character_node = None
@@ -117,7 +118,7 @@ async def quest_transcript(
         focus_line,
         limit,
         offset,
-        ordered_states=tree_order['state_ids'] if tree_order else None,
+        ordered_states=tree_order['state_ids'] if tree_order and not related_encounters else None,
     )
     if rows is None:
         raise StoryBrowsingError(status_code=404, detail="Cited passage not found in this quest")
@@ -137,12 +138,14 @@ async def quest_transcript(
     return {
         "quest": await _quest_info(session, quest, locale, game_version),
         "ordering_semantics": (
+            "Related encounters retain their local authored structure; their positions in this quest are unknown."
+            if related_encounters else
             f"Authored tree order from game client {tree_order['asset_version']}; "
             "parallel and conditional branches do not establish a guaranteed playthrough."
             if tree_order else
             "Authored state/action/talk ordering; branches and runtime conditions are not flattened into a guaranteed playthrough."
         ),
-        "tree_order_asset_version": tree_order['asset_version'] if tree_order else None,
+        "tree_order_asset_version": tree_order['asset_version'] if tree_order and not related_encounters else None,
         "scenes": scene_payloads(scene_rows),
         "story_blocks": await present_blocks(session, tree_order, locale, release_id),
         "filters": {"character": character, "text": q, "locale": locale},
