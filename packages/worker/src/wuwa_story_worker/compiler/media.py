@@ -7,6 +7,7 @@ PlotAudio, Wwise event paths, and CgFile remain references to game resources.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -71,6 +72,7 @@ def compile_media(
     root = _bin_root(data_root)
     assets: set[str] = set()
     groups: set[str] = set()
+    caption_voices: list[tuple[str, Any, dict[str, Any]]] = []
     video_rows = _rows(root, "cgVedio/videodata.json", diagnostic)
     known_cg_names = {row.get("CgName") for row in video_rows
                       if isinstance(row.get("CgName"), str) and row.get("CgName")}
@@ -148,6 +150,8 @@ def compile_media(
         if localize and isinstance(key, str) and key:
             record["localized_text"] = localize(key)
         emit("caption", record)
+        if raw.get("IsPlaySubtitleVoice") is True:
+            caption_voices.append((identity, key, src))
         if cg:
             edge(cg, identity, "uses_caption",
                  "explicit CgName equality" if cg_resolution == "exact" else "unique whitespace-normalized CgName",
@@ -200,6 +204,7 @@ def compile_media(
                        f"$[{row}].CgName", raw.get("CgName"))
 
     relative = "plot_audio/plotaudio.json"
+    voice_keys: Counter[str] = Counter()
     for row, raw in enumerate(_rows(root, relative, diagnostic)):
         src = _source(relative, row)
         key = raw.get("Id")
@@ -208,6 +213,7 @@ def compile_media(
             identity = f"voice_ref:row:{row}"
         else:
             identity = f"voice_ref:{key}"
+            voice_keys[key] += 1
         emit("voice_reference", {"id": identity, "source": src, "raw": raw,
                                  "plot_audio_id": key, "file_name": raw.get("FileName")})
         ref = asset(raw.get("FileName"), "plot_audio_filename", src, "FileName")
@@ -224,6 +230,18 @@ def compile_media(
         ref = asset(raw.get("Path"), "ue", src, "Path")
         if ref:
             edge(identity, ref, "references_asset", "Path", src["file"], f"$[{row}].Path", None)
+
+    # VideoView posts external speech only for enabled captions. A matching
+    # localization key alone does not mean that a caption starts audio.
+    for identity, key, src in caption_voices:
+        if isinstance(key, str) and key and voice_keys[key] == 1:
+            edge(identity, f"voice_ref:{key}", "has_voice_reference",
+                 "IsPlaySubtitleVoice=true; CaptionText = PlotAudio.Id",
+                 src["file"], f"{src['raw_path']}.CaptionText", None)
+        else:
+            diagnostic("unresolved_caption_voice_reference", "warning", src["file"],
+                       f"{src['raw_path']}.CaptionText",
+                       f"Expected one exact PlotAudio.Id for enabled caption: {key!r}")
 
     relative = "QuestRefVideo/questrefvideoconfig.json"
     package_rows = _rows(root, relative, diagnostic)
