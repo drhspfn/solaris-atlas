@@ -93,8 +93,8 @@ def has_authored_event(data: bytes, name: str) -> bool:
     return False
 
 
-def rover_parameters(xml: Path, rover: str | None) -> list[str]:
-    """Select only verified male/female switches, preserving other ambiguity."""
+def rover_parameters(xml: Path, rover: str | None, *, language: str | None = None) -> list[str]:
+    """Bind authored Rover/language values, preserving every other selector."""
     values = {event_id("male"), event_id("female")}
     params = set()
     for node in ET.parse(xml).iter("object"):
@@ -102,12 +102,21 @@ def rover_parameters(xml: Path, rover: str | None) -> list[str]:
             continue
         switches = {int(field.get("value")) for field in node.iter("field")
                     if field.get("name") == "ulSwitchID"}
+        group = node.find(".//field[@name='ulGroupID']")
+        kind = node.find(".//field[@name='eGroupType']")
+        if group is not None and int(group.get('value')) == event_id('language'):
+            if kind is None or kind.get('value') != '1':
+                raise ValueError('Unsupported Wwise language State group')
+            if language not in {'en', 'ja', 'ko', 'zh'}:
+                raise ValueError('Language-dependent soundtrack requires an explicit audio language')
+            if event_id(language) not in switches:
+                raise ValueError(f'Requested audio language is absent from the authored State: {language}')
+            params.add(f'({event_id("language")}={event_id(language)})')
+            continue
         if not values.issubset(switches):
             continue
         if rover not in {"male", "female"}:
             raise ValueError("Gender-dependent soundtrack requires an authored Rover variant")
-        group = node.find(".//field[@name='ulGroupID']")
-        kind = node.find(".//field[@name='eGroupType']")
         if group is None or kind is None or kind.get("value") not in {"0", "1"}:
             raise ValueError("Unsupported Wwise gender switch")
         pair = f"{int(group.get('value'))}={event_id(rover)}"
@@ -115,12 +124,13 @@ def rover_parameters(xml: Path, rover: str | None) -> list[str]:
     return sorted(params)
 
 
-async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover, run_tool):
+async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover, run_tool, *, language: str | None = None):
     """Return (decoded WAV, durable evidence) for exactly one authored event."""
     from wuwa_story_worker.cutscene_import import soundtrack_wem
 
     renderer = tool_path("WUWA_WWISER_PATH")
-    digest = hashlib.sha256(bank.read_bytes() + str(rover).encode() + renderer.read_bytes()).hexdigest()[:20]
+    selection = str(rover).encode() + (b'\0language:' + language.encode('ascii') if language is not None else b'')
+    digest = hashlib.sha256(bank.read_bytes() + selection + renderer.read_bytes()).hexdigest()[:20]
     root = work / "wwise" / digest
     root.mkdir(parents=True, exist_ok=True)
     source = root / bank.name
@@ -138,7 +148,7 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
     xml = root / "bank.xml"
     await run_tool([sys.executable, str(renderer), "-d", "xml", "-dn", str(root / "bank"),
                     "--", str(source)], 120)
-    params = await asyncio.to_thread(rover_parameters, xml, rover)
+    params = await asyncio.to_thread(rover_parameters, xml, rover, language=language)
     for stale in root.glob("*.txtp"):
         stale.unlink()
     command = [sys.executable, str(renderer), "-d", "none", "-g", "-gwd", "-gra",

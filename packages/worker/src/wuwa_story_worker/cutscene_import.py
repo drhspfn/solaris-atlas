@@ -239,17 +239,19 @@ async def decode_soundtrack(track, assets, audio, work, decoder, decoded):
             decoded[key] = (wav, [wem])
         return decoded[key]
     bank = confined(assets, track.bank)
-    key = (bank, track.media_id, getattr(track, "rover", None))
+    key = (bank, track.media_id, getattr(track, "rover", None), getattr(track, 'language', None))
     if key not in decoded:
         if track.media_id is None and has_authored_event(bank.read_bytes(), bank.stem):
-            decoded[key] = await render_bank(bank, audio, work, decoder, getattr(track, "rover", None), run_tool)
+            decoded[key] = await render_bank(bank, audio, work, decoder, getattr(track, "rover", None), run_tool,
+                                             language=getattr(track, 'language', None))
             return decoded[key]
         try:
             identity = bank_media_id(bank.read_bytes(), track.media_id)
         except ValueError as error:
             if track.media_id is not None or not any(text in str(error) for text in ("single-source", "Multiple music sources")):
                 raise
-            decoded[key] = await render_bank(bank, audio, work, decoder, getattr(track, "rover", None), run_tool)
+            decoded[key] = await render_bank(bank, audio, work, decoder, getattr(track, "rover", None), run_tool,
+                                             language=getattr(track, 'language', None))
         else:
             wem = soundtrack_wem(audio, identity)
             wav = work / f"{identity}.wav"
