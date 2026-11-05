@@ -1,0 +1,14 @@
+.ui-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
+}
+.ui-pagination-summary {
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
