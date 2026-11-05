@@ -136,10 +136,11 @@ def test_zero_source_bounds_use_one_measured_canvas_for_all_clips(tmp_path, monk
 
 
 @pytest.mark.parametrize('tampered', [False, True])
-def test_legacy_archive_policy_requires_verified_decoded_sources(tmp_path, tampered):
+@pytest.mark.parametrize('package', ['/Game/Rig', '/game/RIG'])
+def test_legacy_archive_policy_requires_verified_decoded_sources(tmp_path, tampered, package):
     data = json.dumps([{'Type': 'SpineSkeletonDataAsset'}, {'Type': 'SpineAtlasAsset'}]).encode()
     entry = 'decoded/files/Client/Content/Rig.json'
-    manifest = {'packages': ['/Game/Rig'], 'source_resources': ['/Game/Rig'], 'files': {
+    manifest = {'packages': [package], 'source_resources': [package], 'files': {
         entry: {'sha256': hashlib.sha256(data).hexdigest(), 'size_bytes': len(data)}}}
     bundle = tmp_path / 'old-source.zip'
     with zipfile.ZipFile(bundle, 'w') as archive:
@@ -150,6 +151,26 @@ def test_legacy_archive_policy_requires_verified_decoded_sources(tmp_path, tampe
             render.archive_policy(bundle)
     else:
         assert render.archive_policy(bundle)['conversion_allowed'] is True
+
+
+def test_archive_policy_does_not_match_same_basename_in_another_directory(tmp_path):
+    data = json.dumps([{'Type': 'SpineSkeletonDataAsset'}, {'Type': 'SpineAtlasAsset'}]).encode()
+    entry = 'decoded/files/Client/Content/Other/Rig.json'
+    manifest = {'packages': ['/Game/Rig'], 'source_resources': ['/Game/Rig'], 'files': {
+        entry: {'sha256': hashlib.sha256(data).hexdigest(), 'size_bytes': len(data)}}}
+    bundle = tmp_path / 'source.zip'
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        archive.writestr('manifest.json', json.dumps(manifest))
+        archive.writestr(entry, data)
+    assert render.archive_policy(bundle)['conversion_allowed'] is False
+
+
+def test_archive_policy_rejects_ambiguous_package_casing(tmp_path):
+    bundle = tmp_path / 'source.zip'
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        archive.writestr('manifest.json', json.dumps({'packages': ['/Game/Rig', '/game/RIG']}))
+    with pytest.raises(ValueError, match='Ambiguous'):
+        render.archive_policy(bundle)
 
 
 @pytest.mark.parametrize("clips", [[{"id": "idle", "durationSec": float("nan")}],

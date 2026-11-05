@@ -104,9 +104,14 @@ def archive_policy(bundle: Path) -> dict:
     with tempfile.TemporaryDirectory(prefix="riglyph-policy-") as directory, zipfile.ZipFile(bundle) as source:
         manifest = json.loads(source.read("manifest.json"))
         assets = {}
+        by_package = {}
         for index, package in enumerate(manifest.get("packages", [])):
+            identity = package.casefold()
+            if identity in by_package:
+                raise ValueError("Ambiguous case-insensitive archive package")
             assets[package] = {"decoded": Path(directory) / str(index), "decode_failed": True}
             assets[package]["decoded"].mkdir()
+            by_package[identity] = assets[package]
         for name, expected in manifest.get("files", {}).items():
             if not name.startswith("decoded/") or not name.endswith(".json"):
                 continue
@@ -121,7 +126,9 @@ def archive_policy(bundle: Path) -> dict:
             if "Client/Content/" not in name:
                 raise ValueError("Decoded entry has no canonical package path")
             package = "/Game/" + name.split("Client/Content/", 1)[1].removesuffix(".json")
-            asset = assets.get(package)
+            # Cooked/exported package casing can differ from the authored reference.
+            # Match the complete path, never a basename or another package's JSON.
+            asset = by_package.get(package.casefold())
             if asset is not None:
                 (asset["decoded"] / "asset.json").write_bytes(data)
                 asset["decode_failed"] = False
