@@ -50,14 +50,17 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, 
     input_assets = {}
     shared_assets = Counter(engine_path(blob) for _, _, blob in videos)
     banks_by_name = {}
+    # VideoConfig.GetVideoSounds selects the whole shared list when present;
+    # gender-specific rows are a fallback, not additional layers to mix.
+    shared_sounds = [row for row in sounds if row[0] == 2]
     for path in assets.rglob("*"):
         if path.is_file() and path.suffix.casefold() == ".bnk":
             banks_by_name.setdefault(path.name.casefold(), []).append(path)
     for cg_id, gender, blob in videos:
         key = "asset:ue:" + engine_path(blob)
         soundtrack = []
-        for sound_gender, sound_blob in sounds:
-            if sound_gender not in (2, gender):
+        for sound_gender, sound_blob in shared_sounds or sounds:
+            if not shared_sounds and sound_gender != gender:
                 continue
             event = engine_path(sound_blob).rsplit(".", 1)[-1]
             banks = banks_by_name.get((event + ".bnk").casefold(), [])
