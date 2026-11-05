@@ -49,3 +49,6 @@
 .ui-tabs-underline .ui-tab[aria-selected=true] { border-bottom-color: var(--accent-mint); color: var(--accent-mint); }
 .ui-tabs[aria-orientation=vertical] { flex-direction: column; align-items: stretch; }
 @media (forced-colors: active) { .ui-tab[aria-selected=true] { outline: 1px solid Highlight; } }
+
+.ui-tabs-full-width { width: 100%; }
+.ui-tabs-full-width > .ui-tab { flex: 1 1 0; min-width: 0; }

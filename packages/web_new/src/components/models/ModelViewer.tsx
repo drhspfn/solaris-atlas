@@ -474,7 +474,7 @@ export function ModelViewer({
                 onClick={() => drawer.current?.close()}
               />
             </header>
-            <Tabs value={panel} onValueChange={setPanel} variant="segmented" aria-label="Model settings sections"
+            <Tabs value={panel} onValueChange={setPanel} variant="underline" fullWidth aria-label="Model settings sections"
               items={[{ value: 'scene', label: 'Scene' }, { value: 'physics', label: 'Physics' }, { value: 'camera', label: 'Camera' }]} />
             <div className="model-settings-content">
               {panel === "scene" && (

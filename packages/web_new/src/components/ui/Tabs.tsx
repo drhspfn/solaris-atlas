@@ -30,6 +30,7 @@ export type TabsProps<T extends string = string> = Omit<
   onChange?: (value: T) => void;
   variant?: "buttons" | "segmented" | "underline";
   orientation?: "horizontal" | "vertical";
+  fullWidth?: boolean;
 };
 
 /** Controlled tabs. Callers own panel content; arrow keys activate enabled tabs. */
@@ -40,6 +41,7 @@ export function Tabs<T extends string>({
   onChange,
   variant = "buttons",
   orientation = "horizontal",
+  fullWidth = false,
   className = "",
   label,
   ...props
@@ -78,7 +80,7 @@ export function Tabs<T extends string>({
       role="tablist"
       aria-label={props["aria-label"] ?? label}
       aria-orientation={orientation}
-      className={`ui-tabs ui-tabs-${variant} ${className}`}
+      className={`ui-tabs ui-tabs-${variant}${fullWidth ? " ui-tabs-full-width" : ""} ${className}`}
     >
       {items.map((item, index) => (
         <button

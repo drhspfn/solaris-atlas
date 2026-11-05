@@ -28,7 +28,8 @@ function key(tab, value) {
 }
 test('tabs expose controlled selection, optional panel links and each visual variant', () => {
   for (const variant of ['buttons', 'segmented', 'underline']) {
-    const h = harness({ variant }); let tree = h.render();
+    const h = harness({ variant, fullWidth: true }); let tree = h.render();
+    assert(tree.props.className.includes("ui-tabs-full-width"));
     assert.equal(tree.props.role, 'tablist'); assert.equal(tree.props['aria-label'], 'Viewer settings');
     assert(tree.props.className.includes(`ui-tabs-${variant}`));
     assert.equal(tree.props.children[0].props['aria-controls'], 'scene-panel');
