@@ -6,7 +6,6 @@ import math
 import re
 import sqlite3
 import struct
-from collections import Counter
 from pathlib import Path
 
 from flatbuffers.table import Table
@@ -48,7 +47,6 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, 
         raise ValueError("Cutscene not found in VideoData")
     inputs, clips, options = [], [], []
     input_assets = {}
-    shared_assets = Counter(engine_path(blob) for _, _, blob in videos)
     banks_by_name = {}
     # VideoConfig.GetVideoSounds selects the whole shared list when present;
     # gender-specific rows are a fallback, not additional layers to mix.
@@ -80,20 +78,22 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, 
             for language, bank in selected:
                 soundtrack.append({"bank": bank.relative_to(assets).as_posix(),
                                    "language": language,
-                                   "rover": ("male" if gender == 1 else "female" if gender == 0 else None)
-                                   if shared_assets[engine_path(blob)] == 1 else None,
+                                   "rover": "male" if gender == 1 else "female" if gender == 0 else None,
                                    "start_seconds": start, "end_seconds": end})
-        caption_gender = gender if shared_assets[engine_path(blob)] == 1 else 2
-        soundtrack.extend(caption_soundtracks(config_db, assets, name, caption_gender,
+        soundtrack.extend(caption_soundtracks(config_db, assets, name, gender,
                                                missing_assets=missing_assets))
         if key in input_assets:
-            if input_assets[key]["soundtrack"] != soundtrack:
-                raise ValueError(f"Conflicting soundtrack configuration for shared video: {key}")
+            # One movie may serve two authored Rover variants. Keep the audio
+            # alternatives separate while publishing the video only once.
+            for track in soundtrack:
+                if track not in input_assets[key]["soundtrack"]:
+                    input_assets[key]["soundtrack"].append(track)
         else:
             value = {"asset": key, "soundtrack": soundtrack}
             input_assets[key] = value
             inputs.append(value)
-        clips.append({"id": f"cg-{cg_id}", "kind": "clip", "asset": key})
+        clips.append({"id": f"cg-{cg_id}", "kind": "clip", "asset": key,
+                      "rover": "male" if gender == 1 else "female" if gender == 0 else None})
         options.append(
             {
                 "label": "Male Rover"

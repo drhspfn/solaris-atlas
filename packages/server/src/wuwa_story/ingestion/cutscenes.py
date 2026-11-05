@@ -13,10 +13,18 @@ class Clip(StrictModel):
     id: str = Field(min_length=1)
     kind: Literal["clip"] = "clip"
     asset: str = Field(pattern=r"^asset:ue:/Game/")
+    rover: Literal["male", "female"] | None = None
     segment: str | None = Field(default=None, pattern=r"^segment-[a-z0-9-]+$")
     start: float = Field(default=0, ge=0)
     end: float | None = Field(default=None, gt=0)
     next: str | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_unselected_identity(self, handler):
+        value = handler(self)
+        if self.rover is None:
+            value.pop("rover", None)
+        return value
 
     @model_validator(mode="after")
     def valid_range(self):

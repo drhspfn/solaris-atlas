@@ -16,9 +16,20 @@ def test_stem_language_and_duplicate_roles():
         )
 
 
+def test_same_language_has_distinct_rover_stems():
+    stems = [AudioStem(role="voice", language="en", rover=gender, path=f"{gender}.wav",
+                       sources=["event.bnk"], evidence="authored state") for gender in ("female", "male")]
+    recipe = CutsceneAudioRecipe(asset="asset:ue:/Game/A.A", asset_version="3.7.1", duration=5, stems=stems)
+    assert len(recipe.stems) == 2
+    with pytest.raises(ValueError, match="one stem"):
+        CutsceneAudioRecipe(asset=recipe.asset, asset_version=recipe.asset_version,
+                            duration=5, stems=[*stems, stems[0]])
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("complete", [False, True])
-async def test_bundle_requires_every_track_and_silent_video(complete):
+@pytest.mark.parametrize("rover", [None, "female"])
+async def test_bundle_requires_every_track_and_silent_video(complete, rover):
     class Session:
         async def scalars(self, query):
             assert "3.7.0" in query.compile().params.values()
@@ -29,7 +40,8 @@ async def test_bundle_requires_every_track_and_silent_video(complete):
                         "videos": {"full": 12},
                         "tracks": [
                             {"role": "music", "language": None, "file_id": 10},
-                            {"role": "voice", "language": "ja", "file_id": 11},
+                            {"role": "voice", "language": "ja", "file_id": 11,
+                             **({"rover": rover} if rover else {})},
                         ],
                     },
                 )
@@ -52,6 +64,7 @@ async def test_bundle_requires_every_track_and_silent_video(complete):
     )
     if complete:
         assert result[1]["videos"] == {"full": "silent.mp4"}
-        assert result[1]["tracks"][1] == {"role": "voice", "language": "ja", "url": "voice.ogg"}
+        assert result[1]["tracks"][1] == {"role": "voice", "language": "ja", "url": "voice.ogg",
+                                           **({"rover": rover} if rover else {})}
     else:
         assert result == {}

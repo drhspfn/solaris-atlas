@@ -222,6 +222,20 @@ def test_completion_requires_every_requested_stem_and_silent_segment(missing):
     assert cutscene_import.audio_bundle_complete(bundle, {"en", "ja"}, {"branch"}) is (missing is None)
 
 
+@pytest.mark.parametrize("language", [None, "en"])
+def test_completion_requires_both_authored_rover_stems(language):
+    role = "voice" if language else "effects"
+    selectors = {(role, language, gender) for gender in ("male", "female")}
+    bundle = SimpleNamespace(metadata_json={
+        "tracks": [{"role": role, "language": language, "rover": "male", "file_id": 1}],
+        "videos": {"full": 3}})
+    languages = {language} if language else set()
+    assert not cutscene_import.audio_bundle_complete(bundle, languages, set(), selectors=selectors)
+    bundle.metadata_json["tracks"].append(
+        {"role": role, "language": language, "rover": "female", "file_id": 2})
+    assert cutscene_import.audio_bundle_complete(bundle, languages, set(), selectors=selectors)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("complete,hash_matches", [(True, True), (False, True), (True, False)])
 async def test_cutscene_query_rejects_partial_or_other_recipe(monkeypatch, complete, hash_matches):

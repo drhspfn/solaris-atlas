@@ -92,6 +92,7 @@ async def publish_audio(recipe: Path, root: Path, ffmpeg: Path) -> dict:
                     {
                         "role": stem.role,
                         "language": stem.language,
+                        **({"rover": stem.rover} if stem.rover else {}),
                         "file_id": file.id,
                         "source_file_ids": source_ids,
                         "evidence": stem.evidence,

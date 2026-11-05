@@ -101,6 +101,24 @@ def test_shared_sound_list_replaces_gender_specific_rows(tmp_path):
     assert missing == []  # The unused female bank is not a missing dependency.
 
 
+def test_shared_movie_keeps_two_rover_soundtracks_without_duplicate_video(tmp_path):
+    db_path = tmp_path / "videos.db"
+    with sqlite3.connect(db_path) as db:
+        db.executescript("CREATE TABLE videodata (CgId, GirlOrBoy, CgName, BinData); CREATE TABLE videosound (CaptionId, GirlOrBoy, CgName, BinData);")
+        db.executemany("INSERT INTO videodata VALUES (?, ?, ?, ?)", [
+            (235, 1, "C0015", b"/Game/Movies/C0015.C0015\0"),
+            (236, 0, "C0015", b"/Game/Movies/C0015.C0015\0"),
+        ])
+        db.execute("INSERT INTO videosound VALUES (?, ?, ?, ?)",
+                   (78, 2, "C0015", sound("/Game/Audio/event.event", 0, -1)))
+    (tmp_path / "event.bnk").write_bytes(b"bank")
+    recipe = plan_cutscene(db_path, tmp_path, "C0015", "3.7.1")
+    assert len(recipe["videos"]) == 1
+    assert [track["rover"] for track in recipe["videos"][0]["soundtrack"]] == ["male", "female"]
+    assert [node["rover"] for node in recipe["flow"]["nodes"] if node["kind"] == "clip"] == ["male", "female"]
+    assert not recipe["compare_variants"]
+
+
 def test_missing_bank_is_reported_for_partial_video_and_case_is_resolved(tmp_path):
     db_path = tmp_path / "videos.db"
     with sqlite3.connect(db_path) as db:
