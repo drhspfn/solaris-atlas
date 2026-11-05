@@ -38,6 +38,7 @@
 .model-settings-content .ui-input { width: 100%; }
 .model-settings-content .ui-checkbox-field { display: flex; font-size: 13px; }
 .model-settings-content fieldset { display: flex; align-items: center; gap: 20px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
+.model-settings-content fieldset > .ui-checkbox-field { flex: 1 1 0; min-width: 0; justify-content: center; }
 .model-settings-content legend { font-size: 12px; color: var(--text-secondary); padding-inline: 6px; }
 .model-settings-content p { margin: 0; font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
 .native-model-viewer:fullscreen { background: var(--bg-page); padding: 16px; }
