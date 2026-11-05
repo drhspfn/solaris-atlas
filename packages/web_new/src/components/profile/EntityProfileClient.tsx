@@ -286,7 +286,7 @@ export function EntityProfileClient({
       {kind === 'character' &&
         (archive && profileRole === selectedRole ? (
           <CharacterArchive
-            key={selectedRole}
+            key={`archive:${selectedRole}`}
             archive={archive}
             materials={characterMaterials}
             locale={locale}
