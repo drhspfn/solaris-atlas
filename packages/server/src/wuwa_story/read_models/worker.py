@@ -26,7 +26,9 @@ from wuwa_story.read_models.refresh import (
 )
 
 logger = logging.getLogger(__name__)
-PROJECTION_STATEMENT_TIMEOUT_MS = 60_000
+# Background-only DB budget; HTTP retains its separate statement limit.
+# The overall refresh claim remains bounded at 600 seconds.
+PROJECTION_STATEMENT_TIMEOUT_MS = 180_000
 PROJECTION_LOCK_TIMEOUT_MS = 1_000
 CLAIM_TIMEOUT_SECONDS = 10 * 60
 
