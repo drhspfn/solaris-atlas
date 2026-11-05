@@ -44,3 +44,15 @@ def test_compiler_fingerprint_uses_relative_paths_and_stable_order(tmp_path):
         for name in names:
             (root / name).write_text(name, encoding="utf-8")
     assert compiler_fingerprint(left) == compiler_fingerprint(right)
+
+
+def test_shared_parser_changes_invalidate_cached_snapshots(tmp_path):
+    compiler = tmp_path / "compiler"
+    compiler.mkdir()
+    (compiler / "entities.py").write_text("from shared import parse")
+    helper = tmp_path / "speaker_crosswalk.py"
+    helper.write_text("def parse(): return []")
+    dependencies = [("speaker_crosswalk", helper)]
+    before = compiler_fingerprint(compiler, dependencies=dependencies)
+    helper.write_text("def parse(): return ['personal_head']")
+    assert compiler_fingerprint(compiler, dependencies=dependencies) != before
