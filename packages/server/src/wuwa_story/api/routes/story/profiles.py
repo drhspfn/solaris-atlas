@@ -839,6 +839,8 @@ async def character_profile(
     if character is None:
         raise HTTPException(status_code=404, detail="node is not a character")
     release_id = await _release_id(session, game_version)
+    if game_version and release_id is None:
+        raise HTTPException(status_code=404, detail="character snapshot not found")
     element_names = {}
 
     async def element_name(key):
@@ -1125,7 +1127,10 @@ async def character_profile(
         )
     ]
     has_speaker_mapping = bool(speakers)
-    character_source = await _latest_source_record(session, node.id)
+    if game_version:
+        character_source = await _latest_source_record(session, node.id, release_id=release_id)
+    else:
+        character_source = await _latest_source_record(session, node.id)
     raw_role_id = node.canonical_key.partition(":")[2]
     progression_materials = await _character_progression_materials(
         session,
