@@ -1,0 +1,294 @@
+{
+  "release_id": 21,
+  "cases": [
+    {
+      "choice_id": "choice:剧情_3_1_拉海洛主线_上半_2_76_1:2:1:0",
+      "source_record_id": 64652949,
+      "state_key": "剧情_3_1_拉海洛主线_上半_2_76_1",
+      "action_index": 2,
+      "talk_index": 1,
+      "option_index": 0,
+      "classification": "selection_without_explicit_branch",
+      "option_action_names": [],
+      "jump_targets": [],
+      "matching_sequence_transitions": [],
+      "authored_continuation_talk_id": 3,
+      "has_authored_sequence": true,
+      "option_keys": [
+        "TextId",
+        "PlotLineId",
+        "PlotLineKey",
+        "TidTalkOption",
+        "Actions"
+      ],
+      "action": {
+        "Name": "ShowTalk",
+        "Params": {
+          "TalkItems": [
+            {
+              "Type": "Talk",
+              "Id": 1,
+              "PlotLineId": 1,
+              "Name": "对话2",
+              "WhoId": 150059,
+              "TextId": 2011,
+              "TidTalk": "MAIN_YHX_168_1",
+              "PlotLineKey": "MAIN_YHX_168_1",
+              "PlayVoice": true
+            },
+            {
+              "Type": "Talk",
+              "Id": 2,
+              "PlotLineId": 2,
+              "Name": "对话3",
+              "WhoId": 150059,
+              "TextId": 2012,
+              "TidTalk": "MAIN_YHX_168_2",
+              "PlotLineKey": "MAIN_YHX_168_2",
+              "Options": [
+                {
+                  "TextId": 2015,
+                  "PlotLineId": 3,
+                  "PlotLineKey": "MAIN_YHX_168_3",
+                  "TidTalkOption": "MAIN_YHX_168_3",
+                  "Actions": []
+                },
+                {
+                  "TextId": 2016,
+                  "PlotLineId": 4,
+                  "PlotLineKey": "MAIN_YHX_168_4",
+                  "TidTalkOption": "MAIN_YHX_168_4",
+                  "Actions": []
+                }
+              ],
+              "PlayVoice": true
+            },
+            {
+              "Type": "Talk",
+              "Id": 3,
+              "PlotLineId": 5,
+              "Name": "对话4",
+              "WhoId": 150059,
+              "TextId": 2013,
+              "TidTalk": "MAIN_YHX_168_5",
+              "PlotLineKey": "MAIN_YHX_168_5",
+              "PlayVoice": true
+            },
+            {
+              "Type": "Talk",
+              "Id": 4,
+              "PlotLineId": 6,
+              "Name": "对话5",
+              "WhoId": 150059,
+              "TextId": 2014,
+              "TidTalk": "MAIN_YHX_168_6",
+              "PlotLineKey": "MAIN_YHX_168_6",
+              "PlayVoice": true
+            }
+          ],
+          "SequenceDataAsset": "/Game/Aki/Sequence/LevelB_Seq/Main/Section3_1/M3_2_27/DA_M3_2_27.DA_M3_2_27",
+          "TalkSequence": [
+            [
+              1,
+              2,
+              3,
+              4
+            ]
+          ],
+          "SequenceNames": [
+            "DA_M3_2_27.DA_M3_2_27_1Z"
+          ],
+          "SequenceTransitions": {},
+          "TalkOutline": {
+            "TextId": 2243,
+            "TidOutline": "MAIN_YHX_168_7",
+            "PlotLineKey": "MAIN_YHX_168_7"
+          }
+        },
+        "ActionId": 5000206,
+        "ActionGuid": "0cf56361f9c3433f8212872c4647e639"
+      }
+    },
+    {
+      "choice_id": "choice:剧情_3_1_拉海洛主线_上半_2_80_1:3:0:0",
+      "source_record_id": 64655441,
+      "state_key": "剧情_3_1_拉海洛主线_上半_2_80_1",
+      "action_index": 3,
+      "talk_index": 0,
+      "option_index": 0,
+      "classification": "terminal_finish_talk",
+      "option_action_names": [
+        "FinishDoInteract",
+        "FinishTalk"
+      ],
+      "jump_targets": [],
+      "matching_sequence_transitions": [],
+      "authored_continuation_talk_id": null,
+      "has_authored_sequence": false,
+      "option_keys": [
+        "TextId",
+        "PlotLineId",
+        "PlotLineKey",
+        "TidTalkOption",
+        "Actions",
+        "Icon"
+      ],
+      "action": {
+        "Name": "ShowTalk",
+        "Params": {
+          "TalkItems": [
+            {
+              "Type": "Talk",
+              "Id": 2,
+              "PlotLineId": 1,
+              "Name": "对话3",
+              "WhoId": 150059,
+              "TextId": 2029,
+              "TidTalk": "MAIN_YHX_141_1",
+              "PlotLineKey": "MAIN_YHX_141_1",
+              "Options": [
+                {
+                  "TextId": 2030,
+                  "PlotLineId": 2,
+                  "PlotLineKey": "MAIN_YHX_141_2",
+                  "TidTalkOption": "MAIN_YHX_141_2",
+                  "Actions": [
+                    {
+                      "Name": "FinishDoInteract",
+                      "Params": {},
+                      "ActionGuid": "3e51d5595dd04ff7ba0520fc1cd72edf",
+                      "ActionId": 5000095
+                    },
+                    {
+                      "Name": "FinishTalk",
+                      "Params": {},
+                      "ActionGuid": "31b3d5dd40c84a819b46878146036e1a",
+                      "ActionId": 5000187
+                    }
+                  ],
+                  "Icon": 2
+                },
+                {
+                  "TextId": 2031,
+                  "PlotLineId": 3,
+                  "PlotLineKey": "MAIN_YHX_141_3",
+                  "TidTalkOption": "MAIN_YHX_141_3",
+                  "Actions": []
+                }
+              ],
+              "ActorLookAtArray": [
+                {
+                  "ActorIndex": 0,
+                  "Target": {
+                    "Type": 4,
+                    "Lock": false
+                  }
+                }
+              ],
+              "ActorMontageArray": [
+                {
+                  "ActorIndex": 1,
+                  "MontageId": 750827,
+                  "IsAbpMontage": true
+                }
+              ],
+              "PlayVoice": true
+            }
+          ]
+        },
+        "ActionGuid": "41f2f8675d5b45c18df61403e1addf51",
+        "ActionId": 5000186
+      }
+    },
+    {
+      "choice_id": "choice:剧情_3_3_达尼亚洞穴主线_1_30:1:0:0",
+      "source_record_id": 64654693,
+      "state_key": "剧情_3_3_达尼亚洞穴主线_1_30",
+      "action_index": 1,
+      "talk_index": 0,
+      "option_index": 0,
+      "classification": "side_effects_without_explicit_branch",
+      "option_action_names": [
+        "ChangeEntityState",
+        "SetVar"
+      ],
+      "jump_targets": [],
+      "matching_sequence_transitions": [],
+      "authored_continuation_talk_id": null,
+      "has_authored_sequence": false,
+      "option_keys": [
+        "TextId",
+        "PlotLineId",
+        "PlotLineKey",
+        "TidTalkOption",
+        "Actions"
+      ],
+      "action": {
+        "Name": "ShowTalk",
+        "Params": {
+          "TalkItems": [
+            {
+              "Type": "Talk",
+              "Id": 1,
+              "PlotLineId": 1,
+              "Name": "对话2",
+              "WhoId": 83,
+              "TextId": 1139,
+              "TidTalk": "Main_LahaiRoi_ZRJDYKX_66_1",
+              "PlotLineKey": "Main_LahaiRoi_ZRJDYKX_66_1",
+              "Style": {
+                "Type": "InnerVoice"
+              },
+              "Options": [
+                {
+                  "TextId": 1140,
+                  "PlotLineId": 2,
+                  "PlotLineKey": "Main_LahaiRoi_ZRJDYKX_66_2",
+                  "TidTalkOption": "Main_LahaiRoi_ZRJDYKX_66_2",
+                  "Actions": [
+                    {
+                      "Name": "ChangeEntityState",
+                      "Params": {
+                        "Type": "Directly",
+                        "EntityId": 183850137,
+                        "State": "关卡.Common.状态.激活"
+                      },
+                      "ActionGuid": "ba66eb956e844c938831be9cca4fb534",
+                      "ActionId": 5000028
+                    },
+                    {
+                      "Name": "SetVar",
+                      "Params": {
+                        "VarLeft": {
+                          "Type": "Boolean",
+                          "Source": "Global",
+                          "Keyword": "3_3放蛋糕"
+                        },
+                        "VarRight": {
+                          "Type": "Boolean",
+                          "Source": "Constant",
+                          "Value": true
+                        }
+                      },
+                      "ActionGuid": "df49a23c1d094b1b9c7542da540150c2",
+                      "ActionId": 5000159
+                    }
+                  ]
+                },
+                {
+                  "TextId": 1141,
+                  "PlotLineId": 3,
+                  "PlotLineKey": "Main_LahaiRoi_ZRJDYKX_66_3",
+                  "TidTalkOption": "Main_LahaiRoi_ZRJDYKX_66_3",
+                  "Actions": []
+                }
+              ]
+            }
+          ]
+        },
+        "ActionGuid": "10b4be372d154acd9e79d3cbcb553cfb",
+        "ActionId": 5000068
+      }
+    }
+  ]
+}
