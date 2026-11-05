@@ -98,6 +98,13 @@ export interface CharacterArchiveData {
     audio_event_path: string | null;
     audio_url: string | null;
     audio_tracks?: Record<string, string>;
+    audio_variants?: {
+      id: string;
+      source_name: string;
+      language: string;
+      url: string | null;
+      status: 'available' | 'missing';
+    }[];
   }[];
   other_voice_events: { category: string; event: string }[];
 }
@@ -158,6 +165,52 @@ const voiceLocales = availableLocales.filter(({ code }) =>
 );
 const initialVoiceLocale = (locale: string) =>
   voiceLocales.some((option) => option.code === locale) ? locale : "en";
+
+export function CharacterVoicePlayback({ line, textLocale }: {
+  line: CharacterArchiveData['voice_lines'][number];
+  textLocale: string;
+}) {
+  const [choice, setChoice] = useState('');
+  const label = gameText(line.title);
+  const languageLabel = (language: string) =>
+    availableLocales.find((option) => option.code === language)?.label ?? language;
+  const mediaUrl = (url: string) => apiUrl(url.replace(/^\/api/, ''));
+  if (!line.audio_variants?.length) return <TrackPlayer
+    src={line.audio_url ? mediaUrl(line.audio_url) : null}
+    tracks={line.audio_tracks ? Object.fromEntries(Object.entries(line.audio_tracks)
+      .map(([language, url]) => [languageLabel(language), mediaUrl(url)])) : undefined}
+    defaultTrack={languageLabel(initialVoiceLocale(textLocale))}
+    label={label}
+  />;
+
+  // Authored alternatives can be random/state branches, not gender or a default.
+  const counts = new Map<string, number>();
+  const options = [...line.audio_variants].sort((a, b) =>
+    a.language.localeCompare(b.language) || a.source_name.localeCompare(b.source_name),
+  ).map((variant) => {
+    const number = (counts.get(variant.language) ?? 0) + 1;
+    counts.set(variant.language, number);
+    const available = variant.status === 'available' && !!variant.url;
+    return {
+      value: variant.source_name,
+      label: `${languageLabel(variant.language)} · Variant ${number}${available ? '' : ' · unavailable'}`,
+      disabled: !available,
+      url: available ? mediaUrl(variant.url!) : null,
+    };
+  });
+  // A different language may still have one proven legacy track.
+  for (const [language, url] of Object.entries(line.audio_tracks ?? {})) {
+    if (!counts.has(language)) options.push({
+      value: `track:${language}`, label: languageLabel(language), disabled: false, url: mediaUrl(url),
+    });
+  }
+  const selected = options.find((option) => option.value === choice && !option.disabled);
+  return <div className="character-voice-variants">
+    <Select label={`Audio variant: ${label}`} placeholder="Choose language & variant"
+      value={selected?.value ?? ''} onChange={setChoice} options={options} />
+    {selected && <TrackPlayer key={selected.value} src={selected.url} label={`${label} · ${selected.label}`} />}
+  </div>;
+}
 
 export function SkillScaling({
   skill,
@@ -682,34 +735,7 @@ export function CharacterArchive({
                     </small>
                   )}
                 </div>
-                <TrackPlayer
-                  src={
-                    line.audio_url
-                      ? apiUrl(line.audio_url.replace(/^\/api/, ""))
-                      : null
-                  }
-                  tracks={
-                    line.audio_tracks
-                      ? Object.fromEntries(
-                          Object.entries(line.audio_tracks).map(
-                            ([language, url]) => [
-                              availableLocales.find(
-                                (option) => option.code === language,
-                              )?.label ?? language,
-                              apiUrl(url.replace(/^\/api/, "")),
-                            ],
-                          ),
-                        )
-                      : undefined
-                  }
-                  defaultTrack={
-                    availableLocales.find(
-                      (option) =>
-                        option.code === initialVoiceLocale(textLocale),
-                    )?.label
-                  }
-                  label={gameText(line.title)}
-                />
+                <CharacterVoicePlayback key={`${characterKey}:${line.id}`} line={line} textLocale={textLocale} />
               </article>
             ))}
           </div>
