@@ -15,8 +15,10 @@ import { ItemAcquisition } from '@/components/items/ItemAcquisition';
 import { InlineDialogueSearch } from '@/components/search/InlineDialogueSearch';
 import { EmptyInline, ErrorPanel, PageLoader } from '@/components/ui/Feedback';
 import { PanelTitle } from '@/components/ui/PanelTitle';
+import { Select } from '@/components/ui/Select';
 import { APP_SETTINGS } from '@/config/settings';
 import { categoryTitle, type Entity, entityPath } from '@/data/entities';
+import { selectCharacterVariant, type CharacterVariant } from '@/data/characterIdentity';
 import { localizedText } from '@/data/localized';
 import { useLocale } from '@/hooks/useLocale';
 import { usePlayerDisplay } from '@/hooks/usePlayerDisplay';
@@ -38,6 +40,8 @@ export function EntityProfileClient({
 }) {
   const locale = useLocale();
   const playerDisplay = usePlayerDisplay();
+  const [selectedRole, setSelectedRole] = useState(entityKey);
+  const [profileRole, setProfileRole] = useState(entityKey);
   const [data, setData] = useState<any>(initialData || null);
   const [loading, setLoading] = useState(!initialData);
   const [error, setError] = useState('');
@@ -48,9 +52,12 @@ export function EntityProfileClient({
   const [profileRetry, setProfileRetry] = useState(0);
   const [archiveRetry, setArchiveRetry] = useState(0);
 
+  useEffect(() => { setSelectedRole(entityKey); }, [entityKey]);
+
   useEffect(() => {
-    if (initialData && locale === 'en' && profileRetry === 0) {
+    if (initialData && selectedRole === entityKey && locale === 'en' && profileRetry === 0) {
       setData(initialData);
+      setProfileRole(entityKey);
       setLoading(false);
       setError('');
       return;
@@ -59,11 +66,11 @@ export function EntityProfileClient({
     setLoading(true);
     setError('');
     api<any>(
-      `/${kind === 'character' ? 'characters' : kind === 'item' ? 'items' : 'locations'}/${encodeURIComponent(entityKey)}/profile?locale=${locale}`,
+      `/${kind === 'character' ? 'characters' : kind === 'item' ? 'items' : 'locations'}/${encodeURIComponent(selectedRole)}/profile?locale=${locale}`,
       { signal: controller.signal },
     )
       .then((result) => {
-        if (!controller.signal.aborted) setData(result);
+        if (!controller.signal.aborted) { setData(result); setProfileRole(selectedRole); }
       })
       .catch((e) => {
         if (!controller.signal.aborted) setError(e.message);
@@ -72,10 +79,10 @@ export function EntityProfileClient({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [kind, entityKey, locale, initialData, profileRetry]);
+  }, [kind, entityKey, selectedRole, locale, initialData, profileRetry]);
 
   useEffect(() => {
-    if (initialArchive && locale === 'en' && archiveRetry === 0) {
+    if (initialArchive && selectedRole === entityKey && locale === 'en' && archiveRetry === 0) {
       setArchive(initialArchive);
       setArchiveError('');
       return;
@@ -85,7 +92,7 @@ export function EntityProfileClient({
     if (kind !== 'character') return;
     const controller = new AbortController();
     api<CharacterArchiveData>(
-      `/characters/${encodeURIComponent(entityKey)}/archive?locale=${encodeURIComponent(locale)}`,
+      `/characters/${encodeURIComponent(selectedRole)}/archive?locale=${encodeURIComponent(locale)}`,
       { signal: controller.signal },
     )
       .then((result) => {
@@ -95,7 +102,14 @@ export function EntityProfileClient({
         if (!controller.signal.aborted) setArchiveError(cause.message);
       });
     return () => controller.abort();
-  }, [kind, entityKey, locale, initialArchive, archiveRetry]);
+  }, [kind, entityKey, selectedRole, locale, initialArchive, archiveRetry]);
+
+  useEffect(() => {
+    const family = data?.family;
+    if (family?.selected_key && family.selected_key !== data?.character?.canonical_key) {
+      setSelectedRole(family.selected_key);
+    }
+  }, [data]);
 
   if (loading && !data) return <PageLoader />;
   if (error && !data)
@@ -113,7 +127,10 @@ export function EntityProfileClient({
       : kind === 'item'
         ? `Unnamed item · ${entityId}`
         : `Area · ${entityId}`;
-  const name = localizedText(entity?.name) || localizedText(entity?.canonical_name, fallbackName);
+  const family = data?.family;
+  const variants: CharacterVariant[] = family?.variants || [];
+  const selectedVariant = variants.find((variant) => variant.canonical_key === family?.selected_key);
+  const name = family?.name || localizedText(entity?.name) || localizedText(entity?.canonical_name, fallbackName);
   const description = localizedText(entity?.description);
   const relatedByIdentity = new Map<string, any>();
   const unresolvedSpeakerEvidence: any[] = [];
@@ -227,6 +244,30 @@ export function EntityProfileClient({
                 ? 'A character recorded in the Solaris Atlas story archive.'
                 : 'Explore source-backed details and story links for this entry.')}
           </p>
+          {selectedVariant && (
+            <div className="rover-variant-controls" aria-label="Rover appearance and element">
+              <div>
+                <span>Gender</span>
+                <Select label="Rover gender" value={selectedVariant.gender}
+                  options={Array.from(new Set(variants.map((variant) => variant.gender))).map((gender) => ({value: gender, label: gender === 'male' ? 'Male' : 'Female', disabled: !selectCharacterVariant(variants, selectedVariant, { gender })}))}
+                  disabled={loading}
+                  onChange={(gender) => {
+                    const next = selectCharacterVariant(variants, selectedVariant, { gender });
+                    if (next) setSelectedRole(next.canonical_key);
+                  }} />
+              </div>
+              <div>
+                <span>Attribute</span>
+                <Select label="Rover attribute" value={selectedVariant.element_id}
+                  options={variants.filter((variant) => variant.gender === selectedVariant.gender).map((variant) => ({value: variant.element_id, label: localizedText(variant.element, `Attribute ${variant.element_id}`)}))}
+                  disabled={loading}
+                  onChange={(element) => {
+                    const next = selectCharacterVariant(variants, selectedVariant, { element_id: Number(element) });
+                    if (next) setSelectedRole(next.canonical_key);
+                  }} />
+              </div>
+            </div>
+          )}
           <div className="profile-tags">
             <span>{entity?.canonical_key}</span>
             {entity?.playable != null && (
@@ -242,12 +283,13 @@ export function EntityProfileClient({
         </div>
       </div>
       {kind === 'character' &&
-        (archive ? (
+        (archive && profileRole === selectedRole ? (
           <CharacterArchive
+            key={selectedRole}
             archive={archive}
             materials={characterMaterials}
             locale={locale}
-            characterKey={entityKey}
+            characterKey={selectedRole}
           />
         ) : archiveError ? (
           <ErrorPanel message={`Character details unavailable: ${archiveError}`}
@@ -256,7 +298,7 @@ export function EntityProfileClient({
           <div className="character-archive-loading" role="status">Loading character details…</div>
         ))}
       {kind === 'character' && entity?.canonical_key && (
-        <CharacterModel initialModel={initialModel} key={entity.canonical_key} characterKey={entity.canonical_key} name={name} refreshKey={modelRevision} />
+        <CharacterModel initialModel={selectedRole === entityKey ? initialModel : null} key={entity.canonical_key} characterKey={entity.canonical_key} name={name} refreshKey={modelRevision} />
       )}
       <div className="profile-columns">
         <section className="content-panel">

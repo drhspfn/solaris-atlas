@@ -705,3 +705,9 @@ button:disabled {
     transition: none;
   }
 }
+
+
+.rover-variant-controls { display: flex; flex-wrap: wrap; gap: 12px; margin: 20px 0; }
+.rover-variant-controls > div { flex: 1 1 160px; max-width: 240px; min-width: 0; }
+.rover-variant-controls > div > span { display: block; margin-bottom: 6px; color: var(--text-secondary, #A0AAA8); font-size: 13px; }
+.character-kind-filters { flex-wrap: wrap; margin: 0 0 24px; }

@@ -40,7 +40,7 @@ export function EntityCard({ item, index = 0 }: { item: Entity; index?: number }
           {item.node_type === 'quest'
             ? `Quest ID ${item.canonical_key.split(':').at(-1)}`
             : item.node_type === 'character'
-              ? 'Resonator · Character'
+              ? item.character_kind === 'story' ? 'Story & event role' : item.character_kind === 'technical' ? 'Technical role' : item.character_kind === 'playable' ? 'Playable resonator' : 'Character'
               : type === 'location'
                 ? 'Area · Location'
                 : item.node_type}

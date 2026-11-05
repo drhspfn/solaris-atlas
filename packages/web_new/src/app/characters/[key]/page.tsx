@@ -22,6 +22,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const character = data?.character;
   const entityId = character?.canonical_key?.split(':').at(-1) || key;
   const name =
+    data?.family?.name ||
     localizedText(character?.name) ||
     localizedText(character?.canonical_name) ||
     `Character · ${entityId}`;

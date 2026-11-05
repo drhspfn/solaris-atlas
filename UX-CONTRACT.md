@@ -532,3 +532,18 @@ administrator DB sessions own access and expiry; user/session secrets never appe
 as table fields. Changes are confirmed before sensitive actions; stale memory/task
 revisions fail instead of overwriting newer changes. Imported facts and execution
 history have no delete/edit controls. The existing public site UI is unaffected.
+
+
+## Public character identities
+
+The character catalog defaults to playable resonators. Story/event roles and
+technical roles are separate explicit filters, applied consistently to catalog
+search before pagination. Shared template artwork is not personal artwork.
+
+Rover has one public identity/card. The client main-role configuration supplies
+its source variants, including future attributes. Appearance and attribute use
+the shared Select: changing either preserves the other coordinate. Portraits,
+models, voice sources and progression details follow the selected source role;
+story appearances are shared across the family. Source role IDs and existing
+links remain valid. Failed or superseded reads never mix progression details
+from one selection with another selection's archive.
