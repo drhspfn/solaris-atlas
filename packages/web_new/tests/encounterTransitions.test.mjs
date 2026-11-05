@@ -297,8 +297,11 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
   vm.runInNewContext(code, { exports, URLSearchParams,
     require: id => mocks[id] ?? (id === 'react/jsx-runtime' ? require(id) : dummy) });
   const lines = [
-    { id: 'before', flow_state: 'Before', story_position: [0], text: { content: 'Before the encounter' } },
-    { id: 'dialogue:SHUTUP', flow_state: 'Flow28', action: { index: 0 }, text: { content: 'SHUT UP!' }, story_order_mapped: false },
+    { id: 'before', flow_state: 'Before', story_position: [0], text: { content: 'Before the encounter' },
+      action: { name: 'ShowTalk' }, source_type: 'flow_state', game_ids: { talk_item_id: 77 },
+      provenance: { source_file: 'BinData/flowState/flowstate.json', source_row: 21 } },
+    { id: 'dialogue:SHUTUP', flow_state: 'Flow28', action: { index: 0 }, text: { content: 'SHUT UP!' }, story_order_mapped: false,
+      game_ids: { talk_item_id: 0 }, provenance: { source_file: 'BinData/flowState/flowstate.json', source_row: 0 } },
     { id: 'dialogue:THATNOTHOME', flow_state: 'Flow28', action: { index: 0 }, text: { content: 'THAT IS NOT HOME!' }, story_order_mapped: false },
     { id: 'dialogue:repeat', flow_state: 'Flow29', action: { index: 0 }, text: { content: 'A parallel call' }, story_order_mapped: false },
     { id: 'after', flow_state: 'After', story_position: [10], text: { content: 'After the encounter' } },
@@ -317,7 +320,18 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
   assert(start >= 0 && start < markup.indexOf('SHUT UP!') && markup.indexOf('THAT IS NOT HOME!') < end, JSON.stringify({start,end,shutup:markup.indexOf('SHUT UP!'),notHome:markup.indexOf('THAT IS NOT HOME!'),excerpt:markup.slice(Math.max(0,start),Math.max(0,start)+1800)}));
   assert.match(markup, /Read the dialogue shared by this branch/);
   assert.match(markup, /cited-passage/);
-  assert.doesNotMatch(markup, /class="line-state">Flow28|class="line-state">Flow29/);
+  const articles = [...markup.matchAll(/<article\b[^>]*data-dialogue-key="[^"]+"[^>]*>([\s\S]*?)<\/article>/g)];
+  assert.equal(articles.length, lines.length);
+  for (const article of articles) {
+    const disclosure = article[1].match(/<details class="quest-line-source"[^>]*>[\s\S]*?<\/details>/);
+    assert(disclosure, 'every transcript line retains a source disclosure');
+    assert.doesNotMatch(disclosure[0].split('>')[0], /\bopen\b/);
+    assert.doesNotMatch(article[1].replace(disclosure[0], ''), /line-state|action-tag|line-foot/);
+  }
+  const regularSource = articles[0][1].match(/<details class="quest-line-source"[^>]*>[\s\S]*?<\/details>/)[0];
+  for (const value of ['Before', 'ShowTalk', 'Talk 77', 'flowstate.json', 'row 21']) assert(regularSource.includes(value));
+  assert.match(articles[1][1], /Talk 0/);
+  assert.match(articles[1][1], /row 0/);
   const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
   assert.equal(new Set(ids).size, ids.length, 'deep link targets must remain unique');
 });

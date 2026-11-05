@@ -569,9 +569,11 @@ export function QuestPageClient({
     const active = branch?.choice.id === activeChoiceId;
     const lineSource = (
       <div className="line-foot">
+        <span className="line-state">{line.flow_state || 'Story'}</span>
+        {line.action?.name && <span className="action-tag">{line.action.name}</span>}
         <span>
           {line.source_type || 'dialogue'}
-          {line.game_ids?.talk_item_id ? ` · Talk ${line.game_ids.talk_item_id}` : ''}
+          {line.game_ids?.talk_item_id != null ? ` · Talk ${line.game_ids.talk_item_id}` : ''}
         </span>
         {line.provenance?.source_file && (
           <span title={line.provenance.source_file}>
@@ -638,10 +640,6 @@ export function QuestPageClient({
                   fallback="Narration / Unknown speaker"
                 />
               </strong>
-              {!embedded && <>
-                <span className="line-state">{line.flow_state || 'Story'}</span>
-                {line.action?.name && <span className="action-tag">{line.action.name}</span>}
-              </>}
             </div>
             <DialogueAudioReference media={line.media}>
               <p>
@@ -718,14 +716,10 @@ export function QuestPageClient({
                 ))}
               </div>
             )}
-            {embedded
-              ? (line.provenance?.source_file || line.game_ids?.talk_item_id) && (
-                  <details className="quest-line-source">
-                    <summary>Source reference</summary>
-                    {lineSource}
-                  </details>
-                )
-              : lineSource}
+            <details className="quest-line-source">
+              <summary>Source reference</summary>
+              {lineSource}
+            </details>
             {branch &&
               branch.lineIds.at(-1) === line.id &&
               branch.continuationLineId &&
