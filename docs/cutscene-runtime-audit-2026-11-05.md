@@ -2,11 +2,16 @@
 
 ## Scope of evidence
 
-The inspected JavaScript and seven Wwise banks came from the locally installed
-client. Their byte identity with the production 3.7.1 client has not been proven.
-The retained extraction receipts include tool identity and file checksums in
-`scratch/ambiguous-voice-hirc`. Do not turn local selector observations into
-hard-coded production overrides.
+The inspected JavaScript came from the locally installed client; its byte
+identity with production has not been established. The seven Wwise banks and
+Init bank were subsequently verified against the pinned production 3.7.1
+archives: all 210 local archives matched the download plan's MD5 values, and
+the two actual source archives matched production SHA256 values. The runtime
+validator verified 17 event/language pairs, 34 independent alternatives and
+45 WWiser renditions against the retained production cooked inventories.
+Receipts are in `scratch/ambiguous-voice-hirc/production`. This source proof is
+separate from successful publication; it is not permission to hard-code
+selector overrides or claim that every variant is already playable.
 
 ## Video and voice are separate timelines
 
@@ -129,3 +134,25 @@ test skipped; 65 targeted server tests and four audio-selection tests passed;
 TypeScript and targeted Ruff checks passed. Manual image build 42118221095 was
 started from that branch without automatic production deployment. Production
 gender-stem publication and new-image playback remain separate verification gates.
+
+## Selective deployment and persisted graph verification, 22:17 UTC
+
+API and one previously exited image-worker slot now run the verified b024a82
+artifacts. Fourteen other active workers were left untouched. This is a selective
+backend rollout, not a complete PR deployment or an upgrade of the projection
+consumer.
+
+The new API verified all 517 and 654 canonical dialogue identities for the two
+quests above, with no missing, extra or duplicate IDs. All thirteen repaired
+states retained their exact presentation hashes, fifteen source edges and
+fifteen revisions. Dungeon 1557 is now a verified exit to map 1555, while the
+original boss encounter retains its two LevelPlay trees.
+
+Only quest 4688653 had a stale current projection. The normal filtered backfill
+rebuilt that one target to generation 9/9; Denia remained unchanged at 5/5.
+Public current and explicit 3.7.0 transcript requests returned HTTP 200, including
+the exit transition. Fourteen cinematic occurrences still lack published
+sequence media: verified graph links must not be reported as completed playback.
+The old projection consumer still needs a graceful upgrade so subsequent builds
+retain the new fields. Evidence: `scratch/current-twoquest-postdeploy/report.md`
+and `scratch/B024-BACKEND-ROLLOUT.md`.
