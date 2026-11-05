@@ -2,6 +2,7 @@ from copy import deepcopy
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.engine.result import IteratorResult, SimpleResultMetaData
 
 from wuwa_story.db.repositories import sequence_playback as repository
 from wuwa_story.story import runtime_service
@@ -53,3 +54,10 @@ async def test_no_encounters_does_not_query_storage():
     session = AsyncMock()
     assert await runtime_service.sequence_playback(session, [], 15) == {}
     session.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_available_movie_result_is_consumed_as_rows():
+    session = AsyncMock()
+    session.execute.return_value = IteratorResult(SimpleResultMetaData(['id', 'object_key']), iter([(12, 'verified')]))
+    assert await repository.available_movies(session, {12}, 'media') == {12: 'verified'}
