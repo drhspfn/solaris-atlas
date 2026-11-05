@@ -1,4 +1,5 @@
 import asyncio
+import subprocess
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -33,6 +34,60 @@ def delivery(body=b'{"run_id":1,"kind":"voices","job_type":"media.release"}', **
     return SimpleNamespace(body=body, headers={"db_retry_count": 2}, redelivered=False,
                            message_id="pinned-1", type="release_media", ack=AsyncMock(),
                            nack=AsyncMock(), **kwargs)
+
+
+@pytest.mark.parametrize("error,transient", [
+    (subprocess.TimeoutExpired("extractor", 7200), True),
+    (subprocess.CalledProcessError(-9, "extractor; inspect /logs/export.log"), True),
+    (subprocess.CalledProcessError(137, "extractor; inspect /logs/export.log"), True),
+    (subprocess.CalledProcessError(1, "extractor"), False),
+    (subprocess.CalledProcessError(-15, "extractor"), False),
+    (subprocess.CalledProcessError(143, "extractor"), False),
+    (RuntimeError("exit 137; missing Done"), False),
+    (MemoryError("worker memory exhausted"), False),
+])
+def test_extraction_failure_classification(error, transient):
+    assert broker.transient_job_error(error) is transient
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [
+    subprocess.TimeoutExpired("extractor", 7200),
+    subprocess.CalledProcessError(-9, "extractor; inspect /logs/export.log"),
+    subprocess.CalledProcessError(137, "extractor; inspect /logs/export.log"),
+])
+@pytest.mark.parametrize("queue_key", ["pool_audio", "asset_extract"])
+async def test_extraction_retries_exhaust_without_infinite_memory_failure_loop(monkeypatch, error, queue_key):
+    async def execute(payload, handler):
+        await handler(payload)
+
+    monkeypatch.setattr(broker, "execute_media_job", execute)
+    monkeypatch.setattr(broker, "record_job_failure", AsyncMock())
+    monkeypatch.setattr(broker, "notify_job_result", AsyncMock())
+    handler = AsyncMock(side_effect=error)
+    async with consumer(monkeypatch, queue_key, handler) as (callback, channel, *_):
+        for retries in range(4):
+            channel.default_exchange.publish.reset_mock()
+            broker.update_admin_run.reset_mock()
+            message = delivery()
+            message.headers["db_retry_count"] = retries
+            await callback(message)
+            if retries < 3:
+                sent = channel.default_exchange.publish.call_args.args[0]
+                assert sent.headers["db_retry_count"] == retries + 1
+                assert sent.body == message.body
+                assert str(error) in broker.update_admin_run.call_args.kwargs["error"]
+                message.ack.assert_awaited_once()
+                message.nack.assert_not_awaited()
+                broker.record_job_failure.assert_not_awaited()
+            else:
+                channel.default_exchange.publish.assert_not_awaited()
+                message.ack.assert_not_awaited()
+                message.nack.assert_awaited_once_with(requeue=False)
+                broker.record_job_failure.assert_awaited_once_with(
+                    {"run_id": 1, "kind": "voices", "job_type": "media.release"},
+                    "release_media" if queue_key == "pool_audio" else "asset_extract", error)
+        assert handler.await_count == 4
 
 
 @pytest.mark.asyncio

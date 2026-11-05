@@ -74,7 +74,7 @@ async def enqueue_release_media(
         specs.append(("event_catalog", ["client-catalog:v2"]))
     if not (event_artwork_only or notices_only) and cutscenes:
         specs.append(("cutscene_assets", sorted(set(cutscenes))))
-    if not (event_artwork_only or notices_only) and (voices or characters or story_media_only and cutscenes):
+    if not (event_artwork_only or notices_only) and (voices or characters or cutscenes):
         specs.append(("voice_packages", []))
     if not (event_artwork_only or notices_only):
         if not illustrations_only and not story_media_only:

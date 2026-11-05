@@ -163,6 +163,33 @@ async def test_fanout_pins_dependencies_and_keeps_analysis_manual(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cutscene_only_snapshot_still_prepares_audio_dependencies(monkeypatch):
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version='1.0.0')
+    session.scalars.side_effect = [[], ['M0389'], []]  # No characters or standalone voices.
+    session.scalar.side_effect = [4] + [None] * 5
+    runs = []
+    session.add = runs.append
+
+    async def flush():
+        if runs:
+            runs[-1].id = len(runs)
+
+    session.flush.side_effect = flush
+    publish = AsyncMock()
+    monkeypatch.setattr(release_media, 'publish_media_job', publish)
+    result = await release_media.enqueue_release_media(session, 9)
+    payloads = [call.args[0] for call in publish.await_args_list]
+    by_kind = {payload['kind']: payload for payload in payloads}
+    assert list(by_kind) == ['prepare', 'cutscene_assets', 'voice_packages', 'tree_order', 'cutscene']
+    assert result['queued'] == 5
+    assert by_kind['voice_packages']['parent_id'] == by_kind['prepare']['run_id']
+    assert by_kind['cutscene_assets']['parent_id'] == by_kind['prepare']['run_id']
+    assert by_kind['cutscene']['parent_id'] == by_kind['cutscene_assets']['run_id']
+    assert all(payload['release_id'] == 9 for payload in payloads)
+
+
+@pytest.mark.asyncio
 async def test_character_audio_is_published_in_independent_character_jobs(monkeypatch):
     runs = []
     session = AsyncMock()

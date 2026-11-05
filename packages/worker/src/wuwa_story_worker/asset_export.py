@@ -92,8 +92,8 @@ async def _finish_export(root, executable, asset_filter, upload, plan, tag, outp
             raise ValueError("Export exists from a different extractor; use a new asset workspace")
         if existing["job_id"] != plan["id"] or existing["filter"] != asset_filter:
             raise ValueError("Export does not match its pinned download/filter")
-        if not (output / "files").is_dir():
-            receipt.unlink()  # A removed raw cache must be rebuilt, not trusted.
+        if not await asyncio.to_thread(_cached_files_complete, output / "files", existing['files']):
+            receipt.unlink()  # Missing/truncated manifest files require a fresh atomic export.
         elif not upload:
             return receipt  # Our atomic manifest commits an immutable export.
     if not receipt.exists():
@@ -137,17 +137,51 @@ async def _finish_export(root, executable, asset_filter, upload, plan, tag, outp
     return receipt
 
 
+def _cached_files_complete(root, files):
+    """Check declared paths only; cache reuse must not rehash entire raw archives."""
+    if not root.is_dir() or not files:
+        return False
+    try:
+        return all((path := root / item['path']).is_file()
+                   and path.stat().st_size == item['size'] for item in files)
+    except OSError:
+        return False
+
+
+class ExtractionProcessError(subprocess.CalledProcessError):
+    def __init__(self, error, log):
+        super().__init__(error.returncode, error.cmd, output=error.output, stderr=error.stderr)
+        self.log = log
+
+    def __str__(self):
+        return f"{super().__str__()}; inspect {self.log}"
+
+
+class ExtractionTimeoutError(subprocess.TimeoutExpired):
+    def __init__(self, error, log):
+        super().__init__(error.cmd, error.timeout, output=error.output, stderr=error.stderr)
+        self.log = log
+
+    def __str__(self):
+        return f"{super().__str__()}; inspect {self.log}"
+
+
 def _extract_files(root, executable, asset_filter, plan, output, temporary, log,
                    *, game_dir=None, keys_file=None, processors=2, allow_empty=False):
     data = temporary / "files"
     data.mkdir()
     with log.open("w", encoding="utf-8") as stream:
-        subprocess.run(
-            [str(executable.resolve()), str((game_dir or root / "game").resolve()),
-             "@" + str((keys_file or root / "keys.txt").resolve()), str(data.resolve()), asset_filter],
-            stdout=stream, stderr=subprocess.STDOUT, check=False, timeout=7200,
-            env={**os.environ, "DOTNET_PROCESSOR_COUNT": str(processors)},
-        )
+        try:
+            subprocess.run(
+                [str(executable.resolve()), str((game_dir or root / "game").resolve()),
+                 "@" + str((keys_file or root / "keys.txt").resolve()), str(data.resolve()), asset_filter],
+                stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=7200,
+                env={**os.environ, "DOTNET_PROCESSOR_COUNT": str(processors)},
+            )
+        except subprocess.TimeoutExpired as error:
+            raise ExtractionTimeoutError(error, log) from error
+        except subprocess.CalledProcessError as error:
+            raise ExtractionProcessError(error, log) from error
     log_text = log.read_text(encoding="utf-8", errors="replace")
     summary = re.search(r"\[Done\] Extracted (\d+) files", log_text)
     if "[Fail]" in log_text or "[Error]" in log_text or not summary or (int(summary[1]) == 0 and not allow_empty):

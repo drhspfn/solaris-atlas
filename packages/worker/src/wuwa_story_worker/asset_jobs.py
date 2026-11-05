@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 from wuwa_story_worker.asset_export import export_assets
-from wuwa_story_worker.broker import publish_job
+from wuwa_story_worker.broker import publish_job, transient_job_error
 from wuwa_story_worker.client_assets import download_plan, validate_plan
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.map_assets import build_maps
@@ -130,7 +130,9 @@ async def extract_client_assets(payload: dict[str, Any]) -> None:
         if run_id is not None:
             try:
                 await update_admin_run(
-                    run_id, processor_key, "failed", error=f"{type(error).__name__}: {error}"
+                    run_id, processor_key,
+                    "waiting_dependency" if transient_job_error(error) else "failed",
+                    error=f"{type(error).__name__}: {error}"
                 )
             except Exception:
                 logger.exception("Failed to record extraction failure run_id=%s", run_id)

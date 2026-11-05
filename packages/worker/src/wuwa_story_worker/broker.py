@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import socket
+import subprocess
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -31,6 +32,10 @@ MEDIA_QUEUES = {"release_media", "event_media", "entity_media", "release_images"
 
 
 def transient_job_error(error: Exception) -> bool:
+    if isinstance(error, subprocess.TimeoutExpired):
+        return True
+    if isinstance(error, subprocess.CalledProcessError):
+        return error.returncode in {-9, 137}
     if isinstance(error, DBAPIError):
         code = getattr(error.orig, "sqlstate", None)
         return (error.connection_invalidated or code in {"40P01", "40001", "55P03", "57014", "53300", "57P01"}
@@ -361,7 +366,7 @@ async def consume_jobs(
                             try:
                                 if payload.get("run_id") is not None:
                                     await update_admin_run(payload["run_id"], processor_key, "waiting_dependency",
-                                                           error=f"Transient failure; retry {retries + 1}/3: {type(error).__name__}")
+                                                           error=f"Transient failure; retry {retries + 1}/3: {type(error).__name__}: {error}"[:2000])
                                 await defer_job(job_channel, job_key, message, retry_count=retries + 1)
                             except Exception:
                                 logger.exception("Could not defer transient retry")
