@@ -148,3 +148,12 @@ No additional movie was published and no codec whitelist was broadened.
 Detailed inputs, hashes, XML and rendition reports are retained under
 `scratch/video-hirc-selector-audit-20261106/`. Selector classification is not a
 claim that these six movies have been recovered or that every locale was tested.
+
+The M0318 native timing probe ran locally, offline, in the exact production worker
+image `sha256:adb01a876bd3b6c3c8f27bb877ebc0ac9f85eb1bc578af33070c7f4fc5a13743`,
+using decoder SHA256 `16593cfa1f8b79dc1fda30a0f8f6d97da386ab43128557d5c9b6debf72e07ddc`.
+It verified the 4s unit, 20s finite repeat, exact zero PCM, and a 21s Sequence
+including a 1s marker against a PCM repeat reference. The pinned WWiser's original
+recipe reproduces the incorrect 2s Sequence. The receipt is
+`native-silence/production-image-native-proof.json` under that scratch directory;
+no production worker was interrupted or modified.

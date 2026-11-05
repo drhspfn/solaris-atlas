@@ -106,6 +106,25 @@ def test_missing_control_evidence_is_not_assumed_unmodulated(source, name):
                                    source / 'play_all_sound_m0318.bnk', xml)
 
 
+@pytest.mark.parametrize('name', ['uNumCurves', 'ulNumStateProps', 'ulNumStateGroups', 'uNumFx'])
+@pytest.mark.parametrize('change', ['duplicate', 'remove_one'])
+def test_control_evidence_requires_exact_cardinality(source, name, change):
+    xml = source / 'bank.xml'
+    tree = ET.parse(xml)
+    sound = next(n for n in tree.iter('object') if n.get('name') == 'CAkSound'
+                 and n.find(".//field[@name='ulPluginID'][@value='6619138']") is not None)
+    parent = next(n for n in sound.iter() if n.find(f"field[@name='{name}']") is not None)
+    field = parent.find(f"field[@name='{name}']")
+    if change == 'remove_one':
+        parent.remove(field)
+    else:
+        parent.append(ET.Element('field', dict(field.attrib)))
+    tree.write(xml)
+    with pytest.raises(ValueError, match='Silence modulation'):
+        wwise_banks._silence_recipe('?.plugin-silence #B 1.0 #e #l 5.0',
+                                   source / 'play_all_sound_m0318.bnk', xml)
+
+
 @pytest.mark.asyncio
 async def test_render_decodes_corrected_recipe_and_retains_original_provenance(source, monkeypatch):
     bank = source / 'play_all_sound_m0318.bnk'
