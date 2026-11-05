@@ -252,7 +252,7 @@ async def quest_area_rows(session, quest_node_id):
     return area_rows
 
 
-async def latest_source_row(session, node_id):
+async def latest_source_row(session, node_id, *, release_id=None):
     # Match version_key's numeric component ordering, then break ties by import.
     components = func.btrim(
         func.regexp_replace(func.coalesce(GameRelease.game_version, ""), "[^0-9]+", ".", "g"),
@@ -265,6 +265,7 @@ async def latest_source_row(session, node_id):
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
         .outerjoin(GameRelease, GameRelease.id == NodeRevision.release_id)
         .where(NodeRevision.node_id == node_id)
+        .where(NodeRevision.release_id == release_id if release_id is not None else True)
         .order_by(version.desc(), GameRelease.sequence.desc().nulls_last(),
                   NodeRevision.revision.desc(), NodeRevision.id.desc())
         .limit(1)
