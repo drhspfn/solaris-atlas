@@ -236,6 +236,14 @@ async def test_cutscene_dependency_read_finishes_before_io_without_releasing_job
         yield session
 
     async def convert(actual_payload, actual_parent):
+        from sqlalchemy.dialects import postgresql
+
+        dependency = session.scalar.await_args.args[0].compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True},
+        )
+        # A completed voice job in this graph must win over any newer queued
+        # voice preparation belonging to another retry of the same release.
+        assert "->> 'parent_id') = '70'" in str(dependency)
         assert actual_payload == payload
         assert actual_parent == {**parent.raw_output, "voice_plan_id": "plan"}
         assert session.commit.await_count == 3  # Run, parent, and voice dependency reads.
