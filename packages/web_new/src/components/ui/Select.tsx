@@ -37,6 +37,8 @@ export function Select({
   rememberPosition = false,
   label,
   className = '',
+  width = 'full',
+  popupMaxWidth = 420,
   disabled = false,
   placeholder = 'Select',
 }: {
@@ -49,6 +51,10 @@ export function Select({
   rememberPosition?: boolean;
   label: string;
   className?: string;
+  /** Trigger width; compact is a shared 360px control, full fills its container. */
+  width?: 'auto' | 'compact' | 'full';
+  /** Rich-menu cap, independent of trigger width; clipped to the viewport. */
+  popupMaxWidth?: number;
   disabled?: boolean;
   placeholder?: string;
 }) {
@@ -57,6 +63,7 @@ export function Select({
   const options = categories.length ? [...sourceOptions, ...flattenSelectCategories(categories)] : sourceOptions;
   const [path, setPath] = useState<readonly string[]>([]);
   const [query, setQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const scrollPositions = useRef(new Map<string, number>());
   const restoreScroll = useRef(false);
   const searchInput = useRef<HTMLInputElement>(null);
@@ -84,6 +91,10 @@ export function Select({
   }
   function navigate(next: readonly string[]) {
     rememberScroll(); restoreScroll.current = true; setPath(next); setActive(0);
+  }
+  function closeSearch() {
+    rememberScroll(); restoreScroll.current = true; setQuery(''); setSearchOpen(false); setActive(0);
+    panel.current?.focus({ preventScroll: true });
   }
   function close(restoreFocus = true) {
     rememberScroll();
@@ -120,7 +131,7 @@ export function Select({
       }
       const below = window.innerHeight - rect.bottom - 12;
       const above = below < 220 && rect.top > below;
-      const width = Math.min(Math.max(rect.width, rich ? 340 : 240), window.innerWidth - 24);
+      const width = Math.min(rich ? Math.min(Number.isFinite(popupMaxWidth) ? Math.max(160, popupMaxWidth) : 420, Math.max(rect.width, 300)) : Math.max(rect.width, 240), window.innerWidth - 24);
       Object.assign(popup.style, {
         width: `${width}px`,
         left: `${Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))}px`,
@@ -130,7 +141,7 @@ export function Select({
       });
     }
     position();
-    if (searchable) searchInput.current?.focus({ preventScroll: true });
+    if (searchOpen) searchInput.current?.focus({ preventScroll: true });
     else panel.current?.focus({ preventScroll: true });
     window.addEventListener('resize', position);
     window.addEventListener('scroll', position, true);
@@ -138,7 +149,7 @@ export function Select({
       window.removeEventListener('resize', position);
       window.removeEventListener('scroll', position, true);
     };
-  }, [open]);
+  }, [open, searchOpen, popupMaxWidth]);
   useEffect(() => {
     if (!rich || previousValue.current === value) return;
     previousValue.current = value;
@@ -178,7 +189,7 @@ export function Select({
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      close();
+      if (searchOpen) closeSearch(); else close();
       return;
     }
     const typing = (event.target as HTMLElement).tagName === 'INPUT';
@@ -212,7 +223,7 @@ export function Select({
   }
 
   return (
-    <span className={`atlas-select ${className}`}>
+    <span className={`atlas-select atlas-select-width-${width} ${className}`}>
       <button
         ref={trigger}
         type="button"
@@ -246,18 +257,18 @@ export function Select({
         onKeyDown={keyDown}
       >
         {rich && <div className="atlas-select-catalog-heading">
-          {searchable && <div className="atlas-select-search">
+          {searchOpen ? <div className="atlas-select-search">
             <Search size={16} aria-hidden="true" />
             <input ref={searchInput} type="search" aria-label={`Search ${label.toLocaleLowerCase()}`}
               aria-controls={`${id}-options`} aria-activedescendant={rows[active] ? `${id}-${active}` : undefined}
               placeholder={`Search ${label.toLocaleLowerCase()}…`} value={query}
               onChange={event => { rememberScroll(); setQuery(event.target.value); setActive(0); restoreScroll.current = true; }} />
-            {query && <button type="button" aria-label="Clear search" onClick={() => { rememberScroll(); restoreScroll.current = true; setQuery(''); setActive(0); searchInput.current?.focus(); }}><X size={15} aria-hidden="true" /></button>}
-          </div>}
-          {categorized && <div className="atlas-select-breadcrumb">
-            <button type="button" disabled={!path.length || !!query} onClick={() => navigate(path.slice(0, -1))}><ArrowLeft size={15} aria-hidden="true" /> Back</button>
-            <span>{query ? 'Search all categories' : path.join(' / ') || 'All categories'}</span>
-          </div>}
+            <button type="button" aria-label="Close search" onClick={closeSearch}><X size={15} aria-hidden="true" /></button>
+          </div> : <>
+            {categorized && <button className="atlas-select-back" type="button" aria-label="Back" disabled={!path.length} onClick={() => navigate(path.slice(0, -1))}><ArrowLeft size={16} aria-hidden="true" /></button>}
+            <span className="atlas-select-current-category">{categorized ? path.join(' / ') || 'All categories' : label}</span>
+            {searchable && <button className="atlas-select-search-toggle" type="button" aria-label={`Search ${label.toLocaleLowerCase()}`} onClick={() => setSearchOpen(true)}><Search size={16} aria-hidden="true" /></button>}
+          </>}
         </div>}
         <div id={rich ? `${id}-options` : undefined} role={rich ? "listbox" : undefined} aria-label={rich ? label : undefined}
           aria-activedescendant={rich && rows[active] ? `${id}-${active}` : undefined}>

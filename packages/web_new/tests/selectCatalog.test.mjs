@@ -34,10 +34,28 @@ test('catalog drilldown remembers branch and scroll and follows externally contr
 });
 test('search lives inside popup, searches every category, and keyboard selection ignores disabled rows',()=>{
  let selected;const h=harness({value:'',onChange:v=>selected=v,options,label:'Animation',searchable:true,categorized:true});
- let t=h.render();trigger(t).props.onClick();t=h.render();const input=nodes(popup(t)).find(n=>n.type==='input');assert(input);input.props.onChange({target:{value:'Walk'}});t=h.render();assert.equal(rows(t).length,2);assert(row(t,'Walk'));popup(t).props.onKeyDown(event('Enter','INPUT'));assert.equal(selected,'walk');
+ let t=h.render();trigger(t).props.onClick();t=h.render();assert.equal(nodes(popup(t)).filter(n=>n.type==='input').length,0);nodes(popup(t)).find(n=>n.props?.['aria-label']==='Search animation').props.onClick();t=h.render();const input=nodes(popup(t)).find(n=>n.type==='input');assert(input);input.props.onChange({target:{value:'Walk'}});t=h.render();assert.equal(rows(t).length,2);assert(row(t,'Walk'));popup(t).props.onKeyDown(event('Enter','INPUT'));assert.equal(selected,'walk');
  const flat=harness({value:'walk',onChange:v=>selected=v,options:options.slice(2),label:'Flat'});t=flat.render();trigger(t).props.onClick();t=flat.render();popup(t).props.onKeyDown(event('ArrowDown'));t=flat.render();popup(t).props.onKeyDown(event('Enter'));assert.equal(selected,'walk');
 });
 test('nested categories flatten without replacing option identity',()=>{
  const h=harness({value:'',onChange(){},options:[],label:'Nested'});const result=h.flatten([{label:'Body',children:[{label:'Standing',options:[{value:7,label:'Stand'}]}]}]);assert.equal(result[0].value,7);assert.equal(result[0].path.join('/'),'Body/Standing');
 });
 
+
+test('catalog width stays bounded and Escape dismisses search before the menu',()=>{
+ const h=harness({value:'idle',onChange(){},options,label:'Animation',searchable:true,categorized:true});
+ h.element.getBoundingClientRect=()=>({top:100,left:20,width:1400,bottom:144});
+ let t=h.render();trigger(t).props.onClick();t=h.render();assert.equal(h.element.style.width,'420px');
+ nodes(popup(t)).find(n=>n.props?.['aria-label']==='Search animation').props.onClick();t=h.render();
+ popup(t).props.onKeyDown({...event('Escape','INPUT'),stopPropagation(){}});t=h.render();assert.equal(trigger(t).props['aria-expanded'],true);assert.equal(nodes(popup(t)).filter(n=>n.type==='input').length,0);
+});
+
+test('shared Select trigger widths and popup caps are independent of feature names',()=>{
+ for(const width of ['auto','compact','full']) {
+  const h=harness({value:'idle',onChange(){},options,label:'Records',searchable:true,width,popupMaxWidth:380});
+  h.element.getBoundingClientRect=()=>({top:100,left:20,width:width==='compact'?360:1000,bottom:144});
+  let t=h.render();assert(t.props.className.includes(`atlas-select-width-${width}`));
+  trigger(t).props.onClick();h.render();assert.equal(h.element.style.width,width==='compact'?'360px':'380px');
+ }
+ const h=harness({value:'',onChange(){},options,label:'Versions'});assert(h.render().props.className.includes('atlas-select-width-full'));
+});
