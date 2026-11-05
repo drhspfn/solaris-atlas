@@ -22,8 +22,9 @@ skill-template artwork is not presented as personal artwork on unrelated roles.
    compiler worker image for future imports without interrupting active jobs.
 2. Preview existing-data changes:
    `python -m wuwa_story.ingestion.character_identity_backfill`
-3. Apply and refresh only affected character projections:
-   `python -m wuwa_story.ingestion.character_identity_backfill --apply --refresh`
+3. Apply metadata corrections and republish current character archives (including
+   the new talent-value contract) without importing game/media again:
+   `python -m wuwa_story.ingestion.character_identity_backfill --apply --refresh-all`
 4. Let the existing projection worker publish these pages, then deploy the web
    changes. Confirm one Rover in the playable catalog/search and that gender
    and attribute selectors preserve one another. Source role URLs remain valid.
@@ -57,3 +58,26 @@ API fixtures; the separate server probe validated actual source records.
 Targeted backend/compiler and frontend checks pass. The full frontend suite has
 three pre-existing eventRequests.test.mjs module-mock failures for
 `../ui/RenderedAnimation`; neither that test nor the event component was changed.
+
+
+## Talent parameters and NPC corrections
+
+Skill attributes join skilldescription by the source SkillLevelGroupId in one
+snapshot-scoped batch. Exact authored arrays are retained, including constants,
+missing positions, and additional levels. The public level selector is capped by
+MaxSkillLevel; ambiguous multi-parameter expressions expose their separate values
+without inventing a formula. These records already exist in the database.
+
+Foreign NPC artwork paths are materialized with character metadata so legacy
+image lookups also exclude them. The compiler updates this alongside each role;
+old cached bundles preserve established exclusions. Public portraits, galleries
+and social previews use personal images only, falling back to a placeholder if
+none exist. Personal NPC artwork and original media references are retained.
+The public character hero no longer shows the snapshot's ARCHIVE SOURCE banner.
+
+The backfill uses a 2-second lock timeout and 30-second statement timeout. A lock
+conflict rolls back rather than blocking imports. Before application, save the
+old character metadata and take a protected-container ID snapshot. Update only
+idle snapshot/media preparation and projection services; leave active image,
+audio, video, model workers and database/broker services running. Publishing
+current character views is additive and serves existing views during rebuild.
