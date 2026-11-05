@@ -1,0 +1,37 @@
+.media-viewer {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--text-primary, #e9ede7);
+  background: rgba(7, 12, 10, .96);
+  overflow: hidden;
+}
+.media-viewer::backdrop { background: rgba(0, 0, 0, .85); }
+.media-viewer-layout { height: 100%; display: flex; flex-direction: column; }
+.media-viewer-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; background: var(--surface-1, #17201c); border-bottom: 1px solid var(--border-default, #28322c); }
+.media-viewer-heading { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.media-viewer-heading strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.media-viewer-heading span, .media-viewer-zoom { color: var(--text-secondary, #9ca79f); font-size: 12px; white-space: nowrap; }
+.media-viewer-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.media-viewer-zoom { min-width: 38px; text-align: center; }
+.media-viewer-download { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--border-default, #28322c); border-radius: 6px; background: var(--surface-2, #1b2521); color: var(--text-primary, #e9ede7); }
+.media-viewer-download:hover { color: var(--mint); border-color: var(--mint); }
+.media-viewer-download:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+.media-viewer-content { display: flex; align-items: center; gap: 8px; flex: 1; min-height: 0; padding: 12px; }
+.media-viewer-stage { display: grid; place-items: center; flex: 1; min-width: 0; height: 100%; overflow: hidden; }
+.media-viewer-stage img, .media-viewer-stage video { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; }
+.media-viewer-stage img { user-select: none; }
+.media-viewer-error { text-align: center; color: var(--text-secondary, #9ca79f); }
+@media (max-width: 640px) {
+  .media-viewer-header { flex-wrap: wrap; padding: 10px; }
+  .media-viewer-heading { flex: 1 1 100%; }
+  .media-viewer-actions { width: 100%; justify-content: flex-end; }
+  .media-viewer-content { gap: 2px; padding: 4px; }
+}
+
