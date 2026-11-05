@@ -35,3 +35,16 @@ Remaining measured limits: PostgreSQL still has 128 MiB shared buffers and share
 host I/O with archive extraction. Do not restart it blindly during active imports.
 The public Denia page previously exceeded a 12-second smoke-test deadline; that is
 a lower bound, not its full measured load duration. Recheck after routing rollout.
+
+## Static archive regression found during continued imports
+
+A later smoke test returned HTTP 500. The Next.js stack pointed to
+`QuestIllustration`: newly archived Spine entries can have playback metadata but
+no playable `variants` or `unsupported` array. Optional chaining guarded the
+playback object but then called `filter`/`map` on absent fields. Guarding both
+arrays preserves the existing poster/unavailable fallback and valid animations.
+Seven React server-render regression cases cover absent/null playback, unsupported
+metadata, absent/null/empty variants, posterless archives and playable animation.
+Related quest/preview tests and TypeScript validation pass. Recheck the production
+page after this frontend correction; the earlier 1.98-second HTTP 200 sample alone
+is not sufficient evidence of sustained success as new archive shapes arrive.
