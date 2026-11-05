@@ -54,3 +54,29 @@ selected value is controlled by the caller. Arrow keys and Home/End move through
 enabled tabs; each tab exposes its selected state and can reference a named panel.
 The model settings use this component, while other workflows can select the
 appropriate appearance without duplicating tab layout or keyboard handling.
+
+## Media viewer
+
+MediaViewerProvider is mounted once by the site Providers. Any feature can call
+useMediaViewer().open(items, index) with an image/video collection. The hook also
+exposes close, next, previous and goTo; the provider owns the current snapshot.
+Items carry id, src, type (image/video), title and optional poster/downloadName.
+
+The native modal owns focus, Escape dismissal and scroll restoration. Image controls
+provide bounded zoom and pointer panning; arrows navigate the collection. Video uses
+native controls without autoplay. Failed media offers retry. Direct download links
+retain the source URL; cross-origin browser download policy still applies.
+
+## Pills and pagination
+
+Pill renders informational text by default. kind="button" exposes a selectable
+filter through selected/aria-pressed and supports native disabled state.
+kind="link" uses the shared router Link with href and selected/aria-current.
+Normal, selected, hover and disabled states share the application surface and
+text tokens; only genuinely disabled controls use disabled styling.
+
+Pagination uses the shared Button component in both modes. mode="pages" accepts
+one-based page, pageSize, total and onPageChange. mode="cursor" accepts
+hasPrevious, hasNext, onPrevious and onNext; callers retain their opaque tokens.
+An optional label overrides the range summary. disabled suspends both actions.
+Search forms use shared Input/Button controls, with an unframed clear icon.

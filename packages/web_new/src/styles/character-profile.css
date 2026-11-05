@@ -1,0 +1,31 @@
+.character-profile-page .character-profile-hero { grid-template-columns: 200px minmax(0, 1fr); align-items: start; gap: 32px; padding: 28px 0; border-color: var(--border-default); }
+.character-profile-visual { min-width: 0; }
+.character-profile-visual .ui-tabs { margin-bottom: 12px; }
+.character-profile-hero .profile-main { min-width: 0; padding-block: 8px; }
+.character-profile-hero .profile-main h1 { font-size: clamp(30px, 3vw, 42px); line-height: 1.15; overflow-wrap: anywhere; }
+.character-profile-hero .profile-main > p { font-size: 14px; line-height: 1.8; color: var(--text-secondary); max-width: 72ch; }
+.character-profile-hero .profile-portrait { height: 230px; border-radius: var(--radius-md); border-color: var(--border-default); background: var(--surface-1); }
+.character-profile-hero .profile-portrait > .character-portrait-open { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; border-radius: inherit; background: transparent; }
+.character-portrait-open > .ui-button-label { display: block; width: 100%; height: 100%; }
+.character-portrait-open .character-portrait-image { width: 100%; height: 100%; object-fit: contain; }
+.character-portrait-open:focus-visible { outline-offset: -3px; }
+.character-profile-model { min-width: 0; }
+.character-profile-model .character-model { margin: 0; padding: 0; border: 0; background: transparent; }
+.character-profile-model .character-model-heading h2 { display: none; }
+.character-profile-model .character-model-heading:not(:has(.character-model-form-select)) { display: none; }
+.character-profile-model .character-model-heading { margin-bottom: 8px; }
+.character-profile-model .character-model-form-select { width: 100%; }
+.character-profile-model .character-model-preview { min-height: 230px; height: 230px; }
+.character-profile-model .character-model-preview-open > .ui-button-glyph { top: 8px; right: 8px; width: 36px; height: 36px; }
+.character-profile-page .profile-tags span { border-color: var(--border-default); color: var(--text-secondary); border-radius: var(--radius-xs); font-size: 11px; }
+@media (max-width: 760px) {
+  .character-profile-page .character-profile-hero { grid-template-columns: 150px minmax(0, 1fr); gap: 20px; }
+  .character-profile-hero .profile-main { padding: 0; }
+  .character-profile-hero .profile-main > p { font-size: 13px; }
+  .character-profile-hero .profile-portrait, .character-profile-model .character-model-preview { min-height: 190px; height: 190px; }
+}
+@media (max-width: 480px) {
+  .character-profile-page .character-profile-hero { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .character-profile-visual { width: 180px; }
+  .character-profile-hero .profile-main h1 { font-size: 30px; }
+}

@@ -570,3 +570,36 @@ Values use exact source strings, including multi-hit formulas and constant value
 missing levels stay unavailable rather than being extrapolated. Technical skill
 tree nodes and source IDs are not public talent content. Description parameters
 are substituted only when the source supplies their binding.
+
+## Shared media galleries
+
+The site-level MediaViewerProvider owns the single image/video viewer. Features
+provide titled media collections through useMediaViewer; they do not mount their
+own lightboxes. Opening snapshots the collection and selected index. The native
+modal restores focus and page scroll on close, supports Escape and previous/next
+navigation, and leaves keyboard input to native video controls. Images support
+zoom and pointer panning; videos start paused with explicit playback controls.
+Failed sources expose retry without losing the rest of the gallery.
+
+Character portraits, published artwork and playable trial WEBM previews share
+one collection. Gallery video thumbnails show a paused first frame. Unpublished
+or failed trial exports do not produce an empty video card or a binary scene
+archive download. Source references remain available in the profile disclosure.
+
+## Exclusive voice playback
+
+Shared AudioPlayer instances play one voice at a time. A successfully started
+voice pauses earlier players at their current positions; a failed request does
+not silence the current voice. Late starts from superseded requests cannot take
+playback back from a newer voice. Multi-stem cutscene media remains independent.
+
+## Catalog controls
+
+Catalog role filters use the shared selectable Pill. Unselected options remain
+available and visually distinct from genuinely disabled options. Category links
+expose the current destination. Changing role filters resets pagination and
+cancels superseded reads; search category links retain the active locale.
+Shared Pagination owns previous/next geometry, disabled boundaries and a polite
+range summary for page or cursor navigation. Cursor navigation never invents a
+total or page number. Shared search clear actions retain a named keyboard target
+but display only an unframed icon.

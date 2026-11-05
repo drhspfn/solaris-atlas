@@ -1,0 +1,7 @@
+.ui-pill { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 28px; padding: 4px 10px; border: 1px solid var(--border-default); border-radius: 999px; background: var(--surface-1); color: var(--text-primary); font: inherit; font-size: 12px; line-height: 1.3; text-decoration: none; }
+.ui-pill-interactive { min-height: 36px; cursor: pointer; }
+.ui-pill-interactive:hover:not(:disabled) { background: var(--surface-2); border-color: var(--border-strong); }
+.ui-pill-interactive:focus-visible { outline: 1px solid var(--text-secondary); outline-offset: 2px; }
+.ui-pill-interactive[aria-pressed="true"], .ui-pill-interactive[aria-current="page"] { background: var(--surface-3); border-color: var(--accent-mint); color: var(--text-primary); }
+.ui-pill-interactive:disabled { background: var(--surface-1); border-color: var(--border-default); color: var(--text-muted); opacity: .6; cursor: default; }
+@media (forced-colors: active) { .ui-pill-interactive[aria-pressed="true"], .ui-pill-interactive[aria-current="page"] { outline: 1px solid Highlight; } }

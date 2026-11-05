@@ -20,6 +20,15 @@ function load(path, mocks = {}) {
 }
 const preview = load('../src/components/ui/animationPreview.ts');
 const playback = load('../src/components/ui/RenderedAnimation.tsx', { './animationPreview': preview });
+const mediaHelpers = load('../src/components/characters/characterMediaItems.ts');
+const { CharacterMediaProvider, CharacterMediaGallery } = load('../src/components/characters/CharacterMedia.tsx', {
+  '@/api/client': { apiUrl: (url) => url },
+  '@/components/ui/Button': { Button: ({ children, icon, ...props }) => React.createElement('button', props, icon, children) },
+  '@/components/ui/MediaViewer': { MediaViewer: () => null },
+  '@/components/ui/MediaViewerProvider': { useMediaViewer: () => ({ open() {} }) },
+  '@/components/ui/animationPreview': preview,
+  './characterMediaItems': mediaHelpers,
+});
 const { CharacterArchive } = load('../src/components/characters/CharacterArchive.tsx', {
   '@/lib/router': { Link: 'a' },
   '../../api/client': { apiUrl: (url) => url },
@@ -28,19 +37,20 @@ const { CharacterArchive } = load('../src/components/characters/CharacterArchive
   '@/components/ui/Select': { Select: () => null },
   '@/components/ui/TrackPlayer': { TrackPlayer: () => null },
   '@/components/ui/RenderedAnimation': playback,
+  '@/components/characters/CharacterMedia': { CharacterMediaGallery },
   '@/components/ui/animationPreview': preview,
 });
 const clip = { animation: 'idle', url: 'https://cdn.test/idle.webm', mime_type: 'video/webm',
   file_id: 2, width: 786, height: 2048 };
 const ready = { recipe: 'riglyph-native-v1', status: 'ready', variants: [clip] };
 function render(animation_preview, hasArchive = true) {
-  return renderToStaticMarkup(React.createElement(CharacterArchive, {
-    locale: 'en', characterKey: 'character:1211', materials: [],
-    archive: { profile: { voice_actors: {} }, skills: [], skill_tree: [], resonance_chain: [],
-      voice_lines: [], other_voice_events: [],
-      artwork: [{ kind: 'RoleHeadIconLarge', url: 'https://cdn.test/portrait.png' }],
-      trial_spine: hasArchive ? { url: 'https://cdn.test/source.zip', file_id: 1, animation_preview } : null },
-  }));
+  const archive = { profile: { voice_actors: {} }, skills: [], skill_tree: [], resonance_chain: [],
+    voice_lines: [], other_voice_events: [],
+    artwork: [{ kind: 'RoleHeadIconLarge', url: 'https://cdn.test/portrait.png' }],
+    trial_spine: hasArchive ? { url: 'https://cdn.test/source.zip', file_id: 1, animation_preview } : null };
+  return renderToStaticMarkup(React.createElement(CharacterMediaProvider, { archive, name: 'Denia' },
+    React.createElement(CharacterArchive, { locale: 'en', characterKey: 'character:1211', materials: [], archive })));
+
 }
 
 for (const value of [undefined, { status: 'static' }, { status: 'failed' },
@@ -56,10 +66,11 @@ test('a character without an archived trial has no trial block', () => {
   assert.doesNotMatch(render(null, false), /Character trial animation|Download trial scene/);
 });
 
-test('a playable trial retains a looping control-free preview and source download', () => {
+test('a playable trial joins the shared gallery with a paused first-frame thumbnail and no raw scene download', () => {
   const markup = render(ready);
-  assert.match(markup, /character-trial-animation/);
-  assert.match(markup, /<video[^>]*loop=""/);
-  assert.doesNotMatch(markup, /<video[^>]*controls/);
-  assert.match(markup, /href="https:\/\/cdn.test\/source.zip" download=""/);
+  assert.match(markup, /Trial animation/);
+  assert.match(markup, /Artwork and animation/);
+  assert.match(markup, /<video[^>]*src="https:\/\/cdn.test\/idle.webm#t=0.001"/);
+  assert.doesNotMatch(markup, /autoplay|<video[^>]*controls/);
+  assert.doesNotMatch(markup, /character-trial-animation|href="https:\/\/cdn.test\/source.zip"/);
 });

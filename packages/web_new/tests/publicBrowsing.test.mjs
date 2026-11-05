@@ -36,6 +36,10 @@ function harness(component, props) {
   };
   const mocks = {
     react,
+    '@/components/ui/Input': { Input: 'input' },
+    '@/components/ui/Button': { Button: 'button' },
+    '@/components/ui/Pagination': { Pagination: 'Pagination' },
+    '@/components/ui/Pill': { Pill: 'Pill' },
     '@/api/client': {
       api: (path, options) => new Promise((resolve, reject) => {
         calls.push({ path, signal: options.signal });
@@ -85,12 +89,12 @@ test('catalog SSR success avoids a duplicate read; paging back restores its entr
   const h = harness('catalog/CatalogClient', { category: 'character', initialItems, initialTotal: 30, initialLoaded: true });
   h.render();
   assert.equal(h.calls.length, 0);
-  button(h.render(), 'Next').props.onClick();
+  find(h.render(), node => node.type === 'Pagination').props.onPageChange(2);
   h.render();
   assert.match(h.calls[0].path, /offset=24/);
   h.pending[0].resolve({ results: [{ id: 25 }], total: 30 });
   await tick();
-  button(h.render(), 'Previous').props.onClick();
+  find(h.render(), node => node.type === 'Pagination').props.onPageChange(1);
   h.render();
   assert.equal(h.calls.length, 1);
   const card = find(h.render(), (node) => node.props?.item);
@@ -148,4 +152,27 @@ test('profile and archive load in parallel; restoring English rejects late local
   const tree = h.render();
   assert.equal(find(tree, (node) => node.type === 'h1').props.children[0], 'Original');
   assert.equal(find(tree, (node) => node.props?.archive)?.props.archive, initialArchive);
+});
+
+test('changing role filter resets the page and aborts a superseded read', async () => {
+  const h = harness('catalog/CatalogClient', { category: 'character', initialItems, initialTotal: 57, initialLoaded: true });
+  h.render();
+  find(h.render(), node => node.type === 'Pagination').props.onPageChange(2); h.render();
+  assert.match(h.calls[0].path, /offset=24/);
+  find(h.render(), node => node.type === 'Pill' && node.props.children === 'Story & event roles').props.onClick(); h.render();
+  assert.equal(h.calls[0].signal.aborted, true);
+  assert.match(h.calls[1].path, /offset=0.*character_kind=story/);
+  h.pending[0].resolve({ results: [{ id: 999 }], total: 57 });
+  h.pending[1].resolve({ results: [{ id: 50 }], total: 1 }); await tick();
+  assert.equal(find(h.render(), node => node.props?.item)?.props.item.id, 50);
+  assert.equal(find(h.render(), node => node.type === 'Pill' && node.props.children === 'Story & event roles').props.selected, true);
+});
+
+test('catalog search submits from a compact named icon rather than a framed text button', () => {
+  const h = harness('catalog/CatalogClient', { category: 'character', initialItems, initialLoaded: true });
+  const action = find(h.render(), node => node.type === 'button' && node.props?.['aria-label'] === 'Search catalog');
+  assert.equal(action.props.size, 'icon');
+  assert.equal(action.props.variant, 'ghost');
+  assert.equal(action.props.children, undefined);
+  assert.equal(action.props.className, 'search-action');
 });

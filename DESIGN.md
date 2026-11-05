@@ -260,3 +260,16 @@ buttons share a compact wrapping toolbar. Resource loads have independent pendin
 states. Settings actions include visible explanatory text when an icon alone does
 not make the outcome clear. World/local offsets name their coordinate space and
 metre units. Settings/form/close controls remain easy to reach on narrow screens.
+
+### Character profile media
+
+The character header has one compact visual slot beside the name and description.
+Portrait and 3D model are alternate views of that slot, selected with shared
+underline Tabs. The model no longer forms a tall column on the opposite edge of
+the header. Its compact rig mounts on demand; the full studio still opens from
+the preview. On narrow phones the visual and description stack naturally.
+
+The profile's artwork and trial animation use small, consistently sized gallery
+cards. Trial cards show a paused video frame, with playback reserved for the
+shared site-level media viewer. The gallery uses the existing surface, border,
+font and mint action tokens without introducing a second visual theme.

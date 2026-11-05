@@ -36,6 +36,7 @@ function load(react = React) {
     },
     "@/components/ui/Select": { Select: () => null },
     "@/components/ui/TrackPlayer": { TrackPlayer: () => null },
+    "@/components/characters/CharacterMedia": { CharacterMediaGallery: () => null },
     "@/components/ui/RenderedAnimation": { RenderedAnimation: () => null },
     "@/components/ui/animationPreview": { selectAnimationClip: () => null },
   };
@@ -513,4 +514,13 @@ test("Iuno input hints use authored PC labels and leave unrelated text unchanged
   const markup = cardHarness(skill({ description, attributes: [] })).markup();
   assert.match(markup, /Press Basic Attack; then press again\. Localized текст stays\. \{Cus:Other,PC=Keep\}/);
   assert.doesNotMatch(markup, /Cus:Ipt|Touch=|Gamepad=/);
+});
+
+test("profile biography appears only when it adds to the header introduction", () => {
+  const { CharacterArchive } = load();
+  const archive = { biography: "<b>Guardian</b> of the Black Shores.", profile: { voice_actors: {} }, artwork: [], skills: [], skill_tree: [], resonance_chain: [], voice_lines: [], other_voice_events: [] };
+  const render = introduction => renderToStaticMarkup(React.createElement(CharacterArchive, { archive, introduction, materials: [], locale: 'en', characterKey: 'character:1505' }));
+  assert.doesNotMatch(render('Guardian  of the Black Shores.'), /character-biography/);
+  assert.match(render('A different summary.'), /character-biography/);
+  assert.match(render(undefined), /character-biography/);
 });

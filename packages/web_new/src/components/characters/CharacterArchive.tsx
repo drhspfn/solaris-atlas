@@ -16,13 +16,11 @@ import { entityPath } from "../../data/entities";
 import { availableLocales } from "../../data/locales";
 import { Select } from "@/components/ui/Select";
 import { TrackPlayer } from "@/components/ui/TrackPlayer";
-import { RenderedAnimation } from "@/components/ui/RenderedAnimation";
-import {
-  selectAnimationClip,
-  type AnimationPreview,
-} from "@/components/ui/animationPreview";
+import { CharacterMediaGallery } from "@/components/characters/CharacterMedia";
+import type { AnimationPreview } from "@/components/ui/animationPreview";
 import "@/styles/character-voice-lines.css";
 import "@/styles/character-talents.css";
+import "@/styles/character-archive-layout.css";
 
 export interface CharacterArchiveData {
   trial_spine?: {
@@ -129,47 +127,6 @@ function artworkLabel(art: CharacterArchiveData["artwork"][number]) {
   return art.kind.replaceAll(/([a-z])([A-Z])/g, "$1 $2");
 }
 
-function ArtworkCard({
-  art,
-}: {
-  art: CharacterArchiveData["artwork"][number];
-}) {
-  const [failed, setFailed] = useState(false);
-  const label = artworkLabel(art);
-  return (
-    <figure className="character-artwork-card">
-      {art.url && !failed ? (
-        <a
-          href={apiUrl(art.url.replace(/^\/api/, ""))}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={`Open ${label} image`}
-        >
-          <img
-            src={apiUrl(art.url.replace(/^\/api/, ""))}
-            alt={label}
-            loading="lazy"
-            width={256}
-            height={256}
-            onError={() => setFailed(true)}
-          />
-        </a>
-      ) : (
-        <div className="character-artwork-placeholder">
-          <Image size={24} aria-hidden="true" />
-          <span>{failed ? "Image unavailable" : "Image not exported"}</span>
-          {failed && (
-            <button type="button" onClick={() => setFailed(false)}>
-              Retry image
-            </button>
-          )}
-        </div>
-      )}
-      <figcaption>{label}</figcaption>
-    </figure>
-  );
-}
-
 function gameText(
   value: string | null | undefined,
   params: string[] = [],
@@ -189,7 +146,10 @@ function talentText(
   params: string[] = [],
 ): string {
   return gameText(value, params)
-    .replace(/\{Cus:Ipt,Touch=(?:Tap|tap) PC=(Press|press) Gamepad=(?:Press|press)\}/g, "$1")
+    .replace(
+      /\{Cus:Ipt,Touch=(?:Tap|tap) PC=(Press|press) Gamepad=(?:Press|press)\}/g,
+      "$1",
+    )
     .replace(/\{\d+[^}]*\}/g, "—");
 }
 
@@ -405,11 +365,13 @@ export function CharacterArchive({
   materials,
   locale,
   characterKey,
+  introduction,
 }: {
   archive: CharacterArchiveData | null;
   materials: MaterialUse[];
   locale: string;
   characterKey: string;
+  introduction?: string;
 }) {
   const [textLocale, setTextLocale] = useState(locale);
   const [textArchive, setTextArchive] = useState<{
@@ -459,15 +421,6 @@ export function CharacterArchive({
     (art) =>
       art.kind === "RoleHeadIconLarge" && art.scope !== "shared_resource",
   );
-  const trialArtwork = archive?.artwork.find(
-    (art) =>
-      art.kind === "RoleStand" && art.scope !== "shared_resource" && art.url,
-  );
-
-  const trialPreview = selectAnimationClip(
-    archive?.trial_spine?.animation_preview,
-    "idle",
-  );
 
   return (
     <div className="character-archive">
@@ -483,47 +436,53 @@ export function CharacterArchive({
           <ChevronDown size={17} />
         </summary>
         <div className="character-fold-body">
-          {archive?.biography && (
-            <p className="character-biography">{gameText(archive.biography)}</p>
-          )}
-          <div className="character-facts">
+          {archive?.biography &&
+            gameText(archive.biography).replace(/\s+/g, " ") !==
+              (introduction
+                ? gameText(introduction).replace(/\s+/g, " ")
+                : "") && (
+              <p className="character-biography">
+                {gameText(archive.biography)}
+              </p>
+            )}
+          <dl className="character-facts">
             {archive?.profile.element && (
               <div>
-                <small>Attribute</small>
-                <strong>{gameText(archive.profile.element)}</strong>
+                <dt>Attribute</dt>
+                <dd>{gameText(archive.profile.element)}</dd>
               </div>
             )}
             {archive?.profile.quality && (
               <div>
-                <small>Rarity</small>
-                <strong>{gameText(archive.profile.quality)}</strong>
+                <dt>Rarity</dt>
+                <dd>{gameText(archive.profile.quality)}</dd>
               </div>
             )}
             {archive?.profile.affiliation && (
               <div>
-                <small>Affiliation</small>
-                <strong>{gameText(archive.profile.affiliation)}</strong>
+                <dt>Affiliation</dt>
+                <dd>{gameText(archive.profile.affiliation)}</dd>
               </div>
             )}
             {archive?.profile.country && (
               <div>
-                <small>Origin</small>
-                <strong>{gameText(archive.profile.country)}</strong>
+                <dt>Origin</dt>
+                <dd>{gameText(archive.profile.country)}</dd>
               </div>
             )}
             {archive?.profile.birthday && (
               <div>
-                <small>Birthday</small>
-                <strong>{gameText(archive.profile.birthday)}</strong>
+                <dt>Birthday</dt>
+                <dd>{gameText(archive.profile.birthday)}</dd>
               </div>
             )}
             {archive?.profile.talent && (
               <div>
-                <small>Talent</small>
-                <strong>{gameText(archive.profile.talent)}</strong>
+                <dt>Talent</dt>
+                <dd>{gameText(archive.profile.talent)}</dd>
               </div>
             )}
-          </div>
+          </dl>
           {portrait && !portrait.url && (
             <div className="character-asset-note">
               <Image size={16} /> Portrait source found; image export is
@@ -533,45 +492,12 @@ export function CharacterArchive({
               </code>
             </div>
           )}
-          {archive?.trial_spine && trialPreview && (
-            <section
-              aria-label="Character trial animation"
-              className="character-artwork character-trial-animation"
-            >
-              <h3>Trial animation</h3>
-              <RenderedAnimation
-                preview={trialPreview}
-                label="Character trial animation"
-                fallback={
-                  <div className="character-artwork-placeholder">
-                    {trialArtwork?.url ? (
-                      <img
-                        src={apiUrl(trialArtwork.url.replace(/^\/api/, ""))}
-                        alt="Character trial artwork"
-                        loading="lazy"
-                      />
-                    ) : null}
-                  </div>
-                }
-              />
-              <a href={archive.trial_spine.url} download>
-                Download trial scene
-              </a>
-            </section>
-          )}
+          <CharacterMediaGallery />
           {!!archive?.artwork.length && (
             <section
               aria-label="Character artwork"
               className="character-artwork"
             >
-              <h3>Artwork</h3>
-              <div className="character-artwork-gallery">
-                {archive.artwork
-                  .filter((art) => art.scope !== "shared_resource")
-                  .map((art) => (
-                    <ArtworkCard key={`${art.kind}-${art.url}`} art={art} />
-                  ))}
-              </div>
               <details className="character-subfold">
                 <summary>
                   Source references{" "}

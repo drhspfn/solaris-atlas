@@ -4,7 +4,9 @@ import { ArrowRight, BookOpen, ChevronRight, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api, apiUrl } from '@/api/client';
 import type { CharacterModelData } from '@/components/models/types';
-import { CharacterModel } from '@/components/characters/CharacterModel';
+import { CharacterMediaProvider } from '@/components/characters/CharacterMedia';
+import '@/styles/character-profile.css';
+import { CharacterProfileVisual } from '@/components/characters/CharacterProfileVisual';
 import { CharacterModelImport } from '@/components/characters/CharacterModelImport';
 import {
   CharacterArchive,
@@ -201,8 +203,11 @@ export function EntityProfileClient({
     (use: any) => !use.character?.canonical_key,
   );
 
-  return (
-    <div className="page-container">
+  const introduction = description || (kind === 'character' ? archive?.biography?.replace(/<[^>]*>/g, '').trim() : '') ||
+    (kind === 'character' ? 'A character recorded in the Solaris Atlas story archive.' : 'Explore source-backed details and story links for this entry.');
+
+  const content = (
+    <div className={`page-container${kind === 'character' ? ' character-profile-page' : ''}`}>
       {error && <ErrorPanel message={error} onRetry={() => setProfileRetry((value) => value + 1)} />}
       {loading && <p role="status">Updating archive record…</p>}
       <div className="breadcrumbs">
@@ -212,19 +217,18 @@ export function EntityProfileClient({
         <ChevronRight size={13} />
         <span>{name}</span>
       </div>
-      <div className="profile-hero">
-        <div className={`profile-portrait art-${kind}`}>
-          {portraitUrl && (
-            <img
-              className="character-portrait-image"
-              src={apiUrl(portraitUrl.replace(/^\/api/, ''))}
-              alt={`${name} portrait`}
-            />
-          )}
-          <div className="portrait-rings" />
-          {!portraitUrl && <span>{kind === 'character' ? '✳' : kind === 'item' ? '✧' : '⌖'}</span>}
-          <small>{kind.toUpperCase()}</small>
-        </div>
+      <div className={`profile-hero${kind === 'character' ? ' character-profile-hero' : ''}`}>
+        {kind === 'character' ? (
+          <CharacterProfileVisual key={entity?.canonical_key ?? selectedRole} characterKey={entity?.canonical_key ?? selectedRole} name={name} portraitUrl={portraitUrl}
+            initialModel={selectedRole === entityKey ? initialModel : null} refreshKey={modelRevision} />
+        ) : (
+          <div className={`profile-portrait art-${kind}`}>
+            {portraitUrl && <img className="character-portrait-image" src={apiUrl(portraitUrl.replace(/^\/api/, ''))} alt={`${name} portrait`} />}
+            <div className="portrait-rings" />
+            {!portraitUrl && <span>{kind === 'item' ? '✧' : '⌖'}</span>}
+            <small>{kind.toUpperCase()}</small>
+          </div>
+        )}
         <div className="profile-main">
           <span className="eyebrow left">{categoryTitle[kind].toUpperCase()} PROFILE</span>
           <div className="character-profile-title-row">
@@ -234,17 +238,7 @@ export function EntityProfileClient({
                 onComplete={() => setModelRevision((value) => value + 1)} />
             )}
           </div>
-          <p>
-            {description ||
-              (kind === 'character'
-                ? archive?.biography
-                    ?.replace(/<[^>]*>/g, '')
-                    .slice(0, APP_SETTINGS.limits.biographyPreviewCharacters)
-                : null) ||
-              (kind === 'character'
-                ? 'A character recorded in the Solaris Atlas story archive.'
-                : 'Explore source-backed details and story links for this entry.')}
-          </p>
+          <p>{introduction}</p>
           {selectedVariant && (
             <div className="rover-variant-controls" aria-label="Rover appearance and element">
               <div>
@@ -288,6 +282,7 @@ export function EntityProfileClient({
           <CharacterArchive
             key={`archive:${selectedRole}`}
             archive={archive}
+            introduction={introduction}
             materials={characterMaterials}
             locale={locale}
             characterKey={selectedRole}
@@ -298,9 +293,6 @@ export function EntityProfileClient({
         ) : (
           <div className="character-archive-loading" role="status">Loading character details…</div>
         ))}
-      {kind === 'character' && entity?.canonical_key && (
-        <CharacterModel initialModel={selectedRole === entityKey ? initialModel : null} key={entity.canonical_key} characterKey={entity.canonical_key} name={name} refreshKey={modelRevision} />
-      )}
       <div className="profile-columns">
         <section className="content-panel">
           <PanelTitle
@@ -767,4 +759,9 @@ export function EntityProfileClient({
       )}
     </div>
   );
+  return kind === 'character' ? (
+    <CharacterMediaProvider key={entity?.canonical_key ?? selectedRole} archive={profileRole === selectedRole ? archive : null} portraitUrl={portraitUrl} name={name}>
+      {content}
+    </CharacterMediaProvider>
+  ) : content;
 }
