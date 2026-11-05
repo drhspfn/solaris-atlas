@@ -53,8 +53,13 @@ def bank_media_ids(data: bytes) -> list[int]:
                 for location in locations:
                     if len(obj) < location + 9:
                         raise ValueError("Truncated Wwise source")
-                    if struct.unpack_from("<I", obj, location)[0] != 0x00140001:
-                        raise ValueError("Unsupported Wwise source codec")
+                    plugin = struct.unpack_from("<I", obj, location)[0]
+                    if plugin != 0x00140001:
+                        object_id = struct.unpack_from("<I", obj)[0]
+                        raise ValueError(
+                            f"Unsupported Wwise source codec 0x{plugin:08x} "
+                            f"(HIRC type {kind}, object {object_id}, source offset {location})"
+                        )
                     sources.append(struct.unpack_from("<I", obj, location + 5)[0])
                 offset += 5 + length
             if offset != len(payload):
