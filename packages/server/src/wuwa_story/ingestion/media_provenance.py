@@ -95,10 +95,14 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
         async with semaphore:
             return key, await storage.stat(key)
 
-    components = {key: ((reference.metadata_json or {}).get('animation_preview') or {}).get('variants', [])
-                  or (reference.metadata_json or {}).get('playback', {}).get('components', [])
-                  for _identity, _size, key, reference, _location in candidates
-                  if require_spine_playback and expected[_identity].get('kind') == 'spine'}
+    components = {}
+    for identity, _size, key, reference, _location in candidates:
+        metadata = reference.metadata_json or {}
+        parts = list((metadata.get('sequence_media') or {}).get('components', []))
+        if require_spine_playback and expected[identity].get('kind') == 'spine':
+            parts.extend((metadata.get('animation_preview') or {}).get('variants', [])
+                         or (metadata.get('playback') or {}).get('components', []))
+        components.setdefault(key, []).extend(parts)
     keys = {c[2] for c in candidates} | {part['object_key'] for parts in components.values() for part in parts}
     objects = dict(await asyncio.gather(*(stat(key) for key in keys)))
     present = set()

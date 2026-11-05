@@ -169,7 +169,8 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
         from wuwa_story_worker.story_spine import build_spine_bundle
         try:
             bundle, originals = await build_spine_bundle(root, target['resource_id'], fmodel, converter,
-                                                         presentation=target.get('presentation'),
+                                                         presentation=target.get(
+                                                             'presentation'),
                                                          **({'direct_resources': target['direct_resources']}
                                                             if target.get('direct_resources') else {}))
         except BlockingIOError:
@@ -303,9 +304,11 @@ async def _locked_process_entity_media(payload: dict) -> None:
                     and run.metadata_json.get("payload") == payload
                     and run.status not in ("completed", "partial", "cancelled")
                 ):
-                    run.status = "waiting_dependency" if transient_job_error(error) else "failed"
+                    run.status = "waiting_dependency" if transient_job_error(
+                        error) else "failed"
                     run.error = str(error)[:2000]
-                    run.finished_at = None if run.status == "waiting_dependency" else datetime.now(UTC)
+                    run.finished_at = None if run.status == "waiting_dependency" else datetime.now(
+                        UTC)
                     await session.commit()
             raise
 
@@ -416,9 +419,11 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                             rendered = await asyncio.to_thread(build_animation, path)
                             animation = rendered.decision
                             if animation.get('state') == 'render_failed':
-                                riglyph_failures.append({'path': target['path'], 'reasons': animation['reasons']})
+                                riglyph_failures.append(
+                                    {'path': target['path'], 'reasons': animation['reasons']})
                         except (OSError, ValueError, subprocess.SubprocessError, zipfile.BadZipFile) as error:
-                            riglyph_failures.append({'path': target['path'], 'error': str(error)[:500]})
+                            riglyph_failures.append(
+                                {'path': target['path'], 'error': str(error)[:500]})
                             animation = {**animation, 'display': 'static', 'state': 'conversion_failed',
                                          'reasons': [{'code': 'conversion_failed', 'error': str(error)[:500]}]}
                     await session.execute(text("SELECT pg_advisory_xact_lock(:id)"),
@@ -426,9 +431,11 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                     spine_source = {}
                     if target['kind'] == 'spine':
                         with zipfile.ZipFile(path) as archive:
-                            controls = json.loads(archive.read('manifest.json')).get('control_sources', {})
+                            controls = json.loads(archive.read('manifest.json')).get(
+                                'control_sources', {})
                         if controls.get('missing'):
-                            incomplete_spine_controls.append({'path': target['path'], 'missing': controls['missing']})
+                            incomplete_spine_controls.append(
+                                {'path': target['path'], 'missing': controls['missing']})
                         spine_source = {'spine_recipe': target['spine_recipe'],
                                         'sequence_media_schema': target.get('sequence_media_schema'),
                                         'presentation_sha256': target.get('presentation_sha256'),
@@ -445,6 +452,10 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         rendered_metadata = await publish_animation(
                             session, path, published, service, run.id, artifacts=rendered)
                     for original_path in originals:
+                        if target['kind'] == 'spine' and original_path.suffix.lower() == '.mp4':
+                            # The fragment publisher registers these with their video
+                            # identity and links each file to this source bundle.
+                            continue
                         original = await service.register_file(
                             session,
                             original_path,
@@ -484,6 +495,11 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                             source_name=target["language"],
                         )
                     reference.file_id = published.id
+                    sequence_media = None
+                    if target['kind'] == 'spine':
+                        from wuwa_story_worker.sequence_fragments import publish_sequence_fragments
+                        sequence_media = await publish_sequence_fragments(
+                            session, path, target, published, service, run.id, provenance)
                     playback = None
                     if target['kind'] == 'spine' and not rendered_metadata and get_settings().story_spine_playback_enabled and (animation or {}).get('display') == 'animated':
                         from wuwa_story_worker.story_spine import publish_open_playback
@@ -493,6 +509,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                             unsupported_spine.append(
                                 {'path': target['path'], 'diagnostics': playback['unsupported']})
                     reference.metadata_json = {
+                        **({'sequence_media': sequence_media} if sequence_media is not None else {}),
                         **({'playback': playback} if playback else {}),
                         **({'animation_import': animation} if animation else {}),
                         **rendered_metadata,
@@ -501,6 +518,9 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         "language": target["language"],
                         "game_source": provenance,
                     }
+                    if sequence_media is not None and reference_type in {'story_presentation', 'story_spine'}:
+                        from wuwa_story_worker.sequence_fragments import invalidate_sequence_quests
+                        await invalidate_sequence_quests(session, target)
                     # Keep files, variants and provenance atomic for this target;
                     # a later target or deployment must not roll back earlier media.
                     run.raw_output = {"media_report": report,

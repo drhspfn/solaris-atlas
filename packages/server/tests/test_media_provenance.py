@@ -40,6 +40,35 @@ async def test_archive_only_spine_reuse_needs_no_browser_components():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('require_playback', [False, True])
+@pytest.mark.parametrize('fragment_size', [None, 2, 3])
+async def test_sequence_fragments_are_verified_even_without_open_playback(require_playback, fragment_size):
+    value = {**target('story_sequence:flow_state:Story'), 'kind': 'spine',
+             'reference_type': 'story_presentation', 'spine_recipe': 1}
+    reference, file, location = row(value, spine_recipe=1)
+    reference.reference_type = 'story_presentation'
+    part = {'object_key': 'objects/fragment', 'size_bytes': 3}
+    reference.metadata_json['sequence_media'] = {'complete_video': False, 'components': [part, part]}
+    reference.metadata_json['playback'] = {'variants': [{}], 'components': [
+        {'object_key': 'objects/scene', 'size_bytes': 4}], 'unsupported': []}
+
+    async def stat(key):
+        size = fragment_size if key == 'objects/fragment' else 4 if key == 'objects/scene' else 12
+        return SimpleNamespace(size_bytes=size) if size is not None else None
+
+    session = AsyncMock()
+    session.execute.return_value = [(reference, file, location)]
+    storage = SimpleNamespace(backend='s3', bucket='media', stat=AsyncMock(side_effect=stat))
+    result = await missing_media_targets(session, [value], source={'asset_version': '3.7.0'},
+                                         storage=storage, require_spine_playback=require_playback)
+    assert result == ([] if fragment_size == 3 else [value])
+    assert [call.args[0] for call in storage.stat.await_args_list].count('objects/fragment') == 1
+    assert ('objects/scene' in [call.args[0] for call in storage.stat.await_args_list]) == require_playback
+    # A missing child must not mark the still-valid parent ZIP unavailable.
+    assert location.available is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('missing_part', [False, True])
 async def test_native_preview_reuse_verifies_every_rendered_video(missing_part):
     value = {**target('spine_background:7'), 'kind': 'spine', 'reference_type': 'story_spine', 'spine_recipe': 1}
