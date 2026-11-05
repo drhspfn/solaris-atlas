@@ -592,3 +592,14 @@ Shared AudioPlayer instances play one voice at a time. A successfully started
 voice pauses earlier players at their current positions; a failed request does
 not silence the current voice. Late starts from superseded requests cannot take
 playback back from a newer voice. Multi-stem cutscene media remains independent.
+
+## Catalog controls
+
+Catalog role filters use the shared selectable Pill. Unselected options remain
+available and visually distinct from genuinely disabled options. Category links
+expose the current destination. Changing role filters resets pagination and
+cancels superseded reads; search category links retain the active locale.
+Shared Pagination owns previous/next geometry, disabled boundaries and a polite
+range summary for page or cursor navigation. Cursor navigation never invents a
+total or page number. Shared search clear actions retain a named keyboard target
+but display only an unframed icon.

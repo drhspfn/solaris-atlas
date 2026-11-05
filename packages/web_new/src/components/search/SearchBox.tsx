@@ -1,10 +1,19 @@
-'use client';
+"use client";
 
-import { ArrowRight, Search, X } from 'lucide-react';
-import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from '@/lib/router';
+import { ArrowRight, Search, X } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import "@/styles/catalog-controls.css";
+import { useNavigate, useSearchParams } from "@/lib/router";
 
-export function SearchBox({ initial = '', category }: { initial?: string; category?: string }) {
+export function SearchBox({
+  initial = "",
+  category,
+}: {
+  initial?: string;
+  category?: string;
+}) {
   const [value, setValue] = useState(initial);
   const input = useRef<HTMLInputElement>(null);
   const params = useSearchParams();
@@ -13,13 +22,13 @@ export function SearchBox({ initial = '', category }: { initial?: string; catego
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     const next = new URLSearchParams();
-    if (value.trim()) next.set('q', value.trim());
-    if (category && category !== 'all') next.set('category', category);
+    if (value.trim()) next.set("q", value.trim());
+    if (category && category !== "all") next.set("category", category);
     if (params) {
-      for (const c of params.getAll('category')) {
-        if (!next.has('category')) next.append('category', c);
+      for (const c of params.getAll("category")) {
+        if (!next.has("category")) next.append("category", c);
       }
-      for (const field of ['mode', 'game_version', 'locale']) {
+      for (const field of ["mode", "game_version", "locale"]) {
         const selected = params.get(field);
         if (selected) next.set(field, selected);
       }
@@ -27,47 +36,56 @@ export function SearchBox({ initial = '', category }: { initial?: string; catego
     navigate(`/search?${next.toString()}`);
   };
   return (
-    <form className="search-box" noValidate onSubmit={submit}>
+    <form className="search-box ui-search-form" noValidate onSubmit={submit}>
       <Search size={19} />
-      <input
+      <Input
         ref={input}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder={
-          params?.get('mode') === 'story'
-            ? 'Why did it happen? Who was involved?'
-            : 'Search characters, events, factions, places...'
+          params?.get("mode") === "story"
+            ? "Why did it happen? Who was involved?"
+            : "Search characters, events, factions, places..."
         }
         aria-label={
-          params?.get('mode') === 'story' ? 'Search story explanations' : 'Search the archive'
+          params?.get("mode") === "story"
+            ? "Search story explanations"
+            : "Search the archive"
         }
         maxLength={512}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault();
+          if (event.key === "Enter" && event.nativeEvent.isComposing)
+            event.preventDefault();
         }}
       />
       {value && (
-        <button
+        <Button
           type="button"
-          className="search-clear"
+          variant="ghost"
+          size="icon"
+          icon={<X size={17} />}
+          className="search-clear search-action"
           aria-label="Clear archive search"
           onClick={() => {
-            setValue('');
+            setValue("");
             if (initial && params) {
               const next = new URLSearchParams(params.toString());
-              next.delete('q');
+              next.delete("q");
               navigate(`/search?${next.toString()}`);
             }
             input.current?.focus();
           }}
-        >
-          <X size={16} aria-hidden="true" />
-        </button>
+        />
       )}
       <kbd>↵</kbd>
-      <button aria-label="Search">
-        <ArrowRight size={17} />
-      </button>
+      <Button
+        type="submit"
+        size="icon"
+        variant="ghost"
+        className="search-action"
+        aria-label="Search"
+        icon={<ArrowRight size={18} />}
+      />
     </form>
   );
 }

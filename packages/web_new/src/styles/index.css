@@ -522,7 +522,7 @@ button {
   padding: 3px 6px;
   color: #849188;
 }
-.search-box button {
+.search-box button:not(.ui-button) {
   height: 39px;
   width: 40px;
   background: #b0dfbf;
@@ -953,7 +953,7 @@ button {
 .catalog-search input::placeholder {
   color: #76837a;
 }
-.catalog-search button {
+.catalog-search button:not(.ui-button) {
   border: 0;
   background: none;
   color: #91a097;
@@ -3327,7 +3327,7 @@ select {
   border-radius: var(--radius-xs);
   color: var(--text-muted);
 }
-.search-box button {
+.search-box button:not(.ui-button) {
   border-radius: var(--radius-md);
   background: var(--accent-mint);
   color: #09110e;
@@ -5764,7 +5764,7 @@ html {
 .story-map-search input:focus-visible {
   outline: none;
 }
-button.search-clear {
+button.search-clear:not(.ui-button) {
   display: inline-grid;
   place-items: center;
   width: 28px;
@@ -5778,11 +5778,11 @@ button.search-clear {
   background: transparent;
   cursor: pointer;
 }
-button.search-clear:hover {
+button.search-clear:not(.ui-button):hover {
   color: var(--text-primary);
   background: var(--surface-3);
 }
-button.search-clear:focus-visible {
+button.search-clear:not(.ui-button):focus-visible {
   outline: 1px solid var(--accent-mint);
   outline-offset: 1px;
 }

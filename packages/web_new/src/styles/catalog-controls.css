@@ -1,0 +1,13 @@
+.ui-search-form { gap: 8px; }
+.ui-search-form > .ui-input { flex: 1; width: 0; min-height: 40px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--text-primary); font-size: 13px; }
+.ui-search-form > .ui-input:focus-visible { outline: none; }
+.ui-search-form:focus-within { border-color: var(--border-strong); box-shadow: none; }
+.ui-search-form > .ui-button { flex-shrink: 0; }
+.catalog-search.ui-search-form { box-sizing: border-box; min-height: 52px; align-items: center; padding: 6px 8px 6px 14px; }
+.catalog-pagination { margin-top: 32px; }
+.ui-search-form > .ui-button.search-action,
+.ui-search-form > .ui-button.search-action:hover:not(:disabled),
+.ui-search-form > .ui-button.search-action:active:not(:disabled) { flex: 0 0 32px; width: 32px; height: 32px; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--text-secondary); box-shadow: none; }
+.ui-search-form > .ui-button.search-action:hover:not(:disabled) { color: var(--text-primary); }
+.ui-search-form > .search-action .ui-button-glyph,
+.ui-search-form > .search-action .ui-button-glyph svg { width: 20px; height: 20px; }
