@@ -136,6 +136,8 @@ test('provider snapshots collections and bounds navigation using current state',
   const context = { Provider: 'Provider' };
   const react = {
     createContext: () => context,
+    useRef: initial => ({ current: initial }),
+    useEffect: () => {},
     useContext: value => value.current ?? null,
     useState: initial => [state ??= initial, update => { state = typeof update === 'function' ? update(state) : update; }],
     useCallback: callback => callback,
@@ -169,4 +171,35 @@ test('provider snapshots collections and bounds navigation using current state',
   assert.throws(() => exports.useMediaViewer(), /within MediaViewerProvider/);
   context.current = render().props.value;
   assert.equal(exports.useMediaViewer(), context.current);
+});
+
+
+test('provider closes an open viewer when its route reset key changes', () => {
+  let state, ref, lastKey, pending;
+  const context = { Provider: 'Provider' };
+  const react = {
+    createContext: () => context,
+    useState: initial => [state ??= initial, update => { state = typeof update === 'function' ? update(state) : update; }],
+    useRef: initial => ref ??= { current: initial },
+    useEffect: (effect, deps) => { if (!pending && lastKey !== deps[0]) { lastKey = deps[0]; pending = effect; } },
+    useCallback: callback => callback,
+  };
+  const jsx = (type, props) => ({ type, props });
+  const source = readFileSync(new URL('../src/components/ui/MediaViewerProvider.tsx', import.meta.url), 'utf8');
+  const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+  const exports = {};
+  vm.runInNewContext(code, { exports, require: id => {
+    if (id === 'react') return react;
+    if (id === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+    if (id === './MediaViewer') return { MediaViewer: 'MediaViewer' };
+    if (id === './mediaViewerUtils') return helpers;
+    return require(id);
+  } });
+  const render = resetKey => exports.MediaViewerProvider({ children: null, resetKey }).props.value;
+  let api = render('/first');
+  api.open(images); pending(); pending = null;
+  assert.equal(render('/first').activeIndex, 0);
+  render('/second'); pending(); pending = null;
+  api = render('/second');
+  assert.equal(api.activeIndex, null); assert.equal(api.items.length, 0);
 });

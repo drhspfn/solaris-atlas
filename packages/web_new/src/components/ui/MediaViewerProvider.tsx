@@ -4,6 +4,8 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -30,8 +32,21 @@ function validIndex(index: number, count: number): number {
   );
 }
 
-export function MediaViewerProvider({ children }: { children: ReactNode }) {
+export function MediaViewerProvider({
+  children,
+  resetKey,
+}: {
+  children: ReactNode;
+  resetKey?: string;
+}) {
   const [state, setState] = useState<ViewerState>(empty);
+  const previousResetKey = useRef(resetKey);
+  useEffect(() => {
+    if (previousResetKey.current !== resetKey) {
+      previousResetKey.current = resetKey;
+      setState(empty);
+    }
+  }, [resetKey]);
   const open = useCallback((items: MediaItem[], index = 0) => {
     const snapshot = items.slice();
     setState(
