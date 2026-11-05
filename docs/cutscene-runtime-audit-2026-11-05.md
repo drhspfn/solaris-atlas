@@ -74,7 +74,7 @@ Unknown order must remain honest, but can be explained once per group rather
 than after every action. Repeated titles alone are insufficient evidence to
 merge different occurrences.
 
-## Current-release runtime check, 2026-11-05 21:12 UTC
+## Historical current-release runtime check, 2026-11-05 21:12 UTC
 
 A bounded read-only check on API commit `15c231f` compared the complete stored
 English transcript and story blocks against freshly derived source records for
@@ -93,8 +93,9 @@ is not sufficient reason to delete an occurrence.
 
 This verifies stored identities, not complete media playback. Fourteen cinematic
 flow occurrences in quest 4688653 still had no release-21 presentation publication.
-The quest condition for dungeon 1557 had no matching LevelPlayData membership in
-that snapshot and remained unresolved. Neither case should be hidden by assigning
+At that check, the quest condition for dungeon 1557 had no matching LevelPlayData
+membership and remained unresolved; the later verified exit resolves that finding.
+Neither case should be hidden by assigning
 an invented order or borrowing a different release without matching provenance.
 Null choice destinations require separate interpretation; all non-null destinations
 in the checked scope existed. No production replay was performed by this audit.
@@ -153,6 +154,67 @@ rebuilt that one target to generation 9/9; Denia remained unchanged at 5/5.
 Public current and explicit 3.7.0 transcript requests returned HTTP 200, including
 the exit transition. Fourteen cinematic occurrences still lack published
 sequence media: verified graph links must not be reported as completed playback.
-The old projection consumer still needs a graceful upgrade so subsequent builds
-retain the new fields. Evidence: `scratch/current-twoquest-postdeploy/report.md`
-and `scratch/B024-BACKEND-ROLLOUT.md`.
+The projection consumer was still on 15c at this checkpoint. Its subsequent
+authorized graceful replacement completed at 22:31 UTC on b024, without a bulk
+dirty mark; the new builder retains the exit field on future refreshes. Evidence:
+`scratch/current-twoquest-postdeploy/report.md` and
+`scratch/B024-BACKEND-ROLLOUT.md`.
+
+## Persisted source and queued sequence coverage, 22:22–22:33 UTC
+
+Bounded persistence checks retained all 517 and 654 dialogue identities, with
+their exact baseline SHA256 values and fresh release-21 source identity matches.
+Quest 4688653 remained at generation 9/9 and Denia at 5/5. The thirteen repaired
+states still matched fifteen source edges and fifteen revisions. A repeated full
+quest-walk canary hit its eight-second statement budget under load; the successful
+persistence check instead used exact projection rows and known source-record IDs.
+
+Dungeon 1557 is resolved as `dungeon_exit`, not another battle: quest node
+`114000031_94` retains the explicit exit requirement, with instance source record
+64689830, row 1310, release 21, mapping to map 1555. The exit has no encounter tree.
+The original boss at node `114000031_231` retains LevelPlays 114000004 and 114750000.
+Public current and explicit 3.7.0 responses exposed this verified transition.
+
+At 22:24 UTC, all fourteen owners lacking published sequence media already had
+queued work in **existing run 26922**. Each complete frozen presentation equalled
+the current `flow_presentation(raw)` from its exact release-21 source record;
+presentation hashes, recipe 4 and explicit SequenceDataAsset cues matched.
+The request pins client 3.7.1 HD and download
+`1f0a5f240f08d1ef1c21a658d015eb2504abcda835d85b214cb1ec789538c812`.
+The owner/source/sequence matrix follows; every row refers to queued run 26922,
+not an additional job.
+
+| Owner | Source record | Sequence assets |
+| --- | --- | --- |
+| 4641592 | 64655020 | `DA_M3_2_18.DA_M3_2_18` |
+| 4641594 | 64655022 | `DA_P0043.DA_P0043` |
+| 4641599 | 64655029 | `DA_M3_2_19.DA_M3_2_19`, `DA_M0333.DA_M0333` |
+| 4641602 | 64652969 | `DA_M3_2_29.DA_M3_2_29` |
+| 4641604 | 64652971 | `DA_M3_2_30.DA_M3_2_30` |
+| 4648367 | 64652950 | `DA_M3_2_20.DA_M3_2_20` |
+| 4648369 | 64652952 | `DA_M0334.DA_M0334` |
+| 4648371 | 64652954 | `DA_M0335.DA_M0335` |
+| 4648373 | 64652956 | `DA_M0336.DA_M0336` |
+| 4648379 | 64652962 | `DA_M3_2_21.DA_M3_2_21` |
+| 4648381 | 64652964 | `DA_M3_2_22.DA_M3_2_22` |
+| 4648382 | 64652965 | `DA_M3_2_23.DA_M3_2_23` |
+| 4648383 | 64652966 | `DA_M3_2_24.DA_M3_2_24` |
+| 4649793 | 64655025 | `DA_P0044.DA_P0044`, `DA_LS_Piao_02.DA_LS_Piao_02` |
+
+The older request omits `sequence_media_schema`. Current bundle extraction follows
+its retained sequence cues, and fragment publication validates the actual archive
+and emits media schema 1. Runtime playback checks that published media schema,
+exact owner/release/client/presentation proof and fragment references; it does not
+require the request flag. This is distinct from future resolver cache-reuse checks.
+The running b024 image consumer includes this extraction/publication path.
+
+No owner lacked equivalent queued discovery work, so no thirteen-owner backfill,
+duplicate enqueue, replay, split, cancellation or mutation of run 26922 was made.
+**Queued coverage is not completed media:** extraction can still report partial
+or unsupported controls. Published fragments, URLs and runtime grouping require
+post-run verification; no whole cinematic is asserted.
+
+Exact receipts: `scratch/current-twoquest-postdeploy/persistence-bounded.json`,
+`links13-persistence.json`, `sequence-queued-coverage.json` and
+`sequence-queued-coverage.csv` in the same directory. The latter receipt records
+all fourteen source-record IDs, full presentation hashes and exact asset paths.
