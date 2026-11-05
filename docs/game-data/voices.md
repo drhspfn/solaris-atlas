@@ -58,3 +58,33 @@ unrelated completed publications remain reusable; no blanket regeneration or
 automatic production backfill is performed. Recovery of an old caption-enabled
 publication requires this fresh targeted preparation, not replay of an old saved
 payload that lacks the caption coverage requirement.
+
+## Authored character voice alternatives
+
+Simple v172 State/Random voice events can retain all independent alternatives.
+The worker exports exact event BNKs and Init from its pinned main-client plan,
+verifies receipt hashes, matches the complete cooked media inventory, then runs
+WWiser with Init. Only single-source renditions with no additional DSP/layering
+or sequencing are accepted. Unknown selectors and unsupported recipes remain
+explicitly unresolved. No gender, random child, or default state is selected.
+
+Each alternative has its own `character_voice` reference named
+`<language>:hirc1:<stable digest>`. Identity uses event/language/sound/media and
+state/random container-child IDs, never debug filenames or playlist positions.
+Selector branches (including aliases), random weights, bank/Init/tool hashes and
+the verified rendition bodies remain in `game_source.voice_variant`; original
+BNK, Init and WEM bytes are linked through FileVariant provenance. A retry counts
+the language complete only when every member of the same proven set is present.
+
+Character archive voice lines add `audio_variants`: independent entries with
+`id`, `source_name`, `language`, `selector_branches`, `url` and `status`.
+Missing siblings remain visible with a null URL. Languages with authored
+alternatives are excluded from the single-choice `audio_url`/`audio_tracks`;
+other languages retain their existing behavior. There is no SQL migration.
+
+`character-voice-hirc-local.zip` contains seven local-client banks, Init, actual
+WWiser XML/renditions and source hashes: five gender-dependent language pairs
+and twelve random pairs, 34 alternatives. It does **not** establish production
+bank equality. Runtime eligibility is recalculated from the actual pinned
+production inputs before any variant publication; this change does not enqueue
+a global backfill or publish the local fixture.

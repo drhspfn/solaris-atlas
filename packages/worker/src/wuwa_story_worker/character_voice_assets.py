@@ -174,3 +174,21 @@ async def prefetch_media(root, voice_root, identities, cached, fmodel, tool, ver
                     result[media_id] = (path, download_id, package)
                 save_json(receipt, saved)
         return result
+
+
+async def prefetch_banks(root, sources, fmodel, verify):
+    """Exact event banks plus shared Init, exclusively from the pinned main plan."""
+    plan_id = json.loads((root / 'plan.json').read_text(encoding='utf-8'))['id']
+    extractor = await asyncio.to_thread(sha256, fmodel)
+    expected = {'Client/Content/Aki/WwiseAudio_Generated/Init.bnk'}
+    expected.update('Client/Content/Aki/WwiseAudio_Generated/Event/'
+                    + source.rsplit('/', 1)[-1].split('.')[0] + '.bnk' for source in sources)
+    index = await ensure_archive_index(root, fmodel, root)
+    paths = await asyncio.to_thread(indexed_audio_paths, index, {PurePosixPath(p).name for p in expected})
+    selected = sorted(set(paths) & expected)
+    entries = {}
+    for batch in voice_filter_batches(selected):
+        receipt = await export_assets(root, fmodel, '|'.join(batch))
+        entries.update(manifest_entries(receipt, plan_id, extractor))
+    return {path: await asyncio.to_thread(verify, entries[path.removeprefix('Client/Content/')])
+            for path in selected if path.removeprefix('Client/Content/') in entries}

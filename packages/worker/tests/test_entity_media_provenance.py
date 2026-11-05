@@ -127,6 +127,69 @@ async def test_worker_exports_only_missing_and_persists_game_identity(tmp_path, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('missing_sibling', [False, True])
+async def test_named_siblings_publish_separate_references_and_count_one_language_target(tmp_path, monkeypatch, missing_sibling):
+    root = client(tmp_path)
+    value = request().model_copy(update={'kinds': ['voice']})
+    target = {'owner': 1, 'release_id': 2, 'path': '/Game/Voice.Voice', 'kind': 'voice', 'language': 'en'}
+    payload = {'request': value.model_dump(), 'run_id': 7, 'targets': [target]}
+    run = SimpleNamespace(id=7, status='queued', metadata_json={'payload': payload})
+    session = AsyncMock()
+    session.get.return_value = run
+    session.scalar.return_value = None
+    factory = Mock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(entity_media, 'SessionFactory', factory)
+    monkeypatch.setattr(entity_media, 'validate_plan', lambda _: None)
+    monkeypatch.setattr(entity_media, 'missing_media_targets', AsyncMock(return_value=[target]))
+    monkeypatch.setattr(entity_media, 'publish_inventory', AsyncMock(return_value={}))
+    monkeypatch.setattr(entity_media, 'S3Storage', lambda _: AsyncMock())
+    service = AsyncMock()
+    service.register_file.return_value = SimpleNamespace(id=11)
+    service.register_variant.side_effect = lambda *args: SimpleNamespace(metadata_json={})
+    references = []
+
+    async def reference(*args, **kwargs):
+        result = SimpleNamespace(**kwargs)
+        references.append(result)
+        return result
+    service.register_reference.side_effect = reference
+    monkeypatch.setattr(entity_media, 'FileRegistrationService', lambda _: service)
+    executable = tmp_path / 'tool'
+    executable.write_bytes(b'pinned tool')
+    monkeypatch.setattr(entity_media, 'tool_path', lambda _: executable)
+    raw = root / 'Client/Content/Aki/Init.bnk'
+    raw.parent.mkdir(parents=True)
+    raw.write_bytes(b'pinned bank')
+    files = []
+    names = ['en:hirc1:' + 'a'*24, 'en:hirc1:' + 'b'*24]
+    for name in names[:1] if missing_sibling else names:
+        path = root / (name.rsplit(':', 1)[-1] + '.wav')
+        path.write_bytes(b'decoded media')
+        files.append(({**target, 'source_name': name}, path, 'audio_wav', 'audio/wav', [raw]))
+
+    async def build(*args, provenance, voice_diagnostics, **kwargs):
+        for i, (resolved, *_) in enumerate(files):
+            provenance[(target['path'], resolved['source_name'])] = {'media_id': i+1,
+                'voice_variant': {'expected_source_names': names, 'variant': {'source_name': resolved['source_name']}}}
+        if missing_sibling:
+            voice_diagnostics.append({'source': target['path'], 'language': 'en', 'reason': 'Missing exact authored voice media'})
+        return files, [target['path']] if missing_sibling else []
+    monkeypatch.setattr(entity_media, 'build_entity_files', build)
+    await entity_media._process_entity_workspace(payload, None, root)
+    assert {r.source_name for r in references} == set(names[:1] if missing_sibling else names)
+    assert [r.metadata_json['game_source']['media_id'] for r in references] == list(range(1, len(files)+1))
+    assert all(r.owner_node_id == 1 and r.release_id == 2 for r in references)
+    assert run.status == ('partial' if missing_sibling else 'completed')
+    report = run.raw_output['media_report']
+    assert report['requested'] == 1 and report['found'] == int(not missing_sibling)
+    assert report['missing'] == int(missing_sibling) and len(report['entries'][0]['matches']) == len(files)
+    assert report['entries'][0]['status'] == ('partial' if missing_sibling else 'found')
+    assert run.raw_output['published'] == len(files)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("ambiguous", [("en",), ("en", "ja"), ("ja",), ("en", "ja", "ko", "zh")])
 async def test_partial_voice_publication_and_ambiguous_retry_stay_visible(tmp_path, monkeypatch, ambiguous):
     # Retained events have two variants in some languages and singleton media in others.
@@ -155,6 +218,7 @@ async def test_partial_voice_publication_and_ambiguous_retry_stay_visible(tmp_pa
     event = root / "event.json"
     event.write_text(json.dumps([{"EventCookedData": {"EventLanguageMap": [{"Value": {"Media": entries}}]}}]))
     monkeypatch.setattr(entity_media, "prefetch_events", AsyncMock(return_value={source: (event, [])}))
+    monkeypatch.setattr(entity_media, "prefetch_banks", AsyncMock(return_value={}))
     prefetch = AsyncMock(side_effect=lambda root, voices, identities, *args:
                          {identity: media[identity] for identity in identities})
     monkeypatch.setattr(entity_media, "prefetch_media", prefetch)

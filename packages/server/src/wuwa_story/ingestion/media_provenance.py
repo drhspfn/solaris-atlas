@@ -1,6 +1,7 @@
 """Game identities survive extraction workspace cleanup; blob presence never is assumed."""
 
 import asyncio
+import re
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -29,7 +30,8 @@ def matches_source(metadata: dict, source: dict, target: dict) -> bool:
     expected = {key: value for key, value in source.items()
                 if key != "tools" and (key != "voice_plan_id" or target.get("kind") != "image")}
     tools = {key: value for key, value in source.get("tools", {}).items()
-             if key != "WUWA_VGMSTREAM_PATH" or target.get("kind") != "image"}
+             if (key != "WUWA_VGMSTREAM_PATH" or target.get("kind") != "image")
+             and (key != 'WUWA_WWISER_PATH' or provenance.get('voice_variant'))}
     return (
         (target.get('kind') != 'spine' or provenance.get(
             'spine_recipe') == target.get('spine_recipe') and provenance.get(
@@ -45,6 +47,30 @@ def matches_source(metadata: dict, source: dict, target: dict) -> bool:
         and all(provenance.get(key) == value for key, value in expected.items())
         and all((provenance.get("tools") or {}).get(key) == value for key, value in tools.items())
     )
+
+
+def voice_variant_group(reference):
+    """A complete set is evidence, never a language fallback to one variant."""
+    proof = ((reference.metadata_json or {}).get('game_source') or {}).get('voice_variant') or {}
+    if not isinstance(proof, dict):
+        return None
+    variant = proof.get('variant') or {}
+    if not isinstance(variant, dict):
+        return None
+    language = variant.get('language')
+    names = proof.get('expected_source_names')
+    if (proof.get('schema') != 1 or not isinstance(language, str) or language not in {'en', 'ja', 'ko', 'zh'}
+            or not isinstance(names, list) or not 1 < len(names) <= 64
+            or any(not isinstance(name, str) for name in names)
+            or len(set(names)) != len(names) or reference.source_name != variant.get('source_name')
+            or reference.source_name not in names
+            or any(not isinstance(name, str) or not re.fullmatch(language + r':hirc1:[0-9a-f]{24}', name)
+                   for name in names)
+            or any(not isinstance(proof.get(key), str) or not re.fullmatch(r'[0-9a-f]{64}', proof[key])
+                   for key in ('bank_sha256', 'init_sha256', 'wwiser_sha256'))):
+        return None
+    return language, tuple(sorted(names)), tuple(proof[key] for key in
+                                               ('bank_sha256', 'init_sha256', 'wwiser_sha256'))
 
 
 async def missing_media_targets(session, targets: list[dict], *, source: dict, storage,
@@ -72,16 +98,41 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
             FileLocation.bucket == storage.bucket,
         )
     )
+    rows = list(rows)
     expected = {target_identity(t, reference_type): t for t in targets}
     by_source = {(key[0], *key[2:]): target for key,
                  target in expected.items()}
     candidates = []
     references = {}
+    variant_groups = {}
+    # The newest valid proof defines one coherent set. Older banks/recipes must
+    # not fill holes in that set, even when the numeric media IDs were reused.
+    for reference, _file, _location in rows:
+        group = voice_variant_group(reference) if reference.reference_type == 'character_voice' else None
+        if group is None:
+            continue
+        language, names, fingerprints = group
+        base = by_source.get((reference.owner_node_id, reference.source_path, language, reference.reference_type))
+        if base is None or base.get('kind') != 'voice' or not matches_source(reference.metadata_json or {}, source, base):
+            continue
+        identity = target_identity(base, reference_type)
+        current = variant_groups.get(identity)
+        if current is None or reference.id > current[0]:
+            variant_groups[identity] = (reference.id, group)
     for reference, file, location in rows:
         identity = (reference.owner_node_id, reference.release_id, reference.source_path,
                     reference.source_name, reference.reference_type)
         references.setdefault(identity, []).append(reference)
         target = by_source.get((identity[0], *identity[2:]))
+        group = voice_variant_group(reference) if reference.reference_type == 'character_voice' else None
+        if target is None and group is not None:
+            language, names, _fingerprints = group
+            base = by_source.get((identity[0], identity[2], language, identity[4]))
+            base_identity = target_identity(base, reference_type) if base else None
+            selected = variant_groups.get(base_identity)
+            if selected is not None and selected[1] == group:
+                target = {**base, 'source_name': reference.source_name}
+                expected[target_identity(target, reference_type)] = target
         metadata = reference.metadata_json or {}
         preview = metadata.get('animation_preview') or {}
         native_ready = preview.get('recipe') == 'riglyph-native-v1' and preview.get('status') == 'ready' and preview.get('variants')
@@ -129,4 +180,10 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
             )
             session.add(current)
             references.setdefault(identity, []).append(current)
+    for identity, (_id, (_language, names, _fingerprints)) in variant_groups.items():
+        if all((identity[0], identity[1], identity[2], name, identity[4]) in present for name in names):
+            present.add(identity)
+        else:
+            # A legacy single-language clip cannot satisfy a proven multi-variant set.
+            present.discard(identity)
     return [t for t in targets if target_identity(t, reference_type) not in present]

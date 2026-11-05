@@ -26,7 +26,7 @@ from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
 from wuwa_story_worker.broker import JobDeferred, job_lock, transient_job_error
-from wuwa_story_worker.character_voice_assets import prefetch_events, prefetch_media
+from wuwa_story_worker.character_voice_assets import prefetch_banks, prefetch_events, prefetch_media
 from wuwa_story_worker.client_assets import (
     save_json,
     validate_plan,
@@ -218,24 +218,54 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
         if not re.fullmatch(r"/Game/Aki/WwiseAudio/Events/[A-Za-z0-9_]+\.[A-Za-z0-9_]+", source):
             raise ValueError("Unsupported character voice event path")
     events = await prefetch_events(root, sources, cached, fmodel, converter, tool, verified_voice_export)
+    cooked_events, mappings, diagnostics = {}, {}, {}
+    for source, (json_path, _) in events.items():
+        unresolved = {}
+        try:
+            cooked = json.loads(json_path.read_text(encoding='utf-8-sig'))
+            mapping = event_media(cooked, unresolved=unresolved)
+        except ValueError:
+            if not unresolved:
+                missing.append(source)
+                continue
+            mapping = {}
+        cooked_events[source], mappings[source], diagnostics[source] = cooked, mapping, unresolved
+    ambiguous = [source for source in sources if diagnostics.get(source)]
+    banks = await prefetch_banks(root, ambiguous, fmodel, verified_voice_export) if ambiguous else {}
     resolved = []
     for source in sources:
         if source not in events:
             missing.append(source)
             continue
         json_path, originals = events[source]
-        unresolved = {}
-        try:
-            cooked = json.loads(json_path.read_text(encoding="utf-8-sig"))
-            mapping = event_media(cooked, unresolved=unresolved)
-        except ValueError as error:
-            if not unresolved:
-                logger.warning(
-                    "entity_media.voice_unresolved source=%s reason=%s", source, error)
-                missing.append(source)
-                continue
-            mapping = {}
+        if source not in cooked_events:
+            continue
+        cooked, mapping, unresolved = cooked_events[source], mappings[source], diagnostics[source]
+        alternatives, proof = [], None
+        variant_originals = []
+        if unresolved:
+            from wuwa_story_worker.character_voice_variants import verified_alternatives
+            bank_path = 'Client/Content/Aki/WwiseAudio_Generated/Event/' + source.rsplit('/', 1)[-1].split('.')[0] + '.bnk'
+            bank, init = banks.get(bank_path), banks.get('Client/Content/Aki/WwiseAudio_Generated/Init.bnk')
+            try:
+                if bank is None or init is None:
+                    raise ValueError('Exact pinned event bank and Init are required for alternatives')
+                alternatives, proof = await verified_alternatives(bank, init, root, cooked, tool)
+                variant_originals = [bank, init]
+            except ValueError as error:
+                unresolved = {language: f'{reason}; {error}' for language, reason in unresolved.items()}
         for target in (t for t in voices if t["path"] == source):
+            choices = [v for v in alternatives if v['language'] == target['language']]
+            if target['language'] in unresolved and choices:
+                names = sorted(v['source_name'] for v in choices)
+                for choice in choices:
+                    expanded = {**target, 'source_name': choice['source_name']}
+                    evidence = {'schema': 1, **{k: proof[k] for k in
+                                ('bank_sha256', 'init_sha256', 'wwiser_sha256', 'event_id')},
+                                'variant': choice, 'expected_source_names': names}
+                    resolved.append((expanded, choice['media_id'], json_path.parent,
+                                     [*originals, *variant_originals], cooked, evidence))
+                continue
             identity = mapping.get(target["language"])
             if identity is None:
                 reason = unresolved.get(
@@ -248,14 +278,17 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
                 missing.append(source)
                 continue
             resolved.append(
-                (target, identity, json_path.parent, originals, cooked))
+                (target, identity, json_path.parent, originals, cooked, None))
     media = await prefetch_media(root, voice_root, {r[1] for r in resolved}, cached,
                                  fmodel, tool, verified_voice_export)
     decoder_digest = await asyncio.to_thread(sha256, decoder)
-    for target, identity, output, originals, cooked in resolved:
+    for target, identity, output, originals, cooked, variant in resolved:
         entry = media.get(identity)
         if entry is None:
             missing.append(target["path"])
+            if voice_diagnostics is not None:
+                voice_diagnostics.append({'source': target['path'], 'language': target['language'],
+                                          'reason': 'Missing exact authored voice media'})
             continue
         wem, media_download_id, media_package_path = entry
         language = target["language"]
@@ -277,11 +310,12 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
                 partial.replace(wav)
                 save_json(receipt, {"input": input_identity, "sha256": await asyncio.to_thread(sha256, wav)})
         if provenance is not None:
-            provenance[(target["path"], language)] = {
+            provenance[(target["path"], target.get('source_name', language))] = {
                 "voice_plan_id": plan["id"], "media_download_id": media_download_id,
                 "media_package_path": media_package_path,
                 "voice_event": target["path"], "media_id": identity,
                 "event_cooked_data": [e.get("EventCookedData", {}) for e in cooked],
+                **({'voice_variant': variant} if variant else {}),
             }
         files.append((target, wav, "audio_wav",
                      "audio/wav", [wem, *originals]))
@@ -373,7 +407,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 tool_names = ["WUWA_FMODEL_PATH",
                               "WUWA_TEXTURE_CONVERTER_PATH"]
                 if any(t["kind"] == "voice" for t in payload["targets"]):
-                    tool_names.append("WUWA_VGMSTREAM_PATH")
+                    tool_names.extend(["WUWA_VGMSTREAM_PATH", "WUWA_WWISER_PATH"])
                 tools = {name: await asyncio.to_thread(sha256, tool_path(name)) for name in tool_names}
                 source = {"asset_version": request.asset_version, "download_id": request.download_id,
                           "tier": request.tier, "voice_plan_id": request.voice_plan_id, "tools": tools}
@@ -406,7 +440,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                                  for item in voice_diagnostics}
                 for target in payload["targets"]:
                     matches = [path.relative_to(root).as_posix() if path.is_relative_to(root) else path.name
-                               for resolved, path, *_ in files if resolved == target]
+                               for resolved, path, *_ in files
+                               if all(resolved.get(k) == v for k, v in target.items())]
                     entries.append({"expected": target["path"], "language": target["language"],
                                     "status": "already_published" if target_identity(target) not in missing_identities else "found" if matches else "not_resolved", "matches": matches,
                                     **({'reason': voice_reasons[(target['path'], target['language'])]}
@@ -418,8 +453,14 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 inventory = await publish_inventory(root, paths=inventory_paths)
                 report = {"schema_version": 1, **inventory, "asset_version": request.asset_version,
                           "game_version": request.game_version, "entries": entries,
-                          "requested": len(entries), "found": len(entries) - len(targets) + len(files),
-                          "skipped": skipped, "missing": len(targets) - len(files)}
+                          "requested": len(entries),
+                          "skipped": skipped}
+                # A partial variant set can have playable matches and still be incomplete.
+                for entry in entries:
+                    if (entry['expected'], entry['language']) in voice_reasons and entry['status'] == 'found':
+                        entry['status'] = 'partial'
+                report['missing'] = sum(e['status'] in {'not_resolved', 'partial'} for e in entries)
+                report['found'] = len(entries) - report['missing']
                 run.raw_output = {"media_report": report, "published": 0}
                 await session.commit()
                 await storage.ensure_bucket()
@@ -468,7 +509,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                     provenance = await asyncio.to_thread(
                         source_provenance, request, target, originals, tools,
                         spine_source if target['kind'] == 'spine' else voice_provenance.get(
-                            (target["path"], target["language"])),
+                            (target["path"], target.get('source_name', target["language"]))),
                     )
                     published = await service.register_file(session, path, kind, mime_type=mime)
                     rendered_metadata = {}
@@ -504,7 +545,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                             FileReference.release_id == target["release_id"],
                             FileReference.reference_type == reference_type,
                             FileReference.source_path == target["path"],
-                            FileReference.source_name == target["language"],
+                            FileReference.source_name == target.get('source_name', target["language"]),
                             FileReference.metadata_json["asset_version"].astext
                             == request.asset_version,
                         )
@@ -517,7 +558,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                             owner_node_id=target["owner"],
                             release_id=target["release_id"],
                             source_path=target["path"],
-                            source_name=target["language"],
+                            source_name=target.get('source_name', target["language"]),
                         )
                     reference.file_id = published.id
                     sequence_media = None
