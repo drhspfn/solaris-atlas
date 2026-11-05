@@ -52,3 +52,30 @@ kind; dirty marks alone do not prove the public response has refreshed.
 
 No database schema migration is required. Rolling back code does not delete
 published media or evidence. Retain durable logs and recovery checkpoints.
+
+## Production follow-up, 19:55 UTC
+
+PR #147 was squash-merged as `8f4b647099e7ba941d61f28a7db418e2f343f6e7`.
+All-image build 42093183198 passed. Selective deployment finished at 19:35 UTC;
+API is healthy. Two old image workers retain their active jobs and are draining
+naturally. A durable stage-two watcher replaces only those workers after clean
+exit; do not replace their containers while imports are still active.
+
+Queue snapshot: video 903 ready / 3 unacknowledged; audio 4091 / 4; image 1943 / 2.
+The failed-message counts remain video 83, audio 15, image 21, asset 1. Those are
+messages, not unique missing outputs. Twelve release-media and two visual-analysis
+runs completed after deployment; the bounded run audit found no new failed,
+blocked or enqueue-failed runs in that interval. This does not prove every leaf
+or native subprocess succeeded.
+
+A follow-up fixes two confirmed defects: an ambiguous language formerly discarded
+otherwise usable character voice languages, and historical quest profiles could
+select newer source provenance and fail projection validation. Their combined
+51 targeted tests passed. Recovery of 11 unambiguous language mappings is planned;
+17 mappings still require selector evidence and must not be guessed.
+
+M0334's full retained quest tree differs from snapshot 3.1. A read-only canary
+validated an unchanged quest node and all 37 nodes of its linked LevelPlay tree,
+including the M0334 flow. This supports a related encounter with unknown global
+position, not an assertion that the newer entire quest tree matches 3.1. The
+production fragment pilot and historical recovery remain gated pending this fix.
