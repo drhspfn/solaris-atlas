@@ -819,13 +819,17 @@ async def character_profile(
     if character is None:
         raise HTTPException(status_code=404, detail="node is not a character")
     release_id = await _release_id(session, game_version)
+    element_names = {}
+
     async def element_name(key):
         if not key:
             return None
-        key_id = await session.scalar(select(LocalizationKey.id).where(LocalizationKey.key == key))
-        return await _localized(session, key_id, locale, release_id) if key_id else None
+        if key not in element_names:
+            key_id = await session.scalar(select(LocalizationKey.id).where(LocalizationKey.key == key))
+            element_names[key] = await _localized(session, key_id, locale, release_id) if key_id else None
+        return element_names[key]
 
-    member_ids, family = await character_family(session, character, node, element_name)
+    member_ids, family = await character_family(session, character, node, element_name, release_id)
     quest_info_cache: dict[int, dict[str, Any]] = {}
 
     async def character_quest_info(quest: Quest) -> dict[str, Any]:
@@ -933,14 +937,21 @@ async def character_profile(
             SourceFile, SourceFile.id == SourceRecord.source_file_id
         ).where(SourceRecord.release_id == release_id,
                 SourceFile.logical_source_path == "BinData/role/roleinfo.json",
-                SourceRecord.data["Id"].as_integer().in_(member_keys))
+                SourceRecord.data["Id"].as_integer().in_(member_keys)).correlate(None)
         speaker_ids = select(SourceRecord.data["Id"].as_integer()).join(
             SourceFile, SourceFile.id == SourceRecord.source_file_id
         ).where(SourceRecord.release_id == release_id,
                 SourceFile.logical_source_path == "BinData/speaker/speaker.json",
                 SourceRecord.data["RolePileIconAsset"].as_string().in_(assets))
-        own_speaker_ids.update(await session.scalars(
-            select(Speaker.node_id).where(Speaker.game_speaker_id.in_(speaker_ids))))
+        for speaker, speaker_key in await session.execute(
+            select(Speaker, Node.canonical_key).join(Node, Node.id == Speaker.node_id)
+            .where(Speaker.game_speaker_id.in_(speaker_ids))
+        ):
+            if speaker.node_id not in own_speaker_ids:
+                speakers.append({"canonical_key": speaker_key,
+                                 "game_speaker_id": speaker.game_speaker_id,
+                                 "resolution": "main_role_config_exact_asset"})
+            own_speaker_ids.add(speaker.node_id)
     if own_speaker_ids:
         state_ids.update(await session.scalars(
             select(QuestAction.quest_state_node_id)
@@ -1118,14 +1129,14 @@ async def character_profile(
         aliases = list(
             await session.scalars(
                 select(EntityAlias.alias)
-                .where(EntityAlias.node_id == node.id, EntityAlias.locale_id == locale_row.id)
+                .where(EntityAlias.node_id.in_(member_ids), EntityAlias.locale_id == locale_row.id)
                 .order_by(EntityAlias.alias)
             )
         )
         search_rows = await session.execute(
             select(SearchDocument.title, SearchDocument.aliases)
             .where(
-                SearchDocument.target_node_id == node.id, SearchDocument.locale_id == locale_row.id
+                SearchDocument.target_node_id.in_(member_ids), SearchDocument.locale_id == locale_row.id
             )
             .order_by(SearchDocument.id)
         )

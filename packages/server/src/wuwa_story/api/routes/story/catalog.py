@@ -1,6 +1,6 @@
 """Catalog and category browse endpoints."""
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -12,6 +12,7 @@ from wuwa_story.db.models.core import DialogueLine
 from wuwa_story.db.models.graph import Node, NodeType
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.repositories.catalog import read_catalog
+from wuwa_story.db.repositories.character_identity import annotate_character_cards
 from wuwa_story.db.session import get_session
 from wuwa_story.storage.entity_media import entity_image_urls
 from wuwa_story.story.service import prefetch_localizations
@@ -24,6 +25,7 @@ async def browse_catalog(
     category: str = Query(pattern="^(character|item|location|quest|speaker)$"),
     quest_type_id: int | None = Query(None, ge=0),
     locale: str = "en",
+    character_kind: Literal["playable", "story", "technical", "all"] = "playable",
     limit: int = Query(24, ge=1, le=100),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
@@ -31,7 +33,7 @@ async def browse_catalog(
     """Return a stable, localized catalog page for the frontend browse views."""
     if read_projections.should_route_to_projection(category, "current", locale=locale):
         return await read_projections.catalog_page(
-            session, category, locale, quest_type_id=quest_type_id, limit=limit, offset=offset,
+            session, category, locale, quest_type_id=quest_type_id, limit=limit, offset=offset, character_kind=character_kind,
         )
     locale_row = await session.scalar(select(Locale).where(Locale.code == locale))
     if locale_row is None:
@@ -40,7 +42,7 @@ async def browse_catalog(
         raise HTTPException(status_code=400, detail="quest_type_id requires category=quest")
     release_id = await _release_id(session, None)
     total, rows = await read_catalog(
-        session, category, locale_row.id, release_id, limit, offset, quest_type_id,
+        session, category, locale_row.id, release_id, limit, offset, quest_type_id, character_kind=character_kind,
     )
     fallback_keys = {
         row[5] for row in rows
@@ -94,6 +96,7 @@ async def browse_catalog(
                 "image_url": images.get(node.id),
             }
         )
+    await annotate_character_cards(session, results)
     return {
         "category": category,
         "quest_type_id": quest_type_id,

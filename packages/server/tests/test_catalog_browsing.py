@@ -6,13 +6,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import visitors
 from sqlalchemy.sql.selectable import Subquery
 
 from wuwa_story.api.routes.story import catalog
+from wuwa_story.db.models.core import Character
 from wuwa_story.story import service
 
 
@@ -134,7 +135,7 @@ def database(monkeypatch):
 
 
 async def browse(
-    database, category="location", *, limit=24, offset=0, quest_type_id=None, locale="en"
+    database, category="location", *, limit=24, offset=0, quest_type_id=None, locale="en", character_kind="playable"
 ):
     return await catalog.browse_catalog(
         category=category,
@@ -143,6 +144,7 @@ async def browse(
         limit=limit,
         offset=offset,
         session=database,
+        character_kind=character_kind,
     )
 
 
@@ -188,10 +190,10 @@ async def test_primary_roles_and_quest_filter_apply_before_pagination_and_to_sin
     for identity, role in [(1, 2), (2, 1), (3, None), (4, 9)]:
         database.node(identity, "character", role=role, search=str(identity))
     result = await browse(database, "character", limit=1)
-    assert result["total"] == 2
+    assert result["total"] == 1
     assert [row["id"] for row in result["results"]] == [2]
     assert sum("count(" in str(statement) for statement in database.statements) == 1
-    assert [row["id"] for row in (await browse(database, "character", offset=1))["results"]] == [3]
+    assert (await browse(database, "character", offset=1))["results"] == []
     database.node(20, "quest", quest_type="1", search="Alpha")
     database.node(21, "quest", quest_type="3", search="Beta")
     database.node(22, "quest", quest_type="3", status="inactive", search="Gamma")
@@ -244,7 +246,7 @@ async def test_title_precedence_placeholder_rejection_and_category_fallbacks(dat
     ],
 )
 async def test_category_specific_hydration_and_fallback_labels(database, category, label):
-    database.node(1, category)
+    database.node(1, category, role=1 if category == "character" else None)
     assert (await browse(database, category))["results"][0]["title"] == f"{label} · 1"
     page = database.statements[2]
     sql = str(page.compile(dialect=postgresql.dialect()))
@@ -287,3 +289,20 @@ async def test_invalid_locale_and_quest_filter_rejected_before_catalog_reads(dat
             await browse(database, **options)
         assert error.value.status_code == 400
         assert len(database.statements) == 1
+
+
+@pytest.mark.asyncio
+async def test_rover_family_collapses_before_paging_and_role_categories_are_explicit(database):
+    for identity, role in [(1501, 1), (1502, 1), (9901, 1), (5015, 2), (9990, 3)]:
+        database.node(identity, "character", role=role, search=f"Role {identity}")
+    for identity in (1501, 1502, 9901):
+        await database.execute(update(Character).where(Character.node_id == identity).values(
+            metadata_json={"role_type": 1, "public_identity": {"canonical_key": "character:1501", "family": "rover"}}))
+    page = await browse(database, "character", limit=1)
+    assert page["total"] == 1
+    assert page["results"][0]["title"] == "Rover"
+    assert (await browse(database, "character", offset=1))["results"] == []
+    story = await browse(database, "character", character_kind="story")
+    assert [(row["id"], row["character_kind"]) for row in story["results"]] == [(5015, "story")]
+    assert [row["id"] for row in (await browse(database, "character", character_kind="technical"))["results"]] == [9990]
+    assert (await browse(database, "character", character_kind="all"))["total"] == 3

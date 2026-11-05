@@ -20,3 +20,14 @@ def test_rover_identity_discovers_new_elements_from_main_role_config():
 def test_missing_default_does_not_guess_family_from_names_or_role_ids():
     assert main_role_identities([], [{"Id": 1501, "Name": "Rover"}]) == {}
     assert main_role_identities([{"Id": 1501, "Gender": 9, "UnlockCondition": 0}], [{"Id": 1501}]) == {}
+
+
+async def _identity_localize(key):
+    return {"content": key}
+
+
+def test_role_kind_does_not_treat_creatures_and_temporary_roles_as_resonators():
+    from wuwa_story.ingestion.character_identity import character_kind
+    assert character_kind(1) == "playable"
+    assert {character_kind(role) for role in (2, 4, 5)} == {"story"}
+    assert character_kind(3) == character_kind(None) == "technical"

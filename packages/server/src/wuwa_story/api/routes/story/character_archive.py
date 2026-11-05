@@ -25,7 +25,10 @@ from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.db.session import get_session
-from wuwa_story.ingestion.character_artwork import character_artwork_scope
+from wuwa_story.ingestion.character_artwork import (
+    character_artwork_scope,
+    inherited_character_fields,
+)
 from wuwa_story.storage.animation_previews import spine_bundle
 from wuwa_story.storage.s3 import S3Storage
 
@@ -187,6 +190,10 @@ async def character_archive(
     if not role_rows:
         raise HTTPException(status_code=404, detail="character source record not found")
     role = role_rows[0].data
+    inherited = set()
+    if role.get("RoleType") not in (None, 1) and role.get("SkillId") != role_id:
+        templates = await _records(session, release_id, paths["role"], "Id", role.get("SkillId"))
+        inherited = inherited_character_fields(role, templates[0].data if templates else {})
     element_id = role.get("ElementId")
     groups = await _record_groups(session, release_id, {
         paths["element"]: ("Id", element_id if isinstance(element_id, int) else -1),
@@ -203,9 +210,9 @@ async def character_archive(
     element = element_rows[0].data if element_rows else {}
     quality = quality_rows[0].data if quality_rows else {}
     favor_rows = groups[paths["favor"]]
-    skill_rows = groups[paths["skills"]]
-    tree_rows = groups[paths["tree"]]
-    chain_rows = groups[paths["chain"]]
+    skill_rows = groups[paths["skills"]] if not inherited else []
+    tree_rows = groups[paths["tree"]] if not inherited else []
+    chain_rows = groups[paths["chain"]] if not inherited else []
     voice_rows = groups[paths["voices"]]
     role_audio_rows = groups[paths["role_audio"]]
     cost_ids = {
@@ -259,7 +266,7 @@ async def character_archive(
 
     artwork = [
         {"kind": field, "engine_path": role[field], "url": media_url(role[field], "image/"),
-         "scope": character_artwork_scope(field, role[field], role_id)}
+         "scope": "shared_resource" if field in inherited else character_artwork_scope(field, role[field], role_id)}
         for field in artwork_fields if isinstance(role.get(field), str) and role[field]
     ]
     skills = [
@@ -346,7 +353,7 @@ async def character_archive(
     return {
         "canonical_key": canonical_key, "locale": locale, "release_id": release_id,
         "trial_spine": trial_spine,
-        "biography": localized.get(role.get("Introduction")) or localized.get(favor.get("Info")),
+        "biography": (localized.get(role.get("Introduction")) or localized.get(favor.get("Info"))) if not inherited else None,
         "profile": {
             "country": localized.get(favor.get("Country")),
             "birthday": localized.get(favor.get("Birthday")),
@@ -361,8 +368,8 @@ async def character_archive(
             },
             "max_level": role.get("MaxLevel"), "element_id": role.get("ElementId"),
             "weapon_type_id": role.get("WeaponType"), "quality_id": role.get("QualityId"),
-            "element": localized.get(element.get("Name")),
-            "quality": localized.get(quality.get("Name")),
+            "element": localized.get(element.get("Name")) if not inherited else None,
+            "quality": localized.get(quality.get("Name")) if not inherited else None,
         },
         "artwork": artwork, "skills": skills, "skill_tree": tree,
         "resonance_chain": chains, "voice_lines": voices,

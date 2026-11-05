@@ -5,7 +5,7 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-from sqlalchemy import select, tuple_
+from sqlalchemy import case, func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -685,10 +685,19 @@ async def _insert_typed_entities(
                     raise ValueError(
                         f"Cannot import historical {kind}: a newer revision has no typed projection"
                     )
+            updates = {column: getattr(statement.excluded, column) for column in update_columns}
+            if model is Character:
+                # Old cached bundles have no family field; they must not erase a
+                # confirmed identity established by a newer compiler/backfill.
+                incoming = statement.excluded.metadata["public_identity"]
+                identity = case((incoming.astext.is_not(None), incoming),
+                                else_=Character.metadata_json["public_identity"])
+                updates["metadata"] = statement.excluded.metadata.op("||")(
+                    func.jsonb_build_object("public_identity", identity))
             await session.execute(
                 statement.on_conflict_do_update(
                     index_elements=[model.node_id],
-                    set_={column: getattr(statement.excluded, column) for column in update_columns},
+                    set_=updates,
                     where=statement.excluded.node_id.not_in(protected) if protected else None,
                 )
             )

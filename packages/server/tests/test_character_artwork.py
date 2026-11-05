@@ -114,3 +114,13 @@ async def test_export_preserves_cartethyia_card_but_omits_yangyang_portrait():
     )
     targets = await entity_media_targets(session, request)
     assert [target["path"] for target in targets] == [own]
+
+
+def test_npc_does_not_own_reused_yangyang_formation_card():
+    from wuwa_story.ingestion.character_artwork import inherited_character_fields
+
+    template = {"Id": 1402, "RoleHeadIcon": "yangyang.png", "FormationRoleCard": "yangyang-card.png"}
+    npc = {"Id": 5015, "RoleType": 2, "RoleHeadIcon": "masked-man.png", "FormationRoleCard": "yangyang-card.png"}
+    assert inherited_character_fields(npc, template) == {"FormationRoleCard"}
+    assert inherited_character_fields({**npc, "RoleHeadIcon": "yangyang.png"}, template) == set()
+    assert inherited_character_fields({**npc, "RoleType": 1}, template) == set()

@@ -9,7 +9,8 @@ from wuwa_story.api.routes.story import profiles
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("card_count", [1, 12])
-async def test_character_quest_info_is_reused_across_scenes_and_quest_list(monkeypatch, card_count):
+@pytest.mark.parametrize("member_ids", [[1], [1, 2, 8]])
+async def test_character_quest_info_is_reused_across_scenes_and_quest_list(monkeypatch, card_count, member_ids):
     state = Row(node_id=9, state_key="flow", source_record_id=99)
     quest = Row(node_id=7, game_quest_id=70)
     speaker = Row(node_id=4, game_speaker_id=40)
@@ -31,6 +32,7 @@ async def test_character_quest_info_is_reused_across_scenes_and_quest_list(monke
     )
     monkeypatch.setattr(profiles, "get_node", AsyncMock(return_value=Row(id=1, canonical_key="character:1", slug=None)))
     monkeypatch.setattr(profiles, "_release_id", AsyncMock(return_value=5))
+    monkeypatch.setattr(profiles, "character_family", AsyncMock(return_value=(member_ids, None)))
     labels = AsyncMock()
     monkeypatch.setattr(profiles, "prefetch_node_labels", labels)
     monkeypatch.setattr(profiles, "prefetch_dialogue", AsyncMock())
@@ -59,3 +61,7 @@ async def test_character_quest_info_is_reused_across_scenes_and_quest_list(monke
         dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
     assert "SELECT DISTINCT" in query
     assert "speaker_node_id IN (4, 5)" in query
+
+    membership_sql = str(session.execute.await_args_list[0].args[0].compile(
+        dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert f"entity_node_id IN ({', '.join(map(str, member_ids))})" in membership_sql
