@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowRight, BookOpen, ChevronRight, Sparkles } from 'lucide-react';
+import { ArrowRight, BookOpen, ChevronRight } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api, apiUrl } from '@/api/client';
 import type { CharacterModelData } from '@/components/models/types';
@@ -12,7 +12,7 @@ import {
   CharacterArchive,
   type CharacterArchiveData,
 } from '@/components/characters/CharacterArchive';
-import { PlayerText } from '@/components/dialogue/PlayerText';
+import { CharacterConnections } from '@/components/characters/CharacterConnections';
 import { ItemAcquisition } from '@/components/items/ItemAcquisition';
 import { InlineDialogueSearch } from '@/components/search/InlineDialogueSearch';
 import { EmptyInline, ErrorPanel, PageLoader } from '@/components/ui/Feedback';
@@ -34,21 +34,23 @@ export function EntityProfileClient({
   initialData,
   initialArchive,
   initialModel,
+  gameVersion,
 }: {
   kind: 'character' | 'item' | 'location';
   entityKey: string;
   initialData?: any;
   initialArchive?: CharacterArchiveData | null;
   initialModel?: CharacterModelData | null;
+  gameVersion?: string;
 }) {
   const locale = useLocale();
   const playerDisplay = usePlayerDisplay();
   const [selectedRole, setSelectedRole] = useState(entityKey);
   const [profileRole, setProfileRole] = useState(entityKey);
+  const [profileLocale, setProfileLocale] = useState('en');
   const [data, setData] = useState<any>(initialData || null);
   const [loading, setLoading] = useState(!initialData);
   const [error, setError] = useState('');
-  const [showAllRelated, setShowAllRelated] = useState(false);
   const [archive, setArchive] = useState<CharacterArchiveData | null>(initialArchive ?? null);
   const [archiveError, setArchiveError] = useState('');
   const [modelRevision, setModelRevision] = useState(0);
@@ -61,6 +63,7 @@ export function EntityProfileClient({
     if (initialData && selectedRole === entityKey && locale === 'en' && profileRetry === 0) {
       setData(initialData);
       setProfileRole(entityKey);
+      setProfileLocale('en');
       setLoading(false);
       setError('');
       return;
@@ -69,11 +72,11 @@ export function EntityProfileClient({
     setLoading(true);
     setError('');
     api<any>(
-      `/${kind === 'character' ? 'characters' : kind === 'item' ? 'items' : 'locations'}/${encodeURIComponent(selectedRole)}/profile?locale=${locale}`,
+      `/${kind === 'character' ? 'characters' : kind === 'item' ? 'items' : 'locations'}/${encodeURIComponent(selectedRole)}/profile?${kind === 'character' ? `connections_limit=12&${gameVersion ? `game_version=${encodeURIComponent(gameVersion)}&` : ''}` : ''}locale=${locale}`,
       { signal: controller.signal },
     )
       .then((result) => {
-        if (!controller.signal.aborted) { setData(result); setProfileRole(selectedRole); }
+        if (!controller.signal.aborted) { setData(result); setProfileRole(selectedRole); setProfileLocale(locale); }
       })
       .catch((e) => {
         if (!controller.signal.aborted) setError(e.message);
@@ -82,7 +85,7 @@ export function EntityProfileClient({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [kind, entityKey, selectedRole, locale, initialData, profileRetry]);
+  }, [kind, entityKey, selectedRole, locale, initialData, profileRetry, gameVersion]);
 
   useEffect(() => {
     if (initialArchive && selectedRole === entityKey && locale === 'en' && archiveRetry === 0) {
@@ -95,7 +98,7 @@ export function EntityProfileClient({
     if (kind !== 'character') return;
     const controller = new AbortController();
     api<CharacterArchiveData>(
-      `/characters/${encodeURIComponent(selectedRole)}/archive?locale=${encodeURIComponent(locale)}`,
+      `/characters/${encodeURIComponent(selectedRole)}/archive?${gameVersion ? `game_version=${encodeURIComponent(gameVersion)}&` : ''}locale=${encodeURIComponent(locale)}`,
       { signal: controller.signal },
     )
       .then((result) => {
@@ -105,7 +108,7 @@ export function EntityProfileClient({
         if (!controller.signal.aborted) setArchiveError(cause.message);
       });
     return () => controller.abort();
-  }, [kind, entityKey, selectedRole, locale, initialArchive, archiveRetry]);
+  }, [kind, entityKey, selectedRole, locale, initialArchive, archiveRetry, gameVersion]);
 
   useEffect(() => {
     const family = data?.family;
@@ -177,10 +180,8 @@ export function EntityProfileClient({
     }
   }
   const related = Array.from(relatedByIdentity.values());
-  const visibleRelated = showAllRelated
-    ? related
-    : related.slice(0, APP_SETTINGS.limits.relatedPreview);
-  const quests = data?.quests_with_dialogue || data?.quest_references || [];
+  const visibleRelated = related.slice(0, APP_SETTINGS.limits.relatedPreview);
+  const quests = data?.connections_preview?.quests?.results || data?.quests_with_dialogue || data?.quest_references || [];
   const itemQuestUses = kind === 'item' ? data?.quest_uses || [] : [];
   const characterMaterials = kind === 'character' ? data?.progression_materials || [] : [];
   const portraitUrl =
@@ -304,10 +305,17 @@ export function EntityProfileClient({
                   ? 'Where to obtain'
                   : 'Quest references'
             }
-            count={kind === 'item' ? undefined : quests.length}
+            count={kind === 'item' ? undefined : kind === 'character' ? data?.connections_summary?.quests?.total ?? quests.length : quests.length}
           />
           {kind === 'item' && <ItemAcquisition data={data} locale={locale} />}
-          {kind !== 'item' && quests.length ? (
+          {kind === 'character' ? (
+            profileRole === selectedRole && profileLocale === locale ? (
+              <CharacterConnections key={`quests-${selectedRole}-${locale}-${gameVersion || entity?.game_version || "current"}`}
+                characterKey={selectedRole} section="quests" locale={locale}
+                gameVersion={gameVersion || entity?.game_version} initialRows={quests}
+                summary={data?.connections_preview?.quests || data?.connections_summary?.quests} playerDisplay={playerDisplay} />
+            ) : <p role="status">Loading story appearances…</p>
+          ) : kind !== 'item' && quests.length ? (
             <div className="list-stack">
               {quests.map((q: any, i: number) => {
                 const quest = q.quest || q;
@@ -364,7 +372,7 @@ export function EntityProfileClient({
             count={
               kind === 'item'
                 ? progressionGroups.length + unresolvedProgression.length
-                : related.length
+                : kind === 'character' ? data?.connections_summary?.characters?.total ?? related.length : related.length
             }
           />
           {kind === 'item' && itemQuestUses.length > 0 && (
@@ -429,156 +437,34 @@ export function EntityProfileClient({
               ) : null}
             </>
           )}
-          {kind === 'character' && related.length ? (
-            <div className="note-strip">
-              <Sparkles size={15} />
-              <span>
-                Shared authored flow state — co-presence does not imply a personal relationship.
-              </span>
-            </div>
-          ) : null}
-          {kind === 'item' ? null : related.length ? (
+          {kind === 'character' ? (
+            profileRole === selectedRole && profileLocale === locale ? (
+              <CharacterConnections key={`characters-${selectedRole}-${locale}-${gameVersion || entity?.game_version || "current"}`}
+                characterKey={selectedRole} section="characters" locale={locale}
+                gameVersion={gameVersion || entity?.game_version}
+                initialRows={data?.connections_preview?.characters?.results || [...related, ...unresolvedSpeakerEvidence]}
+                summary={data?.connections_preview?.characters || data?.connections_summary?.characters} playerDisplay={playerDisplay} />
+            ) : <p role="status">Loading shared scenes and links…</p>
+          ) : kind === 'item' ? null : related.length ? (
             <div className="list-stack">
               {visibleRelated.map((link: any, i: number) => {
                 const target = link.character || link.node || link.target || link.area;
                 if (!target) return null;
                 const item: Entity = {
-                  id: target.id || i,
-                  canonical_key: target.canonical_key || target.label,
-                  slug: target.slug,
-                  href: target.href,
-                  node_type: target.type || 'character',
+                  id: target.id || i, canonical_key: target.canonical_key || target.label,
+                  slug: target.slug, href: target.href, node_type: target.type || 'character',
                   category: target.type === 'area' ? 'location' : undefined,
                   title: target.label || target.canonical_key,
                 };
-                if (link.shared_scenes) {
-                  const profileHref = entityPath(item);
-                  return (
-                    <article className="shared-person-card" key={target.canonical_key}>
-                      <header className="shared-person-heading">
-                        <span className="connection-index">↗</span>
-                        <div>
-                          <strong>{target.label || target.canonical_key}</strong>
-                          <small>
-                            {link.shared_scenes_total} shared authored flow states · co-presence
-                            only
-                          </small>
-                        </div>
-                        <Link
-                          to={profileHref}
-                          className="shared-person-profile"
-                          aria-label={`Open ${target.label || 'character'} profile`}
-                        >
-                          Open profile <ArrowRight size={14} />
-                        </Link>
-                      </header>
-                      <div className="shared-scene-list">
-                        {link.shared_scenes.map((scene: any, sceneIndex: number) => (
-                          <details
-                            className="shared-scene"
-                            key={`${scene.flow_state}-${sceneIndex}`}
-                          >
-                            <summary>
-                              <span>{scene.flow_state}</span>
-                              <small>{scene.dialogue?.length || 0} dialogue lines</small>
-                            </summary>
-                            {scene.quest_refs?.map((quest: any) => {
-                              const questId =
-                                quest.game_quest_id || quest.canonical_key?.split(':').at(-1);
-                              return (
-                                <Link
-                                  className="shared-scene-quest"
-                                  to={questPath(quest)}
-                                  key={quest.canonical_key || questId}
-                                >
-                                  {localizedText(quest.name, `Quest ${questId}`)}{' '}
-                                  <ArrowRight size={12} />
-                                </Link>
-                              );
-                            })}
-                            <div className="shared-transcript">
-                              {(scene.dialogue || []).map((line: any, lineIndex: number) => (
-                                <div
-                                  className="shared-transcript-line"
-                                  key={`${line.id || lineIndex}`}
-                                >
-                                  <strong>
-                                    <PlayerText
-                                      display={playerDisplay}
-                                      value={line.speaker?.label}
-                                      fallback={line.speaker?.canonical_key || 'Unknown speaker'}
-                                    />
-                                  </strong>
-                                  <p>
-                                    <PlayerText
-                                      display={playerDisplay}
-                                      value={line.text}
-                                      fallback={
-                                        line.text?.inline_text || 'Text unavailable in this locale'
-                                      }
-                                    />
-                                  </p>
-                                </div>
-                              ))}
-                              {scene.dialogue_truncated && (
-                                <small>
-                                  Transcript shortened; open the quest for the complete authored
-                                  sequence.
-                                </small>
-                              )}
-                            </div>
-                            <small className="shared-scene-basis">
-                              Evidence: {scene.basis} · {scene.source?.file}
-                            </small>
-                          </details>
-                        ))}
-                      </div>
-                    </article>
-                  );
-                }
-                return (
-                  <Link to={entityPath(item)} className="connection-row" key={i}>
-                    <span className="connection-index">↗</span>
-                    <div>
-                      <strong>{target.label || target.canonical_key}</strong>
-                      <small>
-                        {(link.relation || link.basis || 'Related entry').replaceAll('_', ' ')}
-                      </small>
-                    </div>
-                    <ArrowRight size={16} />
-                  </Link>
-                );
+                return <Link to={entityPath(item)} className="connection-row" key={i}>
+                  <span className="connection-index">↗</span>
+                  <div><strong>{target.label || target.canonical_key}</strong>
+                    <small>{(link.relation || link.basis || 'Related entry').replaceAll('_', ' ')}</small></div>
+                  <ArrowRight size={16} />
+                </Link>;
               })}
             </div>
-          ) : (
-            <EmptyInline text="No confirmed story or entity links in this snapshot." />
-          )}
-          {kind === 'character' && unresolvedSpeakerEvidence.length > 0 && (
-            <details className="unresolved-voices">
-              <summary>
-                Unresolved speaker IDs in these scenes{' '}
-                <span>{unresolvedSpeakerEvidence.length}</span>
-              </summary>
-              <p>
-                These source speaker IDs have no deterministic character mapping in this snapshot.
-              </p>
-              {unresolvedSpeakerEvidence.map((voice: any) => (
-                <div className="unresolved-voice-row" key={voice.target.canonical_key}>
-                  <strong>{voice.target.label || voice.target.canonical_key}</strong>
-                  <small>{(voice.flow_states || []).join(' · ')}</small>
-                </div>
-              ))}
-            </details>
-          )}
-          {kind === 'character' && related.length > 18 && (
-            <button
-              type="button"
-              className="text-button"
-              onClick={() => setShowAllRelated((visible) => !visible)}
-            >
-              {showAllRelated ? 'Show fewer links' : `Show all ${related.length} links`}
-            </button>
-          )}
+          ) : <EmptyInline text="No confirmed story or entity links in this snapshot." />}
           {kind === 'item' && data?.progression_uses?.length > 0 && (
             <div className="subsection">
               <div className="progression-heading">
