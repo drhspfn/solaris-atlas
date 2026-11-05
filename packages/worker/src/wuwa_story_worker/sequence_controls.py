@@ -3,6 +3,7 @@
 import json
 
 from wuwa_story_worker.sequence_bytecode import resolve_event_calls
+from wuwa_story_worker.sequence_media import sequence_media_score
 
 
 def object_path(value):
@@ -96,6 +97,7 @@ def sequence_control_score(assets, presentation=None):
                            'time_seconds': frame * denominator / numerator if valid_rate and type(frame) is int else None,
                            'function': function, **result})
     return {'format': 'solaris.sequence-controls.v1', 'events': events, 'dialogues': dialogues,
+            'media': sequence_media_score(exports),
             'unresolved': unresolved, 'preloads': preloads,
             'flow_audio_actions': [cue for cue in (presentation or {}).get('cues', []) if cue['kind'] == 'audio_action'],
             'timing_basis': 'owning_movie_scene_tick_resolution',
