@@ -26,10 +26,6 @@
 .character-model-preview > .character-model-expand:hover { background: var(--surface-2); border-color: var(--accent-mint); }
 .character-model-feedback { pointer-events: none; z-index: 2; }
 .character-model-embed-compact [role="alert"] { pointer-events: auto; }
-.character-model .character-model-expand { position: absolute; inset: 0; z-index: 1; width: 100%; border-color: transparent; background: transparent; align-items: flex-end; justify-content: flex-end; }
-.character-model-expand span { padding: 6px 8px; border-radius: var(--radius-sm); background: var(--surface-1); }
-.character-model .character-model-expand:hover { background: transparent; border-color: var(--border-default); }
-.character-model-expand svg { align-self: flex-end; margin-bottom: 10px; }
 .character-model-feedback { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; margin: 0; padding: 16px; text-align: center; }
 .character-model-version { margin: 8px 0; font-size: 12px; }
 .character-model-actions a { font-size: 13px; }
