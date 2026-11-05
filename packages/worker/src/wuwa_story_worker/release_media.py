@@ -46,6 +46,7 @@ from wuwa_story_worker.cutscene_caption_audio import (
 from wuwa_story_worker.cutscene_import import import_cutscene_recipe, missing_cutscene_identities
 from wuwa_story_worker.cutscene_plan import engine_path, plan_cutscene
 from wuwa_story_worker.cutscene_sources import prepare_base_movies
+from wuwa_story_worker.cutscene_video_source import exported_video_path
 from wuwa_story_worker.event_catalog import client_event_record, read_event_catalog
 from wuwa_story_worker.event_resources import annotate_image_packages, event_resources
 from wuwa_story_worker.job_tracking import update_admin_run
@@ -468,25 +469,28 @@ async def cutscene_assets(payload, parent):
     config = await asyncio.to_thread(video_database, receipts[0].parent / "files",
                                      cache=receipts[0].parent / "video-database.json")
     with closing(sqlite3.connect(config.resolve().as_uri() + "?mode=ro", uri=True)) as db:
-        videos = [(row[0], engine_path(row[1]).removeprefix("/Game/").split(".", 1)[0])
+        videos = [(row[0], exported_video_path(engine_path(row[1])))
                   for name in targets for row in db.execute("SELECT CgId, BinData FROM videodata WHERE CgName = ?", (name,))]
     caption_cg_names = [name for name in targets if await asyncio.to_thread(has_caption_audio, config, name)]
     cg_ids = {cg_id for cg_id, _ in videos}
     unavailable = []
     available = {}
     index = None
+    direct_movies = {path for _, path in videos if path.casefold().endswith(".mp4")}
     if parent.get("workspace_id"):
         # Historical config can retain wrappers removed from the current client.
         # Sound events come from the localized package in extract_cutscene_audio.
-        paths = {path for _, path in videos}
+        paths = {path.removeprefix("Client/Content/").removesuffix(".uexp")
+                 for _, path in videos if path not in direct_movies}
         index = await ensure_archive_index(root, fmodel, root)
         available = await asyncio.to_thread(indexed_package_paths, index, paths)
         unavailable = sorted(paths - available.keys())
-        cg_ids = {cg_id for cg_id, path in videos if path in available}
+        cg_ids = {cg_id for cg_id, path in videos if path in direct_movies
+                  or path.removeprefix("Client/Content/").removesuffix(".uexp") in available}
         for batch in voice_filter_batches(path.removesuffix(".uasset") for path in available.values()):
             receipts.append(await export_assets(root, fmodel, "|".join(batch)))
     assets = await asyncio.to_thread(merge_exports, receipts, root / "release-media" / "files")
-    base_movies = await prepare_base_movies(root, assets, available.values(), fmodel, index=index)
+    base_movies = await prepare_base_movies(root, assets, [*available.values(), *sorted(direct_movies)], fmodel, index=index)
     if base_movies["receipts"]:
         await asyncio.to_thread(merge_exports, base_movies["receipts"], assets)
     save_json(assets / "video-database.json", {"path": config.relative_to(receipts[0].parent / "files").as_posix()})
@@ -537,22 +541,21 @@ async def cutscene(payload, parent):
     config = await asyncio.to_thread(video_database, assets)
     missing_assets = []
     recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"], missing_assets=missing_assets)
-    missing_wrappers = [video["asset"] for video in recipe["videos"]
-                        if not confined(assets, "Client/Content/" + video["asset"].removeprefix("asset:ue:/Game/").rsplit(".", 1)[0] + ".uexp").is_file()]
-    if missing_wrappers:
+    missing_sources = [video["asset"] for video in recipe["videos"]
+                       if not confined(assets, exported_video_path(video["asset"].removeprefix("asset:ue:"))).is_file()]
+    if missing_sources:
         # Keep the authored variant flow intact; never publish a different clip
         # or discard an unavailable variant to make the task look successful.
         await cleanup_published_output(parent, payload["run_id"], "cutscene")
-        return {"videos": 0, "asset_version": parent["asset_version"], "missing_assets": missing_wrappers,
+        return {"videos": 0, "asset_version": parent["asset_version"], "missing_assets": missing_sources,
                 "media_report": {"entries": [{"expected": path, "status": "not_in_archive", "matches": []}
-                                             for path in missing_wrappers]}}, "partial"
+                                             for path in missing_sources]}}, "partial"
     absent_movies = []
     invalid_movies = []
     for video in recipe["videos"]:
-        package = video["asset"].removeprefix("asset:ue:/Game/").rsplit(".", 1)[0]
-        wrapper = "Client/Content/" + package + ".uexp"
+        wrapper = exported_video_path(video["asset"].removeprefix("asset:ue:"))
         try:
-            path = movie_path(confined(assets, wrapper).read_bytes())
+            path = wrapper if wrapper.casefold().endswith(".mp4") else movie_path(confined(assets, wrapper).read_bytes())
         except ValueError as error:
             invalid_movies.append({"expected": wrapper, "status": "invalid_source",
                                    "matches": [], "reason": str(error)})
@@ -588,8 +591,7 @@ async def cutscene(payload, parent):
     save_json(recipe_path, recipe)
     entries = []
     for video in recipe["videos"]:
-        package = video["asset"].removeprefix("asset:ue:/Game/").rsplit(".", 1)[0]
-        expected = "Client/Content/" + package + ".uexp"
+        expected = exported_video_path(video["asset"].removeprefix("asset:ue:"))
         exported = confined(assets, expected)
         entries.append({"expected": expected, "status": "found" if exported.is_file() else "not_in_export",
                         "matches": [exported.relative_to(assets.resolve()).as_posix()] if exported.is_file() else []})

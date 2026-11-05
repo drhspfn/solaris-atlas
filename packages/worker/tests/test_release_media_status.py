@@ -31,7 +31,8 @@ async def test_complete_story_repair_waits_for_structure_before_media(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_cutscene_preparation_batches_only_available_movie_wrappers(monkeypatch, tmp_path):
+@pytest.mark.parametrize("optional", [False, True])
+async def test_cutscene_preparation_batches_wrappers_and_retains_direct_movie_cg_ids(monkeypatch, tmp_path, optional):
     # A preparation-only donor match cannot skip wrappers needed by final-identity leaves.
     monkeypatch.setattr(release_media, "missing_cutscene_identities", AsyncMock(return_value=set()))
     config_files = tmp_path / "config/files"
@@ -43,6 +44,8 @@ async def test_cutscene_preparation_batches_only_available_movie_wrappers(monkey
             ("Old", 1, b"/Game/Aki/Movies/Old.Old"),
             ("New", 2, b"/Game/Aki/Movies/New.New"),
             ("Second", 3, b"/Game/Aki/Movies/Second.Second"),
+            ("R0012", 149, b"/Game/Aki/Movies/Storyboard/R0012.mp4"),
+            ("R0012", 150, b"/Game/Aki/Movies/Storyboard/R0012.mp4"),
         ])
     monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
     monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "tool")
@@ -58,18 +61,65 @@ async def test_cutscene_preparation_batches_only_available_movie_wrappers(monkey
     monkeypatch.setattr(release_media, "publish_inventory", AsyncMock(return_value={}))
     monkeypatch.setattr(release_media, "prepare_base_movies", AsyncMock(return_value={
         "receipts": [], "movies": {}, "missing": [], "errors": {"Bad.uexp": "No movie"}}))
-    from wuwa_story_worker import voice_bootstrap
+    from wuwa_story_worker import voice_bootstrap, voice_packages
+    download_calls = []
+    def download(plan, *_args, **_kwargs):
+        download_calls.append(plan)
+        return tmp_path / "optional-videos"
+    monkeypatch.setattr(voice_packages, "download_voice_plan", download)
+    monkeypatch.setattr(release_media, "bind_package", lambda _parent, _kind, _id, root, **_kwargs: root)
+    async def extract(command, log, _timeout):
+        log.write_text("export complete")
+        (command[3] / "R0012.mp4").write_bytes(b"authored source")
+    from wuwa_story_worker import entity_media
+    monkeypatch.setattr(entity_media, "tool", extract)
     def discover(_version, _assets, _tier, ids, **_kwargs):
-        assert ids == {2, 3}
-        return {"id": "video-plan", "files": []}
+        assert ids == {2, 3, 149, 150}
+        return {"id": "video-plan", "files": [{"path": "Video/native.pak"}] if optional else []}
     monkeypatch.setattr(voice_bootstrap, "discover_video_plan", discover)
     result, status = await release_media.cutscene_assets(
-        {"targets": ["Old", "New", "Second"]}, {"workspace_id": 11, "asset_version": "3.7.0", "tier": "hd"})
+        {"targets": ["Old", "New", "Second", "R0012"]}, {"workspace_id": 11, "asset_version": "3.7.0", "tier": "hd"})
     assert status == "completed"
     assert result["media_report"]["missing_video_packages"] == ["Aki/Movies/Old"]
     assert result["media_report"]["invalid_movie_sources"] == {"Bad.uexp": "No movie"}
+    assert len(download_calls) == int(optional)
+    if optional:
+        assert result["video_plan_id"] == download_calls[0]["id"]
+    assert release_media.prepare_base_movies.await_args.args[2] == [
+        "Client/Content/Aki/Movies/New.uasset", "Client/Content/Aki/Movies/Second.uasset",
+        "Client/Content/Aki/Movies/Storyboard/R0012.mp4"]
     assert [call.args[2] for call in export.await_args_list] == [
         "ConfigDB", "KuroPublicConfig", "Client/Content/Aki/Movies/New|Client/Content/Aki/Movies/Second"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("present", [False, True])
+async def test_direct_mp4_preflight_preserves_source_and_never_requires_wrapper(monkeypatch, tmp_path, present):
+    source = "asset:ue:/Game/Aki/Movies/Storyboard/R0012.mp4"
+    movie = tmp_path / "release-media/files/Client/Content/Aki/Movies/Storyboard/R0012.mp4"
+    if present:
+        movie.parent.mkdir(parents=True)
+        movie.write_bytes(b"source mp4")
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "video_database", lambda _: tmp_path / "video.db")
+    monkeypatch.setattr(release_media, "plan_cutscene", lambda *_args, **_kwargs: {"videos": [{"asset": source}]})
+    monkeypatch.setattr(release_media, "update_admin_run", AsyncMock())
+    monkeypatch.setattr(release_media.shutil, "which", lambda _: "ffmpeg")
+    monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "decoder")
+    publish = AsyncMock(return_value={"videos": 1})
+    monkeypatch.setattr(release_media, "import_cutscene_recipe", publish)
+    result, status = await release_media.cutscene(
+        {"targets": ["R0012"], "run_id": 90, "game_version": "2.8.0"}, {"asset_version": "3.7.1"})
+    assert status == ("completed" if present else "partial")
+    if present:
+        publish.assert_awaited_once()
+        assert result["media_report"]["entries"] == [{
+            "expected": "Client/Content/Aki/Movies/Storyboard/R0012.mp4", "status": "found",
+            "matches": ["Client/Content/Aki/Movies/Storyboard/R0012.mp4"]}]
+        assert json.loads(publish.await_args.args[0].read_text())["videos"][0]["asset"] == source
+    else:
+        publish.assert_not_awaited()
+        assert result["missing_assets"] == [source]
 
 
 @pytest.mark.asyncio
