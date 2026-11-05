@@ -738,3 +738,18 @@ button:disabled {
 .atlas-select-width-full { width: 100%; }
 .atlas-select-width-auto { width: fit-content; max-width: 100%; }
 .atlas-select-width-compact { width: min(100%, 360px); max-width: min(100%, 360px); }
+
+/* Native popover owns focus containment; rows and compact header controls own its indicator. */
+.atlas-select-catalog:focus-visible { outline: none; }
+.atlas-select-catalog .atlas-select-icon-button {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 40px; width: 40px; height: 40px; min-width: 40px; min-height: 40px;
+  padding: 0; margin: 0; border: 0; border-radius: var(--radius-xs);
+  background: transparent; color: var(--text-secondary); line-height: 1;
+}
+.atlas-select-catalog .atlas-select-icon-button > svg { flex: 0 0 20px; width: 20px; height: 20px; }
+.atlas-select-catalog .atlas-select-icon-button:hover { background: var(--surface-3); color: var(--text-primary); }
+.atlas-select-catalog .atlas-select-icon-button:focus-visible { outline: 1px solid var(--border-strong); outline-offset: -2px; background: var(--surface-3); }
+.atlas-select-catalog .atlas-select-search .atlas-select-icon-button { flex-basis: 36px; width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
+.atlas-select-catalog .atlas-select-search:focus-within { border-color: var(--border-strong); box-shadow: none; outline: none; }
+.atlas-select-catalog .atlas-select-search input[type=search]:focus-visible { outline: none; box-shadow: none; }

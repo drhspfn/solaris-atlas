@@ -59,3 +59,9 @@ test('shared Select trigger widths and popup caps are independent of feature nam
  }
  const h=harness({value:'',onChange(){},options,label:'Versions'});assert(h.render().props.className.includes('atlas-select-width-full'));
 });
+
+test('catalog header actions use shared nonshrinking icon button treatment',()=>{
+ const h=harness({value:'idle',onChange(){},options,label:'Records',searchable:true,categorized:true});let t=h.render();trigger(t).props.onClick();t=h.render();
+ const search=nodes(popup(t)).find(n=>n.props?.['aria-label']==='Search records');assert(search.props.className.includes('atlas-select-icon-button'));search.props.onClick();t=h.render();
+ const close=nodes(popup(t)).find(n=>n.props?.['aria-label']==='Close search');assert(close.props.className.includes('atlas-select-icon-button'));assert.equal(nodes(close).find(n=>n.type==='X').props.size,20);
+});

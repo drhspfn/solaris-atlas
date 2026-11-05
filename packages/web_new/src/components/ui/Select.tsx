@@ -258,16 +258,16 @@ export function Select({
       >
         {rich && <div className="atlas-select-catalog-heading">
           {searchOpen ? <div className="atlas-select-search">
-            <Search size={16} aria-hidden="true" />
+            <Search size={20} aria-hidden="true" />
             <input ref={searchInput} type="search" aria-label={`Search ${label.toLocaleLowerCase()}`}
               aria-controls={`${id}-options`} aria-activedescendant={rows[active] ? `${id}-${active}` : undefined}
               placeholder={`Search ${label.toLocaleLowerCase()}…`} value={query}
               onChange={event => { rememberScroll(); setQuery(event.target.value); setActive(0); restoreScroll.current = true; }} />
-            <button type="button" aria-label="Close search" onClick={closeSearch}><X size={15} aria-hidden="true" /></button>
+            <button className="atlas-select-icon-button" type="button" aria-label="Close search" onClick={closeSearch}><X size={20} aria-hidden="true" /></button>
           </div> : <>
-            {categorized && <button className="atlas-select-back" type="button" aria-label="Back" disabled={!path.length} onClick={() => navigate(path.slice(0, -1))}><ArrowLeft size={16} aria-hidden="true" /></button>}
+            {categorized && <button className="atlas-select-back atlas-select-icon-button" type="button" aria-label="Back" disabled={!path.length} onClick={() => navigate(path.slice(0, -1))}><ArrowLeft size={20} aria-hidden="true" /></button>}
             <span className="atlas-select-current-category">{categorized ? path.join(' / ') || 'All categories' : label}</span>
-            {searchable && <button className="atlas-select-search-toggle" type="button" aria-label={`Search ${label.toLocaleLowerCase()}`} onClick={() => setSearchOpen(true)}><Search size={16} aria-hidden="true" /></button>}
+            {searchable && <button className="atlas-select-search-toggle atlas-select-icon-button" type="button" aria-label={`Search ${label.toLocaleLowerCase()}`} onClick={() => setSearchOpen(true)}><Search size={20} aria-hidden="true" /></button>}
           </>}
         </div>}
         <div id={rich ? `${id}-options` : undefined} role={rich ? "listbox" : undefined} aria-label={rich ? label : undefined}

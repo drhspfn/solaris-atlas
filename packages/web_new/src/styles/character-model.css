@@ -8,15 +8,15 @@
 .character-model-form-select .atlas-select-trigger { width: 100%; min-width: 0; }
 .character-model p, .character-model-import p, .character-model-import-dialog p { color: var(--text-secondary); line-height: 1.6; overflow-wrap: anywhere; }
 .character-model-actions, .character-model-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-block: 16px; }
-.character-model button:not(.ui-button), .character-model-import button:not(.ui-button), .character-model-dialog button:not(.ui-button), .character-model-actions a {
+.character-model button:not(.ui-button):not(.atlas-select button), .character-model-import button:not(.ui-button):not(.atlas-select button), .character-model-dialog button:not(.ui-button):not(.atlas-select button), .character-model-actions a {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   min-height: 44px; padding: 10px 14px; border: 1px solid var(--border-default);
   border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-primary);
   font: inherit; cursor: pointer;
 }
-.character-model button:not(.ui-button):hover, .character-model-import button:not(.ui-button):hover, .character-model-dialog button:not(.ui-button):hover, .character-model-actions a:hover { border-color: var(--mint); background: var(--surface-3); }
-.character-model button:not(.ui-button):active, .character-model-dialog button:not(.ui-button):active, .character-model-import button:not(.ui-button):active { background: var(--surface-1); }
-.character-model button:not(.ui-button):disabled, .character-model-import button:not(.ui-button):disabled, .character-model-dialog button:not(.ui-button):disabled { opacity: .6; cursor: default; }
+.character-model button:not(.ui-button):not(.atlas-select button):hover, .character-model-import button:not(.ui-button):not(.atlas-select button):hover, .character-model-dialog button:not(.ui-button):not(.atlas-select button):hover, .character-model-actions a:hover { border-color: var(--mint); background: var(--surface-3); }
+.character-model button:not(.ui-button):not(.atlas-select button):active, .character-model-dialog button:not(.ui-button):not(.atlas-select button):active, .character-model-import button:not(.ui-button):not(.atlas-select button):active { background: var(--surface-1); }
+.character-model button:not(.ui-button):not(.atlas-select button):disabled, .character-model-import button:not(.ui-button):not(.atlas-select button):disabled, .character-model-dialog button:not(.ui-button):not(.atlas-select button):disabled { opacity: .6; cursor: default; }
 .character-model :focus-visible, .character-model-import :focus-visible, .character-model-dialog :focus-visible { outline: 2px solid var(--accent-cyan); outline-offset: 3px; }
 .character-model-preview { position: relative; height: clamp(280px, 40vw, 420px); }
 .character-model-embed { position: relative; min-height: 0; height: 100%; }
