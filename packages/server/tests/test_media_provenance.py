@@ -85,6 +85,19 @@ def test_incomplete_controller_archive_remains_retryable():
     assert not matches_source(reference.metadata_json, {'asset_version': '3.7.0'}, value)
 
 
+@pytest.mark.parametrize('archived_version', [None, 0, 1])
+def test_sequence_media_upgrade_revisits_only_outdated_controller_archives(archived_version):
+    from wuwa_story.ingestion.media_provenance import matches_source
+    value = {**target('story_sequence:flow_state:Story'), 'kind': 'spine',
+             'spine_recipe': 2, 'presentation_sha256': 'same', 'sequence_media_schema': 1}
+    reference, _, _ = row(value, spine_recipe=2, presentation_sha256='same',
+                          sequence_media_schema=archived_version)
+    assert matches_source(reference.metadata_json, {'asset_version': '3.7.0'}, value) == (archived_version == 1)
+    # Non-sequence Spine and character trials retain their existing recipe.
+    value.pop('sequence_media_schema')
+    assert matches_source(reference.metadata_json, {'asset_version': '3.7.0'}, value)
+
+
 def target(path="/Game/Icon.Icon", language=None):
     return {"owner": 4, "release_id": 2, "path": path,
             "language": language, "kind": "voice" if language else "image"}

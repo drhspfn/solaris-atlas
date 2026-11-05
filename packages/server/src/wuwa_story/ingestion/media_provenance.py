@@ -34,6 +34,7 @@ def matches_source(metadata: dict, source: dict, target: dict) -> bool:
         (target.get('kind') != 'spine' or provenance.get(
             'spine_recipe') == target.get('spine_recipe') and provenance.get(
             'presentation_sha256') == target.get('presentation_sha256') and
+         (not target.get('sequence_media_schema') or provenance.get('sequence_media_schema') == target['sequence_media_schema']) and
          provenance.get('control_sources_complete', True))
         and provenance.get("schema_version") == 1
         and provenance.get("package_path") == authored_package_path(target)

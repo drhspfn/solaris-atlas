@@ -430,6 +430,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         if controls.get('missing'):
                             incomplete_spine_controls.append({'path': target['path'], 'missing': controls['missing']})
                         spine_source = {'spine_recipe': target['spine_recipe'],
+                                        'sequence_media_schema': target.get('sequence_media_schema'),
                                         'presentation_sha256': target.get('presentation_sha256'),
                                         'control_sources_complete': not controls.get('missing')}
                     provenance = await asyncio.to_thread(
