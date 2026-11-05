@@ -328,7 +328,7 @@ async def quest_media(
                 resource_raw[child["node_id"]]
                 for child in variants.get(target_id, [])
                 if child["relation"] == "uses_caption" and child["node_id"] in resource_raw
-            ], texts) if entry["playback"] and entry["playback"]["asset_version"] == "3.7.0" else {}
+            ], texts) if entry["playback"] and entry["playback"]["asset_version"] in {"3.7.0", "3.7.1"} else {}
             entry["resources"] = [
                 {"kind": child["relation"], "reference": child["canonical_key"],
                  "basis": child["basis"], "source": child["source"],
