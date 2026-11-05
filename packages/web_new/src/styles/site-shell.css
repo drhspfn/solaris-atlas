@@ -717,3 +717,17 @@ button:disabled {
     grid-template-columns: 210px minmax(0, 1fr);
   }
 }
+
+/* Catalog Select: one top-layer menu owns search, navigation and scrolling. */
+.atlas-select-catalog { padding: 0; }
+.atlas-select-catalog-heading { position: sticky; top: 0; z-index: 1; padding: 10px; background: var(--surface-2); border-bottom: 1px solid var(--border-default); }
+.atlas-select-search { display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-1); }
+.atlas-select-search > svg { flex-shrink: 0; color: var(--text-secondary); }
+.atlas-select-search input[type=search] { width: 100%; min-width: 0; min-height: 40px; padding: 0; border: 0; outline: none; background: transparent; color: var(--text-primary); font: inherit; }
+.atlas-select-search:focus-within { border-color: var(--accent-mint); }
+.atlas-select-search button { display: grid; place-items: center; min-width: 32px; min-height: 32px; padding: 0; border: 0; background: transparent; }
+.atlas-select-breadcrumb { display: flex; align-items: center; gap: 12px; margin-top: 8px; font-size: 12px; }
+.atlas-select-breadcrumb button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; flex-shrink: 0; padding: 4px 8px; border: 0; background: transparent; }
+.atlas-select-breadcrumb span { min-width: 0; overflow-wrap: anywhere; color: var(--text-secondary); }
+.atlas-select-catalog > [role=listbox] { padding: 6px; }
+.atlas-select-empty { padding: 14px; margin: 0; color: var(--text-secondary); }
