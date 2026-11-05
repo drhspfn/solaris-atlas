@@ -50,6 +50,11 @@ dungeon context, not evidence that every optional branch occurred. The shared
 quest scope includes these paths and their source-matched cutscene transcripts.
 Backfills only add missing versioned graph evidence; they never enqueue media.
 
+An explicit dungeon-exit requirement can refer to an instance whose map ID is
+different. A verified instance-to-map reference preserves that exit as a transition;
+it does not replay the shared map's battle or assign its optional branches to the
+exit. Missing or ambiguous instance mappings remain unresolved.
+
 Cutscene analysis titles are short, localized single lines describing the scene.
 Resource codes remain visible as provenance, not as generated display titles.
 
