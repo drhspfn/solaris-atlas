@@ -25,23 +25,23 @@ export function EncounterCinematicBoundary({
   children?: ReactNode;
 }) {
   return (
-    <section className={styles.cinematic} aria-label="Cinematic action">
+    <section className={styles.cinematic} aria-label="Scene">
       <div className={styles.marker}>
         <Film size={15} aria-hidden="true" />
-        Start of cinematic action
+        Scene
       </div>
       <p className={styles.note}>
-        {media.some((item) => item.kind === "sequence")
-          ? "In-game cinematic sequence"
-          : "Cinematic scene"}{" "}
-        {playbackResolved ? "· published scene playback" : "· playback is not resolved."}
+        {playbackResolved ? "Playback available" : "Playback pending"}
+        {unplaced ? " · placement unknown" : ""}
       </p>
-      {unplaced && <p className={styles.note}>Its position relative to the displayed dialogue is not established.</p>}
       {children}
-      <div className={styles.marker}>End of cinematic action</div>
+      <div className={styles.marker}>End scene</div>
       <details className={styles.source}>
-        <summary>About this scene boundary</summary>
+        <summary>Source</summary>
+        <p>{media.some((item) => item.kind === "sequence") ? "In-game cinematic sequence" : "Cinematic scene"}</p>
+        {unplaced && <p>Its position relative to the displayed dialogue is not established.</p>}
         <p>Action boundaries do not establish playback duration or completion.</p>
+        {media.map((item, index) => <p key={index}>{item.source.file} · {item.raw_path}</p>)}
       </details>
     </section>
   );
@@ -267,13 +267,6 @@ export function QuestEncounter({
       <p className={styles.note}>
         Only ordered steps establish a sequence. Other paths may be conditional or have unknown order.
       </p>
-      {encounter.trees.length +
-        (encounter.unresolved_level_plays?.length || 0) >
-        1 && (
-        <p className={styles.note}>
-          The relative order of these encounter contexts is not established.
-        </p>
-      )}
       {encounter.trees.map((tree) => (
         <details
           key={tree.level_play_id}
@@ -298,6 +291,9 @@ export function QuestEncounter({
       <div className={styles.marker}>End of encounter context</div>
       <details className={styles.source}>
         <summary>Source &amp; conditions</summary>
+        {encounter.trees.length + (encounter.unresolved_level_plays?.length || 0) > 1 && (
+          <p>The relative order of these encounter contexts is not established.</p>
+        )}
         <p>
           {encounter.source.file} · {encounter.source.raw_path}
         </p>

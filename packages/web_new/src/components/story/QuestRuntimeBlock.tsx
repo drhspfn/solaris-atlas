@@ -93,12 +93,14 @@ export function QuestRuntimeBlock({
   const dialogue = block.flow_states.filter((flow) => stateAnchors.has(flow.state));
   const sourceContext = <>
     <p>{block.condition_type || 'Scripted activity'}</p>
+    {isExit && <p>Authored exit requirement; completion is not established.</p>}
+    {!!block.branches.length && <p>Conditional or parallel branch; order is not established.</p>}
     <small>{block.source.file} · {block.source.key}</small>
     {block.branches.map((branch) => <small key={branch.id}>{branch.type} · {branch.id}</small>)}
   </>;
   if (genericTitle && !isExit && !block.flow_states.length && !block.interactions?.length)
     return <details className={styles.sourceOnly} id={runtimeBlockAnchor(block.id)}>
-      <summary>Activity context{block.branches.length ? ' · conditional / parallel path' : ''}</summary>
+      <summary>Source &amp; conditions</summary>
       {sourceContext}
     </details>;
   const Icon = isExit ? MapPin :
@@ -119,19 +121,13 @@ export function QuestRuntimeBlock({
           : 'Exploration';
   return (
     <section className={`quest-runtime-block ${styles.block}`} id={runtimeBlockAnchor(block.id)}>
-      <span className="quest-activity-kind">
+      {!isExit && <span className="quest-activity-kind">
         <Icon size={16} aria-hidden="true" />
         {label}
-      </span>
+      </span>}
       {(!genericTitle || isExit) && <h3>
         <PlayerText display={display} value={isExit && genericTitle ? 'Leave the area' : block.title} fallback="Story activity" />
       </h3>}
-      {isExit && <p>An exit is required here; this does not mark another battle or confirm it was completed.</p>}
-      {block.branches.length > 0 && (
-        <p className="quest-runtime-branch">
-          Conditional / parallel path · order not established
-        </p>
-      )}
       {dialogue.length > 0 && (
         <nav aria-label="Dialogue for this activity">
           {dialogue
@@ -145,7 +141,7 @@ export function QuestRuntimeBlock({
       {!!block.flow_states.length && !dialogue.length && <p>Dialogue is outside this transcript window.</p>}
       {!!block.interactions?.length && (
         <div className="quest-runtime-interactions">
-          <p>Optional interactions in this area · explore in your own order.</p>
+          <p>Optional interactions</p>
           {block.interactions.map((item) => {
             const content =
               renderInteraction?.(

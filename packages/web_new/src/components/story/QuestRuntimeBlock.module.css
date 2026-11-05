@@ -5,5 +5,6 @@
 .block summary:focus-visible, .sourceOnly > summary:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
 .block nav a { display: inline-flex; align-items: center; min-height: 44px; }
 .block small, .sourceOnly small { display: block; overflow-wrap: anywhere; }
-.sourceOnly { margin: 8px 0; min-width: 0; scroll-margin-top: 100px; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.sourceOnly { display: none; min-width: 0; scroll-margin-top: 100px; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.sourceOnly:target { display: block; margin: 8px 0; }
 @media (max-width: 480px) { .block:global(.quest-runtime-block) { padding: 8px; } }
