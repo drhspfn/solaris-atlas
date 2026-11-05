@@ -8,7 +8,7 @@ import {
   Sparkles,
   Swords,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "@/lib/router";
 
 import { api, apiUrl } from "../../api/client";
@@ -22,6 +22,7 @@ import {
   type AnimationPreview,
 } from "@/components/ui/animationPreview";
 import "@/styles/character-voice-lines.css";
+import "@/styles/character-talents.css";
 
 export interface CharacterArchiveData {
   trial_spine?: {
@@ -56,6 +57,7 @@ export interface CharacterArchiveData {
     order: number;
     name: string | null;
     description: string | null;
+    description_params?: string[];
     max_level: number;
     attributes?: {
       id: number;
@@ -182,6 +184,15 @@ function gameText(
     .trim();
 }
 
+function talentText(
+  value: string | null | undefined,
+  params: string[] = [],
+): string {
+  return gameText(value, params)
+    .replace(/\{Cus:Ipt,Touch=(?:Tap|tap) PC=(Press|press) Gamepad=(?:Press|press)\}/g, "$1")
+    .replace(/\{\d+[^}]*\}/g, "—");
+}
+
 const voiceLocales = availableLocales.filter(({ code }) =>
   ["en", "ja", "zh-Hans", "ko"].includes(code),
 );
@@ -201,61 +212,191 @@ export function SkillScaling({
     ? Math.max(1, Math.floor(skill.max_level))
     : 1;
   const level = Math.min(selectedLevel, maxLevel);
-  const skillLabel = skill.name ? gameText(skill.name) : `Skill #${skill.id}`;
+  const skillLabel = skill.name ? talentText(skill.name) : "Talent";
 
   return (
     <div className="character-skill-scaling">
-      <div className="character-skill-level">
-        <span>Talent level</span>
-        <Select
-          label={`${skillLabel} talent level`}
-          value={level}
-          options={Array.from({ length: maxLevel }, (_, index) => ({
-            value: index + 1,
-            label: `Level ${index + 1}`,
-          }))}
-          onChange={(value) => setSelectedLevel(Number(value))}
-        />
-      </div>
-      <table aria-label={`${skillLabel} values at level ${level}`}>
-        <tbody>
-          {[...skill.attributes]
-            .sort((a, b) => a.order - b.order)
-            .map((attribute) => (
-              <tr key={attribute.id}>
-                <th scope="row">
-                  {gameText(
-                    attribute.name ||
-                      attribute.description ||
-                      `Attribute ${attribute.order}`,
-                  )}
-                  {attribute.name &&
-                    attribute.description &&
-                    !/\{\d+[^}]*\}/.test(attribute.description) && (
-                      <small>{gameText(attribute.description)}</small>
+      {maxLevel > 1 && (
+        <label className="character-skill-level character-talent-level">
+          <span>Talent level</span>
+          <output>
+            {level} / {maxLevel}
+          </output>
+          <input
+            type="range"
+            aria-label={`${skillLabel} talent level`}
+            min={1}
+            max={maxLevel}
+            step={1}
+            value={level}
+            onChange={(event) =>
+              setSelectedLevel(event.currentTarget.valueAsNumber)
+            }
+          />
+        </label>
+      )}
+      <div
+        className="character-talent-stat-scroll"
+        role="region"
+        aria-label={`${skillLabel} stats`}
+        tabIndex={0}
+      >
+        <table aria-label={`${skillLabel} values at level ${level}`}>
+          <tbody>
+            {[...skill.attributes]
+              .sort((a, b) => a.order - b.order)
+              .map((attribute) => (
+                <tr key={attribute.id}>
+                  <th scope="row">
+                    {talentText(
+                      attribute.name || attribute.description || "Stat",
                     )}
-                </th>
-                <td>
-                  {attribute.values.length
-                    ? (attribute.values.length === 1
-                        ? attribute.values[0]
-                        : attribute.values[level - 1]) || "—"
-                    : attribute.parameters.length
-                      ? attribute.parameters.map((values, index) => (
-                          <div key={index}>
-                            <small>Parameter {index + 1}: </small>
-                            {(values.length === 1
-                              ? values[0]
-                              : values[level - 1]) || "—"}
-                          </div>
-                        ))
-                      : "—"}
-                </td>
-              </tr>
-            ))}
-        </tbody>
-      </table>
+                    {attribute.name &&
+                      attribute.description &&
+                      !/\{\d+[^}]*\}/.test(attribute.description) && (
+                        <small>{talentText(attribute.description)}</small>
+                      )}
+                  </th>
+                  <td>
+                    {attribute.values.length
+                      ? (attribute.values.length === 1
+                          ? attribute.values[0]
+                          : attribute.values[level - 1]) || "—"
+                      : attribute.parameters.length
+                        ? attribute.parameters.map((values, index) => (
+                            <div key={index}>
+                              <small>Parameter {index + 1}: </small>
+                              {(values.length === 1
+                                ? values[0]
+                                : values[level - 1]) || "—"}
+                            </div>
+                          ))
+                        : "—"}
+                  </td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
     </div>
+  );
+}
+
+export function SkillCard({
+  skill,
+}: {
+  skill: CharacterArchiveData["skills"][number];
+}) {
+  const id = useId();
+  const [tab, setTab] = useState("description");
+  const [canExpand, setCanExpand] = useState(false);
+  const preview = useRef<HTMLParagraphElement>(null);
+  const description = talentText(
+    skill.description,
+    skill.description_params || [],
+  );
+  const name = skill.name ? talentText(skill.name) : "Talent";
+  const hasStats = !!skill.attributes?.length;
+
+  useEffect(() => {
+    const element = preview.current;
+    if (!element) return;
+    const measure = () => {
+      if (element.clientHeight > 0)
+        setCanExpand(element.scrollHeight > element.clientHeight + 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [description]);
+
+  return (
+    <article className="character-skill-card character-talent-card">
+      <div className="character-skill-heading">
+        {skill.icon.url ? (
+          <img src={apiUrl(skill.icon.url.replace(/^\/api/, ""))} alt="" />
+        ) : (
+          <span className="character-icon-fallback">
+            <Swords size={19} aria-hidden="true" />
+          </span>
+        )}
+        <h3>{name}</h3>
+      </div>
+      {hasStats && (
+        <div
+          className="character-talent-tabs"
+          role="tablist"
+          aria-label={`${name} details`}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
+            const next =
+              event.key === "Home"
+                ? "description"
+                : event.key === "End"
+                  ? "stats"
+                  : event.key === "ArrowLeft" || event.key === "ArrowRight"
+                    ? tab === "description"
+                      ? "stats"
+                      : "description"
+                    : null;
+            if (!next) return;
+            event.preventDefault();
+            setTab(next);
+            event.currentTarget
+              .querySelectorAll<HTMLButtonElement>('[role="tab"]')
+              [next === "description" ? 0 : 1]?.focus();
+          }}
+        >
+          {["description", "stats"].map((name) => (
+            <button
+              key={name}
+              type="button"
+              role="tab"
+              id={`${id}-${name}-tab`}
+              aria-controls={`${id}-${name}-panel`}
+              aria-selected={tab === name}
+              tabIndex={tab === name ? 0 : -1}
+              onClick={() => setTab(name)}
+            >
+              {name === "description" ? "Description" : "Stats"}
+            </button>
+          ))}
+        </div>
+      )}
+      <div
+        id={`${id}-description-panel`}
+        role={hasStats ? "tabpanel" : undefined}
+        aria-labelledby={hasStats ? `${id}-description-tab` : undefined}
+        hidden={hasStats && tab !== "description"}
+      >
+        <div className="character-talent-description">
+          <p ref={preview} className="character-talent-preview">
+            {description}
+          </p>
+          {canExpand && (
+            <details>
+              <summary>
+                <span className="talent-read-more">Read more</span>
+                <span className="talent-show-less">Show less</span>
+              </summary>
+              <p>{description}</p>
+            </details>
+          )}
+        </div>
+      </div>
+      {hasStats && (
+        <div
+          className="character-talent-stats-panel"
+          id={`${id}-stats-panel`}
+          role="tabpanel"
+          aria-labelledby={`${id}-stats-tab`}
+          hidden={tab !== "stats"}
+        >
+          <SkillScaling skill={skill} />
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -508,80 +649,31 @@ export function CharacterArchive({
       <details className="character-fold">
         <summary>
           <Swords size={19} />
-          <span>Skills & skill tree</span>
-          <small>
-            {archive?.skills.length ?? 0} skills ·{" "}
-            {archive?.skill_tree.length ?? 0} nodes
-          </small>
+          <span>Talents</span>
           <ChevronDown size={17} />
         </summary>
         <div className="character-fold-body">
           {archive?.skills.length ? (
             <div className="character-skill-grid">
-              {archive.skills.map((skill) => (
-                <article className="character-skill-card" key={skill.id}>
-                  <div className="character-skill-heading">
-                    {skill.icon.url ? (
-                      <img
-                        src={apiUrl(skill.icon.url.replace(/^\/api/, ""))}
-                        alt=""
-                      />
-                    ) : (
-                      <span className="character-icon-fallback">
-                        <Swords size={19} />
-                      </span>
-                    )}
-                    <div>
-                      <small>
-                        Skill {String(skill.order).padStart(2, "0")}
-                      </small>
-                      <h3>{gameText(skill.name)}</h3>
-                    </div>
-                  </div>
-                  <p>{gameText(skill.description)}</p>
-                  <SkillScaling
+              {archive.skills
+                .filter(
+                  (skill) =>
+                    skill.name?.trim() ||
+                    skill.description?.trim() ||
+                    skill.attributes?.length,
+                )
+                .map((skill) => (
+                  <SkillCard
                     key={`${characterKey}-${skill.id}`}
                     skill={skill}
                   />
-                  <small className="character-source-hint">
-                    Source: Skill #{skill.id} · up to level {skill.max_level}
-                  </small>
-                </article>
-              ))}
+                ))}
             </div>
           ) : (
             <p className="character-muted">
               No skill records in this snapshot.
             </p>
           )}
-          {archive?.skill_tree.length ? (
-            <details className="character-subfold">
-              <summary>
-                Skill tree requirements{" "}
-                <span>{archive.skill_tree.length} nodes</span>
-              </summary>
-              <div className="character-tree-list">
-                {archive.skill_tree.map((node) => (
-                  <div key={node.id}>
-                    <strong>
-                      {node.title ? gameText(node.title) : `Node ${node.order}`}
-                    </strong>
-                    <small>
-                      {node.costs.length
-                        ? node.costs
-                            .map(
-                              (cost) =>
-                                `${cost.item?.name || `Item ${cost.item_id}`} ×${cost.count}`,
-                            )
-                            .join(" · ")
-                        : "No material cost recorded"}
-                    </small>
-                    {node.description && <p>{gameText(node.description)}</p>}
-                  </div>
-                ))}
-              </div>
-            </details>
-          ) : null}
         </div>
       </details>
 

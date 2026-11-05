@@ -1,6 +1,17 @@
 """Preserve authored skill parameters without deriving or extrapolating stats."""
 
 
+def skill_description_parameters(detail: object) -> list[str]:
+    """Validate skill.json SkillDetailNum paired with SkillDescribe.
+
+    Reject malformed arrays rather than shifting placeholder indices or guessing
+    values. MultiSkillDescribe has its own independently ordered parameter array.
+    """
+    if isinstance(detail, list) and all(isinstance(value, str) for value in detail):
+        return list(detail)
+    return []
+
+
 def skill_stat_parameters(detail: object) -> list[list[str]]:
     if not isinstance(detail, list):
         return []

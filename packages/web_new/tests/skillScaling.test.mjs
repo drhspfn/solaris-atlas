@@ -89,8 +89,8 @@ function harness(data = skill()) {
     render: () => SkillScaling({ skill: data }),
     select(level) {
       nodes(this.render())
-        .find((node) => node.props?.label?.endsWith("talent level"))
-        .props.onChange(String(level));
+        .find((node) => node.props?.type === "range")
+        .props.onChange({ currentTarget: { valueAsNumber: level } });
     },
     markup() {
       return renderToStaticMarkup(this.render());
@@ -107,11 +107,13 @@ test("defaults to level 1 and uses the skill cap rather than the raw array lengt
     ],
   });
   const h = harness(data);
-  const select = nodes(h.render()).find((node) => node.props?.options);
-  assert.equal(select.props.value, 1);
-  assert.equal(select.props.label, "Resonance talent level");
-  assert.equal(select.props.options.length, 10);
-  assert.equal(select.props.options.at(-1).value, 10);
+  const slider = nodes(h.render()).find((node) => node.props?.type === "range");
+  assert.equal(slider.props.value, 1);
+  assert.equal(slider.props["aria-label"], "Resonance talent level");
+  assert.equal(slider.props.min, 1);
+  assert.equal(slider.props.max, 10);
+  assert.equal(slider.props.step, 1);
+  assert.match(h.markup(), /<output>1 \/ 10<\/output>/);
   h.select(10);
   assert.match(h.markup(), /<td>10\.00%<\/td>/);
   assert.equal(
@@ -197,16 +199,17 @@ test("absent or empty attributes hide scaling and preserve existing skill descri
         },
       }),
     );
-    assert.match(markup, /Original skill description \{0\}/);
+    assert.match(markup, /Original skill description —/);
     assert.doesNotMatch(markup, /character-skill-scaling|Talent level/);
   }
 });
 
-test("single-level skills offer one level even when source arrays contain more", () => {
-  const h = harness(skill({ max_level: 1 }));
-  const select = nodes(h.render()).find((node) => node.props?.options);
-  assert.equal(select.props.options.length, 1);
-  assert.equal(select.props.options[0].value, 1);
+test("single-level skills display stats without a slider", () => {
+  for (const max_level of [1, null, undefined]) {
+    const h = harness(skill({ max_level }));
+    assert(!nodes(h.render()).some((node) => node.props?.type === "range"));
+    assert.match(h.markup(), /<td>12\.30%<\/td>/);
+  }
 });
 
 test("ambiguous templates retain separate raw parameters at the selected level", () => {
@@ -228,4 +231,286 @@ test("ambiguous templates retain separate raw parameters at the selected level",
   h.select(10);
   assert.match(h.markup(), /Parameter 1: <\/small>—/);
   assert.match(h.markup(), /Parameter 2: <\/small>3/);
+});
+
+function cardHarness(data = skill(), overflow = false) {
+  const states = [];
+  let index = 0;
+  const { SkillCard, SkillScaling } = load({
+    ...React,
+    useId: () => "talent-test",
+    useRef: () => ({ current: null }),
+    useEffect: () => {},
+    useState(initial) {
+      const slot = index++;
+      if (!(slot in states)) states[slot] = slot === 1 ? overflow : initial;
+      return [
+        states[slot],
+        (value) => {
+          states[slot] = value;
+        },
+      ];
+    },
+  });
+  function expand(node) {
+    if (!node || typeof node !== "object") return node;
+    if (node.type === SkillScaling) return expand(SkillScaling(node.props));
+    if (!node.props?.children) return node;
+    return React.cloneElement(
+      node,
+      {},
+      ...[node.props.children].flat(Infinity).map(expand),
+    );
+  }
+  return {
+    render() {
+      index = 0;
+      return expand(SkillCard({ skill: data }));
+    },
+    tab(name) {
+      nodes(this.render())
+        .find((n) => n.props?.role === "tab" && n.props.children === name)
+        .props.onClick();
+    },
+    select(level) {
+      nodes(this.render())
+        .find((n) => n.props?.type === "range")
+        .props.onChange({ currentTarget: { valueAsNumber: level } });
+    },
+    markup() {
+      return renderToStaticMarkup(this.render());
+    },
+  };
+}
+
+test("cards have linked accessible tabs and retain an independent slider across toggles", () => {
+  const first = cardHarness(),
+    second = cardHarness(skill({ id: 11 }));
+  const description = nodes(first.render()).find(
+    (n) => n.props?.role === "tab" && n.props.children === "Description",
+  );
+  assert.equal(description.props["aria-selected"], true);
+  assert.equal(description.props.tabIndex, 0);
+  const panel = nodes(first.render()).find(
+    (n) => n.props?.id === description.props["aria-controls"],
+  );
+  assert.equal(panel.props["aria-labelledby"], description.props.id);
+  assert.equal(panel.props.hidden, false);
+  first.tab("Stats");
+  first.select(2);
+  first.tab("Description");
+  first.tab("Stats");
+  assert.match(first.markup(), /<td>24\.60%<\/td>/);
+  assert.match(first.markup(), /<output>2 \/ 10<\/output>/);
+  assert.match(second.markup(), /<td>12\.30%<\/td>/);
+  assert.doesNotMatch(
+    first.markup(),
+    /Original skill description \{0\}|Source: Skill|Skill #/,
+  );
+});
+
+test("tabs support arrow, Home and End keys and move focus", () => {
+  const h = cardHarness();
+  let focused = null,
+    prevented = 0;
+  for (const [key, expected] of [
+    ["End", 1],
+    ["Home", 0],
+    ["ArrowRight", 1],
+    ["ArrowLeft", 0],
+  ]) {
+    const tabs = nodes(h.render()).find((n) => n.props?.role === "tablist");
+    tabs.props.onKeyDown({
+      key,
+      nativeEvent: {},
+      preventDefault() {
+        prevented++;
+      },
+      currentTarget: {
+        querySelectorAll: () =>
+          [0, 1].map((i) => ({
+            focus() {
+              focused = i;
+            },
+          })),
+      },
+    });
+    assert.equal(focused, expected);
+    assert.equal(
+      nodes(h.render()).filter((n) => n.props?.role === "tab")[expected].props[
+        "aria-selected"
+      ],
+      true,
+    );
+  }
+  assert.equal(prevented, 4);
+});
+
+test("long descriptions use native disclosure without deriving text from stats", () => {
+  const markup = cardHarness(
+    skill({
+      description: "Authored text {0}",
+      attributes: [attribute({ values: ["999%"] })],
+    }),
+    true,
+  ).markup();
+  assert.match(markup, /character-talent-preview/);
+  assert.match(markup, /<details><summary>/);
+  assert.match(markup, /Read more/);
+  assert.match(markup, /Show less/);
+  assert.match(markup, /Authored text —/);
+  assert.doesNotMatch(markup, /Authored text 999%|Authored text \{0\}/);
+});
+
+test("public talents omit raw tree, technical labels and empty cards but retain named passives", () => {
+  const { CharacterArchive } = load();
+  const markup = renderToStaticMarkup(
+    React.createElement(CharacterArchive, {
+      locale: "en",
+      characterKey: "character:1",
+      materials: [],
+      archive: {
+        profile: { voice_actors: {} },
+        artwork: [],
+        skills: [
+          skill(),
+          skill({
+            id: 1003808,
+            name: null,
+            description: "Has chance produce special dishes when cooking.",
+            attributes: [],
+            max_level: 1,
+          }),
+          skill({
+            id: 1003809,
+            name: null,
+            description: null,
+            attributes: [],
+            max_level: 1,
+          }),
+          skill({
+            id: 12,
+            name: "Named passive",
+            description: null,
+            attributes: [],
+            max_level: 1,
+          }),
+        ],
+        skill_tree: [
+          {
+            id: 999,
+            title: "Raw tree requirement",
+            description: "Hidden raw node",
+            costs: [],
+          },
+        ],
+        resonance_chain: [],
+        voice_lines: [],
+        other_voice_events: [],
+      },
+    }),
+  );
+  assert.match(markup, />Talents</);
+  assert.match(markup, /Named passive/);
+  assert.equal(
+    (markup.match(/character-skill-card character-talent-card/g) || []).length,
+    3,
+  );
+  assert.match(markup, /Has chance produce special dishes when cooking\./);
+  assert(
+    markup.indexOf("Original skill description") <
+      markup.indexOf("Has chance produce"),
+  );
+  assert(
+    markup.indexOf("Has chance produce") < markup.indexOf("Named passive"),
+  );
+  assert.doesNotMatch(
+    markup,
+    /Raw tree requirement|Hidden raw node|Skill tree requirements| nodes|Source: Skill|Skill 01|1003808/,
+  );
+});
+
+test("MoonSteps preserves authored level 1 and level 10 display values", () => {
+  const h = harness(
+    skill({
+      name: "MoonSteps",
+      attributes: [
+        attribute({
+          values: ["44.10%", "", "", "", "", "", "", "", "", "87.68%"],
+        }),
+      ],
+    }),
+  );
+  assert.match(h.markup(), /<td>44\.10%<\/td>/);
+  h.select(10);
+  assert.match(h.markup(), /<td>87\.68%<\/td>/);
+  assert.match(h.markup(), /aria-label="MoonSteps talent level"/);
+});
+
+test("description binds only explicit backend parameters and masks unresolved tokens", () => {
+  const h = cardHarness(
+    skill({
+      description: "Authored {0}, missing {1}",
+      description_params: ["3.0s"],
+      attributes: [attribute({ values: ["999%"] })],
+    }),
+  );
+  assert.match(h.markup(), /Authored 3\.0s, missing —/);
+  h.tab("Stats");
+  h.select(2);
+  h.tab("Description");
+  assert.match(h.markup(), /Authored 3\.0s, missing —/);
+  assert.doesNotMatch(h.markup(), /Authored 999%|missing \{1\}/);
+});
+
+
+test("Iuno confirmed SkillDetailNum fills source descriptions including named passives", () => {
+  const cases = [
+  {
+    "id": 1003804,
+    "name": "Waxing Ascent",
+    "description": "Every time Iuno casts Basic Attack, Heavy Attack, Dodge Counter, Resonance Skill, Resonance Liberation, or Intro Skill, she gains {0} Shield equal to {1} of her ATK for {2}s. This Shield will not be passed on to the incoming Resonator.",
+    "description_params": [
+      "1",
+      "32%",
+      "15"
+    ]
+  },
+  {
+    "id": 1003805,
+    "name": "Derivation",
+    "description": "When Iuno casts Intro Skill or Resonance Liberation, she immediately gains {0} stacks of <color=Highlight><te href=141002>Blessing of the Wan Light</te></color>.",
+    "description_params": [
+      "5"
+    ]
+  },
+  {
+    "id": 1003809,
+    "name": "From Gloom to Gleam",
+    "description": "Attack the target to deal {0} <color=Wind>Aero DMG</color>. The incoming Resonator gains {1} Heavy Attack DMG Amplification for {2}s. This effect ends early if they are switched off the field.\nCasting <color=Highlight>Outro Skill</color> won't interrupt <color=Highlight>Heavy Attack - Absolute Fullness</color>, and the Outro Skill effect still applies.",
+    "description_params": [
+      "100%",
+      "50%",
+      "14"
+    ]
+  }
+];
+  for (const data of cases) {
+    const markup = cardHarness(skill({ ...data, max_level: 1, attributes: [] })).markup();
+    for (const value of data.description_params) assert(markup.includes(value));
+    assert.doesNotMatch(markup, /\{\d+[^}]*\}|type="range"|role="tablist"/);
+    if (data.id === 1003804) assert.match(markup, /gains 1 Shield equal to 32% of her ATK for 15s/);
+    if (data.id === 1003805) assert.match(markup, /gains 5 stacks of Blessing of the Wan Light/);
+    if (data.id === 1003809) assert.match(markup, /deal 100% Aero DMG/);
+  }
+});
+
+
+test("Iuno input hints use authored PC labels and leave unrelated text unchanged", () => {
+  const description = "{Cus:Ipt,Touch=Tap PC=Press Gamepad=Press} Basic Attack; " +
+    "then {Cus:Ipt,Touch=tap PC=press Gamepad=press} again. " +
+    "Localized текст stays. {Cus:Other,PC=Keep}";
+  const markup = cardHarness(skill({ description, attributes: [] })).markup();
+  assert.match(markup, /Press Basic Attack; then press again\. Localized текст stays\. \{Cus:Other,PC=Keep\}/);
+  assert.doesNotMatch(markup, /Cus:Ipt|Touch=|Gamepad=/);
 });

@@ -29,7 +29,11 @@ from wuwa_story.ingestion.character_artwork import (
     character_artwork_scope,
     inherited_character_fields,
 )
-from wuwa_story.ingestion.skill_stats import skill_stat_parameters, skill_stat_values
+from wuwa_story.ingestion.skill_stats import (
+    skill_description_parameters,
+    skill_stat_parameters,
+    skill_stat_values,
+)
 from wuwa_story.storage.animation_previews import spine_bundle
 from wuwa_story.storage.s3 import S3Storage
 
@@ -326,6 +330,7 @@ async def character_archive(
             "id": row.data.get("Id"), "type": row.data.get("SkillType"),
             "order": row.data.get("SortIndex"), "name": localized.get(row.data.get("SkillName")),
             "description": localized.get(row.data.get("SkillDescribe")),
+            "description_params": skill_description_parameters(row.data.get("SkillDetailNum")),
             "max_level": row.data.get("MaxSkillLevel"),
             "attributes": skill_attributes.get(row.data.get("SkillLevelGroupId"), []),
             "icon": {"engine_path": row.data.get("Icon"), "url": media_url(row.data.get("Icon"), "image/")},

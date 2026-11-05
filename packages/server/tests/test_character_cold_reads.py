@@ -65,6 +65,7 @@ async def test_archive_batches_dependent_tables_and_keeps_configured_group_ids(m
     assert result["skills"][0]["name"] == "Skill"
     assert result["skills"][0]["source"]["row"] == 9
     assert result["skills"][0]["max_level"] == 10
+    assert result["skills"][0]["description_params"] == []
     assert result["skills"][0]["attributes"] == [{
         "id": 900003, "order": 3, "name": "Attack DMG", "description": "",
         "parameters": [["16.88%*4", "18.26%*4"]], "values": ["16.88%*4", "18.26%*4"],
@@ -92,6 +93,54 @@ async def test_archive_batches_dependent_tables_and_keeps_configured_group_ids(m
     assert "source_record.release_id = 12" in grouped_sql
     for field, value in [("SkillGroupId", 70), ("NodeGroup", 71), ("GroupId", 72), ("RoleId", 7)]:
         assert f"CAST((raw.source_record.data ->> '{field}') AS INTEGER) = {value}" in grouped_sql
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("skill_id", "parameters", "description", "multi_parameters"), [
+    (1003804, ["1", "32%", "15"],
+     "Gain {0} Shield equal to {1} of ATK for {2}s.", ["different"]),
+    (1003805, ["5"], "Gain {0} stacks.", ["different"]),
+    (1003809, ["100%", "50%", "14"],
+     "Deal {0} DMG; gain {1} Amplification for {2}s.", ["50%", "14", "100%"]),
+])
+async def test_archive_exposes_exact_skill_describe_parameters(
+    monkeypatch, skill_id, parameters, description, multi_parameters,
+):
+    role = Row(row_index=0, data={"Id": 1410})
+    skill = Row(row_index=338, data={
+        "Id": skill_id, "SkillLevelGroupId": skill_id, "MaxSkillLevel": 1,
+        "SkillDescribe": "skill.description", "SkillDetailNum": parameters,
+        "MultiSkillDescribe": "skill.multi_description", "MultiSkillDetailNum": multi_parameters,
+        "SkillResumeNum": ["resume-only"],
+        "SkillDescribeNum": ["wrong-field"], "SkillDescribeParams": ["wrong-field"],
+    })
+    monkeypatch.setattr(archive, "get_node", AsyncMock(
+        return_value=Row(id=1, canonical_key="character:1410")))
+    monkeypatch.setattr(archive, "_release_id", AsyncMock(return_value=21))
+    monkeypatch.setattr(archive, "_records", AsyncMock(return_value=[role]))
+
+    async def groups(_session, _release, requests):
+        return {path: [skill] if path == "BinData/skill/skill.json" else [] for path in requests}
+
+    monkeypatch.setattr(archive, "_record_groups", groups)
+    monkeypatch.setattr(archive, "_localized_strings", AsyncMock(return_value={
+        "skill.description": description, "skill.multi_description": "Wrong template {0}",
+    }))
+    monkeypatch.setattr(archive, "get_settings", lambda: Row(s3_bucket="test"))
+    monkeypatch.setattr(archive, "S3Storage", lambda _: Row())
+    session = Row(get=AsyncMock(return_value=object()), scalars=AsyncMock(return_value=[]),
+                  execute=AsyncMock(return_value=[]))
+
+    result = await archive.character_archive.__wrapped__("character:1410", session=session)
+
+    assert result["skills"][0]["description"] == description
+    assert result["skills"][0]["description_params"] == parameters
+    assert result["skills"][0]["attributes"] == []
+    # Parameters come from the already-loaded skill, with no extra lookups.
+    # Existing scaling-description batch.
+    assert session.scalars.await_count == 1
+    # Existing cost items; no media paths.
+    assert session.execute.await_count == 1
 
 
 @pytest.mark.asyncio
