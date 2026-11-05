@@ -2,6 +2,7 @@ import asyncio
 import copy
 import json
 import wave
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -219,7 +220,8 @@ async def test_complete_target_is_committed_before_later_target_failure(tmp_path
     root = client(tmp_path)
     targets = [{"owner": number, "release_id": 2, "path": f"/Game/Icon{number}.Icon{number}",
                 "kind": "image", "language": None} for number in (1, 2)]
-    payload = {"request": request().model_dump(), "run_id": 7, "targets": targets}
+    payload = {"schema_version": 1, "job_type": "media.entities",
+               "request": request().model_dump(), "run_id": 7, "targets": targets}
     run = SimpleNamespace(id=7, status="queued", metadata_json={"payload": payload})
     session = AsyncMock()
     session.get.return_value = run
@@ -308,8 +310,23 @@ async def test_complete_target_is_committed_before_later_target_failure(tmp_path
     service.register_file.side_effect = register_file
     service.register_variant.side_effect = register_variant
     service.register_reference.side_effect = register_reference
+
+    @asynccontextmanager
+    async def connect():
+        yield AsyncMock()
+
+    @asynccontextmanager
+    async def unlocked(*args):
+        yield
+
+    async def workspace(payload, connection):
+        await entity_media._process_entity_workspace(payload, connection, root)
+
+    monkeypatch.setattr(entity_media, "engine", SimpleNamespace(connect=connect))
+    monkeypatch.setattr(entity_media, "job_lock", unlocked)
+    monkeypatch.setattr(entity_media, "_process_entity_media", workspace)
     with pytest.raises(OSError, match="second target"):
-        await entity_media._process_entity_workspace(payload, None, root)
+        await entity_media._locked_process_entity_media(payload)
     assert len(committed_refs) == 1 and committed_refs[0].source_path == targets[0]["path"]
     assert committed_files == ["1.png", "Icon1.uasset"] and len(committed_variants) == 1
     assert events.index(("commit", 1)) < events.index(("lock", 2))

@@ -571,11 +571,9 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 await session.commit()
                 logger.info("entity_media.completed run=%s result=%s",
                             run.id, run.raw_output)
-            except Exception as error:
+            except Exception:
                 await session.rollback()
-                run = await session.get(ProcessingRun, payload["run_id"])
-                run.status = "failed"
-                run.error = str(error)[:2000]
-                run.finished_at = datetime.now(UTC)
-                await session.commit()
+                # The leased outer handler owns the failure/retry status. If its
+                # status write fails, retain the last nonterminal state for GC
+                # rather than exposing a terminal row before the broker retries.
                 raise
