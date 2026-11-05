@@ -8,16 +8,14 @@ from wuwa_story.api.routes.story import (
 )
 from wuwa_story.db.models.core import (
     Character,
-    DialogueLine,
     Item,
     Quest,
-    QuestAction,
 )
 from wuwa_story.db.models.game_events import GameEvent, GameEventOccurrence
-from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeType
+from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision, NodeType
 from wuwa_story.db.models.notices import GameNotice
 from wuwa_story.db.models.ontology import RelationType
-from wuwa_story.db.models.raw import SourceRecord
+from wuwa_story.db.repositories.character_identity import dialogue_participation, speaker_crosswalk
 from wuwa_story.db.repositories.quest_scope import quest_state_links
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
@@ -38,13 +36,11 @@ _NODE_KINDS = {
 
 async def _dialogue_filters(session, entity_id, release_id):
     result = {"character_keys": [], "quest_ids": []}
+    participation = dialogue_participation(release_id, line_ids=[entity_id])
     row = (
         await session.execute(
-            select(DialogueLine.speaker_node_id, QuestAction.quest_state_node_id)
-            .select_from(DialogueLine)
-            .outerjoin(QuestAction, QuestAction.node_id == DialogueLine.action_node_id)
-            .join(SourceRecord, SourceRecord.id == DialogueLine.source_record_id)
-            .where(DialogueLine.node_id == entity_id, SourceRecord.release_id == release_id)
+            select(participation.c.speaker_id, participation.c.state_id)
+            .where(participation.c.line_id == entity_id)
         )
     ).one_or_none()
     if row is None:
@@ -60,7 +56,8 @@ async def _dialogue_filters(session, entity_id, release_id):
             .where(crosswalk.c.speaker_id == speaker_id)
             .order_by(Node.id)
         )
-        result["character_keys"] = sorted({key for key, _slug, _identity in characters if key})
+        result["character_keys"] = sorted(
+            {key for key, _slug, _identity in characters if key})
     if state_id is not None:
         links = quest_state_links(release_id)
         result["quest_ids"] = sorted(
@@ -88,7 +85,8 @@ async def build_relations(session, kind, entity_id, snapshot_key="current"):
     if kind not in ENTITY_READ_MODELS:
         raise ValueError(f"Unknown read-model kind: {kind}")
     if not isinstance(snapshot_key, str) or not snapshot_key or len(snapshot_key) > 64:
-        raise ValueError("A snapshot key must be current or an explicit version")
+        raise ValueError(
+            "A snapshot key must be current or an explicit version")
     grouped = {}
 
     def add(related_kind, related_id, relation_type, fact):
@@ -110,7 +108,8 @@ async def build_relations(session, kind, entity_id, snapshot_key="current"):
             return []
         if kind == "game_notice":
             if snapshot_key != "current":
-                raise ValueError("game_notice has no public historical snapshot selector")
+                raise ValueError(
+                    "game_notice has no public historical snapshot selector")
             notice = await session.get(GameNotice, entity_id)
             if notice is None:
                 return []
@@ -135,11 +134,13 @@ async def build_relations(session, kind, entity_id, snapshot_key="current"):
             event = await session.get(GameEvent, entity_id)
             if event is None or event.source != CLIENT_SOURCE:
                 return []
-            statement = select(GameEventOccurrence).where(GameEventOccurrence.event_id == entity_id)
+            statement = select(GameEventOccurrence).where(
+                GameEventOccurrence.event_id == entity_id)
             if snapshot_key != "current":
                 selected_version = _event_version(snapshot_key)
                 if selected_version is None:
-                    raise ValueError("Event snapshots require a numeric game version")
+                    raise ValueError(
+                        "Event snapshots require a numeric game version")
                 patch = ".".join(map(str, selected_version))
                 version = GameEventOccurrence.game_version
                 statement = statement.where(
@@ -152,8 +153,10 @@ async def build_relations(session, kind, entity_id, snapshot_key="current"):
                 if not runs and snapshot_key == "current"
                 else []
             )
-            rewards.extend((run.id, reward) for run in runs for reward in run.rewards or [])
-            item_ids = {reward.get("id") for _, reward in rewards if type(reward.get("id")) is int}
+            rewards.extend((run.id, reward)
+                           for run in runs for reward in run.rewards or [])
+            item_ids = {reward.get("id") for _, reward in rewards if type(
+                reward.get("id")) is int}
             items = (
                 {
                     game_item_id: node_id
@@ -195,14 +198,16 @@ async def build_relations(session, kind, entity_id, snapshot_key="current"):
                 (Edge.from_node_id == entity_id, Edge.to_node_id), else_=Edge.from_node_id
             )
             rows = await session.execute(
-                select(Edge, Node, NodeType.key, RelationType.key, EdgeEvidence)
+                select(Edge, Node, NodeType.key,
+                       RelationType.key, EdgeEvidence)
                 .select_from(Edge)
                 .join(Node, Node.id == neighbor)
                 .join(NodeType, NodeType.id == Node.type_id)
                 .join(RelationType, RelationType.id == Edge.relation_type_id)
                 .join(EdgeEvidence, EdgeEvidence.edge_id == Edge.id)
                 .where(
-                    or_(Edge.from_node_id == entity_id, Edge.to_node_id == entity_id),
+                    or_(Edge.from_node_id == entity_id,
+                        Edge.to_node_id == entity_id),
                     neighbor != entity_id,
                     Edge.layer.in_(["source", "canonical"]),
                     Edge.basis.in_(
@@ -219,7 +224,8 @@ async def build_relations(session, kind, entity_id, snapshot_key="current"):
             )
             for edge, target, target_type, relation, evidence in rows:
                 target_kind = next(
-                    (name for name, types in _NODE_KINDS.items() if target_type in types), None
+                    (name for name, types in _NODE_KINDS.items()
+                     if target_type in types), None
                 )
                 if target_kind is None:
                     continue
@@ -248,46 +254,30 @@ async def build_relations(session, kind, entity_id, snapshot_key="current"):
 
 
 def _speaker_crosswalk(release_id, character_id=None):
-    statement = (
-        select(
-            Edge.from_node_id.label("speaker_id"),
-            Edge.to_node_id.label("character_id"),
-            Edge.id.label("edge_id"),
-        )
-        .join(RelationType, RelationType.id == Edge.relation_type_id)
-        .where(
-            Edge.layer == "source",
-            Edge.basis == "exact_join",
-            RelationType.key == "references_character",
-            select(EdgeEvidence.id)
-            .where(EdgeEvidence.edge_id == Edge.id, EdgeEvidence.release_id == release_id)
-            .exists(),
-        )
-    )
-    if character_id is not None:
-        statement = statement.where(Edge.to_node_id == character_id)
-    return statement.subquery()
+    return speaker_crosswalk(release_id, [character_id] if character_id is not None else None)
 
 
 async def _character_relations(session, node, release_id, add):
-    # Only a source-authored, exact crosswalk proves that a character spoke a line.
-    crosswalk = _speaker_crosswalk(release_id, node.id)
-    lines = list(
-        await session.execute(
-            select(
-                DialogueLine.node_id,
-                DialogueLine.speaker_node_id,
-                QuestAction.quest_state_node_id,
-                SourceRecord.id,
-                crosswalk.c.edge_id,
-            )
-            .join(crosswalk, crosswalk.c.speaker_id == DialogueLine.speaker_node_id)
-            .join(SourceRecord, SourceRecord.id == DialogueLine.source_record_id)
-            .outerjoin(QuestAction, QuestAction.node_id == DialogueLine.action_node_id)
-            .where(SourceRecord.release_id == release_id)
-            .order_by(DialogueLine.node_id, crosswalk.c.edge_id)
-        )
-    )
+    # Family members are source roles of one public entity, not co-present peers.
+    member_ids = {node.id}
+    character = await session.get(Character, node.id)
+    identity = ((character.metadata_json or {}).get(
+        "public_identity") or {}) if character else {}
+    if identity.get("family"):
+        member_ids.update(await session.scalars(select(Character.node_id).where(
+            Character.metadata_json["public_identity"]["family"].as_string(
+            ) == identity["family"],
+            select(NodeRevision.id).where(NodeRevision.node_id == Character.node_id,
+                                          NodeRevision.release_id == release_id).exists(),
+        )))
+    crosswalk = speaker_crosswalk(release_id, member_ids)
+    participation = dialogue_participation(release_id, speaker_ids=select(crosswalk.c.speaker_id))
+    lines = list(await session.execute(
+        select(participation.c.line_id, participation.c.speaker_id, participation.c.state_id,
+               participation.c.source_record_id, crosswalk.c.edge_id)
+        .join(crosswalk, crosswalk.c.speaker_id == participation.c.speaker_id)
+        .order_by(participation.c.line_id, crosswalk.c.edge_id)
+    ))
     state_lines = {}
     for line_id, speaker_id, state_id, record_id, edge_id in lines:
         add(
@@ -307,11 +297,13 @@ async def _character_relations(session, node, release_id, add):
             state_lines.setdefault(state_id, set()).add(line_id)
     if state_lines:
         links = quest_state_links(release_id)
+        state_quests = {}
         for quest_id, state_id in await session.execute(
             select(links.c.quest_id, links.c.state_id)
             .where(links.c.state_id.in_(state_lines))
             .order_by(links.c.quest_id, links.c.state_id)
         ):
+            state_quests.setdefault(state_id, set()).add(quest_id)
             add(
                 "quest",
                 quest_id,
@@ -325,28 +317,17 @@ async def _character_relations(session, node, release_id, add):
             )
         other_crosswalk = _speaker_crosswalk(release_id)
         shared_facts = {}
+        other_participation = dialogue_participation(
+            release_id, state_ids=state_lines)
         for character_id, state_id, line_id, source_id, edge_id in await session.execute(
-            select(
-                other_crosswalk.c.character_id,
-                QuestAction.quest_state_node_id,
-                DialogueLine.node_id,
-                SourceRecord.id,
-                other_crosswalk.c.edge_id,
-            )
-            .select_from(DialogueLine)
-            .join(other_crosswalk, other_crosswalk.c.speaker_id == DialogueLine.speaker_node_id)
-            .join(QuestAction, QuestAction.node_id == DialogueLine.action_node_id)
-            .join(SourceRecord, SourceRecord.id == DialogueLine.source_record_id)
-            .where(
-                QuestAction.quest_state_node_id.in_(state_lines),
-                other_crosswalk.c.character_id != node.id,
-                SourceRecord.release_id == release_id,
-            )
-            .order_by(
-                other_crosswalk.c.character_id,
-                QuestAction.quest_state_node_id,
-                DialogueLine.node_id,
-            )
+            select(other_crosswalk.c.character_id, other_participation.c.state_id,
+                   other_participation.c.line_id, other_participation.c.source_record_id,
+                   other_crosswalk.c.edge_id)
+            .join(other_participation,
+                  other_participation.c.speaker_id == other_crosswalk.c.speaker_id)
+            .where(other_crosswalk.c.character_id.not_in(member_ids))
+            .order_by(other_crosswalk.c.character_id, other_participation.c.state_id,
+                      other_participation.c.line_id)
         ):
             fact = shared_facts.setdefault(
                 (character_id, state_id),
@@ -354,6 +335,7 @@ async def _character_relations(session, node, release_id, add):
                     "evidence_type": "co_presence_only",
                     "release_id": release_id,
                     "state_node_id": state_id,
+                    "quest_refs": [{"id": quest_id} for quest_id in sorted(state_quests.get(state_id, ()))],
                     "owner_dialogue_node_ids": sorted(state_lines[state_id]),
                     "other_dialogue_node_ids": [],
                     "other_source_record_ids": [],

@@ -2,7 +2,16 @@
 
 from fastapi import APIRouter
 
-from wuwa_story.api.routes.story import catalog, character_archive, continuity, map, media, profiles, transcripts
+from wuwa_story.api.routes.story import (
+    catalog,
+    character_archive,
+    character_connections,
+    continuity,
+    map,
+    media,
+    profiles,
+    transcripts,
+)
 from wuwa_story.api.routes.story.shared import (
     _dialogue_payload as _dialogue_payload,
 )
@@ -21,6 +30,7 @@ router = APIRouter()
 router.include_router(catalog.router)
 router.include_router(profiles.router)
 router.include_router(character_archive.router)
+router.include_router(character_connections.router)
 router.include_router(continuity.router)
 router.include_router(map.router)
 router.include_router(media.router)

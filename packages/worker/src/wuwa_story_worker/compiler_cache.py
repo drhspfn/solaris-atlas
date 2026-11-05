@@ -5,8 +5,24 @@ import json
 from pathlib import Path
 
 
-def compiler_fingerprint(root: Path | None = None):
-    root = root or Path(__file__).with_name("compiler")
+def compiler_fingerprint(root: Path | None = None, *, dependencies=()):
+    if root is None:
+        from wuwa_story.ingestion import (
+            character_artwork,
+            character_identity,
+            dungeon_context,
+            runtime_media,
+            scenario_context,
+            speaker_crosswalk,
+            talk_backgrounds,
+            video_package_context,
+        )
+
+        root = Path(__file__).with_name("compiler")
+        dependencies = [(module.__name__, Path(module.__file__)) for module in (
+            character_artwork, character_identity, dungeon_context, runtime_media,
+            scenario_context, speaker_crosswalk, talk_backgrounds, video_package_context,
+        )]
     digest = hashlib.sha256()
     sources = sorted(
         (path for path in root.rglob("*") if path.is_file() and path.suffix in {".py", ".json"}),
@@ -16,6 +32,11 @@ def compiler_fingerprint(root: Path | None = None):
         raise ValueError("Compiler source identity is unavailable")
     for path in sources:
         digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    for name, path in sorted(dependencies):
+        digest.update(name.encode())
         digest.update(b"\0")
         digest.update(path.read_bytes())
         digest.update(b"\0")

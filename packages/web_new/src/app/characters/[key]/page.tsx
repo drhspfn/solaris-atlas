@@ -14,11 +14,14 @@ type Props = {
   searchParams?: Promise<RouteQuery>;
 };
 
-export async function generateMetadata({ params }: Props): Promise<Metadata> {
+export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
   const key = decodeRouteKey((await params).key);
+  const requestedVersion = (await searchParams)?.game_version;
+  const gameVersion = Array.isArray(requestedVersion) ? requestedVersion[0] : requestedVersion;
+  const versionQuery = gameVersion ? `game_version=${encodeURIComponent(gameVersion)}&` : '';
   const [data, archive] = await Promise.all([
-    serverApi<any>(`/characters/${encodeURIComponent(key)}/profile?locale=en`),
-    serverApi<CharacterArchiveData>(`/characters/${encodeURIComponent(key)}/archive?locale=en`),
+    serverApi<any>(`/characters/${encodeURIComponent(key)}/profile?connections_limit=12&${versionQuery}locale=en`),
+    serverApi<CharacterArchiveData>(`/characters/${encodeURIComponent(key)}/archive?${versionQuery}locale=en`),
   ]);
   const character = data?.character;
   const entityId = character?.canonical_key?.split(':').at(-1) || key;
@@ -63,9 +66,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function CharacterProfilePage({ params, searchParams }: Props) {
   const key = decodeRouteKey((await params).key);
+  const requestedVersion = (await searchParams)?.game_version;
+  const gameVersion = Array.isArray(requestedVersion) ? requestedVersion[0] : requestedVersion;
+  const versionQuery = gameVersion ? `game_version=${encodeURIComponent(gameVersion)}&` : '';
   const [initialData, initialArchive, initialModel] = await Promise.all([
-    serverApi<any>(`/characters/${encodeURIComponent(key)}/profile?locale=en`),
-    serverApi<CharacterArchiveData>(`/characters/${encodeURIComponent(key)}/archive?locale=en`),
+    serverApi<any>(`/characters/${encodeURIComponent(key)}/profile?connections_limit=12&${versionQuery}locale=en`),
+    serverApi<CharacterArchiveData>(`/characters/${encodeURIComponent(key)}/archive?${versionQuery}locale=en`),
     serverApi<CharacterModelData>(`/characters/${encodeURIComponent(key)}/model`, { revalidate: 60 }),
   ]);
 
@@ -79,6 +85,7 @@ export default async function CharacterProfilePage({ params, searchParams }: Pro
       initialData={initialData}
       initialArchive={initialArchive}
       initialModel={initialModel}
+      gameVersion={gameVersion}
     />
   );
 }

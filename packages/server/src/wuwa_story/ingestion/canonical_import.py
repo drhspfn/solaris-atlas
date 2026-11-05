@@ -777,7 +777,7 @@ async def import_canonical_edges(
                 }
             )
         await session.execute(
-            insert(Edge)
+            insert(Edge.__table__)
             .values(edge_values)
             .on_conflict_do_nothing(
                 index_elements=[

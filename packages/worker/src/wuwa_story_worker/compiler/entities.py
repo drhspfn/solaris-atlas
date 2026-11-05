@@ -7,6 +7,7 @@ from typing import Any
 
 from wuwa_story.ingestion.character_artwork import inherited_character_fields
 from wuwa_story.ingestion.character_identity import main_role_identities
+from wuwa_story.ingestion.speaker_crosswalk import speaker_character_links
 
 from .core import Writer, read_json
 
@@ -129,50 +130,15 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
                 writer.diagnostic("unresolved_speaker_name", "warning", "BinData/speaker/speaker.json",
                                   str(speaker_id), key)
     role_rows = simple("role/roleinfo.json", "character", "Id", "character", ("Name", "NickName"))
-    # A display-name match is not identity evidence. Speaker configs do, however,
-    # carry the same dedicated portrait asset paths as RoleInfo. Accept a crosswalk
-    # only when at least two distinct speaker asset fields exactly match assets
-    # owned by the same single RoleInfo.Id.
-    role_asset_fields = (
-        "RoleHeadIcon", "RoleHeadIconBig", "RoleHeadIconCircle", "RoleHeadIconLarge",
-        "FormationRoleCard", "RolePortrait",
-    )
-    speaker_asset_fields = (
-        "HeadIconAsset", "HeadRoundIconAsset", "HeadRoundIconAssetMaleVariant",
-        "RolePileIconAsset",
-    )
-    asset_role_ids: dict[str, set[int]] = {}
-    for role in role_rows:
-        role_id = role.get("Id")
-        if role_id is None:
-            continue
-        for field in role_asset_fields:
-            asset = role.get(field)
-            if isinstance(asset, str) and asset:
-                asset_role_ids.setdefault(asset, set()).add(role_id)
-    resource_crosswalk_count = 0
-    for speaker_index, speaker in enumerate(speakers):
-        speaker_id = speaker.get("Id")
-        if speaker_id is None:
-            continue
-        matches: list[tuple[str, int, str]] = []
-        for field in speaker_asset_fields:
-            asset = speaker.get(field)
-            owners = asset_role_ids.get(asset, set()) if isinstance(asset, str) else set()
-            if len(owners) == 1:
-                matches.append((field, next(iter(owners)), asset))
-        target_ids = {role_id for _, role_id, _ in matches}
-        if len(matches) < 2 or len(target_ids) != 1:
-            continue
-        role_id = next(iter(target_ids))
-        match_detail = "; ".join(f"{field}={asset}" for field, _, asset in matches)
-        writer.edge(
-            f"speaker:{speaker_id}", f"character:{role_id}", "references_character",
-            f"two or more exact speaker/RoleInfo asset matches: {match_detail}",
-            "BinData/speaker/speaker.json", f"$[{speaker_index}]",
-            {"relation": "exact_join"},
-        )
-        resource_crosswalk_count += 1
+    crosswalks = list(speaker_character_links(
+        enumerate(role_rows), enumerate(speakers),
+        read_json(main_role_path) if main_role_path.is_file() else [],
+    ))
+    for link in crosswalks:
+        writer.edge(link["from"], link["to"], link["type"], link["basis"],
+                    link["source"], link["raw_path"],
+                    {"relation": link["relation"], "crosswalk": link["crosswalk"]})
+    resource_crosswalk_count = len(crosswalks)
     role_names: dict[str, list[int]] = {}
     for role in role_rows:
         for field in ("Name", "NickName"):

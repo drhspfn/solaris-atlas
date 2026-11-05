@@ -428,7 +428,7 @@ const backend = createServer(async (request, response) => {
       download: null, physics: null, animations: null, facial: null,
       viewer_url: 'https://cdn.solarisatlas.fun/model-viewer/legacy/index.html',
     }));
-  } else if (request.url === '/characters/character%3A1102/profile?locale=en') {
+  } else if (['/characters/character%3A1102/profile?locale=en', '/characters/character%3A1102/profile?connections_limit=12&locale=en'].includes(request.url)) {
     response.end(JSON.stringify(profile));
   } else if (request.url === '/characters/character%3A1102/archive?locale=en') {
     response.end(JSON.stringify(archive));
