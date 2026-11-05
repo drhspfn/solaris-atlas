@@ -19,7 +19,8 @@ def sound(path, start, end):
     return bytes(builder.Output())
 
 
-def test_other_cutscene_single_and_gender_specific_timed_sound(tmp_path):
+@pytest.mark.parametrize("asset_version", ["3.7.0", "3.7.1"])
+def test_other_cutscene_single_and_gender_specific_timed_sound(tmp_path, asset_version):
     db_path = tmp_path / "videos.db"
     with sqlite3.connect(db_path) as db:
         db.executescript(
@@ -38,10 +39,11 @@ def test_other_cutscene_single_and_gender_specific_timed_sound(tmp_path):
             (1, 0, "Branch", sound("/Game/Audio/event.event", 2.5, 10)),
         )
     (tmp_path / "event.bnk").write_bytes(b"bank")
-    single = plan_cutscene(db_path, tmp_path, "Other", "3.7.0")
+    single = plan_cutscene(db_path, tmp_path, "Other", asset_version)
+    assert single["asset_version"] == asset_version
     assert single["flow"]["nodes"][0]["kind"] == "clip"
     assert single["videos"][0]["soundtrack"] == []
-    branch = plan_cutscene(db_path, tmp_path, "Branch", "3.7.0")
+    branch = plan_cutscene(db_path, tmp_path, "Branch", asset_version)
     assert branch["flow"]["nodes"][0]["kind"] == "choice"
     assert [option["rover"] for option in branch["flow"]["nodes"][0]["options"]] == [
         "female",
@@ -50,6 +52,13 @@ def test_other_cutscene_single_and_gender_specific_timed_sound(tmp_path):
     assert branch["videos"][0]["soundtrack"][0]["start_seconds"] == 2.5
     assert branch["videos"][0]["soundtrack"][0]["end_seconds"] == 10
     assert branch["videos"][1]["soundtrack"] == []
+
+
+@pytest.mark.parametrize("asset_version", ["3.6.0", "3.8.0", "4.0.0", "3.7.2", "3.7"])
+def test_unverified_client_schema_is_rejected_before_opening_database(tmp_path, asset_version):
+    with pytest.raises(ValueError, match="Config schema is verified"):
+        plan_cutscene(tmp_path / "absent.db", tmp_path, "Other", asset_version)
+    assert not (tmp_path / "absent.db").exists()
 
 
 def test_export_path_cannot_escape(tmp_path):
