@@ -68,3 +68,28 @@ links, and avoid rendering empty control nodes as separate story activities.
 Unknown order must remain honest, but can be explained once per group rather
 than after every action. Repeated titles alone are insufficient evidence to
 merge different occurrences.
+
+## Current-release runtime check, 2026-11-05 21:12 UTC
+
+A bounded read-only check on API commit `15c231f` compared the complete stored
+English transcript and story blocks against freshly derived source records for
+release 21 (game snapshot 3.7.0, client assets 3.7.1):
+
+| Quest | Source dialogue / stored dialogue | Encounter node occurrences | Duplicate occurrence identities |
+| --- | ---: | ---: | ---: |
+| 4688653 / 114000031 | 517 / 517 | 186 | 0 |
+| 5389571 / 119000000 (Denia) | 654 / 654 | 0 | 0 |
+
+All 37 nested encounter flow occurrences in the first quest matched their exact
+source pointer, state and presentation hash. All 46 and 76 block-level flow
+references respectively resolved in the selected release. The repeated flow
+3_29_1 originates in different LevelPlay nodes (56 and 58); title or state equality
+is not sufficient reason to delete an occurrence.
+
+This verifies stored identities, not complete media playback. Fourteen cinematic
+flow occurrences in quest 4688653 still had no release-21 presentation publication.
+The quest condition for dungeon 1557 had no matching LevelPlayData membership in
+that snapshot and remained unresolved. Neither case should be hidden by assigning
+an invented order or borrowing a different release without matching provenance.
+Null choice destinations require separate interpretation; all non-null destinations
+in the checked scope existed. No production replay was performed by this audit.
