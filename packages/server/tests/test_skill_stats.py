@@ -9,7 +9,34 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from wuwa_story.api.routes.story import character_archive as archive
-from wuwa_story.ingestion.skill_stats import skill_stat_parameters, skill_stat_values
+from wuwa_story.ingestion.skill_stats import (
+    skill_description_parameters,
+    skill_stat_parameters,
+    skill_stat_values,
+)
+
+
+@pytest.mark.parametrize(("detail", "expected"), [
+    (["1", "32%", "15"], ["1", "32%", "15"]),
+    (["5"], ["5"]),
+    (["100%", "50%", "14"], ["100%", "50%", "14"]),
+    (["0", "", "16.88%*4"], ["0", "", "16.88%*4"]),
+    ([], []),
+    (None, []),
+    ("32%", []),
+    (["1", None, "15"], []),
+    ([1, "32%", "15"], []),
+    ([{"ArrayString": ["1", "2"]}], []),
+])
+def test_description_parameters_validate_without_coercion_or_reindexing(detail, expected):
+    assert skill_description_parameters(detail) == expected
+
+
+def test_description_parameters_do_not_alias_source():
+    source = ["100%", "50%", "14"]
+    result = skill_description_parameters(source)
+    result[0] = "changed"
+    assert source == ["100%", "50%", "14"]
 
 
 @pytest.mark.parametrize(("detail", "description", "parameters", "values"), [
