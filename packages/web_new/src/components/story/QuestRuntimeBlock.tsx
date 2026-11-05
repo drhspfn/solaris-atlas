@@ -13,7 +13,8 @@ export type RuntimeBlock = {
   title: string;
   condition_type?: string;
   encounter?: Encounter;
-  position: number[];
+  position: number[] | null;
+  ordering?: string;
   branches: Array<{ id: string; type: string }>;
   flow_states: Array<{ state: string; position: number[] }>;
   interactions?: Array<{
@@ -36,6 +37,13 @@ export function runtimeBlockSlots(
   const slots = new Map<number, RuntimeBlock[]>();
   const positioned = lines.filter((line) => line.story_position);
   for (const block of blocks) {
+    // Related source context has no chronological slot. Keep it separately
+    // addressable instead of comparing null or inventing a transcript position.
+    if (!block.position || block.ordering === 'related') {
+      slots.set(-1, [...(slots.get(-1) || []), block]);
+      continue;
+    }
+    const position = block.position;
     if (
       partial &&
       (!positioned.length ||
@@ -45,7 +53,7 @@ export function runtimeBlockSlots(
       continue;
     let slot = lines.findIndex(
       (line) =>
-        line.story_position && compareStoryPosition(line.story_position, block.position) >= 0,
+        line.story_position && compareStoryPosition(line.story_position, position) >= 0,
     );
     if (slot < 0)
       slot = positioned.length

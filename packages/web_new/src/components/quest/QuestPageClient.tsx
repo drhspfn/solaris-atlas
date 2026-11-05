@@ -969,6 +969,17 @@ export function QuestPageClient({
               {contextualCutscenes.map((event) => (
                 <Cutscene key={`${event.action}-${event.reference}`} event={event} />
               ))}
+              {!!activitySlots.get(-1)?.length && (
+                <section aria-label="Related activities">
+                  <h3>Related activities</h3>
+                  <p>Their position in this passage is not known.</p>
+                  {activitySlots.get(-1)!.map((block) => (
+                    <QuestRuntimeBlock key={block.id} block={block} display={playerDisplay}
+                      stateAnchors={stateAnchors} renderInteraction={renderInteraction}
+                      renderEncounterFlow={renderEncounterFlow} />
+                  ))}
+                </section>
+              )}
               <RelatedQuestCutscenes manifest={media} />
             </div>
           </div>

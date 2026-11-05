@@ -48,6 +48,21 @@ function loadStory(name) {
 }
 const { QuestEncounter, EncounterCinematicBoundary } = loadStory('QuestEncounter');
 const { QuestSequenceFragments, playableEncounterFragments } = loadStory('QuestSequenceFragments');
+const { runtimeBlockSlots } = loadStory('QuestRuntimeBlock');
+
+test('unplaced activities retain their identities outside chronological slots', () => {
+  const lines = [{ story_position: [2] }, { story_position: [4] }];
+  const known = { id: 'known', position: [3] };
+  const unknown = { id: 'unknown', position: null };
+  const related = { id: 'related', position: [0], ordering: 'related' };
+  for (const partial of [false, true]) {
+    const slots = runtimeBlockSlots(lines, [unknown, known, related], partial);
+    assert.deepEqual(Array.from(slots.get(-1), (block) => block.id), ['unknown', 'related']);
+    assert.deepEqual(Array.from(slots.get(1), (block) => block.id), ['known']);
+    assert.equal(slots.has(0), false);
+    assert.equal(slots.has(2), false);
+  }
+});
 const render = (data, props = {}) => renderToStaticMarkup(React.createElement(QuestEncounter,
   { encounter: data, display, stateAnchors: new Map(), ...props }));
 
