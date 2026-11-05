@@ -6,7 +6,7 @@ import re
 def exported_video_path(engine_path: str) -> str:
     """Preserve direct MP4 references; never manufacture a wrapper for them."""
     if (not isinstance(engine_path, str)
-            or not re.fullmatch(r"/Game/Aki/[A-Za-z0-9_./-]+", engine_path)
+            or not re.fullmatch(r"/Game/[A-Za-z0-9_./-]+", engine_path)
             or any(part in {"", ".", ".."} for part in engine_path.split("/")[1:])):
         raise ValueError("Expected an exact authored video source path")
     if engine_path.casefold().endswith(".mp4"):

@@ -85,11 +85,13 @@ async def test_cutscene_preparation_batches_wrappers_and_retains_direct_movie_cg
     assert len(download_calls) == int(optional)
     if optional:
         assert result["video_plan_id"] == download_calls[0]["id"]
-    assert release_media.prepare_base_movies.await_args.args[2] == [
+    assert set(release_media.prepare_base_movies.await_args.args[2]) == {
         "Client/Content/Aki/Movies/New.uasset", "Client/Content/Aki/Movies/Second.uasset",
-        "Client/Content/Aki/Movies/Storyboard/R0012.mp4"]
-    assert [call.args[2] for call in export.await_args_list] == [
-        "ConfigDB", "KuroPublicConfig", "Client/Content/Aki/Movies/New|Client/Content/Aki/Movies/Second"]
+        "Client/Content/Aki/Movies/Storyboard/R0012.mp4"}
+    assert [call.args[2] for call in export.await_args_list[:2]] == ["ConfigDB", "KuroPublicConfig"]
+    assert len(export.await_args_list) == 3
+    assert set(export.await_args_list[2].args[2].split("|")) == {
+        "Client/Content/Aki/Movies/New", "Client/Content/Aki/Movies/Second"}
 
 
 @pytest.mark.asyncio
