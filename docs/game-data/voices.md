@@ -91,3 +91,60 @@ and twelve random pairs, 34 alternatives. It does **not** establish production
 bank equality. Runtime eligibility is recalculated from the actual pinned
 production inputs before any variant publication; this change does not enqueue
 a global backfill or publish the local fixture.
+
+## Verified production Fulu pilot
+
+On 2026-11-05 UTC, normal scoped enqueue/claim/worker execution completed run
+**28375** for favorword **160843**, character 1608 (owner 2486699), release 19 /
+snapshot 3.5.0. The immutable b024 worker used client 3.7.1, download
+`1f0a5f240f08d1ef1c21a658d015eb2504abcda835d85b214cb1ec789538c812`
+and voice plan `b5abda0a706e6a48e3b05040cad4d29e0fadf49fc06f07b594a68b46a55fbe02`.
+It published eight independent alternatives for
+`play_favor_word_fuluoluo_burst_burst01or02_random_01`: refs **846975–846982**,
+two each for EN/JA/KO/ZH. Coverage was four language targets found, zero missing.
+
+Passed gates: production source PAK SHA-256 matched the locally isolated pinned
+archive inputs; all seven researched banks plus Init passed the runtime HIRC /
+WWiser inventory checks (17 pairs, 34 alternatives, 45 renditions); the actual
+pilot verified eight refs and all **20 live blobs**, including WEM/BNK/Init
+originals. All **eight CDN HEADs returned 200**, `audio/wav`, with nonzero sizes.
+The [public archive API](https://solarisatlas.fun/api/characters/2486699-phrolova/archive?game_version=3.5.0&locale=en)
+returns eight available `audio_variants`, `audio_url=null`, `audio_tracks={}`.
+No default, gender guess, concatenation, or broker replay was used. The bounded
+one-off naturally exited 0 at 22:27:24 UTC; no active import was interrupted.
+
+Lead's **local frontend** browser verification showed eight choices, English
+Variant 1 at readyState 4, and Japanese Variant 2 advancing to 3.302 seconds.
+This is separate from production frontend deployment.
+
+Receipts are retained at
+`/var/lib/solaris-atlas/recovery/confirmed-voices-20261105T201816Z/`:
+`bnk-production-proof/` contains source/archive/runtime proof;
+`fulu-160843-b024/` contains request, exact expected alternatives, driver/console,
+publication proof and public API/CDN checks. Corresponding local audit files are
+under `scratch/ambiguous-voice-hirc/production/`.
+
+Historical **full character projection** is a separate remaining gate: b024
+selected a 3.7.0 root profile revision for requested 3.5.0, so the future-version
+guard correctly rejected it. Fix `8c068d8` pins the existing source lookup to the
+requested release; 68 targeted tests and a read-only production candidate build
+passed, preserving the eight alternatives. The guard is unchanged. That fix and
+reuse-invalidation fix `5168e80` require a subsequent image; their deployment and
+successful projection refresh are not implied by the archive/CDN proof above.
+
+## Remaining cutscene selector/source cases
+
+Bounded HIRC inspection used exact VideoSound mappings from the retained
+production ConfigDB, pinned EN/JA voice archives and the verified main archives.
+No additional movie was published and no codec whitelist was broadened.
+
+| Cases | Source-backed reason | Remaining render requirement |
+|---|---|---|
+| C0026, C0027, C0032 | Four branches of State group `language` (2441027675), with EN/JA/KO/ZH values. C0027 explicitly references `play_all_sound_m3_6_26`. | Bind the requested track language explicitly; do not select the None/Chinese default. Full four-locale recovery still needs validation. |
+| M2_12_06 | Music-switch group 3533944365 has None (748895195) and 2673105805 paths; embedded SetState events and looping music segments produce two renditions. | Prove authored state/timing context or retain explicit alternatives. No canonical state or mix has been selected. |
+| M3_1_11_1 | `play_all_sound_m3_1_11_1` produces one rendition. Its separate `play_story_music_3_0_b_m3_1_11_c` event contains SetState only, hence zero audio renditions. | Preserve the control cue; identify any already-playing music context before claiming a complete soundtrack. |
+| M0318 | Source plugin **0x00650002 = Wwise Silence**, HIRC Sound object 581857846, source offset 4. WWiser emits `?.plugin-silence`; the other sources are OPUS_WEM. | Validate source-generator/virtual-silence handling and decoder output. This is not evidence for accepting arbitrary codecs. |
+
+Detailed inputs, hashes, XML and rendition reports are retained under
+`scratch/video-hirc-selector-audit-20261106/`. Selector classification is not a
+claim that these six movies have been recovered or that every locale was tested.
