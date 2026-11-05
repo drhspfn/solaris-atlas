@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import re
+from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, urlparse
@@ -80,7 +81,12 @@ def get_live_launcher_info(timeout: int = 15) -> dict[str, Any]:
         return {"version": None, "error": str(error)}
 
 
-def discover_plan(version: str | None = None, tier: str = "hd") -> dict[str, Any]:
+def discover_plan(
+    version: str | None = None,
+    tier: str = "hd",
+    *,
+    completed_pins: Sequence[dict[str, Any]] = (),
+) -> dict[str, Any]:
     if version is not None and not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", version):
         raise ValueError("Game version must be major.minor or major.minor.patch")
     if tier not in {"sd", "hd", "uhd"}:
@@ -149,8 +155,6 @@ def discover_plan(version: str | None = None, tier: str = "hd") -> dict[str, Any
         ),
         None,
     )
-    if key_commit is None:
-        raise ValueError(f"No version-labelled AES key update found for {actual_version}")
     plan = {
         "schema_version": 1,
         "job_type": "assets.download",
@@ -163,6 +167,25 @@ def discover_plan(version: str | None = None, tier: str = "hd") -> dict[str, Any
         "keys_commit": key_commit,
         "files": sorted(files, key=lambda item: item["path"]),
     }
+    if key_commit is None:
+        # Only the caller's completed downloads can authorize an existing pin.
+        # Recompute the entire identity against today's verified launcher manifest.
+        for pin in completed_pins:
+            commit = pin.get("keys_commit")
+            if (
+                pin.get("version") != actual_version
+                or pin.get("tier") != tier
+                or not isinstance(commit, str)
+                or not re.fullmatch(r"[0-9a-f]{40}", commit)
+            ):
+                continue
+            plan["keys_commit"] = commit
+            if plan_id(plan) == pin.get("download_id"):
+                plan["id"] = pin["download_id"]
+                validate_plan(plan)
+                logger.info("Reusing completed client download pin download_id=%s", plan["id"])
+                return plan
+        raise ValueError(f"No version-labelled AES key update found for {actual_version}")
     plan["id"] = plan_id(plan)
     return plan
 
