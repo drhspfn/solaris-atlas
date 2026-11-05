@@ -62,18 +62,29 @@ async def test_retry_requires_entire_coherent_live_variant_set(loss):
 
 
 @pytest.mark.asyncio
-async def test_release_reuse_clones_each_variant_without_a_default_language_reference():
+async def test_release_reuse_clones_each_variant_without_a_default_language_reference(monkeypatch):
+    from wuwa_story.read_models import refresh
+
     target = {'kind': 'voice', 'owner': 7, 'release_id': 20, 'path': PATH, 'language': 'en'}
     refs = [reference(name, i+1) for i, name in enumerate(NAMES)]
     session = AsyncMock()
     session.add = Mock()
-    session.execute.return_value = [(r, SimpleNamespace(size_bytes=12), SimpleNamespace(object_key=str(r.id))) for r in refs]
+    session.execute.side_effect = [
+        [(r, SimpleNamespace(size_bytes=12), SimpleNamespace(object_key=str(r.id))) for r in refs],
+        SimpleNamespace(all=lambda: [(20, '3.6.0')]),
+    ]
+    dirty = AsyncMock()
+    monkeypatch.setattr(refresh, 'mark_dirty', dirty)
     storage = SimpleNamespace(backend='s3', bucket='media', stat=AsyncMock(return_value=SimpleNamespace(size_bytes=12)))
     result = await missing_media_targets(session, [target], source={'asset_version': '3.7.1'}, storage=storage)
     assert result == []
     added = [call.args[0] for call in session.add.call_args_list]
     assert {r.source_name for r in added} == set(NAMES)
     assert all(r.release_id == 20 and r.owner_node_id == 7 for r in added)
+    assert [call.args[1:] for call in dirty.await_args_list] == [
+        ('character', [7]), ('character', [7], '3.6.0')]
+    assert session.execute.await_count == 2  # One media batch plus one release batch.
+    session.commit.assert_not_awaited()  # Caller commits references and dirty scopes atomically.
 
 
 @pytest.mark.asyncio

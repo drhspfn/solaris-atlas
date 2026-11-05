@@ -157,6 +157,7 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
     keys = {c[2] for c in candidates} | {part['object_key'] for parts in components.values() for part in parts}
     objects = dict(await asyncio.gather(*(stat(key) for key in keys)))
     present = set()
+    linked_characters = {}
     for identity, size, key, reference, location in candidates:
         location.verified_at = datetime.now(UTC)
         if size is None or objects[key] is None or objects[key].size_bytes != size:
@@ -180,10 +181,23 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
             )
             session.add(current)
             references.setdefault(identity, []).append(current)
+            if identity[4] == 'character_voice' and voice_variant_group(reference) is not None:
+                linked_characters.setdefault(identity[1], set()).add(identity[0])
     for identity, (_id, (_language, names, _fingerprints)) in variant_groups.items():
         if all((identity[0], identity[1], identity[2], name, identity[4]) in present for name in names):
             present.add(identity)
         else:
             # A legacy single-language clip cannot satisfy a proven multi-variant set.
             present.discard(identity)
+    if linked_characters:
+        from wuwa_story.db.models.ops import GameRelease
+        from wuwa_story.read_models.refresh import mark_dirty
+
+        releases = dict((await session.execute(select(GameRelease.id, GameRelease.game_version)
+                        .where(GameRelease.id.in_(linked_characters)))).all())
+        for release_id, owners in sorted(linked_characters.items()):
+            if release_id not in releases:
+                raise ValueError('Unknown character voice publication release')
+            await mark_dirty(session, 'character', sorted(owners))
+            await mark_dirty(session, 'character', sorted(owners), releases[release_id])
     return [t for t in targets if target_identity(t, reference_type) not in present]
