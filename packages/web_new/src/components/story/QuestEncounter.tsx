@@ -39,9 +39,10 @@ export function EncounterCinematicBoundary({
       {unplaced && <p className={styles.note}>Its position relative to the displayed dialogue is not established.</p>}
       {children}
       <div className={styles.marker}>End of cinematic action</div>
-      <small className={styles.note}>
-        Action boundaries do not establish playback duration or completion.
-      </small>
+      <details className={styles.source}>
+        <summary>About this scene boundary</summary>
+        <p>Action boundaries do not establish playback duration or completion.</p>
+      </details>
     </section>
   );
 }
@@ -170,14 +171,7 @@ export function QuestEncounter({
       children
     ) : (
       <div className={styles.branches} role="group" aria-label={branchLabel}>
-        <p className={styles.note}>
-          {branchLabel}
-          {order === "parallel"
-            ? " · no order is implied."
-            : order === "unknown"
-              ? " · sequence is not established."
-              : " · availability depends on the authored branch."}
-        </p>
+        <p className={styles.note}>{branchLabel}</p>
         {children.map((child, index) => (
           <details key={node.children[index].id} className={styles.branch}>
             <summary>
@@ -185,26 +179,33 @@ export function QuestEncounter({
                 ? "Parallel path"
                 : order === "conditional"
                   ? "Conditional path"
-                  : "Alternative path"}
+                  : order === "alternative"
+                    ? "Alternative path"
+                    : "Path · order unknown"}
             </summary>
             {child}
           </details>
         ))}
       </div>
     );
-    if (!meaningful && !children.length && !hasSavedContext) return null;
+    const hasTitle =
+      !!node.title &&
+      !["Story activity", "Story action", "Continue the story"].includes(node.title);
+    if (!meaningful && !children.length && !hasSavedContext)
+      return <div id={encounterAnchor(node.id)} />;
     return (
-      <div className={styles.node} id={encounterAnchor(node.id)}>
+      <div className={meaningful || hasSavedContext ? styles.node : styles.structure} id={encounterAnchor(node.id)}>
         {meaningful && (
           <>
-            <div className={styles.marker}>Action</div>
-            <h4>
-              <PlayerText
-                display={display}
-                value={node.title}
-                fallback="Story action"
-              />
-            </h4>
+            {hasTitle && (
+              <h4>
+                <PlayerText
+                  display={display}
+                  value={node.title}
+                  fallback="Story action"
+                />
+              </h4>
+            )}
             {phase("EnterActions", "Before this action")}
             {phase("Actions", "During this action")}
             {phase("Condition", "Action condition")}
@@ -221,9 +222,6 @@ export function QuestEncounter({
                 : "Encounter failure condition"}
             </p>
           ))}
-        {meaningful && (
-          <div className={styles.marker}>End of authored action</div>
-        )}
         {!!hasSavedContext && (
           <details className={styles.context}>
             <summary>Additional lifecycle context · order unknown</summary>
@@ -266,6 +264,9 @@ export function QuestEncounter({
           fallback="Encounter"
         />
       </h3>
+      <p className={styles.note}>
+        Only ordered steps establish a sequence. Other paths may be conditional or have unknown order.
+      </p>
       {encounter.trees.length +
         (encounter.unresolved_level_plays?.length || 0) >
         1 && (

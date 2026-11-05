@@ -48,7 +48,7 @@ function loadStory(name) {
 }
 const { QuestEncounter, EncounterCinematicBoundary } = loadStory('QuestEncounter');
 const { QuestSequenceFragments, playableEncounterFragments } = loadStory('QuestSequenceFragments');
-const { runtimeBlockSlots } = loadStory('QuestRuntimeBlock');
+const { QuestRuntimeBlock, runtimeBlockAnchor, runtimeBlockSlots } = loadStory('QuestRuntimeBlock');
 
 test('unplaced activities retain their identities outside chronological slots', () => {
   const lines = [{ story_position: [2] }, { story_position: [4] }];
@@ -65,6 +65,63 @@ test('unplaced activities retain their identities outside chronological slots', 
 });
 const render = (data, props = {}) => renderToStaticMarkup(React.createElement(QuestEncounter,
   { encounter: data, display, stateAnchors: new Map(), ...props }));
+const renderBlock = (block, props = {}) => renderToStaticMarkup(React.createElement(QuestRuntimeBlock,
+  { block: { position: null, title: 'Story activity', branches: [], flow_states: [], source, ...block },
+    display, stateAnchors: new Map(), ...props }));
+
+test('source-only activities retain their anchor and branch evidence in a closed disclosure', () => {
+  const markup = renderBlock({ id: 'structural', condition_type: 'CheckConditionGroup',
+    branches: [{ id: 'branch-a', type: 'Selector' }] });
+  assert.match(markup, new RegExp(`^<details class="sourceOnly" id="${runtimeBlockAnchor('structural')}">`));
+  assert.match(markup, /Activity context · conditional \/ parallel path/);
+  assert.match(markup, /CheckConditionGroup/);
+  assert.match(markup, /Selector · branch-a/);
+  assert.doesNotMatch(markup, /\bopen=|<h3|Exploration/);
+});
+
+test('compact activities preserve dialogue, optional interactions and unavailable transcript context', () => {
+  const base = { id: 'activity', flow_states: [{ state: 'Known' }, { state: 'Outside' }],
+    interactions: [{ id: 'inspect', title: 'Inspect the letter', flow_states: [{ state: 'Letter' }], source }] };
+  const markup = renderBlock(base, { stateAnchors: new Map([['Known', 'line-known']]),
+    renderInteraction: (states, owner) => {
+      assert.deepEqual(states, ['Letter']); assert.equal(owner, 'activity:inspect');
+      return [React.createElement('p', { id: 'line-letter', key: 'letter' }, 'All authored dialogue')];
+    } });
+  assert.match(markup, /href="#line-known"/);
+  assert.match(markup, /id="line-letter"/);
+  assert.match(markup, /Inspect the letter/);
+  assert.doesNotMatch(markup, /<h3>Story activity/);
+  assert.match(renderBlock(base), /Dialogue is outside this transcript window/);
+});
+
+test('actual 1557 instance exit is a requirement, never a second 1555 battle', () => {
+  const fixture = JSON.parse(readFileSync(new URL('../../server/tests/fixtures/dungeon1557_exit.json', import.meta.url), 'utf8'));
+  const condition = fixture.quest_node.Data.Condition;
+  assert.equal(condition.Condition.IsExitDungeon, true);
+  const markup = renderBlock({ id: fixture.quest_node.Key, title: 'Leave the area', condition_type: condition.Type,
+    transition: { kind: 'dungeon_exit', dungeon_id: condition.Condition.DungeonId,
+      map_config_id: fixture.instance.MapConfigId, is_exit_dungeon: true,
+      boundary_semantics: 'authored_exit_requirement' } });
+  assert.match(markup, /Area exit/);
+  assert.match(markup, /Leave the area/);
+  assert.match(markup, /An exit is required here/);
+  assert.doesNotMatch(markup, /Encounter activities|End of encounter context|<ol/);
+  assert.match(markup, new RegExp(runtimeBlockAnchor(fixture.quest_node.Key)));
+});
+
+test('flattened structural and empty nodes keep anchors, objectives and outcomes', () => {
+  const data = encounter(node('wrapper', { title: 'Story activity', condition: null, children: [
+    node('empty', { condition: null }), node('objective', { title: 'Protect the academy',
+      completions: [{ is_success: true, phase: 'FinishActions' }, { is_success: false, phase: 'FinishActions' }] }),
+  ] }));
+  const markup = render(data);
+  for (const id of ['wrapper', 'empty', 'objective']) assert.match(markup, new RegExp(encounterAnchor(id)));
+  assert.match(markup, /Protect the academy/);
+  assert.match(markup, /Encounter success condition/);
+  assert.match(markup, /Encounter failure condition/);
+  assert.doesNotMatch(markup, />Action<|End of authored action|<h4>Story activity/);
+  assert.equal(markup.split('Only ordered steps establish a sequence.').length - 1, 1);
+});
 
 function allNodes(tree) {
   if (!tree || typeof tree !== 'object') return [];
@@ -81,7 +138,8 @@ test('local sequence keeps authored child order, parallel occurrences remain dis
   assert.deepEqual(encounterFlows(data).map(f => f.id), ['first', 'parallel-a', 'parallel-b', 'last']);
   const markup = render(data);
   assert.match(markup, /aria-label="Authored action order"/);
-  assert.match(markup, /Parallel paths · no order is implied/);
+  assert.match(markup, /Parallel paths/);
+  assert.equal(markup.split('Only ordered steps establish a sequence.').length - 1, 1);
   assert.equal((markup.match(/Dialogue during the encounter/g) || []).length, 4);
   assert(markup.indexOf(encounterAnchor('67')) < markup.indexOf(encounterAnchor('48')));
 });
