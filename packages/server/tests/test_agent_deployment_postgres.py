@@ -67,7 +67,7 @@ async def test_deployment_prepares_reader_and_preserves_existing_data(deployment
     result = await query_database(settings, "SELECT count(*) AS total FROM core.quest", bind=engine)
     assert result["rows"] == [{"total": 0}]
     async with engine.begin() as connection:
-        assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "0028_agent_reader_role"
+        assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "0029_storage_verification_noop"
         assert not await connection.scalar(text(
             "SELECT rolcanlogin FROM pg_roles WHERE rolname=:role"), {"role": READER_ROLE})
         if existing:
