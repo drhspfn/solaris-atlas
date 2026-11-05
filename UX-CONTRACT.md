@@ -585,3 +585,10 @@ Character portraits, published artwork and playable trial WEBM previews share
 one collection. Gallery video thumbnails show a paused first frame. Unpublished
 or failed trial exports do not produce an empty video card or a binary scene
 archive download. Source references remain available in the profile disclosure.
+
+## Exclusive voice playback
+
+Shared AudioPlayer instances play one voice at a time. A successfully started
+voice pauses earlier players at their current positions; a failed request does
+not silence the current voice. Late starts from superseded requests cannot take
+playback back from a newer voice. Multi-stem cutscene media remains independent.

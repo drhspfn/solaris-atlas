@@ -3,6 +3,7 @@
 import { Pause, Play, Volume2, VolumeX } from 'lucide-react';
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import '@/styles/audio-player.css';
+import { requestVoicePlayback, startVoicePlayback } from './voicePlayback';
 
 function time(seconds: number) {
   const whole = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
@@ -116,7 +117,8 @@ export function AudioPlayer({
           src={src}
           preload="none"
           muted={muted}
-          onPlay={() => setPlaying(true)}
+          onPlay={(event) => { requestVoicePlayback(event.currentTarget); setPlaying(true); }}
+          onPlaying={(event) => startVoicePlayback(event.currentTarget)}
           onPause={() => setPlaying(false)}
           onEnded={() => setPlaying(false)}
           onTimeUpdate={(event) => setElapsed(event.currentTarget.currentTime)}
