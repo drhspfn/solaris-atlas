@@ -1,8 +1,10 @@
+import json
+import sqlite3
 from types import SimpleNamespace as Row
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects import postgresql, sqlite
 
 from wuwa_story.ingestion import dungeon_flow_backfill as repair
 
@@ -71,6 +73,59 @@ async def test_scoped_repair_preview_and_repeat_are_idempotent(monkeypatch):
     assert (await repair.backfill(session, 21, {1555}, apply=True))["written"] == 0
     imported.assert_awaited_once()
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_level_node_filter_extracts_prefix_once_for_many_members(monkeypatch):
+    session, imported, _, rows = fixture(monkeypatch)
+    rows[repair.LEVELS].extend((index, {"LevelPlayId": index, "Data": {
+        "Id": index, "LevelId": 1555, "Type": "Dungeon",
+    }}) for index in range(1000, 1080))
+    original_execute = session.execute.side_effect
+    selected_rows = []
+    with sqlite3.connect(":memory:") as db:
+        db.create_function("split_part", 3, lambda value, delimiter, part:
+                           None if value is None else (value.split(delimiter) + [""] * part)[part - 1])
+        db.execute("ATTACH DATABASE ':memory:' AS raw")
+        db.execute("CREATE TABLE raw.source_file (id INTEGER, release_id INTEGER, logical_source_path TEXT)")
+        db.execute("CREATE TABLE raw.source_record (release_id INTEGER, source_file_id INTEGER, row_index INTEGER, data JSON)")
+        db.executemany("INSERT INTO raw.source_file VALUES (?, ?, ?)", [
+            (1, 21, repair.LEVEL_NODES), (2, 22, repair.LEVEL_NODES),
+        ])
+        original = rows[repair.LEVEL_NODES][0][1]
+        for index, (release, file, key) in enumerate([
+            (21, 1, "114000004_66"),
+            (21, 1, "1140000040_66"),  # A longer numeric prefix must not match.
+            (21, 1, "11400000_66"),
+            (21, 1, "114000004"),  # Selected by prefix, rejected by the parser.
+            (21, 1, "114000004_66_extra"),
+            (21, 2, "114000004_66"),  # Mismatched file snapshot.
+            (22, 1, "114000004_66"),  # Mismatched record snapshot.
+        ]):
+            db.execute("INSERT INTO raw.source_record VALUES (?, ?, ?, ?)",
+                       (release, file, index, json.dumps({**original, "Key": key})))
+
+        async def execute(statement, *args):
+            query = str(statement.compile(dialect=postgresql.dialect(),
+                        compile_kwargs={"literal_binds": True}))
+            if repair.LEVEL_NODES in query:
+                assert query.count("split_part(") == query.count("'Key'") == 1
+                assert " IN (" in query and "'1000'" in query and "'1079'" in query
+                assert " LIKE " not in query and " OR " not in query
+                compiled = str(statement.compile(dialect=sqlite.dialect(),
+                               compile_kwargs={"literal_binds": True}))
+                result = [(index, json.loads(data)) for index, data in db.execute(compiled)]
+                selected_rows.extend(index for index, _ in result)
+                return result
+            return await original_execute(statement, *args)
+
+        session.execute.side_effect = execute
+        result = await repair.backfill(session, 21, {1555})
+    assert selected_rows == [0, 3, 4]
+    assert result["candidate_links"] == result["missing_evidence"] == 1
+    assert result["state_keys"] == ["Story_28_1"]
+    imported.assert_not_awaited()
+    session.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
