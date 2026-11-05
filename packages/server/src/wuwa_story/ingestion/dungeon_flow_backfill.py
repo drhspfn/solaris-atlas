@@ -10,7 +10,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 
-from sqlalchemy import or_, select, text, true
+from sqlalchemy import func, select, text, true
 
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
 from wuwa_story.db.models.ontology import RelationType
@@ -66,11 +66,9 @@ async def backfill(session, release_id, dungeon_ids, *, apply=False, max_links=1
             "FinishDungeon"),
     )).items() if identity in dungeons}
     members = level_memberships(await rows(LEVELS), required)
-    nodes = await rows(LEVEL_NODES, or_(*(
-        SourceRecord.data["Key"].as_string().startswith(
-            f"{identity}_", autoescape=True)
-        for identity in sorted(members)
-    ))) if members else []
+    nodes = await rows(LEVEL_NODES, func.split_part(
+        SourceRecord.data["Key"].as_string(), "_", 1,
+    ).in_([str(identity) for identity in sorted(members)])) if members else []
     possible_states = {
         f"{obj['FlowListName']}_{obj['FlowId']}_{obj['StateId']}"
         for _, row in nodes for _, obj in walk(row.get("Data"))
