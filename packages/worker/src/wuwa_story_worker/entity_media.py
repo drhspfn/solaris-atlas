@@ -44,6 +44,7 @@ from wuwa_story_worker.media_workspace import (
     resolve_workspace,
     workspace_lease,
 )
+from wuwa_story_worker.publication_versions import preserve_story_reference
 from wuwa_story_worker.tooling import asset_workspace, tool_path
 
 logger = logging.getLogger(__name__)
@@ -511,6 +512,30 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         spine_source if target['kind'] == 'spine' else voice_provenance.get(
                             (target["path"], target.get('source_name', target["language"]))),
                     )
+                    reference_type = target.get('reference_type') or (
+                        "entity_image" if target["kind"] == "image" else "character_voice"
+                    )
+                    # Refresh under the owner lock: this session may have cached
+                    # the reference before another publisher committed it.
+                    reference = await session.scalar(
+                        select(FileReference).where(
+                            FileReference.owner_node_id == target["owner"],
+                            FileReference.release_id == target["release_id"],
+                            FileReference.reference_type == reference_type,
+                            FileReference.source_path == target["path"],
+                            FileReference.source_name == target.get('source_name', target["language"]),
+                            FileReference.metadata_json["asset_version"].astext
+                            == request.asset_version,
+                        ).execution_options(populate_existing=True)
+                    )
+                    if reference is not None and preserve_story_reference(
+                            reference_type, reference.metadata_json, provenance):
+                        skipped += 1
+                        report['skipped'] = skipped
+                        logger.info('entity_media.preserved_newer_reference run=%s owner=%s reference=%s',
+                                    run.id, target['owner'], reference.id)
+                        await session.commit()
+                        continue
                     published = await service.register_file(session, path, kind, mime_type=mime)
                     rendered_metadata = {}
                     if rendered is not None:
@@ -536,20 +561,6 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                             sources.append(provenance)
                         variant.metadata_json = {**metadata, "game_source": provenance,
                                                  "game_sources": sources}
-                    reference_type = target.get('reference_type') or (
-                        "entity_image" if target["kind"] == "image" else "character_voice"
-                    )
-                    reference = await session.scalar(
-                        select(FileReference).where(
-                            FileReference.owner_node_id == target["owner"],
-                            FileReference.release_id == target["release_id"],
-                            FileReference.reference_type == reference_type,
-                            FileReference.source_path == target["path"],
-                            FileReference.source_name == target.get('source_name', target["language"]),
-                            FileReference.metadata_json["asset_version"].astext
-                            == request.asset_version,
-                        )
-                    )
                     if reference is None:
                         reference = await service.register_reference(
                             session,
