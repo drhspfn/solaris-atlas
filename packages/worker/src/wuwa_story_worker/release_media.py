@@ -936,6 +936,10 @@ async def _process_release_media(payload):
                             ProcessingRun.processor_id == run.processor_id,
                             ProcessingRun.metadata_json["request"]["release_id"].astext == str(payload["release_id"]),
                             ProcessingRun.metadata_json["request"]["kind"].astext == "voice_packages",
+                            # A newer retry for this release must not gate an
+                            # older graph or lend it another workspace's files.
+                            ProcessingRun.metadata_json["request"]["parent_id"].astext
+                            == str(parent.raw_output["workspace_id"]),
                         ).order_by(ProcessingRun.id.desc()).limit(1))
                         if voice_job is None:
                             raise ValueError("Missing voice package dependency for cutscene import")
