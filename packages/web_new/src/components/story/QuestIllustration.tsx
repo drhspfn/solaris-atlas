@@ -47,7 +47,7 @@ export function QuestIllustration({
   const playback = illustration.bundle?.playback;
   const animation = illustration.animation ?? illustration.bundle?.animation_preview?.default_animation;
   const preview = selectAnimationClip(illustration.bundle?.animation_preview, animation, choice);
-  const authoredVariants = playback?.variants.filter((variant) => variant.animation === animation);
+  const authoredVariants = playback?.variants?.filter((variant) => variant.animation === animation);
   const animated =
     authoredVariants?.find((variant) => variant.rover === choice) ||
     authoredVariants?.find((variant) => !variant.rover);
@@ -160,7 +160,7 @@ export function QuestIllustration({
               {illustration.bundle.asset_version}
             </small>
           )}
-          {playback?.unsupported.map((item) => (
+          {playback?.unsupported?.map((item) => (
             <small key={item.prefab}>{item.reason}</small>
           ))}
           {illustration.images.map((image) => (
