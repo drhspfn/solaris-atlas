@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from wuwa_story.ingestion.character_artwork import inherited_character_fields
 from wuwa_story.ingestion.character_identity import main_role_identities
 
 from .core import Writer, read_json
@@ -51,16 +52,19 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
     def rows(rel: str):
         path = base / rel
         if not path.exists():
-            writer.diagnostic("missing_entity_table", "warning", f"BinData/{rel}", "$", None)
+            writer.diagnostic("missing_entity_table",
+                              "warning", f"BinData/{rel}", "$", None)
             return []
         return read_json(path)
 
     main_role_path = base / "main_role_change/mainroleconfig.json"
     role_path = base / "role/roleinfo.json"
     element_path = base / "element_info/elementinfo.json"
+    role_sources = read_json(role_path) if role_path.is_file() else []
+    role_templates = {row["Id"]: row for row in role_sources}
     main_roles = main_role_identities(
         read_json(main_role_path) if main_role_path.is_file() else [],
-        read_json(role_path) if role_path.is_file() else [],
+        role_sources,
         read_json(element_path) if element_path.is_file() else [],
     )
 
@@ -78,7 +82,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
         for index, raw in enumerate(data):
             value = raw.get(id_field)
             if value is None:
-                writer.diagnostic("missing_entity_id", "error", source, f"$[{index}].{id_field}", raw)
+                writer.diagnostic("missing_entity_id", "error",
+                                  source, f"$[{index}].{id_field}", raw)
                 continue
             identifier = f"{prefix}:{value}"
             record = {"id": identifier, "game_id": value,
@@ -96,6 +101,11 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
                     "ui_config_id": trial.get("UiConfigId"),
                     "animation": "idle",
                 }
+            if kind == "character":
+                fields = inherited_character_fields(
+                    raw, role_templates.get(raw.get("SkillId"), {}))
+                record["shared_artwork_paths"] = sorted(
+                    {raw[field] for field in fields})
             if kind == "character" and value in main_roles:
                 record["public_identity"] = main_roles[value]
             if kind == "character" and value in trial_infos:
@@ -122,7 +132,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
             if key not in english:
                 writer.diagnostic("unresolved_speaker_name", "warning", "BinData/speaker/speaker.json",
                                   str(speaker_id), key)
-    role_rows = simple("role/roleinfo.json", "character", "Id", "character", ("Name", "NickName"))
+    role_rows = simple("role/roleinfo.json", "character",
+                       "Id", "character", ("Name", "NickName"))
     # A display-name match is not identity evidence. Speaker configs do, however,
     # carry the same dedicated portrait asset paths as RoleInfo. Accept a crosswalk
     # only when at least two distinct speaker asset fields exactly match assets
@@ -152,14 +163,16 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
         matches: list[tuple[str, int, str]] = []
         for field in speaker_asset_fields:
             asset = speaker.get(field)
-            owners = asset_role_ids.get(asset, set()) if isinstance(asset, str) else set()
+            owners = asset_role_ids.get(
+                asset, set()) if isinstance(asset, str) else set()
             if len(owners) == 1:
                 matches.append((field, next(iter(owners)), asset))
         target_ids = {role_id for _, role_id, _ in matches}
         if len(matches) < 2 or len(target_ids) != 1:
             continue
         role_id = next(iter(target_ids))
-        match_detail = "; ".join(f"{field}={asset}" for field, _, asset in matches)
+        match_detail = "; ".join(
+            f"{field}={asset}" for field, _, asset in matches)
         writer.edge(
             f"speaker:{speaker_id}", f"character:{role_id}", "references_character",
             f"two or more exact speaker/RoleInfo asset matches: {match_detail}",
@@ -194,7 +207,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
     if npc_heads:
         writer.diagnostic("unresolved_npc_identity", "info", "BinData/npc_headinfo/npcheadinfo.json", "$",
                           "NpcHeadInfo.Id is retained in its own namespace; no proven SpeakerId crosswalk")
-    items = simple("item/iteminfo.json", "item", "Id", "item", ("Name", "BgDescription"))
+    items = simple("item/iteminfo.json", "item", "Id",
+                   "item", ("Name", "BgDescription"))
     areas = simple("area/area.json", "area", "AreaId", "area", ("Title",))
     item_ids = {r.get("Id") for r in items}
     weapon_path = base / "weapon/weaponconf.json"
@@ -242,7 +256,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
             writer.diagnostic("unresolved_parent_area", "warning", "BinData/area/area.json",
                               f"$[{index}].Father", parent)
 
-    partners = simple("PhoneMsg/chatpartner.json", "chat_partner", "Id", "chat_partner", ("Name",))
+    partners = simple("PhoneMsg/chatpartner.json",
+                      "chat_partner", "Id", "chat_partner", ("Name",))
     partner_ids = {r.get("Id") for r in partners}
     flow_ids = {r.get("Id") for r in rows("flow/flow.json")}
     state_keys = {r.get("StateKey") for r in rows("flowState/flowstate.json")}
@@ -257,7 +272,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
             writer.edge(identity, f"chat_partner:{partner}", "has_chat_partner", "WhichChat = ChatPartner.Id",
                         source, f"$[{index}].WhichChat")
         else:
-            writer.diagnostic("unresolved_chat_partner", "warning", source, f"$[{index}].WhichChat", partner)
+            writer.diagnostic("unresolved_chat_partner", "warning",
+                              source, f"$[{index}].WhichChat", partner)
         param = raw.get("FlowParam")
         if isinstance(param, list) and len(param) == 3:
             flow_id = f"{param[0]}_{param[1]}"
@@ -281,7 +297,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
                         f"$[{index}].ListenQuestId")
     counts["short_message"] = len(rows("PhoneMsg/shortmessage.json"))
 
-    references = simple("RandomPlot/plotreference.json", "random_plot_reference", "Id", "random_plot_reference")
+    references = simple("RandomPlot/plotreference.json",
+                        "random_plot_reference", "Id", "random_plot_reference")
     reference_ids = {r.get("Id") for r in references}
     for index, raw in enumerate(references):
         plot = raw.get("Plot")
@@ -297,7 +314,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
             else:
                 writer.diagnostic("unresolved_random_plot_flow", "warning", source,
                                   f"$[{index}].Plot", plot)
-    random_plots = simple("RandomPlot/randomplot.json", "random_plot", "Id", "random_plot")
+    random_plots = simple("RandomPlot/randomplot.json",
+                          "random_plot", "Id", "random_plot")
     for index, raw in enumerate(random_plots):
         for position, ref in enumerate(raw.get("ClientPlotReferenceList") or []):
             source = "BinData/RandomPlot/randomplot.json"
@@ -308,7 +326,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
             else:
                 writer.diagnostic("unresolved_random_plot_reference", "warning", source,
                                   f"$[{index}].ClientPlotReferenceList[{position}]", ref)
-    triggers = simple("RandomPlot/randomplottrigger.json", "random_plot_trigger", "Id", "random_plot_trigger")
+    triggers = simple("RandomPlot/randomplottrigger.json",
+                      "random_plot_trigger", "Id", "random_plot_trigger")
     random_ids = {r.get("Id") for r in random_plots}
     for index, raw in enumerate(triggers):
         target = raw.get("RandomPlotId")
@@ -320,7 +339,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
             writer.diagnostic("unresolved_random_plot", "warning", "BinData/RandomPlot/randomplottrigger.json",
                               f"$[{index}].RandomPlotId", target)
 
-    guests = simple("PlotGuest/plotguest.json", "plot_guest", "GuestID", "plot_guest", ("Name",))
+    guests = simple("PlotGuest/plotguest.json", "plot_guest",
+                    "GuestID", "plot_guest", ("Name",))
     for index, raw in enumerate(guests):
         for position, speaker_id in enumerate(raw.get("SpeakerID") or []):
             if speaker_id in speaker_ids:
@@ -342,7 +362,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
                       *(f"Option{i}" for i in range(1, 6))):
             text_id = raw.get(field)
             if isinstance(text_id, int) and text_id >= 0:
-                values.append({"field": field, "text_id": text_id, "en": subtitle_text.get(text_id)})
+                values.append({"field": field, "text_id": text_id,
+                              "en": subtitle_text.get(text_id)})
                 if text_id not in subtitle_text:
                     writer.diagnostic("unresolved_subtitle_text", "warning", source,
                                       f"$[{index}].{field}", text_id)
@@ -358,7 +379,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
     review_nodes = simple("QuestReview/questreviewnode.json", "quest_review_node", "Id",
                           "quest_review_node", ("Title", "Desc", "Brief"))
     review_ids = {r.get("Id") for r in review_nodes}
-    review_lines = simple("QuestReview/questreviewline.json", "quest_review_line", "Id", "quest_review_line")
+    review_lines = simple("QuestReview/questreviewline.json",
+                          "quest_review_line", "Id", "quest_review_line")
     for index, raw in enumerate(review_nodes):
         next_id = raw.get("SuccessorNodeId")
         if next_id in review_ids:
@@ -409,7 +431,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
     memories = simple("FragmentMemory/photomemorycollect.json", "fragment_memory", "Id",
                       "fragment_memory", ("Title", "Desc", "TipsDesc"))
     for index, raw in enumerate(memories):
-        targets = ([('QuestId', raw.get("QuestId"))] if raw.get("QuestId") else [])
+        targets = ([('QuestId', raw.get("QuestId"))]
+                   if raw.get("QuestId") else [])
         targets += [(f"QuestIdList[{position}]", quest_id)
                     for position, quest_id in enumerate(raw.get("QuestIdList") or [])]
         for field, quest_id in targets:
@@ -422,7 +445,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
                 writer.diagnostic("unresolved_fragment_quest", "warning",
                                   "BinData/FragmentMemory/photomemorycollect.json",
                                   f"$[{index}].{field}", quest_id)
-    simple("MusicSubTitle/musicsubtitle.json", "music_subtitle", "Id", "music_subtitle")
+    simple("MusicSubTitle/musicsubtitle.json",
+           "music_subtitle", "Id", "music_subtitle")
 
     # Explicit item/area IDs in quest structures only; RegionId is intentionally
     # excluded because its identity relationship to AreaId is not established.
@@ -434,7 +458,8 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
                 owner = f"quest:{row.get('QuestId')}"
             else:
                 parts = str(row.get("Key", "")).split("_", 1)
-                owner = f"quest_node:{parts[0]}:{parts[1]}" if len(parts) == 2 else None
+                owner = f"quest_node:{parts[0]}:{parts[1]}" if len(
+                    parts) == 2 else None
             if owner not in writer.ids:
                 continue
             value = row.get("Data")
@@ -450,10 +475,12 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
                     writer.edge(owner, f"item:{target}", "references_item", "explicit ItemId",
                                 source, f"$[{row_index}].{raw_path}")
                 elif field == "ItemId":
-                    writer.diagnostic("unresolved_item", "warning", source, f"$[{row_index}].{raw_path}", target)
+                    writer.diagnostic("unresolved_item", "warning",
+                                      source, f"$[{row_index}].{raw_path}", target)
                 elif field == "AreaId" and target in area_ids:
                     writer.edge(owner, f"area:{target}", "references_area", "explicit AreaId",
                                 source, f"$[{row_index}].{raw_path}")
                 elif field == "AreaId":
-                    writer.diagnostic("unresolved_area", "warning", source, f"$[{row_index}].{raw_path}", target)
+                    writer.diagnostic("unresolved_area", "warning",
+                                      source, f"$[{row_index}].{raw_path}", target)
     return counts

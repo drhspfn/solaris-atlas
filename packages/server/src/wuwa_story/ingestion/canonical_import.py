@@ -508,6 +508,7 @@ async def _insert_typed_entities(
                                 "is_trial": raw.get("IsTrial"),
                                 "is_show": raw.get("IsShow"),
                                 "public_identity": record.get("public_identity"),
+                                "shared_artwork_paths": record.get("shared_artwork_paths"),
                                 **({"trial_presentation": record["trial_presentation"]}
                                    if record.get("trial_presentation") else {}),
                                 **({"trial_entries": record["trial_entries"]}
@@ -689,11 +690,14 @@ async def _insert_typed_entities(
             if model is Character:
                 # Old cached bundles have no family field; they must not erase a
                 # confirmed identity established by a newer compiler/backfill.
-                incoming = statement.excluded.metadata["public_identity"]
-                identity = case((incoming.astext.is_not(None), incoming),
-                                else_=Character.metadata_json["public_identity"])
+                preserved = []
+                for key in ("public_identity", "shared_artwork_paths"):
+                    incoming = statement.excluded.metadata[key]
+                    value = case((incoming.astext.is_not(None), incoming),
+                                 else_=Character.metadata_json[key])
+                    preserved.extend((key, value))
                 updates["metadata"] = statement.excluded.metadata.op("||")(
-                    func.jsonb_build_object("public_identity", identity))
+                    func.jsonb_build_object(*preserved))
             await session.execute(
                 statement.on_conflict_do_update(
                     index_elements=[model.node_id],
