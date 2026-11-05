@@ -1,0 +1,65 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import test from 'node:test';
+import vm from 'node:vm';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import ts from 'typescript';
+
+const require = createRequire(import.meta.url);
+function load(path, mocks = {}) {
+  const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+  const code = ts.transpileModule(source, { compilerOptions: {
+    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
+  } }).outputText;
+  const exports = {};
+  vm.runInNewContext(code, { exports, URL, require: (id) =>
+    id.endsWith('.css') ? {} : mocks[id] ?? require(id) });
+  return exports;
+}
+const preview = load('../src/components/ui/animationPreview.ts');
+const playback = load('../src/components/ui/RenderedAnimation.tsx', { './animationPreview': preview });
+const { CharacterArchive } = load('../src/components/characters/CharacterArchive.tsx', {
+  '@/lib/router': { Link: 'a' },
+  '../../api/client': { apiUrl: (url) => url },
+  '../../data/entities': {},
+  '../../data/locales': { availableLocales: [{ code: 'en', label: 'English' }] },
+  '@/components/ui/Select': { Select: () => null },
+  '@/components/ui/TrackPlayer': { TrackPlayer: () => null },
+  '@/components/ui/RenderedAnimation': playback,
+  '@/components/ui/animationPreview': preview,
+});
+const clip = { animation: 'idle', url: 'https://cdn.test/idle.webm', mime_type: 'video/webm',
+  file_id: 2, width: 786, height: 2048 };
+const ready = { recipe: 'riglyph-native-v1', status: 'ready', variants: [clip] };
+function render(animation_preview, hasArchive = true) {
+  return renderToStaticMarkup(React.createElement(CharacterArchive, {
+    locale: 'en', characterKey: 'character:1211', materials: [],
+    archive: { profile: { voice_actors: {} }, skills: [], skill_tree: [], resonance_chain: [],
+      voice_lines: [], other_voice_events: [],
+      artwork: [{ kind: 'RoleHeadIconLarge', url: 'https://cdn.test/portrait.png' }],
+      trial_spine: hasArchive ? { url: 'https://cdn.test/source.zip', file_id: 1, animation_preview } : null },
+  }));
+}
+
+for (const value of [undefined, { status: 'static' }, { status: 'failed' },
+  { ...ready, variants: [] }, { ...ready, variants: [{ ...clip, url: 'file:///private' }] }]) {
+  test(`unplayable trial hides the entire block and preserves artwork: ${JSON.stringify(value)}`, () => {
+    const markup = render(value);
+    assert.doesNotMatch(markup, /Character trial animation|Download trial scene|playback unavailable/);
+    assert.match(markup, /https:\/\/cdn.test\/portrait.png/);
+  });
+}
+
+test('a character without an archived trial has no trial block', () => {
+  assert.doesNotMatch(render(null, false), /Character trial animation|Download trial scene/);
+});
+
+test('a playable trial retains a looping control-free preview and source download', () => {
+  const markup = render(ready);
+  assert.match(markup, /character-trial-animation/);
+  assert.match(markup, /<video[^>]*loop=""/);
+  assert.doesNotMatch(markup, /<video[^>]*controls/);
+  assert.match(markup, /href="https:\/\/cdn.test\/source.zip" download=""/);
+});
