@@ -157,3 +157,16 @@ including a 1s marker against a PCM repeat reference. The pinned WWiser's origin
 recipe reproduces the incorrect 2s Sequence. The receipt is
 `native-silence/production-image-native-proof.json` under that scratch directory;
 no production worker was interrupted or modified.
+
+Validation: 177 targeted tests passed across `test_wwise_silence.py`,
+`test_wwise_banks.py`, `test_cutscene_language_state.py`, `test_cutscene_import.py`,
+`test_character_voice_variants.py`, and `test_release_media_status.py`; Ruff and
+`git diff --check` passed. Independent review also passed 63 targeted tests.
+The same native image passed all four existing Opus probes. The retained M0318
+fixture tests missing/duplicate XML controls, unsupported generators, invalid or
+randomized durations, infinite loops, and source/recipe disagreement.
+
+Status: the Silence fix is implemented and tested, **not deployed or published**.
+No complete M0318 soundtrack/movie encode, CDN publication, or full-movie playback
+was performed. A normal scoped production retry after rollout remains necessary;
+M3_1_11_1's external music-state context is outside this fix.
