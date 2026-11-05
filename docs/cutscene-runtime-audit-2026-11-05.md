@@ -218,3 +218,36 @@ Exact receipts: `scratch/current-twoquest-postdeploy/persistence-bounded.json`,
 `links13-persistence.json`, `sequence-queued-coverage.json` and
 `sequence-queued-coverage.csv` in the same directory. The latter receipt records
 all fourteen source-record IDs, full presentation hashes and exact asset paths.
+
+## Published audio and reader verification, 22:22–22:48 UTC
+
+C0015's normal scoped importer completed successfully on the b024 worker image.
+The published bundle has one silent video and eight independent OGG stems:
+male/female for en, ja, ko and zh. Public API and all nine media HEAD requests
+returned 200; the video range request returned 206. The browser selected female
+Rover, played the movie, then selected Japanese audio while retaining English
+subtitles. At the observed playback point video time was 20.963 seconds and the
+selected audio stems were at 20.904 seconds, readyState 4, without media errors.
+The historical partial run remains historical; successful publication is proven
+by the new file references and public bundle, not by rewriting its old status.
+Receipts: `scratch/c0015-pilot25937-{persisted-proof,public-proof,driver-finished}.json`.
+
+The local new character reader also played the published Phrolova 3.5.0 pilot:
+eight explicit language/variant choices, English variant 1 playable, Japanese
+variant 2 completed at 3.302 seconds. Selection does not autoplay or replace the
+text language. These are authored random alternatives, not inferred Rover genders.
+
+The quest reader now groups navigation into dialogue, scenes and activities,
+with ten entries initially and local search across every loaded dialogue line.
+Searching SHUT UP reached the nested cinematic passage at flow-state-54. Desktop
+and 390px mobile checks found existing navigation anchors and no horizontal
+overflow (380px client and scroll width). Technical transcript fields are closed
+under Source reference; structural action endings no longer repeat in the main
+reader. Nine source-only activities are omitted from navigation (59 remain),
+while their directly addressable source anchors are preserved.
+
+Latest targeted verification: 34 frontend tests, TypeScript and 39 server/worker
+tests passed. The broader web suite still has three pre-existing eventRequests
+VM-mock failures for RenderedAnimation; do not describe that suite as green.
+This is browser verification of the local candidate against the published API,
+not evidence that the final frontend image has already been deployed.
