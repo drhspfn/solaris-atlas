@@ -54,3 +54,16 @@ async def test_exact_identity_and_alias_still_short_circuit(exact_stage):
     session = SimpleNamespace(execute=AsyncMock(side_effect=answers))
     assert await lexical_search(session, 'quest:1') == [expected]
     assert session.execute.await_count == len(answers)
+
+
+@pytest.mark.asyncio
+async def test_exact_source_key_uses_the_same_character_family_visibility_filter():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from sqlalchemy.dialects import postgresql
+    from wuwa_story.db.repositories.search import lexical_search
+    session = SimpleNamespace(execute=AsyncMock(return_value=[]))
+    assert await lexical_search(session, "character:5015", categories=["character"]) == []
+    query = str(session.execute.await_args_list[0].args[0].compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert "public_identity" in query and "role_type" in query
+    assert "core.character" in query

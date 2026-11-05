@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from sqlalchemy import case, func, literal, or_, select, union_all
 
+from wuwa_story.db.repositories.character_identity import public_character_filter
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS, card_columns
 from wuwa_story.read_models.readers import catalog, entities
 
@@ -49,6 +50,7 @@ async def search_page(
     quest_id=None,
     *,
     _full_dialogue=False,
+    character_kind="playable",
 ):
     snapshot = game_version or "current"
     if scope == "dialogue" and sort_by != "relevance":
@@ -92,12 +94,14 @@ async def search_page(
     for kind in kinds:
         model = ENTITY_READ_MODELS[kind]
         match = or_(
-            model.search_vector.op("@@")(tsquery),
+            model.search_vector.op("@@")(tsquery) if kind != "character" else func.to_tsvector("simple", model.title).op("@@")(tsquery),
             model.title.icontains(q.strip(), autoescape=True),
-            model.searchable_text.icontains(q.strip(), autoescape=True),
+            model.searchable_text.icontains(q.strip(), autoescape=True) if kind != "character" else model.card["alias_keys"].contains([normalized]),
             model.canonical_key == q,
         )
         filters = [model.locale_id == locale_id, model.snapshot_key == snapshot, match]
+        if kind == "character":
+            filters.append(public_character_filter(model.role_type, model.card["public_identity"], model.canonical_key, character_kind))
         if character_key:
             filters.append(model.card["character_keys"].contains([character_key]))
         if quest_id is not None:

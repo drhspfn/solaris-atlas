@@ -1,9 +1,11 @@
 """Lightweight catalog cards and counts, independent of full public pages."""
 
 from fastapi import HTTPException
-from sqlalchemy import func, literal, or_, select, union_all
+from sqlalchemy import func, literal, select, union_all
 
+from wuwa_story.db.repositories.character_identity import public_character_filter
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS, card_columns, card_rows
+from wuwa_story.ingestion.character_identity import character_kind
 from wuwa_story.read_models.readers import entities
 
 
@@ -68,6 +70,7 @@ def catalog_entry(entry, category):
         "slug": entry.slug,
         "href": card["href"],
         "image_url": entry.primary_image_url,
+        **({"character_kind": character_kind(entry.role_type)} if category == "character" else {}),
     }
 
 
@@ -78,6 +81,7 @@ async def catalog_page(
     snapshot_key="current",
     *,
     quest_type_id=None,
+    character_kind="playable",
     limit=24,
     offset=0,
 ):
@@ -98,7 +102,7 @@ async def catalog_page(
         filters.append(model.card["status"].as_string() == "active")
     if category == "character":
         role_type = model.role_type
-        filters.append(or_(role_type == 1, role_type.is_(None)))
+        filters.append(public_character_filter(role_type, model.card["public_identity"], model.canonical_key, character_kind))
     if quest_type_id is not None:
         filters.append(model.quest_type == str(quest_type_id))
     total = await session.scalar(select(func.count()).select_from(model).where(*filters)) or 0

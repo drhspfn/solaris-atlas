@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from wuwa_story.ingestion.character_artwork import inherited_character_fields
+from wuwa_story.ingestion.character_identity import main_role_identities
+
 from .core import Writer, read_json
 
 
@@ -53,6 +56,17 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
             return []
         return read_json(path)
 
+    main_role_path = base / "main_role_change/mainroleconfig.json"
+    role_path = base / "role/roleinfo.json"
+    element_path = base / "element_info/elementinfo.json"
+    role_sources = read_json(role_path) if role_path.is_file() else []
+    role_templates = {row["Id"]: row for row in role_sources}
+    main_roles = main_role_identities(
+        read_json(main_role_path) if main_role_path.is_file() else [],
+        role_sources,
+        read_json(element_path) if element_path.is_file() else [],
+    )
+
     def loc(key: Any):
         if not isinstance(key, str) or not key:
             return None
@@ -85,6 +99,11 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
                     "ui_config_id": trial.get("UiConfigId"),
                     "animation": "idle",
                 }
+            if kind == "character":
+                fields = inherited_character_fields(raw, role_templates.get(raw.get("SkillId"), {}))
+                record["shared_artwork_paths"] = sorted({raw[field] for field in fields})
+            if kind == "character" and value in main_roles:
+                record["public_identity"] = main_roles[value]
             if kind == "character" and value in trial_infos:
                 record["trial_entries"] = trial_infos[value]
             for field in fields:

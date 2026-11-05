@@ -1,15 +1,16 @@
 """Select a catalog page before loading its entity and localization details."""
 
-from sqlalchemy import and_, func, literal, or_, select
+from sqlalchemy import and_, func, literal, select
 from sqlalchemy.orm import load_only
 
 from wuwa_story.db.models.core import Character, Item, Location, Quest, Speaker
 from wuwa_story.db.models.graph import Node, NodeType
 from wuwa_story.db.models.i18n import LocalizationContent, LocalizationValue
 from wuwa_story.db.models.search import SearchDocument
+from wuwa_story.db.repositories.character_identity import public_character_filter
 
 
-async def read_catalog(session, category, locale_id, release_id, limit, offset, quest_type_id):
+async def read_catalog(session, category, locale_id, release_id, limit, offset, quest_type_id, *, character_kind="playable"):
     node_types = ["area", "location"] if category == "location" else [category]
     entity = {
         "character": Character,
@@ -27,7 +28,7 @@ async def read_catalog(session, category, locale_id, release_id, limit, offset, 
         role_type = Character.metadata_json["role_type"].as_integer()
         # Preserve primary roles and rows without a role type.
         scope = scope.outerjoin(Character, Character.node_id == Node.id).where(
-            or_(role_type == 1, role_type.is_(None))
+            public_character_filter(role_type, Character.metadata_json["public_identity"], Node.canonical_key, character_kind)
         )
     elif quest_type_id is not None:
         scope = scope.join(Quest, Quest.node_id == Node.id).where(

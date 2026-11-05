@@ -20,20 +20,39 @@ async def test_archive_batches_dependent_tables_and_keeps_configured_group_ids(m
         "Id": 7, "ElementId": 2, "QualityId": 5, "SkillId": 70,
         "SkillTreeGroupId": 71, "ResonantChainGroupId": 72, "Icon": "/Game/Icon",
     })
-    skill = Row(row_index=9, data={"Id": 100, "SkillName": "skill.name"})
+    skill = Row(row_index=9, data={
+        "Id": 100, "SkillName": "skill.name", "SkillLevelGroupId": 700, "MaxSkillLevel": 10,
+    })
+    other_skill = Row(row_index=10, data={"Id": 700, "SkillLevelGroupId": 701})
+    missing_skill = Row(row_index=11, data={"Id": 701})
+    attribute = Row(row_index=22, data={
+        "Id": 900003, "Order": 3, "SkillLevelGroupId": 700,
+        "AttributeName": "stat.name", "Description": "stat.description",
+        "SkillDetailNum": [{"ArrayString": ["16.88%*4", "18.26%*4"]}],
+    })
+    constant = Row(row_index=23, data={
+        "Id": 900011, "Order": 2, "SkillLevelGroupId": 701,
+        "AttributeName": "constant.name", "Description": "constant.description",
+        "SkillDetailNum": [{"ArrayString": ["9"]}],
+    })
     chain = Row(row_index=3, data={"Id": 200, "NodeName": "chain.name"})
     session = Row(
         get=AsyncMock(return_value=object()),
-        scalars=AsyncMock(return_value=[role]),
+        scalars=AsyncMock(side_effect=[[role], [constant, attribute]]),
         execute=AsyncMock(side_effect=[
             [(chain, "BinData/resonate_chain/resonantchain.json"),
-             (skill, "BinData/skill/skill.json")], [], [],
+             (skill, "BinData/skill/skill.json"),
+             (other_skill, "BinData/skill/skill.json"),
+             (missing_skill, "BinData/skill/skill.json")], [], [],
         ]),
     )
-    monkeypatch.setattr(archive, "get_node", AsyncMock(return_value=Row(id=1, canonical_key="character:7")))
+    monkeypatch.setattr(archive, "get_node", AsyncMock(
+        return_value=Row(id=1, canonical_key="character:7")))
     monkeypatch.setattr(archive, "_release_id", AsyncMock(return_value=12))
     monkeypatch.setattr(archive, "_localized_strings", AsyncMock(return_value={
         "skill.name": "Skill", "chain.name": "Chain",
+        "stat.name": "Attack DMG", "stat.description": "",
+        "constant.name": "Cooldown", "constant.description": "{0}s",
     }))
     monkeypatch.setattr(archive, "get_settings", lambda: Row(s3_bucket="test"))
     monkeypatch.setattr(archive, "S3Storage", lambda _: Row())
@@ -41,15 +60,32 @@ async def test_archive_batches_dependent_tables_and_keeps_configured_group_ids(m
     result = await archive.character_archive.__wrapped__("1-character-slug", session=session)
 
     assert result["canonical_key"] == "character:7"
-    assert result["source"] == {"file": "BinData/role/roleinfo.json", "row": 4, "raw_path": "$[4]"}
+    assert result["source"] == {
+        "file": "BinData/role/roleinfo.json", "row": 4, "raw_path": "$[4]"}
     assert result["skills"][0]["name"] == "Skill"
     assert result["skills"][0]["source"]["row"] == 9
+    assert result["skills"][0]["max_level"] == 10
+    assert result["skills"][0]["attributes"] == [{
+        "id": 900003, "order": 3, "name": "Attack DMG", "description": "",
+        "parameters": [["16.88%*4", "18.26%*4"]], "values": ["16.88%*4", "18.26%*4"],
+        "source": {"file": "BinData/skill/skilldescription.json", "row": 22, "raw_path": "$[22]"},
+    }]
+    assert result["skills"][1]["attributes"][0]["values"] == ["9s"]
+    assert result["skills"][2]["attributes"] == []
+    keys = archive._localized_strings.await_args.args[3]
+    assert {"stat.name", "stat.description",
+            "constant.name", "constant.description"} <= set(keys)
     assert result["resonance_chain"][0]["name"] == "Chain"
     assert result["skill_tree"] == result["voice_lines"] == []
-    # One role lookup, one query for all eight dependent source tables.
-    assert session.scalars.await_count == 1
+    # One role lookup and one skill-description batch for every level group.
+    assert session.scalars.await_count == 2
     assert session.execute.await_count == 3  # groups, cost items, media
-    role_sql = sql(session.scalars.await_args.args[0])
+    role_sql = sql(session.scalars.await_args_list[0].args[0])
+    description_sql = sql(session.scalars.await_args_list[1].args[0])
+    assert "source_file.release_id = 12" in description_sql
+    assert "source_record.release_id = 12" in description_sql
+    assert "source_file.logical_source_path = 'BinData/skill/skilldescription.json'" in description_sql
+    assert "CAST((raw.source_record.data ->> 'SkillLevelGroupId') AS INTEGER) IN (700, 701)" in description_sql
     grouped_sql = sql(session.execute.await_args_list[0].args[0])
     assert "source_file.release_id = 12" in role_sql
     assert "source_file.release_id = 12" in grouped_sql
@@ -61,10 +97,12 @@ async def test_archive_batches_dependent_tables_and_keeps_configured_group_ids(m
 @pytest.mark.asyncio
 async def test_archive_grouping_preserves_row_order_and_missing_tables():
     first, second = Row(row_index=1), Row(row_index=5)
-    session = Row(execute=AsyncMock(return_value=[(first, "skills"), (second, "skills")]))
+    session = Row(execute=AsyncMock(
+        return_value=[(first, "skills"), (second, "skills")]))
     result = await archive._record_groups(session, 12, {"skills": ("GroupId", 7), "voices": ("RoleId", 7)})
     assert result == {"skills": [first, second], "voices": []}
-    assert "ORDER BY raw.source_record.row_index" in sql(session.execute.await_args.args[0])
+    assert "ORDER BY raw.source_record.row_index" in sql(
+        session.execute.await_args.args[0])
     assert await archive._record_groups(session, 12, {}) == {}
     session.execute.assert_awaited_once()
 
@@ -102,29 +140,37 @@ async def test_progression_resolves_unique_items_once_and_preserves_all_uses(mon
     breach = Row(row_index=3, data={"MaxLevel": 40, "BreachLevel": 1, "BreachConsume": [
         {"Key": 1, "Value": 2}, {"Key": 2, "Value": 4},
     ]})
-    role_file, item_file, breach_file = [Row(logical_source_path=path) for path in ("role", "items", "breach")]
-    items = [Row(id=11, canonical_key="item:1"), Row(id=12, canonical_key="item:2")]
+    role_file, item_file, breach_file = [
+        Row(logical_source_path=path) for path in ("role", "items", "breach")]
+    items = [Row(id=11, canonical_key="item:1"),
+             Row(id=12, canonical_key="item:2")]
     session = Row(
-        execute=AsyncMock(side_effect=[[(role, role_file)], [(group, item_file)], [(breach, breach_file)]]),
+        execute=AsyncMock(side_effect=[[(role, role_file)], [
+                          (group, item_file)], [(breach, breach_file)]]),
         scalars=AsyncMock(side_effect=[[project], items]),
     )
     labels = AsyncMock()
     monkeypatch.setattr(shared, "prefetch_node_labels", labels)
-    monkeypatch.setattr(shared, "_node_label", AsyncMock(side_effect=lambda _s, identity, _l: {"id": identity}))
+    monkeypatch.setattr(shared, "_node_label", AsyncMock(
+        side_effect=lambda _s, identity, _l: {"id": identity}))
 
     result = await shared._character_progression_materials(session, 7, "ja", 12)
 
     assert len(result) == 2 + (repeat + 1) * 2
-    assert [(use["item_id"], use["required_count"]) for use in result[:2]] == [(1, 2), (2, 4)]
+    assert [(use["item_id"], use["required_count"])
+            for use in result[:2]] == [(1, 2), (2, 4)]
     assert result[0]["level_cap"] == 40
     assert result[0]["source"]["raw_path"] == "$[3].BreachConsume[0]"
     assert result[2]["source"]["raw_path"] == "$[2].ItemGroup[0]"
-    assert {use["kind"] for use in result[2:]} == {"resonator_level_material", "skill_tree_material"}
+    assert {use["kind"] for use in result[2:]} == {
+        "resonator_level_material", "skill_tree_material"}
     assert all(use["item"] is None for use in result if use["item_id"] == 999)
-    assert all(use["item"] == {"id": 11} for use in result if use["item_id"] == 1)
+    assert all(use["item"] == {"id": 11}
+               for use in result if use["item_id"] == 1)
     labels.assert_awaited_once_with(session, [11, 12], "ja")
     assert session.execute.await_count == 3
-    assert session.scalars.await_count == 2  # development project and unique item nodes
+    # development project and unique item nodes
+    assert session.scalars.await_count == 2
     item_sql = sql(session.scalars.await_args.args[0])
     assert all(f"'item:{identity}'" in item_sql for identity in (1, 2, 999))
     assert "invalid" not in item_sql

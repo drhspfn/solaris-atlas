@@ -25,3 +25,18 @@ def character_artwork_scope(field: str, path: object, role_id: int | None = None
         if owner is not None and owner != role_id:
             return "shared_resource"
     return "character"
+
+
+def inherited_character_fields(role, template):
+    """A foreign skill template is not evidence of personal portrait ownership."""
+    if role.get("RoleType") == 1 or not template or role.get("Id") == template.get("Id"):
+        return set()
+    fields = ("FormationRoleCard", "RolePortrait")
+    if (isinstance(role.get("Name"), str) and isinstance(template.get("Name"), str)
+            and role["Name"] != template["Name"]):
+        fields += ("RoleHeadIcon", "RoleHeadIconBig", "RoleHeadIconLarge",
+                   "RoleHeadIconCircle", "Card")
+    elif role.get("RoleHeadIcon") == template.get("RoleHeadIcon"):
+        return set()
+    return {field for field in fields
+            if role.get(field) and role.get(field) == template.get(field)}

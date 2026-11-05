@@ -268,6 +268,7 @@ async def _build_entity(session, kind, entity_id, locale, snapshot_key):
             )
         if kind == "character":
             character = await session.get(Character, node.id)
+            card["public_identity"] = (character.metadata_json or {}).get("public_identity") if character else None
             card["role_type"] = (
                 (character.metadata_json or {}).get("role_type") if character else None
             )
@@ -278,6 +279,8 @@ async def _build_entity(session, kind, entity_id, locale, snapshot_key):
         title = sections._label(
             entity.get("name"), sections._label(entity.get("canonical_name"), label["label"] or key)
         )
+        if kind == "character" and profile.get("family"):
+            title = "Rover"
         artwork = await sections._artwork(session, node, kind)
         primary_url = profile.get("media", {}).get("image_url")
         if kind == "cutscene":

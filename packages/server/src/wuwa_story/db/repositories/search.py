@@ -3,8 +3,10 @@ from typing import Any
 from sqlalchemy import asc, desc, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from wuwa_story.db.models.core import Character
 from wuwa_story.db.models.graph import Node, NodeType
 from wuwa_story.db.models.search import EntityAlias, SearchDocument
+from wuwa_story.db.repositories.character_identity import public_character_filter
 
 
 def _unique_entities(
@@ -28,6 +30,7 @@ async def lexical_search(
     sort_by: str = "relevance",
     sort_order: str = "desc",
     offset: int = 0,
+    character_kind: str = "playable",
 ) -> list[dict[str, Any]]:
     if sort_by not in {"relevance", "name"}:
         raise ValueError("sort_by must be 'relevance' or 'name'")
@@ -38,6 +41,10 @@ async def lexical_search(
     if category:
         selected_categories.add(category)
     sort = asc if sort_order == "asc" else desc
+    public_characters = select(Character.node_id).join(Node, Node.id == Character.node_id).where(
+        public_character_filter(Character.metadata_json["role_type"].as_integer(),
+                                Character.metadata_json["public_identity"], Node.canonical_key, character_kind))
+    visible = or_(NodeType.key != "character", Node.id.in_(public_characters))
     canonical = await session.execute(
         select(
             Node.id,
@@ -48,7 +55,7 @@ async def lexical_search(
             literal(2.0).label("score"),
         )
         .join(NodeType, Node.type_id == NodeType.id)
-        .where(Node.canonical_key == query)
+        .where(Node.canonical_key == query, visible)
         .limit(limit)
     )
     canonical_rows = [dict(row._mapping) for row in canonical]
@@ -67,7 +74,7 @@ async def lexical_search(
         )
         .join(EntityAlias, EntityAlias.node_id == Node.id)
         .join(NodeType, Node.type_id == NodeType.id)
-        .where(EntityAlias.normalized_alias == normalized)
+        .where(EntityAlias.normalized_alias == normalized, visible)
     )
     if locale_id:
         exact_statement = exact_statement.where(EntityAlias.locale_id == locale_id)
@@ -94,7 +101,7 @@ async def lexical_search(
         )
         .join(SearchDocument, SearchDocument.target_node_id == Node.id)
         .join(NodeType, Node.type_id == NodeType.id)
-        .where(SearchDocument.search_vector.op("@@")(func.plainto_tsquery("simple", query)))
+        .where(SearchDocument.search_vector.op("@@")(func.plainto_tsquery("simple", query)), visible)
     )
     if selected_categories:
         fts = fts.where(NodeType.key.in_(selected_categories))
@@ -119,7 +126,7 @@ async def lexical_search(
             )
             .join(SearchDocument, SearchDocument.target_node_id == Node.id)
             .join(NodeType, Node.type_id == NodeType.id)
-            .where(or_(SearchDocument.title.op("%")(query), SearchDocument.body.op("%")(query)))
+            .where(or_(SearchDocument.title.op("%")(query), SearchDocument.body.op("%")(query)), visible)
         )
         if selected_categories:
             statement = statement.where(NodeType.key.in_(selected_categories))

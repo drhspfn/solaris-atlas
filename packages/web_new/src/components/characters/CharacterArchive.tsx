@@ -1,20 +1,27 @@
-'use client';
+"use client";
 
-import { BookOpen, ChevronDown, Image, Music2, Sparkles, Swords } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { Link } from '@/lib/router';
+import {
+  BookOpen,
+  ChevronDown,
+  Image,
+  Music2,
+  Sparkles,
+  Swords,
+} from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link } from "@/lib/router";
 
-import { api, apiUrl } from '../../api/client';
-import { entityPath } from '../../data/entities';
-import { availableLocales } from '../../data/locales';
-import { Select } from '@/components/ui/Select';
-import { TrackPlayer } from '@/components/ui/TrackPlayer';
+import { api, apiUrl } from "../../api/client";
+import { entityPath } from "../../data/entities";
+import { availableLocales } from "../../data/locales";
+import { Select } from "@/components/ui/Select";
+import { TrackPlayer } from "@/components/ui/TrackPlayer";
 import { RenderedAnimation } from "@/components/ui/RenderedAnimation";
 import {
   selectAnimationClip,
   type AnimationPreview,
 } from "@/components/ui/animationPreview";
-import '@/styles/character-voice-lines.css';
+import "@/styles/character-voice-lines.css";
 
 export interface CharacterArchiveData {
   trial_spine?: {
@@ -37,7 +44,12 @@ export interface CharacterArchiveData {
     element: string | null;
     quality: string | null;
   };
-  artwork: { kind: string; engine_path: string; url: string | null; scope?: 'character' | 'shared_resource' }[];
+  artwork: {
+    kind: string;
+    engine_path: string;
+    url: string | null;
+    scope?: "character" | "shared_resource";
+  }[];
   skills: {
     id: number;
     type: number;
@@ -45,6 +57,15 @@ export interface CharacterArchiveData {
     name: string | null;
     description: string | null;
     max_level: number;
+    attributes?: {
+      id: number;
+      order: number;
+      name: string | null;
+      description: string | null;
+      parameters: string[][];
+      values: string[];
+      source: unknown;
+    }[];
     icon: { engine_path: string | null; url: string | null };
   }[];
   skill_tree: {
@@ -83,37 +104,63 @@ export interface CharacterArchiveData {
 
 type MaterialUse = {
   item_id: number;
-  item?: { id: number; canonical_key: string; label: string; slug?: string | null; href?: string };
+  item?: {
+    id: number;
+    canonical_key: string;
+    label: string;
+    slug?: string | null;
+    href?: string;
+  };
   kind: string;
   level_cap?: number;
   required_count?: number;
   group_id?: number;
 };
 
-function artworkLabel(art: CharacterArchiveData['artwork'][number]) {
-  if (art.scope === 'shared_resource') {
-    if (art.kind === 'RolePortrait') return 'Shared portrait reference';
-    return art.kind === 'RoleStand' ? 'Shared quest artwork' : 'Shared resource icon';
+function artworkLabel(art: CharacterArchiveData["artwork"][number]) {
+  if (art.scope === "shared_resource") {
+    if (art.kind === "RolePortrait") return "Shared portrait reference";
+    return art.kind === "RoleStand"
+      ? "Shared quest artwork"
+      : "Shared resource icon";
   }
-  return art.kind.replaceAll(/([a-z])([A-Z])/g, '$1 $2');
+  return art.kind.replaceAll(/([a-z])([A-Z])/g, "$1 $2");
 }
 
-function ArtworkCard({ art }: { art: CharacterArchiveData['artwork'][number] }) {
+function ArtworkCard({
+  art,
+}: {
+  art: CharacterArchiveData["artwork"][number];
+}) {
   const [failed, setFailed] = useState(false);
   const label = artworkLabel(art);
   return (
     <figure className="character-artwork-card">
       {art.url && !failed ? (
-        <a href={apiUrl(art.url.replace(/^\/api/, ''))} target="_blank" rel="noopener noreferrer"
-          aria-label={`Open ${label} image`}>
-          <img src={apiUrl(art.url.replace(/^\/api/, ''))} alt={label} loading="lazy"
-            width={256} height={256} onError={() => setFailed(true)} />
+        <a
+          href={apiUrl(art.url.replace(/^\/api/, ""))}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`Open ${label} image`}
+        >
+          <img
+            src={apiUrl(art.url.replace(/^\/api/, ""))}
+            alt={label}
+            loading="lazy"
+            width={256}
+            height={256}
+            onError={() => setFailed(true)}
+          />
         </a>
       ) : (
         <div className="character-artwork-placeholder">
           <Image size={24} aria-hidden="true" />
-          <span>{failed ? 'Image unavailable' : 'Image not exported'}</span>
-          {failed && <button type="button" onClick={() => setFailed(false)}>Retry image</button>}
+          <span>{failed ? "Image unavailable" : "Image not exported"}</span>
+          {failed && (
+            <button type="button" onClick={() => setFailed(false)}>
+              Retry image
+            </button>
+          )}
         </div>
       )}
       <figcaption>{label}</figcaption>
@@ -121,19 +168,96 @@ function ArtworkCard({ art }: { art: CharacterArchiveData['artwork'][number] }) 
   );
 }
 
-function gameText(value: string | null | undefined, params: string[] = []): string {
-  if (!value) return 'Text unavailable in this language.';
+function gameText(
+  value: string | null | undefined,
+  params: string[] = [],
+): string {
+  if (!value) return "Text unavailable in this language.";
   return value
-    .replace(/<[^>]*>/g, '')
-    .replace(/\{(\d+)\}/g, (match, index: string) => params[Number(index)] ?? match)
+    .replace(/<[^>]*>/g, "")
+    .replace(
+      /\{(\d+)\}/g,
+      (match, index: string) => params[Number(index)] ?? match,
+    )
     .trim();
 }
 
 const voiceLocales = availableLocales.filter(({ code }) =>
-  ['en', 'ja', 'zh-Hans', 'ko'].includes(code),
+  ["en", "ja", "zh-Hans", "ko"].includes(code),
 );
 const initialVoiceLocale = (locale: string) =>
-  voiceLocales.some((option) => option.code === locale) ? locale : 'en';
+  voiceLocales.some((option) => option.code === locale) ? locale : "en";
+
+export function SkillScaling({
+  skill,
+}: {
+  skill: CharacterArchiveData["skills"][number];
+}) {
+  const [selectedLevel, setSelectedLevel] = useState(1);
+  if (!skill.attributes?.length) return null;
+
+  // Source arrays may include unobtainable levels; only the skill cap defines choices.
+  const maxLevel = Number.isFinite(skill.max_level)
+    ? Math.max(1, Math.floor(skill.max_level))
+    : 1;
+  const level = Math.min(selectedLevel, maxLevel);
+  const skillLabel = skill.name ? gameText(skill.name) : `Skill #${skill.id}`;
+
+  return (
+    <div className="character-skill-scaling">
+      <div className="character-skill-level">
+        <span>Talent level</span>
+        <Select
+          label={`${skillLabel} talent level`}
+          value={level}
+          options={Array.from({ length: maxLevel }, (_, index) => ({
+            value: index + 1,
+            label: `Level ${index + 1}`,
+          }))}
+          onChange={(value) => setSelectedLevel(Number(value))}
+        />
+      </div>
+      <table aria-label={`${skillLabel} values at level ${level}`}>
+        <tbody>
+          {[...skill.attributes]
+            .sort((a, b) => a.order - b.order)
+            .map((attribute) => (
+              <tr key={attribute.id}>
+                <th scope="row">
+                  {gameText(
+                    attribute.name ||
+                      attribute.description ||
+                      `Attribute ${attribute.order}`,
+                  )}
+                  {attribute.name &&
+                    attribute.description &&
+                    !/\{\d+[^}]*\}/.test(attribute.description) && (
+                      <small>{gameText(attribute.description)}</small>
+                    )}
+                </th>
+                <td>
+                  {attribute.values.length
+                    ? (attribute.values.length === 1
+                        ? attribute.values[0]
+                        : attribute.values[level - 1]) || "—"
+                    : attribute.parameters.length
+                      ? attribute.parameters.map((values, index) => (
+                          <div key={index}>
+                            <small>Parameter {index + 1}: </small>
+                            {(values.length === 1
+                              ? values[0]
+                              : values[level - 1]) || "—"}
+                          </div>
+                        ))
+                      : "—"}
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 export function CharacterArchive({
   archive,
@@ -151,23 +275,24 @@ export function CharacterArchive({
     locale: string;
     data: CharacterArchiveData;
   } | null>(null);
-  const [textError, setTextError] = useState('');
+  const [textError, setTextError] = useState("");
 
   useEffect(() => {
     setTextLocale(locale);
     setTextArchive(null);
-    setTextError('');
+    setTextError("");
   }, [locale, characterKey]);
 
   useEffect(() => {
     if (textLocale === locale) return;
     const controller = new AbortController();
-    setTextError('');
+    setTextError("");
     api<CharacterArchiveData>(
       `/characters/${encodeURIComponent(characterKey)}/archive?locale=${encodeURIComponent(textLocale)}`,
     )
       .then((result) => {
-        if (!controller.signal.aborted) setTextArchive({ locale: textLocale, data: result });
+        if (!controller.signal.aborted)
+          setTextArchive({ locale: textLocale, data: result });
       })
       .catch((error: Error) => {
         if (!controller.signal.aborted) setTextError(error.message);
@@ -175,22 +300,33 @@ export function CharacterArchive({
     return () => controller.abort();
   }, [characterKey, locale, textLocale]);
 
-  const groups = new Map<string, { item: MaterialUse['item']; uses: MaterialUse[] }>();
+  const groups = new Map<
+    string,
+    { item: MaterialUse["item"]; uses: MaterialUse[] }
+  >();
   for (const use of materials) {
     const key = use.item?.canonical_key || `unresolved:${use.item_id}`;
     const group = groups.get(key) || { item: use.item, uses: [] };
     group.uses.push(use);
     groups.set(key, group);
   }
-  const spoken = textLocale === locale ? archive : (textArchive?.data ?? archive);
-  const textLoading = textLocale !== locale && textArchive?.locale !== textLocale && !textError;
-  const portrait = archive?.artwork.find((art) => art.kind === 'RoleHeadIconLarge');
+  const spoken =
+    textLocale === locale ? archive : (textArchive?.data ?? archive);
+  const textLoading =
+    textLocale !== locale && textArchive?.locale !== textLocale && !textError;
+  const portrait = archive?.artwork.find(
+    (art) =>
+      art.kind === "RoleHeadIconLarge" && art.scope !== "shared_resource",
+  );
   const trialArtwork = archive?.artwork.find(
     (art) =>
       art.kind === "RoleStand" && art.scope !== "shared_resource" && art.url,
   );
 
-  const trialPreview = selectAnimationClip(archive?.trial_spine?.animation_preview, 'idle');
+  const trialPreview = selectAnimationClip(
+    archive?.trial_spine?.animation_preview,
+    "idle",
+  );
 
   return (
     <div className="character-archive">
@@ -199,7 +335,9 @@ export function CharacterArchive({
           <BookOpen size={19} />
           <span>Profile & progression</span>
           <small>
-            {archive?.profile.max_level ? `Max level ${archive.profile.max_level}` : 'Game records'}
+            {archive?.profile.max_level
+              ? `Max level ${archive.profile.max_level}`
+              : "Game records"}
           </small>
           <ChevronDown size={17} />
         </summary>
@@ -247,8 +385,11 @@ export function CharacterArchive({
           </div>
           {portrait && !portrait.url && (
             <div className="character-asset-note">
-              <Image size={16} /> Portrait source found; image export is pending.{' '}
-              <code title={portrait.engine_path}>{portrait.engine_path.split('/').at(-1)}</code>
+              <Image size={16} /> Portrait source found; image export is
+              pending.{" "}
+              <code title={portrait.engine_path}>
+                {portrait.engine_path.split("/").at(-1)}
+              </code>
             </div>
           )}
           {archive?.trial_spine && trialPreview && (
@@ -278,39 +419,45 @@ export function CharacterArchive({
             </section>
           )}
           {!!archive?.artwork.length && (
-            <section aria-label="Character artwork" className="character-artwork">
+            <section
+              aria-label="Character artwork"
+              className="character-artwork"
+            >
               <h3>Artwork</h3>
               <div className="character-artwork-gallery">
-                {archive.artwork.filter((art) => art.scope !== 'shared_resource').map((art) => (
-                  <ArtworkCard key={`${art.kind}-${art.url}`} art={art} />
-                ))}
+                {archive.artwork
+                  .filter((art) => art.scope !== "shared_resource")
+                  .map((art) => (
+                    <ArtworkCard key={`${art.kind}-${art.url}`} art={art} />
+                  ))}
               </div>
-            <details className="character-subfold">
-              <summary>
-                Source references <span>{archive.artwork.length} references</span>
-              </summary>
-              <div className="character-asset-list">
-                {archive.artwork.map((art) => (
-                  <div key={art.kind}>
-                    <strong>{artworkLabel(art)}</strong>
-                    <code title={art.engine_path}>{art.engine_path}</code>
-                    <small>
-                      {art.url ? (
-                        <a
-                          href={apiUrl(art.url.replace(/^\/api/, ''))}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          View image
-                        </a>
-                      ) : (
-                        'No exported image'
-                      )}
-                    </small>
-                  </div>
-                ))}
-              </div>
-            </details>
+              <details className="character-subfold">
+                <summary>
+                  Source references{" "}
+                  <span>{archive.artwork.length} references</span>
+                </summary>
+                <div className="character-asset-list">
+                  {archive.artwork.map((art) => (
+                    <div key={art.kind}>
+                      <strong>{artworkLabel(art)}</strong>
+                      <code title={art.engine_path}>{art.engine_path}</code>
+                      <small>
+                        {art.url ? (
+                          <a
+                            href={apiUrl(art.url.replace(/^\/api/, ""))}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            View image
+                          </a>
+                        ) : (
+                          "No exported image"
+                        )}
+                      </small>
+                    </div>
+                  ))}
+                </div>
+              </details>
             </section>
           )}
           <h3>
@@ -327,7 +474,7 @@ export function CharacterArchive({
                         slug: group.item.slug,
                         href: group.item.href,
                         canonical_key: group.item.canonical_key,
-                        node_type: 'item',
+                        node_type: "item",
                       })}
                     >
                       {group.item.label || key}
@@ -338,10 +485,12 @@ export function CharacterArchive({
                   <div>
                     {group.uses.map((use, index) => (
                       <span key={`${key}-${index}`}>
-                        {use.kind === 'character_ascension'
-                          ? `Ascension · Lv. ${use.level_cap ?? '?'}`
-                          : use.kind.replaceAll('_', ' ')}
-                        {use.required_count != null ? ` · ${use.required_count}×` : ''}
+                        {use.kind === "character_ascension"
+                          ? `Ascension · Lv. ${use.level_cap ?? "?"}`
+                          : use.kind.replaceAll("_", " ")}
+                        {use.required_count != null
+                          ? ` · ${use.required_count}×`
+                          : ""}
                       </span>
                     ))}
                   </div>
@@ -349,7 +498,9 @@ export function CharacterArchive({
               ))}
             </div>
           ) : (
-            <p className="character-muted">No upgrade material records in this snapshot.</p>
+            <p className="character-muted">
+              No upgrade material records in this snapshot.
+            </p>
           )}
         </div>
       </details>
@@ -359,7 +510,8 @@ export function CharacterArchive({
           <Swords size={19} />
           <span>Skills & skill tree</span>
           <small>
-            {archive?.skills.length ?? 0} skills · {archive?.skill_tree.length ?? 0} nodes
+            {archive?.skills.length ?? 0} skills ·{" "}
+            {archive?.skill_tree.length ?? 0} nodes
           </small>
           <ChevronDown size={17} />
         </summary>
@@ -370,18 +522,27 @@ export function CharacterArchive({
                 <article className="character-skill-card" key={skill.id}>
                   <div className="character-skill-heading">
                     {skill.icon.url ? (
-                      <img src={apiUrl(skill.icon.url.replace(/^\/api/, ''))} alt="" />
+                      <img
+                        src={apiUrl(skill.icon.url.replace(/^\/api/, ""))}
+                        alt=""
+                      />
                     ) : (
                       <span className="character-icon-fallback">
                         <Swords size={19} />
                       </span>
                     )}
                     <div>
-                      <small>Skill {String(skill.order).padStart(2, '0')}</small>
+                      <small>
+                        Skill {String(skill.order).padStart(2, "0")}
+                      </small>
                       <h3>{gameText(skill.name)}</h3>
                     </div>
                   </div>
                   <p>{gameText(skill.description)}</p>
+                  <SkillScaling
+                    key={`${characterKey}-${skill.id}`}
+                    skill={skill}
+                  />
                   <small className="character-source-hint">
                     Source: Skill #{skill.id} · up to level {skill.max_level}
                   </small>
@@ -389,17 +550,22 @@ export function CharacterArchive({
               ))}
             </div>
           ) : (
-            <p className="character-muted">No skill records in this snapshot.</p>
+            <p className="character-muted">
+              No skill records in this snapshot.
+            </p>
           )}
           {archive?.skill_tree.length ? (
             <details className="character-subfold">
               <summary>
-                Skill tree requirements <span>{archive.skill_tree.length} nodes</span>
+                Skill tree requirements{" "}
+                <span>{archive.skill_tree.length} nodes</span>
               </summary>
               <div className="character-tree-list">
                 {archive.skill_tree.map((node) => (
                   <div key={node.id}>
-                    <strong>{node.title ? gameText(node.title) : `Node ${node.order}`}</strong>
+                    <strong>
+                      {node.title ? gameText(node.title) : `Node ${node.order}`}
+                    </strong>
                     <small>
                       {node.costs.length
                         ? node.costs
@@ -407,8 +573,8 @@ export function CharacterArchive({
                               (cost) =>
                                 `${cost.item?.name || `Item ${cost.item_id}`} ×${cost.count}`,
                             )
-                            .join(' · ')
-                        : 'No material cost recorded'}
+                            .join(" · ")
+                        : "No material cost recorded"}
                     </small>
                     {node.description && <p>{gameText(node.description)}</p>}
                   </div>
@@ -429,7 +595,9 @@ export function CharacterArchive({
         <div className="character-fold-body character-chain-grid">
           {archive?.resonance_chain.map((chain) => (
             <article className="character-chain-card" key={chain.id}>
-              <span className="character-chain-number">{String(chain.order).padStart(2, '0')}</span>
+              <span className="character-chain-number">
+                {String(chain.order).padStart(2, "0")}
+              </span>
               <div>
                 <h3>{gameText(chain.name)}</h3>
                 <p>{gameText(chain.description, chain.description_params)}</p>
@@ -437,7 +605,9 @@ export function CharacterArchive({
             </article>
           ))}
           {!archive?.resonance_chain.length && (
-            <p className="character-muted">No chain records in this snapshot.</p>
+            <p className="character-muted">
+              No chain records in this snapshot.
+            </p>
           )}
         </div>
       </details>
@@ -460,7 +630,7 @@ export function CharacterArchive({
                 label: option.label,
               }))}
               onChange={(value) => {
-                setTextError('');
+                setTextError("");
                 setTextLocale(value);
               }}
             />
@@ -469,8 +639,8 @@ export function CharacterArchive({
             )}
           </div>
           <p className="character-muted">
-            Choose the text language above. Each player lets you choose its audio language
-            separately.
+            Choose the text language above. Each player lets you choose its
+            audio language separately.
           </p>
           {textError && <p className="character-error">{textError}</p>}
           {textLoading && (
@@ -482,31 +652,42 @@ export function CharacterArchive({
             {spoken?.voice_lines.map((line) => (
               <article className="character-voice-line" key={line.id}>
                 <div>
-                  <small>{String(line.order).padStart(2, '0')}</small>
+                  <small>{String(line.order).padStart(2, "0")}</small>
                   <h3>{gameText(line.title)}</h3>
                   <p>{gameText(line.text)}</p>
                   {line.audio_event_path && (
-                    <small className="character-source-hint" title={line.audio_event_path}>
-                      Voice event · {line.audio_event_path.split('/').at(-1)}
+                    <small
+                      className="character-source-hint"
+                      title={line.audio_event_path}
+                    >
+                      Voice event · {line.audio_event_path.split("/").at(-1)}
                     </small>
                   )}
                 </div>
                 <TrackPlayer
-                  src={line.audio_url ? apiUrl(line.audio_url.replace(/^\/api/, '')) : null}
+                  src={
+                    line.audio_url
+                      ? apiUrl(line.audio_url.replace(/^\/api/, ""))
+                      : null
+                  }
                   tracks={
                     line.audio_tracks
                       ? Object.fromEntries(
-                          Object.entries(line.audio_tracks).map(([language, url]) => [
-                            availableLocales.find((option) => option.code === language)?.label ??
-                              language,
-                            apiUrl(url.replace(/^\/api/, '')),
-                          ]),
+                          Object.entries(line.audio_tracks).map(
+                            ([language, url]) => [
+                              availableLocales.find(
+                                (option) => option.code === language,
+                              )?.label ?? language,
+                              apiUrl(url.replace(/^\/api/, "")),
+                            ],
+                          ),
                         )
                       : undefined
                   }
                   defaultTrack={
                     availableLocales.find(
-                      (option) => option.code === initialVoiceLocale(textLocale),
+                      (option) =>
+                        option.code === initialVoiceLocale(textLocale),
                     )?.label
                   }
                   label={gameText(line.title)}
@@ -517,13 +698,15 @@ export function CharacterArchive({
           {!!spoken?.other_voice_events.length && (
             <details className="character-subfold">
               <summary>
-                Other character voice events{' '}
+                Other character voice events{" "}
                 <span>{spoken.other_voice_events.length} event names</span>
               </summary>
               <div className="character-asset-list">
                 {spoken.other_voice_events.map((event) => (
                   <div key={`${event.category}-${event.event}`}>
-                    <strong>{event.category.replaceAll(/([a-z])([A-Z])/g, '$1 $2')}</strong>
+                    <strong>
+                      {event.category.replaceAll(/([a-z])([A-Z])/g, "$1 $2")}
+                    </strong>
                     <code>{event.event}</code>
                     <small>Event name only</small>
                   </div>

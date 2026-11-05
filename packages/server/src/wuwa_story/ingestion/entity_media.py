@@ -9,7 +9,10 @@ from wuwa_story.db.models.core import Character
 from wuwa_story.db.models.graph import Node, NodeRevision
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
-from wuwa_story.ingestion.character_artwork import character_artwork_scope
+from wuwa_story.ingestion.character_artwork import (
+    character_artwork_scope,
+    inherited_character_fields,
+)
 from wuwa_story.ingestion.dungeon_context import walk
 from wuwa_story.ingestion.spine_presentation import SPINE_RECIPE, flow_presentation
 from wuwa_story.ingestion.talk_backgrounds import background_config
@@ -103,8 +106,13 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
             raise ValueError(f"Entity has no source in snapshot: {key}")
         rows = [raw]
         if kind == "character":
+            inherited = set()
+            if raw.get("RoleType") not in (None, 1) and raw.get("SkillId") != int(identifier):
+                templates = await records("BinData/role/roleinfo.json", "Id", raw.get("SkillId"))
+                inherited = inherited_character_fields(
+                    raw, templates[0] if templates else {})
             rows = [{field: value for field, value in raw.items()
-                     if character_artwork_scope(field, value, int(identifier)) == "character"}]
+                     if field not in inherited and character_artwork_scope(field, value, int(identifier)) == "character"}]
             for path, field, value in (
                 ("BinData/skill/skill.json", "SkillGroupId",
                  raw.get("SkillId") or int(identifier)),
@@ -119,7 +127,8 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
                     raw.get("ResonantChainGroupId") or int(identifier),
                 ),
             ):
-                rows.extend(await records(path, field, value))
+                if not inherited:
+                    rows.extend(await records(path, field, value))
         if kind == 'flow_state':
             images = sorted(flow_background_paths(raw))
         else:
@@ -127,7 +136,8 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
         if "image" in request.kinds:
             if kind == 'character':
                 character_metadata = await session.scalar(select(Character.metadata_json).where(Character.node_id == node.id))
-                presentation = (character_metadata or {}).get('trial_presentation')
+                presentation = (character_metadata or {}).get(
+                    'trial_presentation')
                 trial_rows = []
                 if presentation and presentation.get('role_id') == int(identifier):
                     trial_rows = [{'FormationSpineSkeletonData': presentation.get('skeleton'),

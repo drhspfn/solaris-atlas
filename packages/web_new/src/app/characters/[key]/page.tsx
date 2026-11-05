@@ -6,6 +6,7 @@ import { decodeRouteKey, publicPath } from '@/lib/routeKey';
 import { canonicalRoute, type RouteQuery } from '@/lib/canonicalRoute';
 import { EntityProfileClient } from '@/components/profile/EntityProfileClient';
 import type { CharacterArchiveData } from '@/components/characters/CharacterArchive';
+import { characterPortrait } from '@/data/characterArtwork';
 import { localizedText } from '@/data/localized';
 
 type Props = {
@@ -22,6 +23,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const character = data?.character;
   const entityId = character?.canonical_key?.split(':').at(-1) || key;
   const name =
+    data?.family?.name ||
     localizedText(character?.name) ||
     localizedText(character?.canonical_name) ||
     `Character · ${entityId}`;
@@ -35,9 +37,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     .trim()
     .slice(0, 300);
   const image =
-    archive?.artwork?.find((art) => art.kind === 'RoleHeadIconLarge')?.url ||
-    archive?.artwork?.find((art) => art.url)?.url ||
-    data?.media?.image_url;
+    archive ? characterPortrait(archive.artwork) : data?.media?.image_url;
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://solarisatlas.fun';
   const imageUrl = image ? (image.startsWith('http') ? image : `${siteUrl}${image}`) : undefined;
 

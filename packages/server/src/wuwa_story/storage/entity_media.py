@@ -3,6 +3,7 @@
 from sqlalchemy import select
 
 from wuwa_story.config.settings import get_settings
+from wuwa_story.db.models.core import Character
 from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.ingestion.character_artwork import character_artwork_scope
@@ -26,9 +27,11 @@ async def entity_image_urls(session, owner_ids: list[int]) -> dict[int, str]:
     )
     rows = await session.execute(
         select(candidates.c.owner_node_id, candidates.c.source_path,
-               FileLocation.object_key, Node.canonical_key)
+               FileLocation.object_key, Node.canonical_key,
+               Character.metadata_json["shared_artwork_paths"])
         .select_from(candidates)
         .join(Node, Node.id == candidates.c.owner_node_id)
+        .outerjoin(Character, Character.node_id == Node.id)
         .join(FileObject, FileObject.id == candidates.c.file_id)
         .join(FileLocation, FileLocation.file_id == FileObject.id)
         .where(
@@ -36,13 +39,16 @@ async def entity_image_urls(session, owner_ids: list[int]) -> dict[int, str]:
             FileLocation.is_primary.is_(True),
             FileLocation.backend == "s3",
             FileLocation.bucket == settings.s3_bucket,
-            FileObject.mime_type.in_(["image/png", "image/jpeg", "image/webp", "image/avif"]),
+            FileObject.mime_type.in_(
+                ["image/png", "image/jpeg", "image/webp", "image/avif"]),
         )
         .order_by(candidates.c.id.desc())
     )
     best = {}
-    for owner_id, source_path, object_key, canonical_key in rows:
+    for owner_id, source_path, object_key, canonical_key, excluded_paths in rows:
         path = source_path or ""
+        if path in (excluded_paths or []):
+            continue
         role_key = canonical_key.partition(":")[2]
         role_id = int(role_key) if role_key.isdecimal() else None
         if canonical_key.startswith("character:") and any(

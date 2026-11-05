@@ -39,3 +39,29 @@ def test_trial_presentation_belongs_to_exact_character(tmp_path):
     }]
     assert "trial_presentation" not in characters[1]
     assert "trial_entries" not in characters[1]
+
+
+def test_compiler_attaches_discovered_rover_variants_without_merging_source_ids(tmp_path):
+    base = tmp_path / "source" / "BinData"
+    for folder in ("role", "main_role_change", "element_info"):
+        (base / folder).mkdir(parents=True)
+    (base / "role/roleinfo.json").write_text(json.dumps([
+        {"Id": 1501, "ElementId": 5}, {"Id": 9912, "ElementId": 8}, {"Id": 5052},
+    ]))
+    (base / "main_role_change/mainroleconfig.json").write_text(json.dumps([
+        {"Id": 1501, "Gender": 1, "UnlockCondition": 0},
+        {"Id": 9912, "Gender": 0, "UnlockCondition": 42},
+    ]))
+    (base / "element_info/elementinfo.json").write_text(json.dumps([{"Id": 8, "Name": "Element_New"}]))
+    subtitles = base.parent / "Textmaps/en/subtitle_text/SubtitleText.json"
+    subtitles.parent.mkdir(parents=True)
+    subtitles.write_text("[]")
+    out = tmp_path / "out"
+    writer = Writer(out, "4.0.0")
+    compile_entities(tmp_path / "source", writer, {})
+    writer.finish()
+    rows = [json.loads(line) for line in (out / "entities/character.jsonl").read_text().splitlines()]
+    assert [row["id"] for row in rows] == ["character:1501", "character:9912", "character:5052"]
+    assert rows[1]["public_identity"]["canonical_key"] == "character:1501"
+    assert rows[1]["public_identity"]["gender"] == "female"
+    assert "public_identity" not in rows[2]

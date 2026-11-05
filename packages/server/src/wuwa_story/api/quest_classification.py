@@ -104,21 +104,36 @@ def quest_item_requirements(data: dict) -> list[dict]:
     return [{"item_id": identity, **item_requirement(data, identity)} for identity in sorted(ids)]
 
 
+async def prefetch_quest_classifications(session, quest_ids, release_id):
+    if release_id is None or not quest_ids:
+        return
+    cache = session.info.setdefault("quest_classification_rows", {})
+    needed = sorted({identity for identity in quest_ids if (release_id, identity) not in cache})
+    if not needed:
+        return
+    for identity in needed:
+        cache[(release_id, identity)] = []
+    rows = await session.execute(
+        select(SourceRecord, SourceFile.logical_source_path)
+        .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+        .where(SourceRecord.release_id == release_id, SourceFile.logical_source_path == QUEST_DATA,
+               SourceRecord.data["QuestId"].as_integer().in_(needed)))
+    for record, path in rows:
+        cache[(release_id, record.data["QuestId"])].append((record, path))
+
+
 async def quest_classification(session, quest_id: int, release_id: int | None) -> dict:
     if release_id is None:
         return classify_quest({}, {}, {})
-    rows = list(
-        await session.execute(
+    cache = session.info.get("quest_classification_rows", {})
+    rows = cache.get((release_id, quest_id))
+    if rows is None:
+        rows = list(await session.execute(
             select(SourceRecord, SourceFile.logical_source_path)
             .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
-            .where(
-                SourceRecord.release_id == release_id,
-                SourceFile.logical_source_path == QUEST_DATA,
-                SourceRecord.data["QuestId"].as_integer() == quest_id,
-            )
-            .limit(2)
-        )
-    )
+            .where(SourceRecord.release_id == release_id,
+                   SourceFile.logical_source_path == QUEST_DATA,
+                   SourceRecord.data["QuestId"].as_integer() == quest_id).limit(2)))
     if len(rows) != 1:
         return classify_quest({}, {}, {})
     record, path = rows[0]

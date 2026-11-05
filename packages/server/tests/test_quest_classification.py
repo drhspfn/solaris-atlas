@@ -130,3 +130,22 @@ async def test_classification_reads_selected_snapshot_and_reuses_only_its_type_d
     statement = session.execute.call_args_list[0].args[0]
     assert 5 in statement.compile().params.values()
     assert 139000037 in statement.compile().params.values()
+
+
+@pytest.mark.asyncio
+async def test_batch_classification_prefetch_preserves_ambiguity_and_missing_rows():
+    from wuwa_story.api.quest_classification import prefetch_quest_classifications
+
+    row = SimpleNamespace(row_index=1, data={"QuestId": 1, "Data": {"Type": 100}})
+    duplicate = SimpleNamespace(row_index=2, data={"QuestId": 2, "Data": {"Type": 100}})
+    session = SimpleNamespace(info={}, execute=AsyncMock(side_effect=[
+        [(row, QUEST_DATA), (duplicate, QUEST_DATA), (duplicate, QUEST_DATA)],
+        [(SimpleNamespace(data=TEST_TYPE, row_index=7), QUEST_TYPE),
+         (SimpleNamespace(data=TEST_MAIN, row_index=7), QUEST_MAIN_TYPE)],
+    ]))
+    await prefetch_quest_classifications(session, [1, 2, 3], 5)
+    assert (await quest_classification(session, 1, 5))["kind"] == "test"
+    assert (await quest_classification(session, 2, 5))["kind"] == "unclassified"
+    assert (await quest_classification(session, 3, 5))["kind"] == "unclassified"
+    await prefetch_quest_classifications(session, [1, 2, 3], 5)
+    assert session.execute.await_count == 2

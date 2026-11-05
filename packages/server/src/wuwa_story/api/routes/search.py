@@ -13,6 +13,7 @@ from wuwa_story.cache import CacheManager
 from wuwa_story.db.models.graph import NodeType
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.ops import GameRelease
+from wuwa_story.db.repositories.character_identity import annotate_character_cards
 from wuwa_story.db.repositories.search import lexical_search
 from wuwa_story.db.session import get_session
 from wuwa_story.read_models.context import source_build
@@ -34,6 +35,7 @@ async def search(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     character: str | None = None,
+    character_kind: Literal["playable", "story", "technical", "all"] = "playable",
     quest_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
@@ -59,7 +61,7 @@ async def search(
         scope = "dialogue"
     if read_projections.should_route_search_to_projection(category, scope, game_version, character, locale=locale, locale_id=locale_id):
         return await read_projections.search_page(
-            session, q, category, scope, locale, game_version, locale_id, sort_by, sort_order, limit, offset, character, quest_id,
+            session, q, category, scope, locale, game_version, locale_id, sort_by, sort_order, limit, offset, character, quest_id, character_kind=character_kind,
         )
     active_release = await session.scalar(
         select(GameRelease).order_by(GameRelease.sequence.desc()).limit(1)
@@ -157,6 +159,7 @@ async def search(
         q,
         limit=limit,
         categories=categories,
+        character_kind=character_kind,
         locale_id=locale_id,
         sort_by=sort_by,
         sort_order=sort_order,
@@ -182,6 +185,7 @@ async def search(
             if result["node_type"] in {"dialogue_line", "talk_item"}
             else result["node_type"]
         )
+    await annotate_character_cards(session, results)
     return {
         "query": q,
         "scope": "entities",

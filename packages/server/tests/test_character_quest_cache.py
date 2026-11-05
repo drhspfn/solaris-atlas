@@ -9,12 +9,13 @@ from wuwa_story.api.routes.story import profiles
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("card_count", [1, 12])
-async def test_character_quest_info_is_reused_across_scenes_and_quest_list(monkeypatch, card_count):
+@pytest.mark.parametrize("member_ids", [[1], [1, 2, 8]])
+async def test_character_quest_info_is_reused_across_scenes_and_quest_list(monkeypatch, card_count, member_ids):
     state = Row(node_id=9, state_key="flow", source_record_id=99)
     quest = Row(node_id=7, game_quest_id=70)
     speaker = Row(node_id=4, game_speaker_id=40)
     link = Row(resolution_type="exact", source_record_id=3)
-    character = Row(canonical_name="Name", name_key_id=None, description=None, playable=True)
+    character = Row(canonical_name="Name", name_key_id=None, description=None, playable=True, metadata_json={"role_type": 1})
     entities = list(range(20, 20 + card_count))
     speakers = list(range(100, 100 + card_count))
     session = Row(
@@ -26,11 +27,12 @@ async def test_character_quest_info_is_reused_across_scenes_and_quest_list(monke
             list(zip(speakers, entities, strict=True)), [(99, 3, "flow.json")],
             Row(all=lambda: []), [],
         ]),
-        scalars=AsyncMock(side_effect=[[9], [state], [quest], [7], [], [quest], []]),
+        scalars=AsyncMock(side_effect=[[9], [state], [quest], [7], [7], [quest], []]),
         scalar=AsyncMock(return_value=None),
     )
     monkeypatch.setattr(profiles, "get_node", AsyncMock(return_value=Row(id=1, canonical_key="character:1", slug=None)))
     monkeypatch.setattr(profiles, "_release_id", AsyncMock(return_value=5))
+    monkeypatch.setattr(profiles, "character_family", AsyncMock(return_value=(member_ids, None)))
     labels = AsyncMock()
     monkeypatch.setattr(profiles, "prefetch_node_labels", labels)
     monkeypatch.setattr(profiles, "prefetch_dialogue", AsyncMock())
@@ -59,3 +61,7 @@ async def test_character_quest_info_is_reused_across_scenes_and_quest_list(monke
         dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
     assert "SELECT DISTINCT" in query
     assert "speaker_node_id IN (4, 5)" in query
+
+    membership_sql = str(session.execute.await_args_list[0].args[0].compile(
+        dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert f"entity_node_id IN ({', '.join(map(str, member_ids))})" in membership_sql

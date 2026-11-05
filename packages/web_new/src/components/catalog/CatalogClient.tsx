@@ -25,6 +25,7 @@ export function CatalogClient({
 }) {
   const searchInput = useRef<HTMLInputElement>(null);
   const locale = useLocale();
+  const [characterKind, setCharacterKind] = useState('playable');
   const [query, setQuery] = useState('');
   const [items, setItems] = useState<Entity[]>(initialItems);
   const [total, setTotal] = useState(initialTotal);
@@ -40,7 +41,7 @@ export function CatalogClient({
   }, [locale]);
 
   useEffect(() => {
-    if (initialLoaded && offset === 0 && !submittedQuery && locale === 'en' && retry === 0) {
+    if (initialLoaded && offset === 0 && !submittedQuery && locale === 'en' && retry === 0 && characterKind === 'playable') {
       setItems(initialItems);
       setTotal(initialTotal);
       setSearchResults(null);
@@ -54,7 +55,7 @@ export function CatalogClient({
     const path = submittedQuery
       ? `/search?q=${encodeURIComponent(submittedQuery)}&category=${encodeURIComponent(category)}&locale=${encodeURIComponent(locale)}&limit=${APP_SETTINGS.limits.catalogSearch}`
       : `/catalog?category=${encodeURIComponent(category)}&locale=${encodeURIComponent(locale)}&limit=${APP_SETTINGS.limits.catalogPage}&offset=${offset}`;
-    api<{ results: Entity[]; total: number }>(path, { signal: controller.signal })
+    api<{ results: Entity[]; total: number }>(`${path}${category === 'character' ? `&character_kind=${characterKind}` : ''}`, { signal: controller.signal })
       .then((d) => {
         if (controller.signal.aborted) return;
         if (submittedQuery) setSearchResults(d.results);
@@ -71,7 +72,7 @@ export function CatalogClient({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [category, locale, offset, submittedQuery, retry, initialLoaded, initialItems, initialTotal]);
+  }, [category, characterKind, locale, offset, submittedQuery, retry, initialLoaded, initialItems, initialTotal]);
 
   const search = (e: React.FormEvent) => {
     e.preventDefault();
@@ -144,6 +145,15 @@ export function CatalogClient({
           ))}
         </div>
       </div>
+      {category === 'character' && (
+        <div className="filter-pills character-kind-filters" aria-label="Character categories">
+          {Object.entries({playable: 'Playable', story: 'Story & event roles', technical: 'Technical roles', all: 'All roles'}).map(([value, label]) => (
+            <button key={value} type="button" className={`filter-pill${characterKind === value ? ' selected' : ''}`}
+              aria-pressed={characterKind === value}
+              onClick={() => { setCharacterKind(value); setOffset(0); }}>{label}</button>
+          ))}
+        </div>
+      )}
       {error ? (
         <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} />
       ) : loading ? (

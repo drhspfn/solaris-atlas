@@ -5,7 +5,7 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-from sqlalchemy import select, tuple_
+from sqlalchemy import case, func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -507,6 +507,8 @@ async def _insert_typed_entities(
                                 "role_type": raw.get("RoleType"),
                                 "is_trial": raw.get("IsTrial"),
                                 "is_show": raw.get("IsShow"),
+                                "public_identity": record.get("public_identity"),
+                                "shared_artwork_paths": record.get("shared_artwork_paths"),
                                 **({"trial_presentation": record["trial_presentation"]}
                                    if record.get("trial_presentation") else {}),
                                 **({"trial_entries": record["trial_entries"]}
@@ -684,10 +686,22 @@ async def _insert_typed_entities(
                     raise ValueError(
                         f"Cannot import historical {kind}: a newer revision has no typed projection"
                     )
+            updates = {column: getattr(statement.excluded, column) for column in update_columns}
+            if model is Character:
+                # Old cached bundles have no family field; they must not erase a
+                # confirmed identity established by a newer compiler/backfill.
+                preserved = []
+                for key in ("public_identity", "shared_artwork_paths"):
+                    incoming = statement.excluded.metadata[key]
+                    value = case((incoming.astext.is_not(None), incoming),
+                                 else_=Character.metadata_json[key])
+                    preserved.extend((key, value))
+                updates["metadata"] = statement.excluded.metadata.op("||")(
+                    func.jsonb_build_object(*preserved))
             await session.execute(
                 statement.on_conflict_do_update(
                     index_elements=[model.node_id],
-                    set_={column: getattr(statement.excluded, column) for column in update_columns},
+                    set_=updates,
                     where=statement.excluded.node_id.not_in(protected) if protected else None,
                 )
             )
