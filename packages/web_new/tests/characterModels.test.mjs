@@ -77,6 +77,7 @@ function harness(importing = false, role = "admin") {
         return (target[i] ??= { current: value });
       },
     },
+    "@/components/ui/Button": { Button: "button" },
     "@/components/models/ModelViewer": { ModelViewer: "NativeModelViewer" },
     "@/api/client": {
       ApiError: class extends Error {},
@@ -527,4 +528,17 @@ test("closing or cancelling nested settings does not close the model dialog", as
   assert.equal(nodes(tree).find(node => node.type === "dialog").props.ref.current.open, true);
   dialog.props.onClose({ target: currentTarget, currentTarget }); h.render();
   assert.equal(h.document.body.style.overflow, "auto"); h.close();
+});
+
+
+test("profile model stage has one corner icon opener and no download links", () => {
+  const h = harness(); h.props.initialModel = model;
+  const tree = h.render();
+  const opener = nodes(tree).find(node => node.props["aria-haspopup"] === "dialog");
+  assert(opener);
+  assert.equal(opener.props.size, "icon");
+  assert(opener.props.icon, "opener has an icon supplied through the shared Button");
+  assert.equal(opener.props.children, undefined, "no loose Explore model text in the stage");
+  assert.equal(nodes(tree).filter(node => node.type === "a" && node.props.download).length, 0);
+  h.close();
 });

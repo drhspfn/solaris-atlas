@@ -1,16 +1,14 @@
 "use client";
 
-import { Download, Maximize2 } from "lucide-react";
+import { Maximize2 } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { api, apiUrl } from "@/api/client";
+import { api } from "@/api/client";
+import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import "@/styles/character-model.css";
 
 import { ModelViewer } from "@/components/models/ModelViewer";
 import type { CharacterModelData as Model } from "@/components/models/types";
-
-const assetUrl = (url: string) => apiUrl(url.replace(/^\/api(?=\/)/, ""));
-const size = (bytes: number) => `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
 
 export function CharacterModel({
   characterKey,
@@ -132,9 +130,7 @@ export function CharacterModel({
       {error ? (
         <div role="alert">
           <p>Model availability could not be loaded: {error}</p>
-          <button type="button" onClick={refresh}>
-            Retry model availability
-          </button>
+          <Button onClick={refresh}>Retry model availability</Button>
         </div>
       ) : !model ? (
         <p role="status">Checking model availability…</p>
@@ -156,33 +152,19 @@ export function CharacterModel({
                   active={nearby}
                 />
               )}
-              <button
-                type="button"
+              <Button
+                size="icon"
+                variant="default"
                 className="character-model-expand"
                 aria-label={`Open 3D viewer of ${name}`}
+                title={`Explore ${name} in 3D`}
                 aria-haspopup="dialog"
                 aria-expanded={viewing}
+                icon={<Maximize2 size={19} />}
                 onClick={() => setViewing(true)}
-              >
-                <Maximize2 size={18} aria-hidden="true" />
-                <span>Explore model</span>
-              </button>
+              />
             </div>
           )}
-          <div className="character-model-actions">
-            {assets?.download && (
-              <a href={assetUrl(assets.download.url)} download>
-                <Download size={16} aria-hidden="true" /> Full-resolution GLB ·{" "}
-                {size(assets.download.size_bytes)}
-              </a>
-            )}
-            {assets?.animations && (
-              <a href={assetUrl(assets.animations.url)} download>
-                <Download size={16} aria-hidden="true" /> Animations ·{" "}
-                {size(assets.animations.size_bytes)}
-              </a>
-            )}
-          </div>
           <dialog
             ref={dialog}
             className="character-model-dialog character-model-viewer"
