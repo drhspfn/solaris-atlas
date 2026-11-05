@@ -1,11 +1,12 @@
 import asyncio
 from collections.abc import AsyncIterator
-from functools import cached_property
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from urllib.parse import quote
 
 import boto3
+from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
@@ -23,21 +24,27 @@ class S3Storage:
         )
         self.cache_control = settings.media_cache_control
         self._settings = settings
+        self._client: Any = None
+        self._client_lock = Lock()
 
-    @cached_property
+    @property
     def client(self) -> Any:
         """Public CDN URLs do not need an S3 SDK client or its initialization."""
-        settings = self._settings
-        return boto3.client(
-            "s3",
-            endpoint_url=settings.s3_endpoint_url,
-            aws_access_key_id=settings.s3_access_key_id,
-            aws_secret_access_key=settings.s3_secret_access_key.get_secret_value(),
-            region_name=settings.s3_region,
-            use_ssl=settings.s3_use_ssl,
-            config=Config(connect_timeout=5, read_timeout=30, max_pool_connections=20,
-                          retries={"mode": "standard", "total_max_attempts": 3}),
-        )
+        with self._client_lock:
+            if self._client is None:
+                settings = self._settings
+                # Do not initialize clients through boto3's shared default session.
+                self._client = boto3.session.Session().client(
+                    "s3",
+                    endpoint_url=settings.s3_endpoint_url,
+                    aws_access_key_id=settings.s3_access_key_id,
+                    aws_secret_access_key=settings.s3_secret_access_key.get_secret_value(),
+                    region_name=settings.s3_region,
+                    use_ssl=settings.s3_use_ssl,
+                    config=Config(connect_timeout=5, read_timeout=30, max_pool_connections=20,
+                                  retries={"mode": "standard", "total_max_attempts": 3}),
+                )
+            return self._client
 
     def public_url(self, object_key: str) -> str:
         """Game media is public and content addressed; these URLs never expire."""
@@ -69,7 +76,9 @@ class S3Storage:
         if object_key.startswith("objects/"):
             extra["CacheControl"] = self.cache_control
         await asyncio.to_thread(
-            self.client.upload_file, str(source), self.bucket, object_key, ExtraArgs=extra
+            self.client.upload_file, str(source), self.bucket, object_key, ExtraArgs=extra,
+            # Limit internal TLS concurrency; the native crash root cause is unconfirmed.
+            Config=TransferConfig(use_threads=False),
         )
         return await self.stat(object_key) or ObjectInfo(source.stat().st_size)
 

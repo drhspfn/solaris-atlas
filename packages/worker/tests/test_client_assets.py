@@ -200,7 +200,7 @@ async def test_cached_export_does_not_rehash_raw_files_but_publication_does(tmp_
     monkeypatch.setattr(asset_export, "_sha256", track_hash)
     assert await asset_export.export_assets(tmp_path, executable, "ConfigDB") == receipt
     assert hashed == [executable]
-    (receipt.parent / "files/data.json").write_text("changed")
+    (receipt.parent / "files/data.json").write_text("[]")  # Same size; upload must still check SHA.
     uploads = []
 
     class Storage:
@@ -233,6 +233,92 @@ async def test_deleted_export_directory_is_rebuilt_from_retained_download(tmp_pa
     assert await asset_export.export_assets(tmp_path, executable, "ConfigDB") == receipt
     assert (receipt.parent / "files/data.json").is_file()
     assert calls == ["ConfigDB", "ConfigDB"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('damage', ['missing', 'truncated'])
+@pytest.mark.parametrize('upload', [False, True])
+async def test_missing_or_truncated_manifest_sqlite_is_reexported_before_receipt_reuse(
+    tmp_path, monkeypatch, damage, upload,
+):
+    import sqlite3
+    from contextlib import closing
+
+    from wuwa_story_worker.release_media import video_database
+
+    executable = _completed_download(tmp_path)
+    calls = []
+
+    def extract(command, stdout, **kwargs):
+        calls.append(command[-1])
+        files = Path(command[3])
+        with closing(sqlite3.connect(files / 'video.db')) as db, db:
+            db.execute('CREATE TABLE videodata (CgId INTEGER)')
+            db.execute('CREATE TABLE videosound (CgId INTEGER)')
+        (files / 'other.json').write_text('{}')
+        stdout.write('Pak "base.pak": 2 files\n[Done] Extracted 2 files\n')
+        return asset_export.subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(asset_export.subprocess, 'run', extract)
+    receipt = await asset_export.export_assets(tmp_path, executable, 'ConfigDB')
+    database = receipt.parent / 'files/video.db'
+    if damage == 'missing':
+        database.unlink()
+    else:
+        database.write_bytes(b'truncated')
+    assert (receipt.parent / 'files').is_dir()  # The directory-only check accepted this.
+    uploads = []
+
+    class Storage:
+        async def ensure_bucket(self):
+            pass
+
+        async def put_file(self, source, key, content_type=None):
+            uploads.append(key)
+
+    monkeypatch.setattr(asset_export, 'S3Storage', lambda _: Storage())
+    assert await asset_export.export_assets(tmp_path, executable, 'ConfigDB', upload) == receipt
+    assert calls == ['ConfigDB', 'ConfigDB']
+    assert video_database(receipt.parent / 'files') == database
+    assert len(uploads) == (3 if upload else 0)
+    if upload:
+        assert uploads[-1].endswith('/manifest.json')
+    await asset_export.export_assets(tmp_path, executable, 'ConfigDB')
+    assert calls == ['ConfigDB', 'ConfigDB']
+
+
+@pytest.mark.asyncio
+async def test_cache_rebuild_failure_is_one_attempt_and_next_delivery_uses_fresh_output(tmp_path, monkeypatch):
+    executable = _completed_download(tmp_path)
+    calls = []
+
+    def extract(command, stdout, **kwargs):
+        files = Path(command[3])
+        calls.append(files)
+        if len(calls) == 2:
+            (files / 'incomplete.json').write_text('partial')
+            stdout.write('[Fail] interrupted extraction\n')
+            return asset_export.subprocess.CompletedProcess(command, 1)
+        (files / 'data.json').write_text('{}')
+        (files / 'keep.json').write_text('durable cache content')
+        stdout.write('Pak "base.pak": 2 files\n[Done] Extracted 2 files\n')
+        return asset_export.subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(asset_export.subprocess, 'run', extract)
+    receipt = await asset_export.export_assets(tmp_path, executable, 'ConfigDB')
+    files = receipt.parent / 'files'
+    (files / 'data.json').unlink()
+    with pytest.raises((RuntimeError, asset_export.subprocess.CalledProcessError)):
+        await asset_export.export_assets(tmp_path, executable, 'ConfigDB')
+    assert len(calls) == 2  # No unbounded inner retry; broker owns the retry budget.
+    assert not receipt.exists()
+    assert (files / 'keep.json').read_text() == 'durable cache content'
+    assert (tmp_path / 'plan.json').is_file()
+    assert await asset_export.export_assets(tmp_path, executable, 'ConfigDB') == receipt
+    assert len(calls) == 3 and len(set(calls)) == 3
+    assert not (files / 'incomplete.json').exists()
+    assert await asset_export.export_assets(tmp_path, executable, 'ConfigDB') == receipt
+    assert len(calls) == 3  # A successful rebuilt export is reused.
 
 
 @pytest.mark.asyncio

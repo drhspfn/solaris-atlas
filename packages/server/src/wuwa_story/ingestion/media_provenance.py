@@ -34,6 +34,7 @@ def matches_source(metadata: dict, source: dict, target: dict) -> bool:
         (target.get('kind') != 'spine' or provenance.get(
             'spine_recipe') == target.get('spine_recipe') and provenance.get(
             'presentation_sha256') == target.get('presentation_sha256') and
+         (not target.get('sequence_media_schema') or provenance.get('sequence_media_schema') == target['sequence_media_schema']) and
          provenance.get('control_sources_complete', True))
         and provenance.get("schema_version") == 1
         and provenance.get("package_path") == authored_package_path(target)
@@ -94,10 +95,14 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
         async with semaphore:
             return key, await storage.stat(key)
 
-    components = {key: ((reference.metadata_json or {}).get('animation_preview') or {}).get('variants', [])
-                  or (reference.metadata_json or {}).get('playback', {}).get('components', [])
-                  for _identity, _size, key, reference, _location in candidates
-                  if require_spine_playback and expected[_identity].get('kind') == 'spine'}
+    components = {}
+    for identity, _size, key, reference, _location in candidates:
+        metadata = reference.metadata_json or {}
+        parts = list((metadata.get('sequence_media') or {}).get('components', []))
+        if require_spine_playback and expected[identity].get('kind') == 'spine':
+            parts.extend((metadata.get('animation_preview') or {}).get('variants', [])
+                         or (metadata.get('playback') or {}).get('components', []))
+        components.setdefault(key, []).extend(parts)
     keys = {c[2] for c in candidates} | {part['object_key'] for parts in components.values() for part in parts}
     objects = dict(await asyncio.gather(*(stat(key) for key in keys)))
     present = set()

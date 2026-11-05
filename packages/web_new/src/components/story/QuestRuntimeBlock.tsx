@@ -2,11 +2,17 @@ import { PlayerText, type PlayerDisplay } from '../dialogue/PlayerText';
 import type { ReactNode } from 'react';
 import { Compass, MapPin, MessageCircle, Swords } from 'lucide-react';
 import { compareStoryPosition } from './cutscenePlacement';
+import { QuestEncounter, type RenderEncounterFlow } from './QuestEncounter';
+import type { Encounter } from './encounterTransitions';
+export type { EncounterFlow } from './encounterTransitions';
+export { EncounterCinematicBoundary } from './QuestEncounter';
+export { encounterCinematicParts, encounterFlowOwners, encounterOwnsMedia } from './encounterTransitions';
 
 export type RuntimeBlock = {
   id: string;
   title: string;
   condition_type?: string;
+  encounter?: Encounter;
   position: number[];
   branches: Array<{ id: string; type: string }>;
   flow_states: Array<{ state: string; position: number[] }>;
@@ -55,12 +61,17 @@ export function QuestRuntimeBlock({
   display,
   stateAnchors,
   renderInteraction,
+  renderEncounterFlow,
 }: {
   block: RuntimeBlock;
   display: PlayerDisplay;
   stateAnchors: Map<string, string>;
   renderInteraction?: (states: string[], owner: string) => ReactNode[];
+  renderEncounterFlow?: RenderEncounterFlow;
 }) {
+  if (block.encounter) return <div id={runtimeBlockAnchor(block.id)}>
+    <QuestEncounter encounter={block.encounter} display={display} stateAnchors={stateAnchors} renderFlow={renderEncounterFlow} />
+  </div>;
   const Icon =
     block.condition_type === 'PlayFlow'
       ? MessageCircle
@@ -137,9 +148,7 @@ export function QuestRuntimeBlock({
                         : 'This interaction has no authored dialogue in the source.'}
                     </p>
                   )}
-                <small>
-                  {item.source.file} · {item.source.key}
-                </small>
+                <details><summary>Source reference</summary><small>{item.source.file} · {item.source.key}</small></details>
               </details>
             );
           })}

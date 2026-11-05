@@ -8,7 +8,7 @@ from wuwa_story.storage.s3 import S3Storage
 
 
 def storage(monkeypatch, **settings):
-    monkeypatch.setattr("wuwa_story.storage.s3.boto3.client", lambda *a, **kw: Mock())
+    monkeypatch.setattr("wuwa_story.storage.s3.boto3.session.Session", lambda: Mock())
     return S3Storage(Settings(_env_file=None, **settings))
 
 

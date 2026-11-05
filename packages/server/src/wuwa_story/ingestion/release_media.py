@@ -74,7 +74,7 @@ async def enqueue_release_media(
         specs.append(("event_catalog", ["client-catalog:v2"]))
     if not (event_artwork_only or notices_only) and cutscenes:
         specs.append(("cutscene_assets", sorted(set(cutscenes))))
-    if not (event_artwork_only or notices_only) and (voices or characters or story_media_only and cutscenes):
+    if not (event_artwork_only or notices_only) and (voices or characters or cutscenes):
         specs.append(("voice_packages", []))
     if not (event_artwork_only or notices_only):
         if not illustrations_only and not story_media_only:
@@ -99,7 +99,7 @@ async def enqueue_release_media(
             if repair_story:
                 request['repair_story'] = 1
         if kind == 'images' and any(key.startswith('flow_state:') for key in targets):
-            request['illustration_schema'] = 5
+            request['illustration_schema'] = 6
         digest = hashlib.sha256(json.dumps(
             request, sort_keys=True).encode()).digest()
         run = await session.scalar(select(ProcessingRun).where(

@@ -9,11 +9,11 @@ from wuwa_story.db.models.core import AuthoredTreeOrder, QuestAction, QuestState
 from wuwa_story.db.models.graph import NodeRevision
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.repositories.cutscenes import source_parents
-from wuwa_story.ingestion.dungeon_context import walk
+from wuwa_story.ingestion.dungeon_context import level_memberships, walk
 from wuwa_story.ingestion.level_interactions import verified_interactions
 from wuwa_story.ingestion.quest_tree_order import records_match
 from wuwa_story.story.media import media_links
-from wuwa_story.story.runtime_blocks import project_blocks
+from wuwa_story.story.runtime_blocks import dungeon_requirement, project_blocks
 
 
 def flow_positions(quest_nodes: list[dict], quest_records: dict[int, dict],
@@ -27,13 +27,15 @@ def flow_positions(quest_nodes: list[dict], quest_records: dict[int, dict],
     def add_flows(raw: dict[str, Any], path: tuple[int, ...]):
         for phase, field in enumerate(('EnterActions', 'Condition', 'FinishActions')):
             for index, (_, value) in enumerate(walk(raw.get(field))):
-                name, flow, state = (value.get(k) for k in ('FlowListName', 'FlowId', 'StateId'))
+                name, flow, state = (value.get(k) for k in (
+                    'FlowListName', 'FlowId', 'StateId'))
                 if not isinstance(name, str) or type(flow) is not int or type(state) is not int:
                     continue
                 state_key = f'{name}_{flow}_{state}'
                 # Children use positive path components; finish actions follow
                 # the entire subtree rather than preceding the first child.
-                order = (*path, 100_001 if field == 'FinishActions' else 0, phase, index)
+                order = (*path, 100_001 if field ==
+                         'FinishActions' else 0, phase, index)
                 if state_key in valid_states and (state_key not in found or order < found[state_key]):
                     found[state_key] = order
 
@@ -42,7 +44,8 @@ def flow_positions(quest_nodes: list[dict], quest_records: dict[int, dict],
         path = tuple(index + 1 for index in node['path'])
         add_flows(raw, path)
         condition = raw.get('Condition')
-        ids = condition.get('LevelPlayIds') if isinstance(condition, dict) else None
+        ids = condition.get('LevelPlayIds') if isinstance(
+            condition, dict) else None
         if (not isinstance(ids, list) or len(ids) != 1 or type(ids[0]) is not int
                 or condition.get('Type') != 'CheckLevelPlay' or condition.get('CompleteNumber') != 1):
             continue
@@ -63,8 +66,10 @@ async def authored_order(session, quest_id: int, release_id: int | None):
 
     async def rows(source: str, identity: int):
         values = await session.scalars(
-            select(SourceRecord.data).join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
-            .where(SourceRecord.release_id == release_id, SourceFile.logical_source_path == source,
+            select(SourceRecord.data).join(
+                SourceFile, SourceFile.id == SourceRecord.source_file_id)
+            .where(SourceRecord.release_id == release_id, SourceFile.release_id == release_id,
+                   SourceFile.logical_source_path == source,
                    SourceRecord.data['Key'].astext.like(f'{identity}\\_%', escape='\\'))
         )
         return {int(row['Key'].split('_')[1]): row['Data'] for row in values
@@ -75,14 +80,31 @@ async def authored_order(session, quest_id: int, release_id: int | None):
     if not candidates:
         return None
     qrecords = await rows('BinData/QuestNodeData/questnodedata.json', quest_id)
-    candidates.sort(key=lambda value: (tuple(map(int, value.asset_version.split('.'))), value.download_id), reverse=True)
-    quest_tree = next((tree for tree in candidates if records_match(tree.nodes, qrecords)), None)
+    candidates.sort(key=lambda value: (tuple(
+        map(int, value.asset_version.split('.'))), value.download_id), reverse=True)
+    quest_tree = next(
+        (tree for tree in candidates if records_match(tree.nodes, qrecords)), None)
     if quest_tree is None:
         return None
     level_ids = set()
+    dungeon_ids = {identity for record in qrecords.values()
+                   if (identity := dungeon_requirement(record)) is not None}
+    dungeon_memberships = {}
+    if dungeon_ids:
+        memberships = await session.execute(select(SourceRecord.row_index, SourceRecord.data,
+                                                   SourceRecord.id).join(SourceFile).where(
+            SourceRecord.release_id == release_id, SourceFile.release_id == release_id,
+            SourceFile.logical_source_path == 'BinData/LevelPlayData/levelplaydata.json',
+            SourceRecord.data['Data']['LevelId'].as_integer().in_(dungeon_ids)))
+        for row_index, data, record_id in memberships:
+            for identity, membership in level_memberships([(row_index, data)], dungeon_ids).items():
+                dungeon_memberships[identity] = {**membership, 'record_id': record_id,
+                                                 'release_id': release_id, 'raw_path': f'$[{row_index}].Data.LevelId'}
+        level_ids.update(dungeon_memberships)
     for record in qrecords.values():
         condition = record.get('Condition')
-        ids = condition.get('LevelPlayIds') if isinstance(condition, dict) else None
+        ids = condition.get('LevelPlayIds') if isinstance(
+            condition, dict) else None
         if (condition and condition.get('Type') == 'CheckLevelPlay' and isinstance(ids, list)
                 and len(ids) == 1 and type(ids[0]) is int and condition.get('CompleteNumber') == 1):
             level_ids.add(ids[0])
@@ -92,34 +114,54 @@ async def authored_order(session, quest_id: int, release_id: int | None):
         AuthoredTreeOrder.tree_kind == 'level_play', AuthoredTreeOrder.tree_id.in_(level_ids)))) if level_ids else []
     level_trees = {tree.tree_id: (tree.nodes, await rows(
         'BinData/LevelPlayNodeData/levelplaynodedata.json', tree.tree_id)) for tree in trees}
-    level_trees = {identity: tree for identity, tree in level_trees.items() if records_match(*tree)}
+    level_trees = {identity: tree for identity,
+                   tree in level_trees.items() if records_match(*tree)}
     level_rows = list(await session.scalars(select(SourceRecord.data).join(SourceFile).where(
         SourceRecord.release_id == release_id,
+        SourceFile.release_id == release_id,
         SourceFile.logical_source_path == 'BinData/LevelPlayData/levelplaydata.json',
         SourceRecord.data['LevelPlayId'].as_integer().in_(level_trees)))) if level_trees else []
     interactions = {row['LevelPlayId']: verified_interactions(level_trees[row['LevelPlayId']][0], row['Data'])
                     for row in level_rows if isinstance(row.get('Data'), dict)}
-    blocks = project_blocks(quest_id, quest_tree.nodes, qrecords, level_trees, interactions)
     possible = set()
-    optional_states = {flow['state'] for items in interactions.values() for item in items for flow in item['flow_states']}
+    optional_states = {flow['state'] for items in interactions.values(
+    ) for item in items for flow in item['flow_states']}
     possible.update(optional_states)
     for record in list(qrecords.values()) + [row for _, records in level_trees.values() for row in records.values()]:
         for _, value in walk(record):
-            name, flow, state = (value.get(k) for k in ('FlowListName', 'FlowId', 'StateId'))
+            name, flow, state = (value.get(k)
+                                 for k in ('FlowListName', 'FlowId', 'StateId'))
             if isinstance(name, str) and type(flow) is int and type(state) is int:
                 possible.add(f'{name}_{flow}_{state}')
     states = dict((await session.execute(select(QuestState.state_key, QuestState.node_id)
-        .join(NodeRevision, NodeRevision.node_id == QuestState.node_id)
-        .where(NodeRevision.release_id == release_id, QuestState.state_key.in_(possible)).distinct())).all())
-    positions = flow_positions(quest_tree.nodes, qrecords, level_trees, set(states))
+                                         .join(NodeRevision, NodeRevision.node_id == QuestState.node_id)
+                                         .where(NodeRevision.release_id == release_id, QuestState.state_key.in_(possible)).distinct())).all())
+    flow_records = {}
+    if dungeon_memberships and possible:
+        flow_rows = await session.execute(select(SourceRecord.data, SourceRecord.id,
+                                                 SourceRecord.row_index).join(SourceFile).where(
+            SourceRecord.release_id == release_id, SourceFile.release_id == release_id,
+            SourceFile.logical_source_path == 'BinData/flowState/flowstate.json',
+            SourceRecord.data['StateKey'].astext.in_(possible)))
+        for data, record_id, row_index in flow_rows:
+            flow_records[data['StateKey']] = {**data, '_source': {
+                'record_id': record_id, 'row': row_index, 'release_id': release_id}}
+    blocks = project_blocks(quest_id, quest_tree.nodes, qrecords, level_trees, interactions,
+                            dungeon_memberships=dungeon_memberships, flow_records=flow_records,
+                            state_ids=states, release_id=release_id,
+                            client={'asset_version': quest_tree.asset_version,
+                                    'download_id': quest_tree.download_id})
+    positions = flow_positions(
+        quest_tree.nodes, qrecords, level_trees, set(states))
     if not positions and not blocks:
         return None
     ids = [states[key] for key, _ in positions]
     actions = list(await session.execute(select(QuestAction.node_id, QuestAction.quest_state_node_id, QuestAction.action_index)
-                                        .where(QuestAction.quest_state_node_id.in_(ids))))
+                                         .where(QuestAction.quest_state_node_id.in_(ids))))
     memberships = set(await source_parents(session, {a for a, _, _ in actions}, ('contains_action',), release_id))
     movies = await media_links(session, [a for a, s, _ in actions if (a, s) in memberships], ('plays_cutscene',), release_id)
-    cutscene_ids = {link['node_id'] for values in movies.values() for link in values}
+    cutscene_ids = {link['node_id']
+                    for values in movies.values() for link in values}
     subtitles = await media_links(session, list(cutscene_ids), ('has_transcript_state',), release_id)
     captions_by_state: dict[int, list[int]] = {}
     caption_positions = {}
@@ -131,7 +173,8 @@ async def authored_order(session, quest_id: int, release_id: int | None):
             for link in subtitles.get(scene['node_id'], []):
                 captions_by_state.setdefault(state, []).append(link['node_id'])
                 position = (*positions_by_id[state], action_index, 0)
-                caption_positions[link['node_id']] = min(caption_positions.get(link['node_id'], position), position)
+                caption_positions[link['node_id']] = min(
+                    caption_positions.get(link['node_id'], position), position)
     ordered: list[int] = []
     for state in ids:
         for identity in (state, *captions_by_state.get(state, [])):
@@ -140,10 +183,21 @@ async def authored_order(session, quest_id: int, release_id: int | None):
     for key in sorted(optional_states):
         if key in states and states[key] not in ordered:
             ordered.append(states[key])
+    # Fetch every source-backed encounter state even on imports without compiled
+    # dungeon ownership edges. This is deterministic enumeration, not a timeline:
+    # only flat positions above establish a global display position.
+    pending = [tree['root'] for block in blocks
+               for tree in block.get('encounter', {}).get('trees', [])][::-1]
+    while pending:
+        node = pending.pop()
+        for flow in node['flow_states']:
+            if (identity := flow.get('state_node_id')) is not None and identity not in ordered:
+                ordered.append(identity)
+        pending.extend(reversed(node['children']))
     caption_keys = dict((await session.execute(select(QuestState.node_id, QuestState.state_key).where(
         QuestState.node_id.in_(caption_positions)))).all()) if caption_positions else {}
     all_positions = {**dict(positions), **{caption_keys[identity]: position for identity, position in caption_positions.items()
-                                         if identity in caption_keys}}
+                                           if identity in caption_keys}}
     return {'state_ids': ordered, 'asset_version': quest_tree.asset_version,
             'mapped_flow_states': [key for key, _ in positions],
             'positions': all_positions, 'blocks': blocks}

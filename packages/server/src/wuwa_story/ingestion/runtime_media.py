@@ -16,6 +16,19 @@ def runtime_media(data, prefix='$', *, recursive=True):
             if isinstance(asset, str) and asset.startswith('/Game/'):
                 yield {'kind': 'sequence', 'reference': 'asset:ue:' + asset,
                        'raw_path': path + '.Params.Path', 'basis': 'PlaySequenceData.Params.Path'}
+        elif name == 'ShowTalk' and isinstance(params, dict):
+            asset = params.get('SequenceDataAsset')
+            if isinstance(asset, str) and asset.startswith('/Game/'):
+                # SequenceNames select entries in the DA, not movie/package names.
+                ref = {'kind': 'sequence', 'reference': 'asset:ue:' + asset,
+                       'raw_path': path + '.Params.SequenceDataAsset',
+                       'basis': 'ShowTalk.Params.SequenceDataAsset'}
+                names = params.get('SequenceNames')
+                if isinstance(names, list) and all(isinstance(value, str) and value for value in names):
+                    ref['sequence_names'] = list(names)
+                    ref['sequence_names_raw_path'] = path + \
+                        '.Params.SequenceNames'
+                yield ref
         if value.get('Type') == 'PlayMp4':
             video = value.get('Mp4Path')
             if isinstance(video, str) and video:

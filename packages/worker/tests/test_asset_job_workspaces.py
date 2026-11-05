@@ -1,10 +1,39 @@
 import asyncio
 import json
+import subprocess
 from unittest.mock import AsyncMock
 
 import pytest
 
 from wuwa_story_worker import asset_jobs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error,status", [
+    (subprocess.TimeoutExpired("extractor", 7200), "waiting_dependency"),
+    (subprocess.CalledProcessError(-9, "extractor; inspect /logs/export.log"), "waiting_dependency"),
+    (subprocess.CalledProcessError(137, "extractor; inspect /logs/export.log"), "waiting_dependency"),
+    (subprocess.CalledProcessError(1, "extractor"), "failed"),
+])
+async def test_extraction_preserves_process_failure_and_cleans_scratch(tmp_path, monkeypatch, error, status):
+    root, payload = downloaded(tmp_path, monkeypatch)
+    payload["run_id"] = 42
+    update = AsyncMock()
+    monkeypatch.setattr(asset_jobs, "update_admin_run", update)
+    roots = []
+
+    async def export(scratch, *args, **kwargs):
+        roots.append(scratch)
+        raise error
+
+    monkeypatch.setattr(asset_jobs, "export_assets", export)
+    with pytest.raises(type(error)) as caught:
+        await asset_jobs.extract_client_assets(payload)
+    assert caught.value is error
+    assert not roots[0].exists()
+    assert (root / "game/client.pak").read_bytes() == b"retained"
+    assert update.await_args_list[-1].args == (42, "asset_extract", status)
+    assert update.await_args_list[-1].kwargs["error"] == f"{type(error).__name__}: {error}"
 
 
 def downloaded(tmp_path, monkeypatch, kind="assets.extract"):

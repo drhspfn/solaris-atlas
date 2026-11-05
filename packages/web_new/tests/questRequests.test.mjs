@@ -75,6 +75,8 @@ function questHarness({ missingTranscript = false, failRequests = false } = {}) 
     },
     '@/components/story/QuestRuntimeBlock': {
       runtimeBlockSlots: () => new Map(),
+      encounterFlowOwners: () => new Map(),
+      encounterOwnsMedia: () => false,
       runtimeBlockAnchor: (id) => id,
     },
     react: {

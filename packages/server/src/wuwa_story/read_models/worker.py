@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import shutil
+import signal
 import time
 from dataclasses import asdict
 
@@ -118,6 +119,8 @@ async def watch_refreshes(stop, *, factory=SessionFactory, interval=2, kinds=Non
 
 
 async def main(args):
+    loop = None
+    installed_signals = []
     try:
         selected = get_settings().read_projection_kinds if getattr(args, "watch", False) else ()
         kinds = args.kind or list(selected or READ_PROJECTION_KINDS)
@@ -172,16 +175,28 @@ async def main(args):
                         await mark_dirty(session, kind, [0], args.snapshot)
             print(json.dumps({"queued_scopes": len(kinds), "snapshot": args.snapshot}), flush=True)
         if args.watch:
+            stop = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                try:
+                    loop.add_signal_handler(sig, stop.set)
+                except NotImplementedError:  # Windows retains asyncio.run's SIGINT handling.
+                    continue
+                installed_signals.append(sig)
             filters = {"entity_ids": args.entity_id, "snapshot_key": args.snapshot} if args.entity_id else {}
             if args.snapshot != "current":
                 filters["snapshot_key"] = args.snapshot
-            await watch_refreshes(asyncio.Event(), kinds=kinds, **filters)
+            await watch_refreshes(stop, kinds=kinds, **filters)
         else:
             print(json.dumps({"claimed": await refresh_batch(
                 kinds=kinds, entity_ids=args.entity_id or None, snapshot_key=args.snapshot,
             )}), flush=True)
     finally:
-        await engine.dispose()
+        try:
+            await engine.dispose()
+        finally:
+            for sig in installed_signals:
+                loop.remove_signal_handler(sig)
 
 
 if __name__ == "__main__":

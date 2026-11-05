@@ -1,12 +1,13 @@
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
 from wuwa_story_worker import release_media
-from wuwa_story_worker.quest_tree_order import tree_records
+from wuwa_story_worker.quest_tree_order import store_tree_order, tree_records
 
 FIXTURES = Path(__file__).parents[2] / 'server/tests/fixtures'
 
@@ -62,3 +63,86 @@ async def test_completed_client_index_is_reused_and_partial_import_is_not_marked
     _, status = await release_media.import_tree_orders(parent, session)
     assert status == 'completed'
     assert old_index.schema_version == 3 and old_index.tree_count == 28
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind', ['quest', 'level_play'])
+async def test_changed_tree_marks_only_release_evidenced_owners_before_batch_commit(monkeypatch, kind):
+    from wuwa_story.read_models import refresh
+
+    record = {'tree_kind': kind, 'tree_id': 42, 'asset_version': '3.7.1',
+              'download_id': 'client', 'source_path': 'Client/42.bytes',
+              'source_sha256': b'changed', 'nodes': []}
+    values = [[101, 101]] if kind == 'quest' else [
+        [{'Key': '42_66', 'Data': {'Condition': {'Type': 'PlayFlow', 'Flow': {
+            'FlowListName': 'Story', 'FlowId': 28, 'StateId': 1}}}}], [900], [101, 101]]
+    session = SimpleNamespace(execute=AsyncMock(return_value=[]), scalars=AsyncMock(side_effect=values),
+        get=AsyncMock(return_value=SimpleNamespace(id=21, game_version='3.7.0')), commit=AsyncMock())
+    dirty = AsyncMock()
+    monkeypatch.setattr(refresh, 'mark_dirty', dirty)
+    assert await store_tree_order(session, [record], release_id=21) == 1
+    assert dirty.await_args_list == [call(session, 'quest', [101]), call(session, 'quest', [101], '3.7.0')]
+    session.commit.assert_not_awaited()  # Tree write and marks share the caller's batch transaction.
+    if kind == 'quest':
+        query = session.scalars.await_args.args[0].compile()
+        assert [42] in query.params.values()
+        assert 21 in query.params.values()
+    else:
+        query = session.scalars.await_args_list[0].args[0].compile()
+        assert 'source_file.release_id' in str(query)
+        assert ['42'] in query.params.values() or {'42'} in query.params.values()
+        endpoint_query = session.scalars.await_args_list[-1].args[0].compile()
+        assert [900] in endpoint_query.params.values()
+
+
+@pytest.mark.asyncio
+async def test_unchanged_tree_does_not_increment_projection_generations(monkeypatch):
+    from wuwa_story.read_models import refresh
+
+    record = {'tree_kind': 'quest', 'tree_id': 42, 'asset_version': '3.7.1',
+              'download_id': 'client', 'source_path': 'Client/42.bytes',
+              'source_sha256': b'same', 'nodes': []}
+    session = SimpleNamespace(execute=AsyncMock(side_effect=[[
+        ('quest', 42, '3.7.1', 'client', b'same', [])], []]), get=AsyncMock())
+    dirty = AsyncMock()
+    monkeypatch.setattr(refresh, 'mark_dirty', dirty)
+    assert await store_tree_order(session, [record], release_id=21) == 1
+    session.get.assert_not_awaited()
+    dirty.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_graph_repair_invalidates_only_exact_quest_owner_keys(monkeypatch):
+    from wuwa_story.ingestion.dungeon_backfill import invalidate_repaired_quests
+    from wuwa_story.read_models import refresh
+
+    session = SimpleNamespace(scalars=AsyncMock(return_value=[101, 101]), commit=AsyncMock())
+    release = SimpleNamespace(id=15, game_version='3.1.0')
+    dirty = AsyncMock()
+    monkeypatch.setattr(refresh, 'mark_dirty', dirty)
+    assert await invalidate_repaired_quests(session, release, [
+        {'from': 'quest_node:114000031:231'}, {'from': 'quest:114000031'},
+        {'from': 'flow_state:Story_28_1'}, {'from': 'quest_node:wrong:1'},
+    ]) == [101]
+    query = session.scalars.await_args.args[0].compile()
+    assert [114000031] in query.params.values()
+    assert 15 in query.params.values()
+    assert dirty.await_args_list == [call(session, 'quest', [101]), call(session, 'quest', [101], '3.1.0')]
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sequence_graph_repair_resolves_only_pinned_state_endpoints(monkeypatch):
+    from wuwa_story.ingestion.dungeon_backfill import invalidate_repaired_quests
+    from wuwa_story.read_models import refresh
+
+    session = SimpleNamespace(scalars=AsyncMock(side_effect=[[900], [101, 101]]))
+    dirty = AsyncMock()
+    monkeypatch.setattr(refresh, 'mark_dirty', dirty)
+    assert await invalidate_repaired_quests(session, SimpleNamespace(id=15, game_version='3.1.0'),
+        [{'from': 'action:Story_28_1:1', 'state_key': 'Story_28_1'}]) == [101]
+    state_query = session.scalars.await_args_list[0].args[0].compile()
+    assert ['Story_28_1'] in state_query.params.values() and 15 in state_query.params.values()
+    endpoint_query = session.scalars.await_args_list[1].args[0].compile()
+    assert [900] in endpoint_query.params.values()
+    assert dirty.await_args_list == [call(session, 'quest', [101]), call(session, 'quest', [101], '3.1.0')]

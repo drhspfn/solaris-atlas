@@ -7,8 +7,15 @@ import re
 import sqlite3
 from pathlib import Path
 
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
-from wuwa_story.db.models.core import AuthoredTreeOrder
+from wuwa_story.db.models.core import AuthoredTreeOrder, QuestState
+from wuwa_story.db.models.graph import NodeRevision
+from wuwa_story.db.models.ops import GameRelease
+from wuwa_story.db.models.raw import SourceFile, SourceRecord
+from wuwa_story.db.repositories.quest_scope import quest_state_links
+from wuwa_story.ingestion.dungeon_backfill import invalidate_repaired_quests
+from wuwa_story.ingestion.dungeon_context import walk
 from wuwa_story.ingestion.quest_tree_order import (
     read_tree_node_record,
     read_tree_order,
@@ -55,7 +62,20 @@ def tree_records(config_db: Path, files: list[Path], kind: str, asset_version: s
                'source_sha256': hashlib.sha256(blob).digest(), 'nodes': nodes}
 
 
-async def store_tree_order(session, records):
+async def store_tree_order(session, records, *, release_id=None):
+    records = list(records)
+    changed = []
+    if records and release_id is not None:
+        existing = {(kind, identity, version, download): (digest, nodes)
+                    for kind, identity, version, download, digest, nodes in await session.execute(select(
+                        AuthoredTreeOrder.tree_kind, AuthoredTreeOrder.tree_id,
+                        AuthoredTreeOrder.asset_version, AuthoredTreeOrder.download_id,
+                        AuthoredTreeOrder.source_sha256, AuthoredTreeOrder.nodes).where(tuple_(
+                            AuthoredTreeOrder.tree_kind, AuthoredTreeOrder.tree_id,
+                            AuthoredTreeOrder.asset_version, AuthoredTreeOrder.download_id).in_([
+                                (r['tree_kind'], r['tree_id'], r['asset_version'], r['download_id']) for r in records])))}
+        changed = [r for r in records if existing.get((r['tree_kind'], r['tree_id'],
+            r['asset_version'], r['download_id'])) != (r['source_sha256'], r['nodes'])]
     count = 0
     for record in records:
         statement = insert(AuthoredTreeOrder).values(**record)
@@ -64,4 +84,32 @@ async def store_tree_order(session, records):
             set_={'source_path': statement.excluded.source_path,
                   'source_sha256': statement.excluded.source_sha256, 'nodes': statement.excluded.nodes}))
         count += 1
+    if changed:
+        release = await session.get(GameRelease, release_id)
+        if release is None:
+            raise ValueError('Unknown tree-order release')
+        await invalidate_repaired_quests(session, release, [
+            {'from': f'quest:{r["tree_id"]}'} for r in changed if r['tree_kind'] == 'quest'])
+        levels = {str(r['tree_id']) for r in changed if r['tree_kind'] == 'level_play'}
+        if levels:
+            rows = await session.scalars(select(SourceRecord.data).join(SourceFile).where(
+                SourceRecord.release_id == release_id, SourceFile.release_id == release_id,
+                SourceFile.logical_source_path == 'BinData/LevelPlayNodeData/levelplaynodedata.json',
+                func.split_part(SourceRecord.data['Key'].astext, '_', 1).in_(levels)))
+            keys = set()
+            for row in rows:
+                for _, value in walk(row.get('Data')):
+                    name, flow, state = (value.get(k) for k in ('FlowListName', 'FlowId', 'StateId'))
+                    if isinstance(name, str) and type(flow) is int and type(state) is int:
+                        keys.add(f'{name}_{flow}_{state}')
+            states = list(await session.scalars(select(QuestState.node_id).join(NodeRevision,
+                NodeRevision.node_id == QuestState.node_id).where(
+                    NodeRevision.release_id == release_id, QuestState.state_key.in_(keys)))) if keys else []
+            if states:
+                from wuwa_story.read_models.refresh import mark_dirty
+                links = quest_state_links(release_id, state_ids=states)
+                quests = sorted(set(await session.scalars(select(links.c.quest_id).distinct())))
+                if quests:
+                    await mark_dirty(session, 'quest', quests)
+                    await mark_dirty(session, 'quest', quests, release.game_version)
     return count

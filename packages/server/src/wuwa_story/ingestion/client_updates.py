@@ -89,5 +89,18 @@ async def enqueue_client_plan(session, plan: dict) -> dict[str, Any]:
 
 
 async def check_client_update(session, tier: str = "hd") -> dict[str, Any]:
-    plan = await asyncio.to_thread(discover_plan, None, tier)
+    completed_pins = list(await session.scalars(
+        select(ProcessingRun.metadata_json["request"])
+        .join(Processor, Processor.id == ProcessingRun.processor_id)
+        .where(
+            Processor.key == "asset_download",
+            ProcessingRun.status == "completed",
+            ProcessingRun.metadata_json["request"]["tier"].astext == tier,
+        )
+        .order_by(ProcessingRun.id.desc())
+        .limit(100)
+    ))
+    # Release the read transaction before launcher/GitHub network I/O.
+    await session.commit()
+    plan = await asyncio.to_thread(discover_plan, None, tier, completed_pins=completed_pins)
     return await enqueue_client_plan(session, plan)

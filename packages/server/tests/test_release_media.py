@@ -106,7 +106,7 @@ async def test_illustration_repair_does_not_even_scan_audio_or_movie_tables(monk
     payloads = [call.args[0] for call in publish.await_args_list]
     assert [payload['kind'] for payload in payloads] == ['prepare', 'images']
     assert payloads[1]['targets'] == ['flow_state:Story_1_29']
-    assert payloads[1]['illustration_schema'] == 5
+    assert payloads[1]['illustration_schema'] == 6
     query = str(session.scalars.call_args.args[0])
     assert 'jsonb_path_exists' in query
     assert 'ShowTalk' not in session.scalars.call_args.args[0].compile().params.values()
@@ -160,6 +160,33 @@ async def test_fanout_pins_dependencies_and_keeps_analysis_manual(monkeypatch):
     assert all(p["release_id"] == 9 and p["game_version"] == "1.0.0" for p in payloads)
     assert all(call.args[2] == ("wuwa.release-images.v1" if call.args[0]["kind"] == "images" else "wuwa.release-media.v1") for call in published.await_args_list)
     assert session.commit.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_cutscene_only_snapshot_still_prepares_audio_dependencies(monkeypatch):
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version='1.0.0')
+    session.scalars.side_effect = [[], ['M0389'], []]  # No characters or standalone voices.
+    session.scalar.side_effect = [4] + [None] * 5
+    runs = []
+    session.add = runs.append
+
+    async def flush():
+        if runs:
+            runs[-1].id = len(runs)
+
+    session.flush.side_effect = flush
+    publish = AsyncMock()
+    monkeypatch.setattr(release_media, 'publish_media_job', publish)
+    result = await release_media.enqueue_release_media(session, 9)
+    payloads = [call.args[0] for call in publish.await_args_list]
+    by_kind = {payload['kind']: payload for payload in payloads}
+    assert list(by_kind) == ['prepare', 'cutscene_assets', 'voice_packages', 'tree_order', 'cutscene']
+    assert result['queued'] == 5
+    assert by_kind['voice_packages']['parent_id'] == by_kind['prepare']['run_id']
+    assert by_kind['cutscene_assets']['parent_id'] == by_kind['prepare']['run_id']
+    assert by_kind['cutscene']['parent_id'] == by_kind['cutscene_assets']['run_id']
+    assert all(payload['release_id'] == 9 for payload in payloads)
 
 
 @pytest.mark.asyncio

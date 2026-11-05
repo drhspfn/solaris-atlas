@@ -7,11 +7,12 @@ from types import SimpleNamespace
 
 from sqlalchemy import select, text
 
-from wuwa_story.db.models.core import AuthoredTreeOrder, QuestState
+from wuwa_story.db.models.core import AuthoredTreeOrder, Quest, QuestState
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
+from wuwa_story.db.repositories.quest_scope import quest_state_links
 from wuwa_story.db.session import SessionFactory
 from wuwa_story.ingestion.canonical_import import import_canonical_edges
 from wuwa_story.ingestion.cutscene_order import rebuild as rebuild_cutscene_order
@@ -37,6 +38,31 @@ from wuwa_story.ingestion.video_package_context import (
     VIDEO_DATA,
     package_cutscene_links,
 )
+
+
+async def invalidate_repaired_quests(session, release, records):
+    """Dirty only exact quest owners of changed source evidence in this release."""
+    from wuwa_story.read_models.refresh import mark_dirty
+
+    owners = [record['from'].split(':') for record in records]
+    identities = {int(parts[1]) for parts in owners if parts[0] in {'quest', 'quest_node'}
+                  and len(parts) >= 2 and parts[1].isdecimal()}
+    quests = set(await session.scalars(select(Quest.node_id).join(
+        NodeRevision, NodeRevision.node_id == Quest.node_id).where(
+        NodeRevision.release_id == release.id, Quest.game_quest_id.in_(identities)))) if identities else set()
+    keys = {record['state_key'] for record in records if record.get('state_key')}
+    if keys:
+        states = list(await session.scalars(select(QuestState.node_id).join(NodeRevision,
+            NodeRevision.node_id == QuestState.node_id).where(
+            NodeRevision.release_id == release.id, QuestState.state_key.in_(keys))))
+        if states:
+            links = quest_state_links(release.id, state_ids=states)
+            quests.update(await session.scalars(select(links.c.quest_id).distinct()))
+    quests = sorted(quests)
+    if quests:
+        await mark_dirty(session, 'quest', quests)
+        await mark_dirty(session, 'quest', quests, release.game_version)
+    return quests
 
 
 async def backfill(session, release_id, dry_run=False):
@@ -139,6 +165,7 @@ async def backfill(session, release_id, dry_run=False):
     if not dry_run and missing:
         await import_canonical_edges(SimpleNamespace(iter_edges=lambda: iter(missing)), session, release_id)
         await rebuild_cutscene_order(session, release_id)
+        await invalidate_repaired_quests(session, release, missing)
     result = {"release_id": release_id, "game_version": release.game_version,
               "candidate_links": len(records), "missing_evidence": len(missing),
               "written": len(missing) if not dry_run else 0, "dry_run": dry_run}
