@@ -174,12 +174,16 @@ async def publish_sequence_fragments(session, bundle, target, published, service
 async def invalidate_sequence_quests(session, target):
     """Flow owners have no read model; dirty their exact release-evidenced quests."""
     from sqlalchemy import select
+    from wuwa_story.db.models.ops import GameRelease
     from wuwa_story.db.repositories.quest_scope import quest_state_links
     from wuwa_story.read_models.refresh import mark_dirty
 
     links = quest_state_links(target['release_id'], state_ids=[target['owner']])
     quests = sorted(set(await session.scalars(select(links.c.quest_id).distinct())))
     if quests:
+        release = await session.get(GameRelease, target['release_id'])
+        if release is None:
+            raise ValueError('Unknown sequence publication release')
         await mark_dirty(session, 'quest', quests)
-        await mark_dirty(session, 'quest', quests, f"release:{target['release_id']}")
+        await mark_dirty(session, 'quest', quests, release.game_version)
     return quests

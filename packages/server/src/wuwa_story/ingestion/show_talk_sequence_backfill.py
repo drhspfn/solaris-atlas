@@ -1,7 +1,8 @@
 """Repair ShowTalk sequence references from imported snapshot rows, without recompiling.
 
 Dry-run by default. Select a release and optional exact state keys; --max-links
-bounds reads and writes. No media jobs or projection refreshes are enqueued.
+bounds reads and writes. Applied changes dirty only source-evidenced owning quest
+projections; no media jobs are enqueued.
 """
 
 import argparse
@@ -19,6 +20,7 @@ from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.session import SessionFactory
 from wuwa_story.ingestion.canonical_import import import_canonical_edges
+from wuwa_story.ingestion.dungeon_backfill import invalidate_repaired_quests
 from wuwa_story.ingestion.dungeon_context import decoded, walk
 from wuwa_story.ingestion.runtime_media import runtime_media
 
@@ -130,12 +132,14 @@ async def backfill(session, release_id, *, state_keys=(), apply=False, max_links
             await session.execute(insert(NodeRevision.__table__).values(values))
     records = [{**link, 'version': release.game_version, 'source_repository': release.upstream_name,
                 'source_commit': release.upstream_commit} for link in missing]
+    changed_assets = set(missing_revisions)
+    await invalidate_repaired_quests(session, release,
+        missing + [link for link in links if link['to'] in changed_assets])
     if records:
         # One importer batch commits nodes, revisions and evidence atomically.
         await import_canonical_edges(SimpleNamespace(iter_edges=lambda: iter(records)), session,
                                      release_id, batch_size=max_links)
-    else:
-        await session.commit()
+    await session.commit()
     report['written'] = len(records)
     return report
 

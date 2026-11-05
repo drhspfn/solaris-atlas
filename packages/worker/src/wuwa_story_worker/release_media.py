@@ -165,7 +165,7 @@ async def image_batch(payload, parent, run, session):
     return {**(child.raw_output or {}), "entity_run_id": child.id}, child.status
 
 
-async def import_tree_orders(parent, session):
+async def import_tree_orders(parent, session, *, release_id=None):
     # Different patch imports may all use the same current client. Index it once.
     key = int.from_bytes(hashlib.sha256(parent["download_id"].encode()).digest()[:4], "big", signed=True)
     async with engine.connect() as lock_connection, job_lock(lock_connection, 704, key):
@@ -174,7 +174,7 @@ async def import_tree_orders(parent, session):
             return {"asset_version": parent["asset_version"], "trees": existing.tree_count,
                     "unresolved": 0, "reused": True}, "completed"
         await session.commit()
-        result, status = await _import_tree_orders(parent, session)
+        result, status = await _import_tree_orders(parent, session, release_id=release_id)
         if status == "completed":
             if existing:
                 existing.tree_count, existing.schema_version = result["trees"], 3
@@ -197,7 +197,7 @@ async def repair_indexed_story(payload, result, status, session):
     return result
 
 
-async def _import_tree_orders(parent, session):
+async def _import_tree_orders(parent, session, *, release_id=None):
     root = client_root(parent)
     extractor = tool_path("WUWA_FMODEL_PATH")
     config = await export_assets(root, extractor, "ConfigDB")
@@ -227,7 +227,7 @@ async def _import_tree_orders(parent, session):
                     root_node.update(interactions.get(record['tree_id'], {}))
                     interaction_count += len(root_node.get('interactions', []))
         for start in range(0, len(records), 25):
-            total += await store_tree_order(session, records[start:start + 25])
+            total += await store_tree_order(session, records[start:start + 25], release_id=release_id)
             await session.commit()
     logger.info("release_media.tree_order asset_version=%s stored=%s unresolved=%s",
                 parent["asset_version"], total, len(errors))
@@ -925,7 +925,8 @@ async def _process_release_media(payload):
                         from wuwa_story_worker.notices import import_notices
                         result, status = await import_notices(client_root(parent.raw_output), session)
                     elif payload["kind"] == "tree_order":
-                        result, status = await import_tree_orders(parent.raw_output, session)
+                        result, status = await import_tree_orders(parent.raw_output, session,
+                                                                 release_id=payload['release_id'])
                         result = await repair_indexed_story(payload, result, status, session)
                     elif payload["kind"] == "cutscene_assets":
                         result, status = await cutscene_assets(payload, parent.raw_output)

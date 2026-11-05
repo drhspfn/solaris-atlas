@@ -1,5 +1,6 @@
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import func, select, text
@@ -17,7 +18,7 @@ class RepairSession(AsyncSession):
 
     async def get(self, entity, identity, **kwargs):
         if entity is GameRelease:
-            return SimpleNamespace(game_version=f'3.{identity}.0', upstream_name='fixture',
+            return SimpleNamespace(id=identity, game_version=f'3.{identity}.0', upstream_name='fixture',
                                    upstream_commit=f'commit-{identity}') if identity in (15, 21) else None
         return await super().get(entity, identity, **kwargs)
 
@@ -29,7 +30,9 @@ class RepairSession(AsyncSession):
 
 
 @pytest.fixture
-async def session():
+async def session(monkeypatch):
+    invalidation = AsyncMock(return_value=[11])
+    monkeypatch.setattr(repair, 'invalidate_repaired_quests', invalidation)
     engine = create_async_engine('sqlite+aiosqlite:///:memory:')
     async with engine.begin() as connection:
         for schema in ('graph', 'ontology', 'raw'):
@@ -64,6 +67,7 @@ async def session():
     try:
         async with RepairSession(engine) as session:
             session.statements = []
+            session.invalidation = invalidation
             yield session
     finally:
         await engine.dispose()
@@ -91,6 +95,9 @@ async def test_dry_run_then_apply_and_replay_use_exact_snapshot_evidence(session
     revisions = list(await session.scalars(select(NodeRevision).where(NodeRevision.node_id == asset.id)))
     assert {(r.release_id, r.source_record_id) for r in revisions} == {(21, 1021), (15, 1015)}
     assert len({r.revision for r in revisions}) == 2
+    assert [call.args[1].id for call in session.invalidation.await_args_list] == [21, 15]
+    assert all(call.args[2] and {row['state_key'] for row in call.args[2]} == {'Story_28_1'}
+               for call in session.invalidation.await_args_list)
 
 
 @pytest.mark.asyncio
