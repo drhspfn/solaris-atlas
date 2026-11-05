@@ -27,7 +27,7 @@ async def test_character_quest_info_is_reused_across_scenes_and_quest_list(monke
             list(zip(speakers, entities, strict=True)), [(99, 3, "flow.json")],
             Row(all=lambda: []), [],
         ]),
-        scalars=AsyncMock(side_effect=[[9], [state], [quest], [7], [], [quest], []]),
+        scalars=AsyncMock(side_effect=[[9], [state], [quest], [7], [7], [quest], []]),
         scalar=AsyncMock(return_value=None),
     )
     monkeypatch.setattr(profiles, "get_node", AsyncMock(return_value=Row(id=1, canonical_key="character:1", slug=None)))

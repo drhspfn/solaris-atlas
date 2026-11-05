@@ -13,9 +13,10 @@ def main_role_identities(configs, roles, elements=()):
     if not defaults:
         return {}
     anchor = min(defaults, key=lambda row: (row["Gender"] != 1, row["Id"]))["Id"]
-    return {
+    identities = {
         row["Id"]: {
             "family": "rover", "canonical_key": f"character:{anchor}",
+            "variant_key": f"character:{row['Id']}", "selectable": True,
             "gender": "male" if row["Gender"] == 1 else "female",
             "element_id": roles[row["Id"]].get("ElementId"),
             "element_name_key": elements.get(roles[row["Id"]].get("ElementId"), {}).get("Name"),
@@ -23,6 +24,21 @@ def main_role_identities(configs, roles, elements=()):
         }
         for row in members
     }
+    # Temporary story/trial roles can explicitly reuse the main role's name key
+    # and both personal portrait fields. Require all three exact references;
+    # a translated name or one inherited default cannot establish identity.
+    for role_id, role in roles.items():
+        if role_id in identities:
+            continue
+        matches = [row["Id"] for row in members if all(
+            isinstance(role.get(field), str) and role[field]
+            and role[field] == roles[row["Id"]].get(field)
+            for field in ("Name", "RoleHeadIcon", "FormationRoleCard"))]
+        if len(matches) == 1:
+            identities[role_id] = {**identities[matches[0]], "selectable": False,
+                                   "resolution": "exact_main_role_name_and_portraits"}
+    return identities
+
 
 
 def character_kind(role_type):

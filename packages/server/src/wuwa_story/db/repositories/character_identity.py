@@ -23,6 +23,8 @@ async def character_family(session, character, node, localize, release_id=None):
     variants = []
     for member, member_node in rows:
         variant = member.metadata_json["public_identity"]
+        if not variant.get("selectable", True):
+            continue
         variants.append({
             "canonical_key": member_node.canonical_key,
             "gender": variant["gender"], "element_id": variant.get("element_id"),
@@ -30,7 +32,7 @@ async def character_family(session, character, node, localize, release_id=None):
         })
     return [member.node_id for member, _ in rows], {
         "canonical_key": identity["canonical_key"], "name": "Rover",
-        "selected_key": node.canonical_key, "variants": variants,
+        "selected_key": identity.get("variant_key", node.canonical_key), "variants": variants,
     }
 
 

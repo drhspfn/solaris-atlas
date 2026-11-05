@@ -124,3 +124,12 @@ def test_npc_does_not_own_reused_yangyang_formation_card():
     assert inherited_character_fields(npc, template) == {"FormationRoleCard"}
     assert inherited_character_fields({**npc, "RoleHeadIcon": "yangyang.png"}, template) == set()
     assert inherited_character_fields({**npc, "RoleType": 1}, template) == set()
+
+
+def test_named_creature_with_complete_foreign_role_defaults_keeps_no_yangyang_portrait():
+    from wuwa_story.ingestion.character_artwork import inherited_character_fields
+    template = {"Id": 1402, "Name": "RoleInfo_1402_Name", "RoleHeadIcon": "yangyang-head", "FormationRoleCard": "yangyang-card"}
+    creature = {**template, "Id": 5002, "Name": "RoleInfo_5002_Name", "RoleType": 2}
+    assert inherited_character_fields(creature, template) == {"RoleHeadIcon", "FormationRoleCard"}
+    actual_yangyang = {**creature, "Name": "RoleInfo_1402_Name"}
+    assert inherited_character_fields(actual_yangyang, template) == set()

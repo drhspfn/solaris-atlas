@@ -31,3 +31,14 @@ def test_role_kind_does_not_treat_creatures_and_temporary_roles_as_resonators():
     assert character_kind(1) == "playable"
     assert {character_kind(role) for role in (2, 4, 5)} == {"story"}
     assert character_kind(3) == character_kind(None) == "technical"
+
+
+def test_temporary_rover_roles_join_the_identity_but_are_not_duplicate_selectable_forms():
+    male = {"Id": 1501, "ElementId": 5, "Name": "Name_Rover", "RoleHeadIcon": "male-head", "FormationRoleCard": "male-card"}
+    temporary = {**male, "Id": 5055, "RoleType": 2}
+    stranger = {**temporary, "Id": 5015, "RoleHeadIcon": "different-person"}
+    identities = main_role_identities([{"Id": 1501, "Gender": 1, "UnlockCondition": 0}], [male, temporary, stranger])
+    assert identities[5055]["canonical_key"] == "character:1501"
+    assert identities[5055]["variant_key"] == "character:1501"
+    assert identities[5055]["selectable"] is False
+    assert 5015 not in identities
