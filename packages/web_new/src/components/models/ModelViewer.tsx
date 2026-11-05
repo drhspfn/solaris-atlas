@@ -30,10 +30,11 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { HelpLabel } from "@/components/ui/Tooltip";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Input } from "@/components/ui/Input";
 import { Slider } from "@/components/ui/Slider";
-import { Tabs } from '@/components/ui/Tabs';
+import { Tabs } from "@/components/ui/Tabs";
 import { Select } from "@/components/ui/Select";
 import { apiUrl } from "@/api/client";
 import {
@@ -174,7 +175,26 @@ export function ModelViewer({
     unavailable = false,
   ) => (
     <Checkbox
-      label={text}
+      label={
+        <HelpLabel
+          label={text}
+          content={
+            {
+              playing:
+                "Play or pause the current animation without resetting its position.",
+              floor:
+                "Show the ground grid and world axes to judge position and orientation.",
+              turntable:
+                "Rotate the model slowly around its vertical axis without changing the animation.",
+              physics:
+                "Approximate spring motion for supported hair and clothing bones. This does not change the downloaded model.",
+              lock: "Cancel root translation on the selected world axes while retaining rotation and pose. Y is free by default for jumps.",
+              follow:
+                "Keep the camera attached to the selected exported bone as the animation moves. Orbit and zoom remain available.",
+            }[key]
+          }
+        />
+      }
       checked={settings[key]}
       disabled={disabled || unavailable}
       onChange={(event) => update(key, event.target.checked)}
@@ -250,46 +270,48 @@ export function ModelViewer({
             {!state.ready && <Button onClick={retry}>Retry viewer</Button>}
           </div>
         )}
-        {!preview && <div className="model-stage-tools">
-              <div className="model-camera-tools" aria-label="Camera controls">
-                {action("Rotate left", "left", false, <RotateCcw size={18} />)}
-                {action("Rotate right", "right", false, <RotateCw size={18} />)}
-                {action("Zoom in", "closer", false, <ZoomIn size={18} />)}
-                {action("Zoom out", "farther", false, <ZoomOut size={18} />)}
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label="Reset view"
-                  title="Reset view"
-                  icon={<Scan size={18} />}
-                  disabled={disabled}
-                  onClick={() => {
-                    update("follow", false);
-                    command("reset");
-                  }}
-                />
-              </div>
-          <div className="model-stage-fullscreen">
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label="Fullscreen"
-              title="Fullscreen"
-              icon={<Maximize2 size={19} />}
-              onClick={async () => {
-                try {
-                  if (document.fullscreenElement)
-                    await document.exitFullscreen();
-                  else await root.current?.requestFullscreen();
-                } catch {
-                  report({
-                    error: "Fullscreen is unavailable in this browser.",
-                  });
-                }
-              }}
-            />
+        {!preview && (
+          <div className="model-stage-tools">
+            <div className="model-camera-tools" aria-label="Camera controls">
+              {action("Rotate left", "left", false, <RotateCcw size={18} />)}
+              {action("Rotate right", "right", false, <RotateCw size={18} />)}
+              {action("Zoom in", "closer", false, <ZoomIn size={18} />)}
+              {action("Zoom out", "farther", false, <ZoomOut size={18} />)}
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label="Reset view"
+                title="Reset view"
+                icon={<Scan size={18} />}
+                disabled={disabled}
+                onClick={() => {
+                  update("follow", false);
+                  command("reset");
+                }}
+              />
+            </div>
+            <div className="model-stage-fullscreen">
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label="Fullscreen"
+                title="Fullscreen"
+                icon={<Maximize2 size={19} />}
+                onClick={async () => {
+                  try {
+                    if (document.fullscreenElement)
+                      await document.exitFullscreen();
+                    else await root.current?.requestFullscreen();
+                  } catch {
+                    report({
+                      error: "Fullscreen is unavailable in this browser.",
+                    });
+                  }
+                }}
+              />
+            </div>
           </div>
-        </div>}
+        )}
       </div>
       {!preview && (
         <>
@@ -474,8 +496,18 @@ export function ModelViewer({
                 onClick={() => drawer.current?.close()}
               />
             </header>
-            <Tabs value={panel} onValueChange={setPanel} variant="underline" fullWidth aria-label="Model settings sections"
-              items={[{ value: 'scene', label: 'Scene' }, { value: 'physics', label: 'Physics' }, { value: 'camera', label: 'Camera' }]} />
+            <Tabs
+              value={panel}
+              onValueChange={setPanel}
+              variant="underline"
+              fullWidth
+              aria-label="Model settings sections"
+              items={[
+                { value: "scene", label: "Scene" },
+                { value: "physics", label: "Physics" },
+                { value: "camera", label: "Camera" },
+              ]}
+            />
             <div className="model-settings-content">
               {panel === "scene" && (
                 <>
@@ -483,11 +515,25 @@ export function ModelViewer({
                   {checkbox("Turntable", "turntable")}
                   {checkbox("Lock root position", "lock", !state.rootAvailable)}
                   <fieldset disabled={disabled || !settings.lock}>
-                    <legend>Lock world axes</legend>
+                    <legend>
+                      <HelpLabel
+                        label="Lock world axes"
+                        content="X and Z control horizontal travel; Y controls vertical travel. Only checked axes are locked, and only while Lock root position is enabled."
+                      />
+                    </legend>
                     {(["x", "y", "z"] as const).map((axis) => (
                       <Checkbox
                         key={axis}
-                        label={axis.toUpperCase()}
+                        label={
+                          <HelpLabel
+                            label={axis.toUpperCase()}
+                            content={
+                              axis === "y"
+                                ? "Lock vertical root movement. Enable this to prevent jumps from moving the model up and down."
+                                : `Lock root movement along the world ${axis.toUpperCase()} axis.`
+                            }
+                          />
+                        }
                         checked={settings.axes[axis]}
                         onChange={(event) =>
                           update("axes", {
@@ -512,7 +558,10 @@ export function ModelViewer({
                     !state.physicsBones,
                   )}
                   <label>
-                    Strength · {Math.round(settings.strength * 100)}%
+                    <HelpLabel
+                      label={`Strength · ${Math.round(settings.strength * 100)}%`}
+                      content="Scale the secondary spring motion. Zero keeps the authored animation unchanged; 100% uses the imported profile, while higher values exaggerate the effect."
+                    />
                     <Slider
                       min="0"
                       max="2"
@@ -531,6 +580,10 @@ export function ModelViewer({
               )}
               {panel === "camera" && (
                 <>
+                  <HelpLabel
+                    label="Camera bone"
+                    content="Choose an actual joint from the exported skeleton. Focus moves the view to it once; Follow keeps tracking it during playback."
+                  />
                   <Select
                     searchable
                     categorized
@@ -549,7 +602,17 @@ export function ModelViewer({
                     "follow",
                     !state.bones.length,
                   )}
-                  <Button icon={<Focus size={18} />} disabled={disabled || !state.bones.length} onClick={() => command("focus")}>Focus camera on bone</Button>
+                  <Button
+                    icon={<Focus size={18} />}
+                    disabled={disabled || !state.bones.length}
+                    onClick={() => command("focus")}
+                  >
+                    Focus camera on bone
+                  </Button>
+                  <HelpLabel
+                    label="Target offset coordinates"
+                    content="World coordinates keep offsets aligned with the scene. Relative to bone rotates the offset with the selected joint."
+                  />
                   <Select
                     label="Target offset coordinates"
                     value={settings.space}
@@ -563,7 +626,10 @@ export function ModelViewer({
                   />
                   {(["X", "Y", "Z"] as const).map((axis, index) => (
                     <label key={axis}>
-                      Target offset {axis} (m)
+                      <HelpLabel
+                        label={`Target offset ${axis} (m)`}
+                        content={`Move the camera target along ${axis} in the selected coordinate space, measured in metres from the bone. Zero points directly at the joint.`}
+                      />
                       <Input
                         type="number"
                         min="-10"
@@ -584,7 +650,11 @@ export function ModelViewer({
                       />
                     </label>
                   ))}
-                  <p>Offsets are measured in metres from the selected exported bone. World coordinates stay aligned to the scene; bone-relative offsets rotate with the bone.</p>
+                  <p>
+                    Offsets are measured in metres from the selected exported
+                    bone. World coordinates stay aligned to the scene;
+                    bone-relative offsets rotate with the bone.
+                  </p>
                   <Button
                     variant="default"
                     icon={<Pause size={16} />}

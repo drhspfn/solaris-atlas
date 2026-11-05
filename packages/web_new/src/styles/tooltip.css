@@ -1,0 +1,8 @@
+.ui-tooltip { display: inline-flex; align-items: center; max-width: 100%; vertical-align: middle; }
+.ui-tooltip-content { box-sizing: border-box; position: fixed; inset: auto; margin: 0; width: max-content; max-width: min(300px, calc(100vw - 16px)); padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-primary); font: inherit; font-size: 12px; line-height: 1.5; text-align: left; white-space: normal; overflow-wrap: anywhere; box-shadow: 0 6px 24px #0006; }
+.ui-tooltip-content::backdrop { background: transparent; pointer-events: none; }
+.ui-tooltip-content[hidden] { display: none; }
+.ui-help-label { display: inline-flex; align-items: center; gap: 3px; }
+.ui-help-label > button.ui-help-trigger { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 18px; width: 18px; height: 18px; min-height: 18px; align-self: flex-start; transform: translateY(-3px); padding: 0; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-secondary); cursor: help; }
+.ui-help-label > button.ui-help-trigger:hover { background: transparent; color: var(--text-primary); }
+.ui-help-trigger svg { flex: 0 0 13px; width: 13px; height: 13px; }
