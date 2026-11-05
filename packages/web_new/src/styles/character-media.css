@@ -1,0 +1,13 @@
+.character-media { margin-block: 24px; }
+.character-media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 160px)); gap: 12px; }
+.character-media-card.ui-button { display: block; min-width: 0; height: auto; padding: 8px; text-align: left; white-space: normal; border-radius: 12px; }
+.character-media-card > .ui-button-label { display: flex; flex-direction: column; align-items: stretch; gap: 8px; width: 100%; }
+.character-media-thumbnail { position: relative; display: grid; place-items: center; width: 100%; height: 120px; overflow: hidden; border-radius: 8px; background: var(--surface-2); color: var(--text-muted); }
+.character-media-thumbnail img, .character-media-thumbnail video { width: 100%; height: 100%; object-fit: contain; }
+.character-media-placeholder { display: grid; justify-items: center; gap: 4px; font-size: 12px; }
+.character-media-video-label { position: absolute; right: 6px; bottom: 6px; display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border-radius: 6px; background: var(--surface-1); color: var(--text-primary); font-size: 12px; }
+.character-media-caption { overflow-wrap: anywhere; color: var(--text-secondary); font-size: 13px; }
+.character-media-action { color: var(--mint); font-size: 12px; }
+@media (max-width: 480px) { .character-media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.character-media-thumbnail video { pointer-events: none; }

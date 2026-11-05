@@ -31,6 +31,8 @@ test('character page loads its model independently of the selected game version'
   } });
   const collect = (node) => !node || typeof node !== 'object' ? [] : [node, ...[node.props?.children].flat(Infinity).flatMap(collect)];
   const nodes = collect(root);
-  assert.equal(nodes.find((node) => node.type === 'CharacterModel').props.gameVersion, undefined);
+  assert.equal(nodes.find((node) => node.type === 'CharacterProfileVisual').props.gameVersion, undefined);
+  assert.equal(nodes.filter((node) => node.type === 'CharacterProfileVisual').length, 1);
+  assert.equal(root.type, 'CharacterMediaProvider');
   assert.equal(nodes.find((node) => node.type === 'CharacterModelImport').props.initialGameVersion, undefined);
 });

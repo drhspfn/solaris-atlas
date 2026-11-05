@@ -738,16 +738,16 @@ for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
     assert.ok(head.includes(`content="${portrait}"`));
     assert.ok(head.includes('href="https://solarisatlas.fun/characters/character%3A1102"'));
     assert.match(main, /<h1>Sanhua/);
-    assert.match(main, /<video[^>]*aria-label="Character trial animation"/);
-    assert.doesNotMatch(main, /<video[^>]*aria-label="Character trial animation"[^>]*controls=/);
-    assert.match(main, /<video[^>]*aria-label="Character trial animation"[^>]*loop=""/);
-    assert.match(main, /class="rendered-animation" style="aspect-ratio:736 \/ 1920"/);
-    assert.match(main, /href="https:\/\/cdn.test\/trial.zip"/);
-    assert.doesNotMatch(main, /src="https:\/\/cdn.test\/trial-idle.webm"/);
-    assert.match(main, /Character model/);
-    assert.match(main, /Camera controls/);
-    assert.match(main, /Model settings/);
-    assert.match(main, /Preview loads when visible/);
+    assert.match(main, /Artwork and animation/);
+    assert.match(main, /aria-label="View Trial animation"/);
+    assert.match(main, /<video[^>]*src="https:\/\/cdn.test\/trial-idle.webm#t=0.001"/);
+    assert.doesNotMatch(main, /<video[^>]*(?:autoPlay|autoplay|controls|loop)=/);
+    assert.doesNotMatch(main, /href="https:\/\/cdn.test\/trial.zip"/);
+    assert.match(main, /aria-label="Open Sanhua media gallery"/);
+    assert.match(main, /aria-label="Character preview"/);
+    assert.match(main, /3D model/);
+    assert.doesNotMatch(main, /Camera controls|Preview loads when visible/);
+    assert.equal(main.split(biography).length - 1, 1, 'header biography is not repeated in progression');
     assert.doesNotMatch(main, /<iframe|model-viewer\/.*index\.html/);
     assert.doesNotMatch(html, /<script[^>]+src="https:\/\/cdn\.solarisatlas\.fun/);
     for (const detail of [biography, 'January 20', 'Eternal Frost', portrait])
@@ -767,7 +767,7 @@ for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
         'character profile and archive must overlap rather than form an SSR waterfall');
     }
     const gallery =
-      main.match(/<div class="character-artwork-gallery">([\s\S]*?)<\/figure><\/div>/)?.[1] ?? '';
+      main.match(/<section class="character-media"[^>]*>([\s\S]*?)<\/section>/)?.[1] ?? '';
     assert.ok(gallery.includes(`src="${portrait}"`));
     assert.ok(!gallery.includes(sharedQuestArtwork));
     assert.ok(!gallery.includes('foreign-yangyang'));
