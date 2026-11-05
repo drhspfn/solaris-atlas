@@ -1,0 +1,20 @@
+name: Deploy app safely
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: Full immutable commit SHA from successful image build
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/production-selective.yml
+    with:
+      image_sha: ${{ inputs.image_sha }}
+    secrets: inherit

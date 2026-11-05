@@ -98,10 +98,9 @@ jobs:
           cache-to: type=gha,mode=max,scope=models
 
   deploy:
-    needs: [build, model-tools]
+    needs: build
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    uses: ./.github/workflows/production-deploy.yml
+    uses: ./.github/workflows/production-selective.yml
     with:
-      component: all
-      image_tag: main
+      image_sha: ${{ github.sha }}
     secrets: inherit

@@ -1,0 +1,64 @@
+name: Safe app deployment
+
+on:
+  workflow_call:
+    inputs:
+      image_sha:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage selective helper without changing live configuration
+        env:
+          HOST: ${{ vars.DEPLOY_HOST }}
+          USER: ${{ vars.DEPLOY_USER }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          stage="solaris-atlas/deploy-tools/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          ssh "$USER@$HOST" "mkdir -p '$stage'"
+          scp scripts/deploy-selective.py "$USER@$HOST:$stage/deploy-selective.py"
+      - name: Run captured selective deployment
+        shell: bash
+        env:
+          HOST: ${{ vars.DEPLOY_HOST }}
+          USER: ${{ vars.DEPLOY_USER }}
+          OWNER: ${{ github.repository_owner }}
+          IMAGE_SHA: ${{ inputs.image_sha }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          stage="solaris-atlas/deploy-tools/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf '%s\n' "$GHCR_TOKEN" | ssh -o ServerAliveInterval=20 -o ServerAliveCountMax=6 "$USER@$HOST" \
+            "GHCR_OWNER='${OWNER,,}' python3 '$stage/deploy-selective.py' --sha '$IMAGE_SHA' --apply" | tee selective-receipt.json
+      - name: Report application and deferred worker status
+        if: ${{ always() }}
+        env:
+          IMAGE_SHA: ${{ inputs.image_sha }}
+        run: |
+          printf '### API + web deployment\n\nSource: `%s`\n\n' "$IMAGE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Workers/models are intentionally deferred; active imports are preserved. Images continue building. Coordinate a captured-ID graceful worker rollout, or use the existing [Deploy selected services](../../workflows/deploy.yml) **all** only during explicit maintenance. See scripts/DEPLOYMENT.md. No worker update was performed by this job.\n\n' >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f selective-receipt.json ]]; then
+            printf '```json\n' >> "$GITHUB_STEP_SUMMARY"
+            cat selective-receipt.json >> "$GITHUB_STEP_SUMMARY"
+            printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
