@@ -6,6 +6,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from wuwa_story.ingestion.runtime_media import runtime_media
 from wuwa_story.ingestion.talk_backgrounds import background_config
 
 from .core import Writer, read_json
@@ -110,6 +111,18 @@ def compile_flow(root: Path, writer: Writer, english: dict[str, dict[str, Any]],
                                             "raw": {"path": path}})
         return identifier
 
+    def compile_talk_sequence(owner: str, action: dict, raw_path: str) -> None:
+        if action.get("Name") != "ShowTalk":
+            return
+        for ref in runtime_media(action, raw_path, recursive=False):
+            if ref["kind"] != "sequence":
+                continue
+            asset = ensure_asset(ref["reference"].removeprefix("asset:ue:"), source, ref["raw_path"])
+            if asset:
+                writer.edge(owner, asset, "plays_sequence_asset", ref["basis"], source,
+                            ref["raw_path"], {key: ref[key] for key in
+                                ("sequence_names", "sequence_names_raw_path") if key in ref})
+
     def compile_nested(owner: str, actions: Any, path: str, state_key: str) -> list[tuple[str, Any]]:
         jumps: list[tuple[str, Any]] = []
         for raw_path, action in _nested_actions(actions, path):
@@ -121,6 +134,7 @@ def compile_flow(root: Path, writer: Writer, english: dict[str, dict[str, Any]],
                                            "action_id": action.get("ActionId"),
                                            "source": {"file": source, "raw_path": raw_path}, "raw": action})
             writer.edge(owner, identifier, "contains_nested_action", "nested Actions array", source, raw_path)
+            compile_talk_sequence(identifier, action, raw_path)
             if action.get("Name") == "JumpTalk":
                 jumps.append((identifier, (action.get("Params") or {}).get("TalkId")))
         return jumps
@@ -202,6 +216,7 @@ def compile_flow(root: Path, writer: Writer, english: dict[str, dict[str, Any]],
                 if asset:
                     writer.edge(action_id, asset, "plays_sequence_asset", "Params.Path", source,
                                 f"{action_path}.Params.Path")
+            compile_talk_sequence(action_id, action, action_path)
             if name == "PostAkEvent":
                 event = (params.get("EventConfig") or {}).get("AkEvent")
                 asset = ensure_asset(event, source, f"{action_path}.Params.EventConfig.AkEvent")
