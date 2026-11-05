@@ -58,11 +58,12 @@ def level_memberships(rows, wanted_dungeons):
     result = {}
     for index, row in rows:
         data = decoded(row.get("Data"))
-        if not isinstance(data, dict) or data.get("Type") != "Quest":
+        if not isinstance(data, dict) or data.get("Type") not in ("Quest", "Dungeon"):
             continue
         level_id, dungeon = row.get("LevelPlayId"), data.get("LevelId")
         if type(level_id) is int and data.get("Id") == level_id and dungeon in wanted_dungeons:
-            result[level_id] = {"dungeon_id": dungeon, "file": LEVELS, "row": index}
+            result[level_id] = {"dungeon_id": dungeon,
+                                "file": LEVELS, "row": index}
     return result
 
 
@@ -78,12 +79,16 @@ def dungeon_links(required, memberships, node_rows, valid_states):
         data = decoded(row.get("Data"))
         if not isinstance(data, dict) or data.get("Id") != int(parts[1]):
             continue
-        for slot in ("EnterActions", "FinishActions"):
+        for slot in ("EnterActions", "FinishActions", "Condition"):
             for path, action in walk(data.get(slot), f"$[{index}].Data.{slot}"):
-                params = action.get("Params")
-                if action.get("Name") != "PlayFlow" or not isinstance(params, dict):
+                field = ("Flow" if slot == "Condition" and action.get("Type") == "PlayFlow"
+                         else "Params" if slot != "Condition" and action.get("Name") == "PlayFlow"
+                         else None)
+                params = decoded(action.get(field)) if field else None
+                if not isinstance(params, dict):
                     continue
-                name, flow, state = (params.get(k) for k in ("FlowListName", "FlowId", "StateId"))
+                name, flow, state = (params.get(k)
+                                     for k in ("FlowListName", "FlowId", "StateId"))
                 if not isinstance(name, str) or type(flow) is not int or type(state) is not int:
                     continue
                 state_key = f"{name}_{flow}_{state}"
@@ -97,6 +102,6 @@ def dungeon_links(required, memberships, node_rows, valid_states):
                             "meaning": "Dungeon scenario context; completion requirement is not proof every branch occurred",
                             "quest_condition": requirement, "level_play": membership,
                             "level_play_id": int(parts[0]), "level_play_node": key,
-                            "flow_source": {"file": LEVEL_NODES, "row": index, "path": path + ".Params"},
+                            "flow_source": {"file": LEVEL_NODES, "row": index, "path": path + "." + field},
                         }, ensure_ascii=False, sort_keys=True),
                     }
