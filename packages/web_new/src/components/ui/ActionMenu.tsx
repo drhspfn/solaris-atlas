@@ -5,7 +5,7 @@ import '../../styles/action-menu.css';
 import { MoreVertical } from 'lucide-react';
 import { type ReactNode, useEffect, useRef } from 'react';
 
-export function ActionMenu({ label, children }: { label: string; children: ReactNode }) {
+export function ActionMenu({ label, children, trigger }: { label: string; children: ReactNode; trigger?: ReactNode }) {
   const ref = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     function close(event: PointerEvent | KeyboardEvent) {
@@ -28,7 +28,7 @@ export function ActionMenu({ label, children }: { label: string; children: React
   return (
     <details className="action-menu" ref={ref}>
       <summary aria-label={label} title={label}>
-        <MoreVertical size={20} aria-hidden="true" />
+        {trigger ?? <MoreVertical size={20} aria-hidden="true" />}
       </summary>
       <div className="action-menu-panel">{children}</div>
     </details>
