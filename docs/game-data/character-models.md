@@ -508,3 +508,28 @@ has no story or item endpoints, so its zero-edge replay is not evidence that all
 real-client story connections have been checked. Production had no `character:npc:`
 nodes at the read-only readiness check; it still needs the catalog import after
 the branch is deployed.
+
+### Release canaries, 2026-11-07
+
+After syncing this branch with main, fresh `wuwa-model` builds from the installed
+3.7.1 client produced verified archives for:
+
+| NPC | Source identity | Preview meshes | Skin joints | Embedded images |
+| --- | --- | ---: | ---: | ---: |
+| Rosemary | `character:npc:15267` | 2 | 198 | 5 |
+| Cristoforo | `character:npc:15697` | 1 | 170 | 4 |
+| Random NPC / Zhixing source template | `character:npc:17521` | 1 | 319 | 7 |
+
+These canaries intentionally used `--without-animations` to verify complete
+geometry, textures, rigs and portable archive publication separately from the
+existing animation pipeline. All three archives passed hash/member validation
+and their preview GLBs were rendered and visually inspected. Rosemary's archive
+also retains the independently declared umbrella component.
+
+The fresh builds exposed textureless MaterialInstance parents exported by CUE
+as UObject lists rather than resolved dictionaries. The shared material reader
+now accepts their authored parameters; regression tests cover parent traversal
+and exact color texture references. It does not invent a texture for an
+unsupported shader. An additional randomly sampled NPC (`16464`) was correctly
+rejected for `MI_NH_FemaleM_090Shanhu` without a resolvable base-color texture;
+no incomplete archive was published for it.
