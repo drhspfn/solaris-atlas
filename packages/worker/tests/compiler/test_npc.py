@@ -72,13 +72,13 @@ def test_npc_discovery_overrides_and_evidence(tmp_path):
     assert offer["source"] == "BinData/shop/shopfixed.json"
 
 
-def test_explicit_name_key_can_link_speaker():
+def test_explicit_name_key_does_not_prove_speaker_identity():
     rows = normalize_npcs(
         [{"Id": 1, "BlueprintType": "A", "EntityType": "Npc"}],
         [{"BlueprintType": "A", "ComponentsData": {"BaseInfoComponent": {
             "Category": {"MainType": "Npc"}, "TidName": "Speaker_7_Name"}}}],
         [], {}, speakers=[{"Id": 7}])
-    assert rows[0]["npc"]["speakers"] == ["speaker:7"]
+    assert rows[0]["npc"]["speakers"] == []
 
 
 def test_model_preloads_use_effective_models_and_compile_optional_input(tmp_path):

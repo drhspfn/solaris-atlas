@@ -214,13 +214,16 @@ async def import_canonical_entities(
                         },
                     }
                 )
-            await session.execute(
-                insert(NodeRevision.__table__)
-                .values(revision_values)
-                .on_conflict_do_nothing(
-                    index_elements=[NodeRevision.node_id, NodeRevision.revision]
-                )
-            )
+            npc_revisions = [value for record, value in zip(batch, revision_values, strict=True)
+                             if kind == "character" and record["id"].startswith("character:npc:")
+                             and isinstance(record.get("npc"), dict)]
+            npc_ids = {value["node_id"] for value in npc_revisions}
+            ordinary = [value for value in revision_values if value["node_id"] not in npc_ids]
+            if ordinary:
+                await session.execute(insert(NodeRevision.__table__).values(ordinary).on_conflict_do_nothing(
+                    index_elements=[NodeRevision.node_id, NodeRevision.revision]))
+            if npc_revisions:
+                await _upsert_npc_revisions(session, npc_revisions)
             await session.commit()
             total += len(batch)
     typed_order = (
@@ -260,6 +263,40 @@ async def import_canonical_entities(
             await _insert_typed_entities(session, kind, batch, node_map, source_ids, newer_release_ids)
             await session.commit()
     return total
+
+
+async def _upsert_npc_revisions(session: AsyncSession, values: list[dict[str, Any]]) -> None:
+    """Refresh same-release NPC revisions without changing the release sequence key."""
+    table = NodeRevision.__table__
+    statement = insert(table).values(values)
+    old_metadata = table.c.metadata
+    history = func.coalesce(old_metadata["repair_history"], func.jsonb_build_array())
+    previous = func.jsonb_build_object(
+        "content_hash", func.encode(table.c.content_hash, "hex"),
+        "source_record_id", table.c.source_record_id,
+        "metadata", old_metadata.op("-")("repair_history"),
+    )
+    updated_history = case(
+        (table.c.content_hash.is_distinct_from(statement.excluded.content_hash),
+         history.op("||")(func.jsonb_build_array(previous))),
+        else_=history,
+    )
+    metadata = case(
+        (table.c.content_hash.is_distinct_from(statement.excluded.content_hash),
+         statement.excluded.metadata.op("||")(func.jsonb_build_object("repair_history", updated_history))),
+        (old_metadata.has_key("repair_history"),  # noqa: W601
+         statement.excluded.metadata.op("||")(func.jsonb_build_object("repair_history", history))),
+        else_=statement.excluded.metadata,
+    )
+    result = await session.execute(statement.on_conflict_do_update(
+        index_elements=[table.c.node_id, table.c.revision],
+        set_={"content_hash": statement.excluded.content_hash,
+              "source_record_id": statement.excluded.source_record_id,
+              "metadata": metadata},
+        where=table.c.release_id == statement.excluded.release_id,
+    ).returning(table.c.node_id))
+    if len(result.all()) != len(values):
+        raise ValueError("NPC revision sequence belongs to a different release")
 
 
 async def _insert_typed_entities(
