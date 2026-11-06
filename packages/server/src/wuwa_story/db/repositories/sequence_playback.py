@@ -14,13 +14,15 @@ async def bundles(session, owners, release_id):
     ).where(
         FileReference.owner_node_id.in_(owners),
         FileReference.release_id == release_id,
-        FileReference.reference_type.in_(['story_presentation', 'story_spine']),
+        FileReference.reference_type.in_(
+            ['story_presentation', 'story_spine']),
     ).order_by(FileReference.id.desc())))
 
 
 async def available_movies(session, selected, release_id, bucket):
     identities = {section['file_id'] for bundle in selected.values()
-                  for section in bundle['media']['sections']}
+                  for section in bundle['media']['sections']
+                  if section.get('kind') == 'movie_fragment' and type(section.get('file_id')) is int}
     if not identities or release_id is None:
         return {}
     rows = await session.execute(select(
@@ -29,7 +31,8 @@ async def available_movies(session, selected, release_id, bucket):
     ).select_from(FileReference).join(FileObject, FileReference.file_id == FileObject.id).join(
         FileLocation, FileLocation.file_id == FileObject.id,
     ).where(
-        FileReference.owner_node_id.in_(selected), FileReference.release_id == release_id,
+        FileReference.owner_node_id.in_(
+            selected), FileReference.release_id == release_id,
         FileReference.reference_type == 'story_sequence_fragment',
         FileObject.id.in_(identities), FileObject.mime_type == 'video/mp4',
         FileLocation.backend == 's3', FileLocation.bucket == bucket,
@@ -48,7 +51,7 @@ async def available_movies(session, selected, release_id, bucket):
         if not isinstance(sources, list):
             continue
         for section in bundle['media']['sections']:
-            if (section['file_id'] == file_id and section.get('source') in sources
+            if (section.get('kind') == 'movie_fragment' and section.get('file_id') == file_id and section.get('source') in sources
                     and section.get('file') == name == metadata.get('archive_entry')
                     and section.get('archive_path') == metadata.get('archive_path')):
                 result[(owner, file_id, section['source'])] = object_key
