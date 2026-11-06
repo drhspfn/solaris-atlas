@@ -75,10 +75,11 @@ def decode_bundles(archive, root, job, expected_forms):
             if any(track["target"].casefold() not in targets for clip in pack["clips"] for track in clip["tracks"]):
                 raise ValueError(
                     "Facial curves do not match the uploaded model")
-        if form.get('data_asset') and entry['provenance'].get('data_asset') != form['data_asset']:
-            raise ValueError('Archive NPC setup does not match its authored data asset')
+        for field in ('data_asset', 'blueprint_model'):
+            if form.get(field) and entry['provenance'].get(field) != form[field]:
+                raise ValueError('Archive NPC setup does not match its authored data asset or Blueprint')
         model = form['model']
-        if form.get('data_asset'):
+        if form.get('data_asset') or form.get('blueprint_model'):
             model = entry['provenance'].get('model')
             if not isinstance(model, str):
                 raise ValueError('Archive NPC setup has no resolved master mesh')

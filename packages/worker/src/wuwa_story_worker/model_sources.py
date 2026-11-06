@@ -45,16 +45,26 @@ def npc_model_sources(component, preloads=()):
         identity = model_type.get('ModelId')
         matches = [row for row in preloads if type(identity) is int and identity > 0
                    and row.get('Id') == identity]
-        if len(matches) != 1 or len(matches[0].get('Meshes') or []) != 1:
+        if len(matches) != 1:
             raise ValueError('NPC ModelId requires one exact authored mesh preload')
         row = matches[0]
-        return {'model': authored_package(row['Meshes'][0]),
+        meshes = row.get('Meshes') or []
+        if len(meshes) > 1 or (not meshes and not row.get('ActorClassPath')):
+            raise ValueError('NPC ModelId requires one exact authored mesh preload')
+        model = authored_package(meshes[0] if meshes else row['ActorClassPath'])
+        return {'model': model,
+                **({'blueprint_model': model} if not meshes else {}),
                 'blueprints': sorted({authored_package(path) for path in row.get('AnimationBlueprints') or []}),
                 'component_blueprint': authored_package(row['ActorClassPath']) if row.get('ActorClassPath') else None,
                 'animation_resources': sorted({authored_package(path) for path in row.get('Animations') or []})}
     if not isinstance(model_type, dict) or model_type.get("Type") != "Npc":
         raise ValueError("Expected an NPC model component")
     npc_model = model_type.get("NpcModel")
+    if not npc_model and model_type.get('BlueprintPath'):
+        blueprint = authored_package(model_type['BlueprintPath'])
+        abp = model_type.get('Abp')
+        return {'model': blueprint, 'blueprint_model': blueprint,
+                'blueprints': [authored_package(abp)] if abp else []}
     if not isinstance(npc_model, dict) or npc_model.get("Type") not in {"Mesh", "Da"}:
         raise ValueError("NPC model does not specify an exact mesh")
     data_asset = npc_model.get("Type") == "Da"

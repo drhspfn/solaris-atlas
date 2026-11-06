@@ -413,6 +413,9 @@ catalog backfill only registers recipes and relationships.
 
 Supported sources include explicit NPC meshes, exact single-mesh `ModelId`
 preloads (including animals), and `PD_NpcSetupData_C` modular setup assets.
+When only a Blueprint is authored, the importer follows its CDO's primary Mesh
+component and explicit Blueprint parents, with cycle/depth checks; an attachment
+mesh cannot substitute for a missing primary mesh.
 For modular NPCs the authored master rig drives body, face and hair parts;
 the low-detail carrier geometry is omitted. Every weighted part bone and its
 ancestors must match the master rest pose. Unused helper bones may differ.

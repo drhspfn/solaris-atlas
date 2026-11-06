@@ -4,7 +4,7 @@ import pytest
 
 from wuwa_story_worker.model_bundle import compatible_master_pose
 from wuwa_story_worker.model_sources import npc_model_sources
-from wuwa_story_worker.npc_setup import setup_sources
+from wuwa_story_worker.npc_setup import blueprint_sources, setup_sources
 
 
 def ref(name, kind='SkeletalMesh'):
@@ -34,6 +34,17 @@ def test_setup_rejects_missing_master_and_ambiguous_identity():
         setup_sources(rows, 'Npc/Setup')
     with pytest.raises(ValueError, match='ambiguous'):
         setup_sources(rows * 2, 'Npc/Setup')
+
+
+def test_blueprint_resolves_only_cdo_primary_mesh_and_authored_parent():
+    rows = [{'Type': 'BlueprintGeneratedClass', 'SuperStruct': {
+        'ObjectPath': '/Game/Npc/Parent'}}, {'Type': 'BP_Test_C', 'Name': 'Default__BP_Test_C',
+        'Properties': {'Mesh': {'ObjectName': "SkeletalMeshComponent'Default__BP_Test_C:CharacterMesh0'"}}},
+        {'Type': 'SkeletalMeshComponent', 'Name': 'WeaponCase0', 'Properties': {'SkeletalMesh': ref('Weapon')}}]
+    assert blueprint_sources(rows, 'Npc/Test') == {'parent': 'Npc/Parent'}
+    rows.append({'Type': 'SkeletalMeshComponent', 'Name': 'CharacterMesh0', 'Properties': {
+        'SkeletalMesh': ref('Body'), 'AnimClass': ref('ABP', 'AnimBlueprintGeneratedClass')}})
+    assert blueprint_sources(rows, 'Npc/Test') == {'model': 'Npc/Body', 'blueprints': ['Npc/ABP']}
 
 
 def test_model_id_uses_exact_preload_even_when_blueprint_and_mesh_names_differ():

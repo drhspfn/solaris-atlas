@@ -84,7 +84,7 @@ identities remain diagnostics instead of guessed links.
 
 Snapshot imports also enqueue a `npc_catalog` media job, after client preparation.
 It decodes BlueprintConfig, TemplateConfig, LevelEntityConfig, Speaker,
-AbpMontageData, MontageData, ShopInfo and ShopFixed from the pinned client. The
+AbpMontageData, MontageData, ModelConfigPreload, ShopInfo and ShopFixed from the pinned client. The
 supplement is additive: it does not replay video, voice or story imports. For an
 existing release, call `enqueue_release_media(session, release_id,
 npc_catalog_only=True)` using the existing authenticated administration/session

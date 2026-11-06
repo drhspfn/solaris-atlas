@@ -273,6 +273,32 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         raise ValueError("UEFormat importer unavailable; use the dedicated model worker image")
     await progress("extract")
     options = {"local_client": local_client} if local_client is not None else {}
+    blueprint_exports = []
+    if sources.get('blueprint_model'):
+        from wuwa_story_worker.npc_setup import blueprint_sources
+
+        package, visited = sources['blueprint_model'], set()
+        for depth in range(8):
+            if package in visited:
+                raise ValueError('Cyclic NPC Blueprint model inheritance')
+            visited.add(package)
+            metadata_root = root / f'npc-blueprint-{depth}'
+            metadata_root.mkdir()
+            _, _, metadata_cooked, receipt = await extract_model(
+                metadata_root, {'model': package, 'blueprints': []}, fmodel, converter,
+                False, metadata_only=True, **options)
+            path = metadata_cooked / 'Client/Content' / (package + '.json')
+            if not path.is_file():
+                raise ValueError('The authored NPC model Blueprint was not exported')
+            resolved = blueprint_sources(json.loads(path.read_text(encoding='utf-8-sig')), package)
+            blueprint_exports.append((package, metadata_cooked, receipt))
+            if 'model' in resolved:
+                sources = {**sources, **resolved,
+                           'blueprints': sources['blueprints'] or resolved.get('blueprints', [])}
+                break
+            package = resolved['parent']
+        else:
+            raise ValueError('NPC Blueprint model inheritance exceeds eight authored parents')
     setup_receipt = None
     if sources.get('data_asset'):
         from wuwa_story_worker.npc_setup import setup_sources
@@ -293,6 +319,9 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         root, sources, fmodel, converter, include_animations,
         additional_filters=sorted(component_filters), **options
     )
+    for _, metadata_cooked, receipt in blueprint_exports:
+        shutil.copytree(metadata_cooked, cooked, dirs_exist_ok=True)
+        manifest['files'].extend(receipt['files'])
     if setup_receipt:
         manifest['files'].extend(setup_receipt['files'])
         from wuwa_story_worker.model_bundle import base_color_texture
@@ -382,8 +411,14 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         if not blueprint_path.is_file():
             raise ValueError("The authored NPC component blueprint was not exported")
         blueprint_rows = json.loads(blueprint_path.read_text(encoding="utf-8-sig"))
-        attachments = npc_blueprint_attachments(blueprint_rows, sources["model"])
-        material_overrides = npc_material_overrides(blueprint_rows)
+        inherited = [json.loads((metadata_cooked / 'Client/Content' / (package + '.json')).read_text(encoding='utf-8-sig'))
+                     for package, metadata_cooked, _ in reversed(blueprint_exports)]
+        declared_attachments = {}
+        for rows in [*inherited, blueprint_rows]:
+            for attachment in npc_blueprint_attachments(rows, sources['model']):
+                declared_attachments[attachment['name']] = attachment
+            material_overrides.update(npc_material_overrides(rows))
+        attachments = list(declared_attachments.values())
         if material_overrides:
             material_root = root / "npc-materials"
             material_root.mkdir()
@@ -583,6 +618,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         "extra_models": sources.get("extra_models", []),
         **({'bone_visibility_events': bone_visibility} if bone_visibility else {}),
         **({'data_asset': sources['data_asset']} if sources.get('data_asset') else {}),
+        **({'blueprint_model': sources['blueprint_model']} if sources.get('blueprint_model') else {}),
         "blueprints": sources["blueprints"],
         "tools": {
             name: sha256(path)

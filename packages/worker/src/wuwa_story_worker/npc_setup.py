@@ -3,6 +3,39 @@
 from wuwa_story_worker.model_sources import exported_package
 
 
+def blueprint_sources(rows, package):
+    """Follow the CDO's explicit Mesh component, or its authored Blueprint parent."""
+    components = set()
+    for row in rows:
+        if str(row.get('Name', '')).startswith('Default__'):
+            reference = (row.get('Properties') or {}).get('Mesh') or {}
+            name = reference.get('ObjectName', '')
+            if name.startswith("SkeletalMeshComponent'") and ':' in name:
+                components.add(name.rsplit(':', 1)[-1].removesuffix("'"))
+    meshes, blueprints = [], set()
+    for row in rows:
+        if row.get('Type') != 'SkeletalMeshComponent' or row.get('Name') not in components:
+            continue
+        value = (row.get('Properties') or {}).get('SkeletalMesh')
+        anim = (row.get('Properties') or {}).get('AnimClass') or {}
+        if str(anim.get('ObjectName', '')).startswith("AnimBlueprintGeneratedClass'"):
+            blueprints.add(exported_package(anim.get('ObjectPath', '')))
+        if value:
+            if not isinstance(value, dict) or not str(value.get('ObjectName', '')).startswith("SkeletalMesh'"):
+                raise ValueError('NPC Blueprint has an unsupported primary mesh reference')
+            meshes.append(exported_package(value.get('ObjectPath', '')))
+    if len(set(meshes)) > 1:
+        raise ValueError('NPC Blueprint has ambiguous primary skeletal meshes')
+    if meshes:
+        return {'model': meshes[0], **({'blueprints': sorted(blueprints)} if blueprints else {})}
+    parents = {exported_package(row['SuperStruct']['ObjectPath']) for row in rows
+               if row.get('Type') == 'BlueprintGeneratedClass'
+               and str((row.get('SuperStruct') or {}).get('ObjectPath', '')).startswith('/Game/')}
+    if len(parents) == 1:
+        return {'parent': next(iter(parents))}
+    raise ValueError(f'NPC Blueprint has no authored primary skeletal mesh: {package}')
+
+
 def setup_sources(rows, package):
     matches = [row for row in rows if row.get('Name') == package.rsplit('/', 1)[-1]
                and row.get('Type') == 'PD_NpcSetupData_C']
