@@ -1,0 +1,126 @@
+"""Opt-in PostgreSQL NPC graph replay in private verification schemas."""
+
+import json
+import os
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from wuwa_story_worker.compiler.core import Writer
+from wuwa_story_worker.compiler.npc import compile_npcs
+
+from wuwa_story.api.routes.story import npc_profile, npc_sales
+from wuwa_story.db.models.graph import Edge, EdgeEvidence
+from wuwa_story.db.repositories.quest_scope import quests_for_state
+from wuwa_story.ingestion.canonical_import import import_canonical_edges
+from wuwa_story.ingestion.npc_scenario import import_npc_scenario_edges
+
+URL = os.getenv("NPC_PG_TEST_DATABASE_URL")
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not URL, reason="Set NPC_PG_TEST_DATABASE_URL to a dedicated verification database")
+async def test_npc_source_edges_and_seller_api_replay(tmp_path, monkeypatch):
+    engine = create_async_engine(URL)
+    assert engine.url.database.endswith("verify"), "Use a dedicated verification database"
+    prefix = "npc_fixture_" + uuid4().hex
+    schemas = {name: f"{prefix}_{name}" for name in ("ontology", "graph", "core", "raw")}
+    o, g, c, r = (schemas[name] for name in ("ontology", "graph", "core", "raw"))
+    mapped = engine.execution_options(schema_translate_map=schemas)
+    entity_source = "BinData/level_entity/levelentityconfig.json"
+    flow_source = "BinData/flowState/flowstate.json"
+    shop_source = "BinData/shop/shopfixed.json"
+    # Actor IDs are from an exported BeginFlowTemplate row; identity and shop are fixtures.
+    state = "fixture_1_1"
+    actions = [{"Name": "BeginFlowTemplate", "Params": {"Actors": [
+        {"EntityId": 300000061, "TalkerId": 630, "IsPlayer": False}]}},
+        {"Name": "ShowTalk", "Params": {"TalkItems": [
+            {"Type": "Talk", "WhoId": 630}, {"Type": "Talk", "WhoId": 999}]}}]
+    components = {"BaseInfoComponent": {"Category": {"MainType": "Npc"}},
+        "InteractComponent": {"FlowListName": "fixture", "FlowId": 1, "StateId": 1,
+            "Actions": [{"Name": "OpenSystemBoard", "Params": {"SystemType": "Shop", "BoardId": 140}}]}}
+    native_entity = {"Id": 1, "MapId": 1, "EntityId": 300000061,
+                     "BlueprintType": "fixture", "ComponentsData": components}
+    files = {"blueprint/blueprintconfig.json": [{"Id": 1, "BlueprintType": "fixture", "EntityType": "Npc"}],
+             "template/templateconfig.json": [{"Id": 2, "BlueprintType": "fixture", "ComponentsData": {}}],
+             "level_entity/levelentityconfig.json": [native_entity],
+             "shop/shopfixed.json": [{"Id": 8, "ShopId": 140, "ItemId": 100, "ItemNum": 3, "Price": {"1": 20}}]}
+    for path, rows in files.items():
+        target = tmp_path / "BinData" / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(rows), encoding="utf-8")
+    writer = Writer(tmp_path / "out", "3.7.1")
+    assert compile_npcs(tmp_path, writer, {}) == {"character": 1}
+    writer.finish()
+    records = [json.loads(line) for line in (tmp_path / "out/graphs/global.jsonl").read_text(encoding="utf-8").splitlines()]
+    records.append({"from": "quest:3", "to": f"flow_state:{state}", "type": "references_flow_state",
+                    "basis": "fixture quest flow", "source": flow_source, "raw_path": "$[0]",
+                    "version": "3.7.1", "relation": "explicit_reference"})
+    for source, target, relation in (
+        (f"flow_state:{state}", f"action:{state}:1", "contains_action"),
+        (f"action:{state}:1", f"talk_item:{state}:1:0", "presents_talk_item"),
+        (f"action:{state}:1", f"talk_item:{state}:1:1", "presents_talk_item"),
+        (f"talk_item:{state}:1:0", "speaker:630", "spoken_by"),
+        (f"talk_item:{state}:1:1", "speaker:999", "spoken_by"),
+    ):
+        records.append({"from": source, "to": target, "type": relation,
+                        "basis": "fixture flow action", "source": flow_source, "raw_path": "$[0]",
+                        "version": "3.7.1", "relation": "explicit_reference"})
+    try:
+        async with engine.begin() as connection:
+            for schema in schemas.values():
+                await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+            for ddl in (
+                f"CREATE TABLE {o}.relation_type (id smallint PRIMARY KEY, key text, label text, description text, inverse_relation_id int, category text, directional boolean, created_at timestamptz DEFAULT now(), metadata jsonb DEFAULT '{{}}')",
+                f"CREATE TABLE {g}.node (id bigint PRIMARY KEY, type_id smallint, canonical_key text UNIQUE, slug text, created_release_id bigint, status text DEFAULT 'active', created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), metadata jsonb DEFAULT '{{}}')",
+                f"CREATE TABLE {g}.edge (id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, from_node_id bigint, relation_type_id smallint, to_node_id bigint, layer text, basis text, confidence float, created_release_id bigint, valid_from_release_id bigint, valid_to_release_id bigint, processor_run_id bigint, metadata jsonb DEFAULT '{{}}', UNIQUE(from_node_id,relation_type_id,to_node_id,layer,basis))",
+                f"CREATE TABLE {g}.edge_evidence (id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, edge_id bigint, release_id bigint, evidence_node_id bigint, source_record_id bigint, source_file_path text, source_raw_path text, explanation text, created_at timestamptz DEFAULT now(), UNIQUE(edge_id,release_id,source_file_path,source_raw_path))",
+                f"CREATE TABLE {c}.character (node_id bigint PRIMARY KEY, canonical_name text, name_key_id bigint, metadata jsonb)",
+                f"CREATE TABLE {c}.quest (node_id bigint PRIMARY KEY)",
+                f"CREATE TABLE {c}.quest_state (node_id bigint PRIMARY KEY, flow_list_name text, flow_id bigint, state_id bigint)",
+                f"CREATE TABLE {c}.dialogue_line (node_id bigint PRIMARY KEY)",
+                f"CREATE TABLE {r}.source_file (id bigint PRIMARY KEY, release_id bigint, logical_source_path text)",
+                f"CREATE TABLE {r}.source_record (id bigint PRIMARY KEY, release_id bigint, source_file_id bigint, row_index bigint, data jsonb)",
+                f"INSERT INTO {o}.relation_type(id,key) VALUES (1,'references_flow_state'),(2,'references_item'),(3,'presents_talk_item'),(4,'contains_action'),(5,'spoken_by')",
+                f"INSERT INTO {g}.node(id,type_id,canonical_key) VALUES (1,1,'character:npc:1'),(2,2,'flow_state:{state}'),(3,3,'item:100'),(4,4,'quest:3'),(5,5,'talk_item:{state}:1:0'),(6,6,'action:{state}:1'),(7,5,'talk_item:{state}:1:1'),(8,7,'speaker:630'),(9,7,'speaker:999')",
+                f"INSERT INTO {c}.quest VALUES (4)",
+                f"INSERT INTO {c}.quest_state VALUES (2,'fixture',1,1)",
+                f"INSERT INTO {c}.dialogue_line VALUES (5),(7)",
+            ):
+                await connection.execute(text(ddl))
+            npc = {"npc": {"blueprint_type": "fixture", "instances": [{"entity_id": 300000061}]}, "role_type": 6}
+            await connection.execute(text(f"INSERT INTO {c}.character VALUES (1, 'Fixture', 1, CAST(:data AS jsonb))"), {"data": json.dumps(npc)})
+            for identity, path, row in ((1, entity_source, native_entity),
+                    (2, flow_source, {"StateKey": state, "Actions": json.dumps(actions)}),
+                    (3, shop_source, files["shop/shopfixed.json"][0])):
+                await connection.execute(text(f"INSERT INTO {r}.source_file VALUES (:id,1,:path)"), {"id": identity, "path": path})
+                await connection.execute(text(f"INSERT INTO {r}.source_record VALUES (:id,1,:id,0,CAST(:data AS jsonb))"), {"id": identity, "data": json.dumps(row)})
+        adapter = SimpleNamespace(iter_edges=lambda: iter(records))
+        monkeypatch.setattr(npc_sales, "_release_id", AsyncMock(return_value=1))
+        monkeypatch.setattr(npc_sales, "prefetch_localizations", AsyncMock())
+        monkeypatch.setattr(npc_sales, "_localized", AsyncMock(return_value={"content": "Fixture"}))
+        async with AsyncSession(mapped) as session:
+            for _ in range(2):
+                assert await import_canonical_edges(adapter, session, 1) == 8
+                assert await import_npc_scenario_edges(session, 1, "3.7.1", entity_source) == 2
+                assert await session.scalar(select(func.count()).select_from(Edge)) == 9
+                assert await session.scalar(select(func.count()).select_from(EdgeEvidence)) == 10
+            assert await quests_for_state(session, 2, 1) == [4]
+            assert await npc_profile.npc_flow_state_ids(session, 1, {}, 1) == [2]
+            participants = (await session.execute(npc_profile.interaction_dialogue(1, [2]))).all()
+            assert {(row.line_id, row.speaker_id) for row in participants} == {(5, 8), (7, 9)}
+            assert await session.scalar(select(npc_profile.source_edge(1, 5, "presents_talk_item", 1)))
+            assert not await session.scalar(select(npc_profile.source_edge(1, 7, "presents_talk_item", 1)))
+            sales = await npc_sales.item_npc_sellers(100, limit=20, offset=0, session=session)
+            assert sales["total"] == 1 and sales["results"][0]["offers"][0]["quantity"] == 3
+            proofs = list(await session.scalars(select(EdgeEvidence)))
+            assert all(proof.source_record_id is not None for proof in proofs)
+    finally:
+        await mapped.dispose()
+        async with engine.begin() as connection:
+            for schema in schemas.values():
+                await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        await engine.dispose()
