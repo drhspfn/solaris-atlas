@@ -47,3 +47,17 @@ workers need a separate captured-ID graceful rollout; do not restart active
 media workers or use the broad worker deployment target. No schema migration is
 required. Rollback: restore prior immutable app/worker images; retained source
 and evidence remain available, and old readers ignore the new proof prefix.
+
+## Explicit contextual references
+
+Follow-up: preserve every unambiguous PlotGuest.Name -> RoleInfo.Name reference
+as `plot_guest -> character`, even when its speaker labels conflict. Structured
+edge metadata carries `identity_status` and `warnings`; the release-specific
+evidence explanation records the same warning. Existing guest -> speaker edges
+retain the original speaker array. Contextual role references never establish a
+global speaker identity, so a suspect Jianxin guest row does not assign Sigrika's
+lines to Jianxin. Missing or ambiguous role keys remain in raw guest records.
+
+The extended production dry-run found 182 missing evidence records across the
+same 13 snapshots: 76 speaker proofs plus 106 contextual role references. All
+endpoints exist. Updated targeted suite: 49 passed, one private-input test skipped.

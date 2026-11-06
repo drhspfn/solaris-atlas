@@ -38,6 +38,8 @@ async def test_real_speaker_crosswalk_batches_preserve_metadata_and_are_idempote
             {'from': f'speaker:{speaker}', 'to': 'character:1212',
              'type': 'references_character', 'relation': 'exact_join',
              'basis': 'Exact typed personal portrait reference: fixture head asset',
+             'crosswalk': {'method': 'exact_plot_guest_role', 'identity_status': 'suspect',
+                           'warnings': ['conflicting_speaker_name']},
              'source': 'BinData/speaker/speaker.json',
              'raw_path': f'$[{row}].HeadIconAsset', 'version': '3.7.0'}
             for speaker, row in ((400049, 5797), (800545, 6707))
@@ -62,6 +64,8 @@ async def test_real_speaker_crosswalk_batches_preserve_metadata_and_are_idempote
             proofs = list(await session.scalars(select(EdgeEvidence).order_by(EdgeEvidence.id)))
             assert [proof.source_record_id for proof in proofs] == [99, 100]
             assert all(proof.release_id == 21 for proof in proofs)
+            edges = list(await session.scalars(select(Edge)))
+            assert all(edge.metadata_json['crosswalk']['identity_status'] == 'suspect' for edge in edges)
             # Also compile the exact production PostgreSQL multi-row column keys.
             statement = postgresql.insert(SpeakerEntityLink.__table__).values([
                 {'speaker_node_id': link.speaker_node_id, 'entity_node_id': link.entity_node_id,

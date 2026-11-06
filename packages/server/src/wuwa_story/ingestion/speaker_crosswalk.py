@@ -15,11 +15,61 @@ SPEAKER_PATH = 'BinData/speaker/speaker.json'
 PERSONAL_PORTRAIT_BASIS = 'Exact typed personal portrait reference: '
 PLOT_GUEST_PATH = 'BinData/PlotGuest/plotguest.json'
 PLOT_GUEST_BASIS = 'Exact PlotGuest speaker reference with corroborated name: '
+PLOT_GUEST_ROLE_BASIS = 'Exact PlotGuest role reference: '
 PORTRAITS = {
     'HeadIconAsset': ('RoleHeadIconCircle', 'RoleHeadIconLarge'),
     'HeadRoundIconAsset': ('RoleHeadIconBig',),
     'HeadRoundIconAssetMaleVariant': ('RoleHeadIconBig',),
 }
+
+
+def plot_guest_role_links(roles, guests, *, english=None):
+    """Retain explicit presentation references, including suspicious ones.
+
+    A guest's role/name and its speaker array are separate source facts. These
+    contextual edges deliberately do not satisfy the speaker identity reader.
+    """
+    owners = {}
+    for row, role in roles:
+        key = role.get('Name')
+        if isinstance(key, str) and type(role.get('Id')) is int:
+            owners.setdefault(key, []).append((row, role))
+    english = english or {}
+
+    def display(key):
+        value = english.get(key)
+        content = value.get('content') if isinstance(value, dict) else None
+        return content.strip() if isinstance(content, str) else ''
+
+    for row, guest in guests:
+        key = guest.get('Name')
+        matches = owners.get(key, []) if isinstance(key, str) else []
+        if len(matches) != 1 or type(guest.get('GuestID')) is not int:
+            continue
+        role_row, role = matches[0]
+        speaker_ids = guest.get('SpeakerID')
+        speaker_ids = speaker_ids if isinstance(speaker_ids, list) else []
+        name = display(key)
+        names = [display(f'Speaker_{identity}_Name') for identity in speaker_ids
+                 if type(identity) is int]
+        warnings = []
+        if not name or not names or any(not value for value in names):
+            warnings.append('missing_resolved_name')
+        if name and any(value and value != name for value in names):
+            warnings.append('conflicting_speaker_name')
+        status = 'suspect' if warnings else 'corroborated'
+        yield {
+            'from': f"plot_guest:{guest['GuestID']}", 'to': f"character:{role['Id']}",
+            'type': 'references_character', 'relation': 'exact_join',
+            'source': PLOT_GUEST_PATH, 'raw_path': f'$[{row}].Name',
+            'basis': (PLOT_GUEST_ROLE_BASIS + f"{key} = {ROLE_PATH}$[{role_row}].Name; "
+                      f"identity_status={status}; warnings={','.join(warnings) or 'none'}; "
+                      'presentation reference, not a global speaker identity'),
+            'crosswalk': {'method': 'exact_plot_guest_role', 'identity_status': status,
+                          'warnings': warnings, 'role_id': role['Id'],
+                          'role_file': ROLE_PATH, 'role_row': role_row,
+                          'speaker_ids': [value for value in speaker_ids if type(value) is int]},
+        }
 
 
 def speaker_character_links(roles, speakers, main_roles=(), *, guests=(), english=None):

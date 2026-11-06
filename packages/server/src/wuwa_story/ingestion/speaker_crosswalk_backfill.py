@@ -1,4 +1,4 @@
-"""Repair proven speaker identities from retained source rows, dry-run by default.
+"""Repair speaker identities and guest role references, dry-run by default.
 
 Select --release-id and optionally --role-id for a report. --apply requires an
 explicit role selection and adds missing source evidence/convenience links only.
@@ -30,8 +30,10 @@ from wuwa_story.ingestion.speaker_crosswalk import (
     PERSONAL_PORTRAIT_BASIS,
     PLOT_GUEST_BASIS,
     PLOT_GUEST_PATH,
+    PLOT_GUEST_ROLE_BASIS,
     ROLE_PATH,
     SPEAKER_PATH,
+    plot_guest_role_links,
     speaker_character_links,
 )
 
@@ -67,7 +69,7 @@ async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=5
     guest_names = {raw.get('Name') for _, raw in groups[PLOT_GUEST_PATH]
                    if isinstance(raw.get('Name'), str) and raw.get('Name')}
     loc_keys = {raw['Name'] for _, raw in groups[ROLE_PATH]
-                if raw.get('RoleType') == 1 and raw.get('Name') in guest_names}
+                if raw.get('Name') in guest_names}
     loc_keys.update(f'Speaker_{identity}_Name' for _, raw in groups[PLOT_GUEST_PATH]
                     for identity in (raw.get('SpeakerID') if isinstance(raw.get('SpeakerID'), list) else [])
                     if type(identity) is int)
@@ -79,10 +81,12 @@ async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=5
         .where(LocalizationValue.release_id == release_id, Locale.code == 'en',
                LocalizationValue.status == 'resolved_nonempty', LocalizationKey.key.in_(loc_keys))
     )} if loc_keys else {}
-    candidates = [link for link in speaker_character_links(
+    links = list(speaker_character_links(
         groups[ROLE_PATH], groups[SPEAKER_PATH], [raw for _, raw in groups[MAIN_ROLE_PATH]],
         guests=groups[PLOT_GUEST_PATH], english=english,
-    ) if not role_ids or int(link['to'].split(':')[1]) in role_ids]
+    ))
+    links.extend(plot_guest_role_links(groups[ROLE_PATH], groups[PLOT_GUEST_PATH], english=english))
+    candidates = [link for link in links if not role_ids or int(link['to'].split(':')[1]) in role_ids]
     if len(candidates) > max_links:
         raise ValueError('Candidate links exceed max_links; narrow the selected roles')
     keys = {link[side] for link in candidates for side in ('from', 'to')}
@@ -115,7 +119,8 @@ async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=5
                           SourceFile.logical_source_path == path,
                           EdgeEvidence.explanation.startswith(basis, autoescape=True))
                      for path, basis in ((SPEAKER_PATH, PERSONAL_PORTRAIT_BASIS),
-                                         (PLOT_GUEST_PATH, PLOT_GUEST_BASIS)))),
+                                         (PLOT_GUEST_PATH, PLOT_GUEST_BASIS),
+                                         (PLOT_GUEST_PATH, PLOT_GUEST_ROLE_BASIS)))),
                source.c.canonical_key.in_(keys), target.c.canonical_key.in_(keys))
     )) if records else set()
     typed = set(await session.execute(
@@ -125,7 +130,8 @@ async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=5
         )
     )) if records else set()
     missing = [link for link in records if (link['from'], link['to'], link['source'], link['raw_path']) not in existing
-               or (known[link['from']], known[link['to']]) not in typed]
+               or (link['from'].startswith('speaker:')
+                   and (known[link['from']], known[link['to']]) not in typed)]
     if apply and missing:
         # Existing importer owns graph/evidence/link conflict handling. Replaying
         # an already evidenced edge also repairs its missing convenience link.
@@ -137,7 +143,8 @@ async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=5
         'missing_links': len(missing), 'written': len(missing) if apply else 0,
         'affected_characters': sorted({known[link['to']] for link in missing}),
         'role_ids': sorted({int(link['to'].split(':')[1]) for link in missing}),
-        'speaker_ids': sorted({int(link['from'].split(':')[1]) for link in missing}),
+        'speaker_ids': sorted({int(link['from'].split(':')[1]) for link in missing
+                               if link['from'].startswith('speaker:')}),
     }
 
 

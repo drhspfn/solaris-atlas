@@ -212,3 +212,34 @@ def test_ambiguous_guest_targets_and_personal_portrait_conflicts_stay_unresolved
     result = guest_links(roles, speakers, guests[:1], english)
     assert len(result) == 1 and result[0]['to'] == 'character:2'
     assert result[0]['crosswalk']['method'] == 'exact_personal_portrait'
+
+def test_guest_context_preserves_conflicting_source_without_promoting_identity():
+    from wuwa_story.ingestion.speaker_crosswalk import plot_guest_role_links
+    roles = [{'Id': 1412, 'RoleType': 1, 'Name': 'sigrika'},
+             {'Id': 1405, 'RoleType': 1, 'Name': 'jianxin'}]
+    guests = [{'GuestID': 1005, 'Name': 'jianxin', 'SpeakerID': [150088]},
+              {'GuestID': 1010, 'Name': 'sigrika', 'SpeakerID': [150088]}]
+    english = {k: {'content': v} for k, v in {'sigrika': 'Sigrika', 'jianxin': 'Jianxin',
+                                           'Speaker_150088_Name': 'Sigrika'}.items()}
+    records = list(plot_guest_role_links(enumerate(roles), enumerate(guests), english=english))
+    assert [(r['from'], r['to']) for r in records] == [
+        ('plot_guest:1005', 'character:1405'), ('plot_guest:1010', 'character:1412')]
+    assert records[0]['crosswalk']['identity_status'] == 'suspect'
+    assert records[0]['crosswalk']['warnings'] == ['conflicting_speaker_name']
+    assert 'identity_status=suspect' in records[0]['basis']
+    assert records[0]['raw_path'] == '$[0].Name'
+    assert records[1]['crosswalk']['identity_status'] == 'corroborated'
+    identities = list(speaker_character_links(enumerate(roles), [(0, {'Id': 150088})],
+                                            guests=enumerate(guests), english=english))
+    assert {r['to'] for r in identities} == {'character:1412'}
+
+
+def test_guest_context_keeps_unknown_names_but_does_not_guess_ambiguous_role_keys():
+    from wuwa_story.ingestion.speaker_crosswalk import plot_guest_role_links
+    guest = {'GuestID': 1, 'Name': 'key', 'SpeakerID': [3]}
+    roles = [{'Id': 2, 'Name': 'key'}]
+    result = list(plot_guest_role_links(enumerate(roles), [(0, guest)]))
+    assert result[0]['crosswalk']['warnings'] == ['missing_resolved_name']
+    assert result[0]['crosswalk']['identity_status'] == 'suspect'
+    roles.append({'Id': 4, 'Name': 'key'})
+    assert not list(plot_guest_role_links(enumerate(roles), [(0, guest)]))

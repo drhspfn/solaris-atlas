@@ -22,7 +22,7 @@ def fixture(monkeypatch, *, family=False, guest=False):
                 (repair.SPEAKER_PATH, 410, {'Id': 317, 'RolePileIconAsset': '/female'}),
                 (repair.SPEAKER_PATH, 1612, {'Id': 1450, 'RolePileIconAsset': '/male'})]
     if guest:
-        known = {'speaker:108': 108, 'character:1402': 1402}
+        known = {'speaker:108': 108, 'character:1402': 1402, 'plot_guest:1': 1001}
         rows = [(repair.ROLE_PATH, 1, {'Id': 1402, 'RoleType': 1, 'Name': 'role_name'}),
                 (repair.SPEAKER_PATH, 0, {'Id': 108}),
                 (repair.PLOT_GUEST_PATH, 0, {'GuestID': 1, 'Name': 'role_name', 'SpeakerID': [108]})]
@@ -39,6 +39,7 @@ def fixture(monkeypatch, *, family=False, guest=False):
             assert 'edge_evidence.release_id = 21' in query
             assert 'source_file.logical_source_path' in query
             assert repair.PLOT_GUEST_PATH in query and repair.PLOT_GUEST_BASIS in query
+            assert repair.PLOT_GUEST_ROLE_BASIS in query
             return evidence
         if 'i18n.localization_key' in query:
             assert 'localization_value.release_id = 21' in query
@@ -60,7 +61,8 @@ def fixture(monkeypatch, *, family=False, guest=False):
         assert selected_session is session and release_id == 21
         for row in adapter.iter_edges():
             evidence.add((row['from'], row['to'], row['source'], row['raw_path']))
-            typed.add((known[row['from']], known[row['to']]))
+            if row['from'].startswith('speaker:'):
+                typed.add((known[row['from']], known[row['to']]))
 
     session.execute.side_effect = execute
     imported = AsyncMock(side_effect=importer)
@@ -150,7 +152,33 @@ async def test_guest_repair_does_not_confuse_source_files_and_is_idempotent(monk
     session, imported, _, evidence, typed = fixture(monkeypatch, guest=True)
     evidence.add(('speaker:108', 'character:1402', repair.SPEAKER_PATH, '$[0].SpeakerID[0]'))
     typed.add((108, 1402))
-    assert (await repair.backfill(session, 21, [1402], apply=True))['written'] == 1
+    assert (await repair.backfill(session, 21, [1402], apply=True))['written'] == 2
     assert ('speaker:108', 'character:1402', repair.PLOT_GUEST_PATH, '$[0].SpeakerID[0]') in evidence
+    assert ('plot_guest:1', 'character:1402', repair.PLOT_GUEST_PATH, '$[0].Name') in evidence
+    assert typed == {(108, 1402)}
     assert (await repair.backfill(session, 21, [1402], apply=True))['written'] == 0
     imported.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_context_only_repair_keeps_warning_and_requires_no_typed_speaker_link(monkeypatch):
+    session, imported, _, evidence, typed = fixture(monkeypatch, guest=True)
+    original_execute = session.execute.side_effect
+
+    async def execute(statement, *args):
+        query = str(statement.compile(dialect=postgresql.dialect(), compile_kwargs={'literal_binds': True}))
+        if 'i18n.localization_key' in query:
+            return [('role_name', 'Yangyang'), ('Speaker_108_Name', 'Someone else')]
+        return await original_execute(statement, *args)
+
+    session.execute.side_effect = execute
+    result = await repair.backfill(session, 21, [1402], apply=True)
+    assert result['candidate_links'] == result['written'] == 1
+    assert result['speaker_ids'] == [] and result['role_ids'] == [1402]
+    adapter = imported.await_args.args[0]
+    link, = adapter.iter_edges()
+    assert link['crosswalk']['identity_status'] == 'suspect'
+    assert 'conflicting_speaker_name' in link['crosswalk']['warnings']
+    assert evidence == {('plot_guest:1', 'character:1402', repair.PLOT_GUEST_PATH, '$[0].Name')}
+    assert typed == set()
+    assert (await repair.backfill(session, 21, [1402], apply=True))['written'] == 0

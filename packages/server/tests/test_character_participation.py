@@ -147,6 +147,18 @@ def test_guest_proof_requires_matching_source_and_release(graph):
         assert graph.rows(select(crosswalk.c.speaker_id)) == []
 
 
+def test_guest_role_context_is_not_speaker_identity_proof(graph):
+    from wuwa_story.ingestion.speaker_crosswalk import PLOT_GUEST_PATH, PLOT_GUEST_ROLE_BASIS
+
+    graph.db.execute('INSERT INTO raw.source_file VALUES (4,?,1)', (PLOT_GUEST_PATH,))
+    graph.db.execute('INSERT INTO raw.source_record VALUES (4,1,0,4)')
+    graph.db.execute('UPDATE graph.edge_evidence SET explanation=?,source_file_path=?,source_record_id=4 '
+                     'WHERE edge_id IN (SELECT id FROM graph.edge WHERE from_node_id=4 AND to_node_id=10)',
+                     (PLOT_GUEST_ROLE_BASIS + 'fixture', PLOT_GUEST_PATH))
+    crosswalk = speaker_crosswalk(1, [10])
+    assert graph.rows(select(crosswalk.c.speaker_id)) == []
+
+
 @pytest.mark.asyncio
 async def test_relation_index_has_caption_dungeon_refs_and_excludes_every_own_family_role(graph, monkeypatch):
     async def execute(statement):
