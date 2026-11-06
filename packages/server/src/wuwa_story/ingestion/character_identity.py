@@ -46,6 +46,8 @@ def character_kind(role_type):
         return "playable"
     if role_type in (2, 4, 5):
         return "story"
+    if role_type == 6:
+        return "npc"
     return "technical"
 
 

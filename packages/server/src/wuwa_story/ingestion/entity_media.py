@@ -94,6 +94,10 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
         kind, _, identifier = key.partition(":")
         if node is None:
             raise ValueError(f"Unsupported media entity: {key}")
+        if key.startswith('character:npc:'):
+            # Native NPCs have model recipes, not RoleInfo portrait/skill IDs.
+            # A shared speaker card cannot authorize a personal avatar export.
+            continue
         raw = await session.scalar(
             select(SourceRecord.data)
             .join(NodeRevision, NodeRevision.source_record_id == SourceRecord.id)

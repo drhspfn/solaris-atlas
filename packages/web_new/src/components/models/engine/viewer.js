@@ -6,6 +6,8 @@ import { BoneCamera, cameraBones } from './camera-rig.js';
 import { RootMotionLock } from './root-motion.js';
 import { FacialAnimation } from './facial.js';
 import { attachAnimationCatalog, bindAnimationClips, prepareAnimatedMeshes } from './animations.js';
+import { declaredAccessories } from './accessories.js';
+import { createLinkedModels } from './linked-models.js';
 
 /** Dispose shared GPU resources once, including failed/obsolete model loads. */
 export function disposeObject(root) {
@@ -21,6 +23,29 @@ export function disposeObject(root) {
   for (const resource of resources) resource.dispose();
 }
 
+// Only asset fields authorize origins; component metadata and scene cues do not.
+// The API permits at most 32 linked models. Bound traversal defensively too.
+export function declaredResourceOrigins(assets, base) {
+  const origins = new Set(), pending = [assets], visited = new Set();
+  while (pending.length && visited.size < 33) {
+    const item = pending.shift();
+    if (!item || typeof item !== 'object' || visited.has(item)) continue;
+    visited.add(item);
+    for (const key of ['preview', 'download', 'animations', 'facial', 'physics']) {
+      if (typeof item[key]?.url !== 'string') continue;
+      try {
+        const url = new URL(item[key].url, base);
+        if (!url.username && !url.password && ['http:', 'https:'].includes(url.protocol)
+            && (new URL(base).protocol !== 'https:' || url.protocol === 'https:')) origins.add(url.origin);
+      } catch { /* Invalid resource URLs are rejected when requested. */ }
+    }
+    if (Array.isArray(item.linked_models)) {
+      for (const child of item.linked_models.slice(0, 33 - visited.size)) pending.push(child);
+    }
+  }
+  return origins;
+}
+
 /**
  * Browser-only renderer. React owns all controls; this module owns the canvas and GPU lifecycle.
  * @param {HTMLElement} host
@@ -34,6 +59,8 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   let disposed = false, settings = initialSettings, model, gltf, mixer, action, physics, root, face;
   let clips = [], animationPack, boneList, applied = false, full = false;
   let qualityRequest, facialRequest, animationRequest, installations = Promise.resolve();
+  let accessories, linked;
+  const accessoryVisibility = {};
   const commandRequests = new Map();
   const loading = { quality: false, animations: false, facial: false };
   const loadErrors = { quality: '', animations: '', facial: '' };
@@ -50,7 +77,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   let previousTime = 0, lastReport = 0, height = 1.8, width = 1.2;
   const abort = new AbortController();
   const emit = patch => { if (!disposed) onState(patch); };
-  const origins = new Set(Object.values(assets).filter(value => value?.url).map(value => new URL(value.url, location.href).origin));
+  const origins = declaredResourceOrigins(assets, location.href);
   function resource(value) {
     const url = new URL(value, location.href);
     if (url.username || url.password || !['http:', 'https:'].includes(url.protocol)
@@ -111,6 +138,12 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     return data;
   }
   function restore() { if (applied) { physics.restore(); applied = false; } }
+  function updateMixer(delta) {
+    accessories?.restore();
+    mixer.update(delta);
+    accessories?.apply();
+    linked?.sync();
+  }
   function resetPhysics() { restore(); physics?.reset(); }
   function reset() {
     follow.detach(); camera.up.set(0, 1, 0); controls.target.copy(target);
@@ -129,8 +162,8 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   function selectAnimation(name) {
     const clip = clips.find(item => item.name === name);
     if (!clip || !mixer) return;
-    resetPhysics(); mixer.stopAllAction();
-    action = mixer.clipAction(clip); action.reset().play(); mixer.update(0);
+    resetPhysics(); accessories?.restore(); mixer.stopAllAction();
+    action = mixer.clipAction(clip); action.reset().play(); updateMixer(0);
     face?.update(name, 0); root?.apply();
     emit({ animation: name }); reportTime();
   }
@@ -144,7 +177,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     if (initial) {
       selectAnimation(initial);
       if (initial === previous?.name) {
-        action.time = previous.time; mixer.update(0); face?.update(initial, action.time); reportTime();
+        action.time = previous.time; updateMixer(0); face?.update(initial, action.time); reportTime();
       }
     }
   }
@@ -180,8 +213,12 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     const previous = { name: action?.getClip().name, time: action?.time || 0, rotation: model?.rotation.clone() };
     resetPhysics(); root?.restore(); follow.detach();
     if (mixer) { mixer.stopAllAction(); mixer.uncacheRoot(model); }
+    linked?.detach();
     if (model) { stage.remove(model); disposeObject(model); }
     gltf = loaded; model = loaded.scene; stage.add(model); prepareAnimatedMeshes(model);
+    const declared = accessories = declaredAccessories(model, accessoryVisibility);
+    for (const option of declared.options) accessoryVisibility[option.name] = option.visible;
+    emit({ accessories: declared.options });
     const bounds = new THREE.Box3().setFromObject(model);
     const center = bounds.getCenter(new THREE.Vector3());
     height = bounds.max.y - bounds.min.y; width = bounds.max.x - bounds.min.x;
@@ -194,6 +231,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     if (!upgrading) reset();
     else if (previous.rotation) model.rotation.copy(previous.rotation);
     mixer = new THREE.AnimationMixer(model); action = undefined;
+    linked?.reattach();
     installClips(next, previous);
     if (clips.length) {
       model.updateMatrixWorld(true);
@@ -304,7 +342,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     if (mixer) {
       restore(); root?.restore();
       if (settings.turntable && !preview) model.rotation.y += delta * 0.5;
-      mixer.update(settings.playing && !preview ? delta * settings.speed : 0); root?.apply();
+      updateMixer(settings.playing && !preview ? delta * settings.speed : 0); root?.apply();
       if (physics && settings.physics && (settings.playing || settings.turntable) && !preview) {
         if (!delta) physics.reset(); physics.update(delta, settings.strength); applied = delta > 0;
       }
@@ -313,16 +351,26 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     if (milliseconds - lastReport > 100) { reportTime(); lastReport = milliseconds; }
     follow.update(); controls.update(); renderer.render(scene, camera);
   });
+  if (!preview && (assets.linked_models?.length || assets.scene?.cues?.length)) {
+    linked = createLinkedModels({ assets, load: loadGLB, dispose: disposeObject,
+      report: components => emit({ components }), getRoot: () => model, getParser: () => gltf?.parser, getAction: () => action });
+  }
   loadGLB(assets.preview.url).then(async loaded => {
-    try { await mutate(() => install(loaded)); }
+    try { await mutate(() => install(loaded)); linked?.start(); }
     catch (error) { if (loaded.scene !== model) disposeObject(loaded.scene); throw error; }
   }).catch(error => emit({ error: error.message, ready: false }));
   return {
     settings: applySettings, command, animation: selectAnimation,
+    component(id, visible) { linked?.set(id, visible); },
+    accessory(name, visible) {
+      if (!accessories?.set(name, visible)) return;
+      accessoryVisibility[name] = visible;
+      emit({ accessories: [...accessories.nodes.keys()].map(name => ({ name, visible: accessoryVisibility[name] })) });
+    },
     face(name) { face?.select(name); face?.update(action?.getClip().name, action?.time || 0); emit({ face: name }); reportTime(); },
     seek(time) {
       resetPhysics();
-      if (action) { action.time = THREE.MathUtils.clamp(time, 0, action.getClip().duration); mixer.update(0); root?.apply(); }
+      if (action) { action.time = THREE.MathUtils.clamp(time, 0, action.getClip().duration); updateMixer(0); root?.apply(); }
       else if (face) face.time = Math.max(0, time);
       face?.update(action?.getClip().name, action?.time || 0); reportTime();
     },
@@ -332,6 +380,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
       document.removeEventListener('visibilitychange', visibility);
       renderer.domElement.removeEventListener('webglcontextlost', contextLost);
       controls.dispose(); mixer?.stopAllAction(); if (model) mixer?.uncacheRoot(model);
+      linked?.dispose();
       disposeObject(scene); scene.clear(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();
     },
   };

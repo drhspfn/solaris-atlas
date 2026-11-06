@@ -30,6 +30,7 @@ async def enqueue_release_media(
     story_media_only: bool = False,
     cutscenes_only: bool = False,
     repair_story: bool = False,
+    npc_catalog_only: bool = False,
 ) -> dict:
     release = await session.get(GameRelease, release_id)
     if release is None:
@@ -40,7 +41,7 @@ async def enqueue_release_media(
     await session.execute(insert(Processor).values(key=PROCESSOR, version="1")
                           .on_conflict_do_nothing(index_elements=[Processor.key]))
     processor = await session.scalar(select(Processor.id).where(Processor.key == PROCESSOR))
-    if event_artwork_only or notices_only or story_structure_only:
+    if event_artwork_only or notices_only or story_structure_only or npc_catalog_only:
         entities, cutscenes, voices = [], [], []
     else:
         present = select(NodeRevision.node_id).where(
@@ -63,12 +64,15 @@ async def enqueue_release_media(
                 voices = list(await session.scalars(select(VoiceReference.file_name).where(
                     VoiceReference.node_id.in_(present), VoiceReference.file_name.is_not(None))
                     .distinct().order_by(VoiceReference.file_name)))
-    characters = [key for key in entities if key.startswith("character:")]
+    characters = [key for key in entities if key.startswith("character:") and not key.startswith('character:npc:')]
+    entities = [key for key in entities if not key.startswith('character:npc:')]
     if illustrations_only:
         cutscenes, voices, characters = [], [], []
     if story_media_only:
         voices, characters = [], []
     specs = [("prepare", [])]
+    if npc_catalog_only:
+        specs.append(("npc_catalog", ["npc-catalog:v1"]))
     if notices_only:
         specs.append(("event_notices", ["en"]))
     if event_artwork_only:
@@ -79,7 +83,7 @@ async def enqueue_release_media(
         specs.append(("cutscene_assets", sorted(set(cutscenes))))
     if not (event_artwork_only or notices_only) and (voices or characters or cutscenes):
         specs.append(("voice_packages", []))
-    if not (event_artwork_only or notices_only):
+    if not (event_artwork_only or notices_only or npc_catalog_only):
         if not illustrations_only and not story_media_only and not cutscenes_only:
             specs.append(("tree_order", []))
         specs.extend(("images", batch) for batch in batches(entities))
@@ -105,6 +109,8 @@ async def enqueue_release_media(
                 request['repair_story'] = 1
                 # Revisit old completed graph repairs; keep published media reusable.
                 request['story_repair_revision'] = 2
+        if kind == 'npc_catalog':
+            request['npc_schema'] = 1
         if kind == 'images' and any(key.startswith('flow_state:') for key in targets):
             request['illustration_schema'] = 6
         digest = hashlib.sha256(json.dumps(
@@ -135,9 +141,11 @@ async def enqueue_release_media(
             queue = "wuwa.release-images.v1"
         if kind in {"cutscene", "cutscene_assets"} and request.get('cutscene_assembly_schema', 0) >= 2:
             queue = CUTSCENE_ASSEMBLY_QUEUE
-        if (event_artwork_only and kind == "event_catalog" or notices_only and kind == "event_notices") and run.status == "completed":
+        if (event_artwork_only and kind == "event_catalog" or notices_only and kind == "event_notices"
+                or npc_catalog_only and kind == "npc_catalog") and run.status == "completed":
             # An explicit reimport must revisit failed/partial image children,
-            # while successful extraction work remains reusable.
+            # or resolve NPC edges whose endpoints were imported afterwards.
+            # Successful extraction work remains reusable.
             run.status = "pending"
         already_queued = run.status == "queued" and (
             run.metadata_json or {}).get("queue", QUEUE) == queue

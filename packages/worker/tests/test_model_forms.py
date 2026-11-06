@@ -2,7 +2,142 @@ from copy import deepcopy
 
 import pytest
 
-from wuwa_story_worker.model_forms import resolve_model_forms
+from wuwa_story_worker.model_forms import resolve_model_forms, resolve_npc_forms
+from wuwa_story_worker.model_sources import (
+    npc_animation_references,
+    npc_blueprint_attachments,
+    npc_material_overrides,
+    npc_model_sources,
+)
+
+
+def test_npc_model_sources_use_iris_authored_mesh_and_abp():
+    # BlueprintConfig 17288 and its template, from the extracted game metadata.
+    root = "/Game/Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003"
+    component = {"Disabled": False, "ModelType": {
+        "Type": "Npc",
+        "NpcModel": {"Type": "Mesh", "Mesh": f"{root}/Model/NH_FemaleMS_003.NH_FemaleMS_003"},
+        "Abp": f"{root}/ABP_NH_MN_FemaleMS_003.ABP_NH_MN_FemaleMS_003_C",
+    }}
+    assert npc_model_sources(component) == {
+        "model": "Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003/Model/NH_FemaleMS_003",
+        "blueprints": ["Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003/ABP_NH_MN_FemaleMS_003"],
+    }
+    component["ModelType"]["NpcModel"] = {"Type": "Da", "Da": root + "/Other"}
+    assert npc_model_sources(component)['data_asset'] == root[6:] + '/Other'
+
+
+def test_avidius_model_outside_model_directory_is_valid():
+    # BlueprintConfig 16697; SkeletalMesh and its exact skeleton are verified in metadata.
+    mesh = "/Game/Aki/Character/NPC/MaleM/Special/NH_MaleM_136_02/NH_MaleM_136_02.NH_MaleM_136_02"
+    component = {"ModelType": {"Type": "Npc", "NpcModel": {"Type": "Mesh", "Mesh": mesh},
+        "Abp": "/Game/Aki/Character/NPC/MaleM/BPData/ABP_NH_MaleM_136.ABP_NH_MaleM_136_C"}}
+    assert npc_model_sources(component)["model"] == mesh[6:].split(".")[0]
+
+
+@pytest.mark.parametrize("mesh", [
+    "/Game/Aki/Character/Role/FemaleM/Yangyang/Model/Yangyang.Yangyang",
+    "/Game/Aki/Character/Monster/MonsterNPC/Model/MonsterNPC.MonsterNPC",
+])
+def test_npc_authored_mesh_is_not_restricted_to_npc_directory(mesh):
+    component = {"ModelType": {"Type": "Npc", "NpcModel": {"Type": "Mesh", "Mesh": mesh}}}
+    assert npc_model_sources(component)["model"] == mesh[6:].split(".")[0]
+
+
+def test_rosemary_blueprint_accessory_keeps_socket_and_local_transform():
+    # SCS_Node_2 and WeaponCase0_GEN_VARIABLE from BP_NH_FemaleMS_002.
+    rows = [
+        {"Type": "SCS_Node", "Properties": {
+            "ComponentTemplate": {"ObjectName": "SkeletalMeshComponent'BP_NH_FemaleMS_002_C:WeaponCase0_GEN_VARIABLE'"},
+            "AttachToName": "WeaponProp02", "ParentComponentOrVariableName": "CharacterMesh0",
+            "InternalVariableName": "WeaponCase0",
+        }},
+        {"Type": "SkeletalMeshComponent", "Name": "WeaponCase0_GEN_VARIABLE", "Properties": {
+            "SkeletalMesh": {"ObjectPath": "/Game/Aki/Character/NPC/NPCProp/NWP052/Model/NWP052"},
+            "RelativeLocation": {"X": -0.086826526, "Y": -0.24841629, "Z": 0.039789926},
+            "RelativeRotation": {"Pitch": 0.00022539623, "Yaw": 0.00013616816, "Roll": 4.001002},
+        }},
+    ]
+    accessory, = npc_blueprint_attachments(rows)
+    assert accessory["model"] == "Aki/Character/NPC/NPCProp/NWP052/Model/NWP052"
+    assert (accessory["name"], accessory["parent"], accessory["socket"]) == (
+        "WeaponCase0", "CharacterMesh0", "WeaponProp02")
+    assert accessory["location"]["Y"] == -0.24841629
+    assert accessory["rotation"]["Roll"] == 4.001002
+    assert accessory["visible"] is True
+
+
+def test_npc_forms_preserve_instance_model_overrides():
+    root = "/Game/Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003"
+    component = {"ModelType": {"Type": "Npc", "NpcModel": {
+        "Type": "Mesh", "Mesh": root + "/Model/NH_FemaleMS_003.NH_FemaleMS_003"},
+        "Abp": root + "/ABP_NH_MN_FemaleMS_003.ABP_NH_MN_FemaleMS_003_C"}}
+    npc = {"blueprint_id": 17288, "model": component, "components": {"ModelComponent": component},
+           "instances": [{"entity_id": 42, "map_id": 1, "components": {"ModelComponent": {
+               "ModelType": {"Abp": root + "/ABP_Alternate.ABP_Alternate_C"}}}}]}
+    forms = resolve_npc_forms(npc)
+    assert [form["id"] for form in forms] == ["default", "mesh-17288-form-2"]
+    assert forms[0]["model"] == forms[1]["model"]
+    assert forms[1]["blueprints"] == [root.removeprefix("/Game/") + "/ABP_Alternate"]
+    assert forms[1]["source"]["entity_id"] == 42
+
+
+def test_npc_forms_deduplicate_interactions_and_union_montages():
+    root = "/Game/Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003"
+    component = {"ModelType": {"Type": "Npc", "NpcModel": {"Type": "Mesh",
+        "Mesh": root + "/Model/NH_FemaleMS_003.NH_FemaleMS_003"},
+        "Abp": root + "/ABP_NH_MN_FemaleMS_003.ABP_NH_MN_FemaleMS_003_C",
+        "BlueprintPath": root + "/BP_NH_FemaleMS_003.BP_NH_FemaleMS_003_C"}}
+    npc = {"blueprint_id": 17288, "model": component, "components": {"ModelComponent": component},
+           "instances": [{"entity_id": i, "map_id": 1, "components": {
+               "InteractComponent": {"State": i, "ActionMontage": root + f"/CommonAnim/Montage/Action{i}"},
+               "NpcPerformComponent": {"Shop": i}}} for i in range(12)]}
+    forms = resolve_npc_forms(npc)
+    assert len(forms) == 1
+    assert len(forms[0]["montages"]) == 12
+    assert "InteractComponent" not in forms[0]["npc_components"]
+
+
+def test_npc_forms_distinguish_blueprints_and_accessory_overrides():
+    root = "/Game/Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003"
+    component = {"ModelType": {"Type": "Npc", "NpcModel": {"Type": "Mesh",
+        "Mesh": root + "/Model/NH_FemaleMS_003.NH_FemaleMS_003"},
+        "Abp": root + "/ABP_NH_MN_FemaleMS_003.ABP_NH_MN_FemaleMS_003_C",
+        "BlueprintPath": root + "/BP_One.BP_One_C"}}
+    npc = {"blueprint_id": 17288, "components": {"ModelComponent": component},
+           "instances": [{"entity_id": 1, "components": {"ModelComponent": {"ModelType": {
+               "BlueprintPath": root + "/BP_Two.BP_Two_C"}}}}]}
+    forms = resolve_npc_forms(npc)
+    assert len(forms) == 2
+    assert forms[0]["model"] == forms[1]["model"]
+    assert forms[0]["component_blueprint"] != forms[1]["component_blueprint"]
+    npc["instances"].append({"entity_id": 2, "components": {"AccessoryComponent": {"Mesh": "hat"}}})
+    assert len(resolve_npc_forms(npc)) == 3
+
+
+def test_npc_animation_references_follow_authored_abp_sequences():
+    path = "/Game/Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003/CommonAnim/Stand01"
+    assert npc_animation_references([{"Properties": {"Sequence": {
+        "ObjectName": "AnimSequence'Stand01'", "ObjectPath": path}}}]) == {path[6:]}
+    assert npc_animation_references({"ObjectName": "AnimSequence'Stand01'",
+        "ObjectPath": "Client/Content/" + path[6:] + ".0"}) == {path[6:]}
+
+
+def test_npc_blueprint_material_overrides_keep_slot_indices():
+    rows = [{"Type": "SkeletalMeshComponent", "Name": "CharacterMesh0", "Properties": {
+        "OverrideMaterials": [None, {"ObjectPath": "Client/Content/Aki/Character/NPC/Materials/Face.3"}]
+    }}]
+    assert npc_material_overrides(rows) == {1: "Aki/Character/NPC/Materials/Face"}
+    rows.append({"Type": "SkeletalMeshComponent", "Name": "CharacterMesh0", "Properties": {
+        "OverrideMaterials": [None, {"ObjectPath": "/Game/Aki/Character/NPC/Materials/Other"}]
+    }})
+    with pytest.raises(ValueError, match="Conflicting"):
+        npc_material_overrides(rows)
+    rows[0]["Name"] = "CharacterMesh0_GEN_VARIABLE"
+    rows.pop()
+    rows.append({"Type": "SCS_Node", "Properties": {"InternalVariableName": "CharacterMesh0",
+        "ComponentTemplate": {"ObjectName": "SkeletalMeshComponent'BP_C:CharacterMesh0_GEN_VARIABLE'"}}})
+    assert npc_material_overrides(rows) == {1: "Aki/Character/NPC/Materials/Face"}
 
 # Only identity fields from scratch/{roleinfo,preload,rolemorph}-3.7.json.
 # Keep these independent of the local scratch files and database.

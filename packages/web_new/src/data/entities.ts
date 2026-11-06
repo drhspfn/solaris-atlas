@@ -7,7 +7,7 @@ export type Entity = {
   canonical_key: string;
   node_type: string;
   category?: Category;
-  character_kind?: 'playable' | 'story' | 'technical';
+  character_kind?: 'playable' | 'story' | 'npc' | 'technical';
   alias?: string;
   title?: string;
   slug?: string | null;

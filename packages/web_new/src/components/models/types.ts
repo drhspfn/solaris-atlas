@@ -1,11 +1,29 @@
 export type ModelAsset = { url: string; size_bytes: number };
+export type ModelComponent = {
+  id: string;
+  parent_form_id: string;
+  parent_component?: string | null;
+  socket?: string | null;
+  transform?: Record<string, Record<string, number>> | null;
+  socket_transform?: { bone?: string; location?: Record<string, number>; rotation?: Record<string, number>; scale?: Record<string, number> } | null;
+  default_visible?: boolean | null;
+  baked?: boolean;
+  standalone_only?: boolean;
+  kind?: "component" | "effect";
+  bindings?: { parent_clip: string | null; child_clip: string | null; kind?: string; source?: { looping?: boolean | null } }[];
+  cues?: unknown[];
+};
 export type ModelAssets = {
+  id?: string;
   preview: ModelAsset | null;
   download: ModelAsset | null;
   physics: ModelAsset | null;
   animations?: ModelAsset | null;
   facial?: ModelAsset | null;
+  linked_models?: LinkedModel[] | null;
+  scene?: { format: string; components: string[]; cues: unknown[] } | null;
 };
+export type LinkedModel = ModelAssets & { id: string; label: string; parent_id: string; component: ModelComponent };
 export type ModelForm = ModelAssets & { id: string; label: string };
 export type CharacterModelData = ModelAssets & {
   status: "ready" | "missing";
@@ -47,6 +65,8 @@ export type ViewerOption = {
   path?: string[];
 };
 export type ViewerState = {
+  components: { id: string; name: string; visible: boolean; override: boolean | null; loading: boolean; error: string }[];
+  accessories: { name: string; visible: boolean }[];
   ready: boolean;
   error: string;
   status: string;
@@ -69,6 +89,8 @@ export type ViewerState = {
   preferredBone: string;
 };
 export const initialViewerState: ViewerState = {
+  components: [],
+  accessories: [],
   ready: false,
   error: "",
   status: "Loading model…",
@@ -101,6 +123,8 @@ export type ViewerCommand =
   | "animations"
   | "facial";
 export type ViewerController = {
+  component: (id: string, visible: boolean | null) => void;
+  accessory: (name: string, visible: boolean) => void;
   settings: (settings: ViewerSettings) => void;
   command: (command: ViewerCommand) => Promise<void>;
   animation: (name: string) => void;

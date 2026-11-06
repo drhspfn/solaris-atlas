@@ -263,6 +263,22 @@ async def test_character_version_locale_evidence_and_artwork_identity_are_preser
 
 
 @pytest.mark.asyncio
+async def test_npc_catalog_projection_uses_scoped_name_without_playable_archive(context):
+    context.node.canonical_key = "character:npc:17290"
+    context.records[(Character, 7)].metadata_json = {"role_type": 6}
+    context.character.return_value = {"character": {"name": {"content": "Zahira"},
+        "aliases": []}, "npc": {"name_scope": "instance", "name_variants": ["Zahira", "I.R.I.S."]}}
+    result = await builders.build_entity(context.session, "character", 7, "ja", "current")
+    assert result["title"] == "Zahira"
+    assert result["payload"]["card"]["aliases"] == []
+    assert result["payload"]["profile"]["npc"]["name_variants"] == ["Zahira", "I.R.I.S."]
+    assert result["payload"]["card"]["role_type"] == 6
+    assert result["primary_image_url"] is None
+    context.archive.assert_not_awaited()
+    sections._artwork.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_quest_materializes_all_transcript_pages(context):
     context.node_type.key = "quest"
     first = [{"id": f"line:{i}"} for i in range(2000)]

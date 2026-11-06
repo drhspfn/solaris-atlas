@@ -293,7 +293,7 @@ async def test_invalid_locale_and_quest_filter_rejected_before_catalog_reads(dat
 
 @pytest.mark.asyncio
 async def test_rover_family_collapses_before_paging_and_role_categories_are_explicit(database):
-    for identity, role in [(1501, 1), (1502, 1), (9901, 1), (5015, 2), (9990, 3)]:
+    for identity, role in [(1501, 1), (1502, 1), (9901, 1), (5015, 2), (9990, 3), (9991, 6)]:
         database.node(identity, "character", role=role, search=f"Role {identity}")
     for identity in (1501, 1502, 9901):
         await database.execute(update(Character).where(Character.node_id == identity).values(
@@ -305,4 +305,6 @@ async def test_rover_family_collapses_before_paging_and_role_categories_are_expl
     story = await browse(database, "character", character_kind="story")
     assert [(row["id"], row["character_kind"]) for row in story["results"]] == [(5015, "story")]
     assert [row["id"] for row in (await browse(database, "character", character_kind="technical"))["results"]] == [9990]
-    assert (await browse(database, "character", character_kind="all"))["total"] == 3
+    npc = await browse(database, "character", character_kind="npc")
+    assert [(row["id"], row["character_kind"]) for row in npc["results"]] == [(9991, "npc")]
+    assert (await browse(database, "character", character_kind="all"))["total"] == 4

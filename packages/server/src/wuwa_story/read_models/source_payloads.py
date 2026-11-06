@@ -192,11 +192,12 @@ async def _build_entity(session, kind, entity_id, locale, snapshot_key):
         if release_id is None:
             raise ValueError(f"Snapshot not imported: {snapshot_key}")
         if kind == "character":
+            is_npc = key.startswith("character:npc:")
             payload = {
                 "profile": await profiles.character_profile(
                     key, locale=locale.code, game_version=version, session=session
                 ),
-                "archive": await character_archive.character_archive(
+                "archive": {"artwork": []} if is_npc else await character_archive.character_archive(
                     key, locale=locale.code, game_version=version, session=session
                 ),
             }
@@ -281,7 +282,7 @@ async def _build_entity(session, kind, entity_id, locale, snapshot_key):
         )
         if kind == "character" and profile.get("family"):
             title = "Rover"
-        artwork = await sections._artwork(session, node, kind)
+        artwork = [] if kind == "character" and key.startswith("character:npc:") else await sections._artwork(session, node, kind)
         primary_url = profile.get("media", {}).get("image_url")
         if kind == "cutscene":
             title = sections._label(payload.get("title"), title)

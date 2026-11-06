@@ -115,6 +115,28 @@ def test_request_validation(patch):
         service.CharacterModelRequest.model_validate({"character_key": "character:1505", **patch})
 
 
+def test_npc_key_is_accepted_without_weakening_validation():
+    from wuwa_story.ingestion.model_uploads import ModelUploadJob
+
+    assert service.CharacterModelRequest(character_key="character:npc:17288").character_key.endswith("17288")
+    assert ModelUploadJob(run_id=1, character_key="character:npc:17288", owner_node_id=1,
+        release_id=1, game_version="1", archive_bytes=1, storage_token="a" * 32).character_key == "character:npc:17288"
+    for value in ("character:npc:0", "character:npc:01", "character:npc:1/other"):
+        with pytest.raises(ValidationError):
+            service.CharacterModelRequest(character_key=value)
+
+
+async def test_npc_recipe_rejects_stale_snapshot_or_mismatched_identity(monkeypatch):
+    monkeypatch.setattr(repository, "model_release", AsyncMock(return_value=SimpleNamespace(id=9)))
+    db = AsyncMock()
+    db.get.return_value = SimpleNamespace(metadata_json={"npc": {"blueprint_id": 17288}})
+    assert await repository.npc_model_recipe(db, 9, 3, 17288) == {"npc": {"blueprint_id": 17288}}
+    with pytest.raises(ValueError, match="latest snapshot"):
+        await repository.npc_model_recipe(db, 8, 3, 17288)
+    with pytest.raises(ValueError, match="does not match"):
+        await repository.npc_model_recipe(db, 9, 3, 123)
+
+
 @pytest.fixture
 def enqueue_context(monkeypatch):
     db = AsyncMock()
@@ -444,10 +466,12 @@ async def test_repository_filters_available_bucket_and_release():
     assert "viewer_object_key" in sql
     for field in ("form_id", "form_label", "form_order"):
         assert field in sql
-    assert [column.name for column in db.execute.await_args.args[0].selected_columns][-3:] == [
+    assert [column.name for column in db.execute.await_args.args[0].selected_columns][-5:] == [
         "form_id",
         "form_label",
         "form_order",
+        "component",
+        "scene",
     ]
 
 
@@ -661,3 +685,28 @@ async def test_public_route_uses_existing_character_resolver(monkeypatch):
     result = await routes.character_model("1505-shorekeeper", "unknown", db)
     resolve.assert_awaited_once_with(db, "1505-shorekeeper", ("character",))
     assert result["status"] == "missing" and result["game_version"] == "unknown"
+
+
+async def test_public_linked_models_are_grouped_under_root(public_forms):
+    root = "mesh-100038"
+    child = "component-0123456789abcdef"
+    grandchild = "component-fedcba9876543210"
+    scene = {"format": "solaris-model-scene-v1", "components": [child, grandchild], "cues": []}
+    component = {"id": "source-1", "parent_form_id": root, "default_visible": True}
+    nested = {"id": "source-2", "parent_form_id": child, "socket": "hand"}
+    public_forms.extend([(*row, None, scene) for row in form_rows("new")])
+    public_forms.extend([(*row, component, None) for row in form_rows("new", child, "Fox", 1)])
+    public_forms.extend([(*row, nested, None) for row in form_rows("new", grandchild, "Hat", 2)])
+    result = await service.public_character_model(AsyncMock(), 15, SimpleNamespace(id=8, game_version="1"))
+    assert [form["id"] for form in result["forms"]] == [root]
+    form = result["forms"][0]
+    assert form["scene"] == scene
+    assert [(item["id"], item["parent_id"]) for item in form["linked_models"]] == [(child, root), (grandchild, child)]
+    assert form["linked_models"][1]["component"] == nested
+    assert form["linked_models"][0]["preview"]["url"].endswith(child + "/preview")
+
+
+async def test_legacy_seven_column_public_rows(public_forms):
+    public_forms.extend(row[:7] for row in form_rows("old"))
+    result = await service.public_character_model(AsyncMock(), 15, SimpleNamespace(id=8, game_version="1"))
+    assert result["status"] == "ready" and result["forms"][0]["id"] == "mesh-100038"

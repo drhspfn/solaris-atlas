@@ -25,7 +25,7 @@ async def browse_catalog(
     category: str = Query(pattern="^(character|item|location|quest|speaker)$"),
     quest_type_id: int | None = Query(None, ge=0),
     locale: str = "en",
-    character_kind: Literal["playable", "story", "technical", "all"] = "playable",
+    character_kind: Literal["playable", "story", "npc", "technical", "all"] = "playable",
     limit: int = Query(24, ge=1, le=100),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),

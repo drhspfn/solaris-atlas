@@ -997,7 +997,8 @@ async def _process_release_media(payload):
                         renewed = await enqueue_release_media(
                             session, payload["release_id"],
                             event_artwork_only=payload["kind"] in {"event_catalog", "event_images", "event_resources"},
-                            notices_only=payload["kind"] == "event_notices", **repair_scope)
+                            notices_only=payload["kind"] == "event_notices",
+                            npc_catalog_only=payload["kind"] == "npc_catalog", **repair_scope)
                         logger.warning("release_media.legacy_workspace_renewed run=%s parent=%s release=%s queued=%s",
                                        run.id, parent.id, payload["release_id"], renewed["queued"])
                         raise JobDeferred("Legacy media dependency renewed; waiting for patch workspace preparation")
@@ -1009,6 +1010,9 @@ async def _process_release_media(payload):
                         result, status = await event_images(payload, parent.raw_output, session)
                     elif payload["kind"] == "event_catalog":
                         result, status = await event_catalog(payload, parent.raw_output, session)
+                    elif payload["kind"] == "npc_catalog":
+                        from wuwa_story_worker.npc_catalog import npc_catalog
+                        result, status = await npc_catalog(payload, parent.raw_output, session)
                     elif payload["kind"] == "event_resources":
                         result, status = await event_resources(payload, parent.raw_output, session, client_root(parent.raw_output))
                     elif payload["kind"] == "event_notices":

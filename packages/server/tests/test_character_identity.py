@@ -30,6 +30,7 @@ def test_role_kind_does_not_treat_creatures_and_temporary_roles_as_resonators():
     from wuwa_story.ingestion.character_identity import character_kind
     assert character_kind(1) == "playable"
     assert {character_kind(role) for role in (2, 4, 5)} == {"story"}
+    assert character_kind(6) == "npc"
     assert character_kind(3) == character_kind(None) == "technical"
 
 

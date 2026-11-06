@@ -264,27 +264,98 @@ def material_metadata_path(name: str, model: Path, files: list[Path]) -> Path | 
     return next(iter(matches), None)
 
 
+def material_metadata(metadata):
+    """Accept resolved exporter maps and textureless/raw material instances.
+
+    CUE serializes instances without resolved textures as a UObject list, even
+    in its ordinary mesh export. Their authored parameters and parent are still
+    useful; treating the list as the resolved-map format crashes dependency walks.
+    """
+    if isinstance(metadata, dict):
+        return metadata
+    rows = [row for row in metadata if isinstance(row, dict)
+            and row.get('Type') == 'MaterialInstanceConstant'] if isinstance(metadata, list) else []
+    if len(rows) != 1 or not isinstance(rows[0].get('Properties'), dict):
+        raise ValueError('Unsupported material metadata format')
+    properties = rows[0]['Properties']
+
+    def parameters(values):
+        result = {}
+        for value in values:
+            name = (value.get('ParameterInfo') or {}).get('Name')
+            if not isinstance(name, str) or not name or name in result:
+                raise ValueError('Ambiguous raw material parameter')
+            result[name] = value.get('ParameterValue', value.get('Value'))
+        return result
+
+    return {
+        'Properties': properties,
+        'Textures': parameters(properties.get('TextureParameterValues') or []),
+        'Scalars': parameters(properties.get('ScalarParameterValues') or []),
+        'Colors': parameters(properties.get('VectorParameterValues') or []),
+        'Switches': parameters((properties.get('StaticParameters') or {}).get('StaticSwitchParameters') or []),
+    }
+
+
 def base_color_texture(metadata: dict, converted: Path) -> tuple[str | None, Path | None]:
+    metadata = material_metadata(metadata)
     textures = metadata.get("Textures", {})
-    reference = next(
-        (textures[key].get("ObjectPath") for key in ("MainTex", "BaseColor") if key in textures),
-        None,
-    )
+    switches = metadata.get("Switches", {})
+    array = switches.get("Tex2DArrayMode") is True
+    riling = switches.get("RilingMode") is True
+    if array:
+        # These cooked Riling master materials default all array IDs to zero.
+        # Other array shaders and non-default IDs need their own verified mapping.
+        if not riling or any(metadata.get("Scalars", {}).get(key, 0) != 0 for key in
+                             ("MainTexArrayID", "BodyID_Riling", "FaceID_Riling")):
+            raise ValueError("Unsupported material texture array selection")
+        entry = textures.get("MainTex_Array", {})
+        if not entry.get("ObjectName", "").startswith("Texture2DArray'") or not entry.get("ObjectPath"):
+            raise ValueError("Unsupported material texture array reference")
+        reference = entry.get("ObjectPath")
+    elif riling and "Tex_FaceAni" in textures and not any(
+        key in textures for key in ("MainTex", "BaseColor")
+    ):
+        face_atlas_transform(metadata)
+        reference = textures["Tex_FaceAni"].get("ObjectPath")
+    else:
+        reference = next(
+            (textures[key].get("ObjectPath") for key in
+             (('MainTex', 'BaseColor', 'FaceAniMap') if switches.get('UseFaceAniMap')
+              else ('MainTex', 'BaseColor')) if key in textures),
+            None,
+        )
     if not reference:
         return None, None
     relative = reference.replace("\\", "/").split(".", 1)[0]
     if relative.startswith("/Game/"):
         relative = "Client/Content/" + relative[6:]
-    candidate = converted / (relative + ".png")
+    candidate = converted / (relative + ("_LAYER0.png" if array else ".png"))
     if candidate.resolve().is_relative_to(converted.resolve()) and candidate.is_file():
         return reference, candidate
     return reference, None
+
+
+def face_atlas_transform(metadata):
+    """Return the authored static cell as Blender UV scale and offset."""
+    scalars = metadata.get("Scalars", {})
+    values = [scalars.get(f"FaceAniTexSampleUV - {axis}") for axis in ("X", "Y")]
+    indices = [scalars.get(f"FaceAni_ID - {axis}") for axis in ("X", "Y")]
+    if any(type(v) not in (int, float) or not 1 <= v <= 16 or v != int(v) for v in values) or any(
+        type(v) not in (int, float) or v != int(v) or not 0 <= v < size
+        for v, size in zip(indices, values, strict=True)
+    ):
+        raise ValueError("Unsupported Riling face atlas parameters")
+    width, height = values
+    x, y = indices
+    return (1 / width, 1 / height, 1), (x / width, 1 - (y + 1) / height, 0)
 
 
 def inherited_base_color_texture(metadata: dict, path: Path | None, converted: Path, source_json: Path):
     """Follow explicit material-instance parents when a child has no color texture."""
     visited = set()
     while True:
+        metadata = material_metadata(metadata)
         reference, texture = base_color_texture(metadata, converted)
         if reference or path is None:
             return reference, texture
@@ -340,6 +411,38 @@ def base_color_alpha_is_opacity(material_name: str, metadata: dict) -> bool:
         # Their diffuse alpha clips the neck; retain cloth/hair mask behavior.
         return False
     return metadata.get("BlendMode") in {1, 2}
+
+
+def compatible_master_pose(primary, extra) -> bool:
+    """Modular NPC parts may add unused helpers, but all weighted bones must fit."""
+    primary_bones = {bone.name: bone for bone in primary.data.bones}
+    extra_bones = {bone.name: bone for bone in extra.data.bones}
+    weighted = set()
+    for obj in extra.children_recursive:
+        if obj.type != 'MESH':
+            continue
+        groups = {group.index: group.name for group in obj.vertex_groups}
+        for vertex in obj.data.vertices:
+            weighted.update(groups[group.group] for group in vertex.groups
+                            if group.weight > 1e-7 and groups.get(group.group) in extra_bones)
+    if not weighted or not weighted <= primary_bones.keys():
+        return False
+    checked = set(weighted)
+    for name in weighted:
+        parent = extra_bones[name].parent
+        while parent is not None:
+            checked.add(parent.name)
+            parent = parent.parent
+    if not checked <= primary_bones.keys():
+        return False
+    for name in checked:
+        bone, other = primary_bones[name], extra_bones[name]
+        if (bone.parent.name if bone.parent else None) != (other.parent.name if other.parent else None):
+            return False
+        if any(abs(a - b) > 1e-4 for left, right in zip(bone.matrix_local, other.matrix_local, strict=True)
+               for a, b in zip(left, right, strict=True)):
+            return False
+    return True
 
 
 def same_rest_skeleton(primary, extra) -> bool:
@@ -461,7 +564,22 @@ def rig_glb_stats(path: Path, bones: int, morph_targets: int, textures: int) -> 
         or any("uri" in buffer for buffer in document.get("buffers", []))
     ):
         raise ValueError(f"Rig GLB textures must be present and embedded: {stats}")
-    if not primitives or any("JOINTS_0" not in p["attributes"] for p in primitives):
+    nodes = document.get("nodes", [])
+    accessory_meshes = set()
+    def accessory_children(index):
+        node = nodes[index]
+        if "mesh" in node:
+            accessory_meshes.add(node["mesh"])
+        for child in node.get("children", []):
+            accessory_children(child)
+    for index, node in enumerate(nodes):
+        if node.get("extras", {}).get("accessory_name"):
+            accessory_children(index)
+    if not primitives or not any("JOINTS_0" in p["attributes"] for p in primitives) or any(
+        "JOINTS_0" not in primitive["attributes"] and index not in accessory_meshes
+        for index, mesh in enumerate(document.get("meshes", []))
+        for primitive in mesh["primitives"]
+    ):
         raise ValueError("Rig GLB has no skinned geometry")
     return stats
 
@@ -470,6 +588,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--extra-model", action="append", type=Path, default=[])
+    parser.add_argument("--attachments", type=Path)
+    parser.add_argument("--material-overrides", type=Path)
+    parser.add_argument('--part-material-overrides', type=Path)
+    parser.add_argument('--master-pose', action='store_true')
+    parser.add_argument('--hide-primary-geometry', action='store_true')
+    parser.add_argument('--bone-visibility', type=Path)
     parser.add_argument("--converted", type=Path, required=True)
     parser.add_argument("--source-json", type=Path, required=True)
     parser.add_argument("--skeleton", required=True)
@@ -565,19 +689,117 @@ def main():
         armature = UEFormatImport(UEModelOptions()).import_file(args.model)
     if armature is None or armature.type != "ARMATURE":
         raise ValueError("Export has no skinned armature")
+    if args.bone_visibility and not batch_mode:
+        for name, events in json.loads(args.bone_visibility.read_text(encoding='utf-8')).items():
+            if name not in armature.data.bones:
+                raise ValueError(f'NPC hide-bone notify targets absent bone: {name}')
+            bone = armature.data.bones[name]
+            label = events[0].get('label', 'Bone: ' + name) if events else 'Bone: ' + name
+            bone['accessory_name'] = label
+            bone['default_visible'] = True
+            bone['attachment_manifest'] = json.dumps({'name': label, 'visible': True,
+                'kind': 'bone_visibility', 'bone': name, 'events': events}, separators=(',', ':'))
     if not batch_mode:
+        part_materials = json.loads(args.part_material_overrides.read_text(encoding='utf-8')) if args.part_material_overrides else {}
+
+        def apply_part_materials(rig, model_path):
+            if not part_materials:
+                return
+            package = model_path.relative_to(args.converted / 'Client/Content').with_suffix('').as_posix()
+            for slot, material_path in part_materials.get(package, {}).items():
+                name = material_path.rsplit('/', 1)[-1]
+                material = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+                meshes = [obj for obj in rig.children_recursive if obj.type == 'MESH'
+                          and int(slot) < len(obj.data.materials)]
+                if not meshes:
+                    raise ValueError(f'NPC part material targets absent slot: {package}:{slot}')
+                for obj in meshes:
+                    obj.data.materials[int(slot)] = material
+
+        if args.hide_primary_geometry:
+            if not args.master_pose or not args.extra_model:
+                raise ValueError('Hiding NPC master geometry requires authored modular parts')
+            for obj in list(armature.children_recursive):
+                if obj.type == 'MESH':
+                    bpy.data.objects.remove(obj, do_unlink=True)
+        apply_part_materials(armature, args.model)
+        if args.material_overrides:
+            overrides = json.loads(args.material_overrides.read_text(encoding="utf-8"))
+            primary_meshes = [obj for obj in armature.children_recursive if obj.type == "MESH"]
+            for slot, package in overrides.items():
+                slot = int(slot)
+                matching = [obj for obj in primary_meshes if slot < len(obj.data.materials)]
+                if not matching:
+                    raise ValueError(f"NPC material override references missing slot {slot}")
+                name = package.rsplit("/", 1)[-1]
+                material = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+                for obj in matching:
+                    obj.data.materials[slot] = material
         for extra_model in args.extra_model:
             extra = UEFormatImport(UEModelOptions()).import_file(extra_model)
             if extra is None or extra.type != "ARMATURE":
                 raise ValueError("Extra model has no skinned armature")
-            if not same_rest_skeleton(armature, extra):
+            compatible = compatible_master_pose(armature, extra) if args.master_pose else same_rest_skeleton(armature, extra)
+            if not compatible:
                 raise ValueError("Extra model skeleton differs from the primary rig")
+            apply_part_materials(extra, extra_model)
             for obj in list(extra.children):
                 obj.parent = armature
                 for modifier in obj.modifiers:
                     if modifier.type == "ARMATURE" and modifier.object == extra:
                         modifier.object = armature
             bpy.data.objects.remove(extra, do_unlink=True)
+        if args.attachments:
+            import math
+
+            from mathutils import Euler, Matrix
+
+            def transform(location, rotation, scale):
+                location, rotation, scale = location or {}, rotation or {}, scale or {}
+                translation = Matrix.Translation((location.get("X", 0) * .01,
+                                                  -location.get("Y", 0) * .01,
+                                                  location.get("Z", 0) * .01))
+                angles = Euler(tuple(math.radians(value) for value in (
+                    rotation.get("Roll", 0), -rotation.get("Pitch", 0), -rotation.get("Yaw", 0))), "XYZ")
+                scaling = Matrix.Diagonal((scale.get("X", 1), scale.get("Y", 1), scale.get("Z", 1), 1))
+                return translation @ angles.to_matrix().to_4x4() @ scaling
+
+            for attachment in json.loads(args.attachments.read_text(encoding="utf-8")):
+                bone = attachment.get("bone")
+                if bone not in armature.data.bones:
+                    raise ValueError(f"NPC accessory targets unknown bone: {bone}")
+                imported = UEFormatImport(UEModelOptions()).import_file(attachment["file"])
+                if imported is None:
+                    raise ValueError("NPC accessory could not be imported")
+                objects = list(imported.children_recursive) if imported.type == "ARMATURE" else [imported]
+                geometry = [obj for obj in objects if obj.type == "MESH"]
+                if not geometry:
+                    raise ValueError("NPC accessory has no geometry")
+                anchor = bpy.data.objects.new("accessory:" + attachment["name"], None)
+                bpy.context.collection.objects.link(anchor)
+                anchor.parent = armature
+                anchor.parent_type = "BONE"
+                anchor.parent_bone = bone
+                anchor.matrix_parent_inverse = Matrix.Identity(4)
+                local = (transform(attachment.get("socket_location"), attachment.get("socket_rotation"),
+                                   attachment.get("socket_scale")) @
+                         transform(attachment.get("location"), attachment.get("rotation"),
+                                   attachment.get("scale")))
+                bpy.context.view_layer.update()
+                anchor.matrix_world = armature.matrix_world @ armature.data.bones[bone].matrix_local @ local
+                anchor["accessory_name"] = attachment["name"]
+                anchor["socket"] = attachment["socket"]
+                anchor["default_visible"] = attachment["visible"]
+                anchor["attachment_manifest"] = json.dumps(
+                    {key: value for key, value in attachment.items() if key != "file"}, separators=(",", ":")
+                )
+                for obj in geometry:
+                    for modifier in list(obj.modifiers):
+                        if modifier.type == "ARMATURE":
+                            obj.modifiers.remove(modifier)
+                    obj.parent = anchor
+                if imported.type == "ARMATURE":
+                    bpy.data.objects.remove(imported, do_unlink=True)
     if batch_mode:
         bones = {bone.name for bone in armature.data.bones}
         if set(plan["bones"]) != bones:
@@ -707,7 +929,7 @@ def main():
             if rig_mode
             else material_files.get(material.name)
         )
-        metadata = json.loads(path.read_text(encoding="utf-8-sig")) if path else {}
+        metadata = material_metadata(json.loads(path.read_text(encoding="utf-8-sig"))) if path else {}
         if args.extra_model and effect_space_only(metadata):
             material.use_nodes = True
             continue
@@ -723,6 +945,30 @@ def main():
             image.pack()
             node = material.node_tree.nodes.new("ShaderNodeTexImage")
             node.image = image
+            if (metadata.get('Switches', {}).get('RilingMode') and
+                    not metadata.get('Switches', {}).get('Tex2DArrayMode') and
+                    'Tex_FaceAni' in metadata.get('Textures', {}) and not any(
+                        key in metadata.get('Textures', {}) for key in ('MainTex', 'BaseColor'))):
+                scale, offset = face_atlas_transform(metadata)
+                mapping = material.node_tree.nodes.new('ShaderNodeMapping')
+                mapping.inputs['Scale'].default_value = scale
+                mapping.inputs['Location'].default_value = offset
+                coordinates = material.node_tree.nodes.new('ShaderNodeTexCoord')
+                material.node_tree.links.new(coordinates.outputs['UV'], mapping.inputs['Vector'])
+                material.node_tree.links.new(mapping.outputs['Vector'], node.inputs['Vector'])
+            elif metadata.get('Switches', {}).get('UseFaceAniMap') and not any(
+                key in metadata.get('Textures', {}) for key in ('MainTex', 'BaseColor')):
+                # Static neutral expression from the authored square face atlas.
+                # Dynamic material-expression curves remain separate from bone clips.
+                cells = metadata.get('Scalars', {}).get('AniSwitch_Face_Int')
+                if type(cells) not in (int, float) or cells != int(cells) or not 1 <= cells <= 16:
+                    raise ValueError('Unsupported NPC face atlas dimensions')
+                mapping = material.node_tree.nodes.new('ShaderNodeMapping')
+                mapping.inputs['Scale'].default_value = (1 / cells, 1 / cells, 1)
+                mapping.inputs['Location'].default_value = (0, 1 - 1 / cells, 0)
+                coordinates = material.node_tree.nodes.new('ShaderNodeTexCoord')
+                material.node_tree.links.new(coordinates.outputs['UV'], mapping.inputs['Vector'])
+                material.node_tree.links.new(mapping.outputs['Vector'], node.inputs['Vector'])
             material.node_tree.links.new(node.outputs["Color"], shader.inputs["Base Color"])
             blend_mode = metadata.get("BlendMode")
             if base_color_alpha_is_opacity(path.stem if path else material.name, metadata):
@@ -846,6 +1092,7 @@ def main():
             export_optimize_disable_viewport=True,
             export_skins=True,
             export_anim_single_armature=True,
+            export_extras=True,
         )
         with indexed_gltf_references(GlTF2Exporter, (Accessor, BufferView)):
             if "FINISHED" not in bpy.ops.export_scene.gltf(**options):

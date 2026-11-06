@@ -17,6 +17,7 @@ from wuwa_story_worker.model_bundle import (
     build_animation_plan,
     canonical_animation_rig,
     effect_space_only,
+    face_atlas_transform,
     file_sha256,
     indexed_gltf_references,
     inherited_base_color_texture,
@@ -77,6 +78,17 @@ def test_animation_catalog_uses_exact_skeleton_reference_not_folder_name(tmp_pat
     rows = animation_sources(tmp_path, "/Game/Aki/Model/Shorekeeper_Skeleton")
     assert len(rows) == 3
     assert {row["name"] for row in rows.values() if row["matches_skeleton"]} == {"Stand1", "Stand2"}
+
+
+def test_npc_common_anim_requires_exact_exported_skeleton(tmp_path):
+    root = tmp_path / "Client/Content/Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003/CommonAnim"
+    root.mkdir(parents=True)
+    skeleton = "/Game/Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003/Model/NH_FemaleMS_003_Skeleton"
+    for name, target in [("Stand01", skeleton), ("Other", skeleton + "_other")]:
+        (root / f"{name}.json").write_text(json.dumps([{"Type": "AnimSequence", "Name": name,
+            "Properties": {"Skeleton": {"ObjectPath": target}}}]))
+    sources = animation_sources(tmp_path, skeleton)
+    assert [row["name"] for row in sources.values() if row["matches_skeleton"]] == ["Stand01"]
 
 
 def test_constant_tracks_retain_values_and_duration_without_single_key_baking():
@@ -185,6 +197,48 @@ def test_base_color_uses_exact_maintex_then_basecolor_without_fuzzy_fallback(tmp
         )[1]
         is None
     )
+
+
+def test_riling_array_uses_exported_default_layer_and_never_white_fallback(tmp_path):
+    metadata = {"Switches": {"RilingMode": True, "Tex2DArrayMode": True}, "Textures": {
+        "MainTex": {"ObjectPath": "/Game/White"},
+        "MainTex_Array": {"ObjectName": "Texture2DArray'Body'", "ObjectPath": "/Game/Body.0"},
+    }}
+    white = tmp_path / "Client/Content/White.png"
+    white.parent.mkdir(parents=True)
+    white.touch()
+    assert base_color_texture(metadata, tmp_path) == ("/Game/Body.0", None)
+    layer = white.with_name("Body_LAYER0.png")
+    layer.touch()
+    assert base_color_texture(metadata, tmp_path) == ("/Game/Body.0", layer)
+    metadata["Scalars"] = {"MainTexArrayID": 1}
+    with pytest.raises(ValueError, match="Unsupported material texture array"):
+        base_color_texture(metadata, tmp_path)
+    metadata["Switches"]["RilingMode"] = False
+    with pytest.raises(ValueError, match="Unsupported material texture array"):
+        base_color_texture(metadata, tmp_path)
+
+
+@pytest.mark.parametrize("name", ["Eyes", "FX"])
+def test_riling_face_atlas_requires_authored_dimensions_and_selects_cell(tmp_path, name):
+    metadata = {
+        "Switches": {"RilingMode": True, "Tex2DArrayMode": False},
+        "Textures": {"Tex_FaceAni": {"ObjectPath": f"/Game/{name}.0"}},
+        "Scalars": {"FaceAniTexSampleUV - X": 3, "FaceAniTexSampleUV - Y": 2,
+                    "FaceAni_ID - X": 0, "FaceAni_ID - Y": 0},
+    }
+    assert base_color_texture(metadata, tmp_path) == (f"/Game/{name}.0", None)
+    texture = tmp_path / f"Client/Content/{name}.png"
+    texture.parent.mkdir(parents=True)
+    texture.touch()
+    assert base_color_texture(metadata, tmp_path)[1] == texture
+    assert face_atlas_transform(metadata) == ((1 / 3, 1 / 2, 1), (0, 1 / 2, 0))
+    metadata["Scalars"]["FaceAni_ID - X"] = 2
+    metadata["Scalars"]["FaceAni_ID - Y"] = 1
+    assert face_atlas_transform(metadata)[1] == (2 / 3, 0, 0)
+    metadata["Scalars"]["FaceAni_ID - Y"] = 2
+    with pytest.raises(ValueError, match="Unsupported Riling face atlas"):
+        base_color_texture(metadata, tmp_path)
 
 
 def test_material_color_inherits_from_explicit_parent_and_rejects_cycles(tmp_path):
@@ -347,6 +401,19 @@ def test_rig_glb_stats_checks_actual_header_joints_morphs_and_embedded_textures(
         "vertices": 3,
         "textures": 1,
     }
+
+
+def test_rigid_accessory_geometry_requires_a_named_accessory_ancestor(tmp_path):
+    document = rig_document()
+    document["meshes"].append({"primitives": [{"attributes": {"POSITION": 0}}]})
+    document["nodes"] = [{"extras": {"accessory_name": "WeaponCase0"}, "children": [1]}, {"mesh": 1}]
+    path = tmp_path / "character.glb"
+    write_test_glb(path, document)
+    assert rig_glb_stats(path, 2, 1, 1)["vertices"] == 6
+    document["nodes"][0].pop("extras")
+    write_test_glb(path, document)
+    with pytest.raises(ValueError, match="skinned geometry"):
+        rig_glb_stats(path, 2, 1, 1)
 
 
 @pytest.mark.parametrize(

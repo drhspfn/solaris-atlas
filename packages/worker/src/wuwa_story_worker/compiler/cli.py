@@ -21,6 +21,7 @@ from .flow import compile_flow
 from .inventory import REQUIRED_NARRATIVE_TABLES, scan, strict_coverage_findings
 from .localization import aggregate_locales, build_localization
 from .media import compile_media
+from .npc import compile_npcs
 from .quests import compile_quests
 from .references import compile_reference_tables
 
@@ -204,6 +205,7 @@ def build(data_root: Path, dist_root: Path, requested_version: str | None, stric
         "flow": "BinData/flow/flow.json", "flow_state": "BinData/flowState/flowstate.json"}.items()}
     quest_counts = compile_quests(paths, writer.emit, writer.edge, writer.diagnostic, localize)
     compile_entities(data_root, writer, english)
+    compile_npcs(data_root, writer, english)
     compile_media(data_root, writer.emit, writer.edge, writer.diagnostic, localize)
     flow_counts = compile_flow(data_root, writer, english, set(baseline.get("action_names", [])))
     reference_counts = compile_reference_tables(data_root, writer, localize, inventory)

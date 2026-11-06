@@ -166,9 +166,9 @@ function ImportControls({
     if (submitting.current || pending) return;
     setError("");
     setInvalidKey(false);
-    if (!/^character:[1-9][0-9]*$/.test(key.trim())) {
+    if (!/^character:(?:npc:)?[1-9][0-9]*$/.test(key.trim())) {
       setInvalidKey(true);
-      setError("Enter a canonical character key, for example character:1505.");
+      setError("Enter a canonical character key, for example character:1505 or character:npc:123.");
       keyInput.current?.focus();
       return;
     }
@@ -310,7 +310,7 @@ function ImportControls({
           setArchive(null); setUploadProgress("");
           if (archiveInput.current) archiveInput.current.value = "";
         }}>Use game client instead</button>}
-        <button type="button" disabled={busy || pending || !/^character:[1-9][0-9]*$/.test(key.trim())}
+        <button type="button" disabled={busy || pending || !/^character:(?:npc:)?[1-9][0-9]*$/.test(key.trim())}
           onClick={() => void (async () => {
             try {
               const query = new URLSearchParams({ character_key: key.trim(), ...(version ? { game_version: version } : {}) });

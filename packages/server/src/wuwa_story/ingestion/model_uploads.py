@@ -1,4 +1,4 @@
-"""Admin-only chunked model uploads; no server-side game extraction is required."""
+"""Admin-only model uploads; linked components also verify authored client metadata."""
 
 import asyncio
 import hashlib
@@ -37,7 +37,7 @@ class ModelUploadJob(BaseModel):
     schema_version: Literal[1] = 1
     job_type: Literal["media.character_model_upload"] = "media.character_model_upload"
     run_id: int = Field(gt=0, strict=True)
-    character_key: str = Field(pattern=r"^character:[1-9][0-9]*$")
+    character_key: str = Field(pattern=r"^character:(?:npc:)?[1-9][0-9]*$")
     owner_node_id: int = Field(gt=0, strict=True)
     release_id: int = Field(gt=0, strict=True)
     game_version: str = Field(min_length=1, max_length=64)

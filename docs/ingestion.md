@@ -79,3 +79,45 @@ identities and raw evidence are already loaded. A fresh release should use the
 full `wuwa-story-import` command above. Exact ID references preserve source
 file, raw path, version, and resolution basis; unsupported or unresolved
 identities remain diagnostics instead of guessed links.
+
+## Native NPC supplement
+
+Snapshot imports also enqueue a `npc_catalog` media job, after client preparation.
+It decodes BlueprintConfig, TemplateConfig, LevelEntityConfig, Speaker,
+AbpMontageData, MontageData, ModelConfigPreload, ShopInfo and ShopFixed from the pinned client. The
+supplement is additive: it does not replay video, voice or story imports. For an
+existing release, call `enqueue_release_media(session, release_id,
+npc_catalog_only=True)` using the existing authenticated administration/session
+boundary. Only the latest story snapshot accepts current-client NPC data.
+
+For an offline build (no database writes):
+
+```bash
+python -m wuwa_story_worker.npc_catalog \
+  --config /absolute/path/to/Client/Content/Aki/ConfigDB \
+  --output /absolute/path/to/npc-supplement \
+  --asset-version 3.7.1 --game-version 3.7.0 \
+  --download-id <64-character-client-download-id>
+```
+
+Add `--apply-release-id <latest-release-id>` to import it using `DATABASE_URL`.
+Completed output is reusable only with the same source and compiler identity.
+Failed staging directories remain available for diagnosis. A changed compiler
+requires a new output directory. Source rows use
+`ClientData/<asset-version>/<download-id>/BinData/...`, retaining their native
+row hashes separately from community snapshot evidence.
+
+NPC identities are `character:npc:<BlueprintConfig.Id>` (`role_type=6`). These
+are configuration identities, not a count of distinct people. Preserve world
+instances, name/model overrides and ambiguous names instead of merging translated
+labels. Shop offers retain currency, price, stock and conditions; reset periods
+remain unknown when supplied only by the live game server. Interaction dialogue
+participants are distinguished from confirmed NPC speakers. Missing endpoint
+nodes can be linked by replaying this supplement after the corresponding story
+or item import; canonical nodes, revisions and evidence are upserted.
+
+The supplement refreshes character search and invalidates character read
+projections in bounded batches. It never schedules thousands of model builds:
+NPC model/animation imports remain an explicit administrator action on the NPC
+profile. Personal artwork stays empty until independently verified; generic
+speaker and RoleInfo defaults do not authorize an NPC avatar.

@@ -15,6 +15,7 @@ from sqlalchemy import select
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
+from wuwa_story.db.repositories.character_models import npc_model_recipe
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.character_models import CharacterModelJob
 from wuwa_story.storage.hashing import content_object_key
@@ -26,15 +27,20 @@ from wuwa_story_worker.broker import job_lock
 from wuwa_story_worker.client_assets import validate_plan
 from wuwa_story_worker.entity_media import tool
 from wuwa_story_worker.job_tracking import update_admin_run
+from wuwa_story_worker.linked_component_forms import (
+    prepare_linked_component,
+    prepare_linked_components,
+)
 from wuwa_story_worker.media_provenance import sha256, temporary_entity_workspace
 from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.model_animation_merge import merge_animation_glbs
 from wuwa_story_worker.model_facial import validate_facial_pack
-from wuwa_story_worker.model_forms import resolve_model_forms
+from wuwa_story_worker.model_forms import resolve_model_forms, resolve_recipe_forms
 from wuwa_story_worker.model_publication import ensure_glb_download
 from wuwa_story_worker.model_sources import (
     exported_package,
     glb_summary,
+    npc_material_overrides,
     spring_profile,
 )
 from wuwa_story_worker.tooling import asset_workspace, tool_path
@@ -85,17 +91,35 @@ async def source_forms(session, release_id, role):
     return resolve_model_forms(role, preloads, morphs)
 
 
-async def extract_model(root, sources, fmodel, converter, include_animations=True, *, local_client=None):
+async def job_forms(session, job):
+    if job.character_key.startswith("character:npc:"):
+        recipe = await npc_model_recipe(session, job.release_id, job.owner_node_id,
+                                        int(job.character_key.rsplit(":", 1)[1]))
+        return resolve_recipe_forms(recipe)
+    role = await source_row(session, job.release_id, "BinData/role/roleinfo.json",
+                            int(job.character_key.split(":")[1]))
+    return await source_forms(session, job.release_id, role)
+
+
+async def extract_model(root, sources, fmodel, converter, include_animations=True, *, local_client=None,
+                        additional_filters=(), metadata_only=False):
     model_dir = sources["model"].rsplit("/", 1)[0]
     filters = [model_dir + "/", *sources["blueprints"]]
+    if sources.get("component_blueprint"):
+        filters.append(sources["component_blueprint"])
     if include_animations:
         # Derive the authored character root, including sibling CommonAnim/Seq
         # directories. Exact skeleton references filter variants after conversion.
-        character_dir = "/".join(sources["model"].split("/")[:5])
+        character_dir = ((sources["model"].rsplit("/Model/", 1)[0]
+                          if "/Model/" in sources["model"] else model_dir)
+                         if sources["model"].startswith("Aki/Character/NPC/")
+                         else "/".join(sources["model"].split("/")[:5]))
         gender_dir = "/".join(sources["model"].split("/")[:4])
         filters = [
             character_dir + "/",
             *sources["blueprints"],
+            *([sources["component_blueprint"]] if sources.get("component_blueprint") else []),
+            *sources.get("montages", []),
             # Shared movement sets are named BaseAnim, BaseAnim2, etc.
             gender_dir + "/BaseAnim",
             # Cooked clips can use Engine compression settings as well as ACL.
@@ -106,14 +130,20 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
             # the authored root. Ownership is checked by skeleton metadata.
             character_dir.rsplit("/", 1)[1],
         ]
+    if metadata_only:
+        filters = [sources['model']]
+    filters.extend(additional_filters)
     if local_client is None:
         receipt = await export_assets(root, fmodel, "|".join(filters))
     else:
         output = root / "exports" / "local"
         output.mkdir(parents=True)
         (output / "files").mkdir()
-        # Local installations can have the original CLI without pipe filters.
-        for asset_filter in dict.fromkeys(filters):
+        # Mount the client once for current CLIs. Older CLIs treat the pipe as a
+        # literal filter and export nothing; only then retry individual filters.
+        unique_filters = list(dict.fromkeys(filters))
+        batch = "|".join(unique_filters) if len(unique_filters) > 1 else None
+        for asset_filter in ([batch] if batch else []) + unique_filters:
             with tempfile.TemporaryDirectory(dir=output) as scratch:
                 extracted = Path(scratch) / "export"
                 extracted.mkdir()
@@ -128,9 +158,11 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
                     failures = [line for line in lines if any(word in line.lower() for word in ("[fail]", "[error]"))]
                     diagnostic = re.sub(r"(?:0x)?[0-9a-fA-F]{32,}", "<redacted-id>", "\n".join(failures[-8:]))
                     raise RuntimeError(f"Local FModel export failed: {diagnostic or 'no supported files exported'}") from error
+                exported = False
                 for path in (extracted / "files").rglob("*"):
                     if not path.is_file():
                         continue
+                    exported = True
                     target = output / "files" / path.relative_to(extracted / "files")
                     target.parent.mkdir(parents=True, exist_ok=True)
                     if target.exists():
@@ -138,6 +170,8 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
                             raise ValueError("Local game changed during model extraction")
                     else:
                         path.replace(target)
+                if asset_filter == batch and exported:
+                    break
         receipt = output / "manifest.json"
         receipt.write_text(json.dumps({"files": [
             {"path": path.relative_to(output / "files").as_posix(),
@@ -153,6 +187,8 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
         inputs += ["-i", (raw / "Engine").resolve()]
     common = [converter, *inputs, "-g", "GAME_WutheringWaves", "-p", "*.uasset"]
     await tool([*common, "-f", "json", "-o", cooked.resolve(), "-y"], root / "metadata.log")
+    if metadata_only:
+        return None, converted, cooked, json.loads(receipt.read_text(encoding='utf-8'))
     await tool(
         [
             *common,
@@ -211,7 +247,7 @@ async def model_progress(run_id, stage, **details):
         )
 
 
-def component_model(component, converted, cooked, skeleton):
+def component_model(component, converted, cooked, skeleton, *, master_pose=False):
     metadata_path = cooked / "Client/Content" / (component + ".json")
     component_path = converted / "Client/Content" / (component + ".uemodel")
     if not component_path.is_file() or not metadata_path.is_file():
@@ -225,10 +261,82 @@ def component_model(component, converted, cooked, skeleton):
     if (
         len(component_skeletons) != 1
         or not component_skeletons[0]
-        or exported_package(component_skeletons[0]) != skeleton
+        or (not master_pose and exported_package(component_skeletons[0]) != skeleton)
     ):
         raise ValueError("Character component uses a different skeleton")
     return component_path.resolve()
+
+
+async def discover_scene_components(root, sources, cooked, converted=None, manifest=None, *,
+                                    skeleton=None, local_client=None, scene=None):
+    """Resolve only authored component/effect dependencies, with bounded extraction."""
+    from wuwa_story_worker.linked_models import discover
+    from wuwa_story_worker.model_bundle import animation_sources
+
+    if not sources.get("component_blueprint") or sources.get("component"):
+        return []
+    if skeleton is None:
+        model_path = cooked / "Client/Content" / (sources["model"] + ".json")
+        rows = json.loads(model_path.read_text(encoding="utf-8-sig"))
+        references = [row.get("Properties", {}).get("Skeleton", {}).get("ObjectPath")
+                      for row in rows if row.get("Type") == "SkeletalMesh"]
+        if len(references) != 1 or not references[0]:
+            raise ValueError("Linked model discovery requires an exact parent skeleton")
+        skeleton = exported_package(references[0])
+    fetched = set()
+    for depth in range(12):
+        clips = [row["source"] for row in animation_sources(cooked, "/Game/" + skeleton).values()
+                 if row["matches_skeleton"]]
+        recipes = discover(cooked, {**sources, "parent_form_id": sources.get("id"),
+                                    "parent_skeleton": skeleton,
+                                    "animation_resources": sorted(set(clips) | set(sources.get("montages", [])))})
+        missing = {resource for recipe in recipes for resource in recipe["required_resources"]}
+        if not missing:
+            break
+        if missing <= fetched:
+            raise ValueError("Explicit linked model dependencies are missing: " + ", ".join(sorted(missing)))
+        fetched.update(missing)
+        if len(fetched) > 512:
+            raise ValueError("Linked model dependency discovery exceeds 512 resources")
+        subroot = root / f"linked-metadata-{depth}"
+        subroot.mkdir()
+        _, _, extra_cooked, receipt = await extract_model(
+            subroot, sources, tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
+            False, metadata_only=True, additional_filters=sorted(missing), local_client=local_client)
+        shutil.copytree(extra_cooked, cooked, dirs_exist_ok=True)
+        if manifest is not None:
+            manifest["files"].extend(receipt["files"])
+    else:
+        raise ValueError("Linked model dependencies exceed twelve discovery passes")
+    if scene is not None:
+        root_cues = {}
+        for recipe in recipes:
+            for cue in recipe["cues"]:
+                if cue.get("defaults", {}).get("target") == "notifying_mesh":
+                    root_cues[json.dumps(cue, sort_keys=True)] = cue
+        scene.update(format="solaris-model-scene-v1", components=[], cues=list(root_cues.values()))
+    results = []
+    for recipe in recipes:
+        if recipe["kind"] == "discovery":
+            continue
+        relation = {key: recipe[key] for key in (
+            "id", "kind", "parent_component", "socket", "socket_transform", "default_visible",
+            "source", "bindings", "cues", "diagnostics")}
+        relation.update(name=recipe["id"], label=recipe["model"].rsplit("/", 1)[-1],
+                        transform={key: (recipe.get("transform") or {}).get(key) or {}
+                                   for key in ("location", "rotation", "scale")})
+        if recipe["kind"] == "effect" and recipe["parent_component"] is None:
+            relation["standalone_only"] = True
+        # Effect-spawned objects have no SCS variable, but do have an exact notify identity.
+        relation["source"] = {**relation["source"], "component": relation["source"].get("component") or recipe["id"]}
+        child_clips = sorted({binding["child_clip"] for binding in recipe["bindings"]
+                              if binding.get("child_clip") and binding.get("parent_clip")})
+        results.append({"model": recipe["model"], "blueprints": [recipe["anim_blueprint"]]
+                        if recipe.get("anim_blueprint") else [], "montages": child_clips,
+                        "component": relation})
+    if len(results) > 32:
+        raise ValueError("Model scene exceeds 32 authored components")
+    return results
 
 
 async def build_bundle(root, sources, include_animations=True, *, run_id=None, local_client=None,
@@ -247,9 +355,111 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         raise ValueError("UEFormat importer unavailable; use the dedicated model worker image")
     await progress("extract")
     options = {"local_client": local_client} if local_client is not None else {}
+    blueprint_exports = []
+    if sources.get('blueprint_model'):
+        from wuwa_story_worker.npc_setup import blueprint_sources
+
+        package, visited = sources['blueprint_model'], set()
+        for depth in range(8):
+            if package in visited:
+                raise ValueError('Cyclic NPC Blueprint model inheritance')
+            visited.add(package)
+            metadata_root = root / f'npc-blueprint-{depth}'
+            metadata_root.mkdir()
+            _, _, metadata_cooked, receipt = await extract_model(
+                metadata_root, {'model': package, 'blueprints': []}, fmodel, converter,
+                False, metadata_only=True, **options)
+            path = metadata_cooked / 'Client/Content' / (package + '.json')
+            if not path.is_file():
+                raise ValueError('The authored NPC model Blueprint was not exported')
+            resolved = blueprint_sources(json.loads(path.read_text(encoding='utf-8-sig')), package)
+            blueprint_exports.append((package, metadata_cooked, receipt))
+            if 'model' in resolved:
+                sources = {**sources, **resolved,
+                           'blueprints': sources['blueprints'] or resolved.get('blueprints', [])}
+                break
+            package = resolved['parent']
+        else:
+            raise ValueError('NPC Blueprint model inheritance exceeds eight authored parents')
+    setup_receipt = None
+    if sources.get('data_asset'):
+        from wuwa_story_worker.npc_setup import setup_sources
+
+        setup_root = root / 'npc-setup'
+        setup_root.mkdir()
+        _, _, setup_cooked, setup_receipt = await extract_model(
+            setup_root, sources, fmodel, converter, False, metadata_only=True, **options)
+        setup_path = setup_cooked / 'Client/Content' / (sources['data_asset'] + '.json')
+        if not setup_path.is_file():
+            raise ValueError('The authored NPC setup asset was not exported')
+        sources = {**sources, **setup_sources(
+            json.loads(setup_path.read_text(encoding='utf-8-sig')), sources['data_asset'])}
+    component_filters = {path.rsplit('/', 1)[0] + '/' for path in sources.get('extra_models', [])}
+    component_filters.update(path.rsplit('/', 1)[0] + '/'
+        for slots in sources.get('part_material_overrides', {}).values() for path in slots.values())
     model, converted, cooked, manifest = await extract_model(
-        root, sources, fmodel, converter, include_animations, **options
+        root, sources, fmodel, converter, include_animations,
+        additional_filters=sorted(component_filters), **options
     )
+    for _, metadata_cooked, receipt in blueprint_exports:
+        shutil.copytree(metadata_cooked, cooked, dirs_exist_ok=True)
+        manifest['files'].extend(receipt['files'])
+    if setup_receipt:
+        manifest['files'].extend(setup_receipt['files'])
+        from wuwa_story_worker.model_bundle import base_color_texture
+
+        missing_textures = set()
+        for slots in sources.get('part_material_overrides', {}).values():
+            for package in slots.values():
+                path = converted / 'Client/Content' / (package + '.json')
+                if path.is_file():
+                    reference, texture = base_color_texture(json.loads(path.read_text(encoding='utf-8-sig')), converted)
+                    if reference and texture is None:
+                        missing_textures.add(exported_package(reference))
+        if missing_textures:
+            texture_root = root / 'npc-part-textures'
+            texture_root.mkdir()
+            _, part_converted, part_cooked, receipt = await extract_model(
+                texture_root, sources, fmodel, converter, False,
+                additional_filters=sorted(missing_textures), **options)
+            shutil.copytree(part_converted, converted, dirs_exist_ok=True)
+            shutil.copytree(part_cooked, cooked, dirs_exist_ok=True)
+            manifest['files'].extend(receipt['files'])
+    if sources.get("component_blueprint"):
+        from wuwa_story_worker.model_sources import npc_animation_references
+        from wuwa_story_worker.npc_accessories import visibility_sources
+
+        refs = set(visibility_sources(sources['model']))
+        for blueprint in [*sources["blueprints"], *sources.get("montages", [])]:
+            path = cooked / "Client/Content" / (blueprint + ".json")
+            if path.is_file():
+                refs.update(npc_animation_references(json.loads(path.read_text(encoding="utf-8-sig"))))
+        missing = [ref for ref in refs if not (cooked / "Client/Content" / (ref + ".json")).is_file()]
+        if missing:
+            extra_root = root / "referenced-animations"
+            extra_root.mkdir()
+            _, extra_converted, extra_cooked, extra_manifest = await extract_model(
+                extra_root, sources, fmodel, converter, False, additional_filters=sorted(missing),
+                metadata_only=not include_animations, **options
+            )
+            shutil.copytree(extra_converted, converted, dirs_exist_ok=True)
+            shutil.copytree(extra_cooked, cooked, dirs_exist_ok=True)
+            manifest["files"].extend(extra_manifest["files"])
+            if any(not (cooked / "Client/Content" / (ref + ".json")).is_file() for ref in missing):
+                raise ValueError("An explicitly referenced NPC animation was not exported")
+    bone_visibility = {}
+    if sources.get('component_blueprint'):
+        from wuwa_story_worker.npc_accessories import npc_bone_visibility_notifies, visibility_label
+
+        for path in cooked.rglob('*.json'):
+            rows = json.loads(path.read_text(encoding='utf-8-sig'))
+            if not isinstance(rows, list) or not any(
+                row.get('Type') == 'TsAnimNotifyHideBone_C' for row in rows if isinstance(row, dict)):
+                continue
+            for event in npc_bone_visibility_notifies(rows):
+                event['source'] = path.relative_to(cooked).with_suffix('').as_posix()
+                event['label'] = visibility_label(sources['model'], event['bone'])
+                bone_visibility.setdefault(event['bone'], []).append(event)
     output = root / "bundle"
     output.mkdir()
     model_metadata = json.loads(
@@ -264,10 +474,111 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
     if len(skeletons) != 1 or not skeletons[0]:
         raise ValueError("The exported character mesh has no exact skeleton reference")
     skeleton = exported_package(skeletons[0])
+    socket_path = cooked / "Client/Content" / (skeleton + ".json")
+    if sources.get("component_blueprint") and not socket_path.is_file():
+        skeleton_root = root / "referenced-skeleton"
+        skeleton_root.mkdir()
+        _, skeleton_converted, skeleton_cooked, skeleton_receipt = await extract_model(
+            skeleton_root, sources, fmodel, converter, False, additional_filters=[skeleton], **options
+        )
+        shutil.copytree(skeleton_converted, converted, dirs_exist_ok=True)
+        shutil.copytree(skeleton_cooked, cooked, dirs_exist_ok=True)
+        manifest["files"].extend(skeleton_receipt["files"])
+        if not socket_path.is_file():
+            raise ValueError("The exact authored NPC skeleton metadata was not exported")
+    attachments = []
+    linked_components = []
+    model_scene = {}
+    material_overrides = {}
+    if sources.get("component_blueprint") and not sources.get("component"):
+        blueprint_path = cooked / "Client/Content" / (sources["component_blueprint"] + ".json")
+        if not blueprint_path.is_file():
+            raise ValueError("The authored NPC component blueprint was not exported")
+        blueprint_rows = json.loads(blueprint_path.read_text(encoding="utf-8-sig"))
+        inherited = [json.loads((metadata_cooked / 'Client/Content' / (package + '.json')).read_text(encoding='utf-8-sig'))
+                     for package, metadata_cooked, _ in reversed(blueprint_exports)]
+        for rows in [*inherited, blueprint_rows]:
+            material_overrides.update(npc_material_overrides(rows))
+        linked_components = await discover_scene_components(
+            root, sources, cooked, converted, manifest, skeleton=skeleton,
+            local_client=local_client, scene=model_scene)
+        for recipe in linked_components:
+            _, relation = prepare_linked_component({"id": "default", **sources}, recipe)
+            recipe["component"] = relation
+            # Keep proven fixed socket attachments baked into the legacy body GLB;
+            # the linked copy is for standalone inspection, never drawn twice.
+            if relation["baked"]:
+                attachments.append({"name": relation["name"], "model": recipe["model"],
+                    "parent": relation["parent_component"], "socket": relation["socket"],
+                    "visible": relation["default_visible"], **relation["transform"]})
+        if material_overrides:
+            material_root = root / "npc-materials"
+            material_root.mkdir()
+            _, part_converted, part_cooked, receipt = await extract_model(
+                material_root, sources, fmodel, converter, False,
+                additional_filters=sorted({path.rsplit("/", 1)[0] + "/" for path in material_overrides.values()}),
+                **options
+            )
+            shutil.copytree(part_converted, converted, dirs_exist_ok=True)
+            shutil.copytree(part_cooked, cooked, dirs_exist_ok=True)
+            manifest["files"].extend(receipt["files"])
+            if any(not (cooked / "Client/Content" / (path + ".json")).is_file()
+                   for path in material_overrides.values()):
+                raise ValueError("The authored NPC material override was not exported")
+        socket_rows = json.loads(socket_path.read_text(encoding="utf-8-sig")) if socket_path.is_file() else []
+        sockets = {row.get("Properties", {}).get("SocketName"): row.get("Properties", {})
+                   for row in socket_rows if row.get("Type") == "SkeletalMeshSocket"}
+        for index, attachment in enumerate(attachments):
+            if attachment["parent"] != "CharacterMesh0":
+                raise ValueError("NPC accessory has an unsupported attachment parent")
+            socket = sockets.get(attachment["socket"])
+            if socket:
+                attachment["bone"] = socket.get("BoneName")
+                attachment["socket_location"] = socket.get("RelativeLocation")
+                attachment["socket_rotation"] = socket.get("RelativeRotation")
+                attachment["socket_scale"] = socket.get("RelativeScale")
+            else:
+                # Unreal permits attaching directly to a named bone.
+                attachment["bone"] = attachment["socket"]
+            subroot = root / f"attachment-{index}"
+            subroot.mkdir()
+            accessory, converted_part, cooked_part, receipt = await extract_model(
+                subroot, {"model": attachment["model"], "blueprints": []}, fmodel, converter,
+                False, **options
+            )
+            shutil.copytree(converted_part, converted, dirs_exist_ok=True)
+            shutil.copytree(cooked_part, cooked, dirs_exist_ok=True)
+            manifest["files"].extend(receipt["files"])
+            attachment["file"] = str(converted / accessory.relative_to(converted_part))
     extra_models = [
-        component_model(component, converted, cooked, skeleton)
+        component_model(component, converted, cooked, skeleton,
+                        master_pose=sources.get('master_pose', False))
         for component in sources.get("extra_models", [])
     ]
+    from wuwa_story_worker.model_material_dependencies import missing_material_resources
+
+    material_models = [sources["model"], *sources.get("extra_models", []),
+                       *(item["model"] for item in attachments)]
+    override_packages = [*material_overrides.values(),
+                         *(path for slots in sources.get("part_material_overrides", {}).values()
+                           for path in slots.values())]
+    material_fetched = set()
+    for depth in range(8):
+        missing = missing_material_resources(cooked, converted, material_models, override_packages)
+        if not missing:
+            break
+        if set(missing) <= material_fetched:
+            raise ValueError("Explicit model material resources were not exported: " + ", ".join(missing))
+        material_fetched.update(missing)
+        subroot = root / f"material-dependencies-{depth}"
+        subroot.mkdir()
+        _, extra_converted, extra_cooked, receipt = await extract_model(
+            subroot, sources, fmodel, converter, False, additional_filters=missing, **options)
+        shutil.copytree(extra_converted, converted, dirs_exist_ok=True)
+        shutil.copytree(extra_cooked, cooked, dirs_exist_ok=True)
+        manifest["files"].extend(receipt["files"])
+    else:
+        raise ValueError("Model material inheritance exceeds eight dependency passes")
     command = [
         blender,
         "-b",
@@ -293,6 +604,26 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         "--preview-texture-size",
         "512",
     ]
+    if attachments:
+        attachment_path = root / "attachments.json"
+        attachment_path.write_text(json.dumps(attachments), encoding="utf-8")
+        command.extend(["--attachments", attachment_path.resolve()])
+    if material_overrides:
+        material_path = root / "npc-material-overrides.json"
+        material_path.write_text(json.dumps(material_overrides), encoding="utf-8")
+        command.extend(["--material-overrides", material_path.resolve()])
+    if sources.get('master_pose'):
+        command.append('--master-pose')
+    if sources.get('hide_primary_geometry'):
+        command.append('--hide-primary-geometry')
+    if sources.get('part_material_overrides'):
+        material_path = root / 'npc-part-materials.json'
+        material_path.write_text(json.dumps(sources['part_material_overrides']), encoding='utf-8')
+        command.extend(['--part-material-overrides', material_path.resolve()])
+    if bone_visibility:
+        visibility_path = root / 'npc-bone-visibility.json'
+        visibility_path.write_text(json.dumps(bone_visibility), encoding='utf-8')
+        command.extend(['--bone-visibility', visibility_path.resolve()])
     plan_path = output / "animation-plan.json"
     await progress("rig_and_animation_plan" if include_animations else "rig")
     await run_blender(
@@ -366,7 +697,8 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
                     raise result
                 parts.append(result)
         await progress("merge_animation_batches", batches=batch_count)
-        await asyncio.to_thread(merge_animation_glbs, parts, output / "animations.glb")
+        await asyncio.to_thread(merge_animation_glbs, parts, output / "animations.glb",
+                                source_paths={clip["name"]: clip["source"] for clip in clips})
         summary = glb_summary(output / "animations.glb", allow_animations=True)
         if summary["animations"] != len(clips):
             raise ValueError("Merged animation collection lost clips")
@@ -401,6 +733,11 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         "source_files": manifest["files"],
         "model": sources["model"],
         "extra_models": sources.get("extra_models", []),
+        **({"linked_components": linked_components} if linked_components else {}),
+        **({"scene": model_scene} if model_scene.get("cues") else {}),
+        **({'bone_visibility_events': bone_visibility} if bone_visibility else {}),
+        **({'data_asset': sources['data_asset']} if sources.get('data_asset') else {}),
+        **({'blueprint_model': sources['blueprint_model']} if sources.get('blueprint_model') else {}),
         "blueprints": sources["blueprints"],
         "tools": {
             name: sha256(path)
@@ -468,7 +805,10 @@ async def publish_bundle(job, output, summaries, provenance):
 async def publish_forms(job, bundles, *, publication_payload=None):
     if not bundles or len({form["id"] for form, *_ in bundles}) != len(bundles):
         raise ValueError("Model publication requires distinct authored forms")
-    validated = [publication_files(job, output, summaries) for _, output, summaries, _ in bundles]
+    validated = [publication_files(
+        job.model_copy(update={"include_animations": "animations" in summaries})
+        if form.get("component") else job, output, summaries)
+        for form, output, summaries, _ in bundles]
     storage = S3Storage(get_settings())
     service = FileRegistrationService(storage)
     prepared_forms = []
@@ -507,7 +847,8 @@ async def publish_forms(job, bundles, *, publication_payload=None):
                     reference_type="character_model_" + kind,
                     owner_node_id=job.owner_node_id,
                     release_id=job.release_id,
-                    source_path="/Game/" + provenance["model"],
+                    source_path="/Game/" + provenance["model"] + (
+                        "#component=" + form["id"] if form.get("component") else ""),
                 )
                 published[kind] = file.id
                 reference.metadata_json = {
@@ -520,6 +861,8 @@ async def publish_forms(job, bundles, *, publication_payload=None):
                     "tier": job.tier,
                     "game_source": provenance,
                     "animation_count": animation_count,
+                    **({"component": form["component"]} if form.get("component") else {}),
+                    **({"scene": provenance["scene"]} if provenance.get("scene") else {}),
                 }
             await service.register_variant(
                 session,
@@ -548,6 +891,45 @@ async def publish_forms(job, bundles, *, publication_payload=None):
         await session.commit()
 
 
+async def build_scene_bundles(staging, forms, *, include_animations=True, **options):
+    """Retain independently validated rigs until the complete scene can publish atomically."""
+    bundles, total_components = [], 0
+    for form in forms:
+        root = staging / form["id"]
+        root.mkdir()
+        output, summaries, provenance = await build_bundle(
+            root, form, include_animations=include_animations, **options)
+        provenance["form_source"] = form.get("source")
+        components = provenance.pop("linked_components", [])
+        total_components += len(components)
+        if total_components > 32:
+            raise ValueError("Model scene exceeds 32 authored components")
+        linked = []
+        children = []
+        prepared_components = prepare_linked_components(form, components)
+        for recipe, (component_id, relation) in zip(components, prepared_components, strict=True):
+            if component_id in linked:
+                raise ValueError("Duplicate authored component in model scene")
+            linked.append(component_id)
+            child_form = {**recipe, "id": component_id, "label": relation["label"],
+                          "order": len(children), "component": relation}
+            child_root = staging / component_id
+            child_root.mkdir()
+            # Static props have no synthetic animation pack. Independent child rigs
+            # export only their own authored animation blueprint/sequence resources.
+            animated = include_animations and bool(recipe.get("blueprints") or recipe.get("montages"))
+            child_output, child_summaries, child_provenance = await build_bundle(
+                child_root, child_form, include_animations=animated, **options)
+            child_provenance["form_source"] = relation["source"]
+            children.append((child_form, child_output, child_summaries, child_provenance))
+        if linked:
+            scene = provenance.setdefault("scene", {"format": "solaris-model-scene-v1", "cues": []})
+            scene["components"] = linked
+        bundles.append((form, output, summaries, provenance))
+        bundles.extend(children)
+    return bundles
+
+
 async def process_character_model(payload):
     if payload.get("job_type") == "media.character_model_upload":
         from wuwa_story_worker.model_uploads import process_model_upload
@@ -566,13 +948,7 @@ async def process_character_model(payload):
                 raise ValueError("Model job payload does not match its durable run")
             if run.status in {"completed", "cancelled"}:
                 return
-            role = await source_row(
-                session,
-                job.release_id,
-                "BinData/role/roleinfo.json",
-                int(job.character_key.split(":")[1]),
-            )
-            forms = await source_forms(session, job.release_id, role)
+            forms = await job_forms(session, job)
         client = (
             asset_workspace() / "assets" / f"{job.asset_version}-{job.tier}-{job.download_id[:16]}"
         )
@@ -595,16 +971,8 @@ async def process_character_model(payload):
             # Keep independently extracted rigs until all forms validate. One commit
             # publishes the complete set; any failure leaves the previous bundle intact.
             with temporary_entity_workspace(client) as staging:
-                bundles = []
-                for form in forms:
-                    with temporary_entity_workspace(client) as root:
-                        output, summaries, provenance = await build_bundle(
-                            root, form, include_animations=job.include_animations, run_id=job.run_id
-                        )
-                        retained = staging / form["id"]
-                        shutil.move(output, retained)
-                    provenance["form_source"] = form["source"]
-                    bundles.append((form, retained, summaries, provenance))
+                bundles = await build_scene_bundles(
+                    staging, forms, include_animations=job.include_animations, run_id=job.run_id)
                 await model_progress(job.run_id, "publish", forms=len(bundles))
                 await publish_forms(job, bundles)
 

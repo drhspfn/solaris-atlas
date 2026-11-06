@@ -188,6 +188,7 @@ export function CatalogClient({
           {Object.entries({
             playable: "Playable",
             story: "Story & event roles",
+            npc: "NPCs",
             technical: "Technical roles",
             all: "All roles",
           }).map(([value, label]) => (

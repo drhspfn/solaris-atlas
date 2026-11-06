@@ -7,6 +7,8 @@ import { BoneCamera, cameraBones } from '../src/components/models/engine/camera-
 import { RootMotionLock } from '../src/components/models/engine/root-motion.js';
 import { FacialAnimation } from '../src/components/models/engine/facial.js';
 import { bindAnimationClips, attachAnimationCatalog, prepareAnimatedMeshes } from '../src/components/models/engine/animations.js';
+import { declaredAccessories } from '../src/components/models/engine/accessories.js';
+import { createLinkedModels } from '../src/components/models/engine/linked-models.js';
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function rig(animated = false, facial = false) {
@@ -18,11 +20,28 @@ function rig(animated = false, facial = false) {
   return { scene, mesh, bone, parser: { associations: new Map([[bone, { nodes: 0 }]]), json: { nodes: [{ name: 'Hips' }] } },
     animations: animated ? [new THREE.AnimationClip('Stand1', 1, [new THREE.VectorKeyframeTrack('Hips.position', [0, 1], [0, 0, 0, 2, 0, 0])])] : [] };
 }
-async function viewer({ preview = false, defer = false, hold = false } = {}) {
+async function viewer({ preview = false, defer = false, hold = false, accessory = false, boneAccessory = false, linked = false, childUrl = 'https://cdn.test/child.glb' } = {}) {
   const requests = [], events = new Map(), changes = [], pending = new Map();
-  let frame, disconnected = false, destroyed = false, failure = false, finish;
+  let frame, disconnected = false, destroyed = false, failure = false, finish, resolveResource;
   let geometryDisposals = 0;
   const low = rig(), full = rig(false, true), pack = rig(true);
+  const child = rig(true);
+  pack.parser.json.animations = [{ extras: { solaris_atlas: { source: 'Client/Content/Aki/Body/Stand.json' } } }];
+  child.parser.json.animations = [{ extras: { solaris_atlas: { source: 'Client/Content/Aki/Prop/Stand.json' } } }];
+  if (boneAccessory) {
+    for (const model of [low, full]) {
+      model.bone.scale.set(2, 3, 4);
+      model.bone.userData = { accessory_name: 'Bone: Hips', default_visible: true,
+        attachment_manifest: JSON.stringify({ name: 'Bone: Hips', visible: true, kind: 'bone_visibility', bone: 'Hips', events: [] }) };
+    }
+    pack.animations[0].tracks.push(new THREE.VectorKeyframeTrack('Hips.scale', [0, 1], [1, 1, 1, 3, 3, 3]));
+  }
+  if (accessory) for (const model of [low, full]) {
+    const anchor = new THREE.Group();
+    anchor.userData = { accessory_name: 'Hat', default_visible: true,
+      attachment_manifest: JSON.stringify({ name: 'Hat', visible: true }) };
+    model.scene.add(anchor); model.accessory = anchor;
+  }
   low.mesh.geometry.addEventListener('dispose', () => geometryDisposals++);
   class Renderer {
     domElement = { setAttribute() {}, addEventListener: (key, value) => events.set(key, value), removeEventListener: key => events.delete(key), remove() {} };
@@ -33,11 +52,13 @@ async function viewer({ preview = false, defer = false, hold = false } = {}) {
     target = new THREE.Vector3(); update() {} dispose() {}
   }
   class Loader {
+    constructor(manager) { resolveResource = url => manager.resolveURL(url); }
     async loadAsync(url) {
       requests.push(url);
       if (failure === true || (typeof failure === 'string' && url.includes(failure))) throw new Error('offline');
       if (hold && /\/(pack|full)\.glb$/.test(url)) await new Promise(resolve => pending.set(url.split('/').at(-1), resolve));
       if (url.endsWith('/pack.glb')) return pack;
+      if (url.endsWith('/child.glb')) return child;
       if (url.endsWith('/full.glb')) return full;
       if (defer) await new Promise(resolve => { finish = resolve; });
       return low;
@@ -48,7 +69,7 @@ async function viewer({ preview = false, defer = false, hold = false } = {}) {
     .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
   const context = { THREE: { ...THREE, WebGLRenderer: Renderer }, GLTFLoader: Loader, OrbitControls: Controls,
     SpringBones: class { joints = [1]; missing = []; reset() {} restore() {} update() {} },
-    BoneCamera, cameraBones, RootMotionLock, FacialAnimation, bindAnimationClips, attachAnimationCatalog, prepareAnimatedMeshes,
+    BoneCamera, cameraBones, RootMotionLock, FacialAnimation, bindAnimationClips, attachAnimationCatalog, prepareAnimatedMeshes, declaredAccessories, createLinkedModels,
     location: { href: 'https://atlas.test/characters/hero', protocol: 'https:' }, URL, AbortController,
     devicePixelRatio: 1, document: { hidden: false, addEventListener: (key, fn) => events.set(key, fn), removeEventListener: key => events.delete(key) },
     ResizeObserver: class { observe() {} disconnect() { disconnected = true; } },
@@ -61,14 +82,91 @@ async function viewer({ preview = false, defer = false, hold = false } = {}) {
   const settings = { playing: false, speed: 1, floor: true, turntable: false, physics: true, strength: 1,
     lock: false, axes: { x: true, y: false, z: true }, bone: '', follow: false, space: 'world', offset: [0, 0, 0] };
   const controller = context.createViewer({ append() {}, getBoundingClientRect: () => ({ width: 500, height: 400 }) },
-    { preview: asset('low.glb'), download: asset('full.glb'), animations: asset('pack.glb'), physics: asset('physics.json'), facial: asset('face.json') },
+    { id: 'root', preview: asset('low.glb'), download: asset('full.glb'), animations: asset('pack.glb'), physics: asset('physics.json'), facial: asset('face.json'),
+      linked_models: linked ? [{ id: 'prop', parent_id: 'root', label: 'Prop', preview: { url: childUrl }, component: { socket: 'Hips', url: 'https://metadata-evil.test/model.glb', bindings: [{ parent_clip: 'Aki/Body/Stand', child_clip: 'Aki/Prop/Stand' }] } }] : [] },
     preview, settings, patch => { changes.push(patch); Object.assign(state, patch); });
   await flush();
-  return { controller, settings, requests, state, full, low, changes, events,
+  return { controller, settings, requests, state, full, low, child, changes, events, resolveResource,
+    collectOrigins: context.declaredResourceOrigins,
     release: name => { const resolve = pending.get(name); assert(resolve, name + ' must already be downloading'); resolve(); },
     frame: ms => frame?.(ms), fail: value => { failure = value; }, finish: () => finish(),
     get disconnected() { return disconnected; }, get destroyed() { return destroyed; }, get disposedGeometry() { return geometryDisposals; } };
 }
+
+test('linked assets authorize their declared CDN origin without trusting metadata or insecure URLs', async () => {
+  const v = await viewer({ linked: true, childUrl: 'https://child-cdn.test/child.glb' }); await flush();
+  assert(v.requests.includes('https://child-cdn.test/child.glb'));
+  assert.equal(v.child.scene.parent, v.low.bone);
+  assert.equal(v.resolveResource('https://child-cdn.test/textures/texture.png'), 'https://child-cdn.test/textures/texture.png');
+  for (const url of ['https://metadata-evil.test/a', 'https://unknown.test/a', 'https://user@child-cdn.test/a', 'http://child-cdn.test/a'])
+    assert.throws(() => v.resolveResource(url), /Invalid model resource URL/);
+  v.controller.dispose();
+});
+
+test('resource origin traversal is limited to declared fields and bounded linked models', async () => {
+  const v = await viewer();
+  const root = { preview: { url: '/root.glb' }, scene: { url: 'https://evil.test/a' }, linked_models: [] };
+  const child = { download: { url: 'https://cdn-two.test/model.glb' }, physics: { url: 'https://user@bad.test/a' }, linked_models: [root] };
+  root.linked_models.push(child);
+  for (let i = 0; i < 40; i++) root.linked_models.push({ preview: { url: `https://cdn${i}.test/a` } });
+  const origins = v.collectOrigins(root, 'https://atlas.test/page');
+  assert(origins.has('https://atlas.test')); assert(origins.has('https://cdn-two.test'));
+  assert(!origins.has('https://evil.test')); assert(!origins.has('https://bad.test')); assert(!origins.has('https://cdn39.test'));
+  assert.equal(origins.size, 33);
+  v.controller.dispose();
+});
+
+test('renderer attaches and synchronizes a linked rig through seek, upgrade, visibility and disposal', async () => {
+  const v = await viewer({ linked: true }); await flush();
+  assert.equal(v.child.scene.parent, v.low.bone);
+  await v.controller.command('animations');
+  v.controller.seek(0.5); assert.equal(v.child.bone.position.x, 1);
+  v.controller.settings({ ...v.settings, playing: true }); v.frame(100); v.frame(200);
+  assert(v.child.bone.position.x > 1);
+  v.controller.settings({ ...v.settings, playing: false }); v.frame(300);
+  const paused = v.child.bone.position.x; v.frame(400); assert.equal(v.child.bone.position.x, paused);
+  await v.controller.command('quality'); assert.equal(v.child.scene.parent, v.full.bone);
+  v.controller.component('prop', false); assert.equal(v.child.scene.visible, false);
+  v.controller.dispose(); assert.equal(v.child.scene.parent, null);
+});
+
+test('component socket lookup uses exported bone names when loader names differ', async () => {
+  const v = await viewer({ linked: true }); await flush();
+  v.full.bone.name = 'Hips_1';
+  await v.controller.command('quality');
+  assert.equal(v.child.scene.parent, v.full.bone);
+  v.controller.dispose();
+});
+
+test('declared accessory visibility survives upgrading model quality', async () => {
+  const v = await viewer({ accessory: true });
+  assert.equal(v.state.accessories[0].name, 'Hat');
+  v.controller.accessory('Hat', false);
+  assert.equal(v.low.accessory.visible, false);
+  await v.controller.command('quality');
+  assert.equal(v.full.accessory.visible, false);
+  assert.equal(v.state.accessories[0].visible, false);
+  v.controller.dispose();
+});
+
+test('bone masks survive animation load, paused frames, seek and quality upgrade', async () => {
+  const v = await viewer({ boneAccessory: true });
+  v.controller.accessory('Bone: Hips', false);
+  await v.controller.command('animations');
+  assert.deepEqual(v.low.bone.scale.toArray(), [0, 0, 0]);
+  v.controller.seek(0.5);
+  assert.deepEqual(v.low.bone.scale.toArray(), [0, 0, 0]);
+  v.frame(100); v.frame(200);
+  assert.deepEqual(v.low.bone.scale.toArray(), [0, 0, 0]);
+  await v.controller.command('quality');
+  assert.deepEqual(v.full.bone.scale.toArray(), [0, 0, 0]);
+  v.controller.settings({ ...v.settings, playing: true }); v.frame(300);
+  assert.deepEqual(v.full.bone.scale.toArray(), [0, 0, 0]);
+  v.controller.accessory('Bone: Hips', true);
+  assert.deepEqual(v.full.bone.scale.toArray(), [2, 3, 4]);
+  assert.equal(v.state.accessories[0].visible, true);
+  v.controller.dispose();
+});
 
 test('native renderer loads only compact geometry until explicit actions; retries keep working model', async () => {
   const v = await viewer();

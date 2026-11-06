@@ -140,7 +140,8 @@ def public_character_filter(role_type, identity, canonical_key, kind="playable")
     category = {
         "playable": role_type == 1,
         "story": role_type.in_((2, 4, 5)),
-        "technical": or_(role_type.is_(None), role_type.not_in((1, 2, 4, 5))),
+        "npc": role_type == 6,
+        "technical": or_(role_type.is_(None), role_type.not_in((1, 2, 4, 5, 6))),
         "all": True,
     }[kind]
     primary = identity["canonical_key"].as_string()

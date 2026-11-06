@@ -402,3 +402,134 @@ Authorization header. This rule allows public data reads; it grants no upload,
 delete or administrative access. The production CDN was checked during migration
 and did not return `Access-Control-Allow-Origin` for the site's Origin header.
 Verify that header on an actual GLB and physics/animation object before rollout.
+
+### NPC recipes and modular appearances
+
+NPC profiles use the same administrator import/upload dialog and local
+`wuwa-model` CLI. Recipes identify `character:npc:<BlueprintConfig.Id>` and retain
+effective world-instance model overrides. Unrelated interaction/quest overrides
+do not create duplicate model forms. NPC model generation is manual; the native
+catalog backfill only registers recipes and relationships.
+
+Supported sources include explicit NPC meshes, exact single-mesh `ModelId`
+preloads (including animals), and `PD_NpcSetupData_C` modular setup assets.
+When only a Blueprint is authored, the importer follows its CDO's primary Mesh
+component and explicit Blueprint parents, with cycle/depth checks; an attachment
+mesh cannot substitute for a missing primary mesh.
+For modular NPCs the authored master rig drives body, face and hair parts;
+the low-detail carrier geometry is omitted. Every weighted part bone and its
+ancestors must match the master rest pose. Unused helper bones may differ.
+Material overrides and required face-atlas textures are retained. The current
+base-color preview selects the neutral face-atlas tile; dynamic expression
+material curves and the original game lighting/shaders are not reconstructed.
+Unsupported compositions fail with a reason instead of publishing missing parts.
+
+Blueprint accessory components retain parent, socket/bone, relative transform
+and visibility in GLB extras. The viewer lists only these declared elements.
+Authored `TsAnimNotifyHideBone` events are also preserved with source sequence,
+time, target bone, hide flag and probability. Cristoforo's mask is verified as
+bone-controlled geometry (`Bone_Piao027_M`), whereas Rosemary's folded umbrella
+is a socket attachment (`WeaponCase0` / `WeaponProp02`). Visibility controls for
+bone elements run after animation updates. Notify events do not establish which
+animation state the game initially selects; the viewer does not infer one.
+
+### Hsin's authored fox transformation
+
+Client inspection confirms that preload `100071` / `BP_Xinyuehu` contains an
+initially hidden `OtherCase2` component referencing
+`/Game/Aki/Character/NPC/AlienNPC/Level_S/SS1Huli/Model/SS1Huli`, with its own
+`SS1Huli_Skeleton` and `ABP_Xinyuehu_Huli`. Preload `100718` references another
+authored fox actor, `BP_Xinyuehu_Huli1`; its participation in the embedded
+component's swap has not been established.
+
+`DT_SkillInfo` skill `13111201` references `AM_Skill01_Loop`. Overlapping notify
+states show `OtherCase2`, hide the main mesh while retaining children, and attach
+the fox to `WeaponProp016`. `AM_AirAttack_Loop` attaches it to `Root` instead.
+The fox animation Blueprint maps these states to separate fox-skeleton clips.
+The linked-model importer retains that component-visibility timeline, attachment
+changes and independent fox rig. The two humanoid forms alone are not a fox
+transformation. `ExtraRibbonAnims` and secondary follow tables remain explicit
+bindings; ambiguous or conditional mappings are retained as evidence rather
+than selected by a matching basename.
+
+### Independent linked models
+
+Playable preload `ActorClassPath` and NPC component Blueprints are the entry
+points. Discovery follows inherited SCS templates, exact child meshes/animation
+Blueprints, montage segments and skeletal-mesh effect groups. Niagara and
+post-processing effects are not character models. Missing authored dependencies
+cause a bounded, diagnostic failure instead of a silently incomplete publication.
+
+Each independent skeleton has its own preview, download and optional animation
+pack. Root forms remain unchanged; component identities include the root form
+and authored component instance. Nested parents are validated, cycles rejected,
+and identical asset bytes deduplicate in the archive and R2. Every GLB animation
+retains its source package so clips with the same name cannot cross-bind.
+The complete set publishes in one transaction. A failed rebuild leaves the prior
+publication usable. No model schema migration is required.
+
+The viewer exposes a full-scene/linked-model selector, visibility overrides and
+an automatic mode driven by authored cues. Components load on demand, have
+independent animation mixers, and follow parent time across pause, seek and loop.
+Supported cues include submesh visibility, primary mesh hiding and temporary
+socket changes. Fixed socket accessories already baked into the parent GLB are
+not rendered twice; their independent bundles remain available for inspection.
+Cristoforo's mask remains a bone-controlled part of the body, not a fictitious
+separate mesh. Dynamic material expression/shader playback remains outside the
+base-color viewer.
+
+Verified source examples include Rosemary's socket umbrella, Suoming's umbrella
+(`Stand2` → `Stand03`, `Stand3` → `Stand02`), Hsin's fox component, and Sigrika's
+effect-spawned `SA1Riling` companion. Its `Stand1_Action02` sequence is explicitly
+selected by the effect asset; it is not inferred from a shared filename.
+
+Local archives use the same scene builder as server imports. A linked-model
+upload requires a matching installed client for independent verification of its
+authored component recipes. Archive-supplied Blueprint names alone do not prove
+authenticity. Unsupported or unverifiable recipes fail before publication.
+
+Local verification on 2026-11-06 used real Sigrika and Riling GLBs in the same
+browser engine as the website. Joint playback, pause/seek, hiding the companion
+and standalone playback were exercised. This caught and fixed a double-applied
+Blender-to-glTF basis when parenting one independent rig to another rig's bone.
+A portable archive containing both rigs passed the upload decoder's geometry,
+animation and authored-component checks. This was a local engine harness, not a
+production publication or an end-to-end test of the live administrator dialog.
+
+The native NPC v3 supplement also completed two isolated PostgreSQL imports:
+13,636 configuration identities/revisions, unchanged counts and revision digests,
+and no duplicate node-release revisions. These are configuration identities, not
+13,636 unique people. Name-key reuse does not create a global speaker identity;
+the catalog importer removes only the retired name-derived evidence and queues
+affected read projections/search for rebuilding. Confirmed scoped actor links
+and independently supported edges remain intact. PostgreSQL fixtures cover the
+nonempty NPC/dialogue/quest/shop/item replay. The full local supplement database
+has no story or item endpoints, so its zero-edge replay is not evidence that all
+real-client story connections have been checked. Production had no `character:npc:`
+nodes at the read-only readiness check; it still needs the catalog import after
+the branch is deployed.
+
+### Release canaries, 2026-11-07
+
+After syncing this branch with main, fresh `wuwa-model` builds from the installed
+3.7.1 client produced verified archives for:
+
+| NPC | Source identity | Preview meshes | Skin joints | Embedded images |
+| --- | --- | ---: | ---: | ---: |
+| Rosemary | `character:npc:15267` | 2 | 198 | 5 |
+| Cristoforo | `character:npc:15697` | 1 | 170 | 4 |
+| Random NPC / Zhixing source template | `character:npc:17521` | 1 | 319 | 7 |
+
+These canaries intentionally used `--without-animations` to verify complete
+geometry, textures, rigs and portable archive publication separately from the
+existing animation pipeline. All three archives passed hash/member validation
+and their preview GLBs were rendered and visually inspected. Rosemary's archive
+also retains the independently declared umbrella component.
+
+The fresh builds exposed textureless MaterialInstance parents exported by CUE
+as UObject lists rather than resolved dictionaries. The shared material reader
+now accepts their authored parameters; regression tests cover parent traversal
+and exact color texture references. It does not invent a texture for an
+unsupported shader. An additional randomly sampled NPC (`16464`) was correctly
+rejected for `MI_NH_FemaleM_090Shanhu` without a resolvable base-color texture;
+no incomplete archive was published for it.

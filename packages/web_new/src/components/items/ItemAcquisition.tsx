@@ -66,7 +66,7 @@ export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: s
     !regions.length &&
     !locations.length
   )
-    return <EmptyInline text="No confirmed acquisition sources recorded yet." />;
+    return <EmptyInline text="No other acquisition sources recorded yet." />;
   return (
     <div className="item-acquisition">
       {banners.length > 0 && (

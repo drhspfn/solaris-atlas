@@ -174,7 +174,7 @@ async def import_canonical_entities(
                     }
                 )
             await session.execute(
-                insert(Node)
+                insert(Node.__table__)
                 .values(node_values)
                 .on_conflict_do_nothing(index_elements=[Node.canonical_key])
             )
@@ -214,13 +214,16 @@ async def import_canonical_entities(
                         },
                     }
                 )
-            await session.execute(
-                insert(NodeRevision)
-                .values(revision_values)
-                .on_conflict_do_nothing(
-                    index_elements=[NodeRevision.node_id, NodeRevision.revision]
-                )
-            )
+            npc_revisions = [value for record, value in zip(batch, revision_values, strict=True)
+                             if kind == "character" and record["id"].startswith("character:npc:")
+                             and isinstance(record.get("npc"), dict)]
+            npc_ids = {value["node_id"] for value in npc_revisions}
+            ordinary = [value for value in revision_values if value["node_id"] not in npc_ids]
+            if ordinary:
+                await session.execute(insert(NodeRevision.__table__).values(ordinary).on_conflict_do_nothing(
+                    index_elements=[NodeRevision.node_id, NodeRevision.revision]))
+            if npc_revisions:
+                await _upsert_npc_revisions(session, npc_revisions)
             await session.commit()
             total += len(batch)
     typed_order = (
@@ -260,6 +263,40 @@ async def import_canonical_entities(
             await _insert_typed_entities(session, kind, batch, node_map, source_ids, newer_release_ids)
             await session.commit()
     return total
+
+
+async def _upsert_npc_revisions(session: AsyncSession, values: list[dict[str, Any]]) -> None:
+    """Refresh same-release NPC revisions without changing the release sequence key."""
+    table = NodeRevision.__table__
+    statement = insert(table).values(values)
+    old_metadata = table.c.metadata
+    history = func.coalesce(old_metadata["repair_history"], func.jsonb_build_array())
+    previous = func.jsonb_build_object(
+        "content_hash", func.encode(table.c.content_hash, "hex"),
+        "source_record_id", table.c.source_record_id,
+        "metadata", old_metadata.op("-")("repair_history"),
+    )
+    updated_history = case(
+        (table.c.content_hash.is_distinct_from(statement.excluded.content_hash),
+         history.op("||")(func.jsonb_build_array(previous))),
+        else_=history,
+    )
+    metadata = case(
+        (table.c.content_hash.is_distinct_from(statement.excluded.content_hash),
+         statement.excluded.metadata.op("||")(func.jsonb_build_object("repair_history", updated_history))),
+        (old_metadata.has_key("repair_history"),  # noqa: W601
+         statement.excluded.metadata.op("||")(func.jsonb_build_object("repair_history", history))),
+        else_=statement.excluded.metadata,
+    )
+    result = await session.execute(statement.on_conflict_do_update(
+        index_elements=[table.c.node_id, table.c.revision],
+        set_={"content_hash": statement.excluded.content_hash,
+              "source_record_id": statement.excluded.source_record_id,
+              "metadata": metadata},
+        where=table.c.release_id == statement.excluded.release_id,
+    ).returning(table.c.node_id))
+    if len(result.all()) != len(values):
+        raise ValueError("NPC revision sequence belongs to a different release")
 
 
 async def _insert_typed_entities(
@@ -505,6 +542,10 @@ async def _insert_typed_entities(
                                 "game_character_id": record.get("game_id"),
                                 "name_key": _nested_key(record, "name"),
                                 "role_type": raw.get("RoleType"),
+                                **({"role_type": 6, "npc": record["npc"]}
+                                   if isinstance(record.get("npc"), dict) else {}),
+                                **({"asset_version": record["asset_version"]}
+                                   if record.get("asset_version") is not None else {}),
                                 "is_trial": raw.get("IsTrial"),
                                 "is_show": raw.get("IsShow"),
                                 "public_identity": record.get("public_identity"),
@@ -654,7 +695,7 @@ async def _insert_typed_entities(
     for model, values in typed:
         grouped.setdefault(model, []).extend(values)
     for model, values in grouped.items():
-        statement = insert(model).values(values)
+        statement = insert(model.__table__).values(values)
         updates_by_model = {
             Character: ("canonical_name", "name_key_id", "nickname_key_id", "metadata"),
             Item: (
@@ -718,6 +759,7 @@ async def import_canonical_edges(
     batch_size: int = 1000,
     relation_filter: set[str] | None = None,
     type_filter: set[str] | None = None,
+    skip_missing_endpoints: bool = False,
 ) -> int:
     relation_ids = {row.key: row.id for row in await session.scalars(select(RelationType))}
     count = 0
@@ -745,9 +787,13 @@ async def import_canonical_edges(
             raise ValueError(f"Canonical source relations are not seeded: {sorted(unknown)}")
         missing = node_keys - node_ids.keys()
         if missing:
-            raise ValueError(
-                f"Canonical graph edge has unresolved endpoints: {sorted(missing)[:10]}"
-            )
+            if not skip_missing_endpoints:
+                raise ValueError(
+                    f"Canonical graph edge has unresolved endpoints: {sorted(missing)[:10]}"
+                )
+            batch = [row for row in batch if row["from"] in node_ids and row["to"] in node_ids]
+            if not batch:
+                continue
         edge_values = []
         for record in batch:
             source_relation = record.get("relation")

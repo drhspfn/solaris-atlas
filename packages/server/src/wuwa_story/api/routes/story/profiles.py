@@ -825,6 +825,15 @@ async def character_profile(
     session: AsyncSession = Depends(get_session),
     connections_limit: int | None = None,
 ) -> dict[str, Any]:
+    # NPC metadata is stored on its typed character, independently of playable projections.
+    from wuwa_story.api.routes.story.npc_profile import npc_profile, npc_record
+
+    candidate = (await get_node(session, canonical_key, ("character",))
+                 if not canonical_key.startswith("character:") or canonical_key.startswith("character:npc:")
+                 else None)
+    if candidate and candidate.canonical_key.startswith("character:npc:"):
+        node, character, npc, release_id = await npc_record(session, candidate.canonical_key, game_version)
+        return await npc_profile(session, node, character, npc, release_id, locale)
     if connections_limit is not None:
         from wuwa_story.read_models.readers.character_connections import compact_character_profile
 

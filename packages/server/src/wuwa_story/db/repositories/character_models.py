@@ -2,6 +2,7 @@
 
 from sqlalchemy import func, select
 
+from wuwa_story.db.models.core import Character
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
@@ -32,6 +33,19 @@ async def model_recipe(session, release_id, character_id):
         role.get("MeshId"), role.get("UiMeshId"), *(row.get("MeshId") for row in morphs),
     })
     return {"role": role, "preloads": preloads, "morphs": morphs}
+
+
+async def npc_model_recipe(session, release_id, owner_node_id, blueprint_id):
+    # Character metadata is current, not a release-versioned source record.
+    # Refuse historical recipes rather than silently assigning current assets to them.
+    latest = await model_release(session)
+    if latest is None or latest.id != release_id:
+        raise ValueError("NPC model metadata is only available for the latest snapshot")
+    character = await session.get(Character, owner_node_id)
+    npc = (character.metadata_json or {}).get("npc") if character else None
+    if not isinstance(npc, dict) or npc.get("blueprint_id") != blueprint_id:
+        raise ValueError("NPC model source is missing or does not match this character")
+    return {"npc": npc}
 
 
 async def model_release(session, game_version=None):
@@ -72,6 +86,8 @@ async def published_model_files(session, owner_node_id, release_id, bucket):
                 FileReference.metadata_json["form_id"].label("form_id"),
                 FileReference.metadata_json["form_label"].label("form_label"),
                 FileReference.metadata_json["form_order"].label("form_order"),
+                FileReference.metadata_json["component"].label("component"),
+                FileReference.metadata_json["scene"].label("scene"),
             )
             .join(FileObject, FileObject.id == FileReference.file_id)
             .join(FileLocation, FileLocation.file_id == FileObject.id)
