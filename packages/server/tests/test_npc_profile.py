@@ -217,3 +217,13 @@ async def test_flow_participants_remain_separate_from_confirmed_identity(monkeyp
     result = await npc_profile.npc_flow_participants("character:npc:123", locale="en", session=session)
     assert result == {"results": [{"speaker": {"canonical_key": "speaker:9"}, "flow_state": "A/1/2"}], "truncated": False}
     assert "participation_spoken" in str(session.execute.call_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_flow_participants_reports_truncation_when_more_than_100_states(monkeypatch):
+    monkeypatch.setattr(npc_profile, "npc_record", AsyncMock(return_value=(SimpleNamespace(id=1), None, {}, 5)))
+    monkeypatch.setattr(npc_profile, "npc_flow_state_ids", AsyncMock(return_value=list(range(101))))
+    monkeypatch.setattr(npc_profile, "prefetch_node_labels", AsyncMock())
+    session = SimpleNamespace(execute=AsyncMock(return_value=[]))
+    result = await npc_profile.npc_flow_participants("character:npc:123", session=session)
+    assert result == {"results": [], "truncated": True}
