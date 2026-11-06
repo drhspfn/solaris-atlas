@@ -29,6 +29,23 @@ const encounter = (root, overrides = {}) => ({ id: 'gate/dungeon:1555', kind: 'e
 const display = { name: 'Rover', colorMode: 'accent', customColor: '' };
 const opened = [];
 const cache = new Map();
+function loadUi(name) {
+  const key = `ui/${name}`;
+  if (cache.has(key)) return cache.get(key);
+  let path = new URL(`../src/components/ui/${name}.tsx`, import.meta.url);
+  if (!existsSync(path)) path = new URL(`../src/components/ui/${name}.ts`, import.meta.url);
+  const code = ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: {
+    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
+  } }).outputText;
+  const exports = {}; cache.set(key, exports);
+  vm.runInNewContext(code, { exports, URL, require: id => {
+    if (id.endsWith('.css')) return {};
+    if (id === 'lucide-react') return new Proxy({}, { get: () => () => null });
+    if (id.startsWith('./')) return loadUi(id.slice(2));
+    return require(id);
+  } });
+  return exports;
+}
 function loadStory(name) {
   if (cache.has(name)) return cache.get(name);
   let path = new URL(`../src/components/story/${name}.tsx`, import.meta.url);
@@ -44,6 +61,7 @@ function loadStory(name) {
     if (id === '../ui/Button') return { Button: ({ children, onClick }) => React.createElement('button', { onClick }, children) };
     if (id === '../ui/MediaViewerProvider') return { useMediaViewer: () => ({ open: (...args) => opened.push(args) }) };
     if (id === '../ui/mediaViewerUtils') return { mediaViewerUrl };
+    if (id === '../ui/AudioPlayer' || id === '../ui/Select') return loadUi(id.split('/').at(-1));
     if (id.startsWith('./')) return loadStory(id.slice(2));
     return require(id);
   } });
@@ -357,6 +375,102 @@ test('component display order uses earliest occurrence before deduplicating file
   assert.equal(JSON.stringify(media), before);
 });
 
+const soundtrackTrack = (overrides = {}) => ({ file_id: 41, url: 'https://cdn.test/M0334-en-male.ogg',
+  language: 'en', rover: 'male', status: 'published', file: 'audio/M0334-en-male.ogg', ...overrides });
+const soundtrackMedia = (tracks = [soundtrackTrack()]) => ({ schema_version: 1, complete_video: false, sections: [
+  { kind: 'audio_event', source: '/Game/M0334.AudioSection', reference: '/Game/Wwise/M0334',
+    clock: { numerator: 30, denominator: 1 },
+    range: { Value: { LowerBound: { Type: 1, Value: { Value: 120 } }, UpperBound: { Type: 0, Value: { Value: 900 } } } }, tracks },
+] });
+
+test('audio-only M0334 renders a whole scene soundtrack with exact source and no autoplay', () => {
+  const media = soundtrackMedia();
+  const before = JSON.stringify(media);
+  const markup = renderToStaticMarkup(React.createElement(QuestSequenceFragments, { media }));
+  assert.equal((markup.match(/<audio\b/g) || []).length, 1);
+  assert.match(markup, /aria-label="Play Scene soundtrack"/);
+  assert.match(markup, /src="https:\/\/cdn.test\/M0334-en-male.ogg" preload="none"/);
+  assert.doesNotMatch(markup, /autoplay|<select|Soundtrack language|Soundtrack Rover|Video components|#t=/i);
+  for (const value of ['audio/M0334-en-male.ogg', '/Game/M0334.AudioSection', 'LowerBound', 'numerator']) assert(markup.includes(value));
+  assert.match(markup, /Whole Wwise event · mixed scene soundtrack/);
+  assert.equal(JSON.stringify(media), before);
+  const combined = renderToStaticMarkup(React.createElement(QuestSequenceFragments, { media: {
+    ...media, sections: [...media.sections, { kind: 'movie_fragment', status: 'published', file_id: 33,
+      url: 'https://cdn.test/M0334.webm' }],
+  } }));
+  assert.match(combined, /Video components · 1/);
+  assert.equal((combined.match(/<audio\b/g) || []).length, 1);
+});
+
+test('null-language soundtrack remains Shared without inventing an English language', () => {
+  const shared = soundtrackTrack({ language: null, rover: null, url: 'https://cdn.test/M0334-shared.ogg',
+    file: 'audio/M0334-shared.ogg' });
+  const renderAudio = (tracks) => renderToStaticMarkup(React.createElement(QuestSequenceFragments, { media: soundtrackMedia(tracks) }));
+  const markup = renderAudio([shared]);
+  assert.match(markup, /Shared soundtrack/);
+  assert.match(markup, /src="https:\/\/cdn.test\/M0334-shared.ogg"/);
+  assert.doesNotMatch(markup, /English|Soundtrack language|Soundtrack Rover|<select|autoplay/);
+  const english = renderAudio([shared, soundtrackTrack()]);
+  assert.match(english, /src="https:\/\/cdn.test\/M0334-en-male.ogg"/);
+  assert.match(english, /Shared/);
+  assert.match(english, /Soundtrack language/);
+  const firstActual = renderAudio([shared, soundtrackTrack({ language: 'ja', url: 'https://cdn.test/ja.ogg' })]);
+  assert.match(firstActual, /src="https:\/\/cdn.test\/M0334-shared.ogg"/);
+  assert.doesNotMatch(firstActual, /English/);
+});
+
+test('soundtrack selectors expose only published languages and actual Rover alternatives', () => {
+  const renderAudio = (tracks) => renderToStaticMarkup(React.createElement(QuestSequenceFragments, { media: soundtrackMedia(tracks) }));
+  const variants = [soundtrackTrack(), soundtrackTrack({ file_id: 42, rover: 'female', url: 'https://cdn.test/female.ogg' }),
+    soundtrackTrack({ file_id: 43, language: 'ja', rover: null, url: 'https://cdn.test/ja.ogg' }),
+    soundtrackTrack({ file_id: 44, language: 'ko', status: 'pending' })];
+  const markup = renderAudio(variants);
+  assert.match(markup, /Soundtrack language/);
+  assert.match(markup, /Soundtrack Rover/);
+  assert.doesNotMatch(markup, /<select|한국어/);
+  assert.equal((markup.match(/<audio\b/g) || []).length, 1);
+  const singleRover = renderAudio([variants[0], variants[2]]);
+  assert.match(singleRover, /Soundtrack language/);
+  assert.doesNotMatch(singleRover, /Soundtrack Rover/);
+  for (const track of [soundtrackTrack({ status: 'pending' }), soundtrackTrack({ url: 'javascript:alert(1)' }),
+    soundtrackTrack({ file: 'audio/../wrong.ogg' })]) assert.equal(renderAudio([track]), '');
+});
+
+test('soundtrack selector changes choose one matching whole event without inventing Rover variants', () => {
+  const states = [];
+  let stateIndex = 0;
+  const exports = {};
+  const code = ts.transpileModule(readFileSync(new URL('../src/components/story/QuestSequenceAudio.tsx', import.meta.url), 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  vm.runInNewContext(code, { exports, require: id => {
+    if (id === 'react') return { useState: initial => {
+      const index = stateIndex++;
+      if (!(index in states)) states[index] = initial;
+      return [states[index], value => { states[index] = value; }];
+    } };
+    if (id === '../ui/mediaViewerUtils') return { mediaViewerUrl };
+    if (id.startsWith('../ui/')) return loadUi(id.split('/').at(-1));
+    return id.endsWith('.css') ? { default: {} } : require(id);
+  } });
+  const media = soundtrackMedia([soundtrackTrack(),
+    soundtrackTrack({ file_id: 42, rover: 'female', url: 'https://cdn.test/female.ogg' }),
+    soundtrackTrack({ file_id: 43, language: 'ja', rover: null, url: 'https://cdn.test/ja.ogg' })]);
+  const renderPlayer = () => {
+    stateIndex = 0;
+    const scene = exports.QuestSequenceAudio({ media }).props.children[0];
+    return scene.type(scene.props).props.children.find(child => child.type === loadUi('AudioPlayer').AudioPlayer);
+  };
+  const initial = renderPlayer();
+  initial.props.settings.props.children.find(child => child.props?.label === 'Soundtrack Rover').props.onChange('female');
+  assert.equal(renderPlayer().props.src, 'https://cdn.test/female.ogg');
+  initial.props.settings.props.children.find(child => child.props?.label === 'Soundtrack language').props.onChange('ja');
+  const japanese = renderPlayer();
+  assert.equal(japanese.props.src, 'https://cdn.test/ja.ogg');
+  assert.equal(japanese.props.settings.props.children.filter(Boolean).length, 1);
+  assert.equal(japanese.props.label, 'Scene soundtrack');
+});
+
 test('published video components are actually reachable inside their flow disclosure', () => {
   const data = encounter(node('root', { flow_states: [flow('movie-flow', 'Flow28', { sequence_media: {
     schema_version: 1, complete_video: false, sections: [{ kind: 'movie_fragment', status: 'published', file_id: 33,
@@ -484,6 +598,25 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     initialTranscript: { lines: windowLines, offset: 1, limit: 2, story_blocks: blocks },
     initialMedia: { events, related_cutscenes: [] },
   }));
+  for (const withBoundary of [true, false]) {
+    const audioMarkup = renderMedia(lines, [{ id: 'soundtrack-gate', title: 'Battle', position: [2],
+      branches: [], flow_states: [], source, encounter: encounter(node('soundtrack-root', { flow_states: [
+        flow('soundtrack-canonical', 'Flow28', { phase: 'Condition', cinematics: withBoundary ? [cinematic()] : [],
+          sequence_media: soundtrackMedia() }),
+        flow('soundtrack-repeated', 'Flow28', { phase: 'Condition', cinematics: withBoundary ? [cinematic()] : [],
+          sequence_media: soundtrackMedia() }),
+      ] })) }], []);
+    const audioPosition = audioMarkup.indexOf('<audio');
+    assert.equal((audioMarkup.match(/<audio\b/g) || []).length, 1, 'shared Flow28 has exactly one soundtrack');
+    assert.match(audioMarkup, /aria-label="Play Scene soundtrack"/);
+    assert(audioPosition >= 0 && audioPosition < audioMarkup.indexOf('SHUT UP!'));
+    for (const text of ['SHUT UP!', 'THAT IS NOT HOME!']) assert(audioMarkup.includes(text));
+    assert.doesNotMatch(audioMarkup, /autoplay|Video components/);
+    if (withBoundary) {
+      assert(audioMarkup.indexOf('class="marker">Scene</div>') < audioPosition);
+      assert(audioMarkup.indexOf('THAT IS NOT HOME!') < audioMarkup.indexOf('End scene'));
+    }
+  }
   const fallbackMarkup = renderMedia([
     { id: 'fallback-before', flow_state: 'Before', text: { content: 'Before' }, story_position: [4] },
     { id: 'fallback-line', flow_state: 'Flow28', text: { content: 'Dialogue without cinematic parts' }, action: { index: 0 } },

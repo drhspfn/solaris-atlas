@@ -147,6 +147,7 @@ function questHarness({
     "@/components/story/QuestSequenceFragments": {
       QuestSequenceFragments: () => null,
       playableEncounterFragments: () => [],
+      hasSequenceComponents: () => false,
     },
     "@/config/settings": { APP_SETTINGS: { limits: { transcript: 2000 } } },
   });
