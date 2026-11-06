@@ -1,4 +1,4 @@
-"""Admin-only chunked model uploads; no server-side game extraction is required."""
+"""Admin-only model uploads; linked components also verify authored client metadata."""
 
 import asyncio
 import hashlib

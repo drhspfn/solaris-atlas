@@ -446,8 +446,65 @@ component's swap has not been established.
 states show `OtherCase2`, hide the main mesh while retaining children, and attach
 the fox to `WeaponProp016`. `AM_AirAttack_Loop` attaches it to `Root` instead.
 The fox animation Blueprint maps these states to separate fox-skeleton clips.
-Replaying the transformation therefore requires a component-visibility timeline,
-attachment changes and independently animated rigs. The current importer does
-not yet reconstruct this synchronized transformation; the two humanoid Hsin
-forms do not establish a playable fox form or a correct transformation by
-themselves. Preserve the explicit component/notify evidence when adding support.
+The linked-model importer retains that component-visibility timeline, attachment
+changes and independent fox rig. The two humanoid forms alone are not a fox
+transformation. `ExtraRibbonAnims` and secondary follow tables remain explicit
+bindings; ambiguous or conditional mappings are retained as evidence rather
+than selected by a matching basename.
+
+### Independent linked models
+
+Playable preload `ActorClassPath` and NPC component Blueprints are the entry
+points. Discovery follows inherited SCS templates, exact child meshes/animation
+Blueprints, montage segments and skeletal-mesh effect groups. Niagara and
+post-processing effects are not character models. Missing authored dependencies
+cause a bounded, diagnostic failure instead of a silently incomplete publication.
+
+Each independent skeleton has its own preview, download and optional animation
+pack. Root forms remain unchanged; component identities include the root form
+and authored component instance. Nested parents are validated, cycles rejected,
+and identical asset bytes deduplicate in the archive and R2. Every GLB animation
+retains its source package so clips with the same name cannot cross-bind.
+The complete set publishes in one transaction. A failed rebuild leaves the prior
+publication usable. No model schema migration is required.
+
+The viewer exposes a full-scene/linked-model selector, visibility overrides and
+an automatic mode driven by authored cues. Components load on demand, have
+independent animation mixers, and follow parent time across pause, seek and loop.
+Supported cues include submesh visibility, primary mesh hiding and temporary
+socket changes. Fixed socket accessories already baked into the parent GLB are
+not rendered twice; their independent bundles remain available for inspection.
+Cristoforo's mask remains a bone-controlled part of the body, not a fictitious
+separate mesh. Dynamic material expression/shader playback remains outside the
+base-color viewer.
+
+Verified source examples include Rosemary's socket umbrella, Suoming's umbrella
+(`Stand2` → `Stand03`, `Stand3` → `Stand02`), Hsin's fox component, and Sigrika's
+effect-spawned `SA1Riling` companion. Its `Stand1_Action02` sequence is explicitly
+selected by the effect asset; it is not inferred from a shared filename.
+
+Local archives use the same scene builder as server imports. A linked-model
+upload requires a matching installed client for independent verification of its
+authored component recipes. Archive-supplied Blueprint names alone do not prove
+authenticity. Unsupported or unverifiable recipes fail before publication.
+
+Local verification on 2026-11-06 used real Sigrika and Riling GLBs in the same
+browser engine as the website. Joint playback, pause/seek, hiding the companion
+and standalone playback were exercised. This caught and fixed a double-applied
+Blender-to-glTF basis when parenting one independent rig to another rig's bone.
+A portable archive containing both rigs passed the upload decoder's geometry,
+animation and authored-component checks. This was a local engine harness, not a
+production publication or an end-to-end test of the live administrator dialog.
+
+The native NPC v3 supplement also completed two isolated PostgreSQL imports:
+13,636 configuration identities/revisions, unchanged counts and revision digests,
+and no duplicate node-release revisions. These are configuration identities, not
+13,636 unique people. Name-key reuse does not create a global speaker identity;
+the catalog importer removes only the retired name-derived evidence and queues
+affected read projections/search for rebuilding. Confirmed scoped actor links
+and independently supported edges remain intact. PostgreSQL fixtures cover the
+nonempty NPC/dialogue/quest/shop/item replay. The full local supplement database
+has no story or item endpoints, so its zero-edge replay is not evidence that all
+real-client story connections have been checked. Production had no `character:npc:`
+nodes at the read-only readiness check; it still needs the catalog import after
+the branch is deployed.
