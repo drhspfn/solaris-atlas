@@ -27,7 +27,10 @@ from wuwa_story_worker.broker import job_lock
 from wuwa_story_worker.client_assets import validate_plan
 from wuwa_story_worker.entity_media import tool
 from wuwa_story_worker.job_tracking import update_admin_run
-from wuwa_story_worker.linked_component_forms import prepare_linked_component
+from wuwa_story_worker.linked_component_forms import (
+    prepare_linked_component,
+    prepare_linked_components,
+)
 from wuwa_story_worker.media_provenance import sha256, temporary_entity_workspace
 from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.model_animation_merge import merge_animation_glbs
@@ -489,7 +492,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         linked_components = await discover_scene_components(
             root, sources, cooked, converted, manifest, skeleton=skeleton, local_client=local_client)
         for recipe in linked_components:
-            _, relation = prepare_linked_component(sources, recipe)
+            _, relation = prepare_linked_component({"id": "default", **sources}, recipe)
             recipe["component"] = relation
             # Keep proven fixed socket attachments baked into the legacy body GLB;
             # the linked copy is for standalone inspection, never drawn twice.
@@ -891,8 +894,8 @@ async def build_scene_bundles(staging, forms, *, include_animations=True, **opti
             raise ValueError("Model scene exceeds 32 authored components")
         linked = []
         children = []
-        for recipe in components:
-            component_id, relation = prepare_linked_component(form, recipe)
+        prepared_components = prepare_linked_components(form, components)
+        for recipe, (component_id, relation) in zip(components, prepared_components, strict=True):
             if component_id in linked:
                 raise ValueError("Duplicate authored component in model scene")
             linked.append(component_id)
