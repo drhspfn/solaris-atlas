@@ -432,3 +432,22 @@ bone-controlled geometry (`Bone_Piao027_M`), whereas Rosemary's folded umbrella
 is a socket attachment (`WeaponCase0` / `WeaponProp02`). Visibility controls for
 bone elements run after animation updates. Notify events do not establish which
 animation state the game initially selects; the viewer does not infer one.
+
+### Hsin's authored fox transformation
+
+Client inspection confirms that preload `100071` / `BP_Xinyuehu` contains an
+initially hidden `OtherCase2` component referencing
+`/Game/Aki/Character/NPC/AlienNPC/Level_S/SS1Huli/Model/SS1Huli`, with its own
+`SS1Huli_Skeleton` and `ABP_Xinyuehu_Huli`. Preload `100718` references another
+authored fox actor, `BP_Xinyuehu_Huli1`; its participation in the embedded
+component's swap has not been established.
+
+`DT_SkillInfo` skill `13111201` references `AM_Skill01_Loop`. Overlapping notify
+states show `OtherCase2`, hide the main mesh while retaining children, and attach
+the fox to `WeaponProp016`. `AM_AirAttack_Loop` attaches it to `Root` instead.
+The fox animation Blueprint maps these states to separate fox-skeleton clips.
+Replaying the transformation therefore requires a component-visibility timeline,
+attachment changes and independently animated rigs. The current importer does
+not yet reconstruct this synchronized transformation; the two humanoid Hsin
+forms do not establish a playable fox form or a correct transformation by
+themselves. Preserve the explicit component/notify evidence when adding support.
