@@ -505,6 +505,10 @@ async def _insert_typed_entities(
                                 "game_character_id": record.get("game_id"),
                                 "name_key": _nested_key(record, "name"),
                                 "role_type": raw.get("RoleType"),
+                                **({"role_type": 6, "npc": record["npc"]}
+                                   if isinstance(record.get("npc"), dict) else {}),
+                                **({"asset_version": record["asset_version"]}
+                                   if record.get("asset_version") is not None else {}),
                                 "is_trial": raw.get("IsTrial"),
                                 "is_show": raw.get("IsShow"),
                                 "public_identity": record.get("public_identity"),
@@ -654,7 +658,7 @@ async def _insert_typed_entities(
     for model, values in typed:
         grouped.setdefault(model, []).extend(values)
     for model, values in grouped.items():
-        statement = insert(model).values(values)
+        statement = insert(model.__table__).values(values)
         updates_by_model = {
             Character: ("canonical_name", "name_key_id", "nickname_key_id", "metadata"),
             Item: (
@@ -718,6 +722,7 @@ async def import_canonical_edges(
     batch_size: int = 1000,
     relation_filter: set[str] | None = None,
     type_filter: set[str] | None = None,
+    skip_missing_endpoints: bool = False,
 ) -> int:
     relation_ids = {row.key: row.id for row in await session.scalars(select(RelationType))}
     count = 0
@@ -745,9 +750,13 @@ async def import_canonical_edges(
             raise ValueError(f"Canonical source relations are not seeded: {sorted(unknown)}")
         missing = node_keys - node_ids.keys()
         if missing:
-            raise ValueError(
-                f"Canonical graph edge has unresolved endpoints: {sorted(missing)[:10]}"
-            )
+            if not skip_missing_endpoints:
+                raise ValueError(
+                    f"Canonical graph edge has unresolved endpoints: {sorted(missing)[:10]}"
+                )
+            batch = [row for row in batch if row["from"] in node_ids and row["to"] in node_ids]
+            if not batch:
+                continue
         edge_values = []
         for record in batch:
             source_relation = record.get("relation")

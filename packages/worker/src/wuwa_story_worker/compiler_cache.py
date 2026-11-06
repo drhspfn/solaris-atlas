@@ -11,6 +11,7 @@ def compiler_fingerprint(root: Path | None = None, *, dependencies=()):
             character_artwork,
             character_identity,
             dungeon_context,
+            npc_sources,
             runtime_media,
             scenario_context,
             speaker_crosswalk,
@@ -20,7 +21,7 @@ def compiler_fingerprint(root: Path | None = None, *, dependencies=()):
 
         root = Path(__file__).with_name("compiler")
         dependencies = [(module.__name__, Path(module.__file__)) for module in (
-            character_artwork, character_identity, dungeon_context, runtime_media,
+            character_artwork, character_identity, dungeon_context, npc_sources, runtime_media,
             scenario_context, speaker_crosswalk, talk_backgrounds, video_package_context,
         )]
     digest = hashlib.sha256()
