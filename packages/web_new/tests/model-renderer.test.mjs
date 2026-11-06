@@ -105,6 +105,14 @@ test('renderer attaches and synchronizes a linked rig through seek, upgrade, vis
   v.controller.dispose(); assert.equal(v.child.scene.parent, null);
 });
 
+test('component socket lookup uses exported bone names when loader names differ', async () => {
+  const v = await viewer({ linked: true }); await flush();
+  v.full.bone.name = 'Hips_1';
+  await v.controller.command('quality');
+  assert.equal(v.child.scene.parent, v.full.bone);
+  v.controller.dispose();
+});
+
 test('declared accessory visibility survives upgrading model quality', async () => {
   const v = await viewer({ accessory: true });
   assert.equal(v.state.accessories[0].name, 'Hat');

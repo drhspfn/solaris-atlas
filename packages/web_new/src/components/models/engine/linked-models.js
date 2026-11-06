@@ -57,12 +57,17 @@ export function componentMatrix(transform) {
   return basis.clone().multiply(matrix).multiply(basis.clone().invert());
 }
 
-export function attachComponent(parent, child, component) {
+export function attachComponent(parent, child, component, parser) {
   let anchor = parent;
   if (component.socket) {
     const matches = [];
     const bone = component.socket_transform?.bone || component.socket;
-    parent.traverse(node => { if (node.isBone && node.name === bone) matches.push(node); });
+    parent.traverse(node => {
+      if (!node.isBone) return;
+      const index = parser?.associations?.get(node)?.nodes;
+      const name = parser ? (index === undefined ? undefined : parser.json?.nodes?.[index]?.name) : node.name;
+      if (name === bone) matches.push(node);
+    });
     if (matches.length !== 1) throw new Error(`Socket bone unavailable: ${bone}`);
     anchor = matches[0];
   }
@@ -71,7 +76,7 @@ export function attachComponent(parent, child, component) {
   anchor.add(child);
 }
 
-export function createLinkedModels({ assets, load, dispose, report, getRoot, getAction }) {
+export function createLinkedModels({ assets, load, dispose, report, getRoot, getParser, getAction }) {
   const declared = new Set(assets.scene?.components ?? (assets.linked_models || []).map(item => item.id));
   const items = (assets.linked_models || []).filter(item => declared.has(item.id) && !item.component.baked);
   const depth = item => { let n = 0, current = item; const seen = new Set(); while (current && !seen.has(current.id)) { seen.add(current.id); current = items.find(candidate => candidate.id === current.parent_id); n++; } return n; };
@@ -82,16 +87,16 @@ export function createLinkedModels({ assets, load, dispose, report, getRoot, get
     if (!closed) report([...entries.values()].map(({ item, visible, loading, error }) => ({ id: item.id, name: item.label, visible, loading, error })));
   }
   function parentOf(entry) {
-    if (entry.item.parent_id === assets.id) return getRoot();
-    return entries.get(entry.item.parent_id)?.rig?.scene;
+    if (entry.item.parent_id === assets.id) return { scene: getRoot(), parser: getParser?.() };
+    return entries.get(entry.item.parent_id)?.rig;
   }
   function reattach() {
     for (const entry of entries.values()) if (entry.rig) entry.rig.scene.removeFromParent();
     for (const entry of entries.values()) if (entry.rig) {
       const parent = parentOf(entry);
       try {
-        if (!parent) throw new Error('Parent component unavailable');
-        attachComponent(parent, entry.rig.scene, entry.item.component); entry.error = '';
+        if (!parent?.scene) throw new Error('Parent component unavailable');
+        attachComponent(parent.scene, entry.rig.scene, entry.item.component, parent.parser); entry.error = '';
       } catch (error) { entry.error = error.message || 'Component could not be attached'; }
     }
     emit();
@@ -115,9 +120,9 @@ export function createLinkedModels({ assets, load, dispose, report, getRoot, get
         }
         if (closed) return;
         const target = parentOf(entry);
-        if (!target) throw new Error('Parent component unavailable');
+        if (!target?.scene) throw new Error('Parent component unavailable');
         prepareAnimatedMeshes(rig.scene);
-        attachComponent(target, rig.scene, entry.item.component);
+        attachComponent(target.scene, rig.scene, entry.item.component, target.parser);
         rig.scene.visible = entry.visible;
         entry.rig = rig; entry.clips = clips; entry.mixer = new THREE.AnimationMixer(rig.scene);
         rig = null;

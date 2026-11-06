@@ -330,7 +330,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   });
   if (!preview && assets.linked_models?.length) {
     linked = createLinkedModels({ assets, load: loadGLB, dispose: disposeObject,
-      report: components => emit({ components }), getRoot: () => model, getAction: () => action });
+      report: components => emit({ components }), getRoot: () => model, getParser: () => gltf?.parser, getAction: () => action });
   }
   loadGLB(assets.preview.url).then(async loaded => {
     try { await mutate(() => install(loaded)); linked?.start(); }
