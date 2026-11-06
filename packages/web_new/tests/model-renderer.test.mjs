@@ -20,9 +20,9 @@ function rig(animated = false, facial = false) {
   return { scene, mesh, bone, parser: { associations: new Map([[bone, { nodes: 0 }]]), json: { nodes: [{ name: 'Hips' }] } },
     animations: animated ? [new THREE.AnimationClip('Stand1', 1, [new THREE.VectorKeyframeTrack('Hips.position', [0, 1], [0, 0, 0, 2, 0, 0])])] : [] };
 }
-async function viewer({ preview = false, defer = false, hold = false, accessory = false, boneAccessory = false, linked = false } = {}) {
+async function viewer({ preview = false, defer = false, hold = false, accessory = false, boneAccessory = false, linked = false, childUrl = 'https://cdn.test/child.glb' } = {}) {
   const requests = [], events = new Map(), changes = [], pending = new Map();
-  let frame, disconnected = false, destroyed = false, failure = false, finish;
+  let frame, disconnected = false, destroyed = false, failure = false, finish, resolveResource;
   let geometryDisposals = 0;
   const low = rig(), full = rig(false, true), pack = rig(true);
   const child = rig(true);
@@ -52,6 +52,7 @@ async function viewer({ preview = false, defer = false, hold = false, accessory 
     target = new THREE.Vector3(); update() {} dispose() {}
   }
   class Loader {
+    constructor(manager) { resolveResource = url => manager.resolveURL(url); }
     async loadAsync(url) {
       requests.push(url);
       if (failure === true || (typeof failure === 'string' && url.includes(failure))) throw new Error('offline');
@@ -82,14 +83,38 @@ async function viewer({ preview = false, defer = false, hold = false, accessory 
     lock: false, axes: { x: true, y: false, z: true }, bone: '', follow: false, space: 'world', offset: [0, 0, 0] };
   const controller = context.createViewer({ append() {}, getBoundingClientRect: () => ({ width: 500, height: 400 }) },
     { id: 'root', preview: asset('low.glb'), download: asset('full.glb'), animations: asset('pack.glb'), physics: asset('physics.json'), facial: asset('face.json'),
-      linked_models: linked ? [{ id: 'prop', parent_id: 'root', label: 'Prop', preview: asset('child.glb'), component: { socket: 'Hips', bindings: [{ parent_clip: 'Aki/Body/Stand', child_clip: 'Aki/Prop/Stand' }] } }] : [] },
+      linked_models: linked ? [{ id: 'prop', parent_id: 'root', label: 'Prop', preview: { url: childUrl }, component: { socket: 'Hips', url: 'https://metadata-evil.test/model.glb', bindings: [{ parent_clip: 'Aki/Body/Stand', child_clip: 'Aki/Prop/Stand' }] } }] : [] },
     preview, settings, patch => { changes.push(patch); Object.assign(state, patch); });
   await flush();
-  return { controller, settings, requests, state, full, low, child, changes, events,
+  return { controller, settings, requests, state, full, low, child, changes, events, resolveResource,
+    collectOrigins: context.declaredResourceOrigins,
     release: name => { const resolve = pending.get(name); assert(resolve, name + ' must already be downloading'); resolve(); },
     frame: ms => frame?.(ms), fail: value => { failure = value; }, finish: () => finish(),
     get disconnected() { return disconnected; }, get destroyed() { return destroyed; }, get disposedGeometry() { return geometryDisposals; } };
 }
+
+test('linked assets authorize their declared CDN origin without trusting metadata or insecure URLs', async () => {
+  const v = await viewer({ linked: true, childUrl: 'https://child-cdn.test/child.glb' }); await flush();
+  assert(v.requests.includes('https://child-cdn.test/child.glb'));
+  assert.equal(v.child.scene.parent, v.low.bone);
+  assert.equal(v.resolveResource('https://child-cdn.test/textures/texture.png'), 'https://child-cdn.test/textures/texture.png');
+  for (const url of ['https://metadata-evil.test/a', 'https://unknown.test/a', 'https://user@child-cdn.test/a', 'http://child-cdn.test/a'])
+    assert.throws(() => v.resolveResource(url), /Invalid model resource URL/);
+  v.controller.dispose();
+});
+
+test('resource origin traversal is limited to declared fields and bounded linked models', async () => {
+  const v = await viewer();
+  const root = { preview: { url: '/root.glb' }, scene: { url: 'https://evil.test/a' }, linked_models: [] };
+  const child = { download: { url: 'https://cdn-two.test/model.glb' }, physics: { url: 'https://user@bad.test/a' }, linked_models: [root] };
+  root.linked_models.push(child);
+  for (let i = 0; i < 40; i++) root.linked_models.push({ preview: { url: `https://cdn${i}.test/a` } });
+  const origins = v.collectOrigins(root, 'https://atlas.test/page');
+  assert(origins.has('https://atlas.test')); assert(origins.has('https://cdn-two.test'));
+  assert(!origins.has('https://evil.test')); assert(!origins.has('https://bad.test')); assert(!origins.has('https://cdn39.test'));
+  assert.equal(origins.size, 33);
+  v.controller.dispose();
+});
 
 test('renderer attaches and synchronizes a linked rig through seek, upgrade, visibility and disposal', async () => {
   const v = await viewer({ linked: true }); await flush();

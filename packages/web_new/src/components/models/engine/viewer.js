@@ -23,6 +23,29 @@ export function disposeObject(root) {
   for (const resource of resources) resource.dispose();
 }
 
+// Only asset fields authorize origins; component metadata and scene cues do not.
+// The API permits at most 32 linked models. Bound traversal defensively too.
+export function declaredResourceOrigins(assets, base) {
+  const origins = new Set(), pending = [assets], visited = new Set();
+  while (pending.length && visited.size < 33) {
+    const item = pending.shift();
+    if (!item || typeof item !== 'object' || visited.has(item)) continue;
+    visited.add(item);
+    for (const key of ['preview', 'download', 'animations', 'facial', 'physics']) {
+      if (typeof item[key]?.url !== 'string') continue;
+      try {
+        const url = new URL(item[key].url, base);
+        if (!url.username && !url.password && ['http:', 'https:'].includes(url.protocol)
+            && (new URL(base).protocol !== 'https:' || url.protocol === 'https:')) origins.add(url.origin);
+      } catch { /* Invalid resource URLs are rejected when requested. */ }
+    }
+    if (Array.isArray(item.linked_models)) {
+      for (const child of item.linked_models.slice(0, 33 - visited.size)) pending.push(child);
+    }
+  }
+  return origins;
+}
+
 /**
  * Browser-only renderer. React owns all controls; this module owns the canvas and GPU lifecycle.
  * @param {HTMLElement} host
@@ -54,7 +77,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   let previousTime = 0, lastReport = 0, height = 1.8, width = 1.2;
   const abort = new AbortController();
   const emit = patch => { if (!disposed) onState(patch); };
-  const origins = new Set(Object.values(assets).filter(value => value?.url).map(value => new URL(value.url, location.href).origin));
+  const origins = declaredResourceOrigins(assets, location.href);
   function resource(value) {
     const url = new URL(value, location.href);
     if (url.username || url.password || !['http:', 'https:'].includes(url.protocol)
