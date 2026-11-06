@@ -131,6 +131,7 @@ class FrameAudioInput(StrictModel):
     mode: Literal["Global", "MusicSubtitle"]
     stop_policy: str = "not_inferred"
     source_media: list[dict] = Field(default_factory=list, max_length=1000)
+    source_files: list[str] = Field(default_factory=list, max_length=1000)
     tools: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")

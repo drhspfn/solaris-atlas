@@ -525,6 +525,55 @@ async def cutscene_assets(payload, parent):
             **({'caption_voice_cg_names': caption_cg_names} if caption_cg_names else {})}, "completed"
 
 
+async def frame_audio_inputs(root, assets, config, name, fmodel, work, voice_root=None):
+    """Review all exact movie contexts, retaining conflicting branches as unresolved."""
+    from wuwa_story.ingestion.cutscenes import FrameAudioInput
+
+    from wuwa_story_worker.cutscene_frame_audio import event_soundtracks
+    from wuwa_story_worker.cutscene_frame_catalog import (
+        catalog_movie_frame_bindings as movie_frame_bindings,
+    )
+    from wuwa_story_worker.media_provenance import sha256 as file_sha256
+
+    bindings = await asyncio.to_thread(movie_frame_bindings, config.parent, name)
+    report = {'movie': name, 'contexts': bindings,
+              'diagnostics': [item for binding in bindings for item in binding.get('unresolved', [])]}
+    if not bindings:
+        report['diagnostics'].append({'code': 'movie_launcher_context_unavailable'})
+        return [], report
+    renderable = [binding for binding in bindings if isinstance(binding.get('raw_action'), dict)
+                  and binding.get('complete') and not binding.get('unresolved')]
+    if not renderable:
+        return [], report
+    signatures = set()
+    for binding in renderable:
+        signatures.add(json.dumps({'events': [{key: event.get(key) for key in
+            ('reference', 'start_seconds', 'end_seconds', 'mode', 'operation', 'event_config')}
+            for event in binding['events']],
+            'unresolved': binding['unresolved']}, sort_keys=True))
+    if len(signatures) != 1:
+        report['diagnostics'].append({'code': 'alternative_movie_audio_contexts_require_selection'})
+        return [], report
+    prepared = await event_soundtracks(root, assets, name, renderable[0], fmodel, work, voice_root=voice_root)
+    report['diagnostics'].extend(prepared['diagnostics'])
+    # Retain event objects and cooked routing metadata alongside native banks.
+    evidence = []
+    for source in prepared.get('sources', []):
+        source = Path(source)
+        digest = await asyncio.to_thread(file_sha256, source)
+        destination = assets / 'frame-audio' / 'sources' / (digest + source.suffix)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if not destination.is_file():
+            await asyncio.to_thread(shutil.copyfile, source, destination)
+        evidence.append(destination.relative_to(assets).as_posix())
+    allowed = set(FrameAudioInput.model_fields)
+    inputs = [FrameAudioInput.model_validate({**{key: value for key, value in item.items() if key in allowed},
+                                             'source': item.get('source') or {},
+                                             'source_files': evidence}).model_dump()
+              for item in prepared['soundtracks']]
+    return inputs, report
+
+
 async def cutscene(payload, parent):
     from wuwa_story_worker.cutscene_import import confined, movie_path
 
@@ -569,7 +618,8 @@ async def cutscene(payload, parent):
                 "media_report": {"entries": [{"expected": path, "status": "not_in_archive", "matches": []}
                                              for path in absent_movies] + invalid_movies}}, "partial"
     voice_cache = root / "voices" if parent.get("workspace_id") else asset_workspace() / "voices"
-    voice_roots = [package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace())] if parent.get("voice_plan_id") else sorted(voice_cache.glob(parent["asset_version"] + "-*"))
+    pinned_voice_root = package_root(parent, "voices", parent["voice_plan_id"], base=asset_workspace()) if parent.get("voice_plan_id") else None
+    voice_roots = [pinned_voice_root] if pinned_voice_root is not None else sorted(voice_cache.glob(parent["asset_version"] + "-*"))
     if parent.get("workspace_id") and parent.get("voice_plan_id"):
         audio = await extract_cutscene_audio(parent, config, payload["targets"][0])
         await asyncio.to_thread(merge_exports, [audio], assets)
@@ -584,9 +634,23 @@ async def cutscene(payload, parent):
             if exported.get("plan_id") == plan.get("id"):
                 await asyncio.to_thread(merge_exports, [voice_root / "plot-audio"], assets)
     missing_assets = []  # Rebuild after the selected multilingual banks are available.
-    recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"], missing_assets=missing_assets)
     work = root / "release-media" / str(payload["run_id"])
     work.mkdir(parents=True, exist_ok=True)
+    frame_audio, frame_report = await frame_audio_inputs(
+        root, assets, config, payload['targets'][0], tool_path('WUWA_FMODEL_PATH'), work,
+        voice_root=pinned_voice_root)
+    save_json(work / 'frame-audio-report.json', frame_report)
+    for diagnostic in frame_report['diagnostics']:
+        if diagnostic.get('severity') in {'info', 'debug'}:
+            continue
+        identity = f"frame_audio:{payload['targets'][0]}:{diagnostic.get('code', 'unresolved')}"
+        if identity not in missing_assets:
+            missing_assets.append(identity)
+    recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"],
+                                     missing_assets=missing_assets, frame_audio=frame_audio)
+    if frame_audio and isinstance(recipe.get('flow'), dict):
+        sources = [binding.get('source', {}) for binding in frame_report['contexts'] if binding.get('events')]
+        recipe['flow']['evidence'] += '; Movie frame audio sources: ' + json.dumps(sources, ensure_ascii=False, sort_keys=True)
     recipe_path = work / "recipe.json"
     save_json(recipe_path, recipe)
     entries = []
@@ -601,7 +665,8 @@ async def cutscene(payload, parent):
                             "status": "found" if (assets / expected).is_file() else "not_in_export",
                             "matches": [expected] if (assets / expected).is_file() else []})
     report = {**(parent.get("media_report") or {}), "schema_version": 1,
-              "asset_version": parent["asset_version"], "game_version": payload["game_version"], "entries": entries}
+              "asset_version": parent["asset_version"], "game_version": payload["game_version"], "entries": entries,
+              'frame_audio': frame_report}
     await update_admin_run(payload["run_id"], "release_media", "running", raw_output={"media_report": report})
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:

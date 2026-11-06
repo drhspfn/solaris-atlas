@@ -242,7 +242,7 @@ async def test_cutscene_query_rejects_partial_or_other_recipe(monkeypatch, compl
     session = AsyncMock()
     factory(monkeypatch, cutscene_import, session)
     ref = SimpleNamespace(source_path="cutscene:test", metadata_json={
-        "publication_complete": complete, "game_source": {"recipe_sha256": "expected" if hash_matches else "old"}})
+        "publication_complete": complete, "game_source": {"recipe_sha256": "expected" if hash_matches else "old", "cutscene_assembly_schema": cutscene_import.CUTSCENE_ASSEMBLY_SCHEMA}})
     monkeypatch.setattr(cutscene_import, "verified_references", AsyncMock(return_value=[ref]))
     result = await cutscene_import.missing_cutscene_identities(
         {"cutscene:test"}, source_context=context(), storage=Mock(), recipe_hashes={"cutscene:test": "expected"})
@@ -261,10 +261,10 @@ async def test_completion_records_and_verifies_entire_publication(tmp_path, monk
     nodes = [SimpleNamespace(id=1, canonical_key="cutscene:test"),
              SimpleNamespace(id=2, canonical_key="asset:ue:/Game/Video.Video")]
     flow = SimpleNamespace(id=3, file_id=20, owner_node_id=1, source_path="cutscene:test",
-                           reference_type="cutscene_flow", metadata_json={"asset_version": "3.7.0"})
-    video = SimpleNamespace(id=1, file_id=11, owner_node_id=2, reference_type="cutscene_video",
+                           reference_type="cutscene_flow_v2", metadata_json={"asset_version": "3.7.0", "cutscene_key": "cutscene:test"})
+    video = SimpleNamespace(id=1, file_id=11, owner_node_id=2, reference_type="cutscene_video_v2",
                             metadata_json={"original_file_id": 10, "source_file_ids": [12]})
-    bundle = SimpleNamespace(id=2, file_id=30, owner_node_id=2, reference_type="cutscene_audio_bundle",
+    bundle = SimpleNamespace(id=2, file_id=30, owner_node_id=2, reference_type="cutscene_audio_bundle_v2",
                              metadata_json={"tracks": [{"role": "voice", "language": "en", "file_id": 31,
                                                         "source_file_ids": [12]}], "videos": {"full": 32}})
     variant = SimpleNamespace(variant_type="cutscene_silent_video", metadata_json={})
@@ -366,7 +366,9 @@ async def test_cutscene_persists_original_sources_and_stable_unreal_identity(tmp
     monkeypatch.setattr(cutscene_import, "complete_cutscene_publication", complete)
     bundles = []
 
-    async def publish_bundle(path, root, ffmpeg):
+    async def publish_bundle(path, root, ffmpeg, **kwargs):
+        assert kwargs["session"] is session
+        assert kwargs["cutscene_key"] == "cutscene:test"
         bundles.append(json.loads(path.read_text()))
 
     monkeypatch.setattr('wuwa_story_worker.cutscene_audio.publish_audio', publish_bundle)

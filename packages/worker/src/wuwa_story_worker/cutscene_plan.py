@@ -32,7 +32,8 @@ def sound_timing(blob: bytes) -> tuple[float, float | None]:
     return max(0, start), None if end < 0 else end
 
 
-def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, *, missing_assets: list | None = None) -> dict:
+def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, *, missing_assets: list | None = None,
+                  frame_audio: list[dict] | None = None) -> dict:
     if asset_version not in {"3.7.0", "3.7.1"}:
         raise ValueError("Config schema is verified for clients 3.7.0 and 3.7.1 only")
     # Read-only: never create or modify an absent game database.
@@ -89,7 +90,7 @@ def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, 
                 if track not in input_assets[key]["soundtrack"]:
                     input_assets[key]["soundtrack"].append(track)
         else:
-            value = {"asset": key, "soundtrack": soundtrack}
+            value = {"asset": key, "soundtrack": soundtrack, **({'frame_audio': frame_audio} if frame_audio else {})}
             input_assets[key] = value
             inputs.append(value)
         clips.append({"id": f"cg-{cg_id}", "kind": "clip", "asset": key,
