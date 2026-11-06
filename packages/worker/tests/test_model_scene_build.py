@@ -56,3 +56,20 @@ async def test_scene_keeps_same_prop_as_distinct_instances_across_forms(tmp_path
     assert len({form["id"] for form, *_ in bundles}) == 4
     assert bundles[1][0]["component"]["parent_form_id"] == "mesh-1"
     assert bundles[3][0]["component"]["parent_form_id"] == "mesh-2"
+
+
+@pytest.mark.asyncio
+async def test_root_visibility_cues_survive_without_exportable_child(tmp_path, monkeypatch):
+    from wuwa_story_worker import linked_models, model_bundle
+
+    cue = {"kind": "TsAnimNotifyStateHideMesh_C", "source_clip": "Aki/Body/Idle",
+           "start": 0, "end": 1, "defaults": {"target": "notifying_mesh", "hide": True}}
+    monkeypatch.setattr(model_bundle, "animation_sources", lambda *_: {})
+    monkeypatch.setattr(linked_models, "discover", lambda *_: [{
+        "kind": "discovery", "required_resources": [], "cues": [cue]}])
+    scene = {}
+    recipes = await models.discover_scene_components(tmp_path,
+        {"component_blueprint": "Aki/BP", "model": "Aki/Body"}, tmp_path,
+        skeleton="Aki/Skeleton", scene=scene)
+    assert recipes == []
+    assert scene == {"format": "solaris-model-scene-v1", "components": [], "cues": [cue]}

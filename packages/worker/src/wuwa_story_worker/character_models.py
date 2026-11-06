@@ -268,7 +268,7 @@ def component_model(component, converted, cooked, skeleton, *, master_pose=False
 
 
 async def discover_scene_components(root, sources, cooked, converted=None, manifest=None, *,
-                                    skeleton=None, local_client=None):
+                                    skeleton=None, local_client=None, scene=None):
     """Resolve only authored component/effect dependencies, with bounded extraction."""
     from wuwa_story_worker.linked_models import discover
     from wuwa_story_worker.model_bundle import animation_sources
@@ -308,6 +308,13 @@ async def discover_scene_components(root, sources, cooked, converted=None, manif
             manifest["files"].extend(receipt["files"])
     else:
         raise ValueError("Linked model dependencies exceed twelve discovery passes")
+    if scene is not None:
+        root_cues = {}
+        for recipe in recipes:
+            for cue in recipe["cues"]:
+                if cue.get("defaults", {}).get("target") == "notifying_mesh":
+                    root_cues[json.dumps(cue, sort_keys=True)] = cue
+        scene.update(format="solaris-model-scene-v1", components=[], cues=list(root_cues.values()))
     results = []
     for recipe in recipes:
         if recipe["kind"] == "discovery":
@@ -318,6 +325,8 @@ async def discover_scene_components(root, sources, cooked, converted=None, manif
         relation.update(name=recipe["id"], label=recipe["model"].rsplit("/", 1)[-1],
                         transform={key: (recipe.get("transform") or {}).get(key) or {}
                                    for key in ("location", "rotation", "scale")})
+        if recipe["kind"] == "effect" and recipe["parent_component"] is None:
+            relation["standalone_only"] = True
         # Effect-spawned objects have no SCS variable, but do have an exact notify identity.
         relation["source"] = {**relation["source"], "component": relation["source"].get("component") or recipe["id"]}
         child_clips = sorted({binding["child_clip"] for binding in recipe["bindings"]
@@ -479,6 +488,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
             raise ValueError("The exact authored NPC skeleton metadata was not exported")
     attachments = []
     linked_components = []
+    model_scene = {}
     material_overrides = {}
     if sources.get("component_blueprint") and not sources.get("component"):
         blueprint_path = cooked / "Client/Content" / (sources["component_blueprint"] + ".json")
@@ -490,7 +500,8 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         for rows in [*inherited, blueprint_rows]:
             material_overrides.update(npc_material_overrides(rows))
         linked_components = await discover_scene_components(
-            root, sources, cooked, converted, manifest, skeleton=skeleton, local_client=local_client)
+            root, sources, cooked, converted, manifest, skeleton=skeleton,
+            local_client=local_client, scene=model_scene)
         for recipe in linked_components:
             _, relation = prepare_linked_component({"id": "default", **sources}, recipe)
             recipe["component"] = relation
@@ -723,6 +734,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         "model": sources["model"],
         "extra_models": sources.get("extra_models", []),
         **({"linked_components": linked_components} if linked_components else {}),
+        **({"scene": model_scene} if model_scene.get("cues") else {}),
         **({'bone_visibility_events': bone_visibility} if bone_visibility else {}),
         **({'data_asset': sources['data_asset']} if sources.get('data_asset') else {}),
         **({'blueprint_model': sources['blueprint_model']} if sources.get('blueprint_model') else {}),
