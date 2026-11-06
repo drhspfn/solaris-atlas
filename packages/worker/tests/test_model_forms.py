@@ -74,6 +74,39 @@ def test_npc_forms_preserve_instance_model_overrides():
     assert forms[1]["source"]["entity_id"] == 42
 
 
+def test_npc_forms_deduplicate_interactions_and_union_montages():
+    root = "/Game/Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003"
+    component = {"ModelType": {"Type": "Npc", "NpcModel": {"Type": "Mesh",
+        "Mesh": root + "/Model/NH_FemaleMS_003.NH_FemaleMS_003"},
+        "Abp": root + "/ABP_NH_MN_FemaleMS_003.ABP_NH_MN_FemaleMS_003_C",
+        "BlueprintPath": root + "/BP_NH_FemaleMS_003.BP_NH_FemaleMS_003_C"}}
+    npc = {"blueprint_id": 17288, "model": component, "components": {"ModelComponent": component},
+           "instances": [{"entity_id": i, "map_id": 1, "components": {
+               "InteractComponent": {"State": i, "ActionMontage": root + f"/CommonAnim/Montage/Action{i}"},
+               "NpcPerformComponent": {"Shop": i}}} for i in range(12)]}
+    forms = resolve_npc_forms(npc)
+    assert len(forms) == 1
+    assert len(forms[0]["montages"]) == 12
+    assert "InteractComponent" not in forms[0]["npc_components"]
+
+
+def test_npc_forms_distinguish_blueprints_and_accessory_overrides():
+    root = "/Game/Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003"
+    component = {"ModelType": {"Type": "Npc", "NpcModel": {"Type": "Mesh",
+        "Mesh": root + "/Model/NH_FemaleMS_003.NH_FemaleMS_003"},
+        "Abp": root + "/ABP_NH_MN_FemaleMS_003.ABP_NH_MN_FemaleMS_003_C",
+        "BlueprintPath": root + "/BP_One.BP_One_C"}}
+    npc = {"blueprint_id": 17288, "components": {"ModelComponent": component},
+           "instances": [{"entity_id": 1, "components": {"ModelComponent": {"ModelType": {
+               "BlueprintPath": root + "/BP_Two.BP_Two_C"}}}}]}
+    forms = resolve_npc_forms(npc)
+    assert len(forms) == 2
+    assert forms[0]["model"] == forms[1]["model"]
+    assert forms[0]["component_blueprint"] != forms[1]["component_blueprint"]
+    npc["instances"].append({"entity_id": 2, "components": {"AccessoryComponent": {"Mesh": "hat"}}})
+    assert len(resolve_npc_forms(npc)) == 3
+
+
 def test_npc_animation_references_follow_authored_abp_sequences():
     path = "/Game/Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003/CommonAnim/Stand01"
     assert npc_animation_references([{"Properties": {"Sequence": {

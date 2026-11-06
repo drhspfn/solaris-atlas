@@ -27,7 +27,7 @@ def resolve_npc_forms(npc):
         if not isinstance(overrides, dict):
             raise ValueError("Invalid NPC instance components")
         candidates.append((merge(base, overrides), instance))
-    forms, seen = [], set()
+    forms, seen = [], {}
 
     def montage_paths(value):
         if isinstance(value, dict):
@@ -40,31 +40,57 @@ def resolve_npc_forms(npc):
             for child in value:
                 yield from montage_paths(child)
 
+    def appearance_fields(value, path=()):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                current = (*path, key)
+                if any(word in key.casefold() for word in ("material", "accessor", "attach", "section")):
+                    yield ".".join(current), child
+                else:
+                    yield from appearance_fields(child, current)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                yield from appearance_fields(child, (*path, str(index)))
+
     for components, instance in candidates:
         component = components.get("ModelComponent") or npc.get("model")
         # Some templates describe only instance models; preserve those instead.
         if not component:
             continue
         resolved = npc_model_sources(component)
-        identity = json.dumps(components, sort_keys=True, ensure_ascii=True)
-        if identity in seen:
-            continue
-        seen.add(identity)
         model_type = component["ModelType"]
         blueprint = model_type.get("BlueprintPath")
+        appearance_components = {
+            name: value for name, value in components.items()
+            if any(word in name.casefold() for word in ("material", "accessor", "attach", "section"))
+        }
+        appearance = {
+            **resolved,
+            "component_blueprint": authored_package(blueprint) if blueprint else None,
+            "overrides": dict(appearance_fields(component)),
+            "components": appearance_components,
+        }
+        identity = json.dumps(appearance, sort_keys=True, ensure_ascii=True)
+        montages = set(montage_paths(components)) | set(montage_paths(npc.get("montages", [])))
+        if identity in seen:
+            form = seen[identity]
+            form["montages"] = sorted(set(form["montages"]) | montages)
+            continue
         index = len(forms)
-        forms.append({
+        form = {
             "id": "default" if not index else f"mesh-{npc['blueprint_id']}-form-{index + 1}",
             "label": "Default" if not index else f"Instance variant {index + 1}",
             "order": index,
             **resolved,
-            "component_blueprint": authored_package(blueprint) if blueprint else None,
-            "montages": sorted(set(montage_paths(components)) | set(montage_paths(npc.get("montages", [])))),
-            "npc_components": components,
+            "component_blueprint": appearance["component_blueprint"],
+            "montages": sorted(montages),
+            "npc_components": {"ModelComponent": component, **appearance_components},
             "source": {"table": "blueprintconfig", "id": npc["blueprint_id"],
                        "entity_id": instance.get("entity_id") if instance else None,
                        "map_id": instance.get("map_id") if instance else None},
-        })
+        }
+        forms.append(form)
+        seen[identity] = form
     if not forms:
         raise ValueError("NPC has no authored model component")
     return forms
