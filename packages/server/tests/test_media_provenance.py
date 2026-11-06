@@ -8,6 +8,36 @@ from wuwa_story.ingestion.entity_media import MediaRequest
 from wuwa_story.ingestion.media_provenance import missing_media_targets
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('tool', ['WUWA_VGMSTREAM_PATH', 'WUWA_WWISER_PATH'])
+@pytest.mark.parametrize('changed', [False, True])
+async def test_sequence_audio_revision3_reuse_checks_decoder_and_renderer(tool, changed):
+    value = {**target('story_sequence:flow_state:Story'), 'kind': 'spine',
+             'reference_type': 'story_presentation', 'spine_recipe': 4, 'sequence_metadata_revision': 3}
+    stored = {'WUWA_VGMSTREAM_PATH': 'decoder', 'WUWA_WWISER_PATH': 'renderer'}
+    reference, file, location = row(value, spine_recipe=4, sequence_metadata_revision=3, tools=stored)
+    reference.reference_type = 'story_presentation'
+    session = AsyncMock()
+    session.execute.return_value = [(reference, file, location)]
+    storage = SimpleNamespace(backend='s3', bucket='media', stat=AsyncMock(return_value=SimpleNamespace(size_bytes=12)))
+    current = {**stored, **({tool: 'changed'} if changed else {})}
+    result = await missing_media_targets(session, [value], source={'asset_version': '3.7.0', 'tools': current}, storage=storage)
+    assert result == ([value] if changed else [])
+
+
+@pytest.mark.parametrize(('path', 'revision', 'kind', 'tool'), [
+    ('story_sequence:flow_state:Story', 2, 'spine', 'WUWA_WWISER_PATH'),
+    ('spine_background:7', 3, 'spine', 'WUWA_WWISER_PATH'),
+    ('/Game/Icon', None, 'image', 'WUWA_VGMSTREAM_PATH'),
+])
+def test_sequence_audio_tool_gate_preserves_other_targets(path, revision, kind, tool):
+    from wuwa_story.ingestion.media_provenance import matches_source
+
+    value = {**target(path), 'kind': kind, 'spine_recipe': 4, 'sequence_metadata_revision': revision}
+    reference, _, _ = row(value, spine_recipe=4, sequence_metadata_revision=revision, tools={tool: 'old'})
+    assert matches_source(reference.metadata_json, {'tools': {tool: 'new'}}, value)
+
+
 @pytest.mark.parametrize(('revision', 'matches'), [(None, False), (1, False), (2, True)])
 def test_scoped_sequence_metadata_revision_requires_recompile_but_not_global_spine_upgrade(revision, matches):
     from wuwa_story.ingestion.media_provenance import matches_source

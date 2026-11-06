@@ -168,6 +168,51 @@ async def publish_sequence_fragments(session, bundle, target, published, service
                 media['components'].append(files[entry])
             section.update(files[entry])
             section['status'] = 'published'
+        for section in media.get('sections', []):
+            if section.get('kind') != 'audio_event':
+                continue
+            for track in section.get('tracks', []):
+                entry = track.get('file')
+                if not entry:
+                    continue
+                if not isinstance(entry, str):
+                    raise ValueError('Invalid authored sequence soundtrack entry')
+                relative = PurePosixPath(entry)
+                if (not entry.startswith('audio/')
+                        or relative.suffix != '.ogg' or '..' in relative.parts
+                        or '\\' in entry or relative.is_absolute()
+                        or track.get('language') not in {None, 'en', 'ja', 'ko', 'zh'}
+                        or track.get('rover') not in {None, 'male', 'female'}):
+                    raise ValueError('Invalid authored sequence soundtrack entry')
+                data, expected = verified(archive, manifest, entry)
+                output = Path(bundle).parent / 'sequence-playback' / expected['sha256']
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_bytes(data)
+                file = await service.register_file(session, output, 'audio_ogg', mime_type='audio/ogg')
+                await service.register_variant(session, published.id, file.id, 'story_sequence_audio', run_id)
+                reference = await session.scalar(select(FileReference).where(
+                    FileReference.owner_node_id == target['owner'],
+                    FileReference.release_id == target['release_id'],
+                    FileReference.reference_type == 'story_sequence_audio',
+                    FileReference.source_path == target['path'], FileReference.source_name == entry,
+                    FileReference.metadata_json['asset_version'].astext == provenance['asset_version'],
+                    FileReference.metadata_json['download_id'].astext == provenance['download_id']))
+                if reference is None:
+                    reference = await service.register_reference(session, file_id=file.id,
+                        reference_type='story_sequence_audio', owner_node_id=target['owner'],
+                        release_id=target['release_id'], source_path=target['path'], source_name=entry)
+                reference.file_id = file.id
+                reference.metadata_json = {'asset_version': provenance['asset_version'],
+                    'download_id': provenance['download_id'], 'bundle_file_id': published.id,
+                    'archive_entry': entry, 'game_source': copy.deepcopy(provenance),
+                    'section_source': section['source'],
+                    'sections': [part['source'] for part in media['sections']
+                                 if part.get('kind') == 'audio_event'
+                                 and part.get('reference') == section.get('reference')
+                                 and any(item.get('file') == entry for item in part.get('tracks', []))],
+                    'event_reference': section.get('reference'),
+                    'language': track.get('language'), 'rover': track.get('rover')}
+                track.update(file_id=file.id, status='published', mime_type='audio/ogg')
         return media
 
 

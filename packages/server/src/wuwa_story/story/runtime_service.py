@@ -56,7 +56,7 @@ async def sequence_playback(session, blocks, release_id):
                 or not isinstance(media.get('sections'), list)):
             continue
         authored_kinds = {'subsequence', 'camera',
-                          'skeletal_animation', 'dialogue', 'event', 'flow_dialogue'}
+                          'skeletal_animation', 'dialogue', 'event', 'flow_dialogue', 'audio_event'}
         sections = [section for section in media['sections'] if isinstance(section, dict)
                     and ((section.get('kind') in authored_kinds and isinstance(section.get('source'), str))
                     or (section.get('kind') == 'movie_fragment' and section.get('status') == 'published'
@@ -71,11 +71,36 @@ async def sequence_playback(session, blocks, release_id):
         return {}
     settings = get_settings()
     locations = await media_repository.available_movies(session, selected, release_id, settings.s3_bucket)
+
+    def published_tracks(section):
+        tracks = section.get('tracks')
+        return [track for track in tracks if isinstance(track, dict)
+                and track.get('status') == 'published' and type(track.get('file_id')) is int
+                and isinstance(track.get('file'), str) and track['file']] if isinstance(tracks, list) else []
+
+    audio_selected = {}
+    for owner, bundle in selected.items():
+        sections = [{**section, 'tracks': published_tracks(section)}
+                    for section in bundle['media']['sections'] if section.get('kind') == 'audio_event']
+        if any(section['tracks'] for section in sections):
+            audio_selected[owner] = {**bundle, 'media': {**bundle['media'], 'sections': sections}}
+    audio_locations = (await media_repository.available_audio(session, audio_selected, release_id, settings.s3_bucket)
+                       if audio_selected else {})
     storage = S3Storage(settings)
+
+    def present_section(owner, section):
+        result = {key: value for key, value in section.items() if key != 'url'}
+        if section.get('kind') == 'movie_fragment':
+            result['url'] = storage.public_url(locations[(owner, section['file_id'], section['source'])])
+        elif section.get('kind') == 'audio_event' and 'tracks' in section:
+            result['tracks'] = [{**track, 'url': storage.public_url(audio_locations[(owner, track['file_id'], section['source'])])}
+                                for track in published_tracks(section)
+                                if (owner, track['file_id'], section['source']) in audio_locations]
+        return result
+
     return {owner: {**bundle['media'], 'complete_video': False, 'owner_node_id': owner,
                     'release_id': release_id, 'bundle_file_id': bundle['file_id'], 'sections': [
-        ({**section, 'url': storage.public_url(locations[(owner, section['file_id'], section['source'])])}
-         if section.get('kind') == 'movie_fragment' else {key: value for key, value in section.items() if key != 'url'})
+        present_section(owner, section)
         for section in bundle['media']['sections']
         if section.get('kind') != 'movie_fragment' or (owner, section['file_id'], section['source']) in locations
     ]} for owner, bundle in selected.items()}

@@ -196,6 +196,11 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
                            target['resource_id'], str(error)[:500])
             missing.append(target['path'])
             continue
+        if target['path'].startswith('story_sequence:') and target.get('sequence_metadata_revision', 0) >= 3:
+            from wuwa_story_worker.sequence_audio_prepare import prepare_sequence_audio
+            bundle, audio_sources = await prepare_sequence_audio(root, bundle, fmodel, converter,
+                                                                 voice_root=voice_root)
+            originals = [*originals, *audio_sources]
         files.append((target, bundle, 'unknown', 'application/zip', originals))
     voices = [t for t in targets if t["kind"] == "voice"]
     if not voices:
@@ -415,7 +420,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 storage = S3Storage(get_settings())
                 tool_names = ["WUWA_FMODEL_PATH",
                               "WUWA_TEXTURE_CONVERTER_PATH"]
-                if any(t["kind"] == "voice" for t in payload["targets"]):
+                if any(t["kind"] == "voice" or (t.get('path', '').startswith('story_sequence:')
+                       and t.get('sequence_metadata_revision', 0) >= 3) for t in payload["targets"]):
                     tool_names.extend(["WUWA_VGMSTREAM_PATH", "WUWA_WWISER_PATH"])
                 tools = {name: await asyncio.to_thread(sha256, tool_path(name)) for name in tool_names}
                 source = {"asset_version": request.asset_version, "download_id": request.download_id,

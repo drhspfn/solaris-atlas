@@ -11,6 +11,11 @@ import {
   sequenceTime,
 } from "./sequenceComponents";
 import styles from "./SequenceComponents.module.css";
+import { QuestSequenceAudio, playableSequenceAudio } from "./QuestSequenceAudio";
+
+export function hasSequenceComponents(media?: SequenceMedia) {
+  return playableEncounterFragments(media).length > 0 || playableSequenceAudio(media).length > 0;
+}
 
 export function playableEncounterFragments(media?: SequenceMedia) {
   const seen = new Set<number>();
@@ -41,7 +46,7 @@ function FragmentList({
 }) {
   const viewer = useMediaViewer();
   return (
-    <details className={styles.components}>
+    <><details className={styles.components}>
       <summary>Video components · {items.length}</summary>
       <p>
         These files are used inside the game-rendered scene. They may need other
@@ -90,13 +95,13 @@ function FragmentList({
           </li>
         ))}
       </ul>
-    </details>
+    </details><QuestSequenceAudio media={media} /></>
   );
 }
 
 export function QuestSequenceFragments({ media }: { media?: SequenceMedia }) {
   const sections = playableEncounterFragments(media);
-  if (!sections.length) return null;
+  if (!sections.length) return playableSequenceAudio(media).length ? <QuestSequenceAudio media={media} /> : null;
   // Use complete published files. Source ranges and clocks are not playback crop commands.
   const items: MediaItem[] = sections.map((section, index) => ({
     id: `sequence-fragment-${section.file_id}`,

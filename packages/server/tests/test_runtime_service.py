@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.engine.result import IteratorResult, SimpleResultMetaData
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from wuwa_story.config.settings import get_settings
 from wuwa_story.db.repositories import sequence_playback as repository
 from wuwa_story.story import runtime_service
 
@@ -252,6 +253,100 @@ async def test_selected_bundle_never_falls_back_to_another_bundles_available_fil
     result = await runtime_service.sequence_playback(AsyncMock(), blocks(), 15)
     assert repository.available_movies.await_args.args[1][7]['file_id'] == 91
     assert result[7]['sections'] == []
+
+
+@pytest.mark.asyncio
+async def test_authored_audio_event_survives_api_without_claiming_published_audio(monkeypatch):
+    row = bundle()
+    audio = {'kind': 'audio_event', 'status': 'referenced', 'source': '/Game/M0334_All.407',
+             'scene_source': '/Game/M0334_All.76', 'reference': '/Game/Aki/WwiseAudio/Events/play_all_sound_m0334',
+             'clock': {'numerator': 30, 'denominator': 1},
+             'range': {'Value': {'LowerBound': {'Type': 1, 'Value': {'Value': 1}},
+                                 'UpperBound': {'Type': 0, 'Value': {'Value': 2035}}}},
+             'parameters': {'bSyncAudio': True, 'FadeDuration': 8000}}
+    row[3]['sequence_media']['sections'].append(audio)
+    monkeypatch.setattr(repository, 'bundles', AsyncMock(return_value=[row]))
+    monkeypatch.setattr(repository, 'available_movies', AsyncMock(return_value={}))
+    result = await runtime_service.sequence_playback(AsyncMock(), blocks(), 15)
+    assert result[7]['schema_version'] == 1 and result[7]['complete_video'] is False
+    assert result[7]['sections'] == [audio]
+    assert 'url' not in result[7]['sections'][0] and 'file_id' not in result[7]['sections'][0]
+
+
+def audio_bundle():
+    row = bundle()
+    row[3]['sequence_media']['sections'] = [{
+        'kind': 'audio_event', 'source': '/Game/M0334_All.407', 'scene_source': '/Game/M0334_All.76',
+        'reference': '/Game/Aki/WwiseAudio/Events/play_all_sound_m0334', 'status': 'referenced',
+        'clock': {'numerator': 30, 'denominator': 1}, 'range': {'authored': 'unchanged'},
+        'parameters': {'bSyncAudio': True, 'FadeDuration': 8000}, 'url': 'https://unverified/section',
+        'tracks': [{'file_id': 20, 'file': 'audio/zh/male.ogg', 'status': 'published',
+                    'language': 'zh', 'rover': 'male', 'url': 'https://unverified/track'},
+                   {'file_id': 21, 'file': 'audio/ja/female.ogg', 'status': 'published',
+                    'language': 'ja', 'rover': 'female'}]}]
+    return row
+
+
+@pytest.mark.asyncio
+async def test_audio_track_url_uses_verified_location_and_retains_authored_metadata(monkeypatch):
+    row = audio_bundle()
+    original = deepcopy(row)
+    monkeypatch.setattr(repository, 'bundles', AsyncMock(return_value=[row]))
+    monkeypatch.setattr(repository, 'available_movies', AsyncMock(return_value={}))
+    lookup = AsyncMock(return_value={(7, 20, '/Game/M0334_All.407'): 'verified-audio'})
+    monkeypatch.setattr(repository, 'available_audio', lookup)
+    from wuwa_story.storage.s3 import S3Storage
+
+    monkeypatch.setattr(S3Storage, 'public_url', lambda self, key: 'https://cdn/' + key)
+    result = await runtime_service.sequence_playback(AsyncMock(), blocks(), 15)
+    audio, = result[7]['sections']
+    track, = audio['tracks']
+    assert track == {**row[3]['sequence_media']['sections'][0]['tracks'][0], 'url': 'https://cdn/verified-audio'}
+    assert audio['parameters'] == {'bSyncAudio': True, 'FadeDuration': 8000}
+    assert audio['range'] == {'authored': 'unchanged'} and audio['reference'].endswith('play_all_sound_m0334')
+    assert 'url' not in audio and row == original
+    assert lookup.await_args.args[1][7]['file_id'] == 90
+    assert lookup.await_args.args[2:] == (15, get_settings().s3_bucket)
+
+
+@pytest.mark.asyncio
+async def test_unavailable_audio_tracks_do_not_leak_stored_urls_or_remove_event_metadata(monkeypatch):
+    row = audio_bundle()
+    monkeypatch.setattr(repository, 'bundles', AsyncMock(return_value=[row]))
+    monkeypatch.setattr(repository, 'available_movies', AsyncMock(return_value={}))
+    monkeypatch.setattr(repository, 'available_audio', AsyncMock(return_value={}))
+    result = await runtime_service.sequence_playback(AsyncMock(), blocks(), 15)
+    audio, = result[7]['sections']
+    assert audio['tracks'] == [] and 'url' not in audio
+    assert audio['kind'] == 'audio_event' and audio['source'] == '/Game/M0334_All.407'
+    assert audio['clock'] == {'numerator': 30, 'denominator': 1}
+    assert audio['parameters']['FadeDuration'] == 8000
+
+
+@pytest.mark.asyncio
+async def test_audio_bundle_proof_mismatch_never_reaches_track_location_lookup(monkeypatch):
+    row = audio_bundle()
+    row[3]['sequence_media']['game_source'] = {**row[3]['game_source'], 'download_id': 'other-client'}
+    monkeypatch.setattr(repository, 'bundles', AsyncMock(return_value=[row]))
+    lookup = AsyncMock(return_value={(7, 20, '/Game/M0334_All.407'): 'must-not-use'})
+    monkeypatch.setattr(repository, 'available_audio', lookup)
+    assert await runtime_service.sequence_playback(AsyncMock(), blocks(), 15) == {}
+    lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('tracks', [None, [], 'invalid', [{'file_id': 20, 'status': 'missing'}],
+                                   [{'file_id': True, 'file': 'audio.ogg', 'status': 'published'}]])
+async def test_no_published_audio_identities_skips_audio_lookup(monkeypatch, tracks):
+    row = audio_bundle()
+    row[3]['sequence_media']['sections'][0]['tracks'] = tracks
+    monkeypatch.setattr(repository, 'bundles', AsyncMock(return_value=[row]))
+    monkeypatch.setattr(repository, 'available_movies', AsyncMock(return_value={}))
+    lookup = AsyncMock()
+    monkeypatch.setattr(repository, 'available_audio', lookup)
+    result = await runtime_service.sequence_playback(AsyncMock(), blocks(), 15)
+    assert result[7]['sections'][0]['tracks'] == []
+    lookup.assert_not_awaited()
 
 
 @pytest.mark.asyncio

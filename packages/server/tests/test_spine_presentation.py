@@ -86,5 +86,5 @@ async def test_sequence_only_flow_is_not_dropped_when_it_has_no_spine_background
     target, = await entity_media_targets(session, request)
     assert target['owner'] == 5 and target['reference_type'] == 'story_presentation'
     assert target['resource_id'] is None and target['spine_recipe'] == SPINE_RECIPE
-    assert target['sequence_metadata_revision'] == 2
+    assert target['sequence_metadata_revision'] == 3
     assert target['presentation']['cues'][0]['kind'] == 'sequence'

@@ -30,7 +30,7 @@ import '@/styles/quest-reader.css';
 import { QuestClassification } from '@/components/story/QuestClassification';
 import { QuestContinuity } from '@/components/story/QuestContinuity';
 import { Cutscene, QuestCutscenes, RelatedQuestCutscenes } from '@/components/story/QuestCutscenes';
-import { QuestSequenceFragments, playableEncounterFragments } from '@/components/story/QuestSequenceFragments';
+import { QuestSequenceFragments, playableEncounterFragments, hasSequenceComponents } from '@/components/story/QuestSequenceFragments';
 import { QuestExplanation } from '@/components/story/QuestExplanation';
 import {
   DialogueAudioReference,
@@ -514,7 +514,7 @@ export function QuestPageClient({
           </EncounterCinematicBoundary>
         : <Fragment key={`${flow.id}-${index}`}>{content}</Fragment>;
     });
-    return componentPart < 0 && componentCount > 0
+    return componentPart < 0 && hasSequenceComponents(flow.sequence_media)
       ? [<QuestSequenceFragments key={`${flow.id}-components`} media={flow.sequence_media} />, ...rendered]
       : rendered;
   };

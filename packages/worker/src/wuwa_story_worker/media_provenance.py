@@ -52,13 +52,16 @@ def source_provenance(request, target, originals, tools, voice=None):
     Keep this metadata on both FileReference and FileVariant rows.
     """
     identity = request if isinstance(request, dict) else request.model_dump()
+    revision = target.get('sequence_metadata_revision')
+    sequence_audio = (target.get('path', '').startswith('story_sequence:')
+                      and type(revision) is int and revision >= 3)
     return {
         "schema_version": 1, "asset_version": identity["asset_version"],
         "download_id": identity["download_id"], "tier": identity["tier"],
         "package_path": authored_package_path(target),
         "language": target.get("language"),
         "tools": {key: value for key, value in tools.items()
-                  if key != "WUWA_VGMSTREAM_PATH" or target["kind"] != "image"},
+                  if key != "WUWA_VGMSTREAM_PATH" or target["kind"] != "image" or sequence_audio},
         "source_files": [{"package_path": package_path(path), "sha256": sha256(path)}
                          for path in originals],
         **(voice or {}),

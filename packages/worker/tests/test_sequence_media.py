@@ -154,3 +154,73 @@ def test_material_texture_matching_respects_child_parameter_overrides(parent_tex
     section, = sequence_media_score(exports)['sections']
     assert (section.get('composition_role') == 'post_process_layer') is confirmed
     assert bool(section.get('material_bindings')) is confirmed
+
+
+def audio_exports(audio_event=None, soft_audio_event=None, rate=None):
+    package = '/Game/Aki/Sequence/LevelA_Seq/Main/03_1/M0334/M0334_All'
+    section_range = {'Value': {'LowerBound': {'Type': 1, 'Value': {'Value': 1}},
+                               'UpperBound': {'Type': 0, 'Value': {'Value': 2035}}}}
+    return [
+        {'Type': 'MovieScene', 'Package': package, '_export_index': 76,
+         'Properties': {'TickResolution': rate or {'Numerator': 30},
+                        'PlaybackRange': {'Value': {'UpperBound': {'Value': {'Value': 1806}}}}}},
+        {'Type': 'MovieSceneKuroAudioEventTrack', 'Package': package, '_export_index': 408,
+         'Outer': {'ObjectPath': package + '.76'}},
+        {'Type': 'MovieSceneKuroAudioEventSection', 'Package': package, '_export_index': 407,
+         'Outer': {'ObjectPath': package + '.408'},
+         'Properties': {'AudioEvent': audio_event, 'SoftAudioEvent': soft_audio_event,
+                        'bSyncAudio': True, 'FadeDuration': 8000, 'SectionRange': section_range}},
+    ]
+
+
+def test_m0334_audio_event_preserves_source_clock_range_sync_and_unconverted_fade():
+    event = '/Game/Aki/WwiseAudio/Events/play_all_sound_m0334'
+    hard = {'ObjectName': "AkAudioEvent'play_all_sound_m0334'", 'ObjectPath': event}
+    soft = {'AssetPathName': event + '.play_all_sound_m0334', 'SubPathString': ''}
+    exports = audio_exports(hard, soft)
+    section, = sequence_media_score(exports)['sections']
+    assert section['kind'] == 'audio_event' and section['reference'] == event
+    assert section['source'].endswith('M0334_All.407')
+    assert section['scene_source'].endswith('M0334_All.76')
+    assert section['clock'] == {'numerator': 30, 'denominator': 1}
+    assert section['range'] == exports[2]['Properties']['SectionRange']
+    assert section['parameters'] == {'bSyncAudio': True, 'FadeDuration': 8000}
+    assert section['audio_event'] == hard and section['soft_audio_event'] == soft
+    assert section['reference_field'] == 'AudioEvent' and section['status'] == 'referenced'
+    assert 'url' not in section and 'file_id' not in section
+
+
+@pytest.mark.parametrize('hard', [None, {}, {'ObjectPath': 'None'}])
+def test_soft_audio_event_fallback_uses_authored_asset_path_not_a_name_guess(hard):
+    soft = {'AssetPathName': '/Game/Aki/WwiseAudio/Events/Exact.Exact', 'SubPathString': ''}
+    section, = sequence_media_score(audio_exports(hard, soft))['sections']
+    assert section['reference'] == '/Game/Aki/WwiseAudio/Events/Exact'
+    assert section['reference_field'] == 'SoftAudioEvent'
+    assert section['soft_audio_event'] == soft
+
+
+def test_conflicting_hard_and_soft_audio_events_do_not_select_either_candidate():
+    hard = {'ObjectPath': '/Game/Aki/WwiseAudio/Events/First'}
+    soft = {'AssetPathName': '/Game/Aki/WwiseAudio/Events/Second.Second'}
+    section, = sequence_media_score(audio_exports(hard, soft))['sections']
+    assert section['reference'] is None and section['status'] == 'unresolved_audio_event'
+    assert section['diagnostics'] == [{'code': 'conflicting_audio_event_references'}]
+    assert section['audio_event'] == hard and section['soft_audio_event'] == soft
+    assert section['parameters']['bSyncAudio'] is True
+
+
+@pytest.mark.parametrize('path', ['https://example.com/Event', '/Game/../Secret',
+                                  '/Game/Event.OtherObject', '/Game/Event?query=1', '/Game/Event\\Other'])
+def test_invalid_audio_event_paths_remain_unresolved_without_dropping_section(path):
+    section, = sequence_media_score(audio_exports(None, {'AssetPathName': path}))['sections']
+    assert section['reference'] is None and section['status'] == 'unresolved_audio_event'
+    assert section['range'] and section['parameters']['FadeDuration'] == 8000
+
+
+def test_audio_event_retains_fractional_clock_and_does_not_invent_missing_parameters():
+    exports = audio_exports({'ObjectPath': '/Game/Event'}, rate={'Numerator': 60000, 'Denominator': 1001})
+    del exports[2]['Properties']['FadeDuration']
+    exports[2]['Properties']['bSyncAudio'] = False
+    section, = sequence_media_score(exports)['sections']
+    assert section['clock'] == {'numerator': 60000, 'denominator': 1001}
+    assert section['parameters'] == {'bSyncAudio': False}
