@@ -126,7 +126,7 @@ export function EntityProfileClient({
       </div>
     );
 
-  if (data?.npc) return <NpcProfile data={data} initialModel={initialModel} gameVersion={gameVersion} />;
+  if (data?.npc) return <NpcProfile key={data.character.canonical_key} data={data} initialModel={initialModel} gameVersion={gameVersion} />;
 
   const entity = data?.[kind];
   const entityId = entity?.canonical_key?.split(':').at(-1) || entityKey;

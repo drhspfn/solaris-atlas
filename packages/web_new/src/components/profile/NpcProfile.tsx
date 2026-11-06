@@ -27,6 +27,8 @@ type Line = {
   canonical_key: string;
   flow_state: string;
   text: unknown;
+  speaker: { label?: string; canonical_key: string } | null;
+  speaker_relation: 'confirmed_npc_speaker' | 'npc_actor_context' | 'interaction_participant';
   quests: { canonical_key: string; game_quest_id: number; name: unknown }[];
 };
 
@@ -70,7 +72,7 @@ function NpcQuests({
   return (
     <section className="content-panel full-panel">
       <PanelTitle number="02" title="Quest appearances" />
-      <p>Quests containing a confirmed speaker’s dialogue.</p>
+      <p>Quests linked to referenced interaction states or a confirmed speaker.</p>
       {error ? (
         <ErrorPanel
           message={error}
@@ -81,7 +83,7 @@ function NpcQuests({
       ) : (
         <>
           {!result.results.length && (
-            <p>No confirmed quest appearances found.</p>
+            <p>No linked quest appearances found.</p>
           )}
           {result.results.map((quest) => (
             <Link
@@ -201,8 +203,8 @@ export function NpcProfile({
       <section className="content-panel full-panel">
         <PanelTitle number="01" title="Dialogue and quest appearances" />
         <p>
-          Lines are linked to confirmed speaker records. Quest links identify
-          the authored state containing each line.
+          Conversations from referenced interaction states and confirmed speakers.
+          A participant in a conversation is not necessarily this NPC.
         </p>
         <form
           className="dialogue-search"
@@ -229,14 +231,14 @@ export function NpcProfile({
           <p role="status">Loading dialogue…</p>
         ) : (
           <>
-            {!result.results.length && <p>No confirmed dialogue found.</p>}
+            {!result.results.length && <p>No linked dialogue found.</p>}
             {result.results.map((line) => (
               <div
                 className="quote-result"
-                key={`${line.canonical_key}:${line.flow_state}`}
+                key={`${line.canonical_key}:${line.flow_state}:${line.speaker?.canonical_key || 'none'}`}
               >
                 <p>{localizedText(line.text, "Text unavailable")}</p>
-                <small>{line.flow_state}</small>
+                <small>{line.speaker?.label || line.speaker?.canonical_key || 'Speaker'} · {line.speaker_relation === 'confirmed_npc_speaker' ? 'Confirmed NPC speaker' : line.speaker_relation === 'npc_actor_context' ? 'NPC-associated line in this interaction' : 'Interaction participant'} · {line.flow_state}</small>
                 {line.quests.map((quest) => (
                   <p key={quest.canonical_key}>
                     <Link to={questPath(quest)}>
@@ -267,16 +269,14 @@ export function NpcProfile({
         gameVersion={gameVersion}
       />
       {npc.shop_count > 0 && <NpcShops characterKey={character.canonical_key} gameVersion={gameVersion} />}
-      {npc.flow_reference_count > 0 && (
-        <section className="content-panel full-panel">
+      <section className="content-panel full-panel">
           <PanelTitle number="04" title="Referenced story states" />
           <p>
             These authored flow references do not establish who speaks in a
             scene.
           </p>
           <NpcFlowParticipants characterKey={character.canonical_key} gameVersion={gameVersion} />
-        </section>
-      )}
+      </section>
     </div>
   );
 }

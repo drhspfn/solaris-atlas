@@ -113,6 +113,20 @@ def test_personal_proof_and_dialogue_hops_override_stale_typed_source_not_snapsh
     assert graph.rows(select(participation.c.line_id)) == []
 
 
+def test_npc_interaction_includes_unspoken_lines_only_with_snapshot_evidence(graph):
+    from wuwa_story.api.routes.story.npc_profile import interaction_dialogue
+
+    graph.db.execute("INSERT INTO core.dialogue_line VALUES (1100, NULL, NULL, 1)")
+    graph.db.execute("INSERT INTO graph.edge (id,from_node_id,to_node_id,relation_type_id,layer,basis) VALUES (5001,201,510,4,'source','explicit')")
+    graph.db.execute("INSERT INTO graph.edge (id,from_node_id,to_node_id,relation_type_id,layer,basis) VALUES (5002,510,1100,3,'source','explicit')")
+    graph.db.execute("INSERT INTO graph.edge_evidence (edge_id,release_id,source_record_id) VALUES (5001,1,1),(5002,1,1)")
+    rows = set(graph.rows(interaction_dialogue(1, [201])))
+    assert (1100, 201, None) in rows
+    assert (1000, 201, 4) in rows
+    graph.db.execute("DELETE FROM graph.edge_evidence WHERE edge_id=5002")
+    assert (1100, 201, None) not in set(graph.rows(interaction_dialogue(1, [201])))
+
+
 def test_personal_crosswalk_proof_cannot_borrow_another_releases_raw_record(graph):
     crosswalk = speaker_crosswalk(1, [10])
     assert graph.rows(select(crosswalk.c.speaker_id)) == [(4,)]

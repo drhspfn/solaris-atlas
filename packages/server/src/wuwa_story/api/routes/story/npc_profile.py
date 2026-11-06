@@ -6,11 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.api.public_addresses import public_addresses
 from wuwa_story.db.models.core import Character, DialogueLine, Item, Quest, QuestState
-from wuwa_story.db.models.graph import Node
+from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node
 from wuwa_story.db.models.i18n import Locale, LocalizationKey, LocalizationValue
+from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.repositories.character_identity import dialogue_participation
 from wuwa_story.db.repositories.nodes import get_node
-from wuwa_story.db.repositories.quest_scope import quest_state_links, quests_for_state
+from wuwa_story.db.repositories.quest_scope import quest_state_links
 from wuwa_story.db.session import get_session
 from wuwa_story.story.service import (
     _localized,
@@ -23,6 +24,49 @@ from wuwa_story.story.service import (
 from wuwa_story.urls import node_address
 
 router = APIRouter(tags=["story browsing"])
+
+
+def source_edge(owner_id, target, relation, release_id):
+    return select(Edge.id).join(RelationType, RelationType.id == Edge.relation_type_id).where(
+        Edge.from_node_id == owner_id, Edge.to_node_id == target, Edge.layer == "source",
+        RelationType.key == relation,
+        select(EdgeEvidence.id).where(EdgeEvidence.edge_id == Edge.id,
+                                     EdgeEvidence.release_id == release_id).exists(),
+    ).exists()
+
+
+def interaction_dialogue(release_id, state_ids):
+    """Include authored lines without a speaker as well as spoken lines in interaction states."""
+    action_edge, talk_edge, spoken = (Edge.__table__.alias(name) for name in
+                                       ("npc_actions", "npc_talks", "npc_spoken"))
+
+    def evidenced(edge, relation):
+        return and_(edge.c.layer == "source", edge.c.relation_type_id == select(RelationType.id).where(
+            RelationType.key == relation).scalar_subquery(), select(EdgeEvidence.id).where(
+            EdgeEvidence.edge_id == edge.c.id, EdgeEvidence.release_id == release_id).exists())
+
+    return (select(talk_edge.c.to_node_id.label("line_id"), action_edge.c.from_node_id.label("state_id"),
+                   spoken.c.to_node_id.label("speaker_id"))
+            .select_from(action_edge).join(talk_edge, talk_edge.c.from_node_id == action_edge.c.to_node_id)
+            .outerjoin(spoken, and_(spoken.c.from_node_id == talk_edge.c.to_node_id,
+                                    evidenced(spoken, "spoken_by")))
+            .join(DialogueLine, DialogueLine.node_id == talk_edge.c.to_node_id)
+            .where(action_edge.c.from_node_id.in_(state_ids), evidenced(action_edge, "contains_action"),
+                   evidenced(talk_edge, "presents_talk_item")).distinct())
+
+
+async def npc_flow_state_ids(session, node_id, npc, release_id):
+    refs = [entry.get("flow") for entry in npc.get("flow_references") or []
+            if isinstance(entry, dict) and entry.get("basis") == "explicit_flow_triple"]
+    valid = [flow for flow in refs if isinstance(flow, list) and len(flow) == 3
+             and isinstance(flow[0], str) and type(flow[1]) is int and type(flow[2]) is int]
+    states = set(await session.scalars(select(QuestState.node_id).where(
+        source_edge(node_id, QuestState.node_id, "references_flow_state", release_id))))
+    for offset in range(0, len(valid), 100):
+        conditions = [and_(QuestState.flow_list_name == name, QuestState.flow_id == flow_id,
+                           QuestState.state_id == state_id) for name, flow_id, state_id in valid[offset:offset + 100]]
+        states.update(await session.scalars(select(QuestState.node_id).where(or_(*conditions))))
+    return sorted(states)
 
 
 async def npc_record(session, identity, game_version=None):
@@ -116,27 +160,21 @@ async def npc_shop_offers(canonical_key: str, shop_id: int, locale: str = "en",
 @router.get("/npcs/{canonical_key:path}/flow-participants")
 async def npc_flow_participants(canonical_key: str, locale: str = "en", game_version: str | None = None,
                                 session: AsyncSession = Depends(get_session)):
-    _, _, npc, release_id = await npc_record(session, canonical_key, game_version)
-    refs = [entry.get("flow") for entry in npc.get("flow_references") or []
-            if isinstance(entry, dict) and entry.get("basis") == "explicit_flow_triple"]
-    valid = [flow for flow in refs if isinstance(flow, list) and len(flow) == 3
-             and isinstance(flow[0], str) and type(flow[1]) is int and type(flow[2]) is int]
-    if not valid or release_id is None:
+    node, _, npc, release_id = await npc_record(session, canonical_key, game_version)
+    if release_id is None:
         return {"results": [], "truncated": False}
-    states = list(await session.scalars(select(QuestState.node_id).where(or_(*[
-        and_(QuestState.flow_list_name == name, QuestState.flow_id == flow_id, QuestState.state_id == state_id)
-        for name, flow_id, state_id in valid[:100]]))))
+    states = await npc_flow_state_ids(session, node.id, npc, release_id)
     if not states:
-        return {"results": [], "truncated": len(valid) > 100}
-    participation = dialogue_participation(release_id, state_ids=states)
+        return {"results": [], "truncated": False}
+    participation = dialogue_participation(release_id, state_ids=states[:100])
     rows = list(await session.execute(select(Node.id, QuestState.state_key)
         .join(participation, participation.c.speaker_id == Node.id)
         .join(QuestState, QuestState.node_id == participation.c.state_id)
-        .distinct().order_by(QuestState.state_key, Node.canonical_key).limit(101)))
+        .distinct().order_by(QuestState.state_key, Node.id).limit(101)))
     await prefetch_node_labels(session, [speaker for speaker, _ in rows[:100]], locale)
     return {"results": [{"speaker": await _node_label(session, speaker, locale), "flow_state": state}
                         for speaker, state in rows[:100]],
-            "truncated": len(valid) > 100 or len(rows) > 100}
+            "truncated": len(states) > 100 or len(rows) > 100}
 
 
 @router.get("/npcs/{canonical_key:path}/dialogue")
@@ -144,17 +182,22 @@ async def npc_flow_participants(canonical_key: str, locale: str = "en", game_ver
 async def npc_dialogue(canonical_key: str, locale: str = "en", game_version: str | None = None,
                        q: str = Query("", max_length=128), limit: int = Query(20, ge=1, le=50),
                        offset: int = Query(0, ge=0), session: AsyncSession = Depends(get_session)):
-    _, _, npc, release_id = await npc_record(session, canonical_key, game_version)
+    node, _, npc, release_id = await npc_record(session, canonical_key, game_version)
     locale_id = await session.scalar(select(Locale.id).where(Locale.code == locale))
     if locale_id is None:
         raise HTTPException(400, "unknown locale")
     speakers = [key for key in npc.get("speakers") or [] if isinstance(key, str)]
     speaker_ids = list(await session.scalars(select(Node.id).where(Node.canonical_key.in_(speakers)))) if speakers else []
-    if not speaker_ids or release_id is None:
+    if release_id is None:
+        return {"results": [], "total": 0, "limit": limit, "offset": offset}
+    state_ids = await npc_flow_state_ids(session, node.id, npc, release_id)
+    if not speaker_ids and not state_ids:
         return {"results": [], "total": 0, "limit": limit, "offset": offset}
     participation = dialogue_participation(release_id, speaker_ids=speaker_ids)
-    query = (select(DialogueLine.node_id.label("line_id"), participation.c.state_id.label("state_id"))
-             .join(participation, participation.c.line_id == DialogueLine.node_id).distinct())
+    own_lines = select(participation.c.line_id, participation.c.state_id, participation.c.speaker_id)
+    selected = interaction_dialogue(release_id, state_ids).union(own_lines).subquery()
+    query = select(selected.c.line_id, selected.c.state_id, selected.c.speaker_id).join(
+        DialogueLine, DialogueLine.node_id == selected.c.line_id)
     if q.strip():
         match = select(LocalizationValue.key_id).where(
             LocalizationValue.key_id == DialogueLine.localization_key_id,
@@ -163,24 +206,33 @@ async def npc_dialogue(canonical_key: str, locale: str = "en", game_version: str
         query = query.where(or_(DialogueLine.inline_text.icontains(q.strip(), autoescape=True), match))
     rows = query.subquery()
     total = await session.scalar(select(func.count()).select_from(rows)) or 0
-    page = list(await session.execute(select(DialogueLine, Node, QuestState).join(
+    page = list(await session.execute(select(DialogueLine, Node, QuestState, rows.c.speaker_id,
+        source_edge(node.id, DialogueLine.node_id, "presents_talk_item", release_id)).join(
         rows, rows.c.line_id == DialogueLine.node_id).join(Node, Node.id == DialogueLine.node_id).join(
         QuestState, QuestState.node_id == rows.c.state_id).order_by(Node.canonical_key, QuestState.state_key)
         .offset(offset).limit(limit)))
     results = []
-    quest_cache = {}
-    for line, line_node, state in page:
-        quest_ids = await quests_for_state(session, state.node_id, release_id)
-        quests = []
-        for quest_id in quest_ids:
-            if quest_id not in quest_cache:
-                quest = await session.get(Quest, quest_id)
-                quest_cache[quest_id] = await _quest_info(session, quest, locale, game_version) if quest else None
-            if quest_cache[quest_id]:
-                quests.append(quest_cache[quest_id])
+    await prefetch_node_labels(session, [speaker_id for _, _, _, speaker_id, _ in page if speaker_id is not None], locale)
+    await prefetch_localizations(session, [line.localization_key_id for line, _, _, _, _ in page], locale, release_id)
+    states = {state.node_id for _, _, state, _, _ in page}
+    quests_by_state = {state_id: [] for state_id in states}
+    if states:
+        links = quest_state_links(release_id, state_ids=states)
+        associations = list(await session.execute(select(links.c.quest_id, links.c.state_id)
+                                                  .order_by(links.c.state_id, links.c.quest_id)))
+        quest_ids = {quest_id for quest_id, _ in associations}
+        quests = list(await session.scalars(select(Quest).where(Quest.node_id.in_(quest_ids)))) if quest_ids else []
+        quest_cache = {quest.node_id: await _quest_info(session, quest, locale, game_version) for quest in quests}
+        for quest_id, state_id in associations:
+            if quest_id in quest_cache:
+                quests_by_state[state_id].append(quest_cache[quest_id])
+    for line, line_node, state, speaker_id, actor_context in page:
         results.append({"canonical_key": line_node.canonical_key, "flow_state": state.state_key,
+                        "speaker": await _node_label(session, speaker_id, locale) if speaker_id is not None else None,
+                        "speaker_relation": "confirmed_npc_speaker" if speaker_id in speaker_ids else
+                                            "npc_actor_context" if actor_context else "interaction_participant",
                         "text": await _localized(session, line.localization_key_id, locale, release_id)
-                                or {"inline_text": line.inline_text}, "quests": quests})
+                                or {"inline_text": line.inline_text}, "quests": quests_by_state[state.node_id]})
     return {"results": results, "total": total, "limit": limit, "offset": offset}
 
 
@@ -189,13 +241,15 @@ async def npc_dialogue(canonical_key: str, locale: str = "en", game_version: str
 async def npc_quests(canonical_key: str, locale: str = "en", game_version: str | None = None,
                      limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0),
                      session: AsyncSession = Depends(get_session)):
-    _, _, npc, release_id = await npc_record(session, canonical_key, game_version)
+    node, _, npc, release_id = await npc_record(session, canonical_key, game_version)
     speakers = [key for key in npc.get("speakers") or [] if isinstance(key, str)]
     speaker_ids = list(await session.scalars(select(Node.id).where(Node.canonical_key.in_(speakers)))) if speakers else []
-    if not speaker_ids or release_id is None:
+    if release_id is None:
         return {"results": [], "total": 0, "limit": limit, "offset": offset}
-    participation = dialogue_participation(release_id, speaker_ids=speaker_ids)
-    state_ids = list(await session.scalars(select(participation.c.state_id).distinct()))
+    state_ids = set(await npc_flow_state_ids(session, node.id, npc, release_id))
+    if speaker_ids:
+        participation = dialogue_participation(release_id, speaker_ids=speaker_ids)
+        state_ids.update(await session.scalars(select(participation.c.state_id).distinct()))
     if not state_ids:
         return {"results": [], "total": 0, "limit": limit, "offset": offset}
     links = quest_state_links(release_id, state_ids=state_ids)
