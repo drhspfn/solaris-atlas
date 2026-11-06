@@ -31,7 +31,13 @@ from wuwa_story_worker.publication_provenance import (
     recipe_identity,
     verified_references,
 )
-from wuwa_story_worker.wwise_banks import bank_media_ids, has_authored_event, render_bank
+from wuwa_story_worker.wwise_banks import (
+    WWISE_RENDERER_SCHEMA,
+    WWISE_REPAIR_CUTSCENES,
+    bank_media_ids,
+    has_authored_event,
+    render_bank,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +58,9 @@ async def missing_cutscene_identities(names: set[str], *, source_context: dict,
         refs = await verified_references(session, storage, "cutscene_flow", source, names)
         present = {ref.source_path for ref in refs
                    if ref.metadata_json.get("publication_complete")
+                   and (source['asset_version'] not in {'3.7.0', '3.7.1'}
+                        or ref.source_path not in WWISE_REPAIR_CUTSCENES
+                        or ref.metadata_json['game_source'].get('wwise_renderer_schema') == WWISE_RENDERER_SCHEMA)
                    and (not require_caption_audio or ref.metadata_json["game_source"].get("caption_audio_schema") == CAPTION_AUDIO_SCHEMA)
                    and (recipe_hashes is None or ref.metadata_json["game_source"].get("recipe_sha256")
                         == recipe_hashes.get(ref.source_path))}
@@ -382,6 +391,7 @@ async def import_cutscene_recipe(
                     source_context, {"path": engine, "kind": "video"}, list(dict.fromkeys(originals)),
                     recipe_sha256=recipe_hash, recipe=requested_spec.model_dump(mode="json"),
                     analyze_variants=analyze_variants,
+                    wwise_renderer_schema=WWISE_RENDERER_SCHEMA,
                     **({'caption_audio_schema': CAPTION_AUDIO_SCHEMA}
                        if source_context.get('caption_audio_schema') == CAPTION_AUDIO_SCHEMA else {}),
                 )

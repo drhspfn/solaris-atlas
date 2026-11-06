@@ -250,3 +250,9 @@ caption rendering, and the 390px control layout. Existing transcript `any` lint
 warnings remain. The design auditor still reports seven pre-existing form-validation
 ownership findings in auth/search/catalog; the new native voice selector follows
 the documented native Select/Listbox policy.
+
+### Shared cinematic entry points
+
+The quest media endpoint groups `kind=cutscene` events by their canonical cinematic reference. It returns one playback graph per cinematic and preserves its authored calls in `entry_points`, including source paths, conditions, interaction ownership and story positions. This is presentation grouping, not deletion of graph edges or runtime choices. Rover/story choices remain nodes in the complete playback graph.
+
+The frontend selects a visible entry for the current transcript window or interaction before assigning players to slots. Historical hashes for all entries resolve to the same player. Both live and stored quest projections receive this normalization, so existing imports do not require a full rebuild to remove duplicate players.

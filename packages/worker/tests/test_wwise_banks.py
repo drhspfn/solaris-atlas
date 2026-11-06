@@ -75,7 +75,9 @@ async def test_render_requires_one_authored_rendition_and_preserves_source_evide
         commands.append(args)
         if "-dn" in args:
             from pathlib import Path
-            Path(args[args.index("-dn") + 1] + ".xml").write_text("<root/>")
+            Path(args[args.index("-dn") + 1] + ".xml").write_text(f'''<root version="172">
+              <object name="CAkEvent"><field name="ulID" value="{wwise_banks.event_id(bank.stem)}"/>
+                <field name="ulActionListSize" value="0"/></object></root>''')
         elif "-go" in args:
             from pathlib import Path
             out = Path(args[args.index("-go") + 1])

@@ -17,6 +17,12 @@ from pathlib import Path
 
 from wuwa_story_worker.tooling import tool_path
 
+WWISE_RENDERER_SCHEMA = 1
+# Only retained 3.7 control/language/silence regressions require durable revalidation.
+WWISE_REPAIR_CUTSCENES = frozenset(f'cutscene:{name}' for name in (
+    'C0026', 'C0027', 'C0032', 'M0318', 'M2_12_06', 'M3_1_11_1',
+))
+
 
 def bank_media_ids(data: bytes) -> list[int]:
     """Read bounded v172 sound/music source tables, without choosing a branch."""
@@ -266,15 +272,68 @@ def event_timeline(xml: Path, identity: int) -> dict:
             'actions': sorted(actions, key=lambda action: action['time_ms'])}
 
 
-def validate_event_timeline(timeline: dict) -> None:
+def validate_event_timeline(timeline: dict, xml: Path | None = None) -> list[str]:
+    """Bind deterministic startup states; never flatten a running state change."""
     states = [action for action in timeline['actions'] if action['kind'] == 'SetState']
     if not states:
-        return
+        return []
     plays = [action for action in timeline['actions'] if action['kind'] == 'Play']
     if not plays:
         raise ValueError('Wwise control-only event requires active music context and elapsed playback time')
     changes = ', '.join(f"{a['state_group_id']}={a['state_id']} at {a['time_ms']}ms" for a in states)
-    raise ValueError(f'Wwise temporal SetState playback is unsupported: {changes}; static renditions cannot reproduce music transitions')
+    bindings = {}
+    for state in states:
+        group, value = state['state_group_id'], state['state_id']
+        if state['time_ms'] != 0 or (group in bindings and bindings[group] != value):
+            raise ValueError(f'Wwise temporal SetState playback is unsupported: {changes}; static renditions cannot reproduce music transitions')
+        bindings[group] = value
+    if xml is None:
+        raise ValueError('Wwise initial SetState requires its consuming switch evidence')
+    nodes = {int(field.get('value')): node for node in ET.parse(xml).iter('object')
+             if (field := node.find("field[@name='ulID']")) is not None}
+
+    def descendants(identity, visited=None):
+        visited = set() if visited is None else visited
+        if identity in visited:
+            return visited
+        visited.add(identity)
+        node = nodes.get(identity)
+        if node is not None:
+            for field in node.iter('field'):
+                if field.get('name') in {'ulChildID', 'audioNodeId', 'NodeID'}:
+                    descendants(int(field.get('value')), visited)
+        return visited
+
+    actions = timeline['actions']
+    for group, value in bindings.items():
+        consumers = set()
+        for identity, node in nodes.items():
+            if node.get('name') == 'CAkSwitchCntr':
+                if node.find(f".//field[@name='ulGroupID'][@value='{group}']") is None:
+                    continue
+                if (node.find(".//field[@name='eGroupType'][@value='1']") is None
+                        or node.find(f".//field[@name='ulSwitchID'][@value='{value}']") is None):
+                    raise ValueError(f'Wwise initial State has no authored switch value: {group}={value}')
+            elif node.get('name') == 'CAkMusicSwitchCntr':
+                arguments = node.findall(".//list[@name='pArguments']/object")
+                if not any(arg.find(f"field[@name='ulGroup'][@value='{group}']") is not None
+                           for arg in arguments):
+                    continue
+                if (len(arguments) != 1
+                        or arguments[0].find("field[@name='eGroupType'][@value='1']") is None
+                        or node.find(".//field[@name='uTreeDepth'][@value='1']") is None
+                        or node.find(f".//object[@name='Node']/field[@name='key'][@value='{value}']") is None):
+                    raise ValueError(f'Unsupported Wwise initial music State mapping: {group}={value}')
+            else:
+                continue
+            consumers.add(identity)
+        consuming_plays = [play for play in plays if consumers & descendants(play['target_id'])]
+        if not consuming_plays:
+            raise ValueError(f'Wwise initial SetState has no consuming Play in this bank: {group}={value}')
+        first_play = min(actions.index(play) for play in consuming_plays)
+        if any(actions.index(state) >= first_play for state in states if state['state_group_id'] == group):
+            raise ValueError(f'Wwise SetState follows consuming Play; elapsed music context is required: {group}')
+    return sorted(f'({group}={value})' for group, value in bindings.items())
 
 
 async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover, run_tool, *, language: str | None = None):
@@ -310,8 +369,12 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
     timeline = event_timeline(xml, event_id(bank.stem))
     controls = root / 'event-timeline.json'
     controls.write_text(json.dumps(timeline, indent=2), encoding='utf-8')
-    validate_event_timeline(timeline)
+    state_params = validate_event_timeline(timeline, xml)
     params = await asyncio.to_thread(rover_parameters, xml, rover, language=language)
+    for param in state_params:
+        if any(other.split('=')[0] == param.split('=')[0] and other != param for other in params):
+            raise ValueError(f'Authored initial State conflicts with requested language/Rover: {param}')
+    params = sorted(set([*params, *state_params]))
     for stale in root.glob("*.txtp"):
         stale.unlink()
     command = [sys.executable, str(renderer), "-d", "none", "-g", "-gwd", "-gra",
