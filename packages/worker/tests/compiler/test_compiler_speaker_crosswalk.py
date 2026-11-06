@@ -57,3 +57,25 @@ def test_compiler_emits_mainrole_family_card_proofs_for_both_genders(tmp_path):
         'speaker:317', 'speaker:750088', 'speaker:1450', 'speaker:300013'}
     assert all(edge['to'] == 'character:1501' and edge['basis'].startswith(PERSONAL_PORTRAIT_BASIS)
                and edge['crosswalk']['method'] == 'main_role_config_exact_asset' for edge in crosswalk)
+
+
+def test_compiler_passes_guest_rows_and_english_with_source_provenance(tmp_path):
+    for relative, rows in {
+        'BinData/role/roleinfo.json': [{'Id': 1402, 'RoleType': 1, 'Name': 'role_name'}],
+        'BinData/speaker/speaker.json': [{'Id': 108}],
+        'BinData/PlotGuest/plotguest.json': [{'GuestID': 1, 'Name': 'role_name', 'SpeakerID': [108]}],
+        'Textmaps/en/subtitle_text/SubtitleText.json': [],
+    }.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(rows))
+    writer = Writer(tmp_path / 'out', 'fixture')
+    compile_entities(tmp_path, writer, {'role_name': {'content': 'Yangyang'},
+                                       'Speaker_108_Name': {'content': 'Yangyang'}})
+    writer.finish()
+    edges = [json.loads(line) for line in (tmp_path / 'out/graphs/global.jsonl').read_text().splitlines()]
+    guest = [edge for edge in edges if edge['type'] == 'references_character']
+    assert len(guest) == 1
+    assert (guest[0]['from'], guest[0]['to'], guest[0]['source'], guest[0]['raw_path']) == (
+        'speaker:108', 'character:1402', 'BinData/PlotGuest/plotguest.json', '$[0].SpeakerID[0]')
+    assert guest[0]['crosswalk']['method'] == 'exact_plot_guest'
