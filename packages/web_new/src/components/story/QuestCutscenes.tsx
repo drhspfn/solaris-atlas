@@ -130,8 +130,8 @@ export function FlowPlayer({
   const languages = [
     ...new Set(
       tracks
-        ?.filter((track) => track.role === "voice")
-        .map((track) => track.language) || [],
+        ?.map((track) => track.language)
+        .filter((language): language is NonNullable<typeof language> => !!language) || [],
     ),
   ];
   const selectedTracks = selectCutsceneTracks(
