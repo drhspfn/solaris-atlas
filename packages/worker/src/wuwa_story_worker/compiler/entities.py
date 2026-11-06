@@ -7,7 +7,7 @@ from typing import Any
 
 from wuwa_story.ingestion.character_artwork import inherited_character_fields
 from wuwa_story.ingestion.character_identity import main_role_identities
-from wuwa_story.ingestion.speaker_crosswalk import speaker_character_links
+from wuwa_story.ingestion.speaker_crosswalk import plot_guest_role_links, speaker_character_links
 
 from .core import Writer, read_json
 
@@ -137,6 +137,10 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
         guests=enumerate(guests), english=english,
     ))
     for link in crosswalks:
+        writer.edge(link["from"], link["to"], link["type"], link["basis"],
+                    link["source"], link["raw_path"],
+                    {"relation": link["relation"], "crosswalk": link["crosswalk"]})
+    for link in plot_guest_role_links(enumerate(role_rows), enumerate(guests), english=english):
         writer.edge(link["from"], link["to"], link["type"], link["basis"],
                     link["source"], link["raw_path"],
                     {"relation": link["relation"], "crosswalk": link["crosswalk"]})
