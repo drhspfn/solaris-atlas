@@ -15,42 +15,59 @@ function uniqueClip(clips, source) {
   return matches.length === 1 ? matches[0] : undefined;
 }
 
-function cueVisibility(cues, parentAction) {
+function cueWindows(cue, parentAction) {
   const source = packagePath(parentAction?.getClip().userData?.sourcePackage);
-  if (!source) return true;
+  if (!source || !Number.isFinite(cue.start)) return [];
+  const finish = Number.isFinite(cue.end) ? cue.end : cue.start + (cue.duration || 0);
+  if (packagePath(cue.source_clip) === source) return [{ start: cue.start, end: finish, rate: 1 }];
+  if (packagePath(cue.montage) !== source || !(cue.play_rate > 0) ||
+      !Number.isFinite(cue.segment_start) || !Number.isFinite(cue.source_start) || !Number.isFinite(cue.source_end) ||
+      cue.source_end <= cue.source_start || !Number.isInteger(cue.loop_count) || cue.loop_count < 1 || cue.loop_count > 1000) return [];
+  const start = Math.max(cue.start, cue.source_start), end = Math.min(finish, cue.source_end);
+  if (end < start) return [];
+  return Array.from({ length: cue.loop_count }, (_, i) => {
+    const base = cue.segment_start + i * (cue.source_end - cue.source_start) / cue.play_rate;
+    return { start: base + (start - cue.source_start) / cue.play_rate,
+      end: base + (end - cue.source_start) / cue.play_rate, rate: cue.play_rate };
+  });
+}
+
+function cueVisibility(cues, parentAction, initial) {
   const events = [];
   for (const cue of cues || []) {
     if (cue.kind !== 'TsAnimNotifyStateSubMeshControl_C' || !cue.defaults) continue;
     const defaults = cue.defaults;
-    const montage = packagePath(cue.montage);
-    if ((montage || packagePath(cue.source_clip)) !== source) continue;
-    const rate = montage ? cue.play_rate : 1;
-    const start = montage ? cue.source_start : 0;
-    const end = montage ? cue.source_end : 0;
-    const loops = montage ? cue.loop_count : 1;
-    if (!(rate > 0) || !Number.isFinite(cue.start) || !Number.isFinite(cue.end) ||
-        !Number.isFinite(start) || !Number.isFinite(end) || !Number.isInteger(loops) || loops < 1 || loops > 1000) continue;
-    for (let i = 0; i < loops; i++) {
-      const map = time => montage ? cue.segment_start + i * (end - start) / rate + (time - start) / rate : time;
-      for (const [time, delay, visible] of [[cue.start, defaults.begin_delay, defaults.begin_visible], [cue.end, defaults.end_delay, defaults.end_visible]]) {
-        if (typeof visible !== 'boolean' || (montage && (time < start || time > end))) continue;
-        const position = map(time + (Number.isFinite(delay) ? delay : 0));
-        if (Number.isFinite(position) && position <= parentAction.time) events.push({ position, visible });
+    for (const window of cueWindows(cue, parentAction)) {
+      for (const [time, delay, visible] of [[window.start, defaults.begin_delay, defaults.begin_visible ?? true], [window.end, defaults.end_delay, defaults.end_visible ?? true]]) {
+        if (typeof visible !== 'boolean') continue;
+        const position = time + (Number.isFinite(delay) ? delay : 0);
+        if (position <= parentAction.time) events.push({ position, visible });
       }
     }
   }
   events.sort((a, b) => a.position - b.position);
-  return events.length ? events[events.length - 1].visible : true;
+  return events.length ? events[events.length - 1].visible : initial;
+}
+
+function activeCue(cues, action, kind) {
+  const matches = [];
+  for (const cue of cues || []) if (cue.kind?.includes(kind)) {
+    for (const window of cueWindows(cue, action)) if (action.time >= window.start && action.time < window.end)
+      matches.push({ cue, ...window });
+  }
+  return matches.sort((a, b) => b.start - a.start)[0];
 }
 
 // Unreal coordinates are centimetres, X forward, Y right, Z up. The exporter
 // converts through Blender's right-handed Z-up space to glTF Y-up.
 export function componentMatrix(transform) {
-  const { location = {}, rotation = {}, scale = {} } = transform || {};
+  const location = transform?.location || {}, rotation = transform?.rotation || {}, scale = transform?.scale || {};
   const rad = THREE.MathUtils.degToRad;
   const matrix = new THREE.Matrix4().compose(
     new THREE.Vector3((location.X || 0) / 100, -(location.Y || 0) / 100, (location.Z || 0) / 100),
-    new THREE.Quaternion().setFromEuler(new THREE.Euler(rad(rotation.Roll || 0), rad(-(rotation.Pitch || 0)), rad(-(rotation.Yaw || 0)), 'XYZ')),
+    Number.isFinite(rotation.W)
+      ? new THREE.Quaternion(-(rotation.X || 0), rotation.Y || 0, -(rotation.Z || 0), rotation.W).normalize()
+      : new THREE.Quaternion().setFromEuler(new THREE.Euler(rad(rotation.Roll || 0), rad(-(rotation.Pitch || 0)), rad(-(rotation.Yaw || 0)), 'XYZ')),
     new THREE.Vector3(scale.X ?? 1, scale.Y ?? 1, scale.Z ?? 1),
   );
   const basis = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
@@ -81,10 +98,12 @@ export function createLinkedModels({ assets, load, dispose, report, getRoot, get
   const items = (assets.linked_models || []).filter(item => declared.has(item.id) && !item.component.baked);
   const depth = item => { let n = 0, current = item; const seen = new Set(); while (current && !seen.has(current.id)) { seen.add(current.id); current = items.find(candidate => candidate.id === current.parent_id); n++; } return n; };
   const entries = new Map(items.sort((a, b) => depth(a) - depth(b))
-    .map(item => [item.id, { item, visible: item.component.default_visible !== false, loading: false, error: '', rig: null, request: null, action: null }]));
-  let closed = false;
+    .map(item => [item.id, { item, visible: item.component.default_visible !== false, override: null, loading: false, error: '', rig: null, request: null, action: null }]));
+  let closed = false, rootModel, rootMeshes = new Map(), lastState = '';
   function emit() {
-    if (!closed) report([...entries.values()].map(({ item, visible, loading, error }) => ({ id: item.id, name: item.label, visible, loading, error })));
+    const state = [...entries.values()].map(({ item, visible, override, loading, error }) => ({ id: item.id, name: item.label, visible, override, loading, error }));
+    const snapshot = JSON.stringify(state);
+    if (!closed && snapshot !== lastState) { lastState = snapshot; report(state); }
   }
   function parentOf(entry) {
     if (entry.item.parent_id === assets.id) return { scene: getRoot(), parser: getParser?.() };
@@ -96,7 +115,7 @@ export function createLinkedModels({ assets, load, dispose, report, getRoot, get
       const parent = parentOf(entry);
       try {
         if (!parent?.scene) throw new Error('Parent component unavailable');
-        attachComponent(parent.scene, entry.rig.scene, entry.item.component, parent.parser); entry.error = '';
+        attachComponent(parent.scene, entry.rig.scene, entry.item.component, parent.parser); entry.error = ''; entry.slot = undefined;
       } catch (error) { entry.error = error.message || 'Component could not be attached'; }
     }
     emit();
@@ -137,30 +156,87 @@ export function createLinkedModels({ assets, load, dispose, report, getRoot, get
     })();
     return entry.request;
   }
+  function rootVisibility(action) {
+    const model = getRoot();
+    if (rootModel !== model) {
+      for (const [mesh, mask] of rootMeshes) mesh.layers.mask = mask;
+      rootModel = model; rootMeshes = new Map();
+      const linkedRoots = new Set([...entries.values()].map(entry => entry.rig?.scene).filter(Boolean));
+      function collect(node) {
+        if (linkedRoots.has(node)) return;
+        if (node.userData?.accessory_name && !node.isBone) return;
+        if (node.isMesh) rootMeshes.set(node, node.layers.mask);
+        for (const child of node.children) collect(child);
+      }
+      if (model) collect(model);
+    }
+    const cues = [...(assets.scene?.cues || []), ...items.flatMap(item => item.component.cues || [])];
+    const events = [];
+    for (const cue of cues) {
+      if (cue.defaults?.target !== 'notifying_mesh' || !cue.kind?.includes('HideMesh')) continue;
+      const windows = cueWindows(cue, action);
+      for (const window of windows) {
+        if (action.time < window.start) continue;
+        if (!cue.kind.includes('State') || action.time < window.end)
+          events.push({ start: window.start, hidden: cue.defaults.hide !== false, children: cue.defaults.hide_children !== false });
+      }
+    }
+    events.sort((a, b) => b.start - a.start);
+    const hidden = events[0]?.hidden || false, hideChildren = events[0]?.children || false;
+    for (const [mesh, mask] of rootMeshes) mesh.layers.mask = hidden ? 0 : mask;
+    return hidden && hideChildren;
+  }
   function sync() {
+    if (closed) return;
+    const hideChildren = rootVisibility(getAction());
     for (const entry of entries.values()) {
-      if (!entry.rig) continue;
       const parent = entries.get(entry.item.parent_id);
       const parentAction = parent ? parent.action : getAction();
-      entry.rig.scene.visible = entry.visible && cueVisibility(entry.item.component.cues, parentAction);
+      const effect = entry.item.component.kind === 'effect';
+      const effectCue = effect && activeCue(entry.item.component.cues, parentAction, 'Effect');
+      const automatic = effect ? Boolean(effectCue) : cueVisibility(entry.item.component.cues, parentAction, entry.item.component.default_visible !== false);
+      entry.visible = !hideChildren && (effect ? automatic && entry.override !== false : entry.override ?? automatic);
       const parentPath = packagePath(parentAction?.getClip().userData?.sourcePackage);
-      const bindings = (entry.item.component.bindings || []).filter(binding => parentPath && packagePath(binding.parent_clip) === parentPath && binding.child_clip);
-      const clip = bindings.length === 1 ? uniqueClip(entry.clips, bindings[0].child_clip) : undefined;
+      const bindingPath = effectCue ? packagePath(effectCue.cue.source_clip) : parentPath;
+      const bindings = (entry.item.component.bindings || []).filter(binding => bindingPath && packagePath(binding.parent_clip) === bindingPath && binding.child_clip);
+      if (!entry.rig) { if ((entry.visible || (!effect && bindings.length === 1 && entry.override !== false)) && !entry.error) void ensure(entry); continue; }
+      entry.rig.scene.visible = entry.visible;
+      const slotCue = activeCue(entry.item.component.cues, parentAction, 'ChangeSlot');
+      const slot = slotCue?.cue;
+      if (entry.slot !== slot) {
+        const target = parentOf(entry);
+        try {
+          const raw = slot?.properties?.SlotTransform || {};
+          const transform = { location: raw.Translation || raw.Location || raw.location || {},
+            rotation: raw.Rotation || raw.rotation || {}, scale: raw.Scale3D || raw.Scale || raw.scale || {} };
+          const component = slot ? { socket: slot.properties?.SwitchToSlotName, socket_transform: slot.socket_transform, transform } : entry.item.component;
+          if (!target?.scene) throw new Error('Parent component unavailable');
+          attachComponent(target.scene, entry.rig.scene, component, target.parser);
+          entry.slot = slot; entry.error = '';
+        } catch (error) { entry.error = error.message || 'Component could not be attached'; }
+      }
+      const binding = bindings.length === 1 ? bindings[0] : undefined;
+      const clip = binding && (!effect || effectCue) ? uniqueClip(entry.clips, binding.child_clip) : undefined;
       if (entry.action?.getClip() !== clip) {
         entry.mixer.stopAllAction(); entry.action = clip ? entry.mixer.clipAction(clip).reset().play() : null;
       }
       if (entry.action && parentAction) {
-        entry.action.time = clip.duration ? parentAction.time % clip.duration : 0;
+        const authoredRate = effectCue?.cue?.properties?.PlayRate ?? entry.item.component.source?.properties?.PlayRate ?? binding.source?.play_rate;
+        const rate = Number.isFinite(authoredRate) && authoredRate >= 0 ? authoredRate : 1;
+        const time = effectCue ? Math.max(0, (parentAction.time - effectCue.start) * effectCue.rate * rate) : parentAction.time;
+        entry.action.time = clip.duration ? (effect && binding.source?.looping === false ? Math.min(time, clip.duration) : time % clip.duration) : 0;
+        if (effect && binding.source?.looping === false) { entry.action.setLoop(THREE.LoopOnce, 1); entry.action.clampWhenFinished = true; }
         entry.mixer.update(0);
       }
     }
+    emit();
   }
   return {
-    start() { emit(); for (const entry of entries.values()) if (entry.visible) void ensure(entry); },
-    set(id, visible) { const entry = entries.get(id); if (!entry) return; entry.visible = visible; if (entry.rig) { if (visible && entry.error) reattach(); sync(); } if (visible) void ensure(entry); emit(); },
+    start() { sync(); },
+    set(id, visible) { const entry = entries.get(id); if (!entry) return; entry.override = visible; if (visible && entry.error) { entry.error = ''; if (entry.rig) reattach(); } sync(); },
     retry(id) { const entry = entries.get(id); if (entry) void ensure(entry); },
     detach() { for (const entry of entries.values()) entry.rig?.scene.removeFromParent(); },
     reattach, sync,
-    dispose() { closed = true; for (const entry of entries.values()) if (entry.rig) { entry.rig.scene.removeFromParent(); entry.mixer.stopAllAction(); entry.mixer.uncacheRoot(entry.rig.scene); dispose(entry.rig.scene); } },
+    dispose() { closed = true; for (const [mesh, mask] of rootMeshes) mesh.layers.mask = mask; for (const entry of entries.values()) if (entry.rig) { entry.rig.scene.removeFromParent(); entry.mixer.stopAllAction(); entry.mixer.uncacheRoot(entry.rig.scene); dispose(entry.rig.scene); } },
   };
 }

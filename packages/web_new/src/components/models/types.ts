@@ -8,7 +8,8 @@ export type ModelComponent = {
   socket_transform?: { bone?: string; location?: Record<string, number>; rotation?: Record<string, number>; scale?: Record<string, number> } | null;
   default_visible?: boolean | null;
   baked?: boolean;
-  bindings?: { parent_clip: string | null; child_clip: string | null }[];
+  kind?: "component" | "effect";
+  bindings?: { parent_clip: string | null; child_clip: string | null; kind?: string; source?: { looping?: boolean | null } }[];
   cues?: unknown[];
 };
 export type ModelAssets = {
@@ -63,7 +64,7 @@ export type ViewerOption = {
   path?: string[];
 };
 export type ViewerState = {
-  components: { id: string; name: string; visible: boolean; loading: boolean; error: string }[];
+  components: { id: string; name: string; visible: boolean; override: boolean | null; loading: boolean; error: string }[];
   accessories: { name: string; visible: boolean }[];
   ready: boolean;
   error: string;
@@ -121,7 +122,7 @@ export type ViewerCommand =
   | "animations"
   | "facial";
 export type ViewerController = {
-  component: (id: string, visible: boolean) => void;
+  component: (id: string, visible: boolean | null) => void;
   accessory: (name: string, visible: boolean) => void;
   settings: (settings: ViewerSettings) => void;
   command: (command: ViewerCommand) => Promise<void>;

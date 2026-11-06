@@ -537,6 +537,7 @@ function ModelViewerInstance({
                     {state.components.map((component) => <div key={component.id}>
                       <Checkbox label={component.name} checked={component.visible}
                         disabled={disabled} onChange={(event) => controller.current?.component(component.id, event.target.checked)} />
+                      {component.override !== null && <Button size="sm" variant="ghost" onClick={() => controller.current?.component(component.id, null)}>Follow animation</Button>}
                       {component.loading && <span role="status"> Loading…</span>}
                       {component.error && <div role="alert">{component.error}{" "}
                         <Button size="sm" onClick={() => controller.current?.component(component.id, true)}>Retry</Button>

@@ -60,6 +60,26 @@ test('source normalization retains full package identity and converts Unreal uni
   assert(position.distanceTo(new THREE.Vector3(1, 3, 2)) < 1e-6);
 });
 
+test('Unreal quaternion reflection matches the converter basis and rotator axes', () => {
+  const half = Math.sin(Math.PI / 4), w = Math.cos(Math.PI / 4);
+  const reflect = new THREE.Matrix4().makeScale(1, -1, 1);
+  const basis = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
+  for (const [rotation, rotator] of [
+    [{ X: -half, Y: 0, Z: 0, W: w }, { Roll: 90 }],
+    [{ X: 0, Y: -half, Z: 0, W: w }, { Pitch: 90 }],
+    [{ X: 0, Y: 0, Z: half, W: w }, { Yaw: 90 }],
+  ]) {
+    const raw = new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion(rotation.X, rotation.Y, rotation.Z, rotation.W));
+    const expected = basis.clone().multiply(reflect).multiply(raw).multiply(reflect).multiply(basis.clone().invert());
+    const actual = componentMatrix({ rotation });
+    const fromRotator = componentMatrix({ rotation: rotator });
+    for (let i = 0; i < 16; i++) {
+      assert(Math.abs(actual.elements[i] - expected.elements[i]) < 1e-9);
+      assert(Math.abs(actual.elements[i] - fromRotator.elements[i]) < 1e-9);
+    }
+  }
+});
+
 test('a component completing after viewer disposal releases its rig without reporting', async () => {
   const child = rig('Aki/Prop/Stand'), root = rig('Aki/Body/Stand');
   let finish, reports = 0, disposed = 0;
@@ -83,5 +103,100 @@ test('visibility cues follow the exact source clip on seek and preserve the user
   action.time = 1.75; linked.sync(); assert.equal(child.scene.visible, true);
   action.time = 0.25; linked.sync(); assert.equal(child.scene.visible, true);
   linked.set('prop', false); action.time = 1.75; linked.sync(); assert.equal(child.scene.visible, false);
+  linked.dispose();
+});
+
+test('Hsin cues lazily reveal the fox, move its socket, and hide only body geometry', async () => {
+  const body = rig('Aki/Hsin/Stand', 'Hand'), fox = rig('Aki/Hsin/Fox');
+  const second = new THREE.Bone(); second.name = 'Head'; body.scene.add(second);
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()); body.scene.add(mesh);
+  body.animations[0].userData = { sourcePackage: 'Client/Content/Aki/Hsin/Stand.json' };
+  const action = new THREE.AnimationMixer(body.scene).clipAction(body.animations[0]).play();
+  const cues = [
+    { kind: 'TsAnimNotifyStateHideMesh_C', source_clip: 'Aki/Hsin/Stand', start: 0.5, end: 1.5, defaults: { target: 'notifying_mesh', hide: true, hide_children: false } },
+    { kind: 'TsAnimNotifyStateSubMeshControl_C', source_clip: 'Aki/Hsin/Stand', start: 0.5, end: 1.5, defaults: { begin_visible: true, end_visible: true, begin_delay: 0, end_delay: 0 } },
+    { kind: 'TsAnimNotifyStateChangeSlot_C', source_clip: 'Aki/Hsin/Stand', start: 0.5, end: 1.5, properties: { SwitchToSlotName: 'FoxSocket', SlotTransform: { Translation: { X: 100 }, Rotation: { Pitch: 0, Yaw: 0, Roll: 0 }, Scale3D: { X: 1, Y: 1, Z: 1 } } }, socket_transform: { bone: 'Head', location: { Z: 50 } } },
+  ];
+  let loads = 0, state;
+  const linked = createLinkedModels({ assets: { id: 'root', linked_models: [{ id: 'fox', parent_id: 'root', label: 'Fox', preview: asset('fox'), component: { default_visible: false, socket: 'Hand', cues } }] },
+    load: async () => { loads++; return fox; }, dispose() {}, report: value => { state = value; }, getRoot: () => body.scene, getAction: () => action });
+  linked.start(); await tick(); assert.equal(loads, 0);
+  action.time = 0.75; linked.sync(); await tick();
+  assert.equal(loads, 1); assert.equal(fox.scene.parent, second); assert.equal(mesh.layers.mask, 0);
+  assert.equal(fox.scene.visible, true); assert(Math.abs(fox.scene.position.x - 1) < 1e-6); assert(Math.abs(fox.scene.position.y - 0.5) < 1e-6);
+  action.time = 1.75; linked.sync(); assert.equal(mesh.layers.mask, 1); assert.equal(fox.scene.parent, body.bone); assert.equal(fox.scene.visible, true);
+  action.time = 0.1; linked.sync(); assert.equal(fox.scene.visible, false); assert.equal(state[0].visible, false);
+  linked.set('fox', true); assert.equal(fox.scene.visible, true);
+  linked.set('fox', null); assert.equal(fox.scene.visible, false);
+  linked.dispose();
+});
+
+test('Sigrika effect is loaded on demand and follows notify-local time without wrapping', async () => {
+  const body = rig('Aki/Sigrika/Stand', 'Hand'), effect = rig('Aki/Effect/Idle');
+  body.animations[0].userData = { sourcePackage: 'Aki/Sigrika/Stand' };
+  const action = new THREE.AnimationMixer(body.scene).clipAction(body.animations[0]).play();
+  let requests = 0;
+  const linked = createLinkedModels({ assets: { id: 'root', linked_models: [{ id: 'effect', parent_id: 'root', label: 'Effect', preview: asset('effect'), component: { kind: 'effect', default_visible: false,
+    bindings: [{ kind: 'effect', parent_clip: 'Aki/Sigrika/Stand', child_clip: 'Aki/Effect/Idle', source: { looping: false } }],
+    cues: [{ kind: 'AnimNotifyStateEffect_C', source_clip: 'Aki/Sigrika/Stand', start: 0.25, end: 3, properties: { PlayRate: 2 } }],
+  } }] }, load: async () => { requests++; return effect; }, dispose() {}, report() {}, getRoot: () => body.scene, getAction: () => action });
+  linked.start(); await tick(); assert.equal(requests, 0);
+  action.time = 0.75; linked.sync(); await tick(); assert.equal(requests, 1); assert.equal(effect.scene.visible, true); assert.equal(effect.bone.position.x, 1);
+  action.time = 1.75; linked.sync(); assert.equal(effect.bone.position.x, 2);
+  action.time = 0.5; linked.sync(); assert.equal(effect.bone.position.x, 0.5);
+  linked.set('effect', true); action.time = 3.1; linked.sync(); assert.equal(effect.scene.visible, false);
+  action.time = 0.2; linked.sync(); assert.equal(effect.scene.visible, false);
+  linked.dispose();
+});
+
+test('root-only hide cues restore body layers and do not hide attached children', () => {
+  const body = rig('Aki/Body/Idle'), mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+  const attachment = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+  body.scene.add(mesh); body.bone.add(attachment); attachment.userData.accessory_name = 'Baked prop';
+  body.animations[0].userData = { sourcePackage: 'Aki/Body/Idle' };
+  const action = new THREE.AnimationMixer(body.scene).clipAction(body.animations[0]).play();
+  const linked = createLinkedModels({ assets: { id: 'root', scene: { cues: [{ kind: 'TsAnimNotifyStateHideMesh_C', source_clip: 'Aki/Body/Idle', start: 0, end: 1, defaults: { target: 'notifying_mesh', hide: true, hide_children: false } }] } },
+    load() {}, dispose() {}, report() {}, getRoot: () => body.scene, getAction: () => action });
+  linked.start(); assert.equal(mesh.layers.mask, 0); assert.equal(attachment.layers.mask, 1);
+  action.time = 1; linked.sync(); assert.equal(mesh.layers.mask, 1); linked.dispose();
+});
+
+test('hidden root geometry restores its original layers on replacement and disposal', () => {
+  const first = rig('Aki/Body/Idle'), second = rig('Aki/Body/Idle');
+  for (const body of [first, second]) { body.mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()); body.mesh.layers.mask = 5; body.scene.add(body.mesh); }
+  first.animations[0].userData = { sourcePackage: 'Aki/Body/Idle' };
+  const action = new THREE.AnimationMixer(first.scene).clipAction(first.animations[0]).play();
+  let current = first.scene;
+  const linked = createLinkedModels({ assets: { id: 'root', scene: { cues: [{ kind: 'TsAnimNotifyStateHideMesh_C', source_clip: 'Aki/Body/Idle', start: 0, end: 1, defaults: { target: 'notifying_mesh', hide: true, hide_children: false } }] } },
+    load() {}, dispose() {}, report() {}, getRoot: () => current, getAction: () => action });
+  linked.start(); assert.equal(first.mesh.layers.mask, 0);
+  current = second.scene; linked.sync(); assert.equal(first.mesh.layers.mask, 5); assert.equal(second.mesh.layers.mask, 0);
+  linked.dispose(); assert.equal(second.mesh.layers.mask, 5);
+});
+
+test('a hidden linked rig preloads when its exact binding becomes active', async () => {
+  const body = rig('Aki/Body/Idle'), child = rig('Aki/Fox/Idle');
+  body.animations[0].userData = { sourcePackage: 'Aki/Other/Idle' };
+  const action = new THREE.AnimationMixer(body.scene).clipAction(body.animations[0]).play();
+  let requests = 0;
+  const linked = createLinkedModels({ assets: { id: 'root', linked_models: [{ id: 'fox', parent_id: 'root', label: 'Fox', preview: asset('fox'), component: { default_visible: false, bindings: [{ parent_clip: 'Aki/Body/Idle', child_clip: 'Aki/Fox/Idle' }] } }] },
+    load: async () => { requests++; return child; }, dispose() {}, report() {}, getRoot: () => body.scene, getAction: () => action });
+  linked.start(); await tick(); assert.equal(requests, 0);
+  action.getClip().userData.sourcePackage = 'Aki/Body/Idle'; linked.sync(); await tick();
+  assert.equal(requests, 1); assert.equal(child.scene.visible, false); linked.dispose();
+});
+
+test('montage segments map source-local cue windows and effect playback rate', async () => {
+  const body = rig('Aki/Body/Montage'), effect = rig('Aki/Effect/Idle');
+  body.animations[0].userData = { sourcePackage: 'Aki/Body/Montage' };
+  const action = new THREE.AnimationMixer(body.scene).clipAction(body.animations[0]).play();
+  const cue = { kind: 'AnimNotifyStateEffect_C', source_clip: 'Aki/Body/Idle', montage: 'Aki/Body/Montage',
+    segment_start: 2, source_start: 1, source_end: 3, play_rate: 2, loop_count: 2, start: 1.5, end: 2.5 };
+  const linked = createLinkedModels({ assets: { id: 'root', linked_models: [{ id: 'effect', parent_id: 'root', label: 'Effect', preview: asset('effect'), component: { kind: 'effect', default_visible: false, cues: [cue], bindings: [{ parent_clip: 'Aki/Body/Idle', child_clip: 'Aki/Effect/Idle', source: { looping: false } }] } }] },
+    load: async () => effect, dispose() {}, report() {}, getRoot: () => body.scene, getAction: () => action });
+  linked.start(); action.time = 2.5; linked.sync(); await tick();
+  assert.equal(effect.scene.visible, true); assert.equal(effect.bone.position.x, 0.5);
+  action.time = 2.8; linked.sync(); assert.equal(effect.scene.visible, false);
+  action.time = 3.5; linked.sync(); assert.equal(effect.scene.visible, true); assert.equal(effect.bone.position.x, 0.5);
   linked.dispose();
 });

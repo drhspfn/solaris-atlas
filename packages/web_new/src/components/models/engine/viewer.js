@@ -328,7 +328,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     if (milliseconds - lastReport > 100) { reportTime(); lastReport = milliseconds; }
     follow.update(); controls.update(); renderer.render(scene, camera);
   });
-  if (!preview && assets.linked_models?.length) {
+  if (!preview && (assets.linked_models?.length || assets.scene?.cues?.length)) {
     linked = createLinkedModels({ assets, load: loadGLB, dispose: disposeObject,
       report: components => emit({ components }), getRoot: () => model, getParser: () => gltf?.parser, getAction: () => action });
   }
