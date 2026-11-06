@@ -222,3 +222,24 @@ def test_distinct_effect_slots_do_not_merge(tmp_path):
     result = discover(tmp_path, {"component_blueprint": "Aki/BP",
                                  "animation_resources": ["Aki/Idle1", "Aki/Idle2"]})
     assert len(result) == 2
+
+
+def test_effect_skeletal_mesh_without_animation_remains_visible_during_cue(tmp_path):
+    export(tmp_path, "Aki/BP", [])
+    export(tmp_path, "Aki/Idle", [
+        {"Type": "AnimSequence", "Properties": {"Notifies": [event("effect", 1, 1, 3)]}},
+        {"Type": "AnimNotifyStateEffect_C", "Name": "effect", "Properties": {
+            "EffectDataAssetRef": {"AssetPathName": "/Game/Aki/Effect.Effect"}, "SocketName": "Root"}},
+    ])
+    export(tmp_path, "Aki/Effect", [{"Type": "EffectModelSkeletalMesh_C", "Properties": {
+        "SkeletalMeshRef": ref("Aki/Prop", "SkeletalMesh")}}])
+    export(tmp_path, "Aki/Prop", [{"Type": "SkeletalMesh", "Properties": {
+        "Skeleton": ref("Aki/PropSkeleton", "Skeleton")}}])
+    result, = discover(tmp_path, {"component_blueprint": "Aki/BP", "animation_resources": ["Aki/Idle"]})
+    assert result["model"] == "Aki/Prop" and result["default_visible"] is False
+    assert result["bindings"][0]["parent_clip"] == "Aki/Idle"
+    assert result["bindings"][0]["child_clip"] is None
+    assert result["cues"][0]["start"] == 1 and result["cues"][0]["end"] == 4
+    assert result["source"]["skeleton"] == "Aki/PropSkeleton"
+    assert result["required_resources"] == ["Aki/PropSkeleton"]
+    assert not any("missing" in message for message in result["diagnostics"])

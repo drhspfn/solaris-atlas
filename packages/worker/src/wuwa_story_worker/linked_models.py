@@ -316,8 +316,11 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
             if item.get("Type") != "EffectModelSkeletalMesh_C":
                 continue
             model, child = _package(p.get("SkeletalMeshRef")), _package(p.get("AnimationRef"))
-            if not model or not child:
-                diagnostics.append(f"Effect missing explicit mesh or animation: {package}")
+            if not model:
+                diagnostics.append(f"Effect missing explicit mesh: {package}")
+                continue
+            if p.get("AnimationRef") and not child:
+                diagnostics.append(f"Effect has invalid animation reference: {package}")
                 continue
             group_id = ":".join(f"{entry['group']}[{entry['index']}]" for entry in group_entries)
             occurrence = (clip, event_index, notify.get("Name"), group_id, package)
@@ -371,7 +374,8 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
                                "group_entries": list(group_entries), "notify": notify.get("Name"),
                                "event_index": event_index}})
                 effect_occurrences[occurrence] = r
-                load(child)
+                if child:
+                    load(child)
             r["cues"].append(cue_for(event, notify, clip, context))
 
     root_cues = []
