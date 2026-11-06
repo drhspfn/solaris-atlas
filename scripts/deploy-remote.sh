@@ -256,6 +256,12 @@ case "$DEPLOY_COMPONENT" in
       '^wuwa[.](snapshot-build|asset-(download|extract)|release-(media|images)|entity-(media|images)|event-media|character-model|pool-(coordinator|image|audio|video))[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues
     ;;
 esac
+case "$DEPLOY_COMPONENT" in
+  cutscene-assembly-worker|all)
+    "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-cutscene-assembly-long-jobs \
+      '^wuwa[.]cutscene-assembly[.]v2$' '{"consumer-timeout":86400000}' --apply-to queues
+    ;;
+esac
 if [[ "$DEPLOY_COMPONENT" == caddy ]]; then
   "${compose[@]}" up -d --force-recreate caddy
 elif [[ "$DEPLOY_COMPONENT" == infrastructure ]]; then
@@ -292,6 +298,8 @@ fi
 if [[ "$DEPLOY_COMPONENT" == infrastructure ]]; then
   "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-assets-long-jobs \
     '^wuwa[.](snapshot-build|asset-(download|extract)|release-(media|images)|entity-(media|images)|event-media|character-model|pool-(coordinator|image|audio|video))[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues
+  "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-cutscene-assembly-long-jobs \
+    '^wuwa[.]cutscene-assembly[.]v2$' '{"consumer-timeout":86400000}' --apply-to queues
 fi
 # Updating a bind-mounted Caddyfile does not reload the running proxy. In
 # particular, switching the web image from nginx to Next.js changes its port.
