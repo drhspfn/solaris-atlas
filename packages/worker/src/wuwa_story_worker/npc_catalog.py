@@ -25,7 +25,7 @@ from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.client_assets import wait_workspace_lock
 from wuwa_story_worker.compiler.core import Writer
 from wuwa_story_worker.compiler.npc import compile_npcs
-from wuwa_story_worker.npc_native_sources import export_native_sources
+from wuwa_story_worker.npc_native_sources import TABLES, export_native_sources
 from wuwa_story_worker.tooling import tool_path
 
 SCHEMA = 1
@@ -149,7 +149,9 @@ async def npc_catalog(payload, parent, session):
         return {'skipped': True, 'reason': 'Current-client NPC catalog belongs to latest snapshot'}, 'completed'
     await session.commit()
     root = client_root(parent)
-    receipt = await export_assets(root, tool_path('WUWA_FMODEL_PATH'), 'ConfigDB')
+    # Avoid extracting every configuration database for this focused backfill.
+    asset_filter = '|'.join(f'ConfigDB/{name}' for name in sorted({row[0] for row in TABLES}))
+    receipt = await export_assets(root, tool_path('WUWA_FMODEL_PATH'), asset_filter)
     configs = list((receipt.parent / 'files').rglob('db_blueprint.db'))
     if len(configs) != 1:
         raise ValueError('Expected one pinned client NPC configuration directory')
