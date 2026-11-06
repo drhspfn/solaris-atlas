@@ -264,7 +264,41 @@ def material_metadata_path(name: str, model: Path, files: list[Path]) -> Path | 
     return next(iter(matches), None)
 
 
+def material_metadata(metadata):
+    """Accept resolved exporter maps and textureless/raw material instances.
+
+    CUE serializes instances without resolved textures as a UObject list, even
+    in its ordinary mesh export. Their authored parameters and parent are still
+    useful; treating the list as the resolved-map format crashes dependency walks.
+    """
+    if isinstance(metadata, dict):
+        return metadata
+    rows = [row for row in metadata if isinstance(row, dict)
+            and row.get('Type') == 'MaterialInstanceConstant'] if isinstance(metadata, list) else []
+    if len(rows) != 1 or not isinstance(rows[0].get('Properties'), dict):
+        raise ValueError('Unsupported material metadata format')
+    properties = rows[0]['Properties']
+
+    def parameters(values):
+        result = {}
+        for value in values:
+            name = (value.get('ParameterInfo') or {}).get('Name')
+            if not isinstance(name, str) or not name or name in result:
+                raise ValueError('Ambiguous raw material parameter')
+            result[name] = value.get('ParameterValue', value.get('Value'))
+        return result
+
+    return {
+        'Properties': properties,
+        'Textures': parameters(properties.get('TextureParameterValues') or []),
+        'Scalars': parameters(properties.get('ScalarParameterValues') or []),
+        'Colors': parameters(properties.get('VectorParameterValues') or []),
+        'Switches': parameters((properties.get('StaticParameters') or {}).get('StaticSwitchParameters') or []),
+    }
+
+
 def base_color_texture(metadata: dict, converted: Path) -> tuple[str | None, Path | None]:
+    metadata = material_metadata(metadata)
     textures = metadata.get("Textures", {})
     switches = metadata.get("Switches", {})
     array = switches.get("Tex2DArrayMode") is True
@@ -321,6 +355,7 @@ def inherited_base_color_texture(metadata: dict, path: Path | None, converted: P
     """Follow explicit material-instance parents when a child has no color texture."""
     visited = set()
     while True:
+        metadata = material_metadata(metadata)
         reference, texture = base_color_texture(metadata, converted)
         if reference or path is None:
             return reference, texture
@@ -894,7 +929,7 @@ def main():
             if rig_mode
             else material_files.get(material.name)
         )
-        metadata = json.loads(path.read_text(encoding="utf-8-sig")) if path else {}
+        metadata = material_metadata(json.loads(path.read_text(encoding="utf-8-sig"))) if path else {}
         if args.extra_model and effect_space_only(metadata):
             material.use_nodes = True
             continue
