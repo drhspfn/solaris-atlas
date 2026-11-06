@@ -280,6 +280,17 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     react: React, 'lucide-react': dummy,
     '@/components/story/QuestRuntimeBlock': story,
     '@/components/story/QuestMediaReferences': { DialogueAudioReference: ({ children }) => children, QuestMediaReferences: () => null },
+    '@/components/story/QuestCutscenes': {
+      Cutscene: ({ event }) => React.createElement('div', { 'data-player': event.reference,
+        id: loadStory('cutsceneAnchor').cutsceneAnchor(event) }, (event.entry_points || [])
+        .filter(point => loadStory('cutsceneAnchor').cutsceneAnchor(point) !== loadStory('cutsceneAnchor').cutsceneAnchor(event))
+        .map(point => React.createElement('span', { key: loadStory('cutsceneAnchor').cutsceneAnchor(point),
+          id: loadStory('cutsceneAnchor').cutsceneAnchor(point) }))),
+      QuestCutscenes: () => null, RelatedQuestCutscenes: () => null,
+    },
+    '@/components/story/encounterTransitions': { encounterFlows },
+    '@/components/story/cutsceneAnchor': loadStory('cutsceneAnchor'),
+
     '@/components/story/questReading': loadStory('questReading'),
     '@/components/story/cutscenePlacement': loadStory('cutscenePlacement'),
     '@/components/dialogue/PlayerText': { PlayerText: ({ value, fallback }) => typeof value === 'string' ? value : value?.content || fallback },
@@ -345,4 +356,49 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
   assert.match(articles[1][1], /row 0/);
   const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
   assert.equal(new Set(ids).size, ids.length, 'deep link targets must remain unique');
+  const primary = { kind: 'cutscene', reference: 'cutscene:shared', flow_state: 'absent',
+    action: 'first', action_index: 1, story_position: [1], source };
+  const alternate = { ...primary, flow_state: 'visible', action: 'second', story_position: [5] };
+  const grouped = { ...primary, entry_points: [primary, alternate] };
+  const renderMedia = (windowLines, blocks, events) => renderToStaticMarkup(React.createElement(exports.QuestPageClient, {
+    questKey: '114000031', initialSelection: { locale: 'en', gameVersion: '', citedLine: 'dialogue:SHUTUP' },
+    initialProfile: { quest: { game_quest_id: 114000031, name: { content: 'Media fixture' } } },
+    initialTranscript: { lines: windowLines, offset: 1, limit: 2, story_blocks: blocks },
+    initialMedia: { events, related_cutscenes: [] },
+  }));
+  const assertPlayer = (html) => {
+    assert.equal((html.match(/data-player="cutscene:shared"/g) || []).length, 1);
+    const targets = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
+    assert.equal(new Set(targets).size, targets.length);
+    for (const entry of [primary, alternate]) assert(targets.includes(loadStory('cutsceneAnchor').cutsceneAnchor(entry)));
+    const scenes = sidebarGroups.find(group => group.id === 'scenes').entries;
+    assert.equal(scenes.length, 1);
+    assert(targets.includes(scenes[0].href.slice(1)));
+  };
+  assertPlayer(renderMedia([
+    { id: 'a', flow_state: 'visible', text: { content: 'Before' }, story_position: [4] },
+    { id: 'b', flow_state: 'visible', text: { content: 'After' }, story_position: [6] },
+  ], [], [grouped]));
+  const interactionBlocks = ['first', 'second'].map(id => ({ id, title: 'Inspect', position: [5], branches: [],
+    flow_states: [], source, interactions: [{ id: 'inspect', title: 'Inspect', source, flow_states: [] }] }));
+  assertPlayer(renderMedia([
+    { id: 'a', flow_state: 'visible', text: { content: 'Before' }, story_position: [4] },
+    { id: 'b', flow_state: 'visible', text: { content: 'After' }, story_position: [6] },
+  ], interactionBlocks, [{ ...grouped, interaction_id: 'absent:inspect', entry_points: [
+    { ...primary, interaction_id: 'first:inspect' }, { ...alternate, interaction_id: 'second:inspect' },
+  ] }]));
+
+  const sharedScene = cinematic({ kind: 'cutscene', reference: 'cutscene:shared' });
+  const sharedEncounter = encounter(node('shared-root', { flow_states: [
+    flow('shared-a', 'Flow28', { cinematics: [sharedScene] }),
+    flow('shared-b', 'Flow29', { cinematics: [sharedScene] }),
+  ] }));
+  assertPlayer(renderMedia([
+    { id: 'before-shared', flow_state: 'before', text: { content: 'Before' }, story_position: [4] },
+    { id: 'shared-a-line', flow_state: 'Flow28', text: { content: 'First call' }, action: { index: 0 } },
+    { id: 'shared-b-line', flow_state: 'Flow29', text: { content: 'Second call' }, action: { index: 0 } },
+    { id: 'after-shared', flow_state: 'after', text: { content: 'After' }, story_position: [6] },
+  ], [{ id: 'shared-gate', title: 'Battle', position: [5], branches: [], flow_states: [], source,
+    encounter: sharedEncounter }], [{ ...grouped, transcript_states: ['Flow28', 'Flow29'] }]));
+
 });

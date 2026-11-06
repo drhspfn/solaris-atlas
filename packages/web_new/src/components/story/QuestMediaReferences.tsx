@@ -79,9 +79,13 @@ export interface CutsceneFlow {
 
 export interface QuestMediaEvent {
   entry_points?: Array<
-    Pick<
+    Omit<
       QuestMediaEvent,
-      "flow_state" | "action_index" | "reference" | "source" | "action"
+      | "playback"
+      | "resources"
+      | "captions"
+      | "transcript_states"
+      | "entry_points"
     >
   >;
   context_inferred?: boolean;
