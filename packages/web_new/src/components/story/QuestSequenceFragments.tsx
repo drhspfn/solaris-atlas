@@ -16,7 +16,7 @@ export function playableEncounterFragments(media?: SequenceMedia) {
   const seen = new Set<number>();
   if (!media || media.schema_version !== 1 || media.complete_video !== false)
     return [];
-  return media.sections.filter((section) => {
+  return orderComponents(media.sections).filter((section) => {
     if (
       section.kind !== "movie_fragment" ||
       section.status !== "published" ||
@@ -95,7 +95,7 @@ function FragmentList({
 }
 
 export function QuestSequenceFragments({ media }: { media?: SequenceMedia }) {
-  const sections = orderComponents(playableEncounterFragments(media));
+  const sections = playableEncounterFragments(media);
   if (!sections.length) return null;
   // Use complete published files. Source ranges and clocks are not playback crop commands.
   const items: MediaItem[] = sections.map((section, index) => ({

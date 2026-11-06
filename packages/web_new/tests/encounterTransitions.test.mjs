@@ -171,15 +171,38 @@ test('empty structural siblings never create list items or branch disclosures', 
     assert.equal((visible.match(/class="branch"/g) || []).length,
       ['conditional', 'alternative', 'parallel'].includes(order) ? 1 : 0);
     assert.doesNotMatch(visible, /<li>\s*<\/li>|Conditional path|Alternative path<|Parallel path<|WaitBattleCondition|EntityId/);
+    assert.doesNotMatch(visible, /Only ordered steps|runtime conditions|player choice|order unknown/i);
+    assert.match(markup, /<details class="source"><summary>Source &amp; conditions/);
+    assert.match(evidence, /Only ordered steps establish a sequence/);
     if (order === 'conditional') {
       assert.match(visible, /<summary>Protect the academy<\/summary>/);
-      assert.match(visible, /runtime conditions, not player choices/);
-      assert.match(visible, /order unknown/);
+      assert.match(visible, /Conditional events/);
+      assert.match(evidence, /runtime conditions, not player choices/);
     }
-    if (order === 'alternative') assert.match(visible, /does not identify a player choice/);
+    if (order === 'alternative') {
+      assert.match(visible, /Alternative events/);
+      assert.match(evidence, /does not identify a player choice/);
+    }
+    if (order === 'parallel') assert.match(visible, /Parallel activities/);
     assert(evidence.includes('WaitBattleCondition'));
     for (const id of ['wrapper', 'empty', 'decorator', 'objective'])
       assert.equal((markup.match(new RegExp(`id="${encounterAnchor(id)}"`, 'g')) || []).length, 1);
+  }
+});
+
+test('branch groups show plain labels and objectives while explanations stay in closed Source', () => {
+  for (const [order, label] of [['conditional', 'Conditional events'], ['alternative', 'Alternative events'],
+    ['parallel', 'Parallel activities'], ['unknown', 'Related activities']]) {
+    const markup = render(encounter(node('group', { title: 'Story activity', condition: null,
+      children_order: order, children: [node('protect', { title: 'Protect the academy' }),
+        node('leave', { title: 'Leave the area' })] })));
+    const [visible, evidence] = markup.split('<details class="source">');
+    assert(visible.includes(`aria-label="${label}"`));
+    for (const title of ['Protect the academy', 'Leave the area'])
+      assert(visible.includes(`<summary>${title}</summary>`));
+    assert.doesNotMatch(visible, /Only ordered steps|runtime conditions|player choice|order unknown/i);
+    assert.match(evidence, /Only ordered steps establish a sequence/);
+    assert.match(evidence, /WaitBattleCondition/);
   }
 });
 
@@ -219,7 +242,7 @@ test('local sequence keeps authored child order, parallel occurrences remain dis
   assert.deepEqual(encounterFlows(data).map(f => f.id), ['first', 'parallel-a', 'parallel-b', 'last']);
   const markup = render(data);
   assert.match(markup, /aria-label="Authored action order"/);
-  assert.match(markup, /Parallel paths/);
+  assert.match(markup, /Parallel activities/);
   assert.equal(markup.split('Only ordered steps establish a sequence.').length - 1, 1);
   assert.equal((markup.match(/Dialogue during the encounter/g) || []).length, 4);
   assert(markup.indexOf(encounterAnchor('67')) < markup.indexOf(encounterAnchor('48')));
@@ -308,7 +331,7 @@ test('published fragments deduplicate display files but retain original metadata
     { kind: 'movie_fragment', status: 'published', file_id: 10, url: 'https://cdn.test/M0335.webm' },
   ] };
   const before = JSON.stringify(media), playable = playableEncounterFragments(media);
-  assert.deepEqual(playable.map(p => p.file_id), [7, 10]); assert.equal(JSON.stringify(media), before);
+  assert.deepEqual(Array.from(playable, p => p.file_id), [7, 10]); assert.equal(JSON.stringify(media), before);
   const tree = QuestSequenceFragments({ media });
   assert.equal(tree.props.items.length, 2);
   assert.equal(tree.props.items[0].src, 'https://cdn.test/M0334.webm');
@@ -319,6 +342,20 @@ test('published fragments deduplicate display files but retain original metadata
   assert.equal(renderToStaticMarkup(React.createElement(QuestSequenceFragments, { media: { ...media, sections: [] } })), '');
 });
 
+
+test('component display order uses earliest occurrence before deduplicating files', () => {
+  const part = (file_id, start) => ({ kind: 'movie_fragment', status: 'published', file_id,
+    url: `https://cdn.test/${file_id}.webm`, scene_source: 'same-scene',
+    clock: { numerator: 30, denominator: 1 }, range: { Value: {
+      LowerBound: { Type: 1, Value: { Value: start * 30 } },
+      UpperBound: { Type: 0, Value: { Value: (start + 1) * 30 } },
+    } } });
+  const media = { schema_version: 1, complete_video: false,
+    sections: [part(7, 10), part(8, 5), part(7, 0)] };
+  const before = JSON.stringify(media);
+  assert.deepEqual(Array.from(playableEncounterFragments(media), part => part.file_id), [7, 8]);
+  assert.equal(JSON.stringify(media), before);
+});
 
 test('published video components are actually reachable inside their flow disclosure', () => {
   const data = encounter(node('root', { flow_states: [flow('movie-flow', 'Flow28', { sequence_media: {

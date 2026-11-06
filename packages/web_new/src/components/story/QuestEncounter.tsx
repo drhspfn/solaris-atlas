@@ -192,12 +192,12 @@ export function QuestEncounter({
     const order = node.children_order;
     const branchLabel =
       order === "parallel"
-        ? "Parallel paths"
+        ? "Parallel activities"
         : order === "conditional"
-          ? "Runtime conditions · order unknown"
+          ? "Conditional events"
           : order === "alternative"
-            ? "Alternative paths · order unknown"
-            : "Paths with unknown order";
+            ? "Alternative events"
+            : "Related activities";
     const childContent = !children.length ? null : order === "sequence" ? (
       <ol className={styles.steps} aria-label="Authored action order">
         {children.map((child) => (
@@ -212,17 +212,6 @@ export function QuestEncounter({
     ) : (
       <div className={styles.branches} role="group" aria-label={branchLabel}>
         <p className={styles.note}>{branchLabel}</p>
-        {order === "conditional" && (
-          <p className={styles.note}>
-            These paths depend on runtime conditions, not player choices.
-          </p>
-        )}
-        {order === "alternative" && (
-          <p className={styles.note}>
-            How a path is selected is not established; this does not identify a
-            player choice.
-          </p>
-        )}
         {children.map((child) => (
           <details key={child.node.id} className={styles.branch}>
             <summary>
@@ -335,6 +324,15 @@ export function QuestEncounter({
         {node.node_type} · {node.owner} · {node.source.file} ·{" "}
         {node.source.raw_path}
       </p>
+      {node.children_order === "conditional" && (
+        <p>These paths depend on runtime conditions, not player choices.</p>
+      )}
+      {node.children_order === "alternative" && (
+        <p>
+          How a path is selected is not established; this does not identify a
+          player choice.
+        </p>
+      )}
       <p>
         <code>
           {JSON.stringify(
@@ -372,10 +370,6 @@ export function QuestEncounter({
           fallback="Encounter"
         />
       </h3>
-      <p className={styles.note}>
-        Only ordered steps establish a sequence. Other paths may be conditional
-        or have unknown order.
-      </p>
       {trees
         .filter(({ content }) => content !== null)
         .map(({ tree, content }) => (
@@ -402,6 +396,10 @@ export function QuestEncounter({
       <div className={styles.marker}>End of encounter context</div>
       <details className={styles.source}>
         <summary>Source &amp; conditions</summary>
+        <p>
+          Only ordered steps establish a sequence. Other paths may be
+          conditional or have unknown order.
+        </p>
         {encounter.trees.length +
           (encounter.unresolved_level_plays?.length || 0) >
           1 && (
