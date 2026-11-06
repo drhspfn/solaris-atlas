@@ -1,6 +1,17 @@
 import pytest
+from sqlalchemy.dialects.postgresql import insert
 
+from wuwa_story.db.models.graph import Node, NodeRevision
 from wuwa_story.ingestion.canonical_import import _insert_typed_entities
+
+
+def test_graph_bulk_inserts_accept_metadata_column():
+    for model, value in ((Node, {"canonical_key": "character:npc:1", "type_id": 1,
+                                  "metadata": {"source_file": "fixture"}}),
+                         (NodeRevision, {"node_id": 1, "release_id": 1, "revision": 1,
+                                         "content_hash": b"x", "metadata": {"source_file": "fixture"}})):
+        statement = insert(model.__table__).values([value])
+        assert "metadata" in str(statement.compile())
 
 
 @pytest.mark.asyncio

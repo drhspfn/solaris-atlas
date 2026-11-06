@@ -174,7 +174,7 @@ async def import_canonical_entities(
                     }
                 )
             await session.execute(
-                insert(Node)
+                insert(Node.__table__)
                 .values(node_values)
                 .on_conflict_do_nothing(index_elements=[Node.canonical_key])
             )
@@ -215,7 +215,7 @@ async def import_canonical_entities(
                     }
                 )
             await session.execute(
-                insert(NodeRevision)
+                insert(NodeRevision.__table__)
                 .values(revision_values)
                 .on_conflict_do_nothing(
                     index_elements=[NodeRevision.node_id, NodeRevision.revision]
