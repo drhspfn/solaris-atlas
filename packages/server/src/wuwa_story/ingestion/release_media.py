@@ -28,6 +28,7 @@ async def enqueue_release_media(
     illustrations_only: bool = False,
     story_structure_only: bool = False,
     story_media_only: bool = False,
+    cutscenes_only: bool = False,
     repair_story: bool = False,
 ) -> dict:
     release = await session.get(GameRelease, release_id)
@@ -51,14 +52,14 @@ async def enqueue_release_media(
             | (QuestAction.action_name == 'PlaySequenceData'))
         catalog = ((Node.canonical_key.startswith("character:"))
                    | (Node.canonical_key.startswith("item:")) | (Node.canonical_key.startswith("skill:")))
-        entities = list(await session.scalars(select(Node.canonical_key).where(
+        entities = [] if cutscenes_only else list(await session.scalars(select(Node.canonical_key).where(
             Node.id.in_(present), Node.id.in_(illustrated) if illustrations_only or story_media_only else
             catalog | Node.id.in_(illustrated)).order_by(Node.id)))
         cutscenes, voices = [], []
         if not illustrations_only:
             cutscenes = list(await session.scalars(select(Cutscene.cg_name).where(
                 Cutscene.node_id.in_(present), Cutscene.cg_name.is_not(None)).order_by(Cutscene.node_id)))
-            if not story_media_only:
+            if not story_media_only and not cutscenes_only:
                 voices = list(await session.scalars(select(VoiceReference.file_name).where(
                     VoiceReference.node_id.in_(present), VoiceReference.file_name.is_not(None))
                     .distinct().order_by(VoiceReference.file_name)))
@@ -79,7 +80,7 @@ async def enqueue_release_media(
     if not (event_artwork_only or notices_only) and (voices or characters or cutscenes):
         specs.append(("voice_packages", []))
     if not (event_artwork_only or notices_only):
-        if not illustrations_only and not story_media_only:
+        if not illustrations_only and not story_media_only and not cutscenes_only:
             specs.append(("tree_order", []))
         specs.extend(("images", batch) for batch in batches(entities))
         specs.extend(("cutscene", [name]) for name in sorted(set(cutscenes)))
