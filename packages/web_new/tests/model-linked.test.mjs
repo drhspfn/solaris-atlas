@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { createLinkedModels, packagePath, componentMatrix } from '../src/components/models/engine/linked-models.js';
+import { createLinkedModels, packagePath, componentMatrix, attachComponent } from '../src/components/models/engine/linked-models.js';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const asset = url => ({ url });
@@ -14,6 +14,7 @@ function rig(source, name = 'Joint') {
 
 test('component rigs attach to authored socket and follow exact package-bound parent time', async () => {
   const body = rig('Client/Content/Aki/Body/Stand.json', 'Hand');
+  body.bone.rotation.x = -Math.PI / 2;
   const child = rig('Client/Content/Aki/Prop/Stand.json');
   const pack = rig('Client/Content/Aki/Prop/Stand.json');
   body.animations[0].userData = { sourcePackage: 'Client/Content/Aki/Body/Stand.json' };
@@ -27,7 +28,8 @@ test('component rigs attach to authored socket and follow exact package-bound pa
   linked.start(); await tick();
   assert.deepEqual(requests, ['child', 'pack']);
   assert.equal(child.scene.parent, body.bone);
-  assert(Math.abs(child.scene.position.x - 1) < 1e-6); assert(Math.abs(child.scene.position.y - 0.5) < 1e-6);
+  body.scene.updateMatrixWorld(true);
+  assert(child.scene.getWorldPosition(new THREE.Vector3()).distanceTo(new THREE.Vector3(1, 0.5, 0)) < 1e-6);
   action.time = 1; linked.sync(); assert(Math.abs(child.bone.position.x - 1) < 1e-6);
   action.time = 0.25; linked.sync(); assert(Math.abs(child.bone.position.x - 0.25) < 1e-6);
   action.time = 2.25; linked.sync(); assert(Math.abs(child.bone.position.x - 0.25) < 1e-6);
@@ -80,6 +82,21 @@ test('Unreal quaternion reflection matches the converter basis and rotator axes'
   }
 });
 
+test('bone attachment applies the exported basis once, while scene attachment needs no correction', () => {
+  const body = new THREE.Group(), bone = new THREE.Bone(), child = new THREE.Group(), childRoot = new THREE.Bone();
+  bone.name = 'Root'; bone.rotation.x = -Math.PI / 2; childRoot.rotation.x = -Math.PI / 2;
+  body.add(bone); child.add(childRoot);
+  attachComponent(body, child, { socket: 'Root', transform: { location: { X: 100, Z: 50 } } });
+  body.updateMatrixWorld(true);
+  assert(child.getWorldPosition(new THREE.Vector3()).distanceTo(new THREE.Vector3(1, 0.5, 0)) < 1e-6);
+  const expected = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+  assert(Math.abs(childRoot.getWorldQuaternion(new THREE.Quaternion()).dot(expected)) > 1 - 1e-9);
+  attachComponent(body, child, { transform: { location: { X: 100, Z: 50 } } });
+  body.updateMatrixWorld(true);
+  assert(child.getWorldPosition(new THREE.Vector3()).distanceTo(new THREE.Vector3(1, 0.5, 0)) < 1e-6);
+  assert(Math.abs(childRoot.getWorldQuaternion(new THREE.Quaternion()).dot(expected)) > 1 - 1e-9);
+});
+
 test('a component completing after viewer disposal releases its rig without reporting', async () => {
   const child = rig('Aki/Prop/Stand'), root = rig('Aki/Body/Stand');
   let finish, reports = 0, disposed = 0;
@@ -128,6 +145,7 @@ test('visibility cues follow the exact source clip on seek and preserve the user
 test('Hsin cues lazily reveal the fox, move its socket, and hide only body geometry', async () => {
   const body = rig('Aki/Hsin/Stand', 'Hand'), fox = rig('Aki/Hsin/Fox');
   const second = new THREE.Bone(); second.name = 'Head'; body.scene.add(second);
+  second.rotation.x = -Math.PI / 2;
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()); body.scene.add(mesh);
   body.animations[0].userData = { sourcePackage: 'Client/Content/Aki/Hsin/Stand.json' };
   const action = new THREE.AnimationMixer(body.scene).clipAction(body.animations[0]).play();
@@ -142,7 +160,8 @@ test('Hsin cues lazily reveal the fox, move its socket, and hide only body geome
   linked.start(); await tick(); assert.equal(loads, 0);
   action.time = 0.75; linked.sync(); await tick();
   assert.equal(loads, 1); assert.equal(fox.scene.parent, second); assert.equal(mesh.layers.mask, 0);
-  assert.equal(fox.scene.visible, true); assert(Math.abs(fox.scene.position.x - 1) < 1e-6); assert(Math.abs(fox.scene.position.y - 0.5) < 1e-6);
+  body.scene.updateMatrixWorld(true);
+  assert.equal(fox.scene.visible, true); assert(fox.scene.getWorldPosition(new THREE.Vector3()).distanceTo(new THREE.Vector3(1, 0.5, 0)) < 1e-6);
   action.time = 1.75; linked.sync(); assert.equal(mesh.layers.mask, 1); assert.equal(fox.scene.parent, body.bone); assert.equal(fox.scene.visible, true);
   action.time = 0.1; linked.sync(); assert.equal(fox.scene.visible, false); assert.equal(state[0].visible, false);
   linked.set('fox', true); assert.equal(fox.scene.visible, true);

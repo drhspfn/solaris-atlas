@@ -89,6 +89,9 @@ export function attachComponent(parent, child, component, parser) {
     anchor = matches[0];
   }
   const matrix = componentMatrix(component.socket_transform).multiply(componentMatrix(component.transform));
+  // Exported bones use the converter's Z-up basis; a child glTF scene already
+  // contains its own basis conversion, so undo the parent's before attaching it.
+  if (anchor.isBone) matrix.premultiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
   matrix.decompose(child.position, child.quaternion, child.scale);
   anchor.add(child);
 }
