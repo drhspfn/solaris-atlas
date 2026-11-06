@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.agents.cutscene_vision import visual_reference
@@ -28,6 +28,7 @@ from wuwa_story.ingestion.cutscenes import Clip, PlaybackFlow
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.story import media as story_media
 from wuwa_story.story.cutscene_occurrences import group_cutscene_occurrences
+from wuwa_story.story.cutscene_publications import publication_order, publication_types
 from wuwa_story.story.service import _quest_page_state_ids
 from wuwa_story.story.tree_order import authored_order
 
@@ -48,7 +49,10 @@ async def dialogue_media(
         settings_factory=get_settings, storage_factory=S3Storage,
     )
 
-async def cutscene_videos(session: AsyncSession, asset_ids: list[int], asset_version: str | None = None) -> dict[int, dict]:
+async def cutscene_videos(
+    session: AsyncSession, asset_ids: list[int], asset_version: str | None = None,
+    *, cutscene_key: str | None = None,
+) -> dict[int, dict]:
     """Published playable files for exact authored asset identities, across text snapshots."""
     if not asset_ids:
         return {}
@@ -58,11 +62,14 @@ async def cutscene_videos(session: AsyncSession, asset_ids: list[int], asset_ver
         select(FileReference, FileLocation.object_key)
         .join(FileLocation, FileLocation.file_id == FileReference.file_id)
         .where(FileReference.owner_node_id.in_(asset_ids),
-               FileReference.reference_type == "cutscene_video",
+               FileReference.reference_type.in_(publication_types("cutscene_video")),
                FileLocation.backend == "s3", FileLocation.bucket == settings.s3_bucket,
                FileLocation.available.is_(True), FileLocation.is_primary.is_(True))
         .where(FileReference.metadata_json["asset_version"].astext == asset_version if asset_version else True)
-        .order_by(FileReference.id.desc())
+        .where(or_(FileReference.reference_type == "cutscene_video",
+                   FileReference.metadata_json["cutscene_key"].astext == cutscene_key)
+               if cutscene_key is not None else True)
+        .order_by(publication_order(FileReference.reference_type), FileReference.id.desc())
     )
     videos = {}
     for reference, object_key in rows:
@@ -84,20 +91,22 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
         select(FileReference)
         .where(
             FileReference.owner_node_id.in_(cutscene_ids),
-            FileReference.reference_type == "cutscene_flow",
+            FileReference.reference_type.in_(publication_types("cutscene_flow")),
         )
-        .order_by(FileReference.id.desc())
+        .order_by(publication_order(FileReference.reference_type), FileReference.id.desc())
     )
     selected = {}
     for reference in rows:
         selected.setdefault(reference.owner_node_id, reference)
     result = {}
     for owner_id, reference in selected.items():
+        cutscene_key = reference.metadata_json.get("cutscene_key") or getattr(reference, "source_path", None)
         flow = PlaybackFlow.model_validate(reference.metadata_json["flow"])
         keys = {node.asset for node in flow.nodes if isinstance(node, Clip)}
         nodes = list(await session.scalars(select(Node).where(Node.canonical_key.in_(keys))))
         videos = await cutscene_videos(
-            session, [node.id for node in nodes], reference.metadata_json["asset_version"]
+            session, [node.id for node in nodes], reference.metadata_json["asset_version"],
+            cutscene_key=cutscene_key,
         )
         media = {node.canonical_key: {**videos[node.id], "asset_node_id": node.id}
                  for node in nodes if node.id in videos}
@@ -109,6 +118,7 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
             reference.metadata_json["asset_version"],
             settings,
             storage,
+            cutscene_key=cutscene_key,
         )
         for asset in nodes:
             if asset.canonical_key in media and asset.id in bundles:
@@ -127,7 +137,10 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
                 .join(FileLocation, FileLocation.file_id == FileReference.file_id)
                 .where(
                     FileReference.owner_node_id.in_([node.id for node in nodes]),
-                    FileReference.reference_type == "cutscene_segment",
+                    FileReference.reference_type.in_(publication_types("cutscene_segment")),
+                    or_(FileReference.reference_type == "cutscene_segment",
+                        FileReference.metadata_json["cutscene_key"].astext == cutscene_key)
+                    if cutscene_key is not None else True,
                     FileReference.metadata_json["asset_version"].astext
                     == reference.metadata_json["asset_version"],
                     FileReference.metadata_json["segment_id"].astext.in_(
@@ -138,7 +151,7 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
                     FileLocation.available.is_(True),
                     FileLocation.is_primary.is_(True),
                 )
-                .order_by(FileReference.id.desc())
+                .order_by(publication_order(FileReference.reference_type), FileReference.id.desc())
             )
             for segment_reference, object_key in segment_rows:
                 key = segment_reference.metadata_json["segment_id"]

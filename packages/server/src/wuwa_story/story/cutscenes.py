@@ -15,6 +15,7 @@ from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.storage import FileLocation, FileReference
 from wuwa_story.db.repositories import cutscenes as repository
 from wuwa_story.storage.s3 import S3Storage
+from wuwa_story.story.cutscene_publications import publication_order, publication_types
 from wuwa_story.story.service import _localized, prefetch_localizations
 
 
@@ -26,8 +27,8 @@ async def previews(session, scene_ids, release_id):
     variant_type, asset_type = aliased(RelationType), aliased(RelationType)
     video = aliased(FileReference)
     latest_video = (select(video.file_id).where(
-        video.owner_node_id == assets.to_node_id, video.reference_type == "cutscene_video")
-        .order_by(video.id.desc()).limit(1).correlate(assets).scalar_subquery())
+        video.owner_node_id == assets.to_node_id, video.reference_type.in_(publication_types("cutscene_video")))
+        .order_by(publication_order(video.reference_type), video.id.desc()).limit(1).correlate(assets).scalar_subquery())
     settings = get_settings()
     rows = await session.execute(
         select(variants.from_node_id, FileReference.file_id,
@@ -100,8 +101,8 @@ async def visual_titles(session, scene_ids, release_id, locale):
     variant_type, asset_type = aliased(RelationType), aliased(RelationType)
     video = aliased(FileReference)
     latest_video = (select(video.file_id).where(
-        video.owner_node_id == assets.to_node_id, video.reference_type == "cutscene_video")
-        .order_by(video.id.desc()).limit(1).correlate(assets).scalar_subquery())
+        video.owner_node_id == assets.to_node_id, video.reference_type.in_(publication_types("cutscene_video")))
+        .order_by(publication_order(video.reference_type), video.id.desc()).limit(1).correlate(assets).scalar_subquery())
     report = aliased(FileReference)
     latest_report = (select(report.id).where(
         report.owner_node_id == assets.to_node_id, report.reference_type == "cutscene_visual_description",

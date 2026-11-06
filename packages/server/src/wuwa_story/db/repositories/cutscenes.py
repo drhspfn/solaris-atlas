@@ -14,6 +14,7 @@ from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease, ImportRun
 from wuwa_story.db.models.storage import FileReference
+from wuwa_story.story.cutscene_publications import publication_types
 
 
 def scene_query(release_id, q="", playable=True):
@@ -26,7 +27,7 @@ def scene_query(release_id, q="", playable=True):
     if playable:
         query = query.where(select(FileReference.id).where(
             FileReference.owner_node_id == Cutscene.node_id,
-            FileReference.reference_type == "cutscene_flow",
+            FileReference.reference_type.in_(publication_types("cutscene_flow")),
             FileReference.metadata_json["publication_complete"].as_boolean().is_(
                 True),
         ).exists())

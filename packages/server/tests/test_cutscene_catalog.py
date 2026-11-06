@@ -24,7 +24,8 @@ async def test_unlinked_scene_uses_visual_title_in_both_catalog_and_detail(monke
 
 
 @pytest.mark.asyncio
-async def test_previews_use_current_video_and_only_edges_from_requested_snapshot(monkeypatch):
+@pytest.mark.parametrize('v2', [False, True])
+async def test_previews_use_current_video_and_only_edges_from_requested_snapshot(monkeypatch, v2):
     import wuwa_story.story.cutscenes as service
 
     monkeypatch.setattr(service, "get_settings",
@@ -62,6 +63,10 @@ async def test_previews_use_current_video_and_only_edges_from_requested_snapshot
         ])
         db.executemany("INSERT INTO storage.file_location VALUES (?, ?, ?, 's3', 'test', 1, 1)",
                        [(1, 70, "stale"), (2, 71, "second"), (3, 72, "best")])
+        if v2:
+            # Old writer finishes later with stale bytes; previews/titles stay on v2.
+            db.executemany("INSERT INTO storage.file_reference VALUES (?,12,?,?,?)", [
+                (0, 51, 'cutscene_video_v2', '{}'), (99, 50, 'cutscene_video', '{}')])
 
         class Session:
             async def execute(self, query):

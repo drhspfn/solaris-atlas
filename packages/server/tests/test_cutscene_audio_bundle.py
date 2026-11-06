@@ -26,6 +26,37 @@ def test_same_language_has_distinct_rover_stems():
                             duration=5, stems=[*stems, stems[0]])
 
 
+@pytest.mark.parametrize('role', ['music', 'effects', 'mixed'])
+@pytest.mark.parametrize('language', ['en', 'ja', 'ko', 'zh', None])
+def test_nonvoice_stems_preserve_authored_language(role, language):
+    stem = AudioStem(role=role, language=language, path='a.wav', sources=['a.bnk'], evidence='native role')
+    assert stem.role == role and stem.language == language
+
+
+def test_full_localized_rover_role_matrix_and_selector_uniqueness():
+    stems = [AudioStem(role=role, language=language, rover=rover, path='a.wav',
+                       sources=['a.bnk'], evidence='native role and selector')
+             for role in ['voice', 'music', 'effects']
+             for language in ['en', 'ja', 'ko', 'zh'] for rover in ['male', 'female']]
+    recipe = CutsceneAudioRecipe(asset='asset:ue:/Game/A.A', asset_version='3.7.1', duration=5, stems=stems)
+    assert len(recipe.stems) == 24
+    with pytest.raises(ValueError, match='one stem'):
+        CutsceneAudioRecipe(asset=recipe.asset, asset_version=recipe.asset_version,
+                            duration=5, stems=[*stems, stems[0]])
+    with pytest.raises(ValueError, match='at most 64'):
+        CutsceneAudioRecipe(asset=recipe.asset, asset_version=recipe.asset_version,
+                            duration=5, stems=[stems[0]] * 65)
+
+
+def test_aggregated_frame_event_source_closure_accepts_1000_proof_files():
+    sources = [f'proof-{index}.xml' for index in range(1000)]
+    stem = AudioStem(role='music', language='en', path='native.wav', sources=sources,
+                     evidence='aggregated frame-event banks, XML and native WAV proofs')
+    assert stem.sources == sources
+    with pytest.raises(ValueError, match='at most 1000'):
+        AudioStem(role='music', path='native.wav', sources=[*sources, 'extra.wav'], evidence='source')
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("complete", [False, True])
 @pytest.mark.parametrize("rover", [None, "female"])
