@@ -98,6 +98,8 @@ async def enqueue_release_media(
             request['index_schema'] = 3
             if repair_story:
                 request['repair_story'] = 1
+                # Revisit old completed graph repairs; keep published media reusable.
+                request['story_repair_revision'] = 2
         if kind == 'images' and any(key.startswith('flow_state:') for key in targets):
             request['illustration_schema'] = 6
         digest = hashlib.sha256(json.dumps(
