@@ -58,4 +58,3 @@ if __name__ == "__main__":
         args.out.write_text(value, encoding="utf-8")
     else:
         print(value)
-

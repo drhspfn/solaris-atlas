@@ -50,4 +50,3 @@ if __name__ == '__main__':
                                   json.loads(args.dialogue.read_text(encoding='utf-8-sig'))))
     args.out.write_text(json.dumps(rows, ensure_ascii=True, indent=2), encoding='utf-8')
     print(json.dumps({'matched_world_instances': len(rows), 'out': str(args.out)}))
-
