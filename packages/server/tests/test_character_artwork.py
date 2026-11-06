@@ -67,6 +67,19 @@ def test_actual_portraits_with_different_internal_aliases_remain_supported():
 
 
 @pytest.mark.asyncio
+async def test_native_npc_does_not_borrow_roleinfo_or_speaker_artwork():
+    session = AsyncMock()
+    session.scalar.side_effect = [1, SimpleNamespace(id=15)]
+    with pytest.raises(ValueError, match="No authored media references"):
+        await entity_media_targets(session, MediaRequest(
+            download_id="a" * 64, asset_version="3.7.1", game_version="3.7.0",
+            entities=["character:npc:17288"], kinds=["image"],
+        ))
+    assert session.scalar.await_count == 2
+    session.scalars.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["character", "item"])
 async def test_export_omits_shared_character_resources_but_keeps_item_icons(kind):
     portrait = "/Game/Common/T_ActivityRoleYinlin"

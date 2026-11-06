@@ -195,6 +195,8 @@ async def _build_and_import_locked(payload, version, repository, commit, workspa
                         os.getenv("WUWA_IMPORT_BATCH_SIZE", "500"))
                 )
                 media = await enqueue_release_media(session, result.release_id)
+                media['npc_catalog'] = await enqueue_release_media(
+                    session, result.release_id, npc_catalog_only=True)
         logger.info("Imported WuWa %s at %s: %s",
                     actual_version, commit, result)
     finally:

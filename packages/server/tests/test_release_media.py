@@ -547,3 +547,42 @@ async def test_waiting_release_lock_refreshes_stale_coordinators_and_preserves_p
             assert leaf.raw_output is None
             publish.assert_not_awaited()
     engine.dispose()
+
+@pytest.mark.asyncio
+async def test_npc_catalog_scope_reuses_prepare_without_replaying_other_media(monkeypatch):
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version='3.7.0')
+    session.scalar.side_effect = [4, None, None]
+    runs = []
+    session.add = runs.append
+    async def flush():
+        if runs:
+            runs[-1].id = len(runs)
+    session.flush.side_effect = flush
+    publish = AsyncMock()
+    monkeypatch.setattr(release_media, 'publish_media_job', publish)
+    await release_media.enqueue_release_media(session, 21, npc_catalog_only=True)
+    payloads = [call.args[0] for call in publish.await_args_list]
+    assert [p['kind'] for p in payloads] == ['prepare', 'npc_catalog']
+    assert payloads[1]['parent_id'] == payloads[0]['run_id']
+    assert payloads[1]['npc_schema'] == 1
+    session.scalars.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status,queued', [('completed', 1), ('running', 0), ('queued', 0)])
+async def test_npc_reimport_relinks_completed_catalog_without_duplicate_active_work(monkeypatch, status, queued):
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version='3.7.0')
+    prepare = SimpleNamespace(id=1, status='completed', metadata_json={}, raw_output={})
+    catalog = SimpleNamespace(id=2, status=status, metadata_json={}, raw_output={})
+    session.scalar.side_effect = [4, prepare, catalog]
+    monkeypatch.setattr(release_media, 'workspace_expired', lambda _: False)
+    publish = AsyncMock()
+    monkeypatch.setattr(release_media, 'publish_media_job', publish)
+    report = await release_media.enqueue_release_media(session, 21, npc_catalog_only=True)
+    assert report['queued'] == queued
+    assert publish.await_count == queued
+    if queued:
+        assert publish.await_args.args[0]['run_id'] == 2
+        assert publish.await_args.args[0]['kind'] == 'npc_catalog'
