@@ -4,7 +4,7 @@ import hashlib
 from collections.abc import AsyncIterator
 from typing import Any
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import delete, func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,7 +20,7 @@ from wuwa_story.db.models import (
     Speaker,
 )
 from wuwa_story.db.models.graph import NodeRevision
-from wuwa_story.db.models.i18n import LocalizationContent, LocalizationValue
+from wuwa_story.db.models.i18n import LocalizationContent, LocalizationKey, LocalizationValue
 from wuwa_story.db.models.ops import GameRelease, ImportRun
 from wuwa_story.db.models.search import SearchDocument
 from wuwa_story.ingestion.releases import release_order
@@ -39,6 +39,7 @@ TEXT_SOURCES = (
     (Item, "description_key_id", "item_description"),
     (Location, "name_key_id", "area"),
 )
+EMPTY_ENTITY_NAME_KEY = "Entity_e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 
 def _document(node_id, locale_id, content, category):
@@ -128,6 +129,68 @@ async def _historical_source_rows(session, model, key_field, category, release_i
         last = rows[-1][0]
 
 
+def npc_display_keys(npc):
+    """Return distinct explicit instance name keys and all source name variants."""
+    overrides, variants = set(), set()
+    for instance in npc.get("instances") or []:
+        if not isinstance(instance, dict):
+            continue
+        name = instance.get("name") or {}
+        key = name.get("key") if isinstance(name, dict) else None
+        if not isinstance(key, str) or not key:
+            continue
+        variants.add(key)
+        components = instance.get("components") or {}
+        base = components.get("BaseInfoComponent") or {} if isinstance(components, dict) else {}
+        if isinstance(base, dict) and base.get("TidName") == key:
+            overrides.add(key)
+    return overrides, variants
+
+
+async def _npc_display_rows(session, release_id, batch_size):
+    """Index scoped instance labels only where a canonical NPC name is ambiguous."""
+    last = 0
+    while True:
+        rows = list(await session.execute(select(Character.node_id, Character.metadata_json)
+            .join(NodeRevision, NodeRevision.node_id == Character.node_id)
+            .where(NodeRevision.release_id == release_id, Character.node_id > last,
+                   Character.name_key_id.is_(None),
+                   Character.metadata_json["role_type"].as_integer() == 6)
+            .distinct().order_by(Character.node_id).limit(batch_size)))
+        if not rows:
+            return
+        candidates = [(node_id, *npc_display_keys((metadata or {}).get("npc") or {}))
+                      for node_id, metadata in rows]
+        keys = set().union(*(variants for _, _, variants in candidates))
+        values = await session.execute(select(LocalizationKey.key, LocalizationValue.locale_id,
+            LocalizationContent.content, LocalizationValue.status).join(LocalizationValue, LocalizationValue.key_id == LocalizationKey.id)
+            .join(LocalizationContent, LocalizationContent.id == LocalizationValue.content_id)
+            .where(LocalizationKey.key.in_(keys), LocalizationValue.release_id == release_id))
+        localized = {}
+        empty = {}
+        for key, locale, content, status in values:
+            if status == "resolved_nonempty" and content and content.strip():
+                localized.setdefault(locale, {})[key] = content
+            elif status == "resolved_empty" or (status == "resolved_nonempty" and not (content or "").strip()):
+                empty.setdefault(locale, set()).add(key)
+        for node_id, overrides, variants in candidates:
+            for locale, texts in localized.items():
+                named = sorted(key for key in overrides if key in texts)
+                known_empty = empty.get(locale, set()) | {EMPTY_ENTITY_NAME_KEY}
+                if len(named) != 1 or overrides - set(named) - known_empty:
+                    continue
+                title = texts[named[0]]
+                aliases = sorted({texts[key] for key in variants if key in texts and texts[key] != title})
+                document = _document(node_id, locale, title, "character")
+                document["aliases"] = aliases
+                document["body"] = " ".join([title, *aliases])
+                document["search_vector"] = func.to_tsvector("simple", document["body"])
+                document["content_hash"] = hashlib.sha256(
+                    f"character\0{locale}\0{document['body']}".encode()).digest()
+                yield document
+        last = rows[-1][0]
+
+
 async def build_lexical_index(
     session: AsyncSession,
     game_version: str,
@@ -168,6 +231,22 @@ async def build_lexical_index(
                 batch.clear()
         if batch:
             indexed += await _upsert_batch(session, batch, newer_release_ids)
+        if model is Character and key_field == "name_key_id" and not historical:
+            scoped_nodes = (select(Character.node_id).join(
+                NodeRevision, NodeRevision.node_id == Character.node_id).where(
+                NodeRevision.release_id == release.id, Character.name_key_id.is_(None),
+                Character.metadata_json["role_type"].as_integer() == 6))
+            await session.execute(delete(SearchDocument).where(
+                SearchDocument.category == "character", SearchDocument.target_node_id.in_(scoped_nodes)))
+            batch = []
+            async for row in _npc_display_rows(session, release.id, batch_size):
+                batch.append(row)
+                if len(batch) >= batch_size:
+                    indexed += await _upsert_batch(session, batch, newer_release_ids)
+                    batch.clear()
+            if batch:
+                indexed += await _upsert_batch(session, batch, newer_release_ids)
+            await session.commit()
     return indexed
 
 
