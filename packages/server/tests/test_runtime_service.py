@@ -13,10 +13,10 @@ from wuwa_story.story import runtime_service
 
 def blocks():
     return [{'title': 'Objective', 'encounter': {'release_id': 15,
-        'client': {'asset_version': '3.7.1', 'download_id': 'client'}, 'trees': [{'root': {
-        'title': 'Activity', 'text_key': 'nested', 'children': [],
-        'flow_states': [{'state_node_id': 7, 'presentation_sha256': 'presentation'}],
-    }}]}}]
+                                                 'client': {'asset_version': '3.7.1', 'download_id': 'client'}, 'trees': [{'root': {
+                                                     'title': 'Activity', 'text_key': 'nested', 'children': [],
+                                                     'flow_states': [{'state_node_id': 7, 'presentation_sha256': 'presentation'}],
+                                                 }}]}}]
 
 
 def bundle():
@@ -39,9 +39,11 @@ async def test_fragments_use_available_locations_not_unverified_metadata(monkeyp
     media['sections'].extend([{**media['sections'][0], 'file_id': 13},
                               {'kind': 'subsequence', 'status': 'published', 'file_id': 12}, None])
     monkeypatch.setattr(repository, 'bundles', AsyncMock(return_value=[row]))
-    monkeypatch.setattr(repository, 'available_movies', AsyncMock(return_value={(7, 12, '/Game/Scene.4'): 'verified'}))
+    monkeypatch.setattr(repository, 'available_movies', AsyncMock(
+        return_value={(7, 12, '/Game/Scene.4'): 'verified'}))
     from wuwa_story.storage.s3 import S3Storage
-    monkeypatch.setattr(S3Storage, 'public_url', lambda self, key: 'https://cdn/' + key)
+    monkeypatch.setattr(S3Storage, 'public_url',
+                        lambda self, key: 'https://cdn/' + key)
     result = await runtime_service.sequence_playback(AsyncMock(), blocks(), 15)
     assert result[7]['complete_video'] is False
     assert len(result[7]['sections']) == 1
@@ -54,16 +56,64 @@ async def test_fragments_use_available_locations_not_unverified_metadata(monkeyp
 async def test_nested_labels_localized_and_source_tree_unchanged(monkeypatch):
     source = blocks()
     before = deepcopy(source)
-    monkeypatch.setattr(runtime_service.repository, 'named_localization_keys', AsyncMock(return_value={'nested': 1}))
+    monkeypatch.setattr(runtime_service.repository, 'named_localization_keys', AsyncMock(
+        return_value={'nested': 1}))
     monkeypatch.setattr(runtime_service, 'prefetch_localizations', AsyncMock())
-    monkeypatch.setattr(runtime_service, '_localized', AsyncMock(return_value={'content': 'Defeat the boss'}))
+    monkeypatch.setattr(runtime_service, '_localized', AsyncMock(
+        return_value={'content': 'Defeat the boss'}))
     media = {**bundle()[3]['sequence_media'], 'sections': []}
-    monkeypatch.setattr(runtime_service, 'sequence_playback', AsyncMock(return_value={7: media}))
+    monkeypatch.setattr(runtime_service, 'sequence_playback',
+                        AsyncMock(return_value={7: media}))
     result = await runtime_service.present_blocks(AsyncMock(), {'blocks': source}, 'en', 15)
     root = result[0]['encounter']['trees'][0]['root']
     assert root['title'] == 'Defeat the boss'
-    assert root['flow_states'][0]['sequence_media'] == media
+    attached = root['flow_states'][0]['sequence_media']
+    assert {key: value for key, value in attached.items() if key !=
+            'flow_context'} == media
+    assert attached['flow_context']['state_node_id'] == 7
     assert source == before
+
+
+@pytest.mark.asyncio
+async def test_engine_spans_remain_visible_without_movie_file_ids_or_movie_locations(monkeypatch):
+    row = bundle()
+    camera = {'kind': 'camera', 'status': 'authored', 'source': '/Game/Shot.3',
+              'scene_source': '/Game/Shot.0', 'clock': {'numerator': 30, 'denominator': 1},
+              'range': {'Value': {'LowerBound': {'Type': 1, 'Value': {'Value': 0}}}},
+              'url': 'must-not-be-trusted'}
+    row[3]['sequence_media']['sections'].append(camera)
+    monkeypatch.setattr(repository, 'bundles', AsyncMock(return_value=[row]))
+    monkeypatch.setattr(repository, 'available_movies',
+                        AsyncMock(return_value={}))
+    result = await runtime_service.sequence_playback(AsyncMock(), blocks(), 15)
+    assert result[7]['sections'] == [
+        {k: v for k, v in camera.items() if k != 'url'}]
+    assert result[7]['owner_node_id'] == 7 and result[7]['bundle_file_id'] == 90
+    assert result[7]['schema_version'] == 1
+
+
+@pytest.mark.asyncio
+async def test_async_battle_flow_context_retains_condition_and_action_boundaries(monkeypatch):
+    source = blocks()
+    node = source[0]['encounter']['trees'][0]['root']
+    node.update(owner='level_play_node:1:2', condition={
+                'Type': 'WaitBattleCondition', 'ConditionId': 5})
+    flow = node['flow_states'][0]
+    flow.update(phase='EnterActions', timing='during', **{'async': True},
+                cinematics=[{'start': {'action_index': 0, 'anchor': 'before_action'},
+                             'end': {'action_index': 0, 'anchor': 'after_action'}}])
+    monkeypatch.setattr(runtime_service.repository,
+                        'named_localization_keys', AsyncMock(return_value={}))
+    monkeypatch.setattr(runtime_service, 'prefetch_localizations', AsyncMock())
+    monkeypatch.setattr(runtime_service, 'sequence_playback', AsyncMock(
+        return_value={7: bundle()[3]['sequence_media']}))
+    result = await runtime_service.present_blocks(AsyncMock(), {'blocks': source}, 'en', 15)
+    context = result[0]['encounter']['trees'][0]['root']['flow_states'][0]['sequence_media']['flow_context']
+    assert context['node_condition'] == node['condition'] and context['async'] is True
+    assert context['phase'] == 'EnterActions' and context['boundaries'] == flow['cinematics']
+    assert context['global_clock'] is None
+    assert [(m['kind'], m['action_index'], m['anchor'], m['clock']) for m in context['markers']] == [
+        ('cinematic_entry', 0, 'before_action', None), ('cinematic_exit', 0, 'after_action', None)]
 
 
 @pytest.mark.asyncio
@@ -71,9 +121,11 @@ async def test_selected_owner_is_not_attached_to_another_occurrence_without_matc
     source = blocks()
     source.append(deepcopy(source[0]))
     del source[1]['encounter']['client']
-    monkeypatch.setattr(runtime_service.repository, 'named_localization_keys', AsyncMock(return_value={}))
+    monkeypatch.setattr(runtime_service.repository,
+                        'named_localization_keys', AsyncMock(return_value={}))
     monkeypatch.setattr(runtime_service, 'prefetch_localizations', AsyncMock())
-    monkeypatch.setattr(runtime_service, 'sequence_playback', AsyncMock(return_value={7: bundle()[3]['sequence_media']}))
+    monkeypatch.setattr(runtime_service, 'sequence_playback', AsyncMock(
+        return_value={7: bundle()[3]['sequence_media']}))
     presented = await runtime_service.present_blocks(AsyncMock(), {'blocks': source}, 'en', 15)
     assert 'sequence_media' in presented[0]['encounter']['trees'][0]['root']['flow_states'][0]
     assert 'sequence_media' not in presented[1]['encounter']['trees'][0]['root']['flow_states'][0]
@@ -98,7 +150,8 @@ async def test_available_movie_result_is_consumed_as_rows():
     session.execute.return_value = IteratorResult(SimpleResultMetaData(
         ['owner', 'id', 'path', 'name', 'metadata', 'object_key']),
         iter([(7, 12, path, section['file'], proof, 'verified')]))
-    selected = {owner: {'file_id': file_id, 'source_path': path, 'media': media}}
+    selected = {owner: {'file_id': file_id,
+                        'source_path': path, 'media': media}}
     assert await repository.available_movies(session, selected, 15, 'media') == {(7, 12, '/Game/Scene.4'): 'verified'}
     sql = session.execute.call_args.args[0].compile()
     assert 'file_reference.release_id' in str(sql)
@@ -108,7 +161,7 @@ async def test_available_movie_result_is_consumed_as_rows():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('bad', ['asset', 'download', 'presentation', 'inner_proof', 'outer_proof',
-                               'schema0', 'package', 'wrong_owner'])
+                                 'schema0', 'package', 'wrong_owner'])
 @pytest.mark.parametrize('valid_candidate', [False, True])
 async def test_wrong_newer_bundle_cannot_mask_valid_exact_bundle(monkeypatch, bad, valid_candidate):
     wrong = deepcopy(bundle())
@@ -118,7 +171,8 @@ async def test_wrong_newer_bundle_cannot_mask_valid_exact_bundle(monkeypatch, ba
         proof[{'asset': 'asset_version', 'download': 'download_id',
                'presentation': 'presentation_sha256'}[bad]] = 'wrong'
     elif bad == 'inner_proof':
-        metadata['sequence_media']['game_source'] = {**proof, 'download_id': 'wrong'}
+        metadata['sequence_media']['game_source'] = {
+            **proof, 'download_id': 'wrong'}
     elif bad == 'outer_proof':
         metadata['download_id'] = 'wrong'
     elif bad == 'schema0':
@@ -127,9 +181,12 @@ async def test_wrong_newer_bundle_cannot_mask_valid_exact_bundle(monkeypatch, ba
         proof['package_path'] = 'other'
     else:
         owner = 8
-    candidates = [(owner, file_id + 1, path, metadata)] + ([bundle()] if valid_candidate else [])
-    monkeypatch.setattr(repository, 'bundles', AsyncMock(return_value=candidates))
-    monkeypatch.setattr(repository, 'available_movies', AsyncMock(return_value={}))
+    candidates = [(owner, file_id + 1, path, metadata)] + \
+        ([bundle()] if valid_candidate else [])
+    monkeypatch.setattr(repository, 'bundles',
+                        AsyncMock(return_value=candidates))
+    monkeypatch.setattr(repository, 'available_movies',
+                        AsyncMock(return_value={}))
     result = await runtime_service.sequence_playback(AsyncMock(), blocks(), 15)
     if not valid_candidate:
         assert result == {}
@@ -160,7 +217,7 @@ async def test_missing_or_conflicting_encounter_proof_never_queries_media(defect
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('defect', ['bundle', 'game_source', 'asset', 'download', 'path',
-                                  'entry', 'archive', 'sections'])
+                                    'entry', 'archive', 'sections'])
 async def test_fragment_requires_exact_owner_bundle_provenance_and_section(defect):
     owner, bundle_id, path, metadata = bundle()
     media = metadata['sequence_media']
@@ -179,7 +236,8 @@ async def test_fragment_requires_exact_owner_bundle_provenance_and_section(defec
     session.execute.return_value = IteratorResult(SimpleResultMetaData(
         ['owner', 'id', 'path', 'name', 'metadata', 'object_key']),
         iter([(owner, 12, path, section['file'], proof, 'wrong')]))
-    selected = {owner: {'file_id': bundle_id, 'source_path': 'story_sequence:flow7', 'media': media}}
+    selected = {owner: {'file_id': bundle_id,
+                        'source_path': 'story_sequence:flow7', 'media': media}}
     assert await repository.available_movies(session, selected, 15, 'media') == {}
 
 
@@ -187,8 +245,10 @@ async def test_fragment_requires_exact_owner_bundle_provenance_and_section(defec
 async def test_selected_bundle_never_falls_back_to_another_bundles_available_files(monkeypatch):
     older = bundle()
     newer = (older[0], 91, older[2], deepcopy(older[3]))
-    monkeypatch.setattr(repository, 'bundles', AsyncMock(return_value=[newer, older]))
-    monkeypatch.setattr(repository, 'available_movies', AsyncMock(return_value={}))
+    monkeypatch.setattr(repository, 'bundles',
+                        AsyncMock(return_value=[newer, older]))
+    monkeypatch.setattr(repository, 'available_movies',
+                        AsyncMock(return_value={}))
     result = await runtime_service.sequence_playback(AsyncMock(), blocks(), 15)
     assert repository.available_movies.await_args.args[1][7]['file_id'] == 91
     assert result[7]['sections'] == []
@@ -211,22 +271,23 @@ async def test_real_fragment_query_excludes_foreign_owners_releases_and_unavaila
         proof = {'asset_version': '3.7.1', 'download_id': 'client', 'bundle_file_id': bundle_id,
                  'game_source': media['game_source'], 'archive_entry': section['file'],
                  'archive_path': section['archive_path'], 'sections': [section['source']]}
-        selected = {owner: {'file_id': bundle_id, 'source_path': path, 'media': media}}
+        selected = {owner: {'file_id': bundle_id,
+                            'source_path': path, 'media': media}}
         async with AsyncSession(engine) as session:
             for index, (ref_owner, ref_release) in enumerate([(8, 15), (7, 14)]):
                 await session.execute(text('INSERT INTO storage.file_reference VALUES (:id, :owner, :release, 12, :path, :name, :kind, :metadata)'),
-                    {'id': index, 'owner': ref_owner, 'release': ref_release, 'path': path,
-                     'name': section['file'], 'kind': 'story_sequence_fragment', 'metadata': json.dumps(proof)})
+                                      {'id': index, 'owner': ref_owner, 'release': ref_release, 'path': path,
+                                       'name': section['file'], 'kind': 'story_sequence_fragment', 'metadata': json.dumps(proof)})
             assert await repository.available_movies(session, selected, 15, 'media') == {}
             await session.execute(text('INSERT INTO storage.file_reference VALUES (3, 7, 15, 12, :path, :name, :kind, :metadata)'),
-                {'path': path, 'name': section['file'], 'kind': 'story_sequence_fragment', 'metadata': json.dumps(proof)})
+                                  {'path': path, 'name': section['file'], 'kind': 'story_sequence_fragment', 'metadata': json.dumps(proof)})
             assert await repository.available_movies(session, selected, 15, 'media') == {(7, 12, '/Game/Scene.4'): 'verified'}
             await session.execute(text('UPDATE storage.file_location SET available=0'))
             assert await repository.available_movies(session, selected, 15, 'media') == {}
             for index, (ref_owner, ref_release) in enumerate([(8, 15), (7, 14), (7, 15)], 4):
                 await session.execute(text('INSERT INTO storage.file_reference VALUES (:id, :owner, :release, 90, :path, NULL, :kind, :metadata)'),
-                    {'id': index, 'owner': ref_owner, 'release': ref_release, 'path': path,
-                     'kind': 'story_presentation', 'metadata': json.dumps(metadata)})
+                                      {'id': index, 'owner': ref_owner, 'release': ref_release, 'path': path,
+                                       'kind': 'story_presentation', 'metadata': json.dumps(metadata)})
             bundles = await repository.bundles(session, {7}, 15)
             assert len(bundles) == 1
             assert tuple(bundles[0]) == (7, 90, path, metadata)

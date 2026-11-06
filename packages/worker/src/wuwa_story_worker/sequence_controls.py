@@ -96,8 +96,27 @@ def sequence_control_score(assets, presentation=None):
             events.append({'source': source, 'scene_source': scene_source, 'key_index': index, 'frame': frame, 'clock': clock,
                            'time_seconds': frame * denominator / numerator if valid_rate and type(frame) is int else None,
                            'function': function, **result})
+    media = sequence_media_score(exports)
+    from wuwa_story.ingestion.dungeon_context import walk
+
+    actions = [(path, value) for path, value in walk((presentation or {}).get('source', {}))
+               if isinstance(value.get('Name'), str)]
+    flow_dialogues = []
+    for cue in (presentation or {}).get('cues', []):
+        if cue.get('kind') != 'dialogue':
+            continue
+        source = cue['source_path']
+        parents = [(path, action) for path, action in actions
+                   if source.startswith(path + '.') or source.startswith(path + '[')]
+        action = max(parents, key=lambda item: len(item[0]))[1] if parents else {}
+        flow_dialogues.append({'kind': 'flow_dialogue', 'source': source, 'scene_source': None,
+                               'clock': None, 'range': None, 'async': action.get('Async'),
+                               'text_key': cue.get('text_key'), 'talk_id': cue.get('talk_id'),
+                               'speaker_id': cue.get('speaker_id'), 'dialogue_origin': 'flow',
+                               'timing_basis': 'authored_action_extent'})
+    media['sections'].extend(flow_dialogues)
     return {'format': 'solaris.sequence-controls.v1', 'events': events, 'dialogues': dialogues,
-            'media': sequence_media_score(exports),
+            'media': media,
             'unresolved': unresolved, 'preloads': preloads,
             'flow_audio_actions': [cue for cue in (presentation or {}).get('cues', []) if cue['kind'] == 'audio_action'],
             'timing_basis': 'owning_movie_scene_tick_resolution',

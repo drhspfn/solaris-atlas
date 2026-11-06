@@ -30,6 +30,7 @@ import '@/styles/quest-reader.css';
 import { QuestClassification } from '@/components/story/QuestClassification';
 import { QuestContinuity } from '@/components/story/QuestContinuity';
 import { Cutscene, QuestCutscenes, RelatedQuestCutscenes } from '@/components/story/QuestCutscenes';
+import { QuestSequenceFragments, playableEncounterFragments } from '@/components/story/QuestSequenceFragments';
 import { QuestExplanation } from '@/components/story/QuestExplanation';
 import {
   DialogueAudioReference,
@@ -499,15 +500,23 @@ export function QuestPageClient({
     }
     const selected = related.filter((line: any) => inlineStates.has(line.flow_state));
     const parts = encounterCinematicParts(selected, flow.cinematics);
-    return parts.map((part, index) => {
+    const componentPart = parts.findIndex(part => part.cinematics.length > 0);
+    const componentCount = playableEncounterFragments(flow.sequence_media).length;
+    const rendered = parts.map((part, index) => {
       const events = pageMediaEvents.filter(event => event.kind === 'cutscene' &&
         encounterMediaOwners.get(event.reference) === flow.id &&
         parts.findIndex((part) => part.cinematics.some(scene => scene.reference === event.reference)) === index);
       const content = renderExcerpt(part.lines.map((line: any) => indexedLines.get(line.id)!), events);
       return part.cinematics.length
-        ? <EncounterCinematicBoundary key={`${flow.id}-${index}`} media={part.cinematics} unplaced={!part.lines.length} playbackResolved={events.some(event => !!event.playback)}>{content}</EncounterCinematicBoundary>
+        ? <EncounterCinematicBoundary key={`${flow.id}-${index}`} media={part.cinematics} unplaced={!part.lines.length} playbackResolved={events.some(event => !!event.playback)} componentCount={index === componentPart ? componentCount : 0}>
+            {index === componentPart && <QuestSequenceFragments media={flow.sequence_media} />}
+            {content}
+          </EncounterCinematicBoundary>
         : <Fragment key={`${flow.id}-${index}`}>{content}</Fragment>;
     });
+    return componentPart < 0 && componentCount > 0
+      ? [<QuestSequenceFragments key={`${flow.id}-components`} media={flow.sequence_media} />, ...rendered]
+      : rendered;
   };
   const renderInteraction = (states: string[], owner: string) => {
     const selected = shown

@@ -11,6 +11,7 @@ LIBRARY = '/Game/Aki/TypeScript/Game/Module/Sequence/PlotBlueprintFunctionLibrar
 def fixture(tmp_path, *, rate=None, library=LIBRARY):
     def ref(kind, name, index):
         return {'ObjectName': f"{kind}'{name}'", 'ObjectPath': f'files/Client/Content/Story/Scene.{index}'}
+
     def const(value):
         return {'Token': 'EX_StringConst', 'Value': value}
     exports = [
@@ -21,11 +22,13 @@ def fixture(tmp_path, *, rate=None, library=LIBRARY):
               'ContextExpression': {'Token': 'EX_LocalVirtualFunction', 'Function': 'OpenUiView',
                                     'Parameters': [const('key'), const('key'), const('start'), const('start'), {'Token': 'EX_False'}]}},
              {'Token': 'EX_Return', 'StatementIndex': 100, 'Expression': {'Token': 'EX_Nothing'}}]},
-        {'Type': 'MovieScene', 'Properties': {'TickResolution': rate or {'Numerator': 30}}},
-        {'Type': 'MovieSceneEventTrack', 'Outer': ref('MovieScene', 'Scene', 1)},
+        {'Type': 'MovieScene', 'Properties': {
+            'TickResolution': rate or {'Numerator': 30}}},
+        {'Type': 'MovieSceneEventTrack',
+            'Outer': ref('MovieScene', 'Scene', 1)},
         {'Type': 'MovieSceneEventTriggerSection', 'Outer': ref('MovieSceneEventTrack', 'Track', 2),
          'Properties': {'EventChannel': {'KeyTimes': [{'Value': 90}],
-                                        'KeyValues': [{'Ptrs': {'Function': ref('Function', 'Director_C:Entry', 0)}}]}}},
+                                         'KeyValues': [{'Ptrs': {'Function': ref('Function', 'Director_C:Entry', 0)}}]}}},
         {'Type': 'BlueprintGeneratedClass', 'Name': 'Director_C'},
         {'Type': 'MovieSceneDialogueSection', 'Outer': ref('MovieSceneEventTrack', 'Track', 2),
          'Properties': {'DialogueInfo': {'SourceString': 'story.line'}, 'GuardTime': 120}},
@@ -46,7 +49,8 @@ def test_event_frame_and_opening_are_resolved_using_owning_scene_clock(tmp_path)
     assert score['runtime_traversal'] is False
     openings = opened_ui_resources(score)
     assert [entry['rover'] for entry in openings] == ['male', 'female']
-    assert all(entry['animation'] == 'start' and entry['loop'] is False for entry in openings)
+    assert all(entry['animation'] == 'start' and entry['loop']
+               is False for entry in openings)
 
 
 def test_same_function_name_on_an_unrelated_receiver_is_not_a_spine_binding(tmp_path):
@@ -55,21 +59,39 @@ def test_same_function_name_on_an_unrelated_receiver_is_not_a_spine_binding(tmp_
 
 
 @pytest.mark.parametrize('rate,seconds', [({'Numerator': 60000, 'Denominator': 1001}, 1.5015),
-                                        ({'Numerator': 0}, None), ({'Denominator': 1}, None)])
+                                          ({'Numerator': 0}, None), ({'Denominator': 1}, None)])
 def test_invalid_or_fractional_clock_is_never_replaced_with_assumed_30fps(tmp_path, rate, seconds):
     assets, _ = fixture(tmp_path, rate=rate)
-    assert sequence_control_score(assets)['events'][0]['time_seconds'] == seconds
+    assert sequence_control_score(
+        assets)['events'][0]['time_seconds'] == seconds
 
 
 def test_dialogue_links_use_exact_localization_identity_and_keep_audio_commands(tmp_path):
     assets, _ = fixture(tmp_path)
-    audio = {'kind': 'audio_action', 'source_path': '$.Actions[0]', 'command': {'Name': 'PostAkEvent'}}
+    audio = {'kind': 'audio_action',
+             'source_path': '$.Actions[0]', 'command': {'Name': 'PostAkEvent'}}
     presentation = {'cues': [{'kind': 'dialogue', 'text_key': 'story.line', 'source_path': '$.TalkItems[4]'},
                              {'kind': 'dialogue', 'text_key': 'different', 'source_path': '$.TalkItems[5]'}, audio]}
     score = sequence_control_score(assets, presentation)
     assert score['dialogues'][0]['talk_sources'] == ['$.TalkItems[4]']
-    assert score['dialogues'][0]['command']['GuardTime'] == 120  # Original units preserved.
+    # Original units preserved.
+    assert score['dialogues'][0]['command']['GuardTime'] == 120
     assert score['flow_audio_actions'] == [audio]
+
+
+def test_async_flow_dialogue_is_unclocked_and_not_merged_into_cinematic_scene(tmp_path):
+    assets, _ = fixture(tmp_path)
+    presentation = {'source': {'Actions': [{'Name': 'ShowTalk', 'Async': True, 'Params': {
+        'TalkItems': [{'Id': 1, 'TidTalk': 'story.line'}]}}]},
+        'cues': [{'kind': 'dialogue', 'source_path': '$.Actions[0].Params.TalkItems[0]',
+                  'talk_id': 1, 'text_key': 'story.line'}]}
+    sections = sequence_control_score(assets, presentation)[
+        'media']['sections']
+    flow, = [s for s in sections if s['kind'] == 'flow_dialogue']
+    cinematic, = [s for s in sections if s['kind'] == 'dialogue']
+    assert flow['async'] is True and flow['clock'] is None and flow['scene_source'] is None
+    assert cinematic['clock'] == {'numerator': 30, 'denominator': 1}
+    assert cinematic['scene_source'] == PACKAGE + '.1'
 
 
 def test_mismatched_channel_is_reported_without_pairing_unrelated_keys(tmp_path):
@@ -77,17 +99,20 @@ def test_mismatched_channel_is_reported_without_pairing_unrelated_keys(tmp_path)
     exports[3]['Properties']['EventChannel']['KeyValues'] = []
     (tmp_path / 'decoded/Scene.json').write_text(json.dumps(exports), encoding='utf-8')
     score = sequence_control_score(assets)
-    assert score['events'] == [] and score['unresolved'][0]['code'] == 'mismatched_event_channel'
+    assert score['events'] == [
+    ] and score['unresolved'][0]['code'] == 'mismatched_event_channel'
 
 
 def test_preload_keys_are_kept_separate_from_confirmed_open_commands(tmp_path):
     assets, exports = fixture(tmp_path)
-    exports.append({'Type': 'BP_SequenceData_Generated_C', 'Properties': {'PreloadUiArray': ['other_key']}})
+    exports.append({'Type': 'BP_SequenceData_Generated_C',
+                   'Properties': {'PreloadUiArray': ['other_key']}})
     (tmp_path / 'decoded/Scene.json').write_text(json.dumps(exports), encoding='utf-8')
     score = sequence_control_score(assets)
     assert score['preloads'][0]['prefab_key'] == 'other_key'
     assert score['preloads'][0]['usage'] == 'preload_only'
-    assert {entry['prefab_key'] for entry in opened_ui_resources(score)} == {'key'}
+    assert {entry['prefab_key']
+            for entry in opened_ui_resources(score)} == {'key'}
 
 
 def test_array_open_keeps_authored_clip_pairs_and_retains_unknown_arrays_without_guessing():
@@ -95,7 +120,10 @@ def test_array_open_keeps_authored_clip_pairs_and_retains_unknown_arrays_without
         return {'events': [{'source': 'scene.3', 'frame': 8, 'calls': [{
             'function': 'OpenUiViewInArray', 'receiver': {'reference': {'ObjectPath': LIBRARY}},
             'arguments': ['key', 'key', clips, clips]}]}]}
-    entries = opened_ui_resources(score([{'Name': 'pose', 'NeedLoop': True}, {'Name': 'move', 'NeedLoop': False}]))
-    assert [entry['animation'] for entry in entries] == ['pose', 'move', 'pose', 'move']
+    entries = opened_ui_resources(
+        score([{'Name': 'pose', 'NeedLoop': True}, {'Name': 'move', 'NeedLoop': False}]))
+    assert [entry['animation']
+            for entry in entries] == ['pose', 'move', 'pose', 'move']
     entries = opened_ui_resources(score({'symbol': 'dynamic'}))
-    assert len(entries) == 2 and all(entry['animation'] is None for entry in entries)
+    assert len(entries) == 2 and all(
+        entry['animation'] is None for entry in entries)

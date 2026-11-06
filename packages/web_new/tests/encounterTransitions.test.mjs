@@ -138,6 +138,95 @@ test('flattened structural and empty nodes keep anchors, objectives and outcomes
   assert.equal(markup.split('Only ordered steps establish a sequence.').length - 1, 1);
 });
 
+test('two empty conditional children retain source anchors without empty branches', () => {
+  const data = encounter(node('empty-conditional', { title: 'Story activity', condition: null,
+    children_order: 'conditional', children: [
+      node('empty-a', { title: 'Story activity', condition: { Type: 'CheckConditionGroup', Flag: 17 },
+        branch_condition: { Type: 'QuestFlag', Value: 'left' } }),
+      node('empty-b', { title: 'Story activity', condition: null,
+        branch_condition: { Type: 'QuestFlag', Value: 'right' } }),
+    ] }));
+  const markup = render(data);
+  const [visible, evidence] = markup.split('<details class="source">');
+  assert.doesNotMatch(visible, /class="branch"|class="branches"|<li|<ol|Conditional path|Runtime conditions/);
+  assert.doesNotMatch(visible, /<summary>Encounter activities<\/summary>/);
+  for (const id of ['empty-conditional', 'empty-a', 'empty-b']) {
+    assert.equal((markup.match(new RegExp(`id="${encounterAnchor(id)}"`, 'g')) || []).length, 1);
+    assert(evidence.includes(`id="${encounterAnchor(id)}"`));
+  }
+  for (const value of ['CheckConditionGroup', 'QuestFlag', 'left', 'right', '17']) assert(evidence.includes(value));
+});
+
+test('empty structural siblings never create list items or branch disclosures', () => {
+  for (const order of ['sequence', 'conditional', 'alternative', 'parallel', 'unknown']) {
+    const data = encounter(node('wrapper', { title: 'Story activity', condition: null, children_order: order,
+      children: [node('empty', { condition: null }),
+        node('decorator', { title: 'Story activity', condition: null, children: [
+          node('objective', { title: 'Protect the academy', branch_condition: { Type: 'WaitBattleCondition', EntityId: 42 } }),
+        ] }),
+      ] }));
+    const markup = render(data);
+    const [visible, evidence] = markup.split('<details class="source">');
+    assert.equal((visible.match(/<li>/g) || []).length, order === 'sequence' ? 1 : 0);
+    assert.equal((visible.match(/class="branch"/g) || []).length,
+      ['conditional', 'alternative', 'parallel'].includes(order) ? 1 : 0);
+    assert.doesNotMatch(visible, /<li>\s*<\/li>|Conditional path|Alternative path<|Parallel path<|WaitBattleCondition|EntityId/);
+    assert.doesNotMatch(visible, /Only ordered steps|runtime conditions|player choice|order unknown/i);
+    assert.match(markup, /<details class="source"><summary>Source &amp; conditions/);
+    assert.match(evidence, /Only ordered steps establish a sequence/);
+    if (order === 'conditional') {
+      assert.match(visible, /<summary>Protect the academy<\/summary>/);
+      assert.match(visible, /Conditional events/);
+      assert.match(evidence, /runtime conditions, not player choices/);
+    }
+    if (order === 'alternative') {
+      assert.match(visible, /Alternative events/);
+      assert.match(evidence, /does not identify a player choice/);
+    }
+    if (order === 'parallel') assert.match(visible, /Parallel activities/);
+    assert(evidence.includes('WaitBattleCondition'));
+    for (const id of ['wrapper', 'empty', 'decorator', 'objective'])
+      assert.equal((markup.match(new RegExp(`id="${encounterAnchor(id)}"`, 'g')) || []).length, 1);
+  }
+});
+
+test('branch groups show plain labels and objectives while explanations stay in closed Source', () => {
+  for (const [order, label] of [['conditional', 'Conditional events'], ['alternative', 'Alternative events'],
+    ['parallel', 'Parallel activities'], ['unknown', 'Related activities']]) {
+    const markup = render(encounter(node('group', { title: 'Story activity', condition: null,
+      children_order: order, children: [node('protect', { title: 'Protect the academy' }),
+        node('leave', { title: 'Leave the area' })] })));
+    const [visible, evidence] = markup.split('<details class="source">');
+    assert(visible.includes(`aria-label="${label}"`));
+    for (const title of ['Protect the academy', 'Leave the area'])
+      assert(visible.includes(`<summary>${title}</summary>`));
+    assert.doesNotMatch(visible, /Only ordered steps|runtime conditions|player choice|order unknown/i);
+    assert.match(evidence, /Only ordered steps establish a sequence/);
+    assert.match(evidence, /WaitBattleCondition/);
+  }
+});
+
+test('component availability never claims full cinematic playback', () => {
+  for (const playbackResolved of [false, true]) {
+    const markup = renderToStaticMarkup(React.createElement(EncounterCinematicBoundary,
+      { media: [cinematic()], componentCount: 2, playbackResolved }));
+    assert.match(markup, /In-game scene · 2 video components available/);
+    assert.doesNotMatch(markup, /Playback pending|Playback available|full playback/i);
+  }
+});
+
+test('flow content owns video components while fallback remains available without content', () => {
+  const data = encounter(node('component-owner', { flow_states: [flow('component-flow', 'Flow28', {
+    sequence_media: { schema_version: 1, complete_video: false, sections: [
+      { kind: 'movie_fragment', status: 'published', file_id: 33, url: 'https://cdn.test/M0334.webm' },
+    ] },
+  })] }));
+  const content = render(data, { renderFlow: () => [React.createElement('p', { key: 'owned' }, 'Owned scene components')] });
+  assert.match(content, /Owned scene components/);
+  assert.doesNotMatch(content, /Video components|View video component/);
+  assert.match(render(data, { renderFlow: () => [] }), /View video component 1/);
+});
+
 function allNodes(tree) {
   if (!tree || typeof tree !== 'object') return [];
   return [tree, ...[tree.props?.children].flat(Infinity).flatMap(allNodes)];
@@ -153,7 +242,7 @@ test('local sequence keeps authored child order, parallel occurrences remain dis
   assert.deepEqual(encounterFlows(data).map(f => f.id), ['first', 'parallel-a', 'parallel-b', 'last']);
   const markup = render(data);
   assert.match(markup, /aria-label="Authored action order"/);
-  assert.match(markup, /Parallel paths/);
+  assert.match(markup, /Parallel activities/);
   assert.equal(markup.split('Only ordered steps establish a sequence.').length - 1, 1);
   assert.equal((markup.match(/Dialogue during the encounter/g) || []).length, 4);
   assert(markup.indexOf(encounterAnchor('67')) < markup.indexOf(encounterAnchor('48')));
@@ -181,7 +270,9 @@ test('SaveConfig stays separate and cannot own or hide flat authored dialogue', 
   const markup = render(data);
   assert.match(markup, /Additional lifecycle context · order unknown/);
   assert.match(markup, /Dialogue · timing unknown/);
-  assert.doesNotMatch(markup, /BuffTechnicalName|Before this action|After this action/);
+  const [visible, evidence] = markup.split('<details class="source">');
+  assert.doesNotMatch(visible, /BuffTechnicalName|Before this action|After this action/);
+  assert.match(evidence, /BuffTechnicalName/);
 });
 
 test('canonical dialogue ownership is unique without deleting repeated branch calls', () => {
@@ -240,7 +331,7 @@ test('published fragments deduplicate display files but retain original metadata
     { kind: 'movie_fragment', status: 'published', file_id: 10, url: 'https://cdn.test/M0335.webm' },
   ] };
   const before = JSON.stringify(media), playable = playableEncounterFragments(media);
-  assert.deepEqual(playable.map(p => p.file_id), [7, 10]); assert.equal(JSON.stringify(media), before);
+  assert.deepEqual(Array.from(playable, p => p.file_id), [7, 10]); assert.equal(JSON.stringify(media), before);
   const tree = QuestSequenceFragments({ media });
   assert.equal(tree.props.items.length, 2);
   assert.equal(tree.props.items[0].src, 'https://cdn.test/M0334.webm');
@@ -252,22 +343,40 @@ test('published fragments deduplicate display files but retain original metadata
 });
 
 
-test('published video fragments are actually reachable inside their flow disclosure', () => {
+test('component display order uses earliest occurrence before deduplicating files', () => {
+  const part = (file_id, start) => ({ kind: 'movie_fragment', status: 'published', file_id,
+    url: `https://cdn.test/${file_id}.webm`, scene_source: 'same-scene',
+    clock: { numerator: 30, denominator: 1 }, range: { Value: {
+      LowerBound: { Type: 1, Value: { Value: start * 30 } },
+      UpperBound: { Type: 0, Value: { Value: (start + 1) * 30 } },
+    } } });
+  const media = { schema_version: 1, complete_video: false,
+    sections: [part(7, 10), part(8, 5), part(7, 0)] };
+  const before = JSON.stringify(media);
+  assert.deepEqual(Array.from(playableEncounterFragments(media), part => part.file_id), [7, 8]);
+  assert.equal(JSON.stringify(media), before);
+});
+
+test('published video components are actually reachable inside their flow disclosure', () => {
   const data = encounter(node('root', { flow_states: [flow('movie-flow', 'Flow28', { sequence_media: {
     schema_version: 1, complete_video: false, sections: [{ kind: 'movie_fragment', status: 'published', file_id: 33,
       url: 'https://cdn.test/M0334.webm' }],
   } })] }));
   const markup = render(data);
-  assert.match(markup, /Video fragments · 1/);
-  assert.match(markup, /Watch video fragment 1/);
-  assert.match(markup, /not a complete cinematic recording/);
+  assert.match(markup, /Video components · 1/);
+  assert.match(markup, /View video component 1/);
+  assert.match(markup, /used inside the game-rendered scene/);
   assert.doesNotMatch(markup, /<video/);
 });
 
 
 test('quest reader nests cinematic dialogue once and preserves cited line addresses', () => {
+  const sequenceMedia = { schema_version: 1, complete_video: false, sections: [
+    { kind: 'movie_fragment', status: 'published', file_id: 33, url: 'https://cdn.test/M0334.webm' },
+  ] };
   const root = node('root', { condition: null, children_order: 'sequence', children: [
-    node('cinema', { flow_states: [flow('cinema-occurrence', 'Flow28', { phase: 'Condition', async: false, timing: 'blocking', cinematics: [cinematic()] })] }),
+    node('cinema', { flow_states: [flow('cinema-occurrence', 'Flow28', { phase: 'Condition', async: false,
+      timing: 'blocking', cinematics: [cinematic()], sequence_media: sequenceMedia })] }),
     node('parallel', { condition: null, children_order: 'parallel', children: [
       node('a', { flow_states: [flow('repeat-a')] }), node('b', { flow_states: [flow('repeat-b')] }),
     ] }),
@@ -279,6 +388,7 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
   const mocks = {
     react: React, 'lucide-react': dummy,
     '@/components/story/QuestRuntimeBlock': story,
+    '@/components/story/QuestSequenceFragments': loadStory('QuestSequenceFragments'),
     '@/components/story/QuestMediaReferences': { DialogueAudioReference: ({ children }) => children, QuestMediaReferences: () => null },
     '@/components/story/QuestCutscenes': {
       Cutscene: ({ event }) => React.createElement('div', { 'data-player': event.reference,
@@ -340,6 +450,14 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
   assert(markup.includes(`id="${runtimeBlockAnchor('technical')}"`), 'source-only direct-link anchor remains mounted');
   const start = markup.indexOf('class="marker">Scene</div>'), end = markup.indexOf('End scene');
   assert(start >= 0 && start < markup.indexOf('SHUT UP!') && markup.indexOf('THAT IS NOT HOME!') < end, JSON.stringify({start,end,shutup:markup.indexOf('SHUT UP!'),notHome:markup.indexOf('THAT IS NOT HOME!'),excerpt:markup.slice(Math.max(0,start),Math.max(0,start)+1800)}));
+  const components = '<summary>Video components · 1</summary>';
+  assert.equal(markup.split(components).length - 1, 1, 'canonical flow renders one component block');
+  assert.equal(markup.split('>View video component 1<').length - 1, 1);
+  assert(start < markup.indexOf(components) && markup.indexOf(components) < markup.indexOf('SHUT UP!'),
+    'video components belong inside Scene before its dialogue');
+  const scene = markup.slice(start, end);
+  assert.match(scene, /In-game scene · 1 video components available/);
+  assert.doesNotMatch(scene, /Playback pending|Playback available|full playback/i);
   assert.match(markup, /Read the dialogue shared by this branch/);
   assert.match(markup, /cited-passage/);
   const articles = [...markup.matchAll(/<article\b[^>]*data-dialogue-key="[^"]+"[^>]*>([\s\S]*?)<\/article>/g)];
@@ -366,6 +484,19 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     initialTranscript: { lines: windowLines, offset: 1, limit: 2, story_blocks: blocks },
     initialMedia: { events, related_cutscenes: [] },
   }));
+  const fallbackMarkup = renderMedia([
+    { id: 'fallback-before', flow_state: 'Before', text: { content: 'Before' }, story_position: [4] },
+    { id: 'fallback-line', flow_state: 'Flow28', text: { content: 'Dialogue without cinematic parts' }, action: { index: 0 } },
+    { id: 'fallback-after', flow_state: 'After', text: { content: 'After' }, story_position: [6] },
+  ], [{ id: 'fallback-gate', title: 'Battle', position: [5], branches: [], flow_states: [], source,
+    encounter: encounter(node('fallback-root', { flow_states: [flow('fallback-flow', 'Flow28', {
+      cinematics: [], sequence_media: sequenceMedia,
+    })] })) }], []);
+  assert.equal(fallbackMarkup.split(components).length - 1, 1,
+    'published components remain reachable when no cinematic part exists');
+  assert.equal(fallbackMarkup.split('>View video component 1<').length - 1, 1);
+  assert(fallbackMarkup.indexOf(components) < fallbackMarkup.indexOf('Dialogue without cinematic parts'));
+  assert.doesNotMatch(fallbackMarkup, /class="marker">Scene<\/div>/);
   const assertPlayer = (html) => {
     assert.equal((html.match(/data-player="cutscene:shared"/g) || []).length, 1);
     const targets = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);

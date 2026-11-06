@@ -18,7 +18,9 @@ export function EncounterCinematicBoundary({
   children,
   unplaced = false,
   playbackResolved = false,
+  componentCount = 0,
 }: {
+  componentCount?: number;
   unplaced?: boolean;
   playbackResolved?: boolean;
   media: EncounterCinematic[];
@@ -31,17 +33,35 @@ export function EncounterCinematicBoundary({
         Scene
       </div>
       <p className={styles.note}>
-        {playbackResolved ? "Playback available" : "Playback pending"}
+        {componentCount > 0
+          ? `In-game scene · ${componentCount} video components available`
+          : playbackResolved
+            ? "Playback available"
+            : "Playback pending"}
         {unplaced ? " · placement unknown" : ""}
       </p>
       {children}
       <div className={styles.marker}>End scene</div>
       <details className={styles.source}>
         <summary>Source</summary>
-        <p>{media.some((item) => item.kind === "sequence") ? "In-game cinematic sequence" : "Cinematic scene"}</p>
-        {unplaced && <p>Its position relative to the displayed dialogue is not established.</p>}
-        <p>Action boundaries do not establish playback duration or completion.</p>
-        {media.map((item, index) => <p key={index}>{item.source.file} · {item.raw_path}</p>)}
+        <p>
+          {media.some((item) => item.kind === "sequence")
+            ? "In-game cinematic sequence"
+            : "Cinematic scene"}
+        </p>
+        {unplaced && (
+          <p>
+            Its position relative to the displayed dialogue is not established.
+          </p>
+        )}
+        <p>
+          Action boundaries do not establish playback duration or completion.
+        </p>
+        {media.map((item, index) => (
+          <p key={index}>
+            {item.source.file} · {item.raw_path}
+          </p>
+        ))}
       </details>
     </section>
   );
@@ -97,9 +117,27 @@ export function QuestEncounter({
           {flow.timing === "unknown" ? " · timing unknown" : ""}
         </summary>
         {grouped}
-        <QuestSequenceFragments media={flow.sequence_media} />
+        {!content.length && (
+          <QuestSequenceFragments media={flow.sequence_media} />
+        )}
       </details>
     );
+  };
+  const sourceOnlyNodes = new Set<string>();
+  const branchTitle = (node: EncounterNode): string => {
+    if (
+      node.title &&
+      !["Story activity", "Story action", "Continue the story"].includes(
+        node.title,
+      )
+    )
+      return node.title;
+    const child = node.children.find((child) => !sourceOnlyNodes.has(child.id));
+    if (child) return branchTitle(child);
+    if (node.flow_states.length) return "Dialogue";
+    if (node.media.length) return "Cinematic scene";
+    if (node.completions.length) return "Encounter outcome";
+    return "Encounter activity";
   };
   const renderNode = (node: EncounterNode): ReactNode => {
     const meaningful =
@@ -148,53 +186,79 @@ export function QuestEncounter({
         </div>
       );
     };
-    const children = node.children.map((child) => (
-      <Fragment key={child.id}>{renderNode(child)}</Fragment>
-    ));
+    const children = node.children
+      .map((node) => ({ node, content: renderNode(node) }))
+      .filter((child) => child.content !== null);
     const order = node.children_order;
     const branchLabel =
       order === "parallel"
-        ? "Parallel paths"
+        ? "Parallel activities"
         : order === "conditional"
-          ? "Conditional paths"
+          ? "Conditional events"
           : order === "alternative"
-            ? "Alternative paths"
-            : "Paths with unknown order";
+            ? "Alternative events"
+            : "Related activities";
     const childContent = !children.length ? null : order === "sequence" ? (
       <ol className={styles.steps} aria-label="Authored action order">
-        {children.map((child, index) => (
-          <li key={node.children[index].id}>{child}</li>
+        {children.map((child) => (
+          <li key={child.node.id}>{child.content}</li>
         ))}
       </ol>
     ) : children.length === 1 &&
       (order === "decorator" || order === "unknown") ? (
-      children
+      children.map((child) => (
+        <Fragment key={child.node.id}>{child.content}</Fragment>
+      ))
     ) : (
       <div className={styles.branches} role="group" aria-label={branchLabel}>
         <p className={styles.note}>{branchLabel}</p>
-        {children.map((child, index) => (
-          <details key={node.children[index].id} className={styles.branch}>
+        {children.map((child) => (
+          <details key={child.node.id} className={styles.branch}>
             <summary>
-              {order === "parallel"
-                ? "Parallel path"
-                : order === "conditional"
-                  ? "Conditional path"
-                  : order === "alternative"
-                    ? "Alternative path"
-                    : "Path · order unknown"}
+              <PlayerText
+                display={display}
+                value={branchTitle(child.node)}
+                fallback="Encounter activity"
+              />
             </summary>
-            {child}
+            {child.content}
           </details>
         ))}
       </div>
     );
     const hasTitle =
       !!node.title &&
-      !["Story activity", "Story action", "Continue the story"].includes(node.title);
-    if (!meaningful && !children.length && !hasSavedContext)
-      return <div id={encounterAnchor(node.id)} />;
+      !["Story activity", "Story action", "Continue the story"].includes(
+        node.title,
+      );
+    const hasReadableContent =
+      (meaningful && hasTitle) ||
+      ["EnterActions", "Actions", "Condition", "FinishActions"].some(
+        (name) =>
+          node.flow_states.some(
+            (flow) =>
+              flow.phase === name && flow.execution_context !== "save_config",
+          ) ||
+          node.media.some(
+            (item) =>
+              item.phase === name && item.execution_context !== "save_config",
+          ),
+      ) ||
+      node.completions.some(
+        (item) => item.execution_context !== "save_config",
+      ) ||
+      hasSavedContext;
+    if (!hasReadableContent && !children.length) {
+      sourceOnlyNodes.add(node.id);
+      return null;
+    }
     return (
-      <div className={meaningful || hasSavedContext ? styles.node : styles.structure} id={encounterAnchor(node.id)}>
+      <div
+        className={
+          meaningful || hasSavedContext ? styles.node : styles.structure
+        }
+        id={encounterAnchor(node.id)}
+      >
         {meaningful && (
           <>
             {hasTitle && (
@@ -247,6 +311,48 @@ export function QuestEncounter({
       </div>
     );
   };
+  const trees = encounter.trees.map((tree) => ({
+    tree,
+    content: renderNode(tree.root),
+  }));
+  const renderSource = (node: EncounterNode): ReactNode => (
+    <div
+      key={node.id}
+      id={sourceOnlyNodes.has(node.id) ? encounterAnchor(node.id) : undefined}
+    >
+      <p>
+        {node.node_type} · {node.owner} · {node.source.file} ·{" "}
+        {node.source.raw_path}
+      </p>
+      {node.children_order === "conditional" && (
+        <p>These paths depend on runtime conditions, not player choices.</p>
+      )}
+      {node.children_order === "alternative" && (
+        <p>
+          How a path is selected is not established; this does not identify a
+          player choice.
+        </p>
+      )}
+      <p>
+        <code>
+          {JSON.stringify(
+            {
+              condition: node.condition,
+              branch_condition: node.branch_condition,
+              count: node.count,
+              children_order: node.children_order,
+              source: node.source,
+              action_sections: node.action_sections,
+              completions: node.completions,
+            },
+            null,
+            2,
+          )}
+        </code>
+      </p>
+      {node.children.map(renderSource)}
+    </div>
+  );
   return (
     <section
       className={styles.encounter}
@@ -264,19 +370,18 @@ export function QuestEncounter({
           fallback="Encounter"
         />
       </h3>
-      <p className={styles.note}>
-        Only ordered steps establish a sequence. Other paths may be conditional or have unknown order.
-      </p>
-      {encounter.trees.map((tree) => (
-        <details
-          key={tree.level_play_id}
-          className={styles.context}
-          open={encounter.trees.length === 1}
-        >
-          <summary>Encounter activities</summary>
-          {renderNode(tree.root)}
-        </details>
-      ))}
+      {trees
+        .filter(({ content }) => content !== null)
+        .map(({ tree, content }) => (
+          <details
+            key={tree.level_play_id}
+            className={styles.context}
+            open={encounter.trees.length === 1}
+          >
+            <summary>Encounter activities</summary>
+            {content}
+          </details>
+        ))}
       {encounter.unresolved_level_plays?.map((tree) => (
         <p className={styles.note} key={tree.level_play_id}>
           An additional encounter context is recorded, but its matching authored
@@ -291,16 +396,27 @@ export function QuestEncounter({
       <div className={styles.marker}>End of encounter context</div>
       <details className={styles.source}>
         <summary>Source &amp; conditions</summary>
-        {encounter.trees.length + (encounter.unresolved_level_plays?.length || 0) > 1 && (
-          <p>The relative order of these encounter contexts is not established.</p>
+        <p>
+          Only ordered steps establish a sequence. Other paths may be
+          conditional or have unknown order.
+        </p>
+        {encounter.trees.length +
+          (encounter.unresolved_level_plays?.length || 0) >
+          1 && (
+          <p>
+            The relative order of these encounter contexts is not established.
+          </p>
         )}
         <p>
           {encounter.source.file} · {encounter.source.raw_path}
         </p>
         {encounter.trees.map((tree) => (
-          <p key={tree.level_play_id}>
-            {tree.membership.file} · {tree.level_play_id}
-          </p>
+          <Fragment key={tree.level_play_id}>
+            <p>
+              {tree.membership.file} · {tree.level_play_id}
+            </p>
+            {renderSource(tree.root)}
+          </Fragment>
         ))}
         {encounter.unresolved_level_plays?.map((tree) => (
           <p key={tree.level_play_id}>

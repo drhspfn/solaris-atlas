@@ -147,7 +147,7 @@ def verified_voice_export(entry) -> Path:
 
 
 async def build_entity_files(root, targets, fmodel, converter, voice_root=None, provenance=None,
-                             voice_diagnostics=None):
+                             voice_diagnostics=None, retained_sequences=None):
     images = [t for t in targets if t["kind"] == "image"]
     icons = {}
     if images:
@@ -174,11 +174,19 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
     for target in (target for target in targets if target['kind'] == 'spine'):
         from wuwa_story_worker.story_spine import build_spine_bundle
         try:
-            bundle, originals = await build_spine_bundle(root, target['resource_id'], fmodel, converter,
+            retained = (retained_sequences or {}).get(target['path'])
+            if retained is not None:
+                from wuwa_story_worker.sequence_metadata import recompile_bundle
+                bundle, originals = await asyncio.to_thread(recompile_bundle, retained,
+                    retained.with_name('recompiled.zip'), target)
+            else:
+                bundle, originals = await build_spine_bundle(root, target['resource_id'], fmodel, converter,
                                                          presentation=target.get(
                                                              'presentation'),
                                                          **({'direct_resources': target['direct_resources']}
-                                                            if target.get('direct_resources') else {}))
+                                                            if target.get('direct_resources') else {}),
+                                                         **({'sequence_metadata_revision': target['sequence_metadata_revision']}
+                                                            if target['path'].startswith('story_sequence:') and 'sequence_metadata_revision' in target else {}))
         except BlockingIOError:
             raise
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
@@ -421,12 +429,20 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 targets = await missing_media_targets(
                     session, payload["targets"], source=source, storage=storage,
                     require_spine_playback=get_settings().story_spine_playback_enabled)
+                # Release reuse/projection locks before builds and the separate inventory session.
+                await session.commit()
                 missing_identities = {target_identity(t) for t in targets}
                 skipped = len(payload["targets"]) - len(targets)
                 voice_provenance = {}
                 voice_diagnostics = []
                 files, missing = [], []
                 if targets:
+                    from wuwa_story_worker.sequence_metadata import retained_bundle
+                    retained_sequences = {}
+                    for target in targets:
+                        retained = await retained_bundle(session, storage, root, target, source)
+                        if retained is not None:
+                            retained_sequences[target['path']] = retained
                     files, missing = await build_entity_files(
                         root,
                         targets,
@@ -435,6 +451,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         voice_root=voice_root,
                         provenance=voice_provenance,
                         voice_diagnostics=voice_diagnostics,
+                        retained_sequences=retained_sequences,
                     )
                 entries = []
                 voice_reasons = {(item['source'], item['language']): item['reason']
@@ -507,6 +524,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                                         'sequence_media_schema': target.get('sequence_media_schema'),
                                         'presentation_sha256': target.get('presentation_sha256'),
                                         'control_sources_complete': not controls.get('missing')}
+                        if target['path'].startswith('story_sequence:') and 'sequence_metadata_revision' in target:
+                            spine_source['sequence_metadata_revision'] = target['sequence_metadata_revision']
                     provenance = await asyncio.to_thread(
                         source_provenance, request, target, originals, tools,
                         spine_source if target['kind'] == 'spine' else voice_provenance.get(

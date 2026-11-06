@@ -111,3 +111,24 @@ records for Denia's quest. The index recovered ten explicit room interactions,
 including optional flow states 41–45. The corresponding scenario membership hash
 matched the retained snapshot. This is source verification, not a claim that every
 branch of every game quest has been replayed or recovered.
+
+## Cinematic sections and encounter transitions
+
+The sequence bundle retains camera cuts, skeletal-animation sections, dialogue,
+subsequences, event sections and movie components. Every section keeps its owning
+MovieScene clock, range and source reference. A component's source offset is not
+an instruction to crop the published file or a global quest timestamp.
+
+Video components remain inside the corresponding cinematic dialogue block.
+Repeated uses of one file retain all authored occurrences while the viewer lists
+that file once. Gender selection comes from source track tags. A post-process
+layer is labelled only when its media texture is actually bound through a
+post-process material; a black background or file name does not establish alpha.
+These files do not establish that a full engine-rendered scene is playable.
+
+Encounter action order and explicit phases determine battle/dialogue/cinematic
+boundaries. Conditional and parallel events retain their conditions in the closed
+source disclosure; they are not reinterpreted as player choices or a linear
+runtime traversal. Empty structural branches retain source anchors without empty
+numbered list items. This requires no database schema migration; older readers
+can ignore the additional sequence metadata.

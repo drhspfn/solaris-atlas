@@ -1,0 +1,9 @@
+.components { margin: 12px 0; min-width: 0; }
+.components > summary { min-height: 44px; padding: 10px 0; cursor: pointer; color: var(--text-primary); }
+.components > summary:hover { color: var(--mint); }
+.components summary:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+.components > p { color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.components ul { padding-inline-start: 20px; margin: 8px 0; }
+.components li { padding: 6px 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.components li > details { margin-top: 4px; }
+.components pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
