@@ -34,7 +34,8 @@ def normalize_npcs(blueprints: list[dict[str, Any]], templates: list[dict[str, A
                    entities: list[dict[str, Any]], english: dict[str, dict[str, Any]],
                    shop_info: list[dict[str, Any]] = (), shop_fixed: list[dict[str, Any]] = (),
                    abp_montages: list[dict[str, Any]] = (), montages: list[dict[str, Any]] = (),
-                   speakers: list[dict[str, Any]] = ()) -> list[dict[str, Any]]:
+                   speakers: list[dict[str, Any]] = (),
+                   model_preloads: list[dict[str, Any]] = ()) -> list[dict[str, Any]]:
     """Return one character per BlueprintConfig.Id, preserving authored overrides."""
     template_by_type = {row.get("BlueprintType"): (index, row) for index, row in enumerate(templates)}
     instances: dict[Any, list[tuple[int, dict[str, Any]]]] = defaultdict(list)
@@ -50,6 +51,7 @@ def normalize_npcs(blueprints: list[dict[str, Any]], templates: list[dict[str, A
         fixed_by_shop[row.get("ShopId")].append(row)
     montage_by_id = {row.get("Id"): row for row in montages}
     abp_by_id = {row.get("Id"): row for row in abp_montages}
+    preload_by_id = {row.get("Id"): row for row in model_preloads if type(row.get("Id")) is int}
 
     def localization(key: Any) -> dict[str, Any] | None:
         if not isinstance(key, str) or not key:
@@ -107,11 +109,26 @@ def normalize_npcs(blueprints: list[dict[str, Any]], templates: list[dict[str, A
                     montage_refs.append({"id": obj["MontageId"], "is_abp": obj.get("IsAbp"),
                                          "source": source, "path": path})
         proven_speakers = [speaker_keys[name["key"]]] if name and name["key"] in speaker_keys else []
+        base_model = components.get("ModelComponent") or {}
+        base_model = base_model if isinstance(base_model, dict) else {}
+        base_type = base_model.get("ModelType") or {}
+        base_type = base_type if isinstance(base_type, dict) else {}
+        model_types = [base_type]
+        for instance in selected:
+            override = instance["components"].get("ModelComponent", {})
+            if not isinstance(override, dict):
+                continue
+            override_type = override.get("ModelType", {})
+            if isinstance(override_type, dict):
+                model_types.append({**base_type, **override_type})
+        model_ids = {model.get("ModelId") for model in model_types
+                     if model.get("Type") == "ModelId" and type(model.get("ModelId")) is int}
         npc = {"blueprint_id": identifier, "blueprint_type": blueprint, "template_id": template.get("Id"),
                "source": bp.get("_client_source"),
                "template_source": template.get("_client_source"),
                "template_row": template_index,
                "components": components, "instances": selected, "model": components.get("ModelComponent"),
+               "model_preloads": [preload_by_id[mid] for mid in sorted(model_ids) if mid in preload_by_id],
                "name_variants": [{"name": localization(key), "sources": sources}
                                  for key, sources in sorted(variants.items(), key=lambda item: item[0] or "")],
                "shop_ids": sorted(shop_ids), "shop_actions": shop_actions,

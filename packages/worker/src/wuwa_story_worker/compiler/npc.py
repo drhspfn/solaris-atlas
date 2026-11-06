@@ -32,7 +32,7 @@ def compile_npcs(root: Path, writer: Writer, english: dict[str, dict[str, Any]])
         rows("level_entity/levelentityconfig.json"), english,
         rows("shop/shopinfo.json"), shop_fixed,
         rows("AbpMontageData/abpmontagedata.json"), rows("MontageData/montagedata.json"),
-        rows("speaker/speaker.json"),
+        rows("speaker/speaker.json"), rows("model_config_preload/modelconfigpreload.json"),
     )
     for record in records:
         writer.emit("character", record)

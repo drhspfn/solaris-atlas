@@ -8,7 +8,7 @@ from pathlib import Path
 from flatbuffers.number_types import Int32Flags
 from flatbuffers.table import Table
 
-from wuwa_story_worker.map_sources import flag, integer, open_db, table, text
+from wuwa_story_worker.map_sources import flag, integer, open_db, strings, table, text
 
 
 def _vector(row, field, pairs=False):
@@ -51,6 +51,7 @@ TABLES = (
     ('db_speaker.db', 'speaker', 'BinData/speaker/speaker.json'),
     ('db_shop.db', 'shopinfo', 'BinData/shop/shopinfo.json'),
     ('db_shop.db', 'shopfixed', 'BinData/shop/shopfixed.json'),
+    ('db_model_config_preload.db', 'modelconfigpreload', 'BinData/model_config_preload/modelconfigpreload.json'),
 )
 
 
@@ -87,6 +88,12 @@ def native_rows(config, database, name, asset_version):
                     ('HeadRoundIconAssetMaleVariant', 7), ('RolePileIconAsset', 8))})
                 record.update({key: integer(row, index, -1) for key, index in (
                     ('NameStringKey', 1), ('TitleStringKey', 2), ('Name', 3), ('Title', 9))})
+            elif name == 'modelconfigpreload':
+                # Field offsets follow the client's generated ModelConfigPreload.js.
+                record['ActorClassPath'] = text(row, 1) if row.Offset(6) else None
+                record.update({key: strings(row, index) for index, key in enumerate(
+                    ('ActorClass', 'Animations', 'Effects', 'Audios', 'Meshes', 'Materials',
+                     'AnimationBlueprints', 'Others'), 2)})
             else:
                 record = decode_shop(blob, name == 'shopfixed')
             record['_client_source'] = {'asset_version': asset_version, 'database': database,

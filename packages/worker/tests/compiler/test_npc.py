@@ -81,6 +81,34 @@ def test_explicit_name_key_can_link_speaker():
     assert rows[0]["npc"]["speakers"] == ["speaker:7"]
 
 
+def test_model_preloads_use_effective_models_and_compile_optional_input(tmp_path):
+    blueprint = [{"Id": 1, "BlueprintType": "A", "EntityType": "Npc"}]
+    template = [{"BlueprintType": "A", "ComponentsData": {
+        "BaseInfoComponent": {"Category": {"MainType": "Npc"}},
+        "ModelComponent": {"ModelType": {"Type": "ModelId", "ModelId": 10}}}}]
+    entities = [{"BlueprintType": "A", "ComponentsData": {"ModelComponent": {"ModelType": value}}}
+                for value in ({"ModelId": 20}, {"Type": "Npc", "ModelId": 30},
+                              {"ModelId": 999}, {"ModelId": True})]
+    preloads = [{"Id": i, "Meshes": [f"/Game/{i}"], "_client_source": {"key": i}}
+                for i in (10, 20, 30, 40)]
+    records = normalize_npcs(blueprint, template, entities, {}, model_preloads=preloads)
+    assert records[0]["npc"]["model_preloads"] == preloads[:2]
+    assert normalize_npcs(blueprint, template, entities, {})[0]["npc"]["model_preloads"] == []
+
+    for path, data in (("blueprint/blueprintconfig.json", blueprint),
+                       ("template/templateconfig.json", template),
+                       ("level_entity/levelentityconfig.json", entities),
+                       ("model_config_preload/modelconfigpreload.json", preloads)):
+        target = tmp_path / "BinData" / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(data), encoding="utf-8")
+    writer = Writer(tmp_path / "out", "test")
+    compile_npcs(tmp_path, writer, {})
+    writer.finish()
+    row = json.loads((tmp_path / "out/entities/character.jsonl").read_text(encoding="utf-8"))
+    assert row["npc"]["model_preloads"] == preloads[:2]
+
+
 def test_research_native_name_variants():
     # Actual keys and instance evidence from the native source research export.
     iris = "Entity_beccf0c91f56d418c84e5cb684eff4012e563863774a907f4e6c3f6e19f55fd3"
