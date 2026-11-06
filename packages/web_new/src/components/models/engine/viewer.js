@@ -35,7 +35,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   let disposed = false, settings = initialSettings, model, gltf, mixer, action, physics, root, face;
   let clips = [], animationPack, boneList, applied = false, full = false;
   let qualityRequest, facialRequest, animationRequest, installations = Promise.resolve();
-  let accessoryNodes = new Map();
+  let accessories;
   const accessoryVisibility = {};
   const commandRequests = new Map();
   const loading = { quality: false, animations: false, facial: false };
@@ -114,6 +114,11 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     return data;
   }
   function restore() { if (applied) { physics.restore(); applied = false; } }
+  function updateMixer(delta) {
+    accessories?.restore();
+    mixer.update(delta);
+    accessories?.apply();
+  }
   function resetPhysics() { restore(); physics?.reset(); }
   function reset() {
     follow.detach(); camera.up.set(0, 1, 0); controls.target.copy(target);
@@ -132,8 +137,8 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   function selectAnimation(name) {
     const clip = clips.find(item => item.name === name);
     if (!clip || !mixer) return;
-    resetPhysics(); mixer.stopAllAction();
-    action = mixer.clipAction(clip); action.reset().play(); mixer.update(0);
+    resetPhysics(); accessories?.restore(); mixer.stopAllAction();
+    action = mixer.clipAction(clip); action.reset().play(); updateMixer(0);
     face?.update(name, 0); root?.apply();
     emit({ animation: name }); reportTime();
   }
@@ -147,7 +152,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     if (initial) {
       selectAnimation(initial);
       if (initial === previous?.name) {
-        action.time = previous.time; mixer.update(0); face?.update(initial, action.time); reportTime();
+        action.time = previous.time; updateMixer(0); face?.update(initial, action.time); reportTime();
       }
     }
   }
@@ -185,8 +190,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     if (mixer) { mixer.stopAllAction(); mixer.uncacheRoot(model); }
     if (model) { stage.remove(model); disposeObject(model); }
     gltf = loaded; model = loaded.scene; stage.add(model); prepareAnimatedMeshes(model);
-    const declared = declaredAccessories(model, accessoryVisibility);
-    accessoryNodes = declared.nodes;
+    const declared = accessories = declaredAccessories(model, accessoryVisibility);
     for (const option of declared.options) accessoryVisibility[option.name] = option.visible;
     emit({ accessories: declared.options });
     const bounds = new THREE.Box3().setFromObject(model);
@@ -311,7 +315,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     if (mixer) {
       restore(); root?.restore();
       if (settings.turntable && !preview) model.rotation.y += delta * 0.5;
-      mixer.update(settings.playing && !preview ? delta * settings.speed : 0); root?.apply();
+      updateMixer(settings.playing && !preview ? delta * settings.speed : 0); root?.apply();
       if (physics && settings.physics && (settings.playing || settings.turntable) && !preview) {
         if (!delta) physics.reset(); physics.update(delta, settings.strength); applied = delta > 0;
       }
@@ -327,15 +331,14 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   return {
     settings: applySettings, command, animation: selectAnimation,
     accessory(name, visible) {
-      const node = accessoryNodes.get(name);
-      if (!node || typeof visible !== 'boolean') return;
-      node.visible = visible; accessoryVisibility[name] = visible;
-      emit({ accessories: [...accessoryNodes].map(([name, node]) => ({ name, visible: node.visible })) });
+      if (!accessories?.set(name, visible)) return;
+      accessoryVisibility[name] = visible;
+      emit({ accessories: [...accessories.nodes.keys()].map(name => ({ name, visible: accessoryVisibility[name] })) });
     },
     face(name) { face?.select(name); face?.update(action?.getClip().name, action?.time || 0); emit({ face: name }); reportTime(); },
     seek(time) {
       resetPhysics();
-      if (action) { action.time = THREE.MathUtils.clamp(time, 0, action.getClip().duration); mixer.update(0); root?.apply(); }
+      if (action) { action.time = THREE.MathUtils.clamp(time, 0, action.getClip().duration); updateMixer(0); root?.apply(); }
       else if (face) face.time = Math.max(0, time);
       face?.update(action?.getClip().name, action?.time || 0); reportTime();
     },

@@ -19,11 +19,19 @@ function rig(animated = false, facial = false) {
   return { scene, mesh, bone, parser: { associations: new Map([[bone, { nodes: 0 }]]), json: { nodes: [{ name: 'Hips' }] } },
     animations: animated ? [new THREE.AnimationClip('Stand1', 1, [new THREE.VectorKeyframeTrack('Hips.position', [0, 1], [0, 0, 0, 2, 0, 0])])] : [] };
 }
-async function viewer({ preview = false, defer = false, hold = false, accessory = false } = {}) {
+async function viewer({ preview = false, defer = false, hold = false, accessory = false, boneAccessory = false } = {}) {
   const requests = [], events = new Map(), changes = [], pending = new Map();
   let frame, disconnected = false, destroyed = false, failure = false, finish;
   let geometryDisposals = 0;
   const low = rig(), full = rig(false, true), pack = rig(true);
+  if (boneAccessory) {
+    for (const model of [low, full]) {
+      model.bone.scale.set(2, 3, 4);
+      model.bone.userData = { accessory_name: 'Bone: Hips', default_visible: true,
+        attachment_manifest: JSON.stringify({ name: 'Bone: Hips', visible: true, kind: 'bone_visibility', bone: 'Hips', events: [] }) };
+    }
+    pack.animations[0].tracks.push(new THREE.VectorKeyframeTrack('Hips.scale', [0, 1], [1, 1, 1, 3, 3, 3]));
+  }
   if (accessory) for (const model of [low, full]) {
     const anchor = new THREE.Group();
     anchor.userData = { accessory_name: 'Hat', default_visible: true,
@@ -85,6 +93,25 @@ test('declared accessory visibility survives upgrading model quality', async () 
   await v.controller.command('quality');
   assert.equal(v.full.accessory.visible, false);
   assert.equal(v.state.accessories[0].visible, false);
+  v.controller.dispose();
+});
+
+test('bone masks survive animation load, paused frames, seek and quality upgrade', async () => {
+  const v = await viewer({ boneAccessory: true });
+  v.controller.accessory('Bone: Hips', false);
+  await v.controller.command('animations');
+  assert.deepEqual(v.low.bone.scale.toArray(), [0, 0, 0]);
+  v.controller.seek(0.5);
+  assert.deepEqual(v.low.bone.scale.toArray(), [0, 0, 0]);
+  v.frame(100); v.frame(200);
+  assert.deepEqual(v.low.bone.scale.toArray(), [0, 0, 0]);
+  await v.controller.command('quality');
+  assert.deepEqual(v.full.bone.scale.toArray(), [0, 0, 0]);
+  v.controller.settings({ ...v.settings, playing: true }); v.frame(300);
+  assert.deepEqual(v.full.bone.scale.toArray(), [0, 0, 0]);
+  v.controller.accessory('Bone: Hips', true);
+  assert.deepEqual(v.full.bone.scale.toArray(), [2, 3, 4]);
+  assert.equal(v.state.accessories[0].visible, true);
   v.controller.dispose();
 });
 
