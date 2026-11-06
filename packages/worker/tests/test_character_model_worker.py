@@ -32,6 +32,14 @@ def test_model_identity_comes_from_mesh_id_and_preload_not_portrait_names():
         model_sources(role, {**preload, "Meshes": preload["Meshes"] * 2})
 
 
+def test_playable_model_preserves_authored_actor_component_blueprint():
+    result = model_sources({"MeshId": 23}, {
+        "Id": 23, "Meshes": ["/Game/Aki/Character/Role/Female/Test/Model/Rig.Rig"],
+        "ActorClassPath": "/Game/Aki/Character/Role/Female/Test/BP_Test.BP_Test_C",
+    })
+    assert result["component_blueprint"] == "Aki/Character/Role/Female/Test/BP_Test"
+
+
 def test_composite_component_requires_export_and_matching_skeleton(tmp_path):
     converted, cooked = tmp_path / "converted", tmp_path / "cooked"
     component = "Aki/Character/Role/Test/Model/Up2"

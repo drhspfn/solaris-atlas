@@ -33,7 +33,9 @@ def model_sources(role, preload):
     if not mesh.startswith("Aki/Character/Role/") or "/Model/" not in mesh:
         raise ValueError("Authored mesh is not a character rig")
     blueprints = [authored_package(path) for path in preload.get("AnimationBlueprints", [])]
-    return {"model": mesh, "blueprints": sorted(set(blueprints))}
+    return {"model": mesh, "blueprints": sorted(set(blueprints)),
+            **({"component_blueprint": authored_package(preload["ActorClassPath"])}
+               if preload.get("ActorClassPath") else {})}
 
 
 def npc_model_sources(component, preloads=()):

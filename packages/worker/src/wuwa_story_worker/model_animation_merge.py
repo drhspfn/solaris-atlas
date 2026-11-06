@@ -252,7 +252,7 @@ def _read_part(path):
     return data, 28 + length, byte_length, names, topology, transforms
 
 
-def merge_animation_glbs(parts: list[Path], destination: Path) -> None:
+def merge_animation_glbs(parts: list[Path], destination: Path, *, source_paths=None) -> None:
     """Validate compatible animation batches, stream their BIN data, then atomically publish.
 
     JSON metadata is retained; binary validation is bounded to one input batch and
@@ -308,6 +308,11 @@ def merge_animation_glbs(parts: list[Path], destination: Path) -> None:
                 if not isinstance(extras, dict):
                     raise ValueError("Animation extras must be an object for catalog metadata")
                 extras["solaris_atlas"] = classify_animation(clip["name"])
+                if source_paths is not None:
+                    source = source_paths.get(clip["name"])
+                    if not isinstance(source, str) or not source:
+                        raise ValueError("Animation clip has no exact authored source")
+                    extras["solaris_atlas"]["source"] = source
                 merged["animations"].append(clip)
             sources.append((path, offset, length, before))
             binary_size += length + (-length % 4)

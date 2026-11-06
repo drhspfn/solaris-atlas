@@ -29,6 +29,17 @@ def read_glb(path):
     return json.loads(raw[20 : 20 + length]), raw[28 + length :]
 
 
+def test_merge_preserves_exact_source_for_linked_animation_binding(tmp_path):
+    source, output = tmp_path / "part.glb", tmp_path / "all.glb"
+    part(source, "Stand1")
+    package = "Client/Content/Aki/Character/Test/Stand1.Stand1"
+    merger.merge_animation_glbs([source], output, source_paths={"Stand1": package})
+    data, _ = read_glb(output)
+    assert data["animations"][0]["extras"]["solaris_atlas"]["source"] == package
+    with pytest.raises(ValueError, match="exact authored source"):
+        merger.merge_animation_glbs([source], tmp_path / "bad.glb", source_paths={})
+
+
 def test_merge_preserves_joint_identity_without_counting_wrapper_as_bone(tmp_path):
     paths = [tmp_path / "a.glb", tmp_path / "b.glb"]
     for path, name in zip(paths, ["Walk", "Run"], strict=True):
