@@ -1,0 +1,168 @@
+{
+  "source_db": "scratch\\music-context-authored-20261105\\closure\\Client\\Content\\Aki\\ConfigDB\\db_flowState.db",
+  "source_db_sha256": "09169c5d48aa1f00f73d619726beed39a6e5a8d2b34b93154d5e978b48429180",
+  "native_record_sha256": "e4291ca6ffcd11da1575d6cc8a29868aac7eb90e447f8a37e7f3178e07aa9d8d",
+  "state_key": "\u5267\u60c5_3_5_\u7384\u65b9\u57ce_\u51b3\u6218_4_3_5",
+  "m0374": {
+    "Name": "PlayMovie",
+    "Params": {
+      "VideoName": "M0374",
+      "Mp4FrameEvents": [
+        {
+          "Second": 0,
+          "EventActions": [
+            {
+              "Name": "PostAkEvent",
+              "Params": {
+                "EventConfig": {
+                  "Type": "MusicSubtitle",
+                  "MusicSubtitleGroupTag": "M0374",
+                  "AkEvent": "/Game/Aki/WwiseAudio/Events/play_all_sound_m0374.play_all_sound_m0374"
+                }
+              },
+              "ActionGuid": "365dd627143f44cb9e2d6ad3fa938208",
+              "ActionId": 5000198
+            }
+          ]
+        }
+      ]
+    },
+    "ActionGuid": "dbeb11bcf25c44558eab0eafc59601e8",
+    "ActionId": 5000208
+  },
+  "other_actual_actions": [
+    {
+      "state_key": "\u5267\u60c5_3_4_\u8fb9\u7f18\u884c\u8005\u8054\u52a82_3_2",
+      "action_index": 1,
+      "action": {
+        "Name": "PlayMovie",
+        "Params": {
+          "VideoName": "M0361",
+          "Mp4FrameEvents": [
+            {
+              "Second": 2,
+              "EventActions": [
+                {
+                  "Name": "FadeInScreen",
+                  "Params": {
+                    "Ease": {
+                      "Type": 2,
+                      "Duration": 0
+                    },
+                    "ScreenType": "Black"
+                  },
+                  "ActionGuid": "22df587224844cfaba8b681c5128873c",
+                  "ActionId": 5000093
+                }
+              ]
+            }
+          ]
+        },
+        "ActionGuid": "7dd8281467a3400d9476d74748ea0990",
+        "ActionId": 5000042
+      },
+      "signature": [
+        [],
+        [
+          "FadeInScreen"
+        ],
+        true
+      ]
+    },
+    {
+      "state_key": "\u5267\u60c5_3_1_\u62c9\u6d77\u6d1b\u4e3b\u7ebf_\u4e0a\u534a_2_5_2",
+      "action_index": 1,
+      "action": {
+        "Name": "PlayMovie",
+        "Params": {
+          "VideoName": "M3_2_13",
+          "Mp4FrameEvents": [
+            {
+              "Second": 0,
+              "EventActions": [
+                {
+                  "Name": "PostAkEvent",
+                  "Params": {
+                    "EventConfig": {
+                      "Type": "MusicSubtitle",
+                      "MusicSubtitleGroupTag": "m_3_2_13",
+                      "AkEvent": "/Game/Aki/WwiseAudio/Events/play_story_music_m3_2_13.play_story_music_m3_2_13"
+                    }
+                  },
+                  "ActionGuid": "53d5ebc8ff044f12aae97e49c8fd228c",
+                  "ActionId": 5000210
+                }
+              ]
+            },
+            {
+              "Second": 101,
+              "EventActions": [
+                {
+                  "Name": "PostAkEvent",
+                  "Params": {
+                    "EventConfig": {
+                      "Type": "Global",
+                      "AkEvent": "/Game/Aki/WwiseAudio/Events/play_interact_seq_title_subtitle.play_interact_seq_title_subtitle"
+                    }
+                  },
+                  "ActionGuid": "b0d1552540bd4d78b13a930ee997e44e",
+                  "ActionId": 5000227
+                }
+              ]
+            },
+            {
+              "Second": 101,
+              "EventActions": [
+                {
+                  "Name": "OpenSystemBoard",
+                  "Params": {
+                    "SystemType": "PictureCaption",
+                    "BoardId": 0,
+                    "PictureCaptionConfig": {
+                      "PictureCaption": "3_1_VersionTitleName",
+                      "Duration": 4
+                    }
+                  },
+                  "ActionGuid": "aa6484b8bf9c4d329df6b1ead2d5411d",
+                  "ActionId": 5000109,
+                  "Async": true
+                }
+              ]
+            },
+            {
+              "Second": 102,
+              "EventActions": [
+                {
+                  "Name": "FadeInScreen",
+                  "Params": {
+                    "Ease": {
+                      "Type": 2,
+                      "Duration": 1
+                    },
+                    "ScreenType": "Black"
+                  },
+                  "ActionGuid": "28145d91810e4782bc0b2f3520f68d35",
+                  "ActionId": 5000150
+                }
+              ]
+            }
+          ]
+        },
+        "ActionGuid": "1899b48e42b1435abceeb0d54701a804",
+        "ActionId": 5000208
+      },
+      "signature": [
+        [
+          "Global",
+          "MusicSubtitle"
+        ],
+        [
+          "FadeInScreen",
+          "OpenSystemBoard",
+          "PostAkEvent"
+        ],
+        true
+      ]
+    }
+  ]
+}

@@ -13,6 +13,7 @@ from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceRecord
 from wuwa_story.db.models.storage import FileReference
+from wuwa_story.story.cutscene_publications import publication_types
 
 MAX_CONTEXT_CHARACTERS = 12_000
 MAX_CONTEXT_ROWS = 100
@@ -111,7 +112,7 @@ async def video_context_snapshot(
         "rows": [],
         "truncated": False,
     }
-    if reference.reference_type != "cutscene_video":
+    if reference.reference_type not in publication_types("cutscene_video"):
         snapshot["basis"] = "caller" if context else "unavailable"
         if context:
             snapshot["context"] = context[:MAX_CONTEXT_CHARACTERS]

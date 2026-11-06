@@ -12,13 +12,13 @@ class AudioStem(StrictModel):
     language: Literal["en", "ja", "ko", "zh"] | None = None
     rover: Literal["male", "female"] | None = None
     path: str = Field(min_length=1)
-    sources: list[str] = Field(min_length=1, max_length=100)
+    sources: list[str] = Field(min_length=1, max_length=1000)
     evidence: str = Field(min_length=1)
 
     @model_validator(mode="after")
     def language_matches_role(self):
-        if (self.role == "voice") != (self.language is not None):
-            raise ValueError("Voice stems require a language; other stems are language independent")
+        if self.role == "voice" and self.language is None:
+            raise ValueError("Voice stems require a language")
         return self
 
 
@@ -26,7 +26,9 @@ class CutsceneAudioRecipe(StrictModel):
     asset: str = Field(pattern=r"^asset:ue:/Game/")
     asset_version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
     duration: float = Field(gt=0)
-    stems: list[AudioStem] = Field(min_length=1, max_length=16)
+    stems: list[AudioStem] = Field(min_length=1, max_length=64)
+    complete: bool = True
+    missing_sources: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def unique_roles(self):

@@ -4,6 +4,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
+CUTSCENE_ASSEMBLY_SCHEMA = 2
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
@@ -117,10 +119,40 @@ class Soundtrack(StrictModel):
         return value
 
 
+class FrameAudioInput(StrictModel):
+    bank: str = Field(min_length=1)
+    audio_directory: str = Field(min_length=1)
+    language: Literal["en", "ja", "ko", "zh"] | None = None
+    rover: Literal["male", "female"] | None = None
+    start_seconds: float = Field(ge=0)
+    end_seconds: float | None = Field(default=None, gt=0)
+    reference: str = Field(pattern=r"^/Game/Aki/WwiseAudio/Events/")
+    source: dict = Field(default_factory=dict)
+    mode: Literal["Global", "MusicSubtitle"]
+    stop_policy: str = "not_inferred"
+    source_media: list[dict] = Field(default_factory=list, max_length=1000)
+    source_files: list[str] = Field(default_factory=list, max_length=1000)
+    tools: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def valid_range(self):
+        if self.end_seconds is not None and self.end_seconds <= self.start_seconds:
+            raise ValueError("Frame audio end must follow its source start")
+        return self
+
+
 class VideoInput(StrictModel):
     asset: str = Field(pattern=r"^asset:ue:/Game/")
     # 23 real caption voices already produce 92 localized inputs for one video.
     soundtrack: list[Soundtrack] = Field(default_factory=list, max_length=256)
+    frame_audio: list[FrameAudioInput] = Field(default_factory=list, max_length=256)
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_identity(self, handler):
+        value = handler(self)
+        if not self.frame_audio:
+            value.pop('frame_audio', None)
+        return value
 
 
 class CutsceneRecipe(StrictModel):

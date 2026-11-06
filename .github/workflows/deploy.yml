@@ -6,7 +6,7 @@ on:
       component:
         description: Component to deploy
         type: choice
-        options: [infrastructure, api, web, caddy, snapshot-worker, story-agent, cutscene-vision, all]
+        options: [infrastructure, api, web, caddy, snapshot-worker, story-agent, cutscene-vision, cutscene-assembly-worker, all]
         required: true
       image_tag:
         description: Image tag (defaults to main; a full or short commit SHA also works)

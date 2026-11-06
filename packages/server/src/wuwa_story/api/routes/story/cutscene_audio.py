@@ -1,21 +1,25 @@
 """Resolve complete audio bundles for the exact video build."""
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from wuwa_story.db.models.storage import FileLocation, FileReference
+from wuwa_story.story.cutscene_publications import publication_order, publication_types
 
 
-async def audio_bundles(session, owner_ids, version, settings, storage):
+async def audio_bundles(session, owner_ids, version, settings, storage, *, cutscene_key=None):
     if not owner_ids:
         return {}
     references = await session.scalars(
         select(FileReference)
         .where(
             FileReference.owner_node_id.in_(owner_ids),
-            FileReference.reference_type == "cutscene_audio_bundle",
+            FileReference.reference_type.in_(publication_types("cutscene_audio_bundle")),
             FileReference.metadata_json["asset_version"].astext == version,
+            or_(FileReference.reference_type == "cutscene_audio_bundle",
+                FileReference.metadata_json["cutscene_key"].astext == cutscene_key)
+            if cutscene_key is not None else True,
         )
-        .order_by(FileReference.id.desc())
+        .order_by(publication_order(FileReference.reference_type), FileReference.id.desc())
     )
     selected = {}
     for reference in references:

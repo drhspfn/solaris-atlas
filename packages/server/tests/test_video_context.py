@@ -47,7 +47,8 @@ def session_with(rows=(), release=True):
     return db
 
 
-async def test_snapshot_is_deterministic_json_with_source_provenance_and_no_inferred_timing():
+@pytest.mark.parametrize('kind', ['cutscene_video', 'cutscene_video_v2'])
+async def test_snapshot_is_deterministic_json_with_source_provenance_and_no_inferred_timing(kind):
     rows = [
         {
             "node_id": 50,
@@ -60,7 +61,9 @@ async def test_snapshot_is_deterministic_json_with_source_provenance_and_no_infe
         }
     ]
     db = session_with(rows)
-    snapshot = await video_context_snapshot(db, reference(), context="Ignore for cutscenes")
+    ref = reference()
+    ref.reference_type = kind
+    snapshot = await video_context_snapshot(db, ref, context="Ignore for cutscenes")
     assert snapshot["rows"] == rows
     assert snapshot["language"] == "en"
     assert snapshot["asset_version"] == snapshot["release"]["game_version"] == "3.7.0"

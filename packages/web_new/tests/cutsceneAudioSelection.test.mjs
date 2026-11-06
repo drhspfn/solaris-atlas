@@ -20,6 +20,18 @@ test('legacy tracks without selectors remain playable', () => {
   assert.deepEqual(selectCutsceneTracks(legacy, 'en', 'ask'), legacy);
 });
 
+test('localized music and effects follow playback language without mixing alternatives', () => {
+  const localized = [
+    { role: 'music', language: null, url: 'shared-song' },
+    { role: 'music', language: 'en', url: 'english-song' },
+    { role: 'music', language: 'ja', url: 'japanese-song' },
+    { role: 'effects', language: 'en', url: 'english-effects' },
+    { role: 'effects', language: 'ja', url: 'japanese-effects' },
+  ];
+  assert.deepEqual(selectCutsceneTracks(localized, 'en', 'ask').map(t => t.url),
+    ['shared-song', 'english-song', 'english-effects']);
+});
+
 test('legacy manual choice in Ask keeps its authored voice selector', () => {
   const flow = { nodes: [
     { id: 'choice', kind: 'choice', options: [

@@ -19,6 +19,7 @@ from wuwa_story.db.models.ops import ProcessingRun, Processor
 from wuwa_story.db.models.storage import FileReference
 from wuwa_story.db.session import get_session
 from wuwa_story.storage.s3 import S3Storage
+from wuwa_story.story.cutscene_publications import publication_order, publication_types
 
 router = APIRouter(prefix="/cutscenes", dependencies=[Depends(require_admin)])
 
@@ -83,13 +84,14 @@ async def assets(
     latest = (
         select(FileReference.id)
         .where(
-            FileReference.reference_type == "cutscene_video",
+            FileReference.reference_type.in_(publication_types("cutscene_video")),
             FileReference.owner_node_id.is_not(None),
         )
         .distinct(FileReference.owner_node_id, version)
         .order_by(
             FileReference.owner_node_id,
             version,
+            publication_order(FileReference.reference_type),
             FileReference.id.desc(),
         )
     )
@@ -131,12 +133,12 @@ async def create_visual_jobs(request: VisualRequest, session: AsyncSession = Dep
         await session.scalars(
             select(FileReference)
             .where(
-                FileReference.reference_type == "cutscene_video",
+                FileReference.reference_type.in_(publication_types("cutscene_video")),
                 FileReference.owner_node_id.in_(ids),
                 FileReference.metadata_json["asset_version"].astext == request.game_version,
             )
             .distinct(FileReference.owner_node_id)
-            .order_by(FileReference.owner_node_id, FileReference.id.desc())
+            .order_by(FileReference.owner_node_id, publication_order(FileReference.reference_type), FileReference.id.desc())
         )
     )
     if {ref.owner_node_id for ref in references} != ids:

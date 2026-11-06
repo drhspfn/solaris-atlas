@@ -207,6 +207,8 @@ async def test_cutscene_audio_finds_base_music_and_init_outside_localized_voice_
 
 @pytest.fixture(autouse=True)
 def isolate_source_lookups(monkeypatch):
+    monkeypatch.setattr(release_media, 'frame_audio_inputs', AsyncMock(return_value=([], {
+        'contexts': [], 'diagnostics': []})))
     monkeypatch.setattr(release_media, "run_workspace_id", AsyncMock(return_value=None))
     monkeypatch.setattr(release_media, "cleanup_workspace", AsyncMock(return_value=False))
     monkeypatch.setattr(release_media, "source_context", AsyncMock(return_value={"tools": {}}))

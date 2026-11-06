@@ -169,9 +169,9 @@ case "$DEPLOY_COMPONENT" in
   api) services=(api) ;;
   web) services=(web) ;;
   caddy) services=(caddy) ;;
-  snapshot-worker) services=(snapshot-worker asset-worker media-worker projection-worker image-worker audio-worker video-worker model-worker) ;;
-  story-agent|cutscene-vision) services=("$DEPLOY_COMPONENT") ;;
-  all) services=(api web caddy snapshot-worker asset-worker media-worker projection-worker image-worker audio-worker video-worker model-worker story-agent cutscene-vision) ;;
+  snapshot-worker) services=(snapshot-worker asset-worker media-worker projection-worker image-worker audio-worker video-worker model-worker cutscene-assembly-worker) ;;
+  story-agent|cutscene-vision|cutscene-assembly-worker) services=("$DEPLOY_COMPONENT") ;;
+  all) services=(api web caddy snapshot-worker asset-worker media-worker projection-worker image-worker audio-worker video-worker model-worker story-agent cutscene-vision cutscene-assembly-worker) ;;
   *) echo "Unsupported DEPLOY_COMPONENT: $DEPLOY_COMPONENT" >&2; exit 2 ;;
 esac
 
@@ -204,7 +204,7 @@ if [[ "$DEPLOY_COMPONENT" == api || "$DEPLOY_COMPONENT" == all ]]; then
   # before DDL, and restore exactly the running containers even if migration fails.
   migrate_stopped() (
       running_clients=$("${compose[@]}" ps -q --status running \
-        api snapshot-worker asset-worker media-worker projection-worker image-worker audio-worker video-worker model-worker story-agent cutscene-vision)
+        api snapshot-worker asset-worker media-worker projection-worker image-worker audio-worker video-worker model-worker story-agent cutscene-vision cutscene-assembly-worker)
       migration_clients=()
       if [[ -n "$running_clients" ]]; then
         mapfile -t migration_clients <<< "$running_clients"
@@ -241,7 +241,7 @@ fi
 if [[ "$DEPLOY_COMPONENT" != infrastructure ]]; then
   pull_services=()
   for service in "${services[@]}"; do
-    if [[ "$WORKER_IMAGE" == solaris-atlas-worker:* && ( "$service" == snapshot-worker || "$service" == media-worker || "$service" == projection-worker || "$service" == asset-worker || "$service" == image-worker || "$service" == audio-worker || "$service" == video-worker ) ]]; then
+    if [[ "$WORKER_IMAGE" == solaris-atlas-worker:* && ( "$service" == snapshot-worker || "$service" == media-worker || "$service" == projection-worker || "$service" == asset-worker || "$service" == image-worker || "$service" == audio-worker || "$service" == video-worker || "$service" == cutscene-assembly-worker ) ]]; then
       docker image inspect "$WORKER_IMAGE" >/dev/null
     else
       pull_services+=("$service")
@@ -254,6 +254,12 @@ case "$DEPLOY_COMPONENT" in
   snapshot-worker|all)
     "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-assets-long-jobs \
       '^wuwa[.](snapshot-build|asset-(download|extract)|release-(media|images)|entity-(media|images)|event-media|character-model|pool-(coordinator|image|audio|video))[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues
+    ;;
+esac
+case "$DEPLOY_COMPONENT" in
+  cutscene-assembly-worker|all)
+    "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-cutscene-assembly-long-jobs \
+      '^wuwa[.]cutscene-assembly[.]v2$' '{"consumer-timeout":86400000}' --apply-to queues
     ;;
 esac
 if [[ "$DEPLOY_COMPONENT" == caddy ]]; then
@@ -292,6 +298,8 @@ fi
 if [[ "$DEPLOY_COMPONENT" == infrastructure ]]; then
   "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-assets-long-jobs \
     '^wuwa[.](snapshot-build|asset-(download|extract)|release-(media|images)|entity-(media|images)|event-media|character-model|pool-(coordinator|image|audio|video))[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues
+  "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-cutscene-assembly-long-jobs \
+    '^wuwa[.]cutscene-assembly[.]v2$' '{"consumer-timeout":86400000}' --apply-to queues
 fi
 # Updating a bind-mounted Caddyfile does not reload the running proxy. In
 # particular, switching the web image from nginx to Next.js changes its port.

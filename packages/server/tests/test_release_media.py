@@ -31,7 +31,9 @@ async def test_complete_story_repair_marks_index_for_ordered_media_followup(monk
 
 
 @pytest.mark.asyncio
-async def test_story_media_followup_keeps_images_and_movie_dependencies_without_catalog_or_voice_line_imports(monkeypatch):
+@pytest.mark.parametrize('schema', [1, 2])
+async def test_story_media_followup_keeps_images_and_movie_dependencies_without_catalog_or_voice_line_imports(monkeypatch, schema):
+    monkeypatch.setattr(release_media, 'CUTSCENE_ASSEMBLY_SCHEMA', schema)
     session = AsyncMock()
     session.get.return_value = SimpleNamespace(game_version='3.7.0')
     session.scalars.side_effect = [['flow_state:Story'], ['C0028']]
@@ -49,6 +51,12 @@ async def test_story_media_followup_keeps_images_and_movie_dependencies_without_
     assert [p['kind'] for p in payloads] == ['prepare', 'cutscene_assets', 'voice_packages', 'images', 'cutscene']
     assert next(p for p in payloads if p['kind'] == 'images')['targets'] == ['flow_state:Story']
     assert session.scalars.await_count == 2
+    queues = {call.args[0]['kind']: call.args[2] for call in publish.await_args_list}
+    expected = 'wuwa.cutscene-assembly.v2' if schema == 2 else release_media.QUEUE
+    assert queues['cutscene_assets'] == queues['cutscene'] == expected
+    assert queues['prepare'] == queues['voice_packages'] == release_media.QUEUE
+    assert queues['images'] == 'wuwa.release-images.v1'
+    assert all(p['cutscene_assembly_schema'] == schema for p in payloads if p['kind'] in {'cutscene_assets', 'cutscene'})
 
 
 @pytest.mark.asyncio
@@ -185,7 +193,10 @@ async def test_fanout_pins_dependencies_and_keeps_analysis_manual(monkeypatch):
     assert by_kind["cutscene"]["parent_id"] == by_kind["cutscene_assets"]["run_id"]
     assert by_kind["voices"]["parent_id"] == by_kind["voice_packages"]["run_id"]
     assert all(p["release_id"] == 9 and p["game_version"] == "1.0.0" for p in payloads)
-    assert all(call.args[2] == ("wuwa.release-images.v1" if call.args[0]["kind"] == "images" else "wuwa.release-media.v1") for call in published.await_args_list)
+    assert all(call.args[2] == (
+        'wuwa.cutscene-assembly.v2' if call.args[0]['kind'] in {'cutscene', 'cutscene_assets'} else
+        'wuwa.release-images.v1' if call.args[0]['kind'] == 'images' else 'wuwa.release-media.v1'
+    ) for call in published.await_args_list)
     assert session.commit.await_count == 1
 
 
@@ -374,7 +385,8 @@ async def test_fresh_root_renews_legacy_coordinators_once_without_resetting_leav
         id=10 + index, status=coordinator_status if kind in {"cutscene_assets", "voice_packages"} else "completed",
         raw_output={"asset_version": "3.7.0"} if index in {1, 2} and not coordinator_workspace else
                    {"asset_version": "3.7.0", "workspace_id": 10, "kept": kind},
-        metadata_json={"queue": release_media.QUEUE},
+        metadata_json={"queue": release_media.CUTSCENE_ASSEMBLY_QUEUE
+                       if kind in {'cutscene_assets', 'cutscene'} else release_media.QUEUE},
     ) for index, kind in enumerate(kinds)]
     original_outputs = [run.raw_output for run in runs]
     session = AsyncMock()
@@ -441,6 +453,8 @@ async def test_waiting_release_lock_refreshes_stale_coordinators_and_preserves_p
                            "targets": targets, "parent_id": parent}
                 if kind == "tree_order":
                     request["index_schema"] = 3
+                if kind in {"cutscene_assets", "cutscene"}:
+                    request['cutscene_assembly_schema'] = release_media.CUTSCENE_ASSEMBLY_SCHEMA
                 sync.add(release_media.ProcessingRun(
                     id=identity, processor_id=4,
                     input_hash=hashlib.sha256(json.dumps(request, sort_keys=True).encode()).digest(),

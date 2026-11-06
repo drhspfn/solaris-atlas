@@ -182,3 +182,52 @@ def test_image_queues_have_independent_worker_slots():
     limits=queue_concurrency()
     assert limits['release_images']==2
     assert limits['entity_images']==2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('deferred', [False, True])
+async def test_cutscene_v2_uses_normal_claim_lease_and_never_old_pool(monkeypatch, deferred):
+    from wuwa_story_worker.queues import QUEUES
+
+    assert QUEUES['cutscene_assembly'].name == 'wuwa.cutscene-assembly.v2'
+    assert queue_concurrency()['cutscene_assembly'] == 1
+    assert 'cutscene_assembly' in broker.MEDIA_QUEUES
+    channel, queue, connection = AsyncMock(), AsyncMock(), AsyncMock()
+    connection.channel.return_value = channel
+    ready = asyncio.Event()
+    queue.consume.side_effect = lambda *args, **kwargs: ready.set()
+    monkeypatch.setattr(broker.aio_pika, 'connect_robust', AsyncMock(return_value=connection))
+    declare = AsyncMock(return_value=(None, queue))
+    monkeypatch.setattr(broker, 'declare_queue', declare)
+    claim = AsyncMock(return_value=True)
+    monkeypatch.setattr(broker, 'claim_import', claim)
+    handler = AsyncMock(side_effect=broker.JobDeferred('busy') if deferred else None)
+    async def leased(payload, callback):
+        await callback(payload)
+    execute = AsyncMock(side_effect=leased)
+    monkeypatch.setattr(broker, 'execute_media_job', execute)
+    update = AsyncMock()
+    monkeypatch.setattr(broker, 'update_admin_run', update)
+    defer = AsyncMock()
+    monkeypatch.setattr(broker, 'defer_job', defer)
+    task = asyncio.create_task(broker.consume_jobs({'cutscene_assembly': handler}, route_media=True))
+    try:
+        await asyncio.wait_for(ready.wait(), 2)
+        payload = {'run_id': 123, 'job_type': 'media.release', 'kind': 'cutscene', 'cutscene_assembly_schema': 2}
+        import json
+        message = SimpleNamespace(body=json.dumps(payload).encode(), headers={}, redelivered=False,
+            message_id='assembly:123', type=None, ack=AsyncMock(), nack=AsyncMock())
+        await queue.consume.call_args.args[0](message)
+        claim.assert_awaited_once_with(payload, redelivered=False)
+        execute.assert_awaited_once_with(payload, handler)
+        assert declare.await_count == 1  # Never declares/forwards to pool_video.
+        channel.default_exchange.publish.assert_not_awaited()
+        if deferred:
+            update.assert_awaited_once_with(123, 'release_media', 'waiting_dependency', error='busy')
+            defer.assert_awaited_once_with(channel, 'cutscene_assembly', message)
+        else:
+            message.ack.assert_awaited_once()
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task

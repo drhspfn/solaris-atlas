@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
 import os
@@ -28,10 +29,17 @@ logger = logging.getLogger(__name__)
 EXCHANGE_NAME = "wuwa.jobs.v1"
 FAILED_EXCHANGE_NAME = "wuwa.jobs.failed.v1"
 JobHandler = Callable[[dict[str, Any]], Awaitable[None]]
-MEDIA_QUEUES = {"release_media", "event_media", "entity_media", "release_images", "entity_images"}
+MEDIA_QUEUES = {"release_media", "event_media", "entity_media", "release_images", "entity_images", "cutscene_assembly"}
 
 
 def transient_job_error(error: Exception) -> bool:
+    if isinstance(error, MemoryError):
+        return True
+    if isinstance(error, OSError) and error.errno in {
+        errno.EAGAIN, errno.EBUSY, errno.ENOMEM, errno.ENOSPC,
+        errno.EDQUOT, errno.EMFILE, errno.ENFILE, errno.EIO,
+    }:
+        return True
     if isinstance(error, subprocess.TimeoutExpired):
         return True
     if isinstance(error, subprocess.CalledProcessError):
@@ -288,6 +296,7 @@ async def consume_jobs(
                     payload = {}
                     source_key = message.type if job_key.startswith("pool_") else job_key
                     processor_key = {"release_images": "release_media", "event_media": "release_media",
+                                     "cutscene_assembly": "release_media",
                                      "entity_images": "entity_media", "snapshot_build": "snapshot_import"}.get(source_key, source_key)
                     try:
                         payload = json.loads(message.body)
@@ -296,7 +305,7 @@ async def consume_jobs(
                         # A deployment may change a kind's resource pool. Move
                         # retained private deliveries too, before executing them.
                         wrong_pool = job_key.startswith("pool_") and job_key != "pool_" + media_pool(payload)
-                        if (route_media and job_key in MEDIA_QUEUES) or wrong_pool:
+                        if (route_media and job_key in MEDIA_QUEUES and job_key != "cutscene_assembly") or wrong_pool:
                             destination = "pool_" + media_pool(payload)
                             headers = dict(message.headers or {})
                             if message.redelivered:
@@ -317,7 +326,7 @@ async def consume_jobs(
                                 return
                             await message.ack()
                             return
-                        if source_key in {"release_media", "event_media", "entity_media", "release_images", "entity_images", "asset_download",
+                        if source_key in {"cutscene_assembly", "release_media", "event_media", "entity_media", "release_images", "entity_images", "asset_download",
                                        "asset_extract", "snapshot_build", "character_model"}:
                             if not await claim_import(payload, redelivered=message.redelivered
                                                       or (message.headers or {}).get("pool_redelivered") is True):

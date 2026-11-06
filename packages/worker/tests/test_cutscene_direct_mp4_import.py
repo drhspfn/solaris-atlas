@@ -12,7 +12,8 @@ from wuwa_story_worker import cutscene_import
 
 
 @pytest.mark.asyncio
-async def test_direct_mp4_import_retains_original_provenance_without_reading_wrapper(tmp_path, monkeypatch):
+@pytest.mark.parametrize('preserve_complete', [False, True])
+async def test_direct_mp4_import_retains_original_provenance_without_reading_wrapper(tmp_path, monkeypatch, preserve_complete):
     source = "/Game/Aki/Movies/Storyboard/R0012.mp4"
     asset = "asset:ue:" + source
     relative = "Client/Content/Aki/Movies/Storyboard/R0012.mp4"
@@ -59,7 +60,7 @@ async def test_direct_mp4_import_retains_original_provenance_without_reading_wra
     async def register_file(_session, path, kind, **_kwargs):
         files.append((path, kind, path.read_bytes()))
         return SimpleNamespace(id=len(files))
-    async def reference(*args):
+    async def reference(*args, **kwargs):
         ref = SimpleNamespace(id=len(references) + 1, kind=args[4])
         references.append(ref)
         return ref
@@ -67,9 +68,16 @@ async def test_direct_mp4_import_retains_original_provenance_without_reading_wra
     monkeypatch.setattr(cutscene_import, "FileRegistrationService", lambda _: service)
     monkeypatch.setattr(cutscene_import, "publication_reference", reference)
 
-    result = await cutscene_import.import_cutscene_recipe(
-        recipe, tmp_path, tmp_path, tmp_path, tmp_path / "work", tmp_path / "decoder", tmp_path / "ffmpeg",
-        source_context=context)
+    args = (recipe, tmp_path, tmp_path, tmp_path, tmp_path / "work", tmp_path / "decoder", tmp_path / "ffmpeg")
+    if preserve_complete:
+        session.scalar.return_value = SimpleNamespace(metadata_json={'publication_complete': True})
+        with pytest.raises(ValueError, match='Incomplete cutscene rebuild'):
+            await cutscene_import.import_cutscene_recipe(*args, source_context=context,
+                                                        missing_assets=['unresolved native event'])
+        assert files == references == []
+        session.commit.assert_not_awaited()
+        return
+    result = await cutscene_import.import_cutscene_recipe(*args, source_context=context)
 
     assert result["videos"] == 1
     assert [(path, data) for path, kind, data in files if kind == "video_game"] == [(movie, original)]

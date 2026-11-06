@@ -17,6 +17,7 @@ from wuwa_story.agents.video_context import video_context_snapshot
 from wuwa_story.db.models.agents import AgentCall
 from wuwa_story.db.models.ops import ProcessingRun, Processor
 from wuwa_story.db.models.storage import FileObject, FileReference
+from wuwa_story.story.cutscene_publications import publication_order, publication_types
 
 VISION_VERSION = "cutscene-visual-v4"
 MIN_VISUAL_SECONDS = 5.0
@@ -131,7 +132,7 @@ async def enqueue_visual_job(
     text_context = await video_context_snapshot(session, reference, context=context)
     config = settings.public_config()
     report = None
-    if getattr(reference, "reference_type", None) == "cutscene_video" and reference.owner_node_id:
+    if getattr(reference, "reference_type", None) in publication_types("cutscene_video") and reference.owner_node_id:
         report = await visual_reference(session, reference.owner_node_id, reference.metadata_json.get("asset_version"))
         if report and (report.file_id != file.id or not report.metadata_json.get("events")
                        or report.metadata_json.get("title")):
@@ -194,10 +195,10 @@ async def visual_reference(session: AsyncSession, asset_id: int, version: str | 
         select(FileReference)
         .where(
             FileReference.owner_node_id == asset_id,
-            FileReference.reference_type == "cutscene_video",
+            FileReference.reference_type.in_(publication_types("cutscene_video")),
             *([FileReference.metadata_json["asset_version"].astext == version] if version else []),
         )
-        .order_by(FileReference.id.desc())
+        .order_by(publication_order(FileReference.reference_type), FileReference.id.desc())
         .limit(1)
     )
     if video is None:

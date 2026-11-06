@@ -166,6 +166,48 @@ compose=(record_compose)
         pattern = commands[policy].split("wuwa-assets-long-jobs ", 1)[1].split(" ", 1)[0]
         self.assertRegex("wuwa.character-model.v1", pattern)
 
+    def test_dedicated_cutscene_service_deploy_does_not_roll_other_workers(self):
+        result = self.deploy('cutscene-assembly-worker')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        startup = [line for line in result.stdout.splitlines() if line.startswith('up -d')]
+        self.assertEqual(startup, ['up -d cutscene-assembly-worker'])
+        workflow = (ROOT / '.github/workflows/production-deploy.yml').read_text()
+        self.assertIn('story-agent|cutscene-vision|cutscene-assembly-worker) components=(worker)', workflow)
+
+    def test_cutscene_v2_timeout_policy_is_exact_scoped_and_before_consumer(self):
+        for component in ('cutscene-assembly-worker', 'all', 'infrastructure', 'api', 'snapshot-worker'):
+            with self.subTest(component=component):
+                result = self.deploy(component)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                policies = [line for line in result.stdout.splitlines()
+                            if 'set_policy wuwa-cutscene-assembly-long-jobs ' in line]
+                if component not in {'cutscene-assembly-worker', 'all', 'infrastructure'}:
+                    self.assertEqual(policies, [])
+                    continue
+                self.assertEqual(len(policies), 1)
+                self.assertIn('^wuwa[.]cutscene-assembly[.]v2$', policies[0])
+                self.assertIn('{"consumer-timeout":86400000}', policies[0])
+                self.assertIn('--apply-to queues', policies[0])
+                if component == 'infrastructure':
+                    self.assertLess(result.stdout.index('up -d --wait'), result.stdout.index(policies[0]))
+                else:
+                    startup = next(line for line in result.stdout.splitlines()
+                                   if line.startswith('up -d ') and 'cutscene-assembly-worker' in line)
+                    self.assertLess(result.stdout.index(policies[0]), result.stdout.index(startup))
+
+    def test_dedicated_cutscene_compose_inherits_normal_worker_environment(self):
+        compose = (ROOT / 'infrastructure/prod/compose.yml').read_text()
+        service = compose.split('\n  cutscene-assembly-worker:\n', 1)[1].split('\n  projection-worker:', 1)[0]
+        self.assertIn('<<: *worker', service)
+        self.assertIn('["wuwa-story-worker", "run", "--queue", "cutscene_assembly"]', service)
+        self.assertIn('WUWA_QUEUE_CONCURRENCY: cutscene_assembly=1', service)
+        self.assertIn('WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker', service)
+        self.assertIn('replicas: 1', service)
+        self.assertIn('cpus: 1', service)
+        self.assertIn('mem_limit: ${WUWA_CUTSCENE_ASSEMBLY_MEMORY:-4g}', service)
+        self.assertIn('stop_grace_period: 21630s', service)
+        self.assertIn("WUWA_SHUTDOWN_TIMEOUT_SECONDS: '21600'", service)
+        self.assertNotIn('--pool', service)
     def test_infrastructure_waits_for_broker_before_setting_job_policy(self):
         result = self.deploy("infrastructure")
         self.assertEqual(result.returncode, 0, result.stderr)

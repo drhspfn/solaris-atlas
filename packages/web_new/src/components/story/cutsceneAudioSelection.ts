@@ -19,6 +19,6 @@ export function selectCutsceneTracks(
   return tracks.filter(
     (track) =>
       (!track.rover || track.rover === rover) &&
-      (track.role !== 'voice' || track.language === language),
+      (!track.language || track.language === language),
   );
 }

@@ -17,6 +17,16 @@ def test_stems_must_be_aligned_to_full_movie(tmp_path):
         validate_stem(path, 10)
 
 
+def test_native_fallback_keeps_one_rover_sound_but_excludes_music_and_other_languages():
+    from wuwa_story_worker.cutscene_import import fallback_frame_stems
+    shared = {'role': 'effects', 'language': None, 'rover': None}
+    male = {'role': 'voice', 'language': 'en', 'rover': 'male'}
+    female = {**male, 'rover': 'female'}
+    extras = [{**male, 'role': 'music'}, {**male, 'language': 'ja'}]
+    assert fallback_frame_stems([shared, male, *extras]) == [shared, male]
+    assert fallback_frame_stems([shared, male, female, *extras]) == [shared]
+
+
 @pytest.mark.asyncio
 async def test_localized_stems_keep_languages_and_source_timing(tmp_path, monkeypatch):
     from types import SimpleNamespace
@@ -69,6 +79,8 @@ async def test_rover_alternatives_are_never_mixed_together(tmp_path, monkeypatch
         return source, [source]
     async def run(command, *_):
         commands.append(command)
+        from pathlib import Path
+        Path(command[-1]).write_bytes(command[command.index("-i") + 1].encode())
     monkeypatch.setattr(cutscene_import, "decode_soundtrack", decode)
     monkeypatch.setattr(cutscene_import, "run_tool", run)
     result = await cutscene_import.localized_audio_recipe(
@@ -90,5 +102,5 @@ def test_shared_segments_require_comparison_of_every_audio_variant(language, rov
 
     from wuwa_story_worker.cutscene_import import can_share_variant_segments
 
-    videos = [SimpleNamespace(soundtrack=[SimpleNamespace(language=language, rover=rover)])]
+    videos = [SimpleNamespace(frame_audio=[], soundtrack=[SimpleNamespace(language=language, rover=rover)])]
     assert can_share_variant_segments(videos) is allowed

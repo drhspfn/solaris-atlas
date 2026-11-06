@@ -200,6 +200,19 @@ services:
     deploy:
       replicas: ${WUWA_COORDINATOR_REPLICAS:-1}
 
+  cutscene-assembly-worker:
+    <<: *worker
+    command: ["wuwa-story-worker", "run", "--queue", "cutscene_assembly"]
+    cpus: 1
+    mem_limit: ${WUWA_CUTSCENE_ASSEMBLY_MEMORY:-4g}
+    stop_grace_period: 21630s
+    deploy:
+      replicas: 1
+    environment:
+      WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
+      WUWA_QUEUE_CONCURRENCY: cutscene_assembly=1
+      WUWA_SHUTDOWN_TIMEOUT_SECONDS: '21600'
+
   projection-worker:
     <<: *worker
     command: ["python", "-m", "wuwa_story.read_models.worker", "--watch"]

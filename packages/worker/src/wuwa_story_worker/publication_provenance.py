@@ -7,6 +7,7 @@ import json
 from sqlalchemy import select
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.ingestion.media_provenance import matches_source
+from wuwa_story.story.cutscene_publications import publication_type
 
 from wuwa_story_worker.media_provenance import source_provenance
 
@@ -45,7 +46,7 @@ async def verified_references(session, storage, kind, source, paths=None, owner_
     Errors from S3 propagate; unavailable objects and size mismatches are retryable.
     Legacy references without a closure are deliberately never considered complete.
     """
-    query = select(FileReference).where(FileReference.reference_type == kind)
+    query = select(FileReference).where(FileReference.reference_type == publication_type(kind))
     if paths is not None:
         query = query.where(FileReference.source_path.in_(paths))
     if owner_ids is not None:

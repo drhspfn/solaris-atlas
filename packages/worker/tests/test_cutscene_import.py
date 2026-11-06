@@ -221,7 +221,7 @@ async def test_unaligned_variants_publish_independent_authored_flow_only_if_vali
         files.append((path, kind, path.read_bytes()))
         return SimpleNamespace(id=len(files))
 
-    async def reference(*args):
+    async def reference(*args, **kwargs):
         ref = SimpleNamespace(id=len(references) + 1)
         references.append(ref)
         return ref
