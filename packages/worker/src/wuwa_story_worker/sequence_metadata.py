@@ -1,0 +1,153 @@
+"""Recompile sequence metadata from verified retained JSON, without game export."""
+
+import hashlib
+import json
+import zipfile
+from pathlib import PurePosixPath
+
+from sqlalchemy import select
+from wuwa_story.db.models.storage import FileLocation, FileReference
+from wuwa_story.ingestion.media_provenance import matches_source
+from wuwa_story.ingestion.spine_presentation import presentation_hash
+
+from wuwa_story_worker.sequence_controls import sequence_control_score
+
+MAX_BUNDLE_BYTES = 512 * 1024**2
+
+
+def recompile_bundle(bundle, output, target):
+    """Preserve extracted movies and incomplete-control evidence, not guessed media."""
+    with zipfile.ZipFile(bundle) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        inventory = manifest['files']
+        if len(inventory) > 10000 or sum(item['size_bytes'] for item in inventory.values()) > MAX_BUNDLE_BYTES:
+            raise ValueError(
+                'Retained sequence bundle exceeds metadata rebuild bounds')
+        entries = {}
+        for name, expected in inventory.items():
+            path = PurePosixPath(name)
+            if path.is_absolute() or '..' in path.parts or '\\' in name:
+                raise ValueError('Invalid retained sequence archive path')
+            if archive.getinfo(name).file_size != expected['size_bytes']:
+                raise ValueError('Retained sequence entry size differs')
+            data = archive.read(name)
+            if hashlib.sha256(data).hexdigest() != expected['sha256']:
+                raise ValueError('Retained sequence entry checksum differs')
+            entries[name] = data
+    presentation = json.loads(entries['presentation.json'])
+    if (presentation.get('sha256') != target['presentation_sha256']
+            or presentation_hash({k: v for k, v in presentation.items() if k != 'sha256'}) != target['presentation_sha256']):
+        raise ValueError(
+            'Retained sequence presentation differs from current target')
+    unpacked = output.parent / 'retained-source'
+    assets, originals = {}, []
+    for name, data in entries.items():
+        if name.startswith(('source/', 'media/')):
+            path = unpacked / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            originals.append(path)
+        if name.startswith('decoded/') and name.endswith('.json') and 'Client/Content/' in name:
+            package = '/Game/' + \
+                name.split('Client/Content/', 1)[1].removesuffix('.json')
+            decoded = unpacked / 'decoded' / \
+                hashlib.sha256(package.encode()).hexdigest()
+            decoded.mkdir(parents=True, exist_ok=True)
+            (decoded / 'package.json').write_bytes(data)
+            assets[package] = {'decoded': decoded}
+    if not assets:
+        raise ValueError(
+            'Retained bundle has no source-keyed decoded sequence JSON')
+    controls = json.loads(entries['controls.json'])
+    score = sequence_control_score(assets, presentation)
+    for unresolved in controls.get('unresolved', []):
+        if unresolved not in score['unresolved']:
+            score['unresolved'].append(unresolved)
+    control_sources = dict(manifest.get('control_sources') or {})
+    missing = list(control_sources.get('missing', []))
+    for unresolved in score['unresolved']:
+        diagnostic = {'status': 'unresolved_control', **unresolved}
+        if diagnostic not in missing:
+            missing.append(diagnostic)
+    for event in score['events']:
+        diagnostics = [d for d in event.get('diagnostics', []) if d.get('code') != 'unbound_event_function']
+        if diagnostics:
+            diagnostic = {'status': 'unsupported_control', 'source': event['source'], 'diagnostics': diagnostics}
+            if diagnostic not in missing:
+                missing.append(diagnostic)
+    manifest['control_sources'] = {**control_sources, 'missing': missing}
+    previous = {section['source']: section for section in controls.get('media', {}).get('sections', [])
+                if section.get('kind') == 'movie_fragment'}
+    for section in score['media']['sections']:
+        old = previous.get(section['source'])
+        if section['kind'] != 'movie_fragment' or not old:
+            continue
+        if any(section.get(key) != old.get(key) for key in ('reference', 'scene_source', 'clock', 'range', 'parameters')):
+            raise ValueError(
+                'Retained movie section no longer matches its authored timing')
+        if old.get('file') and old['file'] not in entries:
+            raise ValueError(
+                'Retained movie section has no verified archive entry')
+        section.update({key: old[key] for key in (
+            'file', 'archive_path', 'status') if key in old})
+    if set(previous) - {section['source'] for section in score['media']['sections'] if section['kind'] == 'movie_fragment'}:
+        raise ValueError('Metadata rebuild lost an existing movie section')
+    entries['controls.json'] = json.dumps(
+        score, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()
+    manifest['sequence_metadata_revision'] = target['sequence_metadata_revision']
+    manifest['files']['controls.json'] = {'size_bytes': len(entries['controls.json']),
+                                          'sha256': hashlib.sha256(entries['controls.json']).hexdigest()}
+    entries['manifest.json'] = json.dumps(
+        manifest, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_suffix('.partial')
+    with zipfile.ZipFile(temporary, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, data in sorted(entries.items()):
+            info = zipfile.ZipInfo(name, date_time=(2000, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, data)
+    temporary.replace(output)
+    return output, sorted(originals)
+
+
+async def retained_bundle(session, storage, root, target, source):
+    """An exact-source prior bundle is input to the normal publisher, never reused as new proof."""
+    if not target['path'].startswith('story_sequence:') or not target.get('sequence_metadata_revision'):
+        return None
+    rows = await session.execute(select(FileReference.metadata_json, FileLocation.object_key).join(
+        FileLocation, FileLocation.file_id == FileReference.file_id).where(
+        FileReference.owner_node_id == target['owner'], FileReference.release_id == target['release_id'],
+        FileReference.source_path == target['path'], FileReference.reference_type == target['reference_type'],
+        FileReference.source_name == target.get(
+            'source_name', target['language']),
+        FileLocation.backend == storage.backend, FileLocation.bucket == storage.bucket,
+        FileLocation.available.is_(True), FileLocation.is_primary.is_(True),
+    ).order_by(FileReference.id.desc()))
+    for metadata, key in rows:
+        proof = (metadata or {}).get('game_source') or {}
+        # This checks source identity only. The original manifest's incomplete
+        # controls remain untouched and the normal publisher still reports partial.
+        identity = {**metadata, 'game_source': {**
+                                                proof, 'control_sources_complete': True}}
+        if not matches_source(identity, source, {**target, 'sequence_metadata_revision': None}):
+            continue
+        if (proof.get('sequence_metadata_revision') or 0) >= target['sequence_metadata_revision']:
+            return None
+        path = root / 'sequence-metadata' / \
+            str(target['owner']) / 'retained.zip'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        count = 0
+        with path.open('wb') as output:
+            async for chunk in storage.get(key):
+                count += len(chunk)
+                if count > MAX_BUNDLE_BYTES:
+                    raise ValueError(
+                        'Retained sequence download exceeds metadata rebuild bound')
+                output.write(chunk)
+        if proof.get('control_sources_complete') is False:
+            with zipfile.ZipFile(path) as archive:
+                manifest = json.loads(archive.read('manifest.json'))
+            if not (manifest.get('control_sources') or {}).get('missing'):
+                raise ValueError('Incomplete provenance has no retained missing-control evidence')
+        return path
+    return None

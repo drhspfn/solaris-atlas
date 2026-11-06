@@ -160,6 +160,9 @@ def _parser() -> argparse.ArgumentParser:
     replay = commands.add_parser("replay-failed", help="Requeue dead-lettered jobs")
     replay.add_argument("--queue", choices=tuple(QUEUES), default="snapshot_build")
     replay.add_argument("--limit", type=int, default=100)
+    metadata = commands.add_parser("enqueue-sequence-metadata", help="Recompile one prior sequence-only job with the current metadata revision")
+    metadata.add_argument("run_id", type=int)
+    metadata.add_argument("--apply", action="store_true", help="Enqueue through normal target resolution; default is a read-only plan")
     return parser
 
 
@@ -380,6 +383,18 @@ def main() -> None:
                 )
 
         asyncio.run(visual_command())
+    elif args.command == "enqueue-sequence-metadata":
+        async def enqueue_metadata():
+            from wuwa_story.db.session import SessionFactory, engine
+
+            from wuwa_story_worker.sequence_metadata_jobs import enqueue_metadata_revision
+
+            try:
+                async with SessionFactory() as session:
+                    print(json.dumps(await enqueue_metadata_revision(session, args.run_id, apply=args.apply)))
+            finally:
+                await engine.dispose()
+        asyncio.run(enqueue_metadata())
     elif args.command == "enqueue-analysis":
         from wuwa_story.db.session import SessionFactory
 

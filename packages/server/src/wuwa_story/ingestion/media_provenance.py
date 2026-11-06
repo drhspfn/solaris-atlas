@@ -33,6 +33,10 @@ def matches_source(metadata: dict, source: dict, target: dict) -> bool:
              if (key != "WUWA_VGMSTREAM_PATH" or target.get("kind") != "image")
              and (key != 'WUWA_WWISER_PATH' or provenance.get('voice_variant'))}
     return (
+        (not target.get('path', '').startswith('story_sequence:')
+         or target.get('sequence_metadata_revision') is None
+         or provenance.get('sequence_metadata_revision') == target['sequence_metadata_revision'])
+        and
         (target.get('kind') != 'spine' or provenance.get(
             'spine_recipe') == target.get('spine_recipe') and provenance.get(
             'presentation_sha256') == target.get('presentation_sha256') and

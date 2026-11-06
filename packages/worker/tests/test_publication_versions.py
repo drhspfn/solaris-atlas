@@ -58,6 +58,19 @@ def test_voice_and_image_publication_are_untouched():
         assert not preserve_story_reference(reference_type, {'game_source': proof()}, proof(sequence_media_schema=None))
 
 
+@pytest.mark.parametrize(('previous_revision', 'incoming_revision', 'preserve'), [(2, None, True), (2, 1, True), (1, 2, False), (2, 2, False)])
+def test_sequence_metadata_revision_does_not_allow_stale_payload_downgrade(previous_revision, incoming_revision, preserve):
+    assert preserve_story_reference('story_presentation', {'game_source': proof(sequence_metadata_revision=previous_revision)},
+                                    proof(sequence_metadata_revision=incoming_revision)) is preserve
+
+
+def test_equal_metadata_revision_preserves_complete_controls_against_partial_replacement():
+    assert preserve_story_reference('story_presentation', {'game_source': proof(sequence_metadata_revision=2, control_sources_complete=True)},
+                                    proof(sequence_metadata_revision=2, control_sources_complete=False))
+    assert not preserve_story_reference('story_presentation', {'game_source': proof(sequence_metadata_revision=2, control_sources_complete=False)},
+                                        proof(sequence_metadata_revision=2, control_sources_complete=True))
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(('incoming_schema', 'preserve'), [(None, True), (1, False), (2, False)])
 async def test_worker_refreshes_locked_reference_before_any_publication(tmp_path, monkeypatch, incoming_schema, preserve):

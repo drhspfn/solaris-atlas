@@ -9,7 +9,8 @@ def preserve_story_reference(reference_type, metadata, incoming):
     """
     if reference_type not in {'story_presentation', 'story_spine'}:
         return False
-    previous = metadata.get('game_source') if isinstance(metadata, dict) else None
+    previous = metadata.get('game_source') if isinstance(
+        metadata, dict) else None
     if not isinstance(previous, dict) or not isinstance(incoming, dict):
         return False
     if any(type(proof.get('schema_version')) is not int or proof['schema_version'] != 1
@@ -19,11 +20,18 @@ def preserve_story_reference(reference_type, metadata, incoming):
         if not isinstance(previous.get(key), str) or not previous[key] or previous[key] != incoming.get(key):
             return False
     versions = []
-    for key in ('spine_recipe', 'sequence_media_schema'):
+    keys = ['spine_recipe', 'sequence_media_schema']
+    if incoming['package_path'].startswith('story_sequence:'):
+        keys.append('sequence_metadata_revision')
+    for key in keys:
         old, new = previous.get(key), incoming.get(key)
         old = 0 if old is None else old
         new = 0 if new is None else new
         if type(old) is not int or old < 0 or type(new) is not int or new < 0:
             return False
         versions.append((old, new))
-    return any(old > new for old, new in versions)
+    return (any(old > new for old, new in versions)
+            or (incoming['package_path'].startswith('story_sequence:')
+                and all(old == new for old, new in versions)
+                and previous.get('control_sources_complete') is True
+                and incoming.get('control_sources_complete') is False))

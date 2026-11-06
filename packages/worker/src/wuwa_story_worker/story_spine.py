@@ -195,7 +195,8 @@ def portable_bundle(output, resource, assets, icons, identity, *, presentation=N
     return output, sorted(originals)
 
 
-async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentation=None, direct_resources=None):
+async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentation=None, direct_resources=None,
+                            sequence_metadata_revision=None):
     configs = []
     if not direct_resources or presentation:
         receipt = await export_assets(root, fmodel, 'ConfigDB')
@@ -277,6 +278,8 @@ async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentati
     plan = json.loads((root / 'plan.json').read_text(encoding='utf-8'))
     identity = {'asset_version': plan['version'],
                 'download_id': plan['id'], 'tier': plan['tier']}
+    if sequence_metadata_revision is not None:
+        identity['sequence_metadata_revision'] = sequence_metadata_revision
     # Several flow states in one job may use the same resource with different
     # dialogue/control cues. Their output paths must not overwrite each other.
     suffix = '-' + presentation['sha256'] if presentation else ''

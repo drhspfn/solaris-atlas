@@ -8,6 +8,23 @@ from wuwa_story.ingestion.entity_media import MediaRequest
 from wuwa_story.ingestion.media_provenance import missing_media_targets
 
 
+@pytest.mark.parametrize(('revision', 'matches'), [(None, False), (1, False), (2, True)])
+def test_scoped_sequence_metadata_revision_requires_recompile_but_not_global_spine_upgrade(revision, matches):
+    from wuwa_story.ingestion.media_provenance import matches_source
+
+    value = {**target('story_sequence:flow_state:Story'), 'kind': 'spine',
+             'reference_type': 'story_presentation', 'spine_recipe': 4,
+             'sequence_metadata_revision': 2}
+    reference, _, _ = row(value, spine_recipe=4, sequence_metadata_revision=revision)
+    source = {'asset_version': '3.7.0', 'download_id': 'a' * 64, 'tier': 'hd', 'tools': {}}
+    # Derive the source exactly as this test helper constructs it.
+    source = {key: reference.metadata_json['game_source'][key] for key in ('asset_version', 'download_id')}
+    assert matches_source(reference.metadata_json, source, value) is matches
+    value['path'] = 'spine_background:7'
+    reference.metadata_json['game_source']['package_path'] = value['path']
+    assert matches_source(reference.metadata_json, source, value)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('recipe,missing_part,playable,missing', [(0, False, True, True), (1, True, True, True), (1, False, False, True), (1, False, True, False)])
 async def test_spine_reuse_verifies_recipe_and_every_open_component(recipe, missing_part, playable, missing):

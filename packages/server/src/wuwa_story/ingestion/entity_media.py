@@ -17,6 +17,8 @@ from wuwa_story.ingestion.dungeon_context import walk
 from wuwa_story.ingestion.spine_presentation import SPINE_RECIPE, flow_presentation
 from wuwa_story.ingestion.talk_backgrounds import background_config
 
+SEQUENCE_METADATA_REVISION = 2
+
 
 class MediaRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -185,6 +187,7 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
                     targets.append({'owner': node.id, 'release_id': release_id,
                                     'path': f'story_sequence:{node.canonical_key}', 'resource_id': None,
                                     'kind': 'spine', 'language': None, 'reference_type': 'story_presentation',
+                                    'sequence_metadata_revision': SEQUENCE_METADATA_REVISION,
                                     'spine_recipe': SPINE_RECIPE, 'presentation': presentation, **sequence_version,
                                     'presentation_sha256': presentation['sha256']})
         if kind == "character" and "voice" in request.kinds:
