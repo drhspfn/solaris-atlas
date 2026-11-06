@@ -1,6 +1,8 @@
 """Explicit media references inside quest/level actions and travel transitions."""
 
-from wuwa_story.ingestion.dungeon_context import walk
+import json
+
+from wuwa_story.ingestion.dungeon_context import decoded, walk
 
 
 def runtime_media(data, prefix='$', *, recursive=True):
@@ -50,3 +52,41 @@ def quest_runtime_links(rows, available):
                    'type': 'plays_cutscene', 'relation': 'explicit_reference',
                    'source': 'BinData/QuestNodeData/questnodedata.json',
                    'raw_path': ref['raw_path'], 'basis': ref['basis']}
+
+
+def action_movie_links(owner, action, path, video_names):
+    """Normalize movie references onto their owning action; nesting is not execution proof."""
+    for ref in runtime_media(action, path):
+        if ref['kind'] != 'cutscene':
+            continue
+        video = ref['reference'].removeprefix('cutscene:')
+        extra = ({'nested_context': True, 'conditional': True, 'runtime_order_confirmed': False,
+                  'owning_action_raw_path': path,
+                  'context_note': 'Nested movie reference; branch execution is unconfirmed'}
+                 if ref['raw_path'] != f'{path}.Params.VideoName' else {})
+        basis = 'VideoName = CgName'
+        if video not in video_names:
+            if video.strip() not in video_names or sum(
+                    candidate.strip() == video.strip() for candidate in video_names
+                    if isinstance(candidate, str)) != 1:
+                continue
+            extra.update(raw_value=video, normalized_value=video.strip(
+            ), resolution='unique_whitespace_normalization')
+            video = video.strip()
+            basis = 'unique whitespace-normalized VideoName = CgName'
+        yield {'from': owner, 'to': f'cutscene:{video}', 'type': 'plays_cutscene',
+               'relation': 'explicit_reference', 'source': 'BinData/flowState/flowstate.json',
+               'raw_path': ref['raw_path'],
+               'basis': json.dumps({'basis': basis, **extra}, sort_keys=True) if extra.get('nested_context') else basis,
+               **extra}
+
+
+def flow_movie_links(rows, video_names):
+    for index, row in rows:
+        key, actions = row.get('StateKey'), decoded(row.get('Actions'))
+        if not isinstance(key, str) or not key or not isinstance(actions, list):
+            continue
+        for position, action in enumerate(actions):
+            if isinstance(action, dict):
+                yield from action_movie_links(f'action:{key}:{position}', action,
+                                              f'$[{index}].Actions<json>[{position}]', video_names)

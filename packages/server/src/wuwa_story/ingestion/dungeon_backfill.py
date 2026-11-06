@@ -39,7 +39,7 @@ from wuwa_story.ingestion.level_interactions import (
     membership_hash,
     required_level_links,
 )
-from wuwa_story.ingestion.runtime_media import quest_runtime_links
+from wuwa_story.ingestion.runtime_media import flow_movie_links, quest_runtime_links
 from wuwa_story.ingestion.scenario_context import scenario_links
 from wuwa_story.ingestion.video_package_context import (
     QUEST_VIDEO,
@@ -167,7 +167,8 @@ async def backfill(session, release_id, dry_run=False, quest_ids=None):
                  "version": release.game_version, "source_repository": release.upstream_name,
                  "source_commit": release.upstream_commit}
                 for link in scenario if link["from"] in scenario_quests]
-    context = list(authored_flow_context(quest_nodes, await rows(FLOWS), await rows(STATES), records, await rows(PLOT)))
+    state_rows = await rows(STATES)
+    context = list(authored_flow_context(quest_nodes, await rows(FLOWS), state_rows, records, await rows(PLOT)))
     context_quests = set(await session.scalars(select(Node.canonical_key).join(
         NodeRevision, NodeRevision.node_id == Node.id).where(
         NodeRevision.release_id == release_id,
@@ -185,11 +186,12 @@ async def backfill(session, release_id, dry_run=False, quest_ids=None):
     records += [{**link, "version": release.game_version, "source_repository": release.upstream_name,
                  "source_commit": release.upstream_commit}
                 for link in packages if link["from"] in package_nodes and link["to"] in package_nodes]
-    runtime_candidates = list(quest_runtime_links(quest_nodes, package_nodes | {
+    known_cutscenes = {
         key for key in await session.scalars(select(Node.canonical_key).join(
             NodeRevision, NodeRevision.node_id == Node.id).where(
             NodeRevision.release_id == release_id, Node.canonical_key.like('cutscene:%')))
-    }))
+    }
+    runtime_candidates = list(quest_runtime_links(quest_nodes, package_nodes | known_cutscenes))
     runtime_owners = set(await session.scalars(select(Node.canonical_key).where(
         Node.canonical_key.in_({link['from'] for link in runtime_candidates})))) if runtime_candidates else set()
     records += [{**link, 'version': release.game_version, 'source_repository': release.upstream_name,
@@ -199,12 +201,25 @@ async def backfill(session, release_id, dry_run=False, quest_ids=None):
                    row["raw_path"]): row for row in records}.values())
     if quest_ids is not None:
         records = [row for row in records if int(row['from'].split(':')[1]) in quest_ids]
+    state_owners = [row for row in records if row['to'].startswith('flow_state:')]
+    selected_states = {row['to'].removeprefix('flow_state:') for row in state_owners}
+    movie_candidates = list(flow_movie_links(
+        [(index, row) for index, row in state_rows if row.get('StateKey') in selected_states],
+        {key.removeprefix('cutscene:') for key in known_cutscenes}))
+    media_keys = {row[side] for row in movie_candidates for side in ('from', 'to')}
+    observed_media = set(await session.scalars(select(Node.canonical_key).join(
+        NodeRevision, NodeRevision.node_id == Node.id).where(NodeRevision.release_id == release_id,
+        Node.canonical_key.in_(media_keys)))) if media_keys else set()
+    records.extend({**row, 'version': release.game_version, 'source_repository': release.upstream_name,
+                    'source_commit': release.upstream_commit} for row in movie_candidates
+                   if row['from'] in observed_media and row['to'] in observed_media)
     source, target = Node.__table__.alias(
         "source"), Node.__table__.alias("target")
     owner_scope = []
     if quest_ids is not None:
         owners = select(Node.id).where(or_(
-            Node.canonical_key.in_([f'quest:{identity}' for identity in sorted(quest_ids)]),
+            Node.canonical_key.in_([f'quest:{identity}' for identity in sorted(quest_ids)]
+                                  + sorted({row['from'] for row in records if row['from'].startswith('action:')})),
             *(Node.canonical_key.startswith(f'quest_node:{identity}:', autoescape=True)
               for identity in sorted(quest_ids)),
         ))
@@ -256,13 +271,18 @@ async def backfill(session, release_id, dry_run=False, quest_ids=None):
             await import_canonical_edges(SimpleNamespace(iter_edges=lambda: iter(missing)), session,
                                          release_id, batch_size=len(missing))
         await rebuild_cutscene_order(session, release_id)
-        await invalidate_repaired_quests(session, release, missing + stale_context)
+        repaired_states = {row['from'].removeprefix('action:').rsplit(':', 1)[0]
+                           for row in missing if row['from'].startswith('action:')}
+        await invalidate_repaired_quests(session, release,
+            [row for row in missing + stale_context if not row['from'].startswith('action:')]
+            + [row for row in state_owners if row['to'].removeprefix('flow_state:') in repaired_states])
     result = {"release_id": release_id, "game_version": release.game_version,
               "candidate_links": len(records), "missing_evidence": len(missing),
               "written": len(missing) if not dry_run else 0, "dry_run": dry_run}
     result['authored_flow_context_links'] = len(current_context)
     result['stale_context_evidence'] = stale_context
     result['removed_context_evidence'] = len(stale_context) if not dry_run else 0
+    result['flow_movie_links'] = sum(row['from'].startswith('action:') for row in records)
     await session.commit()
     return result
 

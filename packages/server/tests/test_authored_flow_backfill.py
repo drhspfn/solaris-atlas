@@ -9,7 +9,8 @@ from wuwa_story.ingestion import dungeon_backfill as repair
 from wuwa_story.ingestion.authored_flow_context import FLOWS, RECIPE, STATES, authored_flow_context
 
 
-def fixture(monkeypatch, *, disappeared=False, stale=True, unchanged=False, ungrouped=False):
+def fixture(monkeypatch, *, disappeared=False, stale=True, unchanged=False, ungrouped=False,
+            nested_media=False, observed_media=True, existing_movie=False):
     tables = {
         repair.QUEST_NODES: [(7, {'Key': '42_3', 'Data': {'Condition': {
             'FlowListName': 'Story', 'FlowId': 6, 'StateId': 19}}})],
@@ -24,6 +25,9 @@ def fixture(monkeypatch, *, disappeared=False, stale=True, unchanged=False, ungr
         tables[FLOWS] = []
         tables[STATES][0][1]['Actions'] = json.dumps([{'Name': 'PlayFlow', 'Params': {
             'FlowListName': 'Story', 'FlowId': 6, 'StateId': 20}}])
+    if nested_media:
+        tables[STATES][1][1]['Actions'] = json.dumps([{'Name': 'Branch', 'Actions': [
+            {'Name': 'PlayMovie', 'Params': {'VideoName': 'M0357'}}]}])
     old = json.dumps({'recipe': RECIPE, 'old_proof': True})
     if unchanged:
         link, = authored_flow_context(tables[repair.QUEST_NODES], tables[FLOWS], tables[STATES])
@@ -49,11 +53,21 @@ def fixture(monkeypatch, *, disappeared=False, stale=True, unchanged=False, ungr
             return stored
         if 'graph.edge_evidence.id, ontology.relation_type.key' in query:
             assert 'graph.edge.from_node_id IN (SELECT graph.node.id' in query
-            return existing if stale else []
+            result = list(existing) if stale else []
+            # Model the SQL owner filter: omitted action keys hide published evidence.
+            if existing_movie and "'action:Story_6_20:0'" in query:
+                result.append((83, 'plays_cutscene', 'action:Story_6_20:0', 'cutscene:M0357',
+                               STATES, '$[13].Actions<json>[0].Actions[0].Params.VideoName'))
+            return result
         return []
 
     async def scalars(statement):
-        query = str(statement)
+        query = str(statement.compile(dialect=postgresql.dialect(), compile_kwargs={'literal_binds': True}))
+        if ' LIKE ' in query:
+            return ['cutscene:M0357'] if nested_media else []
+        if 'action:Story_6_20:0' in query:
+            assert 'release_id = 21' in query
+            return ['action:Story_6_20:0', 'cutscene:M0357'] if observed_media else ['cutscene:M0357']
         if 'authored_tree_order' in query:
             return []
         if 'quest_state.state_key' in query:
@@ -122,6 +136,36 @@ async def test_equal_explicit_call_context_recipe_is_not_retracted_when_membersh
     assert result['stale_context_evidence'] == []
     assert not any(query.startswith('DELETE') for query in queries)
     imported.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('observed', [True, False])
+async def test_scoped_retained_nested_movie_repair_requires_both_release_endpoints(monkeypatch, observed):
+    session, imported, invalidation, _ = fixture(monkeypatch, nested_media=True, observed_media=observed)
+    result = await repair.backfill(session, 21, quest_ids={42})
+    links = list(imported.await_args.args[0].iter_edges())
+    movies = [row for row in links if row['from'].startswith('action:')]
+    assert result['flow_movie_links'] == len(movies) == int(observed)
+    if observed:
+        movie, = movies
+        assert movie['from'] == 'action:Story_6_20:0' and movie['to'] == 'cutscene:M0357'
+        assert movie['raw_path'] == '$[13].Actions<json>[0].Actions[0].Params.VideoName'
+        assert json.loads(movie['basis'])['runtime_order_confirmed'] is False
+    assert all(row['from'].startswith('quest:') for row in invalidation.await_args.args[2])
+
+
+@pytest.mark.asyncio
+async def test_repeated_scoped_movie_repair_reads_existing_action_evidence_and_writes_nothing(monkeypatch):
+    session, imported, invalidation, queries = fixture(
+        monkeypatch, nested_media=True, unchanged=True, existing_movie=True)
+    result = await repair.backfill(session, 21, quest_ids={42})
+    assert result['flow_movie_links'] == 1
+    assert result['missing_evidence'] == result['written'] == result['removed_context_evidence'] == 0
+    ownership = next(query for query in queries if 'graph.edge_evidence.id, ontology.relation_type.key' in query)
+    assert "'action:Story_6_20:0'" in ownership and "'quest:42'" in ownership
+    assert 'quest/_node:42:' in ownership
+    imported.assert_not_awaited()
+    invalidation.assert_not_awaited()
 
 
 @pytest.mark.asyncio

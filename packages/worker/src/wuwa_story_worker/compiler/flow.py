@@ -6,7 +6,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from wuwa_story.ingestion.runtime_media import runtime_media
+from wuwa_story.ingestion.runtime_media import action_movie_links, runtime_media
 from wuwa_story.ingestion.talk_backgrounds import background_config
 
 from .core import Writer, read_json
@@ -139,6 +139,26 @@ def compile_flow(root: Path, writer: Writer, english: dict[str, dict[str, Any]],
                 jumps.append((identifier, (action.get("Params") or {}).get("TalkId")))
         return jumps
 
+    def compile_movie_references(owner: str, action: dict, path: str) -> None:
+        params = action.get('Params') or {}
+        if action.get('Name') == 'PlayMovie' and isinstance(params, dict):
+            value = params.get('VideoName')
+            if not isinstance(value, str) or not value:
+                counts['unresolved_cutscenes'] += 1
+                writer.diagnostic('unresolved_cutscene', 'warning', source, f'{path}.Params.VideoName', value)
+        links = list(action_movie_links(owner, action, path, video_names))
+        resolved = {link['raw_path'] for link in links}
+        for link in links:
+            writer.edge(owner, link['to'], link['type'], link['basis'], source, link['raw_path'],
+                        {key: value for key, value in link.items() if key not in (
+                            'from', 'to', 'type', 'basis', 'source', 'raw_path')})
+            counts['resolved_cutscenes'] += 1
+        for ref in runtime_media(action, path):
+            if ref['kind'] == 'cutscene' and ref['raw_path'] not in resolved:
+                counts['unresolved_cutscenes'] += 1
+                writer.diagnostic('unresolved_cutscene', 'warning', source, ref['raw_path'],
+                                  ref['reference'].removeprefix('cutscene:'))
+
     for row_index, row in enumerate(rows):
         state_key = row.get("StateKey")
         if not isinstance(state_key, str) or not state_key:
@@ -186,30 +206,12 @@ def compile_flow(root: Path, writer: Writer, english: dict[str, dict[str, Any]],
                             source, action_path, {"runtime_traversal": False})
             previous_action = action_id
             counts["actions"] += 1
+            compile_movie_references(action_id, action, action_path)
             params = action.get("Params") or {}
             if not isinstance(params, dict):
                 writer.diagnostic("unsupported_action_params", "warning", source, f"{action_path}.Params", params)
                 continue
 
-            if name == "PlayMovie":
-                cg = params.get("VideoName")
-                if cg in video_names:
-                    writer.edge(action_id, f"cutscene:{cg}", "plays_cutscene", "VideoName = CgName",
-                                source, f"{action_path}.Params.VideoName")
-                    counts["resolved_cutscenes"] += 1
-                elif isinstance(cg, str) and cg.strip() in video_names and sum(
-                        candidate.strip() == cg.strip() for candidate in video_names
-                        if isinstance(candidate, str)) == 1:
-                    writer.edge(action_id, f"cutscene:{cg.strip()}", "plays_cutscene",
-                                "unique whitespace-normalized VideoName = CgName",
-                                source, f"{action_path}.Params.VideoName",
-                                {"raw_value": cg, "normalized_value": cg.strip(),
-                                 "resolution": "unique_whitespace_normalization"})
-                    counts["resolved_cutscenes"] += 1
-                else:
-                    counts["unresolved_cutscenes"] += 1
-                    writer.diagnostic("unresolved_cutscene", "warning", source,
-                                      f"{action_path}.Params.VideoName", cg)
             if name == "PlaySequenceData":
                 sequence_path = params.get("Path")
                 asset = ensure_asset(sequence_path, source, f"{action_path}.Params.Path")

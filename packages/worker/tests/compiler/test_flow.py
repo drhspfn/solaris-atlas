@@ -8,6 +8,55 @@ from wuwa_story_worker.compiler.flow import compile_flow
 
 
 class FlowCompilerTests(unittest.TestCase):
+    def test_nested_movie_references_resolve_on_owning_action_without_top_level_duplicates(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            actions = [
+                {'Name': 'Branch', 'Params': 'unsupported', 'Actions': [
+                    {'Name': 'PlayMovie', 'Params': {'VideoName': 'Missing'}},
+                    {'Name': 'PlayMovie', 'Params': {'VideoName': 'M0357'}},
+                    {'Name': 'PlayMovie', 'Params': {'VideoName': ' M0357'}}]},
+                {'Name': 'ShowTalk', 'Params': {'TalkItems': [{'Id': 1, 'Type': 'Talk',
+                                                               'Options': [{'Actions': [{'Name': 'PlayMovie', 'Params': {'VideoName': 'M0357'}}]}]}]}},
+                {'Name': 'PlayMovie', 'Params': {'VideoName': 'M0357'}},
+                {'Name': 'PlayMovie', 'Params': {}},
+            ]
+            for relative, rows in {
+                'flow/flow.json': [{'Id': 'Story_1', 'States': [1]}],
+                'speaker/speaker.json': [], 'cgVedio/videodata.json': [{'CgName': 'M0357'}],
+                'flowState/flowstate.json': [{'Id': 1, 'StateKey': 'Story_1_1', 'Actions': json.dumps(actions)}],
+            }.items():
+                path = root / 'BinData' / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(rows), encoding='utf-8')
+            writer = Writer(root / 'out', 'fixture')
+            writer.emit(
+                'cutscene', {'id': 'cutscene:M0357', 'source': {}, 'raw': {}})
+            counts = compile_flow(root, writer, {})
+            writer.finish()
+            edges = [json.loads(line) for line in (
+                root / 'out/graphs/global.jsonl').read_text().splitlines()]
+            movies = [edge for edge in edges if edge['type']
+                      == 'plays_cutscene']
+            self.assertEqual(len(movies), 4)
+            self.assertEqual(counts['resolved_cutscenes'], 4)
+            self.assertEqual(counts['unresolved_cutscenes'], 2)
+            self.assertTrue(all(edge['from'].startswith(
+                'action:Story_1_1:') for edge in movies))
+            direct, = [edge for edge in movies if edge['from']
+                       == 'action:Story_1_1:2']
+            self.assertEqual(direct['basis'], 'VideoName = CgName')
+            self.assertNotIn('nested_context', direct)
+            nested = [edge for edge in movies if edge is not direct]
+            self.assertEqual({edge['raw_path'] for edge in nested}, {
+                '$[0].Actions<json>[0].Actions[1].Params.VideoName',
+                '$[0].Actions<json>[0].Actions[2].Params.VideoName',
+                '$[0].Actions<json>[1].Params.TalkItems[0].Options[0].Actions[0].Params.VideoName'})
+            for edge in nested:
+                self.assertTrue(edge['conditional'])
+                self.assertFalse(edge['runtime_order_confirmed'])
+                self.assertTrue(json.loads(edge['basis'])['nested_context'])
+
     def test_inline_options_sequence_jump_phone_and_unknown_are_retained(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -41,22 +90,27 @@ class FlowCompilerTests(unittest.TestCase):
             state.write_text(json.dumps([{"StateKey": "story_1_1", "Id": 1,
                                           "Actions": json.dumps(actions)}]))
             writer = Writer(root / "out", "fixture")
-            writer.emit("speaker", {"id": "speaker:200144", "source": {}, "raw": {}})
-            writer.emit("cutscene", {"id": "cutscene:C1", "source": {}, "raw": {}})
+            writer.emit(
+                "speaker", {"id": "speaker:200144", "source": {}, "raw": {}})
+            writer.emit(
+                "cutscene", {"id": "cutscene:C1", "source": {}, "raw": {}})
             compile_flow(root, writer, {key: {"content": key, "source": "fixture"}
                                         for key in ("line.one", "line.two", "choice.one")},
                          {"ShowTalk", "PlayMovie"})
             writer.finish()
-            edges = [json.loads(line) for line in (root / "out/graphs/global.jsonl").read_text().splitlines()]
+            edges = [json.loads(line) for line in (
+                root / "out/graphs/global.jsonl").read_text().splitlines()]
             codes = [row["code"] for row in writer.diagnostics]
             self.assertIn("phone_message:story_1_1:0:1", writer.ids)
             self.assertIn("choice:story_1_1:0:0:0", writer.ids)
-            self.assertIn("action:story_1_1:1", writer.ids)  # missing ActionId is legal
+            # missing ActionId is legal
+            self.assertIn("action:story_1_1:1", writer.ids)
             self.assertIn("unknown_talk_item_type", codes)
             self.assertIn("duplicate_local_talk_id", codes)
             self.assertIn("unresolved_choice_target", codes)
             self.assertIn("unresolved_localization", codes)
-            self.assertTrue(any(e["type"] == "plays_cutscene" and e["to"] == "cutscene:C1" for e in edges))
+            self.assertTrue(
+                any(e["type"] == "plays_cutscene" and e["to"] == "cutscene:C1" for e in edges))
             self.assertTrue(any(e["type"] == "plays_cutscene" and
                                 e.get("resolution") == "unique_whitespace_normalization" and
                                 e.get("raw_value") == " C1" for e in edges))
@@ -64,7 +118,8 @@ class FlowCompilerTests(unittest.TestCase):
             backgrounds = [edge for edge in edges if edge['type'] == 'references_asset'
                            and 'BackgroundConfig' in edge['raw_path']]
             self.assertEqual(len(backgrounds), 2)
-            self.assertTrue(all(edge['from'] == 'talk_item:story_1_1:0:0' for edge in backgrounds))
+            self.assertTrue(
+                all(edge['from'] == 'talk_item:story_1_1:0:0' for edge in backgrounds))
 
 
 if __name__ == "__main__":
