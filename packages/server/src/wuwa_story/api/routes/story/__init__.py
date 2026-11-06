@@ -10,6 +10,7 @@ from wuwa_story.api.routes.story import (
     map,
     media,
     npc_profile,
+    npc_sales,
     profiles,
     transcripts,
 )
@@ -30,6 +31,7 @@ from wuwa_story.api.routes.story.transcripts import search_dialogue as search_di
 router = APIRouter()
 router.include_router(catalog.router)
 router.include_router(npc_profile.router)
+router.include_router(npc_sales.router)
 router.include_router(profiles.router)
 router.include_router(character_archive.router)
 router.include_router(character_connections.router)
