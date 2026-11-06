@@ -69,6 +69,33 @@ async def test_repeating_complete_repair_resumes_media_after_an_already_complete
 
 
 @pytest.mark.asyncio
+async def test_new_graph_repair_generation_does_not_match_completed_legacy_index(monkeypatch):
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(game_version='3.7.0')
+    prepare = SimpleNamespace(id=10, status='completed')
+    session.scalar.side_effect = [4, prepare, None]
+    added = []
+    session.add = added.append
+
+    async def flush():
+        if added:
+            added[-1].id = 12
+
+    session.flush.side_effect = flush
+    publish = AsyncMock()
+    monkeypatch.setattr(release_media, 'publish_media_job', publish)
+    result = await release_media.enqueue_release_media(
+        session, 9, story_structure_only=True, repair_story=True)
+    payload = publish.await_args.args[0]
+    legacy = {'release_id': 9, 'game_version': '3.7.0', 'kind': 'tree_order',
+              'targets': [], 'parent_id': 10, 'index_schema': 3, 'repair_story': 1}
+    assert added[0].input_hash != hashlib.sha256(json.dumps(legacy, sort_keys=True).encode()).digest()
+    assert result['queued'] == 1 and payload['story_repair_revision'] == 2
+    assert payload['parent_id'] == prepare.id and payload['kind'] == 'tree_order'
+    assert prepare.status == 'completed'
+
+
+@pytest.mark.asyncio
 async def test_story_repair_queues_only_index_and_reuses_normal_prepare(monkeypatch):
     session = AsyncMock()
     session.get.return_value = SimpleNamespace(game_version='3.7.0')
