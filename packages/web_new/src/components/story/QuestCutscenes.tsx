@@ -650,7 +650,7 @@ export function Cutscene({
         <p>
           {event.story_order_mapped
             ? "Related scenario from the authored tree; branches can vary in play."
-            : "Related scenario; its exact position in the quest is unconfirmed."}
+            : "Possible quest connection; occurrence and position in the story are unconfirmed."}
         </p>
       )}
       {flow ? (

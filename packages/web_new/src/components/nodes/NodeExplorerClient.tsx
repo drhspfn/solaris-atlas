@@ -223,7 +223,7 @@ export function NodeExplorerPage({
                   >
                     <span>
                       <strong>{localizedText(quest.name, `Quest ${id}`)}</strong>
-                      <small>{quest.context_inferred ? 'Open related scene in quest →' : 'Open quest at this line →'}</small>
+                      <small>{quest.context_inferred ? 'Possible quest connection · open related scene →' : 'Open quest at this line →'}</small>
                     </span>
                     <ArrowRight size={15} />
                   </Link>
