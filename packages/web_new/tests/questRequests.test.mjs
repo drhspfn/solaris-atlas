@@ -52,6 +52,7 @@ function questHarness({ missingTranscript = false, failRequests = false } = {}) 
   const mocks = Object.fromEntries(
     [
       'lucide-react',
+      './QuestSidebar',
       '@/components/dialogue/PlayerText',
       '@/components/story/AnalysisActions',
       '@/components/story/QuestIllustration',
@@ -68,6 +69,11 @@ function questHarness({ missingTranscript = false, failRequests = false } = {}) 
     ].map((id) => [id, dummy]),
   );
   Object.assign(mocks, {
+    './questSidebarModel': load('../src/components/quest/questSidebarModel.ts', {}),
+    '@/data/localized': load('../src/data/localized.ts', {}),
+    '@/components/story/cutsceneAnchor': load('../src/components/story/cutsceneAnchor.ts', {}),
+    '@/components/story/runtimeActivity': load('../src/components/story/runtimeActivity.ts', {}),
+    '@/components/story/encounterTransitions': { encounterFlows: () => [] },
     '@/styles/quest-reader.css': {},
     '@/components/story/questReading': {
       questForks: () => [],
@@ -118,7 +124,10 @@ function questHarness({ missingTranscript = false, failRequests = false } = {}) 
     '@/preferences/NarrativePreferences': {
       useNarrativePreferences: () => ({}),
     },
-    '@/components/story/cutscenePlacement': { cutsceneSlots: () => new Map() },
+    '@/components/story/cutscenePlacement': {
+      cutsceneSlots: () => new Map(),
+      visibleCutsceneEntries: (_, events) => events,
+    },
     '@/config/settings': { APP_SETTINGS: { limits: { transcript: 2000 } } },
   });
   const { QuestPageClient } = load('../src/components/quest/QuestPageClient.tsx', mocks, {

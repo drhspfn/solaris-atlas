@@ -1,11 +1,11 @@
-'use client';
+"use client";
 
-import { Film, Info, Pause, Play, VolumeX } from 'lucide-react';
-import { type ReactNode, useRef, useState } from 'react';
-import { Select } from '../ui/Select';
+import { Film, Info, Pause, Play, VolumeX } from "lucide-react";
+import { type ReactNode, useRef, useState } from "react";
+import { Select } from "../ui/Select";
 
-import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
-import { cutsceneAnchor, packageCutsceneAnchor } from './cutsceneAnchor';
+import { useNarrativePreferences } from "../../preferences/NarrativePreferences";
+import { cutsceneAnchor, packageCutsceneAnchor } from "./cutsceneAnchor";
 
 export interface MediaSource {
   file: string | null;
@@ -34,9 +34,9 @@ export interface MediaAssetReference {
 }
 
 export interface CutsceneAudioTrack {
-  role: 'voice' | 'music' | 'effects' | 'mixed';
-  language: 'en' | 'ja' | 'ko' | 'zh' | null;
-  rover?: 'male' | 'female' | null;
+  role: "voice" | "music" | "effects" | "mixed";
+  language: "en" | "ja" | "ko" | "zh" | null;
+  rover?: "male" | "female" | null;
   url: string;
 }
 
@@ -50,9 +50,9 @@ export interface CutsceneCaption {
 export type CutsceneNode =
   | {
       id: string;
-      kind: 'clip';
+      kind: "clip";
       asset: string;
-      rover?: 'male' | 'female' | null;
+      rover?: "male" | "female" | null;
       segment?: string | null;
       start: number;
       end: number | null;
@@ -60,12 +60,12 @@ export type CutsceneNode =
     }
   | {
       id: string;
-      kind: 'choice';
+      kind: "choice";
       prompt: string;
       options: Array<{
         label: string;
         next: string;
-        rover?: 'male' | 'female' | null;
+        rover?: "male" | "female" | null;
       }>;
     };
 export interface CutsceneFlow {
@@ -74,10 +74,20 @@ export interface CutsceneFlow {
   nodes: CutsceneNode[];
   evidence: string;
   asset_version: string;
-  media: Record<string, NonNullable<MediaAssetReference['video']>>;
+  media: Record<string, NonNullable<MediaAssetReference["video"]>>;
 }
 
 export interface QuestMediaEvent {
+  entry_points?: Array<
+    Omit<
+      QuestMediaEvent,
+      | "playback"
+      | "resources"
+      | "captions"
+      | "transcript_states"
+      | "entry_points"
+    >
+  >;
   context_inferred?: boolean;
   story_order_mapped?: boolean;
   story_position?: number[];
@@ -86,7 +96,7 @@ export interface QuestMediaEvent {
   branches?: Array<{ id: string; type: string }>;
   transition?: boolean;
   title?: string;
-  kind: 'cutscene' | 'sequence' | 'audio_event';
+  kind: "cutscene" | "sequence" | "audio_event";
   playback?: CutsceneFlow | null;
   action: string;
   flow_state: string;
@@ -116,7 +126,7 @@ export interface QuestMediaEvent {
 }
 
 export interface QuestMediaManifest {
-  availability: 'references_only' | 'partial';
+  availability: "references_only" | "partial";
   game_version?: string;
   events: QuestMediaEvent[];
   video_packages: Array<{
@@ -134,7 +144,7 @@ export interface QuestMediaManifest {
 function SourcePath({ source }: { source: MediaSource }) {
   return (
     <small title={source.raw_path || undefined}>
-      {source.file?.split('/').at(-1)} · {source.raw_path}
+      {source.file?.split("/").at(-1)} · {source.raw_path}
     </small>
   );
 }
@@ -152,14 +162,16 @@ export function QuestMediaReferences({
   const visible = new Set(visibleCutscenes.map(cutsceneAnchor));
   const links = manifest.events.flatMap((event) => {
     const anchor =
-      event.kind !== 'audio_event' && visible.has(cutsceneAnchor(event))
+      event.kind !== "audio_event" && visible.has(cutsceneAnchor(event))
         ? cutsceneAnchor(event)
         : stateAnchors.get(event.flow_state);
-    if (!anchor || event.kind === 'audio_event') return [];
+    if (!anchor || event.kind === "audio_event") return [];
     return [{ event, anchor }];
   });
   const eventScenes = new Set(
-    manifest.events.filter((event) => event.kind === 'cutscene').map((event) => event.reference),
+    manifest.events
+      .filter((event) => event.kind === "cutscene")
+      .map((event) => event.reference),
   );
   const related = (manifest.related_cutscenes || []).filter(
     (scene) => !eventScenes.has(`cutscene:${scene.name}`),
@@ -178,13 +190,15 @@ export function QuestMediaReferences({
         >
           <Film size={13} />
           <span>
-            {event.kind === 'cutscene'
-              ? `Cutscene · ${event.reference.replace('cutscene:', '')}`
-              : 'Story scene'}
+            {event.kind === "cutscene"
+              ? `Cutscene · ${event.reference.replace("cutscene:", "")}`
+              : "Story scene"}
           </span>
         </a>
       ))}
-      {related.length > 0 && <p>Related scenes · story position is not yet mapped</p>}
+      {related.length > 0 && (
+        <p>Related scenes · story position is not yet mapped</p>
+      )}
       {related.map((scene) => (
         <a
           className="quest-media-jump quest-media-event"
@@ -193,7 +207,8 @@ export function QuestMediaReferences({
         >
           <Film size={13} />
           <span>
-            {scene.name} · {scene.playable ? 'Watch' : 'Video not available yet'}
+            {scene.name} ·{" "}
+            {scene.playable ? "Watch" : "Video not available yet"}
           </span>
         </a>
       ))}
@@ -212,7 +227,7 @@ export function DialogueAudioReference({
         language: string;
         url: string;
         asset_version: string;
-        rover?: 'male' | 'female' | null;
+        rover?: "male" | "female" | null;
       }>;
       file_name: string | null;
       plot_audio_id: string | null;
@@ -222,7 +237,9 @@ export function DialogueAudioReference({
   };
 }) {
   const { voiceLanguage, preferredRover } = useNarrativePreferences();
-  const [voiceRover, setVoiceRover] = useState<'male' | 'female' | 'ask'>('ask');
+  const [voiceRover, setVoiceRover] = useState<"male" | "female" | "ask">(
+    "ask",
+  );
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playingUrl, setPlayingUrl] = useState<string | null>(null);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
@@ -246,26 +263,32 @@ export function DialogueAudioReference({
       </div>
     );
   const tracks = voices.flatMap((voice) => voice.tracks || []);
-  const rover = preferredRover === 'ask' ? voiceRover : preferredRover;
+  const rover = preferredRover === "ask" ? voiceRover : preferredRover;
   const track =
-    tracks.find((entry) => entry.language === voiceLanguage && entry.rover === rover) ||
+    tracks.find(
+      (entry) => entry.language === voiceLanguage && entry.rover === rover,
+    ) ||
     tracks.find((entry) => entry.language === voiceLanguage && !entry.rover);
-  const roverChoices = tracks.filter((entry) => entry.language === voiceLanguage && entry.rover);
+  const roverChoices = tracks.filter(
+    (entry) => entry.language === voiceLanguage && entry.rover,
+  );
 
   return (
     <div className="dialogue-voice">
-      {preferredRover === 'ask' && roverChoices.length > 0 && (
+      {preferredRover === "ask" && roverChoices.length > 0 && (
         <Select
           label="Rover voice"
           value={voiceRover}
           onChange={(value) => setVoiceRover(value as typeof voiceRover)}
           options={[
-            { value: 'ask', label: 'Choose Rover' },
-            ...['female', 'male']
-              .filter((value) => roverChoices.some((entry) => entry.rover === value))
+            { value: "ask", label: "Choose Rover" },
+            ...["female", "male"]
+              .filter((value) =>
+                roverChoices.some((entry) => entry.rover === value),
+              )
               .map((value) => ({
                 value,
-                label: value === 'female' ? 'Female Rover' : 'Male Rover',
+                label: value === "female" ? "Female Rover" : "Male Rover",
               })),
           ]}
         />
@@ -276,8 +299,10 @@ export function DialogueAudioReference({
             <button
               type="button"
               className="dialogue-play"
-              aria-label={playingUrl === track.url ? 'Pause voice' : 'Play voice'}
-              title={playingUrl === track.url ? 'Pause voice' : 'Play voice'}
+              aria-label={
+                playingUrl === track.url ? "Pause voice" : "Play voice"
+              }
+              title={playingUrl === track.url ? "Pause voice" : "Play voice"}
               onClick={() => {
                 const audio = audioRef.current;
                 if (!audio) return;
@@ -285,16 +310,22 @@ export function DialogueAudioReference({
                   audio.pause();
                   return;
                 }
-                document.querySelectorAll<HTMLMediaElement>('audio, video').forEach((other) => {
-                  if (other !== audio) other.pause();
-                });
+                document
+                  .querySelectorAll<HTMLMediaElement>("audio, video")
+                  .forEach((other) => {
+                    if (other !== audio) other.pause();
+                  });
                 void audio.play().catch((error: DOMException) => {
                   // Moving to another scene intentionally interrupts pending playback.
-                  if (error.name !== 'AbortError') setFailedUrl(track.url);
+                  if (error.name !== "AbortError") setFailedUrl(track.url);
                 });
               }}
             >
-              {playingUrl === track.url ? <Pause size={16} /> : <Play size={16} />}
+              {playingUrl === track.url ? (
+                <Pause size={16} />
+              ) : (
+                <Play size={16} />
+              )}
             </button>
             <audio
               ref={audioRef}
@@ -321,8 +352,8 @@ export function DialogueAudioReference({
             aria-label="Audio not available yet"
             title={
               tracks.length
-                ? 'This voice language is not available yet.'
-                : 'Audio not available yet.'
+                ? "This voice language is not available yet."
+                : "Audio not available yet."
             }
             tabIndex={0}
           >
@@ -332,19 +363,25 @@ export function DialogueAudioReference({
         {children}
       </div>
       {failedUrl === track?.url && (
-        <small role="alert">Audio could not load. Try playing again or refresh the page.</small>
+        <small role="alert">
+          Audio could not load. Try playing again or refresh the page.
+        </small>
       )}
       <details className="dialogue-audio-ref dialogue-source-info">
         <summary
           aria-label="Audio source details"
           title={voices
             .map((voice) =>
-              [voice.file_name || voice.plot_audio_id, voice.source.file, voice.source.raw_path]
+              [
+                voice.file_name || voice.plot_audio_id,
+                voice.source.file,
+                voice.source.raw_path,
+              ]
                 .filter(Boolean)
-                .join('\n'),
+                .join("\n"),
             )
             .concat(events.map((event) => event.engine_path))
-            .join('\n\n')}
+            .join("\n\n")}
         >
           <Info size={14} />
         </summary>

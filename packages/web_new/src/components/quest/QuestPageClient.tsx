@@ -10,7 +10,7 @@ import { localizedText } from '@/data/localized';
 import { cutsceneAnchor, packageCutsceneAnchor } from '@/components/story/cutsceneAnchor';
 import { isSourceOnlyActivity, sidebarActivityTitle } from '@/components/story/runtimeActivity';
 import { AnalysisActions } from '@/components/story/AnalysisActions';
-import { cutsceneSlots } from '@/components/story/cutscenePlacement';
+import { cutsceneSlots, visibleCutsceneEntries } from '@/components/story/cutscenePlacement';
 import {
   QuestRuntimeBlock,
   EncounterCinematicBoundary,
@@ -21,6 +21,7 @@ import {
   runtimeBlockAnchor,
   runtimeBlockSlots,
 } from '@/components/story/QuestRuntimeBlock';
+import { encounterFlows } from '@/components/story/encounterTransitions';
 import { QuestIllustration } from '@/components/story/QuestIllustration';
 import { QuestIllustratedScene } from '@/components/story/QuestIllustratedScene';
 import { QuestFork } from '@/components/story/QuestFork';
@@ -326,15 +327,28 @@ export function QuestPageClient({
   );
   const encounterBlocks = [...activitySlots.values()].flat();
   const encounterOwners = encounterFlowOwners(encounterBlocks, shown);
-  const contextualCutscenes = (media?.events || []).filter(
-    (event) => event.kind === 'cutscene' && event.context_inferred && !event.story_order_mapped && !encounterOwnsMedia(event, encounterOwners, encounterBlocks),
+  const interactionIds = new Set<string>(encounterBlocks.flatMap((block) =>
+    (block.interactions || []).map((item) => `${block.id}:${item.id}`)));
+  const pageMediaEvents = visibleCutsceneEntries(shown, media?.events || [],
+    Boolean(transcript?.offset || lines.length >= (transcript?.limit || 0)), interactionIds);
+  const encounterMediaOwners = new Map<string, string>();
+  for (const event of pageMediaEvents) {
+    if (event.interaction_id) continue;
+    const flow = encounterBlocks.flatMap((block) => block.encounter ? encounterFlows(block.encounter) : [])
+      .find((flow) => encounterOwnsMedia(event, new Map([[flow.state, flow.id]]), encounterBlocks) &&
+        encounterOwners.get(flow.state) === flow.id);
+    if (flow) encounterMediaOwners.set(event.reference, flow.id);
+  }
+
+  const contextualCutscenes = pageMediaEvents.filter(
+    (event) => event.kind === 'cutscene' && !event.interaction_id && event.context_inferred && !event.story_order_mapped && !encounterMediaOwners.has(event.reference),
   );
   const videoSlots = cutsceneSlots(
     shown,
     onlyLines || onlyChoices
       ? []
-      : (media?.events || []).filter(
-          (event) => !event.interaction_id && (!event.context_inferred || event.story_order_mapped) && !encounterOwnsMedia(event, encounterOwners, encounterBlocks),
+      : pageMediaEvents.filter(
+          (event) => !event.interaction_id && (!event.context_inferred || event.story_order_mapped) && !encounterMediaOwners.has(event.reference),
         ),
     Boolean(transcript?.offset || lines.length >= (transcript?.limit || 0)),
     ['cutscene', 'sequence'],
@@ -360,10 +374,11 @@ export function QuestPageClient({
   })));
   const visibleSidebarScenes = new Set([
     ...Array.from(videoSlots.values()).flat(), ...contextualCutscenes,
-    ...(media?.events || []).filter((event) => event.interaction_id &&
+    ...pageMediaEvents.filter((event) => encounterMediaOwners.has(event.reference)),
+    ...pageMediaEvents.filter((event) => event.interaction_id &&
       activityBlocks.some((block) => block.interactions?.some((item) => `${block.id}:${item.id}` === event.interaction_id))),
   ].map(cutsceneAnchor));
-  const eventSceneNames = new Set((media?.events || []).filter((event) => event.kind === 'cutscene').map((event) => event.reference));
+  const eventSceneNames = new Set(pageMediaEvents.filter((event) => event.kind === 'cutscene').map((event) => event.reference));
   const sidebarGroups: SidebarGroup[] = [
     { id: 'dialogue', title: 'Dialogue', entries: stateIndex.map((state) => {
       const first = shown.find((line: any) => line.flow_state === state.key);
@@ -372,7 +387,7 @@ export function QuestPageClient({
         note: `${state.count} ${state.count === 1 ? 'line' : 'lines'} in this view`, inView: true };
     }) },
     { id: 'scenes', title: 'Scenes', entries: [
-      ...(media?.events || []).filter((event) => event.kind !== 'audio_event').map((event) => {
+      ...pageMediaEvents.filter((event) => event.kind !== 'audio_event').map((event) => {
         const anchor = visibleSidebarScenes.has(cutsceneAnchor(event))
           ? cutsceneAnchor(event) : stateAnchors.get(event.flow_state);
         const fallback = event.kind === 'cutscene' ? `Cutscene · ${event.reference.replace('cutscene:', '')}` : 'Story scene';
@@ -395,11 +410,6 @@ export function QuestPageClient({
       note: !block.position || block.ordering === 'related' ? 'Related · position unknown' : undefined,
     })).sort((a: { inView: boolean }, b: { inView: boolean }) => Number(b.inView) - Number(a.inView)) },
   ];
-  const interactionIds = new Set(
-    activityBlocks.flatMap((block) =>
-      (block.interactions || []).map((item) => `${block.id}:${item.id}`),
-    ),
-  );
   for (const block of activityBlocks)
     for (const item of block.interactions || [])
       for (const flow of item.flow_states)
@@ -488,10 +498,11 @@ export function QuestPageClient({
       return related.length ? [<a key={flow.id} href={`#${lineAnchors.get(related[0].id)}`}>Read the dialogue shared by this branch ↗</a>] : [];
     }
     const selected = related.filter((line: any) => inlineStates.has(line.flow_state));
-    return encounterCinematicParts(selected, flow.cinematics).map((part, index) => {
-      const events = (media?.events || []).filter(event => event.kind === 'cutscene' &&
-        part.cinematics.some(scene => scene.reference === event.reference) &&
-        (event.flow_state === flow.state || event.transcript_states?.includes(flow.state)));
+    const parts = encounterCinematicParts(selected, flow.cinematics);
+    return parts.map((part, index) => {
+      const events = pageMediaEvents.filter(event => event.kind === 'cutscene' &&
+        encounterMediaOwners.get(event.reference) === flow.id &&
+        parts.findIndex((part) => part.cinematics.some(scene => scene.reference === event.reference)) === index);
       const content = renderExcerpt(part.lines.map((line: any) => indexedLines.get(line.id)!), events);
       return part.cinematics.length
         ? <EncounterCinematicBoundary key={`${flow.id}-${index}`} media={part.cinematics} unplaced={!part.lines.length} playbackResolved={events.some(event => !!event.playback)}>{content}</EncounterCinematicBoundary>
@@ -509,10 +520,11 @@ export function QuestPageClient({
       );
     return renderExcerpt(
       selected,
-      (media?.events || []).filter(
+      pageMediaEvents.filter(
         (event) =>
-          event.interaction_id === owner ||
-          selected.some(({ line }: any) => line.flow_state === event.flow_state),
+          !encounterMediaOwners.has(event.reference) &&
+          (event.interaction_id ? event.interaction_id === owner :
+            selected.some(({ line }: any) => line.flow_state === event.flow_state)),
       ),
     );
   };
@@ -747,8 +759,8 @@ export function QuestPageClient({
               const owner = ids.length ? forkOwners.get(ids[0]) : null;
               return renderExcerpt(
                 selected,
-                (media?.events || []).filter(
-                  (event) => owner && forkMediaOwners.get(event.flow_state) === owner,
+                pageMediaEvents.filter(
+                  (event) => owner && !event.interaction_id && !encounterMediaOwners.has(event.reference) && forkMediaOwners.get(event.flow_state) === owner,
                 ),
               );
             }}

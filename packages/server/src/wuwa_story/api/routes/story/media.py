@@ -27,6 +27,7 @@ from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.cutscenes import Clip, PlaybackFlow
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.story import media as story_media
+from wuwa_story.story.cutscene_occurrences import group_cutscene_occurrences
 from wuwa_story.story.service import _quest_page_state_ids
 from wuwa_story.story.tree_order import authored_order
 
@@ -182,7 +183,8 @@ async def quest_media(
 ) -> dict[str, Any]:
     """Authored media references with published playable files when available."""
     if read_projections.should_route_to_projection("quest", game_version, locale=locale):
-        return await read_projections.quest_section(session, game_quest_id, locale, game_version, "media")
+        return group_cutscene_occurrences(await read_projections.quest_section(
+            session, game_quest_id, locale, game_version, "media"))
     quest = await get_quest(session, game_quest_id)
     if quest is None:
         raise HTTPException(status_code=404, detail="quest not found")
@@ -364,7 +366,7 @@ async def quest_media(
     package_scenes = await _links(session, [quest.node_id], ("references_packaged_cutscene",), release_id)
     related = {link["node_id"]: link for link in package_scenes.get(quest.node_id, [])}
     package_flows = await cutscene_flows(session, list(related)) if related else {}
-    return {
+    return group_cutscene_occurrences({
         "quest": f"quest:{game_quest_id}",
         "game_version": (await session.get(GameRelease, release_id)).game_version,
         "availability": "partial" if playable else "references_only",
@@ -384,4 +386,4 @@ async def quest_media(
                           for asset in package_assets.get(link["node_id"], [])]}
             for link in package_links.get(quest.node_id, [])
         ],
-    }
+    })

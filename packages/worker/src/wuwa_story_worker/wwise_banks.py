@@ -6,6 +6,7 @@ the male/female sources in a bank must never be mixed together indiscriminately.
 
 import asyncio
 import hashlib
+import json
 import math
 import re
 import shutil
@@ -15,6 +16,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from wuwa_story_worker.tooling import tool_path
+
+WWISE_RENDERER_SCHEMA = 1
+# Only retained 3.7 control/language/silence regressions require durable revalidation.
+WWISE_REPAIR_CUTSCENES = frozenset(f'cutscene:{name}' for name in (
+    'C0026', 'C0027', 'C0032', 'M0318', 'M2_12_06', 'M3_1_11_1',
+))
 
 
 def bank_media_ids(data: bytes) -> list[int]:
@@ -192,22 +199,165 @@ def rover_parameters(xml: Path, rover: str | None, *, language: str | None = Non
     return sorted(params)
 
 
+def event_timeline(xml: Path, identity: int) -> dict:
+    """Inspect v172 event controls; this is evidence, not a music scheduler.
+
+    Times are milliseconds from the requested event, never elapsed music time.
+    Keep invocation order at equal times and visit only the requested closure.
+    """
+    tree = ET.parse(xml)
+    if tree.getroot().get('version') != '172':
+        raise ValueError('Unsupported Wwise event control schema')
+    nodes = {}
+    for node in tree.iter('object'):
+        field = node.find("field[@name='ulID']")
+        if field is None:
+            continue
+        key = int(field.get('value'))
+        if key in nodes:
+            raise ValueError(f'Duplicate Wwise object ID: {key}')
+        nodes[key] = node
+
+    def number(node, name):
+        fields = node.findall(f".//field[@name='{name}']")
+        if len(fields) != 1:
+            raise ValueError(f'Missing or ambiguous Wwise control field: {name}')
+        return int(fields[0].get('value'))
+
+    actions = []
+
+    def visit(event, elapsed, chain):
+        if event in chain:
+            raise ValueError(f'Wwise PlayEvent cycle: {[*chain, event]}')
+        node = nodes.get(event)
+        if node is None or node.get('name') != 'CAkEvent':
+            raise ValueError(f'Missing Wwise event: {event}')
+        refs = node.findall(".//field[@name='ulActionID']")
+        if len(refs) != number(node, 'ulActionListSize'):
+            raise ValueError(f'Incomplete Wwise action list: {event}')
+        for ref in refs:
+            action_id = int(ref.get('value'))
+            action = nodes.get(action_id)
+            kind = action.get('name') if action is not None else None
+            if kind not in {'CAkActionPlay', 'CAkActionStop', 'CAkActionPlayEvent', 'CAkActionSetState'}:
+                raise ValueError(f'Missing or unsupported Wwise action: {action_id} ({kind})')
+            props = {}
+            for bundle in action.findall('.//object'):
+                if bundle.get('name', '').startswith('AkPropBundle<RANGED_MODIFIERS'):
+                    if number(bundle, 'cProps') != 0:
+                        raise ValueError(f'Randomized Wwise action timing/properties: {action_id}')
+            for prop in action.findall(".//list[@name='pProps']/object"):
+                key, value = number(prop, 'pID'), number(prop, 'pValue')
+                if key in props:
+                    raise ValueError(f'Duplicate Wwise action property: {action_id}/{key}')
+                props[key] = value
+            delay = props.get(58, 0)  # v172 DelayTime
+            if delay < 0:
+                raise ValueError(f'Negative Wwise action delay: {action_id}')
+            target = number(action, 'idExt')
+            record = {'event_id': event, 'event_chain': [*chain, event],
+                      'action_id': action_id, 'kind': kind.removeprefix('CAkAction'),
+                      'time_ms': elapsed + delay, 'target_id': target,
+                      'target_in_bank': target in nodes, 'properties': props}
+            if kind == 'CAkActionSetState':
+                record['state_group_id'] = number(action, 'ulStateGroupID')
+                record['state_id'] = number(action, 'ulTargetStateID')
+            actions.append(record)
+            if kind == 'CAkActionPlayEvent':
+                visit(target, elapsed + delay, (*chain, event))
+
+    visit(identity, 0, ())
+    return {'event_id': identity, 'bank': tree.getroot().get('filename'),
+            'xml_sha256': hashlib.sha256(xml.read_bytes()).hexdigest(),
+            'actions': sorted(actions, key=lambda action: action['time_ms'])}
+
+
+def validate_event_timeline(timeline: dict, xml: Path | None = None) -> list[str]:
+    """Bind deterministic startup states; never flatten a running state change."""
+    states = [action for action in timeline['actions'] if action['kind'] == 'SetState']
+    if not states:
+        return []
+    plays = [action for action in timeline['actions'] if action['kind'] == 'Play']
+    if not plays:
+        raise ValueError('Wwise control-only event requires active music context and elapsed playback time')
+    changes = ', '.join(f"{a['state_group_id']}={a['state_id']} at {a['time_ms']}ms" for a in states)
+    bindings = {}
+    for state in states:
+        group, value = state['state_group_id'], state['state_id']
+        if state['time_ms'] != 0 or (group in bindings and bindings[group] != value):
+            raise ValueError(f'Wwise temporal SetState playback is unsupported: {changes}; static renditions cannot reproduce music transitions')
+        bindings[group] = value
+    if xml is None:
+        raise ValueError('Wwise initial SetState requires its consuming switch evidence')
+    nodes = {int(field.get('value')): node for node in ET.parse(xml).iter('object')
+             if (field := node.find("field[@name='ulID']")) is not None}
+
+    def descendants(identity, visited=None):
+        visited = set() if visited is None else visited
+        if identity in visited:
+            return visited
+        visited.add(identity)
+        node = nodes.get(identity)
+        if node is not None:
+            for field in node.iter('field'):
+                if field.get('name') in {'ulChildID', 'audioNodeId', 'NodeID'}:
+                    descendants(int(field.get('value')), visited)
+        return visited
+
+    actions = timeline['actions']
+    for group, value in bindings.items():
+        consumers = set()
+        for identity, node in nodes.items():
+            if node.get('name') == 'CAkSwitchCntr':
+                if node.find(f".//field[@name='ulGroupID'][@value='{group}']") is None:
+                    continue
+                if (node.find(".//field[@name='eGroupType'][@value='1']") is None
+                        or node.find(f".//field[@name='ulSwitchID'][@value='{value}']") is None):
+                    raise ValueError(f'Wwise initial State has no authored switch value: {group}={value}')
+            elif node.get('name') == 'CAkMusicSwitchCntr':
+                arguments = node.findall(".//list[@name='pArguments']/object")
+                if not any(arg.find(f"field[@name='ulGroup'][@value='{group}']") is not None
+                           for arg in arguments):
+                    continue
+                if (len(arguments) != 1
+                        or arguments[0].find("field[@name='eGroupType'][@value='1']") is None
+                        or node.find(".//field[@name='uTreeDepth'][@value='1']") is None
+                        or node.find(f".//object[@name='Node']/field[@name='key'][@value='{value}']") is None):
+                    raise ValueError(f'Unsupported Wwise initial music State mapping: {group}={value}')
+            else:
+                continue
+            consumers.add(identity)
+        consuming_plays = [play for play in plays if consumers & descendants(play['target_id'])]
+        if not consuming_plays:
+            raise ValueError(f'Wwise initial SetState has no consuming Play in this bank: {group}={value}')
+        first_play = min(actions.index(play) for play in consuming_plays)
+        if any(actions.index(state) >= first_play for state in states if state['state_group_id'] == group):
+            raise ValueError(f'Wwise SetState follows consuming Play; elapsed music context is required: {group}')
+    return sorted(f'({group}={value})' for group, value in bindings.items())
+
+
 async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover, run_tool, *, language: str | None = None):
     """Return (decoded WAV, durable evidence) for exactly one authored event."""
     from wuwa_story_worker.cutscene_import import soundtrack_wem
 
     renderer = tool_path("WUWA_WWISER_PATH")
+    # Exclude our copied Init banks when work is nested inside the audio export.
+    initializers = sorted(path for path in audio.rglob("Init.bnk") if path.is_file()
+                          and not path.resolve().is_relative_to(work.resolve()))
+    if len(initializers) > 1:
+        raise ValueError("Ambiguous Wwise Init bank")
     selection = str(rover).encode() + (b'\0language:' + language.encode('ascii') if language is not None else b'')
-    digest = hashlib.sha256(bank.read_bytes() + selection + renderer.read_bytes()).hexdigest()[:20]
+    fingerprint = hashlib.sha256(bank.read_bytes() + selection + renderer.read_bytes())
+    fingerprint.update(Path(__file__).read_bytes())
+    for initializer in initializers:
+        fingerprint.update(hashlib.sha256(initializer.read_bytes()).digest())
+    digest = fingerprint.hexdigest()[:20]
     root = work / "wwise" / digest
     root.mkdir(parents=True, exist_ok=True)
     source = root / bank.name
     shutil.copyfile(bank, source)
     # The base Init bank carries the shared bus gains; it is exported separately
     # because localized voice packages do not contain it.
-    initializers = sorted(path for path in audio.rglob("Init.bnk") if path.is_file())
-    if len(initializers) > 1:
-        raise ValueError("Ambiguous Wwise Init bank")
     inputs = [source]
     for initializer in initializers:
         local = root / "Init.bnk"
@@ -216,7 +366,15 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
     xml = root / "bank.xml"
     await run_tool([sys.executable, str(renderer), "-d", "xml", "-dn", str(root / "bank"),
                     "--", str(source)], 120)
+    timeline = event_timeline(xml, event_id(bank.stem))
+    controls = root / 'event-timeline.json'
+    controls.write_text(json.dumps(timeline, indent=2), encoding='utf-8')
+    state_params = validate_event_timeline(timeline, xml)
     params = await asyncio.to_thread(rover_parameters, xml, rover, language=language)
+    for param in state_params:
+        if any(other.split('=')[0] == param.split('=')[0] and other != param for other in params):
+            raise ValueError(f'Authored initial State conflicts with requested language/Rover: {param}')
+    params = sorted(set([*params, *state_params]))
     for stale in root.glob("*.txtp"):
         stale.unlink()
     command = [sys.executable, str(renderer), "-d", "none", "-g", "-gwd", "-gra",
@@ -245,7 +403,7 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
                              and not re.fullmatch(r'\?\.plugin-silence #B [0-9.]+', line.strip())
                              for line in body.splitlines()):
         raise ValueError("Unsupported Wwise rendition resource path")
-    originals = [bank, *initializers, recipe, xml]
+    originals = [bank, *initializers, recipe, xml, controls]
     if original_recipe is not None:
         originals.append(original_recipe)
     media = root / "wem"
