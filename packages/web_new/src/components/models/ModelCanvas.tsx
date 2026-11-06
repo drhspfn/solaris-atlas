@@ -18,8 +18,9 @@ export default function ModelCanvas({ assets, preview, settings, onState, onCont
     try {
       controller.current = createViewer(host.current, assets, preview, currentSettings.current, onState);
       onController(controller.current);
-    } catch {
-      onState({ error: 'WebGL is unavailable. Enable browser graphics acceleration and retry.' });
+    } catch (error) {
+      onState({ error: error instanceof Error && error.message === 'Invalid model resource URL'
+        ? error.message : 'WebGL is unavailable. Enable browser graphics acceleration and retry.' });
     }
     return () => { controller.current?.dispose(); controller.current = null; onController(null); };
   }, [assets, preview, onState, onController]);

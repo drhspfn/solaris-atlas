@@ -106,6 +106,7 @@ export function attachAnimationCatalog(clip, pack, index) {
     );
   clip.userData = {
     ...clip.userData,
+    sourcePackage: typeof imported?.source === "string" ? imported.source : undefined,
     catalog: valid
       ? Object.fromEntries(keys.map((key) => [key, imported[key]]))
       : classifyAnimation(clip.name),

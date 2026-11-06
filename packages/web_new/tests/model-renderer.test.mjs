@@ -8,6 +8,7 @@ import { RootMotionLock } from '../src/components/models/engine/root-motion.js';
 import { FacialAnimation } from '../src/components/models/engine/facial.js';
 import { bindAnimationClips, attachAnimationCatalog, prepareAnimatedMeshes } from '../src/components/models/engine/animations.js';
 import { declaredAccessories } from '../src/components/models/engine/accessories.js';
+import { createLinkedModels } from '../src/components/models/engine/linked-models.js';
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function rig(animated = false, facial = false) {
@@ -19,11 +20,14 @@ function rig(animated = false, facial = false) {
   return { scene, mesh, bone, parser: { associations: new Map([[bone, { nodes: 0 }]]), json: { nodes: [{ name: 'Hips' }] } },
     animations: animated ? [new THREE.AnimationClip('Stand1', 1, [new THREE.VectorKeyframeTrack('Hips.position', [0, 1], [0, 0, 0, 2, 0, 0])])] : [] };
 }
-async function viewer({ preview = false, defer = false, hold = false, accessory = false, boneAccessory = false } = {}) {
+async function viewer({ preview = false, defer = false, hold = false, accessory = false, boneAccessory = false, linked = false } = {}) {
   const requests = [], events = new Map(), changes = [], pending = new Map();
   let frame, disconnected = false, destroyed = false, failure = false, finish;
   let geometryDisposals = 0;
   const low = rig(), full = rig(false, true), pack = rig(true);
+  const child = rig(true);
+  pack.parser.json.animations = [{ extras: { solaris_atlas: { source: 'Client/Content/Aki/Body/Stand.json' } } }];
+  child.parser.json.animations = [{ extras: { solaris_atlas: { source: 'Client/Content/Aki/Prop/Stand.json' } } }];
   if (boneAccessory) {
     for (const model of [low, full]) {
       model.bone.scale.set(2, 3, 4);
@@ -53,6 +57,7 @@ async function viewer({ preview = false, defer = false, hold = false, accessory 
       if (failure === true || (typeof failure === 'string' && url.includes(failure))) throw new Error('offline');
       if (hold && /\/(pack|full)\.glb$/.test(url)) await new Promise(resolve => pending.set(url.split('/').at(-1), resolve));
       if (url.endsWith('/pack.glb')) return pack;
+      if (url.endsWith('/child.glb')) return child;
       if (url.endsWith('/full.glb')) return full;
       if (defer) await new Promise(resolve => { finish = resolve; });
       return low;
@@ -63,7 +68,7 @@ async function viewer({ preview = false, defer = false, hold = false, accessory 
     .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
   const context = { THREE: { ...THREE, WebGLRenderer: Renderer }, GLTFLoader: Loader, OrbitControls: Controls,
     SpringBones: class { joints = [1]; missing = []; reset() {} restore() {} update() {} },
-    BoneCamera, cameraBones, RootMotionLock, FacialAnimation, bindAnimationClips, attachAnimationCatalog, prepareAnimatedMeshes, declaredAccessories,
+    BoneCamera, cameraBones, RootMotionLock, FacialAnimation, bindAnimationClips, attachAnimationCatalog, prepareAnimatedMeshes, declaredAccessories, createLinkedModels,
     location: { href: 'https://atlas.test/characters/hero', protocol: 'https:' }, URL, AbortController,
     devicePixelRatio: 1, document: { hidden: false, addEventListener: (key, fn) => events.set(key, fn), removeEventListener: key => events.delete(key) },
     ResizeObserver: class { observe() {} disconnect() { disconnected = true; } },
@@ -76,14 +81,29 @@ async function viewer({ preview = false, defer = false, hold = false, accessory 
   const settings = { playing: false, speed: 1, floor: true, turntable: false, physics: true, strength: 1,
     lock: false, axes: { x: true, y: false, z: true }, bone: '', follow: false, space: 'world', offset: [0, 0, 0] };
   const controller = context.createViewer({ append() {}, getBoundingClientRect: () => ({ width: 500, height: 400 }) },
-    { preview: asset('low.glb'), download: asset('full.glb'), animations: asset('pack.glb'), physics: asset('physics.json'), facial: asset('face.json') },
+    { id: 'root', preview: asset('low.glb'), download: asset('full.glb'), animations: asset('pack.glb'), physics: asset('physics.json'), facial: asset('face.json'),
+      linked_models: linked ? [{ id: 'prop', parent_id: 'root', label: 'Prop', preview: asset('child.glb'), component: { socket: 'Hips', bindings: [{ parent_clip: 'Aki/Body/Stand', child_clip: 'Aki/Prop/Stand' }] } }] : [] },
     preview, settings, patch => { changes.push(patch); Object.assign(state, patch); });
   await flush();
-  return { controller, settings, requests, state, full, low, changes, events,
+  return { controller, settings, requests, state, full, low, child, changes, events,
     release: name => { const resolve = pending.get(name); assert(resolve, name + ' must already be downloading'); resolve(); },
     frame: ms => frame?.(ms), fail: value => { failure = value; }, finish: () => finish(),
     get disconnected() { return disconnected; }, get destroyed() { return destroyed; }, get disposedGeometry() { return geometryDisposals; } };
 }
+
+test('renderer attaches and synchronizes a linked rig through seek, upgrade, visibility and disposal', async () => {
+  const v = await viewer({ linked: true }); await flush();
+  assert.equal(v.child.scene.parent, v.low.bone);
+  await v.controller.command('animations');
+  v.controller.seek(0.5); assert.equal(v.child.bone.position.x, 1);
+  v.controller.settings({ ...v.settings, playing: true }); v.frame(100); v.frame(200);
+  assert(v.child.bone.position.x > 1);
+  v.controller.settings({ ...v.settings, playing: false }); v.frame(300);
+  const paused = v.child.bone.position.x; v.frame(400); assert.equal(v.child.bone.position.x, paused);
+  await v.controller.command('quality'); assert.equal(v.child.scene.parent, v.full.bone);
+  v.controller.component('prop', false); assert.equal(v.child.scene.visible, false);
+  v.controller.dispose(); assert.equal(v.child.scene.parent, null);
+});
 
 test('declared accessory visibility survives upgrading model quality', async () => {
   const v = await viewer({ accessory: true });

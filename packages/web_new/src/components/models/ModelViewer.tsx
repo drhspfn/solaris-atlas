@@ -52,6 +52,16 @@ const stamp = (value: number) =>
   `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
 const label = (name: string, bytes?: number) =>
   bytes && bytes > 0 ? `${name} · ${(bytes / 1048576).toFixed(1)} MiB` : name;
+const normalizeAssets = (assets: ModelAssets): ModelAssets => ({
+  ...assets,
+  ...Object.fromEntries(
+    (["preview", "download", "physics", "animations", "facial"] as const).map((key) => {
+      const asset = assets[key];
+      return [key, asset ? { ...asset, url: apiUrl(asset.url.replace(/^\/api(?=\/)/, "")) } : asset];
+    }),
+  ),
+  linked_models: assets.linked_models?.map((item) => ({ ...item, ...normalizeAssets(item) })),
+});
 
 class CanvasBoundary extends Component<
   { children: ReactNode; retry: () => void },
@@ -73,15 +83,7 @@ class CanvasBoundary extends Component<
   }
 }
 
-export function ModelViewer({
-  assets: source,
-  name,
-  preview = false,
-  active = true,
-  titleId,
-  formSelector,
-  onClose,
-}: {
+type ModelViewerProps = {
   assets: ModelAssets;
   name: string;
   preview?: boolean;
@@ -89,17 +91,33 @@ export function ModelViewer({
   titleId?: string;
   formSelector?: ReactNode;
   onClose?: () => void;
-}) {
+};
+
+export function ModelViewer(props: ModelViewerProps) {
+  const [selected, setSelected] = useState("");
+  const linked = props.assets.linked_models ?? [];
+  const item = linked.find((model) => model.id === selected);
+  const assets = item ?? props.assets;
+  const selector = !props.preview && linked.length > 0 && (
+    <Select label="Model view" value={selected} onChange={setSelected}
+      options={[{ value: "", label: "Full scene" }, ...linked.map(({ id, label }) => ({ value: id, label }))]} />
+  );
+  return <ModelViewerInstance key={selected} {...props} assets={assets}
+    formSelector={<>{props.formSelector}{selector}</>} />;
+}
+
+function ModelViewerInstance({
+  assets: source,
+  name,
+  preview = false,
+  active = true,
+  titleId,
+  formSelector,
+  onClose,
+}: ModelViewerProps) {
   const [assets] = useState<ModelAssets>(
     () =>
-      Object.fromEntries(
-        Object.entries(source).map(([key, asset]) => [
-          key,
-          asset && typeof asset === "object" && "url" in asset
-            ? { ...asset, url: apiUrl(asset.url.replace(/^\/api(?=\/)/, "")) }
-            : asset,
-        ]),
-      ) as ModelAssets,
+      normalizeAssets(source),
   );
   const [settings, setSettings] = useState<ViewerSettings>(defaultSettings);
   const [state, setState] = useState<ViewerState>(initialViewerState);
@@ -514,6 +532,17 @@ export function ModelViewer({
                   {checkbox("Show floor and world axes", "floor")}
                   {checkbox("Turntable", "turntable")}
                   {checkbox("Lock root position", "lock", !state.rootAvailable)}
+                  {state.components.length > 0 && <fieldset>
+                    <legend>Linked components</legend>
+                    {state.components.map((component) => <div key={component.id}>
+                      <Checkbox label={component.name} checked={component.visible}
+                        disabled={disabled} onChange={(event) => controller.current?.component(component.id, event.target.checked)} />
+                      {component.loading && <span role="status"> Loading…</span>}
+                      {component.error && <div role="alert">{component.error}{" "}
+                        <Button size="sm" onClick={() => controller.current?.component(component.id, true)}>Retry</Button>
+                      </div>}
+                    </div>)}
+                  </fieldset>}
                   {state.accessories.length > 0 && <fieldset>
                     <legend>Accessories</legend>
                     {state.accessories.map((accessory) => <Checkbox key={accessory.name}
