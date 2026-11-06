@@ -86,8 +86,11 @@ async def available_audio(session, selected, release_id, bucket):
                 or metadata.get('game_source') != proof
                 or any(metadata.get(field) != proof[field] for field in ('asset_version', 'download_id'))):
             continue
+        sources = metadata.get('sections', [metadata.get('section_source')])
+        if not isinstance(sources, list):
+            continue
         for section in bundle['media']['sections']:
-            if (section.get('kind') != 'audio_event' or section.get('source') != metadata.get('section_source')
+            if (section.get('kind') != 'audio_event' or section.get('source') not in sources
                     or section.get('reference') != metadata.get('event_reference')):
                 continue
             for track in section.get('tracks', []):

@@ -205,7 +205,12 @@ async def publish_sequence_fragments(session, bundle, target, published, service
                 reference.metadata_json = {'asset_version': provenance['asset_version'],
                     'download_id': provenance['download_id'], 'bundle_file_id': published.id,
                     'archive_entry': entry, 'game_source': copy.deepcopy(provenance),
-                    'section_source': section['source'], 'event_reference': section.get('reference'),
+                    'section_source': section['source'],
+                    'sections': [part['source'] for part in media['sections']
+                                 if part.get('kind') == 'audio_event'
+                                 and part.get('reference') == section.get('reference')
+                                 and any(item.get('file') == entry for item in part.get('tracks', []))],
+                    'event_reference': section.get('reference'),
                     'language': track.get('language'), 'rover': track.get('rover')}
                 track.update(file_id=file.id, status='published', mime_type='audio/ogg')
         return media

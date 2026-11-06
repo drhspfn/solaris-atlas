@@ -8,7 +8,8 @@ from wuwa_story.db.repositories.sequence_playback import available_audio
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('mismatch', [None, 'bundle_file_id', 'event_reference', 'language', 'game_source'])
-async def test_audio_url_requires_exact_bundle_event_language_and_provenance(mismatch):
+@pytest.mark.parametrize('repeated', [False, True])
+async def test_audio_url_requires_exact_bundle_event_language_and_provenance(mismatch, repeated):
     proof = {'asset_version': '3.7.1', 'download_id': 'client', 'sequence_metadata_revision': 3}
     selected = {7: {'file_id': 90, 'source_path': 'story_sequence:Flow28', 'media': {
         'game_source': proof, 'sections': [{'kind': 'audio_event', 'source': '/Game/Scene.407',
@@ -18,12 +19,19 @@ async def test_audio_url_requires_exact_bundle_event_language_and_provenance(mis
                 'game_source': deepcopy(proof), 'section_source': '/Game/Scene.407',
                 'event_reference': '/Game/Event', 'archive_entry': 'audio/event/en/shared.ogg',
                 'language': 'en', 'rover': None}
+    expected = {(7, 91, '/Game/Scene.407'): 'verified'}
+    if repeated:
+        section = deepcopy(selected[7]['media']['sections'][0])
+        section['source'] = '/Game/Scene.501'
+        selected[7]['media']['sections'].append(section)
+        metadata['sections'] = ['/Game/Scene.407', '/Game/Scene.501']
+        expected[(7, 91, '/Game/Scene.501')] = 'verified'
     if mismatch:
         metadata[mismatch] = 'different'
     session = AsyncMock()
     session.execute.return_value = [(7, 91, 'story_sequence:Flow28', 'audio/event/en/shared.ogg', metadata, 'verified')]
     result = await available_audio(session, selected, 21, 'media')
-    assert result == ({} if mismatch else {(7, 91, '/Game/Scene.407'): 'verified'})
+    assert result == ({} if mismatch else expected)
 
 
 @pytest.mark.asyncio

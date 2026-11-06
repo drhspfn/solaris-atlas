@@ -29,9 +29,12 @@ def matches_source(metadata: dict, source: dict, target: dict) -> bool:
     files = provenance.get("source_files") or []
     expected = {key: value for key, value in source.items()
                 if key != "tools" and (key != "voice_plan_id" or target.get("kind") != "image")}
+    revision = target.get('sequence_metadata_revision')
+    sequence_audio = (target.get('path', '').startswith('story_sequence:')
+                      and type(revision) is int and revision >= 3)
     tools = {key: value for key, value in source.get("tools", {}).items()
-             if (key != "WUWA_VGMSTREAM_PATH" or target.get("kind") != "image")
-             and (key != 'WUWA_WWISER_PATH' or provenance.get('voice_variant'))}
+             if (key != "WUWA_VGMSTREAM_PATH" or target.get("kind") != "image" or sequence_audio)
+             and (key != 'WUWA_WWISER_PATH' or provenance.get('voice_variant') or sequence_audio)}
     return (
         (not target.get('path', '').startswith('story_sequence:')
          or target.get('sequence_metadata_revision') is None

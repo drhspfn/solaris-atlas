@@ -12,6 +12,23 @@ from wuwa_story_worker import entity_media, sequence_metadata_jobs
 from wuwa_story_worker.sequence_metadata import recompile_bundle
 
 
+@pytest.mark.parametrize(('path', 'revision', 'kind', 'keeps_decoder'), [
+    ('story_sequence:flow_state:Story', 3, 'image', True),
+    ('story_sequence:flow_state:Story', 3, 'spine', True),
+    ('story_sequence:flow_state:Story', 2, 'image', False),
+    ('spine_background:7', 3, 'image', False),
+    ('/Game/Icon', None, 'image', False),
+])
+def test_sequence_audio_source_proof_keeps_current_tools_only_for_scoped_image_targets(path, revision, kind, keeps_decoder):
+    from wuwa_story_worker.media_provenance import source_provenance
+
+    request = {'asset_version': '3.7.1', 'download_id': 'a' * 64, 'tier': 'hd'}
+    tools = {'WUWA_FMODEL_PATH': 'extractor', 'WUWA_VGMSTREAM_PATH': 'decoder', 'WUWA_WWISER_PATH': 'renderer'}
+    proof = source_provenance(request, {'path': path, 'kind': kind, 'sequence_metadata_revision': revision}, [], tools)
+    assert ('WUWA_VGMSTREAM_PATH' in proof['tools']) is keeps_decoder
+    assert proof['tools']['WUWA_WWISER_PATH'] == 'renderer'
+
+
 def retained(tmp_path):
     presentation = flow_presentation({'StateKey': 'Story_1', 'Actions': [
         {'Name': 'PlaySequenceData', 'Params': {'Path': '/Game/Aki/Scene.Scene'}}]})
