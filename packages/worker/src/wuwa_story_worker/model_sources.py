@@ -36,6 +36,53 @@ def model_sources(role, preload):
     return {"model": mesh, "blueprints": sorted(set(blueprints))}
 
 
+def npc_model_sources(component):
+    """Resolve only the mesh and animation blueprint explicitly authored for an NPC."""
+    if not isinstance(component, dict) or component.get("Disabled") is True:
+        raise ValueError("NPC model component is missing or disabled")
+    model_type = component.get("ModelType")
+    if not isinstance(model_type, dict) or model_type.get("Type") != "Npc":
+        raise ValueError("Expected an NPC model component")
+    npc_model = model_type.get("NpcModel")
+    if not isinstance(npc_model, dict) or npc_model.get("Type") != "Mesh":
+        raise ValueError("NPC model does not specify an exact mesh")
+    mesh = authored_package(npc_model.get("Mesh"))
+    if not mesh.startswith("Aki/Character/NPC/") or "/Model/" not in mesh:
+        raise ValueError("Authored mesh is not an NPC rig")
+    abp = model_type.get("Abp")
+    return {"model": mesh, "blueprints": [authored_package(abp)] if abp else []}
+
+
+def npc_blueprint_attachments(rows):
+    """Read explicitly attached component templates from cooked Blueprint metadata."""
+    components = {row.get("Name"): row for row in rows if isinstance(row, dict)}
+    attachments = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("Type") != "SCS_Node":
+            continue
+        node = row.get("Properties", {})
+        template = node.get("ComponentTemplate", {}).get("ObjectName", "")
+        name = template.rsplit(":", 1)[-1].removesuffix("'")
+        component = components.get(name, {})
+        properties = component.get("Properties", {})
+        mesh = properties.get("SkeletalMesh") or properties.get("StaticMesh")
+        if not isinstance(mesh, dict) or not mesh.get("ObjectPath"):
+            continue
+        if not node.get("ParentComponentOrVariableName") or not node.get("AttachToName"):
+            raise ValueError("NPC accessory is missing its explicit parent or socket")
+        attachments.append({
+            "name": node.get("InternalVariableName") or name,
+            "model": authored_package(mesh["ObjectPath"]),
+            "parent": node["ParentComponentOrVariableName"],
+            "socket": node["AttachToName"],
+            "location": properties.get("RelativeLocation"),
+            "rotation": properties.get("RelativeRotation"),
+            "scale": properties.get("RelativeScale3D"),
+            "visible": properties.get("bVisible", True) and not properties.get("bHiddenInGame", False),
+        })
+    return attachments
+
+
 def exported_package(value):
     if value.startswith("Client/Content/"):
         value = "/Game/" + value[len("Client/Content/") :]

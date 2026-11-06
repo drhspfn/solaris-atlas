@@ -3,6 +3,47 @@ from copy import deepcopy
 import pytest
 
 from wuwa_story_worker.model_forms import resolve_model_forms
+from wuwa_story_worker.model_sources import npc_blueprint_attachments, npc_model_sources
+
+
+def test_npc_model_sources_use_iris_authored_mesh_and_abp():
+    # BlueprintConfig 17288 and its template, from the extracted game metadata.
+    root = "/Game/Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003"
+    component = {"Disabled": False, "ModelType": {
+        "Type": "Npc",
+        "NpcModel": {"Type": "Mesh", "Mesh": f"{root}/Model/NH_FemaleMS_003.NH_FemaleMS_003"},
+        "Abp": f"{root}/ABP_NH_MN_FemaleMS_003.ABP_NH_MN_FemaleMS_003_C",
+    }}
+    assert npc_model_sources(component) == {
+        "model": "Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003/Model/NH_FemaleMS_003",
+        "blueprints": ["Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003/ABP_NH_MN_FemaleMS_003"],
+    }
+    component["ModelType"]["NpcModel"] = {"Type": "Da", "Da": root + "/Other"}
+    with pytest.raises(ValueError, match="exact mesh"):
+        npc_model_sources(component)
+
+
+def test_rosemary_blueprint_accessory_keeps_socket_and_local_transform():
+    # SCS_Node_2 and WeaponCase0_GEN_VARIABLE from BP_NH_FemaleMS_002.
+    rows = [
+        {"Type": "SCS_Node", "Properties": {
+            "ComponentTemplate": {"ObjectName": "SkeletalMeshComponent'BP_NH_FemaleMS_002_C:WeaponCase0_GEN_VARIABLE'"},
+            "AttachToName": "WeaponProp02", "ParentComponentOrVariableName": "CharacterMesh0",
+            "InternalVariableName": "WeaponCase0",
+        }},
+        {"Type": "SkeletalMeshComponent", "Name": "WeaponCase0_GEN_VARIABLE", "Properties": {
+            "SkeletalMesh": {"ObjectPath": "/Game/Aki/Character/NPC/NPCProp/NWP052/Model/NWP052"},
+            "RelativeLocation": {"X": -0.086826526, "Y": -0.24841629, "Z": 0.039789926},
+            "RelativeRotation": {"Pitch": 0.00022539623, "Yaw": 0.00013616816, "Roll": 4.001002},
+        }},
+    ]
+    accessory, = npc_blueprint_attachments(rows)
+    assert accessory["model"] == "Aki/Character/NPC/NPCProp/NWP052/Model/NWP052"
+    assert (accessory["name"], accessory["parent"], accessory["socket"]) == (
+        "WeaponCase0", "CharacterMesh0", "WeaponProp02")
+    assert accessory["location"]["Y"] == -0.24841629
+    assert accessory["rotation"]["Roll"] == 4.001002
+    assert accessory["visible"] is True
 
 # Only identity fields from scratch/{roleinfo,preload,rolemorph}-3.7.json.
 # Keep these independent of the local scratch files and database.
