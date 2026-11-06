@@ -78,11 +78,12 @@ def test_effect_spawn_and_root_hide_with_cycle(tmp_path):
     export(tmp_path, "Aki/Effect", [{"Type": "EffectModelSkeletalMesh_C", "Properties": {
         "SkeletalMeshRef": ref("Aki/Riling"), "AnimationRef": ref("Aki/RilingIdle"), "Looping": False}}])
     result, = discover(tmp_path, {"component_blueprint": "Aki/BP", "animation_resources": ["Aki/Idle"]})
-    assert result["kind"] == "effect" and result["default_visible"] is None
+    assert result["kind"] == "effect" and result["default_visible"] is False
     assert result["source"]["component"] == result["id"]
     assert result["bindings"][0]["child_clip"] == "Aki/RilingIdle"
     assert result["bindings"][0]["source"]["looping"] is False
     assert result["socket"] == "Root"
+    assert result["source"]["group_entries"] == [{"group": "Aki/Group", "index": 1, "value": 0}]
     assert result["cues"][1]["defaults"]["target"] == "notifying_mesh"
     assert any("cycle" in d for d in result["diagnostics"])
     assert result["required_resources"] == ["Aki/Riling", "Aki/RilingIdle"]
@@ -113,3 +114,45 @@ def test_root_hide_is_preserved_without_components_and_json_sources(tmp_path):
     assert result["id"] == "$discovery"
     assert result["cues"][0]["defaults"]["target"] == "notifying_mesh"
     assert result["cues"][0]["source_clip"] == "Aki/Idle"
+
+
+def test_inherited_component_override_and_missing_parent(tmp_path):
+    child = {"Type": "BlueprintGeneratedClass", "SuperStruct": ref("Aki/Base", "BlueprintGeneratedClass")}
+    export(tmp_path, "Aki/Child", [child, {"Type": "InheritableComponentHandler", "Properties": {
+        "Records": [{"ComponentKey": {"OwnerClass": ref("Aki/Base", "BlueprintGeneratedClass"),
+                                      "SCSVariableName": "Hat"},
+                     "ComponentTemplate": {"ObjectName": "StaticMeshComponent'Child:Hat_Override'"}}]}},
+        {"Type": "StaticMeshComponent", "Name": "Hat_Override", "Properties": {"bVisible": False}}])
+    initial, = discover(tmp_path, {"component_blueprint": "Aki/Child"})
+    assert initial["required_resources"] == ["Aki/Base"]
+    export(tmp_path, "Aki/Base", [
+        {"Type": "SCS_Node", "Properties": {"InternalVariableName": "Hat",
+          "ComponentTemplate": {"ObjectName": "StaticMeshComponent'Base:Hat_GEN_VARIABLE'"},
+          "ParentComponentOrVariableName": "CharacterMesh0", "AttachToName": "Head"}},
+        {"Type": "StaticMeshComponent", "Name": "Hat_GEN_VARIABLE", "Properties": {
+            "StaticMesh": ref("Aki/Hat", "StaticMesh"), "bVisible": True}},
+        {"Type": "BlueprintGeneratedClass", "SuperStruct": ref("Aki/Child", "BlueprintGeneratedClass")},
+    ])
+    result, = discover(tmp_path, {"component_blueprint": "Aki/Child"})
+    assert result["model"] == "Aki/Hat" and result["default_visible"] is False
+    assert result["source"]["owner_blueprint"] == "Aki/Base"
+    assert result["source"]["override_blueprints"] == ["Aki/Child"]
+    assert result["source"]["model_type"] == "StaticMeshComponent"
+    assert any("StaticMesh" in d for d in result["diagnostics"])
+    assert any("cycle" in d for d in result["diagnostics"])
+
+
+def test_socket_can_be_an_authored_bone(tmp_path):
+    export(tmp_path, "Aki/BP", [
+        {"Type": "SCS_Node", "Properties": {"InternalVariableName": "Umbrella",
+          "ComponentTemplate": {"ObjectName": "SkeletalMeshComponent'BP:Umbrella_GEN_VARIABLE'"},
+          "AttachToName": "WeaponProp05"}},
+        {"Type": "SkeletalMeshComponent", "Name": "Umbrella_GEN_VARIABLE", "Properties": {
+          "SkeletalMesh": ref("Aki/Umbrella")}},
+    ])
+    export(tmp_path, "Aki/Skeleton", [{"Type": "Skeleton", "ReferenceSkeleton": {
+        "FinalRefBoneInfo": [{"Name": "WeaponProp05"}]}}])
+    result, = discover(tmp_path, {"component_blueprint": "Aki/BP", "parent_skeleton": "Aki/Skeleton"})
+    assert result["socket_transform"] == {"bone": "WeaponProp05", "location": None,
+                                          "rotation": None, "scale": None, "source": "Aki/Skeleton"}
+    assert not result["diagnostics"]

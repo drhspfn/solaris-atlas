@@ -90,13 +90,43 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
                 "default_visible": None, "baked": id_ in baked, "source": provenance,
                 "bindings": [], "cues": [], "required_resources": [], "diagnostics": []}
 
-    rows = load(bp) if bp else None
     if not bp:
         diagnostics.append("No component_blueprint supplied")
-    if rows:
+    chain, current, visited = [], bp, set()
+    while current:
+        if current in visited:
+            diagnostics.append(f"Blueprint inheritance cycle: {current}")
+            break
+        if len(chain) >= 32:
+            diagnostics.append("Blueprint inheritance limit reached (32 packages)")
+            break
+        visited.add(current)
+        rows = load(current)
+        if rows is None:
+            break
+        chain.append((current, rows))
+        parents = set()
+        for row in rows:
+            if row.get("Type") != "BlueprintGeneratedClass":
+                continue
+            parent = row.get("SuperStruct") or {}
+            if str(parent.get("ObjectName", "")).startswith("BlueprintGeneratedClass'"):
+                path = _package(parent)
+                if path:
+                    parents.add(path)
+        if len(parents) > 1:
+            diagnostics.append(f"Ambiguous Blueprint parents: {current}")
+            break
+        current = next(iter(parents), None)
+
+    # Override records are keyed by their original owner and SCS variable. A more
+    # derived template wins per field; missing properties inherit from the parent.
+    overrides = {}
+    components = {}
+    for owner, rows in reversed(chain):
         by_name = {r.get("Name"): r for r in rows if isinstance(r, dict)}
         for row in rows:
-            if not isinstance(row, dict) or row.get("Type") != "SCS_Node":
+            if row.get("Type") != "SCS_Node":
                 continue
             node = _props(row)
             template = node.get("ComponentTemplate") or {}
@@ -104,21 +134,49 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
             component = by_name.get(template_name, {})
             if component.get("Type") not in ("SkeletalMeshComponent", "StaticMeshComponent"):
                 continue
-            p = _props(component)
-            model = _package(p.get("SkeletalMesh") or p.get("StaticMesh"))
-            if not model or model == primary:
-                continue
             name = node.get("InternalVariableName") or template_name
-            result = recipe(name, "component", model, {"blueprint": bp, "component": name,
-                                                       "template": template_name})
-            result.update(anim_blueprint=_package(p.get("AnimClass")),
-                          parent_component=node.get("ParentComponentOrVariableName"),
-                          socket=node.get("AttachToName"), transform=_transform(p),
-                          default_visible=p.get("bVisible", True) and not p.get("bHiddenInGame", False))
-            if p.get("bHideLogicallyOnBeginPlay"):
-                result["diagnostics"].append("Logical begin-play hide is authored separately from visibility")
-            result["source"]["animation_data"] = p.get("AnimationData")
-            recipes.append(result)
+            if name in components:
+                diagnostics.append(f"Duplicate SCS component name in inheritance: {name}")
+            components[name] = {"owner": owner, "node": node, "template": template_name,
+                                "type": component["Type"], "properties": dict(_props(component))}
+        for row in rows:
+            if row.get("Type") != "InheritableComponentHandler":
+                continue
+            for record in _props(row).get("Records", []):
+                key = record.get("ComponentKey") or {}
+                owner_class = _package(key.get("OwnerClass"))
+                name = key.get("SCSVariableName")
+                template = record.get("ComponentTemplate") or {}
+                template_name = str(template.get("ObjectName", "")).rsplit(":", 1)[-1].rstrip("'")
+                component = by_name.get(template_name)
+                if name and owner_class and component:
+                    overrides.setdefault((owner_class, name), []).append((owner, component))
+                elif name and owner_class:
+                    diagnostics.append(f"Unresolved inherited component override: {owner}:{name}")
+
+    for name, info in components.items():
+        p = info["properties"]
+        applied = []
+        for override_owner, component in overrides.get((info["owner"], name), []):
+            p.update(_props(component))
+            applied.append(override_owner)
+        model = _package(p.get("SkeletalMesh") or p.get("StaticMesh"))
+        if not model or model == primary:
+            continue
+        node = info["node"]
+        result = recipe(name, "component", model, {"blueprint": bp, "component": name,
+            "template": info["template"], "owner_blueprint": info["owner"],
+            "override_blueprints": applied, "model_type": info["type"]})
+        result.update(anim_blueprint=_package(p.get("AnimClass")),
+                      parent_component=node.get("ParentComponentOrVariableName"),
+                      socket=node.get("AttachToName"), transform=_transform(p),
+                      default_visible=p.get("bVisible", True) and not p.get("bHiddenInGame", False))
+        if info["type"] == "StaticMeshComponent":
+            result["diagnostics"].append("StaticMesh component requires static-mesh export support")
+        if p.get("bHideLogicallyOnBeginPlay"):
+            result["diagnostics"].append("Logical begin-play hide is authored separately from visibility")
+        result["source"]["animation_data"] = p.get("AnimationData")
+        recipes.append(result)
 
     # Mesh skeletons and ABPs are discovered in stages as metadata becomes available.
     if not skeleton and primary:
@@ -132,6 +190,12 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
     if skeleton_rows:
         sockets = {_props(r).get("SocketName"): _props(r) for r in skeleton_rows
                    if r.get("Type") == "SkeletalMeshSocket"}
+        bones = {bone.get("Name") for row in skeleton_rows if row.get("Type") == "Skeleton"
+                 for bone in (row.get("ReferenceSkeleton") or {}).get("FinalRefBoneInfo", [])}
+        for name in bones - sockets.keys():
+            if name:
+                # The socket is the bone itself; its pose is already present in the rig.
+                sockets[name] = {"BoneName": name}
         for r in recipes:
             socket = sockets.get(r["socket"])
             if socket:
@@ -217,13 +281,12 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
 
     effect_seen = set()
 
-    def effect(ref, clip, context, event, notify, path=()):
+    def effect(ref, clip, context, event, notify, path=(), group_entries=()):
         package = _package(ref)
         if not package:
             return
         if package not in effect_seen and len(effect_seen) >= 256:
-            diagnostics.append("Effect discovery limit reached (256 packages)")
-            return
+            raise ValueError("Effect discovery limit reached (256 packages); scene is incomplete")
         effect_seen.add(package)
         if package in path:
             diagnostics.append(f"Effect resource cycle: {package}")
@@ -235,23 +298,34 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
         for item in data:
             p = _props(item)
             if item.get("Type") == "EffectModelGroup_C":
-                for e in p.get("EffectData", []):
+                for index, e in enumerate(p.get("EffectData", [])):
                     raw = e.get("Key", "")
                     nested = raw.split("'", 2)[1] if "'" in raw else raw
-                    effect(nested, clip, context, event, notify, (*path, package))
+                    effect(nested, clip, context, event, notify, (*path, package),
+                           (*group_entries, {"group": package, "index": index, "value": e.get("Value")}))
             if item.get("Type") != "EffectModelSkeletalMesh_C":
                 continue
             model, child = _package(p.get("SkeletalMeshRef")), _package(p.get("AnimationRef"))
             if not model or not child:
                 diagnostics.append(f"Effect missing explicit mesh or animation: {package}")
                 continue
-            id_ = f"effect:{clip}:{notify.get('Name')}:{package}"
+            group_id = ":".join(f"{entry['group']}[{entry['index']}]" for entry in group_entries)
+            id_ = f"effect:{clip}:{notify.get('Name')}:{group_id}:{package}"
             r = next((x for x in recipes if x["id"] == id_), None)
             if r is None:
                 r = recipe(id_, "effect", model, {"blueprint": bp, "component": id_,
-                    "effect": package, "effect_chain": list(path), "properties": p})
-                r["parent_component"] = "CharacterMesh0"
+                    "effect": package, "effect_chain": list(path), "properties": p,
+                    "model_type": "effect_spawned_skeletal_mesh", "group_entries": list(group_entries)})
+                r["default_visible"] = False
+                r["parent_component"] = (None if _props(notify).get("Attached") is False
+                                         else "CharacterMesh0")
+                if _props(notify).get("Attached") is False:
+                    r["diagnostics"].append("Effect is explicitly detached; world placement requires runtime semantics")
                 r["socket"] = _props(notify).get("SocketName")
+                socket_data = sockets.get(r["socket"])
+                if socket_data:
+                    r["socket_transform"] = {"bone": socket_data.get("BoneName"),
+                                             **_transform(socket_data), "source": skeleton}
                 r["transform"] = {"location": _props(notify).get("Location"),
                                   "rotation": _props(notify).get("Rotation"),
                                   "scale": _props(notify).get("Scale")}
