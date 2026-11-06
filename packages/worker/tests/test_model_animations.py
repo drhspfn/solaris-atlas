@@ -413,7 +413,9 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
             assert "--rig-only" in args
             if include:
                 (output / "animation-plan.json").write_text(
-                    json.dumps({"clips": [{"name": f"Clip{i}"} for i in range(clip_count)]})
+                    json.dumps({"clips": [{"name": f"Clip{i}",
+                        "source": f"Client/Content/Aki/ActualAnim/Clip{i}.json"}
+                        for i in range(clip_count)]})
                 )
                 (output / "report.json").write_text(
                     json.dumps({"animation_coverage": {"playable_clips": clip_count}})
