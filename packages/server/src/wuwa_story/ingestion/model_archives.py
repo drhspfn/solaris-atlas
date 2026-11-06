@@ -32,12 +32,12 @@ def validate_manifest(data):
     if not isinstance(objects, dict) or not 1 <= len(objects) <= 256:
         raise ValueError("Invalid archive objects")
     for key, size in objects.items():
-        if not re.fullmatch(r"[a-f0-9]{64}", key) or type(size) is not int or size < 1:
+        if not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{64}", key) or type(size) is not int or size < 1:
             raise ValueError("Invalid archive object identity")
     if sum(objects.values()) > MAX_EXPANDED_BYTES:
         raise ValueError("Expanded model archive exceeds size limit")
     referenced = set()
-    parents, component_ids, component_sources = {}, set(), set()
+    parents, components, component_sources, scenes = {}, {}, set(), {}
     root_count = 0
     for entry in data["forms"]:
         if not isinstance(entry, dict) or not isinstance(entry.get("form"), dict):
@@ -59,11 +59,28 @@ def validate_manifest(data):
                     or any(not isinstance(source.get(k), str) or not source[k].strip()
                            for k in ("blueprint", "component"))):
                 raise ValueError("Invalid archive component identity")
-            identity = (source["blueprint"], source["component"])
-            if component["id"] in component_ids or identity in component_sources:
+            if (not isinstance(form.get("label"), str) or not form["label"].strip()
+                    or type(form.get("order")) is not int or form["order"] < 0):
+                raise ValueError("Invalid archive component label or order")
+            for key in ("name", "label", "parent_component"):
+                if key in component and (not isinstance(component[key], str) or not component[key].strip()):
+                    raise ValueError("Invalid archive component metadata")
+            if ("default_visible" in component and type(component["default_visible"]) is not bool
+                    or "socket" in component and component["socket"] is not None
+                    and (not isinstance(component["socket"], str) or not component["socket"].strip())
+                    or any(key in component and not isinstance(component[key], list)
+                           for key in ("bindings", "cues"))):
+                raise ValueError("Invalid archive component metadata")
+            transform = component.get("transform")
+            if "transform" in component and (not isinstance(transform, dict)
+                    or any(not isinstance(transform.get(key), dict)
+                           for key in ("location", "rotation", "scale"))):
+                raise ValueError("Invalid archive component transform")
+            identity = (component["parent_form_id"], source["blueprint"], source["component"])
+            if identity in component_sources:
                 raise ValueError("Duplicate archive component")
-            component_ids.add(component["id"])
             component_sources.add(identity)
+            components[form["id"]] = component["id"]
             parents[form["id"]] = component["parent_form_id"]
         else:
             if component is not None:
@@ -78,8 +95,19 @@ def validate_manifest(data):
             referenced.add(value)
         if not isinstance(entry.get("provenance"), dict):
             raise ValueError("Archive lacks model provenance")
+        scene = entry["provenance"].get("scene")
+        if scene is not None:
+            if (component is not None or not isinstance(scene, dict)
+                    or scene.get("format") != "solaris-model-scene-v1"
+                    or not isinstance(scene.get("components"), list)
+                    or not isinstance(scene.get("cues"), list)
+                    or any(not isinstance(item, str) for item in scene["components"])
+                    or len(set(scene["components"])) != len(scene["components"])):
+                raise ValueError("Invalid archive scene")
+            scenes[form["id"]] = scene
     if not 1 <= root_count <= 16 or len(parents) > 32:
         raise ValueError("Archive must contain 1..16 roots and at most 32 components")
+    component_ids = set()
     for child in parents:
         seen, current = set(), child
         while current in parents:
@@ -89,6 +117,19 @@ def validate_manifest(data):
             current = parents[current]
         if current not in ids:
             raise ValueError("Archive component parent is missing")
+        identity = (current, components[child])
+        if identity in component_ids:
+            raise ValueError("Duplicate archive component")
+        component_ids.add(identity)
+    for root, scene in scenes.items():
+        for child in scene["components"]:
+            if child not in parents:
+                raise ValueError("Archive scene references a missing component")
+            ancestor = child
+            while ancestor in parents:
+                ancestor = parents[ancestor]
+            if ancestor != root:
+                raise ValueError("Archive scene references another root's component")
     if referenced != objects.keys():
         raise ValueError("Archive contains unreferenced objects")
     return data

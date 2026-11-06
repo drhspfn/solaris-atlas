@@ -90,3 +90,53 @@ def test_component_graph_rejects_invalid_links(tmp_path, mutation):
     with pytest.raises(ValueError):
         write_archive(tmp_path / "bad.zip", {"character_key": "character:1"},
                       [root, (child, root[1], {}, {}), (other, root[1], {}, {})])
+
+
+@pytest.mark.parametrize("field,value", [
+    ("default_visible", "false"), ("socket", 3), ("bindings", {}), ("cues", None),
+    ("transform", {"location": {}, "rotation": []}), ("transform", None), ("name", ""),
+])
+def test_component_optional_metadata_must_have_contract_types(tmp_path, field, value):
+    root = bundle(tmp_path)
+    child = component("component-0123456789abcdef", root[0]["id"], "fox")
+    child["component"][field] = value
+    with pytest.raises(ValueError, match="component"):
+        write_archive(tmp_path / "bad.zip", {"character_key": "character:1"},
+                      [root, (child, root[1], {}, {})])
+
+
+def test_scene_references_only_its_own_component_graph(tmp_path):
+    root = bundle(tmp_path)
+    child = component("component-0123456789abcdef", root[0]["id"], "fox")
+    scene = {"format": "solaris-model-scene-v1", "components": [child["id"]], "cues": []}
+    bundles = [(root[0], root[1], {}, {**root[3], "scene": scene}), (child, root[1], {}, {})]
+    write_archive(tmp_path / "ok.zip", {"character_key": "character:1"}, bundles)
+    scene["components"] = ["component-fedcba9876543210"]
+    with pytest.raises(ValueError, match="missing component"):
+        write_archive(tmp_path / "bad.zip", {"character_key": "character:1"}, bundles)
+    scene["components"] = [child["id"], child["id"]]
+    with pytest.raises(ValueError, match="scene"):
+        write_archive(tmp_path / "duplicate.zip", {"character_key": "character:1"}, bundles)
+
+
+def test_scene_cannot_reference_other_root_component(tmp_path):
+    root = bundle(tmp_path)
+    other = {**root[0], "id": "mesh-2"}
+    child = component("component-0123456789abcdef", other["id"], "fox")
+    scene = {"format": "solaris-model-scene-v1", "components": [child["id"]], "cues": []}
+    with pytest.raises(ValueError, match="another root"):
+        write_archive(tmp_path / "bad.zip", {"character_key": "character:1"}, [
+            (root[0], root[1], {}, {**root[3], "scene": scene}),
+            (other, root[1], {}, root[3]), (child, root[1], {}, {})])
+
+
+def test_same_authored_component_can_be_reused_under_distinct_roots(tmp_path):
+    root = bundle(tmp_path)
+    other = {**root[0], "id": "mesh-2"}
+    first = component("component-0123456789abcdef", root[0]["id"], "fox")
+    second = component("component-fedcba9876543210", other["id"], "fox")
+    path = tmp_path / "reused.zip"
+    manifest = write_archive(path, {"character_key": "character:1"}, [
+        root, (other, root[1], {}, root[3]),
+        (first, root[1], {}, {}), (second, root[1], {}, {})])
+    assert read_archive(path, tmp_path / "decoded") == manifest
