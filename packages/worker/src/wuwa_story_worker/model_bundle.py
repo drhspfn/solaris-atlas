@@ -266,21 +266,55 @@ def material_metadata_path(name: str, model: Path, files: list[Path]) -> Path | 
 
 def base_color_texture(metadata: dict, converted: Path) -> tuple[str | None, Path | None]:
     textures = metadata.get("Textures", {})
-    reference = next(
-        (textures[key].get("ObjectPath") for key in
-         (('MainTex', 'BaseColor', 'FaceAniMap') if metadata.get('Switches', {}).get('UseFaceAniMap')
-          else ('MainTex', 'BaseColor')) if key in textures),
-        None,
-    )
+    switches = metadata.get("Switches", {})
+    array = switches.get("Tex2DArrayMode") is True
+    riling = switches.get("RilingMode") is True
+    if array:
+        # These cooked Riling master materials default all array IDs to zero.
+        # Other array shaders and non-default IDs need their own verified mapping.
+        if not riling or any(metadata.get("Scalars", {}).get(key, 0) != 0 for key in
+                             ("MainTexArrayID", "BodyID_Riling", "FaceID_Riling")):
+            raise ValueError("Unsupported material texture array selection")
+        entry = textures.get("MainTex_Array", {})
+        if not entry.get("ObjectName", "").startswith("Texture2DArray'") or not entry.get("ObjectPath"):
+            raise ValueError("Unsupported material texture array reference")
+        reference = entry.get("ObjectPath")
+    elif riling and "Tex_FaceAni" in textures and not any(
+        key in textures for key in ("MainTex", "BaseColor")
+    ):
+        face_atlas_transform(metadata)
+        reference = textures["Tex_FaceAni"].get("ObjectPath")
+    else:
+        reference = next(
+            (textures[key].get("ObjectPath") for key in
+             (('MainTex', 'BaseColor', 'FaceAniMap') if switches.get('UseFaceAniMap')
+              else ('MainTex', 'BaseColor')) if key in textures),
+            None,
+        )
     if not reference:
         return None, None
     relative = reference.replace("\\", "/").split(".", 1)[0]
     if relative.startswith("/Game/"):
         relative = "Client/Content/" + relative[6:]
-    candidate = converted / (relative + ".png")
+    candidate = converted / (relative + ("_LAYER0.png" if array else ".png"))
     if candidate.resolve().is_relative_to(converted.resolve()) and candidate.is_file():
         return reference, candidate
     return reference, None
+
+
+def face_atlas_transform(metadata):
+    """Return the authored static cell as Blender UV scale and offset."""
+    scalars = metadata.get("Scalars", {})
+    values = [scalars.get(f"FaceAniTexSampleUV - {axis}") for axis in ("X", "Y")]
+    indices = [scalars.get(f"FaceAni_ID - {axis}") for axis in ("X", "Y")]
+    if any(type(v) not in (int, float) or not 1 <= v <= 16 or v != int(v) for v in values) or any(
+        type(v) not in (int, float) or v != int(v) or not 0 <= v < size
+        for v, size in zip(indices, values, strict=True)
+    ):
+        raise ValueError("Unsupported Riling face atlas parameters")
+    width, height = values
+    x, y = indices
+    return (1 / width, 1 / height, 1), (x / width, 1 - (y + 1) / height, 0)
 
 
 def inherited_base_color_texture(metadata: dict, path: Path | None, converted: Path, source_json: Path):
@@ -876,7 +910,18 @@ def main():
             image.pack()
             node = material.node_tree.nodes.new("ShaderNodeTexImage")
             node.image = image
-            if metadata.get('Switches', {}).get('UseFaceAniMap') and not any(
+            if (metadata.get('Switches', {}).get('RilingMode') and
+                    not metadata.get('Switches', {}).get('Tex2DArrayMode') and
+                    'Tex_FaceAni' in metadata.get('Textures', {}) and not any(
+                        key in metadata.get('Textures', {}) for key in ('MainTex', 'BaseColor'))):
+                scale, offset = face_atlas_transform(metadata)
+                mapping = material.node_tree.nodes.new('ShaderNodeMapping')
+                mapping.inputs['Scale'].default_value = scale
+                mapping.inputs['Location'].default_value = offset
+                coordinates = material.node_tree.nodes.new('ShaderNodeTexCoord')
+                material.node_tree.links.new(coordinates.outputs['UV'], mapping.inputs['Vector'])
+                material.node_tree.links.new(mapping.outputs['Vector'], node.inputs['Vector'])
+            elif metadata.get('Switches', {}).get('UseFaceAniMap') and not any(
                 key in metadata.get('Textures', {}) for key in ('MainTex', 'BaseColor')):
                 # Static neutral expression from the authored square face atlas.
                 # Dynamic material-expression curves remain separate from bone clips.

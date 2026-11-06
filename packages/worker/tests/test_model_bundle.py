@@ -17,6 +17,7 @@ from wuwa_story_worker.model_bundle import (
     build_animation_plan,
     canonical_animation_rig,
     effect_space_only,
+    face_atlas_transform,
     file_sha256,
     indexed_gltf_references,
     inherited_base_color_texture,
@@ -196,6 +197,48 @@ def test_base_color_uses_exact_maintex_then_basecolor_without_fuzzy_fallback(tmp
         )[1]
         is None
     )
+
+
+def test_riling_array_uses_exported_default_layer_and_never_white_fallback(tmp_path):
+    metadata = {"Switches": {"RilingMode": True, "Tex2DArrayMode": True}, "Textures": {
+        "MainTex": {"ObjectPath": "/Game/White"},
+        "MainTex_Array": {"ObjectName": "Texture2DArray'Body'", "ObjectPath": "/Game/Body.0"},
+    }}
+    white = tmp_path / "Client/Content/White.png"
+    white.parent.mkdir(parents=True)
+    white.touch()
+    assert base_color_texture(metadata, tmp_path) == ("/Game/Body.0", None)
+    layer = white.with_name("Body_LAYER0.png")
+    layer.touch()
+    assert base_color_texture(metadata, tmp_path) == ("/Game/Body.0", layer)
+    metadata["Scalars"] = {"MainTexArrayID": 1}
+    with pytest.raises(ValueError, match="Unsupported material texture array"):
+        base_color_texture(metadata, tmp_path)
+    metadata["Switches"]["RilingMode"] = False
+    with pytest.raises(ValueError, match="Unsupported material texture array"):
+        base_color_texture(metadata, tmp_path)
+
+
+@pytest.mark.parametrize("name", ["Eyes", "FX"])
+def test_riling_face_atlas_requires_authored_dimensions_and_selects_cell(tmp_path, name):
+    metadata = {
+        "Switches": {"RilingMode": True, "Tex2DArrayMode": False},
+        "Textures": {"Tex_FaceAni": {"ObjectPath": f"/Game/{name}.0"}},
+        "Scalars": {"FaceAniTexSampleUV - X": 3, "FaceAniTexSampleUV - Y": 2,
+                    "FaceAni_ID - X": 0, "FaceAni_ID - Y": 0},
+    }
+    assert base_color_texture(metadata, tmp_path) == (f"/Game/{name}.0", None)
+    texture = tmp_path / f"Client/Content/{name}.png"
+    texture.parent.mkdir(parents=True)
+    texture.touch()
+    assert base_color_texture(metadata, tmp_path)[1] == texture
+    assert face_atlas_transform(metadata) == ((1 / 3, 1 / 2, 1), (0, 1 / 2, 0))
+    metadata["Scalars"]["FaceAni_ID - X"] = 2
+    metadata["Scalars"]["FaceAni_ID - Y"] = 1
+    assert face_atlas_transform(metadata)[1] == (2 / 3, 0, 0)
+    metadata["Scalars"]["FaceAni_ID - Y"] = 2
+    with pytest.raises(ValueError, match="Unsupported Riling face atlas"):
+        base_color_texture(metadata, tmp_path)
 
 
 def test_material_color_inherits_from_explicit_parent_and_rejects_cycles(tmp_path):
