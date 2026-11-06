@@ -130,9 +130,11 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
                 writer.diagnostic("unresolved_speaker_name", "warning", "BinData/speaker/speaker.json",
                                   str(speaker_id), key)
     role_rows = simple("role/roleinfo.json", "character", "Id", "character", ("Name", "NickName"))
+    guests = simple("PlotGuest/plotguest.json", "plot_guest", "GuestID", "plot_guest", ("Name",))
     crosswalks = list(speaker_character_links(
         enumerate(role_rows), enumerate(speakers),
         read_json(main_role_path) if main_role_path.is_file() else [],
+        guests=enumerate(guests), english=english,
     ))
     for link in crosswalks:
         writer.edge(link["from"], link["to"], link["type"], link["basis"],
@@ -292,7 +294,6 @@ def compile_entities(root: Path, writer: Writer, english: dict[str, dict[str, An
             writer.diagnostic("unresolved_random_plot", "warning", "BinData/RandomPlot/randomplottrigger.json",
                               f"$[{index}].RandomPlotId", target)
 
-    guests = simple("PlotGuest/plotguest.json", "plot_guest", "GuestID", "plot_guest", ("Name",))
     for index, raw in enumerate(guests):
         for position, speaker_id in enumerate(raw.get("SpeakerID") or []):
             if speaker_id in speaker_ids:

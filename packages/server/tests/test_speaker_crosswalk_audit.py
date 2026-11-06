@@ -33,3 +33,20 @@ def test_offline_audit_requires_bounded_single_release_sources():
     source['source_rows'][0]['release_id'] = 20
     with pytest.raises(ValueError, match='different releases'):
         audit_snapshot(source)
+
+
+def test_offline_audit_accepts_optional_guest_rows_and_english():
+    from wuwa_story.ingestion.speaker_crosswalk import PLOT_GUEST_BASIS, PLOT_GUEST_PATH
+
+    source = {'release_id': 21, 'source_rows': [
+        {'file': ROLE_PATH, 'row_index': 1, 'data': {'Id': 1402, 'RoleType': 1, 'Name': 'role_name'}},
+        {'file': SPEAKER_PATH, 'row_index': 0, 'data': {'Id': 108}},
+        {'file': PLOT_GUEST_PATH, 'row_index': 3,
+         'data': {'GuestID': 1, 'Name': 'role_name', 'SpeakerID': [108]}},
+    ]}
+    assert audit_snapshot(source)['candidate_links'] == 0
+    source['english'] = {'role_name': {'content': 'Yangyang'}, 'Speaker_108_Name': {'content': 'Yangyang'}}
+    assert audit_snapshot(source)['personal_proof_repairs'] == 1
+    source['existing_crosswalks'] = [{'speaker': 108, 'character': 'character:1402',
+                                      'explanations': [PLOT_GUEST_BASIS + 'fixture']}]
+    assert audit_snapshot(source)['personal_proof_repairs'] == 0

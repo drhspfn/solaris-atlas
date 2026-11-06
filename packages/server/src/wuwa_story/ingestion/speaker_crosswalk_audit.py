@@ -1,8 +1,9 @@
 """Offline audit of bounded retained-source snapshots (one JSON object per line).
 
 Each snapshot has release_id, game_version, source_rows (file, row_index, data),
-and existing_crosswalks (speaker, character, explanations). No database/network
-access or writes: output is a per-release selective-repair report on stdout.
+existing_crosswalks (speaker, character, explanations), and optionally english
+(localization key to {content: text}). No database/network access or writes:
+output is a per-release selective-repair report on stdout.
 """
 
 import argparse
@@ -12,6 +13,8 @@ from pathlib import Path
 from wuwa_story.ingestion.character_identity import MAIN_ROLE_PATH
 from wuwa_story.ingestion.speaker_crosswalk import (
     PERSONAL_PORTRAIT_BASIS,
+    PLOT_GUEST_BASIS,
+    PLOT_GUEST_PATH,
     ROLE_PATH,
     SPEAKER_PATH,
     speaker_character_links,
@@ -26,7 +29,7 @@ def audit_snapshot(snapshot, *, max_rows=20000):
     if not isinstance(rows, list) or not 1 <= len(rows) <= max_rows:
         raise ValueError(
             'Source rows exceed the bounded snapshot profile or are empty')
-    groups = {path: [] for path in (ROLE_PATH, SPEAKER_PATH, MAIN_ROLE_PATH)}
+    groups = {path: [] for path in (ROLE_PATH, SPEAKER_PATH, MAIN_ROLE_PATH, PLOT_GUEST_PATH)}
     for row in rows:
         if row.get('release_id', release_id) != release_id:
             raise ValueError('Cannot mix source rows from different releases')
@@ -37,12 +40,13 @@ def audit_snapshot(snapshot, *, max_rows=20000):
     candidates = list(speaker_character_links(
         groups[ROLE_PATH], groups[SPEAKER_PATH], [
             raw for _, raw in groups[MAIN_ROLE_PATH]],
+        guests=groups[PLOT_GUEST_PATH], english=snapshot.get('english'),
     ))
     existing = snapshot.get('existing_crosswalks') or []
     old_pairs = {(f"speaker:{row['speaker']}",
                   row['character']) for row in existing}
     proved_pairs = {(f"speaker:{row['speaker']}", row['character']) for row in existing
-                    if any(text.startswith(PERSONAL_PORTRAIT_BASIS)
+                    if any(text.startswith((PERSONAL_PORTRAIT_BASIS, PLOT_GUEST_BASIS))
                            for text in row.get('explanations', []) if isinstance(text, str))}
     expected = {(row['from'], row['to']) for row in candidates}
     new_pairs = expected - old_pairs
