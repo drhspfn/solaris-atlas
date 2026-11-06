@@ -11,7 +11,7 @@ def instance(key, override):
 
 
 @pytest.mark.asyncio
-async def test_search_uses_unique_localized_instance_override_with_variants():
+async def test_search_uses_unique_localized_instance_override_without_variant_aliases():
     iris = {"instances": [instance("iris", False), instance("empty", True),
                           instance("iris_alt", True)]}
     zahira = {"instances": [instance("iris", False), instance("zahira", True)]}
@@ -26,7 +26,7 @@ async def test_search_uses_unique_localized_instance_override_with_variants():
     ])
     documents = [row async for row in _npc_display_rows(session, 3, 100)]
     assert [(row["target_node_id"], row["title"], row["aliases"]) for row in documents] == [
-        (1, "I.R.I.S", ["I.R.I.S."]), (2, "Zahira", ["I.R.I.S."])]
+        (1, "I.R.I.S", []), (2, "Zahira", [])]
 
 
 @pytest.mark.asyncio

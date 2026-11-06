@@ -173,20 +173,14 @@ async def _npc_display_rows(session, release_id, batch_size):
                 localized.setdefault(locale, {})[key] = content
             elif status == "resolved_empty" or (status == "resolved_nonempty" and not (content or "").strip()):
                 empty.setdefault(locale, set()).add(key)
-        for node_id, overrides, variants in candidates:
+        for node_id, overrides, _variants in candidates:
             for locale, texts in localized.items():
                 named = sorted(key for key in overrides if key in texts)
                 known_empty = empty.get(locale, set()) | {EMPTY_ENTITY_NAME_KEY}
                 if len(named) != 1 or overrides - set(named) - known_empty:
                     continue
                 title = texts[named[0]]
-                aliases = sorted({texts[key] for key in variants if key in texts and texts[key] != title})
                 document = _document(node_id, locale, title, "character")
-                document["aliases"] = aliases
-                document["body"] = " ".join([title, *aliases])
-                document["search_vector"] = func.to_tsvector("simple", document["body"])
-                document["content_hash"] = hashlib.sha256(
-                    f"character\0{locale}\0{document['body']}".encode()).digest()
                 yield document
         last = rows[-1][0]
 
