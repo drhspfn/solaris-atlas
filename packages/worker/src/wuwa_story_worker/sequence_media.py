@@ -91,12 +91,26 @@ def sequence_media_score(exports):
                 chain = material_chain(blend.get('Object'))
                 if not chain or chain[-1].get('Properties', {}).get('MaterialDomain') != 'MD_PostProcess':
                     continue
-                textures = [ref for material in chain for ref in
-                            (material.get('Properties', {}).get('CachedExpressionData') or {}).get('ReferencedTextures', [])
-                            if isinstance(ref, dict)]
-                textures.extend(value.get('ParameterValue') for material in chain for value in
-                                material.get('Properties', {}).get('TextureParameterValues', [])
-                                if isinstance(value.get('ParameterValue'), dict))
+                parameters, ambiguous = {}, False
+                for material in chain:  # Child first: an override shadows the same parent parameter.
+                    for value in material.get('Properties', {}).get('TextureParameterValues', []):
+                        info = value.get('ParameterInfo') or {}
+                        if (not isinstance(info, dict) or not isinstance(info.get('Name'), str)
+                                or not info['Name'] or type(info.get('Association')) not in {str, int}
+                                or type(info.get('Index')) is not int):
+                            ambiguous = True
+                            break
+                        key = (info['Name'], info['Association'], info['Index'])
+                        parameters.setdefault(key, value.get('ParameterValue'))
+                if ambiguous:
+                    continue
+                textures = [ref for ref in parameters.values() if isinstance(ref, dict)]
+                if not parameters:
+                    # Cached texture lists do not identify parameter names. They
+                    # prove inheritance only when no override can replace a default.
+                    textures = [ref for material in chain for ref in
+                                (material.get('Properties', {}).get('CachedExpressionData') or {}).get('ReferencedTextures', [])
+                                if isinstance(ref, dict)]
                 if not any(object_path(ref.get('ObjectPath')) == texture for ref in textures):
                     continue
                 result.append({'source': f'{candidate["Package"]}.{candidate["_export_index"]}',

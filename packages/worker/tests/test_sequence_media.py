@@ -117,3 +117,40 @@ def test_movie_role_requires_actual_texture_material_and_postprocess_binding():
         {'ObjectPath': '/Game/Other'}]
     section, = sequence_media_score(exports)['sections']
     assert 'composition_role' not in section
+
+
+@pytest.mark.parametrize('parent_texture,child_texture,confirmed', [
+    (None, None, True),  # A real MI without overrides still inherits the cache proof.
+    ('/Game/VideoTexture', '/Game/OtherTexture', False),
+    ('/Game/OtherTexture', '/Game/VideoTexture', True),
+    (None, '/Game/OtherTexture', False),  # Unmapped parent cache cannot prove usage.
+])
+def test_material_texture_matching_respects_child_parameter_overrides(parent_texture, child_texture, confirmed):
+    package = '/Game/Scene'
+    texture = {'ObjectPath': '/Game/VideoTexture'}
+    raw = [
+        {'Type': 'MovieScene'},
+        {'Type': 'MovieSceneMediaTrack', 'Outer': {'ObjectPath': package + '.0'}},
+        {'Type': 'MovieSceneMediaSection', 'Outer': {'ObjectPath': package + '.1'},
+         'Properties': {'MediaTexture': texture}},
+        {'Type': 'KuroPostProcessVolume', 'Outer': {'ObjectPath': package + '.0'},
+         'Properties': {'Settings': {'WeightedBlendables': {'Array': [
+             {'Weight': 1, 'Object': {'ObjectPath': '/Game/Child'}}]}}}},
+    ]
+    exports = [{**entry, 'Package': package, '_export_index': index}
+               for index, entry in enumerate(raw)]
+    for name, parent, value in [('Child', 'Parent', child_texture), ('Parent', 'Material', parent_texture)]:
+        props = {'Parent': {'ObjectPath': '/Game/' + parent}}
+        if value is not None:
+            props['TextureParameterValues'] = [{
+                'ParameterInfo': {'Name': 'Video', 'Association': 'GlobalParameter', 'Index': -1},
+                'ParameterValue': {'ObjectPath': value},
+            }]
+        exports.append({'Type': 'MaterialInstanceConstant', 'Package': '/Game/' + name,
+                        '_export_index': 0, 'Properties': props})
+    exports.append({'Type': 'Material', 'Package': '/Game/Material', '_export_index': 0,
+                    'Properties': {'MaterialDomain': 'MD_PostProcess',
+                                   'CachedExpressionData': {'ReferencedTextures': [texture]}}})
+    section, = sequence_media_score(exports)['sections']
+    assert (section.get('composition_role') == 'post_process_layer') is confirmed
+    assert bool(section.get('material_bindings')) is confirmed
