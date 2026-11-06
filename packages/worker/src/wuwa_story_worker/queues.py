@@ -16,6 +16,7 @@ class QueueSpec:
 
 
 QUEUES = {
+    "cutscene_assembly": QueueSpec(key="cutscene_assembly", name="wuwa.cutscene-assembly.v2", default_concurrency=1),
     "character_model": QueueSpec(key="character_model", name="wuwa.character-model.v1", default_concurrency=1),
     "release_images": QueueSpec(key="release_images", name="wuwa.release-images.v1", default_concurrency=2),
     "entity_images": QueueSpec(key="entity_images", name="wuwa.entity-images.v1", default_concurrency=2),

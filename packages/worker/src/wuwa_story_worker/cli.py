@@ -251,6 +251,7 @@ async def _consume(queues: list[str] | None = None, pool: str | None = None) -> 
         except NotImplementedError:  # Windows uses KeyboardInterrupt cancellation.
             pass
     handlers = {
+        "cutscene_assembly": process_release_media,
         "character_model": process_character_model,
         "release_images": process_release_media,
         "entity_images": process_entity_media,

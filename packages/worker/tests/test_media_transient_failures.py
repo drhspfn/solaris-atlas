@@ -1,3 +1,4 @@
+import errno
 import subprocess
 from unittest.mock import AsyncMock
 
@@ -6,6 +7,18 @@ from PIL import Image
 
 from wuwa_story_worker import broker, cutscene_import, entity_media, story_spine
 from wuwa_story_worker.asset_export import ExtractionProcessError
+
+
+@pytest.mark.parametrize('code', [errno.EAGAIN, errno.EBUSY, errno.ENOMEM, errno.ENOSPC,
+                                 errno.EDQUOT, errno.EMFILE, errno.ENFILE, errno.EIO])
+def test_resource_exhaustion_is_retryable(code):
+    assert broker.transient_job_error(OSError(code, 'temporary resource failure'))
+
+
+def test_python_oom_is_retryable_without_retrying_missing_files_or_permissions():
+    assert broker.transient_job_error(MemoryError('allocation failed'))
+    assert not broker.transient_job_error(FileNotFoundError(errno.ENOENT, 'missing authored input'))
+    assert not broker.transient_job_error(PermissionError(errno.EACCES, 'permissions'))
 
 
 @pytest.mark.asyncio

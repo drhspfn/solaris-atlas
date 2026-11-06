@@ -203,7 +203,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn('component: all', deploy)
         self.assertIn('  model-tools:', images)
         legacy = (ROOT/'.github/workflows/deploy.yml').read_text()
-        self.assertIn('cutscene-vision, all]', legacy)
+        self.assertIn('cutscene-vision, cutscene-assembly-worker, all]', legacy)
         self.assertIn('production-deploy.yml', legacy)
 
     def test_app_workflow_never_copies_live_config_and_reports_deferred_updates(self):

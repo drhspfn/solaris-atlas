@@ -43,7 +43,7 @@ jobs:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
           KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
-          [[ "$COMPONENT" =~ ^(infrastructure|api|web|caddy|snapshot-worker|story-agent|cutscene-vision|all)$ ]]
+          [[ "$COMPONENT" =~ ^(infrastructure|api|web|caddy|snapshot-worker|story-agent|cutscene-vision|cutscene-assembly-worker|all)$ ]]
           [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_.-]{1,128}$ ]]
           test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
       - name: Render service env files from individual Variables and Secrets
@@ -191,7 +191,7 @@ jobs:
             api) components=(api) ;;
             web) components=(web) ;;
             snapshot-worker) components=(worker models) ;;
-            story-agent|cutscene-vision) components=(worker) ;;
+            story-agent|cutscene-vision|cutscene-assembly-worker) components=(worker) ;;
             all) components=(api web worker models) ;;
             *) echo "Unsupported image component: $COMPONENT" >&2; exit 2 ;;
           esac

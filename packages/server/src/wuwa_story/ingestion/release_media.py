@@ -15,6 +15,7 @@ from wuwa_story.ingestion.media_workspaces import retain_workspace, workspace_ex
 
 QUEUE = "wuwa.release-media.v1"
 EVENT_QUEUE = "wuwa.event-media.v1"
+CUTSCENE_ASSEMBLY_QUEUE = "wuwa.cutscene-assembly.v2"
 PROCESSOR = "release_media"
 
 
@@ -131,6 +132,8 @@ async def enqueue_release_media(
         queue = EVENT_QUEUE if event_artwork_only or notices_only else QUEUE
         if kind == "images":
             queue = "wuwa.release-images.v1"
+        if kind in {"cutscene", "cutscene_assets"} and request.get('cutscene_assembly_schema', 0) >= 2:
+            queue = CUTSCENE_ASSEMBLY_QUEUE
         if (event_artwork_only and kind == "event_catalog" or notices_only and kind == "event_notices") and run.status == "completed":
             # An explicit reimport must revisit failed/partial image children,
             # while successful extraction work remains reusable.
