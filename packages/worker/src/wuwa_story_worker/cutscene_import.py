@@ -366,6 +366,14 @@ def collapse_shared_stems(stems, root):
     return stems
 
 
+def fallback_frame_stems(stems):
+    """One localized voice selection, never a mixture of Rover alternatives."""
+    rovers = {stem['rover'] for stem in stems if stem['rover']}
+    return [stem for stem in stems if stem['role'] != 'music'
+            and stem['language'] in (None, 'en')
+            and (len(rovers) < 2 or stem['rover'] is None)]
+
+
 async def import_cutscene_recipe(
     recipe: Path,
     assets: Path,
@@ -479,9 +487,7 @@ async def import_cutscene_recipe(
             # Keep the movie's own sound when downloaded without the player.
             # Music stays independently controllable in its published stem.
             native_index = 1 + len(fallback_tracks)
-            for stem in frame_stems:
-                if stem['role'] == 'music' or stem['language'] not in (None, 'en') or stem['rover'] is not None:
-                    continue
+            for stem in fallback_frame_stems(frame_stems):
                 input_index = native_index
                 native_index += 1
                 command.extend(['-i', str(stem['path'])])
