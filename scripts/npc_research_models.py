@@ -80,6 +80,15 @@ def effective_base(template_components, instance_components):
             **instance_components.get("BaseInfoComponent", {})}
 
 
+def is_npc(base, template_components, entity_type):
+    category = base.get("Category", {}).get("MainType")
+    if category is not None:
+        return category == "Npc"
+    # Some authored NPC templates (including Avidius) have Category: {}.
+    # Require both independent type declarations rather than guessing a name.
+    return entity_type == "Npc" and template_components.get("ModelComponent", {}).get("ModelType", {}).get("Type") == "Npc"
+
+
 def research(config, entities_path, locales, metadata, all_npcs=False, blueprints=()):
     sources = set()
 
@@ -109,6 +118,13 @@ def research(config, entities_path, locales, metadata, all_npcs=False, blueprint
         templates[blueprint] = {"id": identifier, "name": row.text(2),
                                 "components": json.loads(row.text(3) or "{}")}
 
+    blueprint_rows = {bp: (identifier, blob) for identifier, bp, blob in rows(
+        "db_blueprint.db", "SELECT Id, BlueprintType, BinData FROM blueprintconfig")}
+
+    def npc(blueprint, base):
+        bp = blueprint_rows.get(blueprint)
+        return is_npc(base, templates.get(blueprint, {}).get("components", {}), Row(bp[1]).text(2) if bp else "")
+
     sources.add(entities_path)
     entities = read_json(entities_path)
     entities_by_blueprint = defaultdict(list)
@@ -120,7 +136,7 @@ def research(config, entities_path, locales, metadata, all_npcs=False, blueprint
     identity_links = []
     for blueprint, template in templates.items():
         key = template["components"].get("BaseInfoComponent", {}).get("TidName")
-        if all_npcs and template["components"].get("BaseInfoComponent", {}).get("Category", {}).get("MainType") == "Npc":
+        if all_npcs and npc(blueprint, template["components"].get("BaseInfoComponent", {})):
             selected.setdefault(blueprint, set())
         if key in localized and not all_npcs:
             selected.setdefault(blueprint, set()).add(localized[key])
@@ -131,9 +147,9 @@ def research(config, entities_path, locales, metadata, all_npcs=False, blueprint
         components = entity.get("ComponentsData", {})
         base = effective_base(templates.get(blueprint, {}).get("components", {}), components)
         key = base.get("TidName")
-        if all_npcs and base.get("Category", {}).get("MainType") == "Npc":
+        if all_npcs and npc(blueprint, base):
             selected.setdefault(blueprint, set())
-        if key in localized and (not all_npcs or base.get("Category", {}).get("MainType") == "Npc"):
+        if key in localized and (not all_npcs or npc(blueprint, base)):
             selected.setdefault(blueprint, set()).add(localized[key])
             identity_links.append({"blueprint": blueprint, "entity_id": entity["EntityId"],
                                    "source": "instance" if "TidName" in components.get("BaseInfoComponent", {}) else "template",
@@ -160,8 +176,6 @@ def research(config, entities_path, locales, metadata, all_npcs=False, blueprint
                 if found and found[0]:
                     names_by_key[key] = found[0]
 
-    blueprint_rows = {bp: (identifier, blob) for identifier, bp, blob in rows(
-        "db_blueprint.db", "SELECT Id, BlueprintType, BinData FROM blueprintconfig")}
 
     chains = []
     requests = set()
@@ -192,7 +206,7 @@ def research(config, entities_path, locales, metadata, all_npcs=False, blueprint
             base = effective_base(template["components"], components)
             # All-NPC discovery excludes an instance explicitly overridden to
             # another category, even when its template category is Npc.
-            if all_npcs and base.get("Category", {}).get("MainType") != "Npc":
+            if all_npcs and not npc(blueprint, base):
                 continue
             key = base.get("TidName")
             chain["entities"].append({"pointer": f"/{index}", "id": entity["Id"],

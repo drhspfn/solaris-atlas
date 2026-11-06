@@ -107,6 +107,13 @@ class ModelResearchTests(unittest.TestCase):
                 models.open_db(path)
             self.assertFalse(path.exists())
 
+    def test_empty_category_requires_validated_npc_template(self):
+        template = {"ModelComponent": {"ModelType": {"Type": "Npc"}}}
+        self.assertTrue(models.is_npc({"Category": {}}, template, "Npc"))
+        self.assertFalse(models.is_npc({"Category": {}}, template, "SceneItem"))
+        self.assertFalse(models.is_npc({"Category": {}}, {}, "Npc"))
+        self.assertFalse(models.is_npc({"Category": {"MainType": "SceneItem"}}, template, "Npc"))
+
 
 if __name__ == "__main__":
     unittest.main()
