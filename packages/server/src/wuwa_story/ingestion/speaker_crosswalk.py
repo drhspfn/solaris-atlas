@@ -13,6 +13,8 @@ from wuwa_story.ingestion.character_identity import MAIN_ROLE_PATH, main_role_id
 ROLE_PATH = 'BinData/role/roleinfo.json'
 SPEAKER_PATH = 'BinData/speaker/speaker.json'
 PERSONAL_PORTRAIT_BASIS = 'Exact typed personal portrait reference: '
+PLOT_GUEST_PATH = 'BinData/PlotGuest/plotguest.json'
+PLOT_GUEST_BASIS = 'Exact PlotGuest speaker reference with corroborated name: '
 PORTRAITS = {
     'HeadIconAsset': ('RoleHeadIconCircle', 'RoleHeadIconLarge'),
     'HeadRoundIconAsset': ('RoleHeadIconBig',),
@@ -20,7 +22,81 @@ PORTRAITS = {
 }
 
 
-def speaker_character_links(roles, speakers, main_roles=()):
+def speaker_character_links(roles, speakers, main_roles=(), *, guests=(), english=None):
+    """Use personal portraits and independently corroborated explicit guest links.
+
+    PlotGuest.Name is a RoleInfo localization *key*, not a display-name guess.
+    Its SpeakerID references include stale/copied entries, so require the same
+    snapshot's resolved English speaker name as an additional check. Missing,
+    ambiguous or conflicting evidence stays unresolved.
+    """
+    roles, speakers, main_roles = list(roles), list(speakers), list(main_roles)
+    portraits = list(_portrait_links(roles, speakers, main_roles))
+    yield from portraits
+    proved = {}
+    for link in portraits:
+        proved.setdefault(link['from'], set()).add(link['to'])
+    english = english or {}
+
+    def display(key):
+        value = english.get(key)
+        content = value.get('content') if isinstance(value, dict) else None
+        return content.strip() if isinstance(content, str) else ''
+
+    role_keys, speaker_counts, role_counts = {}, {}, {}
+    identities = main_role_identities(main_roles, [raw for _, raw in roles])
+    for row, role in roles:
+        identity = role.get('Id')
+        if type(identity) is int:
+            role_counts[identity] = role_counts.get(identity, 0) + 1
+        key = role.get('Name')
+        if role.get('RoleType') == 1 and type(role.get('Id')) is int and isinstance(key, str):
+            role_keys.setdefault(key, []).append((row, role))
+    for _, speaker in speakers:
+        identity = speaker.get('Id')
+        if type(identity) is int:
+            speaker_counts[identity] = speaker_counts.get(identity, 0) + 1
+    candidates = {}
+    for row, guest in guests:
+        key = guest.get('Name')
+        owners = role_keys.get(key, []) if isinstance(key, str) else []
+        if len(owners) != 1 or not isinstance(guest.get('SpeakerID'), list):
+            continue
+        role_row, role = owners[0]
+        if role_counts[role['Id']] != 1:
+            continue
+        name = display(role['Name'])
+        if not name:
+            continue
+        target = identities.get(role['Id'], {}).get('canonical_key', f"character:{role['Id']}")
+        for position, identity in enumerate(guest['SpeakerID']):
+            if type(identity) is not int or speaker_counts.get(identity) != 1:
+                continue
+            speaker_key = f'Speaker_{identity}_Name'
+            if display(speaker_key) != name:
+                continue
+            source = f'speaker:{identity}'
+            candidates.setdefault(source, []).append({
+                'from': source, 'to': target, 'type': 'references_character',
+                'basis': (PLOT_GUEST_BASIS + f"{role['Name']} = {ROLE_PATH}$[{role_row}].Name; "
+                          f"SpeakerID[{position}]={identity}; {speaker_key}={name}"),
+                'relation': 'exact_join', 'source': PLOT_GUEST_PATH,
+                'raw_path': f'$[{row}].SpeakerID[{position}]',
+                'crosswalk': {'method': 'exact_plot_guest', 'guest_id': guest.get('GuestID'),
+                              'role_file': ROLE_PATH, 'role_row': role_row,
+                              'role_id': role['Id'], 'speaker_name_key': speaker_key,
+                              'role_name_key': role['Name']},
+            })
+    for source, links in sorted(candidates.items()):
+        targets = {link['to'] for link in links}
+        if len(targets) != 1 or (source in proved and proved[source] != targets):
+            continue
+        # Multiple guest presentations can reference the same identity; retain
+        # their evidence, while the graph importer upserts one identity edge.
+        yield from links
+
+
+def _portrait_links(roles, speakers, main_roles=()):
     """Yield deterministic compiler edges with both source field references.
 
     Each input is (source row index, decoded source object), from ONE release.
