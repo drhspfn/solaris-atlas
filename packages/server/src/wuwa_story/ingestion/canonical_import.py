@@ -819,6 +819,8 @@ async def import_canonical_edges(
                         "source_repository": record.get("source_repository"),
                         "source_commit": record.get("source_commit"),
                         "source_version": record["version"],
+                        **({"crosswalk": record["crosswalk"]}
+                           if isinstance(record.get("crosswalk"), dict) else {}),
                     },
                 }
             )

@@ -1,4 +1,4 @@
-"""Repair proven speaker identities from retained source rows, dry-run by default.
+"""Repair speaker identities and guest role references, dry-run by default.
 
 Select --release-id and optionally --role-id for a report. --apply requires an
 explicit role selection and adds missing source evidence/convenience links only.
@@ -10,10 +10,16 @@ import asyncio
 import json
 from types import SimpleNamespace
 
-from sqlalchemy import select, text
+from sqlalchemy import and_, or_, select, text
 
 from wuwa_story.db.models.core import SpeakerEntityLink
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
+from wuwa_story.db.models.i18n import (
+    Locale,
+    LocalizationContent,
+    LocalizationKey,
+    LocalizationValue,
+)
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
@@ -22,8 +28,12 @@ from wuwa_story.ingestion.canonical_import import import_canonical_edges
 from wuwa_story.ingestion.character_identity import MAIN_ROLE_PATH
 from wuwa_story.ingestion.speaker_crosswalk import (
     PERSONAL_PORTRAIT_BASIS,
+    PLOT_GUEST_BASIS,
+    PLOT_GUEST_PATH,
+    PLOT_GUEST_ROLE_BASIS,
     ROLE_PATH,
     SPEAKER_PATH,
+    plot_guest_role_links,
     speaker_character_links,
 )
 
@@ -43,7 +53,7 @@ async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=5
     if release is None:
         raise ValueError('Unknown imported release')
 
-    groups = {path: [] for path in (ROLE_PATH, SPEAKER_PATH, MAIN_ROLE_PATH)}
+    groups = {path: [] for path in (ROLE_PATH, SPEAKER_PATH, MAIN_ROLE_PATH, PLOT_GUEST_PATH)}
     for path, index, data in await session.execute(
         select(SourceFile.logical_source_path, SourceRecord.row_index, SourceRecord.data)
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
@@ -56,9 +66,27 @@ async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=5
         raise ValueError('This release has no complete RoleInfo/Speaker source tables')
     if not set(role_ids) <= {raw.get('Id') for _, raw in groups[ROLE_PATH]}:
         raise ValueError('Selected role IDs are absent from this release')
-    candidates = [link for link in speaker_character_links(
+    guest_names = {raw.get('Name') for _, raw in groups[PLOT_GUEST_PATH]
+                   if isinstance(raw.get('Name'), str) and raw.get('Name')}
+    loc_keys = {raw['Name'] for _, raw in groups[ROLE_PATH]
+                if raw.get('Name') in guest_names}
+    loc_keys.update(f'Speaker_{identity}_Name' for _, raw in groups[PLOT_GUEST_PATH]
+                    for identity in (raw.get('SpeakerID') if isinstance(raw.get('SpeakerID'), list) else [])
+                    if type(identity) is int)
+    english = {key: {'content': content} for key, content in await session.execute(
+        select(LocalizationKey.key, LocalizationContent.content)
+        .join(LocalizationValue, LocalizationValue.key_id == LocalizationKey.id)
+        .join(Locale, Locale.id == LocalizationValue.locale_id)
+        .join(LocalizationContent, LocalizationContent.id == LocalizationValue.content_id)
+        .where(LocalizationValue.release_id == release_id, Locale.code == 'en',
+               LocalizationValue.status == 'resolved_nonempty', LocalizationKey.key.in_(loc_keys))
+    )} if loc_keys else {}
+    links = list(speaker_character_links(
         groups[ROLE_PATH], groups[SPEAKER_PATH], [raw for _, raw in groups[MAIN_ROLE_PATH]],
-    ) if not role_ids or int(link['to'].split(':')[1]) in role_ids]
+        guests=groups[PLOT_GUEST_PATH], english=english,
+    ))
+    links.extend(plot_guest_role_links(groups[ROLE_PATH], groups[PLOT_GUEST_PATH], english=english))
+    candidates = [link for link in links if not role_ids or int(link['to'].split(':')[1]) in role_ids]
     if len(candidates) > max_links:
         raise ValueError('Candidate links exceed max_links; narrow the selected roles')
     keys = {link[side] for link in candidates for side in ('from', 'to')}
@@ -77,7 +105,8 @@ async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=5
                for link in candidates if link not in unresolved]
     source, target = Node.__table__.alias('source'), Node.__table__.alias('target')
     existing = set(await session.execute(
-        select(source.c.canonical_key, target.c.canonical_key, EdgeEvidence.source_raw_path)
+        select(source.c.canonical_key, target.c.canonical_key, EdgeEvidence.source_file_path,
+               EdgeEvidence.source_raw_path)
         .select_from(Edge).join(RelationType, RelationType.id == Edge.relation_type_id)
         .join(source, source.c.id == Edge.from_node_id).join(target, target.c.id == Edge.to_node_id)
         .join(EdgeEvidence, EdgeEvidence.edge_id == Edge.id)
@@ -85,10 +114,13 @@ async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=5
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
         .where(RelationType.key == 'references_character', Edge.layer == 'source',
                Edge.basis == 'exact_join', EdgeEvidence.release_id == release_id,
-               EdgeEvidence.source_file_path == SPEAKER_PATH,
                SourceRecord.release_id == release_id, SourceFile.release_id == release_id,
-               SourceFile.logical_source_path == SPEAKER_PATH,
-               EdgeEvidence.explanation.startswith(PERSONAL_PORTRAIT_BASIS, autoescape=True),
+               or_(*(and_(EdgeEvidence.source_file_path == path,
+                          SourceFile.logical_source_path == path,
+                          EdgeEvidence.explanation.startswith(basis, autoescape=True))
+                     for path, basis in ((SPEAKER_PATH, PERSONAL_PORTRAIT_BASIS),
+                                         (PLOT_GUEST_PATH, PLOT_GUEST_BASIS),
+                                         (PLOT_GUEST_PATH, PLOT_GUEST_ROLE_BASIS)))),
                source.c.canonical_key.in_(keys), target.c.canonical_key.in_(keys))
     )) if records else set()
     typed = set(await session.execute(
@@ -97,8 +129,9 @@ async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=5
             SpeakerEntityLink.entity_node_id.in_(known.values()),
         )
     )) if records else set()
-    missing = [link for link in records if (link['from'], link['to'], link['raw_path']) not in existing
-               or (known[link['from']], known[link['to']]) not in typed]
+    missing = [link for link in records if (link['from'], link['to'], link['source'], link['raw_path']) not in existing
+               or (link['from'].startswith('speaker:')
+                   and (known[link['from']], known[link['to']]) not in typed)]
     if apply and missing:
         # Existing importer owns graph/evidence/link conflict handling. Replaying
         # an already evidenced edge also repairs its missing convenience link.
@@ -110,7 +143,8 @@ async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=5
         'missing_links': len(missing), 'written': len(missing) if apply else 0,
         'affected_characters': sorted({known[link['to']] for link in missing}),
         'role_ids': sorted({int(link['to'].split(':')[1]) for link in missing}),
-        'speaker_ids': sorted({int(link['from'].split(':')[1]) for link in missing}),
+        'speaker_ids': sorted({int(link['from'].split(':')[1]) for link in missing
+                               if link['from'].startswith('speaker:')}),
     }
 
 

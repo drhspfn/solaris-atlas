@@ -7,16 +7,21 @@ from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.ingestion.character_identity import character_kind
-from wuwa_story.ingestion.speaker_crosswalk import PERSONAL_PORTRAIT_BASIS, SPEAKER_PATH
+from wuwa_story.ingestion.speaker_crosswalk import (
+    PERSONAL_PORTRAIT_BASIS,
+    PLOT_GUEST_BASIS,
+    PLOT_GUEST_PATH,
+    SPEAKER_PATH,
+)
 
 
 def speaker_crosswalk(release_id, character_ids=None):
     """The same evidenced identity contract for profiles and relation indexing.
 
     SpeakerEntityLink is an unversioned convenience projection. Only the exact
-    source graph and PERSONAL_PORTRAIT_BASIS evidence for this release establish
-    membership. Legacy exact_join/card evidence remains archived but is not an
-    identity proof. Populate the new per-release proofs before enabling readers.
+    source graph and matching portrait or PlotGuest evidence for this release
+    establish membership. Legacy exact_join/card evidence remains archived but
+    is not an identity proof.
     """
     proof = select(EdgeEvidence.source_record_id).join(
         SourceRecord, SourceRecord.id == EdgeEvidence.source_record_id,
@@ -24,10 +29,13 @@ def speaker_crosswalk(release_id, character_ids=None):
         SourceFile, SourceFile.id == SourceRecord.source_file_id,
     ).where(
         EdgeEvidence.edge_id == Edge.id, EdgeEvidence.release_id == release_id,
-        EdgeEvidence.source_file_path == SPEAKER_PATH, SourceRecord.release_id == release_id,
-        SourceFile.release_id == release_id, SourceFile.logical_source_path == SPEAKER_PATH,
-        EdgeEvidence.explanation.startswith(
-            PERSONAL_PORTRAIT_BASIS, autoescape=True),
+        SourceRecord.release_id == release_id, SourceFile.release_id == release_id,
+        or_(*(
+            and_(EdgeEvidence.source_file_path == path, SourceFile.logical_source_path == path,
+                 EdgeEvidence.explanation.startswith(basis, autoescape=True))
+            for path, basis in ((SPEAKER_PATH, PERSONAL_PORTRAIT_BASIS),
+                                (PLOT_GUEST_PATH, PLOT_GUEST_BASIS))
+        )),
     ).correlate(Edge)
     record = proof.with_only_columns(
         func.min(EdgeEvidence.source_record_id)).scalar_subquery()
