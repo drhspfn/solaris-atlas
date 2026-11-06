@@ -9,6 +9,7 @@ from wuwa_story.db.models.core import Character, DialogueLine, Item, Quest, Ques
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node
 from wuwa_story.db.models.i18n import Locale, LocalizationKey, LocalizationValue
 from wuwa_story.db.models.ontology import RelationType
+from wuwa_story.db.models.search import SearchDocument
 from wuwa_story.db.repositories.character_identity import dialogue_participation
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.db.repositories.quest_scope import quest_state_links
@@ -93,12 +94,37 @@ def price_pairs(value):
 
 async def npc_profile(session, node, character, npc, release_id, locale):
     instances = npc.get("instances") or []
+    name = await _localized(session, character.name_key_id, locale, release_id)
+    variants = []
+    scoped_name = False
+    if character.name_key_id is None:
+        row = (await session.execute(select(SearchDocument.title)
+            .join(Locale, Locale.id == SearchDocument.locale_id)
+            .where(SearchDocument.target_node_id == node.id, SearchDocument.category == "character",
+                   Locale.code == locale))).first()
+        if row and row.title:
+            name = {"content": row.title}
+            variants = [row.title]
+            scoped_name = True
+    name_keys = {entry.get("name", {}).get("key") for entry in npc.get("name_variants") or []
+                 if isinstance(entry, dict) and isinstance(entry.get("name"), dict)} - {None}
+    if name_keys:
+        key_ids = list(await session.scalars(select(LocalizationKey.id).where(LocalizationKey.key.in_(name_keys))))
+        await prefetch_localizations(session, key_ids, locale, release_id)
+        for key_id in key_ids:
+            localized = await _localized(session, key_id, locale, release_id)
+            text = (localized or {}).get("content")
+            if text and text not in variants:
+                variants.append(text)
     return {"character": {"canonical_key": node.canonical_key, **node_address(node, "character"),
                           "canonical_name": character.canonical_name,
-                          "name": await _localized(session, character.name_key_id, locale, release_id),
+                          "name": name,
+                          "aliases": [],
                           "description": character.description, "playable": False},
             "npc": {"blueprint_id": npc.get("blueprint_id"), "blueprint_type": npc.get("blueprint_type"),
                     "speakers": npc.get("speakers") or [],
+                    "name_scope": "instance" if scoped_name else "blueprint",
+                    "name_variants": variants,
                     "flow_reference_count": len(npc.get("flow_references") or []),
                     "instances": [{"map_id": item.get("map_id"), "entity_id": item.get("entity_id"),
                                    "name": item.get("name")} for item in instances[:10]],

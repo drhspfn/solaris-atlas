@@ -19,6 +19,8 @@ const PAGE_SIZE = 20;
 
 type Npc = {
   blueprint_id: number;
+  name_scope: 'instance' | 'blueprint';
+  name_variants: string[];
   speakers: string[];
   flow_reference_count: number;
   shop_count: number;
@@ -194,6 +196,7 @@ export function NpcProfile({
               "An NPC recorded in the Solaris Atlas archive.",
             )}
           </p>
+          {npc.name_scope === 'instance' && <p>This name is recorded for an instance of this blueprint.{npc.name_variants.length > 1 ? ` Other recorded names: ${npc.name_variants.filter((variant) => variant !== name).join(', ')}.` : ''}</p>}
           <div className="profile-tags">
             <span>{character.canonical_key}</span>
             <span>NPC</span>

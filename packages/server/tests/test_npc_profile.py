@@ -14,14 +14,15 @@ def test_shop_price_decoder_accepts_native_key_value_rows():
 
 @pytest.mark.asyncio
 async def test_profile_keeps_flows_separate_and_has_no_guessed_portrait(monkeypatch):
-    node = SimpleNamespace(canonical_key="character:npc:123", slug=None)
+    node = SimpleNamespace(id=1, canonical_key="character:npc:123", slug=None)
     character = SimpleNamespace(
         canonical_name="Trader", name_key_id=None, description=None)
     monkeypatch.setattr(npc_profile, "_localized",
                         AsyncMock(return_value=None))
     metadata = {"blueprint_id": 123, "speakers": ["speaker:9"],
                 "flow_references": [{"flow": ["A", 1, 2], "basis": "explicit_flow_triple"}]}
-    result = await npc_profile.npc_profile(None, node, character, metadata, 5, "en")
+    session = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(first=lambda: None)))
+    result = await npc_profile.npc_profile(session, node, character, metadata, 5, "en")
     assert result["npc"]["speakers"] == ["speaker:9"]
     assert result["npc"]["flow_reference_count"] == 1
     assert "flow_references" not in result["npc"]
@@ -30,13 +31,30 @@ async def test_profile_keeps_flows_separate_and_has_no_guessed_portrait(monkeypa
 
 @pytest.mark.asyncio
 async def test_profile_caps_large_instance_list(monkeypatch):
-    node = SimpleNamespace(canonical_key="character:npc:123", slug=None)
+    node = SimpleNamespace(id=1, canonical_key="character:npc:123", slug=None)
     character = SimpleNamespace(canonical_name=None, name_key_id=None, description=None)
     monkeypatch.setattr(npc_profile, "_localized", AsyncMock(return_value=None))
     metadata = {"instances": [{"entity_id": i} for i in range(1000)]}
-    result = await npc_profile.npc_profile(None, node, character, metadata, 5, "en")
+    session = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(first=lambda: None)))
+    result = await npc_profile.npc_profile(session, node, character, metadata, 5, "en")
     assert result["npc"]["instance_count"] == 1000
     assert len(result["npc"]["instances"]) == 10
+
+
+@pytest.mark.asyncio
+async def test_profile_reuses_scoped_search_title_and_preserves_variants(monkeypatch):
+    node = SimpleNamespace(id=1, canonical_key="character:npc:17290", slug=None)
+    character = SimpleNamespace(canonical_name=None, name_key_id=None, description=None)
+    indexed = SimpleNamespace(title="Zahira")
+    session = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(first=lambda: indexed)),
+                              scalars=AsyncMock(return_value=[2]))
+    monkeypatch.setattr(npc_profile, "prefetch_localizations", AsyncMock())
+    monkeypatch.setattr(npc_profile, "_localized", AsyncMock(side_effect=[None, {"content": "I.R.I.S."}]))
+    result = await npc_profile.npc_profile(session, node, character, {"name_variants": [{"name": {"key": "iris"}}]}, 5, "en")
+    assert result["character"]["name"]["content"] == "Zahira"
+    assert result["npc"]["name_scope"] == "instance"
+    assert result["npc"]["name_variants"] == ["Zahira", "I.R.I.S."]
+    assert result["character"]["aliases"] == []
 
 
 @pytest.mark.asyncio

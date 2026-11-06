@@ -45,6 +45,7 @@ function ShopOffers({ characterKey, gameVersion, shop }: { characterKey: string;
         <div><ItemLabel item={offer.item} /> · Quantity {offer.count ?? 'unknown'}<br />
           <small>Configured conditions: {Object.entries(offer.conditions).filter(([, value]) => value != null).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(' · ') || 'none recorded'}</small></div>
         <div>Price: {offer.price.length ? offer.price.map((price, i) => <span key={i}>{i > 0 ? ', ' : ''}{price.amount} × <ItemLabel item={price.item} /></span>) : 'unknown'}
+          {offer.original_price.length > 0 && <div>Original price: {offer.original_price.map((price, i) => <span key={i}>{i > 0 ? ', ' : ''}{price.amount} × <ItemLabel item={price.item} /></span>)}</div>}
           {offer.limit != null && offer.limit >= 0 ? ` · Limit ${offer.limit}` : ''}</div>
       </div>)}
       {result.total > PAGE_SIZE && <Pagination mode="pages" page={page} pageSize={PAGE_SIZE} total={result.total} onPageChange={setPage} ariaLabel={`Shop ${shop.id} offer pages`} />}
