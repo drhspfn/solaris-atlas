@@ -9,7 +9,8 @@ def prop():
     return {"model": "Aki/Character/Prop/Umbrella/Model/Umbrella", "blueprints": [],
             "component": {"id": "umbrella", "name": "WeaponCase0", "label": "Umbrella",
                           "source": {"blueprint": "Aki/Character/NPC/BP_Test", "component": "WeaponCase0"},
-                          "default_visible": True}}
+                          "default_visible": True, "bindings": [], "cues": [],
+                          "parent_component": "CharacterMesh0", "socket": "WeaponProp02"}}
 
 
 @pytest.mark.asyncio
