@@ -15,6 +15,7 @@ function load(path, mocks, globals = {}) {
   return exports;
 }
 const calendar = load('../src/components/events/calendar.ts', {});
+const animationPreview = load('../src/components/ui/animationPreview.ts', {}, { URL });
 const summary = { id: 7, occurrence_id: 42, title: 'Event', kind: 'limited',
   starts_at: null, ends_at: null, artwork: [], detail_url: '/events/7/detail?server=asia&occurrence_id=42' };
 function harness() {
@@ -39,6 +40,8 @@ function harness() {
     },
     'lucide-react': { X: () => null, ExternalLink: () => null },
     './EventArtwork': { EventArtwork: () => null }, './calendar': calendar,
+    '../ui/RenderedAnimation': { RenderedAnimation: ({ fallback }) => fallback },
+    '../ui/animationPreview': animationPreview,
     '@/api/client': { api: (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject })) },
   }, { AbortController, document: { body: { style: { overflow: '' } } },
     setInterval: () => 1, clearInterval() {} });
