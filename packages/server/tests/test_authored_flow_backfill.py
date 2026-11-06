@@ -44,8 +44,11 @@ def fixture(monkeypatch, *, disappeared=False, stale=True, unchanged=False, ungr
             return next((rows for source, rows in tables.items() if repr(source) in query), [])
         if 'graph.edge_evidence.explanation' in query:
             assert "graph.edge.basis = 'inference'" in query and 'release_id = 21' in query
+            assert 'graph.edge.from_node_id IN (SELECT graph.node.id' in query
+            assert "'quest:42'" in query and 'quest/_node:42:' in query
             return stored
         if 'graph.edge_evidence.id, ontology.relation_type.key' in query:
+            assert 'graph.edge.from_node_id IN (SELECT graph.node.id' in query
             return existing if stale else []
         return []
 

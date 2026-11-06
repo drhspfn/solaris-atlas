@@ -5,7 +5,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, or_, select, text
 
 from wuwa_story.db.models.core import AuthoredTreeOrder, Quest, QuestState
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
@@ -201,13 +201,21 @@ async def backfill(session, release_id, dry_run=False, quest_ids=None):
         records = [row for row in records if int(row['from'].split(':')[1]) in quest_ids]
     source, target = Node.__table__.alias(
         "source"), Node.__table__.alias("target")
+    owner_scope = []
+    if quest_ids is not None:
+        owners = select(Node.id).where(or_(
+            Node.canonical_key.in_([f'quest:{identity}' for identity in sorted(quest_ids)]),
+            *(Node.canonical_key.startswith(f'quest_node:{identity}:', autoescape=True)
+              for identity in sorted(quest_ids)),
+        ))
+        owner_scope = [Edge.from_node_id.in_(owners)]
     existing_rows = list(await session.execute(
         select(EdgeEvidence.id, RelationType.key, source.c.canonical_key,
                target.c.canonical_key, EdgeEvidence.source_file_path, EdgeEvidence.source_raw_path)
         .select_from(Edge).join(RelationType, RelationType.id == Edge.relation_type_id)
         .join(source, source.c.id == Edge.from_node_id).join(target, target.c.id == Edge.to_node_id)
         .join(EdgeEvidence, EdgeEvidence.edge_id == Edge.id)
-        .where(RelationType.key.in_((RELATION, "references_scenario_flow_state", "references_packaged_cutscene", "plays_cutscene")), Edge.layer == "source",
+        .where(*owner_scope, RelationType.key.in_((RELATION, "references_scenario_flow_state", "references_packaged_cutscene", "plays_cutscene")), Edge.layer == "source",
                EdgeEvidence.release_id == release_id)
     ))
     # Refresh only this recipe's evidence in this release and requested quest scope.
@@ -218,7 +226,7 @@ async def backfill(session, release_id, dry_run=False, quest_ids=None):
         RelationType, RelationType.id == Edge.relation_type_id).join(
         source, source.c.id == Edge.from_node_id).join(target, target.c.id == Edge.to_node_id).join(
         EdgeEvidence, EdgeEvidence.edge_id == Edge.id).where(
-        Edge.layer == 'source', Edge.basis == 'inference', RelationType.key == 'references_scenario_flow_state',
+        *owner_scope, Edge.layer == 'source', Edge.basis == 'inference', RelationType.key == 'references_scenario_flow_state',
         EdgeEvidence.release_id == release_id)))
     current_context = {(row['from'], row['to'], row['source'], row['raw_path'], row['basis'])
                        for row in records if isinstance(proof := decoded(row['basis']), dict)
