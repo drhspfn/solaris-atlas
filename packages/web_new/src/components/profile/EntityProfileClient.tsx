@@ -8,6 +8,7 @@ import { CharacterMediaProvider } from '@/components/characters/CharacterMedia';
 import '@/styles/character-profile.css';
 import { CharacterProfileVisual } from '@/components/characters/CharacterProfileVisual';
 import { CharacterModelImport } from '@/components/characters/CharacterModelImport';
+import { NpcProfile } from '@/components/profile/NpcProfile';
 import {
   CharacterArchive,
   type CharacterArchiveData,
@@ -95,7 +96,7 @@ export function EntityProfileClient({
     }
     setArchive(null);
     setArchiveError('');
-    if (kind !== 'character') return;
+    if (kind !== 'character' || data?.npc || selectedRole.startsWith('character:npc:')) return;
     const controller = new AbortController();
     api<CharacterArchiveData>(
       `/characters/${encodeURIComponent(selectedRole)}/archive?${gameVersion ? `game_version=${encodeURIComponent(gameVersion)}&` : ''}locale=${encodeURIComponent(locale)}`,
@@ -124,6 +125,8 @@ export function EntityProfileClient({
         <ErrorPanel message={error} onRetry={() => setProfileRetry((value) => value + 1)} />
       </div>
     );
+
+  if (data?.npc) return <NpcProfile data={data} initialModel={initialModel} gameVersion={gameVersion} />;
 
   const entity = data?.[kind];
   const entityId = entity?.canonical_key?.split(':').at(-1) || entityKey;

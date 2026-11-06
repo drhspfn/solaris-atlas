@@ -7,6 +7,7 @@ import { display, type Entity, entityPath } from '../../data/entities';
 
 export function EntityCard({ item, index = 0 }: { item: Entity; index?: number }) {
   const type = item.category ?? (item.node_type === 'area' ? 'location' : item.node_type);
+  const imageUrl = item.character_kind === 'npc' ? null : item.image_url;
   return (
     <Link
       to={entityPath(item)}
@@ -15,11 +16,11 @@ export function EntityCard({ item, index = 0 }: { item: Entity; index?: number }
         animationDelay: `${Math.min(index, APP_SETTINGS.presentation.cardStaggerMaxIndex) * APP_SETTINGS.presentation.cardStaggerMs}ms`,
       }}
     >
-      <div className={`entity-art art-${type}${item.image_url ? ' has-image' : ''}`}>
-        {item.image_url ? (
+      <div className={`entity-art art-${type}${imageUrl ? ' has-image' : ''}`}>
+        {imageUrl ? (
           <img
             className="entity-card-image"
-            src={apiUrl(item.image_url.replace(/^\/api/, ''))}
+            src={apiUrl(imageUrl.replace(/^\/api/, ''))}
             alt=""
             loading="lazy"
           />

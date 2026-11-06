@@ -40,7 +40,7 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
     .trim()
     .slice(0, 300);
   const image =
-    archive ? characterPortrait(archive.artwork) : data?.media?.image_url;
+    data?.npc ? null : archive ? characterPortrait(archive.artwork) : data?.media?.image_url;
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://solarisatlas.fun';
   const imageUrl = image ? (image.startsWith('http') ? image : `${siteUrl}${image}`) : undefined;
 
