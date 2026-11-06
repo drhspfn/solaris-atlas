@@ -150,7 +150,7 @@ async def publish_audio(recipe: Path, root: Path, ffmpeg: Path, *, session=None,
                 )
                 source_ids = []
                 for path in evidence:
-                    kind = {".wem": "audio_wem", ".wav": "audio_wav"}.get(path.suffix, "unknown")
+                    kind = {".wem": "audio_wem", ".wav": "audio_wav", ".mp4": "video_game"}.get(path.suffix.casefold(), "unknown")
                     source_file = await service.register_file(
                         session, path, kind, mime_type="application/octet-stream"
                     )

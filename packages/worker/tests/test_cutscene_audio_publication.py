@@ -23,8 +23,10 @@ def publication(tmp_path, monkeypatch, *, failure=None, missing_full=False,
         stream.setframerate(48000)
         stream.writeframes(b'\0' * 48000 * 4)
     (root / 'source.wem').write_bytes(b'exact-source')
+    (root / 'original.wav').write_bytes(b'original-pcm')
+    (root / 'original.mp4').write_bytes(b'original-video')
     stems = [{'role': role, 'language': language, 'rover': rover, 'path': 'stem.wav',
-              'sources': ['source.wem'], 'evidence': 'authored event and native role'}
+              'sources': ['source.wem', 'original.wav', 'original.mp4'], 'evidence': 'authored event and native role'}
              for role, language, rover in [('music', None, None), ('effects', None, None),
                                            ('voice', 'en', 'male'), ('voice', 'en', 'female')]]
     spec = {'asset': 'asset:ue:/Game/M0374.M0374', 'asset_version': '3.7.1', 'duration': 1, 'stems': stems}
@@ -101,6 +103,10 @@ def publication(tmp_path, monkeypatch, *, failure=None, missing_full=False,
     files = {}
 
     async def register(_session, path, kind, **kwargs):
+        if path.name == 'original.wav':
+            assert kind == 'audio_wav'  # Same SHA identity as video publication evidence.
+        if path.name == 'original.mp4':
+            assert kind == 'video_game'  # Embedded mix already belongs to the original movie.
         if failure == 'upload' and path.name == 'audio.json':
             raise OSError('manifest upload failed')
         data = path.read_bytes()

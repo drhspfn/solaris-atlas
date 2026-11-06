@@ -157,11 +157,49 @@ def test_native_identity_mismatch_is_not_parsed_by_blob_substring(configs, actio
     insert(configs / 'db_QuestNodeData.db', 'questnodedata', ('WRONG', node_blob('RIGHT', {'Actions': [action]})))
     result = catalog_movie_frame_bindings(configs, 'M0374')
     assert not any(b['events'] for b in result)
-    assert any(u['code'] == 'native_source_decode_incomplete' for b in result for u in b['unresolved'])
+    assert any(u['code'] == 'native_record_decode_incomplete' for b in result for u in b['unresolved'])
 
 
 def test_changed_source_invalidates_catalog_cache(configs, action):
     assert catalog_movie_frame_bindings(configs, 'M0374')[0]['unresolved'][0]['code'] == 'unmapped_launcher'
     insert(configs / 'db_QuestNodeData.db', 'questnodedata', ('new', node_blob('new', {'Actions': [action]})))
+    binding, = catalog_movie_frame_bindings(configs, 'M0374')
+    assert binding['complete'] and len(binding['events']) == 1
+
+
+@pytest.mark.parametrize('family', ['flow', 'quest', 'level', 'entity'])
+def test_bad_nonmovie_record_does_not_drop_later_valid_launcher(configs, action, family):
+    if family == 'entity':
+        path, table_name = configs / 'db_level_entity.db', 'levelentityconfig'
+        insert(path, table_name, (0, 2, 3, b'bad'))
+        insert(path, table_name, (1, 2, 3, entity_blob({'Actions': [action]})))
+    else:
+        filename, table_name = {'flow': ('db_flowState.db', 'flowstate'),
+            'quest': ('db_QuestNodeData.db', 'questnodedata'),
+            'level': ('db_LevelPlayNodeData.db', 'levelplaynodedata')}[family]
+        path = configs / filename
+        insert(path, table_name, ('A_bad', b'bad'))
+        blob = flow_blob('Z_good', [action]) if family == 'flow' else node_blob('Z_good', {'Actions': [action]})
+        insert(path, table_name, ('Z_good', blob))
+    catalog = movie_launcher_catalog(configs)
+    assert len(catalog['bindings']['M0374']) == 1
+    assert catalog['bindings']['M0374'][0]['events'][0]['reference'].endswith('play_all_sound_m0374.play_all_sound_m0374')
+    source = next(s for s in catalog['sources'] if s['file'] == path.name)
+    assert source['records'] == 2 and source['record_errors'] == 1
+
+
+def test_native_empty_movie_noop_and_unhashable_labels_do_not_abort_scan(configs, action):
+    placeholder = {'Name': 'PlayMovie', 'Params': {'VideoName': ''}, 'ActionId': 5000188,
+                   'ActionGuid': '2afcc411a31243ccb693cd6d916caf71'}
+    strange = {'Name': {'native': 'object'}, 'Type': ['native', 'list'],
+               'Params': 'ordinary native text', 'Data': 'not JSON', 'Actions': []}
+    insert(configs / 'db_flowState.db', 'flowstate', ('A_native', flow_blob('A_native', [placeholder, strange])))
+    insert(configs / 'db_flowState.db', 'flowstate', ('Z_M0374', flow_blob('Z_M0374', [action])))
+    insert(configs / 'db_QuestNodeData.db', 'questnodedata', ('A', node_blob('A', strange)))
+    insert(configs / 'db_LevelPlayNodeData.db', 'levelplaynodedata', ('A', node_blob('A', strange)))
+    insert(configs / 'db_level_entity.db', 'levelentityconfig', (1, 2, 3, entity_blob(strange)))
+    catalog = movie_launcher_catalog(configs)
+    assert not catalog['unresolved']
+    assert catalog['sources'][0]['noop_launchers'] == 1
     binding, = catalog_movie_frame_bindings(configs, 'M0374')
     assert binding['complete'] and len(binding['events']) == 1

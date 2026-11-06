@@ -60,6 +60,49 @@ async def test_story_media_followup_keeps_images_and_movie_dependencies_without_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('story_media_only', [False, True])
+async def test_cutscenes_only_preserves_normal_requests_without_unrelated_jobs(monkeypatch, story_media_only):
+    async def enqueue(scoped):
+        session = AsyncMock()
+        session.get.return_value = SimpleNamespace(game_version='3.7.1')
+        session.scalars.side_effect = ([['M0374']] if scoped else
+                                       [['flow_state:Story'], ['M0374']])
+        session.scalar.side_effect = [4] + [None] * (4 if scoped else 5)
+        runs = []
+        session.add = runs.append
+
+        async def flush():
+            if runs:
+                runs[-1].id = len(runs)
+
+        session.flush.side_effect = flush
+        publish = AsyncMock()
+        monkeypatch.setattr(release_media, 'publish_media_job', publish)
+        await release_media.enqueue_release_media(
+            session, 9, story_media_only=story_media_only if scoped else True,
+            cutscenes_only=scoped)
+        return session, runs, publish.await_args_list
+
+    _, normal_runs, normal_calls = await enqueue(False)
+    session, runs, calls = await enqueue(True)
+    assert [call.args[0]['kind'] for call in calls] == [
+        'prepare', 'cutscene_assets', 'voice_packages', 'cutscene']
+    session.scalars.assert_awaited_once()
+    assert 'cutscene' in str(session.scalars.await_args.args[0]).lower()
+    normal = {call.args[0]['kind']: (run, call) for run, call in zip(normal_runs, normal_calls, strict=True)}
+    for run, call in zip(runs, calls, strict=True):
+        payload, _, queue = call.args
+        previous_run, previous_call = normal[payload['kind']]
+        assert run.input_hash == previous_run.input_hash
+        assert {k: v for k, v in payload.items() if k != 'run_id'} == {
+            k: v for k, v in previous_call.args[0].items() if k != 'run_id'}
+        assert queue == previous_call.args[2]
+        if payload['kind'] in {'cutscene_assets', 'cutscene'}:
+            assert payload['cutscene_assembly_schema'] == 2
+            assert queue == 'wuwa.cutscene-assembly.v2'
+
+
+@pytest.mark.asyncio
 async def test_repeating_complete_repair_resumes_media_after_an_already_completed_index(monkeypatch):
     session = AsyncMock()
     session.get.return_value = SimpleNamespace(game_version='3.7.0')

@@ -694,7 +694,7 @@ async def import_cutscene_recipe(
                     if path == movie:
                         continue
                     source = await service.register_file(
-                        session, path, "audio_wem" if path.suffix.casefold() == ".wem" else "unknown",
+                        session, path, {'.wem': 'audio_wem', '.wav': 'audio_wav'}.get(path.suffix.casefold(), 'unknown'),
                         mime_type="application/octet-stream")
                     source_files.append(source.id)
                 for bank, wem, wav in source_paths:
