@@ -38,13 +38,14 @@ test('component rigs attach to authored socket and follow exact package-bound pa
   assert.equal(states.at(-1)[0].visible, false);
 });
 
-test('ambiguous sources do not bind, failures retry, and baked components stay unloaded', async () => {
+test('ambiguous sources do not bind, failures retry, and baked or standalone-only components stay unloaded', async () => {
   const body = rig('Aki/Body/Stand', 'Hand'), child = rig('Aki/Prop/Stand');
   body.animations[0].userData = { sourcePackage: 'Aki/Other/Stand' };
   const action = new THREE.AnimationMixer(body.scene).clipAction(body.animations[0]).play();
   let attempts = 0, state;
   const linked = createLinkedModels({ assets: { id: 'root', linked_models: [
     { id: 'baked', parent_id: 'root', label: 'Baked', preview: asset('baked'), component: { baked: true } },
+    { id: 'world-effect', parent_id: 'root', label: 'World effect', preview: asset('world-effect'), component: { standalone_only: true } },
     { id: 'prop', parent_id: 'root', label: 'Prop', preview: asset('child'), component: { default_visible: false, bindings: [{ parent_clip: 'Aki/Body/Stand', child_clip: 'Aki/Prop/Stand' }] } },
   ] }, load: async () => { if (++attempts === 1) throw new Error('offline'); return child; }, dispose() {}, report: value => { state = value; }, getRoot: () => body.scene, getAction: () => action });
   linked.start(); assert.equal(attempts, 0); assert.equal(state.length, 1);

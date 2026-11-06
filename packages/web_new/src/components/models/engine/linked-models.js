@@ -98,7 +98,7 @@ export function attachComponent(parent, child, component, parser) {
 
 export function createLinkedModels({ assets, load, dispose, report, getRoot, getParser, getAction }) {
   const declared = new Set(assets.scene?.components ?? (assets.linked_models || []).map(item => item.id));
-  const items = (assets.linked_models || []).filter(item => declared.has(item.id) && !item.component.baked);
+  const items = (assets.linked_models || []).filter(item => declared.has(item.id) && !item.component.baked && !item.component.standalone_only);
   const depth = item => { let n = 0, current = item; const seen = new Set(); while (current && !seen.has(current.id)) { seen.add(current.id); current = items.find(candidate => candidate.id === current.parent_id); n++; } return n; };
   const entries = new Map(items.sort((a, b) => depth(a) - depth(b))
     .map(item => [item.id, { item, visible: item.component.default_visible !== false, override: null, loading: false, error: '', rig: null, request: null, action: null }]));

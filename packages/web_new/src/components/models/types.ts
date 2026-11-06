@@ -8,6 +8,7 @@ export type ModelComponent = {
   socket_transform?: { bone?: string; location?: Record<string, number>; rotation?: Record<string, number>; scale?: Record<string, number> } | null;
   default_visible?: boolean | null;
   baked?: boolean;
+  standalone_only?: boolean;
   kind?: "component" | "effect";
   bindings?: { parent_clip: string | null; child_clip: string | null; kind?: string; source?: { looping?: boolean | null } }[];
   cues?: unknown[];
