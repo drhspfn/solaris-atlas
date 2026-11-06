@@ -300,7 +300,16 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
             if item.get("Type") == "EffectModelGroup_C":
                 for index, e in enumerate(p.get("EffectData", [])):
                     raw = e.get("Key", "")
-                    nested = raw.split("'", 2)[1] if "'" in raw else raw
+                    if not isinstance(raw, str) or "'" not in raw:
+                        diagnostics.append(f"Unsupported untyped effect group entry: {package}[{index}]")
+                        continue
+                    effect_type, nested = raw.split("'", 1)
+                    nested = nested.split("'", 1)[0]
+                    if effect_type not in ("EffectModelGroup_C", "EffectModelSkeletalMesh_C"):
+                        message = f"Unsupported effect group entry type: {effect_type}"
+                        if message not in diagnostics:
+                            diagnostics.append(message)
+                        continue
                     effect(nested, clip, context, event, notify, (*path, package),
                            (*group_entries, {"group": package, "index": index, "value": e.get("Value")}))
             if item.get("Type") != "EffectModelSkeletalMesh_C":

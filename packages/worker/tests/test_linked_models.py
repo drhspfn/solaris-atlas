@@ -156,3 +156,18 @@ def test_socket_can_be_an_authored_bone(tmp_path):
     assert result["socket_transform"] == {"bone": "WeaponProp05", "location": None,
                                           "rotation": None, "scale": None, "source": "Aki/Skeleton"}
     assert not result["diagnostics"]
+
+
+def test_effect_group_skips_explicit_non_model_dependencies(tmp_path):
+    export(tmp_path, "Aki/BP", [])
+    export(tmp_path, "Aki/Idle", [
+        {"Type": "AnimSequence", "Properties": {"Notifies": [event("effect", 1)]}},
+        {"Type": "AnimNotifyStateEffect_C", "Name": "effect", "Properties": {
+            "EffectDataAssetRef": {"AssetPathName": "/Game/Aki/Group.Group"}}},
+    ])
+    export(tmp_path, "Aki/Group", [{"Type": "EffectModelGroup_C", "Properties": {"EffectData": [
+        {"Key": "EffectModelNiagara_C'/Game/Aki/Niagara.Niagara'", "Value": 0},
+        {"Key": "EffectModelSkeletalMesh_C'/Game/Aki/ModelEffect.ModelEffect'", "Value": 0}]}}])
+    result, = discover(tmp_path, {"component_blueprint": "Aki/BP", "animation_resources": ["Aki/Idle"]})
+    assert result["required_resources"] == ["Aki/ModelEffect"]
+    assert any("EffectModelNiagara_C" in d for d in result["diagnostics"])
