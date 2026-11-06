@@ -1,6 +1,7 @@
 """Disposable model extraction, headless conversion and atomic bundle publication."""
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -581,7 +582,8 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
                     raise result
                 parts.append(result)
         await progress("merge_animation_batches", batches=batch_count)
-        await asyncio.to_thread(merge_animation_glbs, parts, output / "animations.glb")
+        await asyncio.to_thread(merge_animation_glbs, parts, output / "animations.glb",
+                                source_paths={clip["name"]: clip["source"] for clip in clips})
         summary = glb_summary(output / "animations.glb", allow_animations=True)
         if summary["animations"] != len(clips):
             raise ValueError("Merged animation collection lost clips")
@@ -686,7 +688,10 @@ async def publish_bundle(job, output, summaries, provenance):
 async def publish_forms(job, bundles, *, publication_payload=None):
     if not bundles or len({form["id"] for form, *_ in bundles}) != len(bundles):
         raise ValueError("Model publication requires distinct authored forms")
-    validated = [publication_files(job, output, summaries) for _, output, summaries, _ in bundles]
+    validated = [publication_files(
+        job.model_copy(update={"include_animations": "animations" in summaries})
+        if form.get("component") else job, output, summaries)
+        for form, output, summaries, _ in bundles]
     storage = S3Storage(get_settings())
     service = FileRegistrationService(storage)
     prepared_forms = []
@@ -725,7 +730,8 @@ async def publish_forms(job, bundles, *, publication_payload=None):
                     reference_type="character_model_" + kind,
                     owner_node_id=job.owner_node_id,
                     release_id=job.release_id,
-                    source_path="/Game/" + provenance["model"],
+                    source_path="/Game/" + provenance["model"] + (
+                        "#component=" + form["id"] if form.get("component") else ""),
                 )
                 published[kind] = file.id
                 reference.metadata_json = {
@@ -738,6 +744,8 @@ async def publish_forms(job, bundles, *, publication_payload=None):
                     "tier": job.tier,
                     "game_source": provenance,
                     "animation_count": animation_count,
+                    **({"component": form["component"]} if form.get("component") else {}),
+                    **({"scene": provenance["scene"]} if provenance.get("scene") else {}),
                 }
             await service.register_variant(
                 session,
@@ -764,6 +772,48 @@ async def publish_forms(job, bundles, *, publication_payload=None):
             "temporary_exports_removed": True,
         }
         await session.commit()
+
+
+async def build_scene_bundles(staging, forms, *, include_animations=True, **options):
+    """Retain independently validated rigs until the complete scene can publish atomically."""
+    bundles, total_components = [], 0
+    for form in forms:
+        root = staging / form["id"]
+        root.mkdir()
+        output, summaries, provenance = await build_bundle(
+            root, form, include_animations=include_animations, **options)
+        provenance["form_source"] = form.get("source")
+        components = provenance.pop("linked_components", [])
+        total_components += len(components)
+        if total_components > 32:
+            raise ValueError("Model scene exceeds 32 authored components")
+        linked = []
+        children = []
+        for recipe in components:
+            relation = dict(recipe["component"])
+            identity = hashlib.sha256((form["id"] + "|" + relation["id"]).encode()).hexdigest()[:16]
+            component_id = "component-" + identity
+            if component_id in linked:
+                raise ValueError("Duplicate authored component in model scene")
+            linked.append(component_id)
+            relation["parent_form_id"] = form["id"]
+            child_form = {**recipe, "id": component_id, "label": relation["label"],
+                          "order": len(children), "component": relation}
+            child_root = staging / component_id
+            child_root.mkdir()
+            # Static props have no synthetic animation pack. Independent child rigs
+            # export only their own authored animation blueprint/sequence resources.
+            animated = include_animations and bool(recipe.get("blueprints") or recipe.get("montages"))
+            child_output, child_summaries, child_provenance = await build_bundle(
+                child_root, child_form, include_animations=animated, **options)
+            child_provenance["form_source"] = relation["source"]
+            children.append((child_form, child_output, child_summaries, child_provenance))
+        if linked:
+            scene = provenance.setdefault("scene", {"format": "solaris-model-scene-v1", "cues": []})
+            scene["components"] = linked
+        bundles.append((form, output, summaries, provenance))
+        bundles.extend(children)
+    return bundles
 
 
 async def process_character_model(payload):
@@ -807,16 +857,8 @@ async def process_character_model(payload):
             # Keep independently extracted rigs until all forms validate. One commit
             # publishes the complete set; any failure leaves the previous bundle intact.
             with temporary_entity_workspace(client) as staging:
-                bundles = []
-                for form in forms:
-                    with temporary_entity_workspace(client) as root:
-                        output, summaries, provenance = await build_bundle(
-                            root, form, include_animations=job.include_animations, run_id=job.run_id
-                        )
-                        retained = staging / form["id"]
-                        shutil.move(output, retained)
-                    provenance["form_source"] = form["source"]
-                    bundles.append((form, retained, summaries, provenance))
+                bundles = await build_scene_bundles(
+                    staging, forms, include_animations=job.include_animations, run_id=job.run_id)
                 await model_progress(job.run_id, "publish", forms=len(bundles))
                 await publish_forms(job, bundles)
 

@@ -13,7 +13,7 @@ from wuwa_story.ingestion.model_archives import write_archive
 
 
 async def build(args):
-    from wuwa_story_worker.character_models import build_bundle
+    from wuwa_story_worker.character_models import build_scene_bundles
     from wuwa_story_worker.model_forms import resolve_recipe_forms
 
     recipe = json.loads(args.recipe.read_text(encoding="utf-8-sig"))
@@ -34,17 +34,11 @@ async def build(args):
     started = time.monotonic()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".solaris-model-", dir=args.output.parent) as scratch:
-        bundles = []
-        for form in forms:
-            print(f"Building {form['label']} ({form['id']})", flush=True)
-            root = Path(scratch) / form["id"]
-            root.mkdir()
-            output, summaries, provenance = await build_bundle(root, form,
-                                                               include_animations=not args.without_animations,
-                                                               local_client={"game": args.game_dir.resolve(), "keys": args.keys_file.resolve(),
-                                                                             "processors": args.workers}, animation_workers=args.workers,
-                                                               report_progress=lambda stage, **details: print(json.dumps({"stage": stage, **details}), flush=True))
-            bundles.append((form, output, summaries, provenance))
+        bundles = await build_scene_bundles(Path(scratch), forms,
+            include_animations=not args.without_animations,
+            local_client={"game": args.game_dir.resolve(), "keys": args.keys_file.resolve(),
+                          "processors": args.workers}, animation_workers=args.workers,
+            report_progress=lambda stage, **details: print(json.dumps({"stage": stage, **details}), flush=True))
         manifest = await asyncio.to_thread(write_archive, args.output, {
             "character_key": recipe["character_key"], "game_version": recipe["game_version"],
             "asset_version": args.asset_version, "tier": args.tier,
