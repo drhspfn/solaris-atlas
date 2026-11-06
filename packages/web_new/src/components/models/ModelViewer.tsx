@@ -514,6 +514,12 @@ export function ModelViewer({
                   {checkbox("Show floor and world axes", "floor")}
                   {checkbox("Turntable", "turntable")}
                   {checkbox("Lock root position", "lock", !state.rootAvailable)}
+                  {state.accessories.length > 0 && <fieldset>
+                    <legend>Accessories</legend>
+                    {state.accessories.map((accessory) => <Checkbox key={accessory.name}
+                      label={accessory.name} checked={accessory.visible} disabled={disabled}
+                      onChange={(event) => controller.current?.accessory(accessory.name, event.target.checked)} />)}
+                  </fieldset>}
                   <fieldset disabled={disabled || !settings.lock}>
                     <legend>
                       <HelpLabel

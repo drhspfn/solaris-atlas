@@ -47,6 +47,7 @@ export type ViewerOption = {
   path?: string[];
 };
 export type ViewerState = {
+  accessories: { name: string; visible: boolean }[];
   ready: boolean;
   error: string;
   status: string;
@@ -69,6 +70,7 @@ export type ViewerState = {
   preferredBone: string;
 };
 export const initialViewerState: ViewerState = {
+  accessories: [],
   ready: false,
   error: "",
   status: "Loading model…",
@@ -101,6 +103,7 @@ export type ViewerCommand =
   | "animations"
   | "facial";
 export type ViewerController = {
+  accessory: (name: string, visible: boolean) => void;
   settings: (settings: ViewerSettings) => void;
   command: (command: ViewerCommand) => Promise<void>;
   animation: (name: string) => void;

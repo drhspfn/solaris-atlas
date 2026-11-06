@@ -7,6 +7,7 @@ import { BoneCamera, cameraBones } from '../src/components/models/engine/camera-
 import { RootMotionLock } from '../src/components/models/engine/root-motion.js';
 import { FacialAnimation } from '../src/components/models/engine/facial.js';
 import { bindAnimationClips, attachAnimationCatalog, prepareAnimatedMeshes } from '../src/components/models/engine/animations.js';
+import { declaredAccessories } from '../src/components/models/engine/accessories.js';
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function rig(animated = false, facial = false) {
@@ -18,11 +19,17 @@ function rig(animated = false, facial = false) {
   return { scene, mesh, bone, parser: { associations: new Map([[bone, { nodes: 0 }]]), json: { nodes: [{ name: 'Hips' }] } },
     animations: animated ? [new THREE.AnimationClip('Stand1', 1, [new THREE.VectorKeyframeTrack('Hips.position', [0, 1], [0, 0, 0, 2, 0, 0])])] : [] };
 }
-async function viewer({ preview = false, defer = false, hold = false } = {}) {
+async function viewer({ preview = false, defer = false, hold = false, accessory = false } = {}) {
   const requests = [], events = new Map(), changes = [], pending = new Map();
   let frame, disconnected = false, destroyed = false, failure = false, finish;
   let geometryDisposals = 0;
   const low = rig(), full = rig(false, true), pack = rig(true);
+  if (accessory) for (const model of [low, full]) {
+    const anchor = new THREE.Group();
+    anchor.userData = { accessory_name: 'Hat', default_visible: true,
+      attachment_manifest: JSON.stringify({ name: 'Hat', visible: true }) };
+    model.scene.add(anchor); model.accessory = anchor;
+  }
   low.mesh.geometry.addEventListener('dispose', () => geometryDisposals++);
   class Renderer {
     domElement = { setAttribute() {}, addEventListener: (key, value) => events.set(key, value), removeEventListener: key => events.delete(key), remove() {} };
@@ -48,7 +55,7 @@ async function viewer({ preview = false, defer = false, hold = false } = {}) {
     .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
   const context = { THREE: { ...THREE, WebGLRenderer: Renderer }, GLTFLoader: Loader, OrbitControls: Controls,
     SpringBones: class { joints = [1]; missing = []; reset() {} restore() {} update() {} },
-    BoneCamera, cameraBones, RootMotionLock, FacialAnimation, bindAnimationClips, attachAnimationCatalog, prepareAnimatedMeshes,
+    BoneCamera, cameraBones, RootMotionLock, FacialAnimation, bindAnimationClips, attachAnimationCatalog, prepareAnimatedMeshes, declaredAccessories,
     location: { href: 'https://atlas.test/characters/hero', protocol: 'https:' }, URL, AbortController,
     devicePixelRatio: 1, document: { hidden: false, addEventListener: (key, fn) => events.set(key, fn), removeEventListener: key => events.delete(key) },
     ResizeObserver: class { observe() {} disconnect() { disconnected = true; } },
@@ -69,6 +76,17 @@ async function viewer({ preview = false, defer = false, hold = false } = {}) {
     frame: ms => frame?.(ms), fail: value => { failure = value; }, finish: () => finish(),
     get disconnected() { return disconnected; }, get destroyed() { return destroyed; }, get disposedGeometry() { return geometryDisposals; } };
 }
+
+test('declared accessory visibility survives upgrading model quality', async () => {
+  const v = await viewer({ accessory: true });
+  assert.equal(v.state.accessories[0].name, 'Hat');
+  v.controller.accessory('Hat', false);
+  assert.equal(v.low.accessory.visible, false);
+  await v.controller.command('quality');
+  assert.equal(v.full.accessory.visible, false);
+  assert.equal(v.state.accessories[0].visible, false);
+  v.controller.dispose();
+});
 
 test('native renderer loads only compact geometry until explicit actions; retries keep working model', async () => {
   const v = await viewer();

@@ -6,6 +6,7 @@ import { BoneCamera, cameraBones } from './camera-rig.js';
 import { RootMotionLock } from './root-motion.js';
 import { FacialAnimation } from './facial.js';
 import { attachAnimationCatalog, bindAnimationClips, prepareAnimatedMeshes } from './animations.js';
+import { declaredAccessories } from './accessories.js';
 
 /** Dispose shared GPU resources once, including failed/obsolete model loads. */
 export function disposeObject(root) {
@@ -34,6 +35,8 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   let disposed = false, settings = initialSettings, model, gltf, mixer, action, physics, root, face;
   let clips = [], animationPack, boneList, applied = false, full = false;
   let qualityRequest, facialRequest, animationRequest, installations = Promise.resolve();
+  let accessoryNodes = new Map();
+  const accessoryVisibility = {};
   const commandRequests = new Map();
   const loading = { quality: false, animations: false, facial: false };
   const loadErrors = { quality: '', animations: '', facial: '' };
@@ -182,6 +185,10 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     if (mixer) { mixer.stopAllAction(); mixer.uncacheRoot(model); }
     if (model) { stage.remove(model); disposeObject(model); }
     gltf = loaded; model = loaded.scene; stage.add(model); prepareAnimatedMeshes(model);
+    const declared = declaredAccessories(model, accessoryVisibility);
+    accessoryNodes = declared.nodes;
+    for (const option of declared.options) accessoryVisibility[option.name] = option.visible;
+    emit({ accessories: declared.options });
     const bounds = new THREE.Box3().setFromObject(model);
     const center = bounds.getCenter(new THREE.Vector3());
     height = bounds.max.y - bounds.min.y; width = bounds.max.x - bounds.min.x;
@@ -319,6 +326,12 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   }).catch(error => emit({ error: error.message, ready: false }));
   return {
     settings: applySettings, command, animation: selectAnimation,
+    accessory(name, visible) {
+      const node = accessoryNodes.get(name);
+      if (!node || typeof visible !== 'boolean') return;
+      node.visible = visible; accessoryVisibility[name] = visible;
+      emit({ accessories: [...accessoryNodes].map(([name, node]) => ({ name, visible: node.visible })) });
+    },
     face(name) { face?.select(name); face?.update(action?.getClip().name, action?.time || 0); emit({ face: name }); reportTime(); },
     seek(time) {
       resetPhysics();
