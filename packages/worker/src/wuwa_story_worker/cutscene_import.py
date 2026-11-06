@@ -32,6 +32,7 @@ from wuwa_story.story.cutscene_publications import publication_type
 from wuwa_story_worker.cutscene_caption_audio import CAPTION_AUDIO_SCHEMA
 from wuwa_story_worker.cutscene_segments import VariantAlignmentError, export_segments
 from wuwa_story_worker.cutscene_video_source import exported_video_path
+from wuwa_story_worker.media_provenance import package_path, sha256
 from wuwa_story_worker.publication_provenance import (
     pinned_source,
     publication_source,
@@ -374,6 +375,22 @@ def fallback_frame_stems(stems):
             and (len(rovers) < 2 or stem['rover'] is None)]
 
 
+def frame_provenance_files(originals, frame_stems):
+    """Separate native package identities from explicitly retained render evidence."""
+    frame_files = {Path(path) for stem in frame_stems for path in stem['sources']}
+    native, reconstructed = [], []
+    for path in dict.fromkeys(originals):
+        try:
+            package_path(path)
+        except ValueError:
+            if path not in frame_files:
+                raise
+            reconstructed.append({'logical_name': path.name, 'sha256': sha256(path)})
+        else:
+            native.append(path)
+    return native, reconstructed
+
+
 async def import_cutscene_recipe(
     recipe: Path,
     assets: Path,
@@ -444,11 +461,15 @@ async def import_cutscene_recipe(
                     _, evidence = await decode_soundtrack(track, assets, audio, work, decoder, decoded)
                     originals.extend(path for path in evidence if path.suffix.casefold() in {".wem", ".bnk"})
                 originals.extend(path for stem in frame_stems for path in stem['sources'])
+                native_originals, reconstruction_files = frame_provenance_files(originals, frame_stems)
                 provenance_by_asset[video.asset] = publication_source(
-                    source_context, {"path": engine, "kind": "video"}, list(dict.fromkeys(originals)),
+                    source_context, {"path": engine, "kind": "video"}, native_originals,
                     recipe_sha256=recipe_hash, recipe=requested_spec.model_dump(mode="json"),
                     analyze_variants=analyze_variants,
                     cutscene_assembly_schema=CUTSCENE_ASSEMBLY_SCHEMA,
+                    **({'reconstruction_files': reconstruction_files,
+                        'frame_audio_sources': [item for event in video.frame_audio for item in event.source_media]}
+                       if frame_stems else {}),
                     wwise_renderer_schema=WWISE_RENDERER_SCHEMA,
                     **({'caption_audio_schema': CAPTION_AUDIO_SCHEMA}
                        if source_context.get('caption_audio_schema') == CAPTION_AUDIO_SCHEMA else {}),

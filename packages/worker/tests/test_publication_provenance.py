@@ -395,3 +395,19 @@ async def test_cutscene_persists_original_sources_and_stable_unreal_identity(tmp
         assert len(bundles) == 1 and bundles[0]['asset'] == 'asset:ue:/Game/Video.Video'
         assert bundles[0]['stems'][0]['language'] == 'en'
         assert any(name.endswith('en_vo_caption.wem') for name in bundles[0]['stems'][0]['sources'])
+
+
+def test_native_frame_render_evidence_is_not_falsely_treated_as_game_package(tmp_path):
+    movie = tmp_path / "Client/Content/Aki/Movies/M0374.mp4"
+    movie.parent.mkdir(parents=True)
+    movie.write_bytes(b"movie")
+    evidence = [tmp_path / name for name in ("cooked-event.json", "role-proof.json", "music.wav")]
+    for path in evidence:
+        path.write_bytes(path.name.encode())
+    native, reconstruction = cutscene_import.frame_provenance_files(
+        [movie, *evidence], [{"sources": evidence}])
+    assert native == [movie]
+    assert {item["logical_name"] for item in reconstruction} == {path.name for path in evidence}
+    assert all(len(item["sha256"]) == 64 for item in reconstruction)
+    with pytest.raises(ValueError, match="stable game package path"):
+        cutscene_import.frame_provenance_files([movie, *evidence], [])
