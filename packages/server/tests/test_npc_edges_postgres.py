@@ -9,8 +9,6 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from wuwa_story_worker.compiler.core import Writer
-from wuwa_story_worker.compiler.npc import compile_npcs
 
 from wuwa_story.api.routes.story import npc_profile, npc_sales
 from wuwa_story.db.models.graph import Edge, EdgeEvidence
@@ -24,6 +22,8 @@ URL = os.getenv("NPC_PG_TEST_DATABASE_URL")
 @pytest.mark.asyncio
 @pytest.mark.skipif(not URL, reason="Set NPC_PG_TEST_DATABASE_URL to a dedicated verification database")
 async def test_npc_source_edges_and_seller_api_replay(tmp_path, monkeypatch):
+    Writer = pytest.importorskip("wuwa_story_worker.compiler.core").Writer
+    compile_npcs = pytest.importorskip("wuwa_story_worker.compiler.npc").compile_npcs
     engine = create_async_engine(URL)
     assert engine.url.database.endswith("verify"), "Use a dedicated verification database"
     prefix = "npc_fixture_" + uuid4().hex
