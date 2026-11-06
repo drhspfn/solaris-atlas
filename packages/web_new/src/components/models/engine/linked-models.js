@@ -99,11 +99,23 @@ export function createLinkedModels({ assets, load, dispose, report, getRoot, get
   const depth = item => { let n = 0, current = item; const seen = new Set(); while (current && !seen.has(current.id)) { seen.add(current.id); current = items.find(candidate => candidate.id === current.parent_id); n++; } return n; };
   const entries = new Map(items.sort((a, b) => depth(a) - depth(b))
     .map(item => [item.id, { item, visible: item.component.default_visible !== false, override: null, loading: false, error: '', rig: null, request: null, action: null }]));
-  let closed = false, rootModel, rootMeshes = new Map(), lastState = '';
+  let closed = false, rootModel, rootMeshes = new Map(), reported = false;
   function emit() {
-    const state = [...entries.values()].map(({ item, visible, override, loading, error }) => ({ id: item.id, name: item.label, visible, override, loading, error }));
-    const snapshot = JSON.stringify(state);
-    if (!closed && snapshot !== lastState) { lastState = snapshot; report(state); }
+    if (closed) return;
+    let changed = !reported;
+    for (const entry of entries.values()) {
+      const previous = entry.reported;
+      if (!previous || previous.visible !== entry.visible || previous.override !== entry.override ||
+          previous.loading !== entry.loading || previous.error !== entry.error) { changed = true; break; }
+    }
+    if (!changed) return;
+    const state = [];
+    for (const entry of entries.values()) {
+      const { item, visible, override, loading, error } = entry;
+      entry.reported = { visible, override, loading, error };
+      state.push({ id: item.id, name: item.label, visible, override, loading, error });
+    }
+    reported = true; report(state);
   }
   function parentOf(entry) {
     if (entry.item.parent_id === assets.id) return { scene: getRoot(), parser: getParser?.() };

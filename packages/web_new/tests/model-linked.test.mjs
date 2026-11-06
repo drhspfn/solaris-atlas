@@ -90,6 +90,25 @@ test('a component completing after viewer disposal releases its rig without repo
   assert.equal(disposed, 1); assert.equal(reports, before); assert.equal(child.scene.parent, null);
 });
 
+test('unchanged animation frames do not report UI state; visibility and override changes do', async () => {
+  const body = rig('Aki/Body/Idle'), child = rig('Aki/Prop/Idle');
+  body.animations[0].userData = { sourcePackage: 'Aki/Body/Idle' };
+  const action = new THREE.AnimationMixer(body.scene).clipAction(body.animations[0]).play();
+  const reports = [];
+  const linked = createLinkedModels({ assets: { id: 'root', linked_models: [{ id: 'prop', parent_id: 'root', label: 'Prop', preview: asset('child'), component: { default_visible: true } }] },
+    load: async () => child, dispose() {}, report: state => reports.push(state), getRoot: () => body.scene, getAction: () => action });
+  linked.start(); await tick();
+  const before = reports.length;
+  for (let i = 0; i < 300; i++) { action.time = i / 100; linked.sync(); }
+  assert.equal(reports.length, before);
+  linked.set('prop', true); assert.equal(reports.length, before + 1);
+  assert.equal(reports.at(-1)[0].override, true);
+  linked.set('prop', false); assert.equal(reports.length, before + 2);
+  assert.equal(reports.at(-1)[0].visible, false);
+  linked.set('prop', false); assert.equal(reports.length, before + 2);
+  linked.dispose();
+});
+
 test('visibility cues follow the exact source clip on seek and preserve the user switch', async () => {
   const child = rig('Aki/Prop/Stand'), body = rig('Aki/Body/Stand');
   body.animations[0].userData = { sourcePackage: 'Client/Content/Aki/Body/Stand.json' };
