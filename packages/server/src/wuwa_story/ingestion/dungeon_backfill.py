@@ -270,7 +270,10 @@ async def backfill(session, release_id, dry_run=False, quest_ids=None):
         if missing:
             await import_canonical_edges(SimpleNamespace(iter_edges=lambda: iter(missing)), session,
                                          release_id, batch_size=len(missing))
-        await rebuild_cutscene_order(session, release_id)
+        if any(row['type'] != 'references_scenario_flow_state'
+               or not isinstance(proof := decoded(row['basis']), dict)
+               or proof.get('recipe') != RECIPE for row in missing):
+            await rebuild_cutscene_order(session, release_id)
         repaired_states = {row['from'].removeprefix('action:').rsplit(':', 1)[0]
                            for row in missing if row['from'].startswith('action:')}
         await invalidate_repaired_quests(session, release,

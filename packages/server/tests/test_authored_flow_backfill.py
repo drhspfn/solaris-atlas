@@ -94,6 +94,7 @@ async def test_scoped_recipe_refresh_replaces_changed_proof_or_removes_disappear
     assert len(deletions) == 1 and 'release_id = 21' in deletions[0] and ' IN (80)' in deletions[0]
     assert result['removed_context_evidence'] == 1
     assert result['written'] == (0 if disappeared else 1)
+    repair.rebuild_cutscene_order.assert_not_awaited()
     if disappeared:
         imported.assert_not_awaited()
     else:
@@ -151,7 +152,23 @@ async def test_scoped_retained_nested_movie_repair_requires_both_release_endpoin
         assert movie['from'] == 'action:Story_6_20:0' and movie['to'] == 'cutscene:M0357'
         assert movie['raw_path'] == '$[13].Actions<json>[0].Actions[0].Params.VideoName'
         assert json.loads(movie['basis'])['runtime_order_confirmed'] is False
+        repair.rebuild_cutscene_order.assert_awaited_once_with(session, 21)
+    else:
+        repair.rebuild_cutscene_order.assert_not_awaited()
     assert all(row['from'].startswith('quest:') for row in invalidation.await_args.args[2])
+
+
+@pytest.mark.asyncio
+async def test_existing_quest_scenario_relation_still_rebuilds_order(monkeypatch):
+    session, imported, _, _ = fixture(monkeypatch)
+    monkeypatch.setattr(repair, 'scenario_links', lambda *args: iter([{
+        'from': 'quest:42', 'to': 'flow_state:Story_6_19', 'source': repair.LEVEL_NODES,
+        'raw_path': '$[2].Data.Condition.Flow', 'basis': 'Existing scenario ownership proof',
+    }]))
+    await repair.backfill(session, 21, quest_ids={42})
+    assert any(row['basis'] == 'Existing scenario ownership proof'
+               for row in imported.await_args.args[0].iter_edges())
+    repair.rebuild_cutscene_order.assert_awaited_once_with(session, 21)
 
 
 @pytest.mark.asyncio
