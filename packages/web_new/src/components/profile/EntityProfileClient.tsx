@@ -15,6 +15,7 @@ import {
 } from '@/components/characters/CharacterArchive';
 import { CharacterConnections } from '@/components/characters/CharacterConnections';
 import { ItemAcquisition } from '@/components/items/ItemAcquisition';
+import { NpcSellers } from '@/components/items/NpcSellers';
 import { InlineDialogueSearch } from '@/components/search/InlineDialogueSearch';
 import { EmptyInline, ErrorPanel, PageLoader } from '@/components/ui/Feedback';
 import { PanelTitle } from '@/components/ui/PanelTitle';
@@ -312,6 +313,7 @@ export function EntityProfileClient({
             count={kind === 'item' ? undefined : kind === 'character' ? data?.connections_summary?.quests?.total ?? quests.length : quests.length}
           />
           {kind === 'item' && <ItemAcquisition data={data} locale={locale} />}
+          {kind === 'item' && entity?.game_item_id != null && <NpcSellers key={entity.game_item_id} itemId={entity.game_item_id} locale={locale} />}
           {kind === 'character' ? (
             profileRole === selectedRole && profileLocale === locale ? (
               <CharacterConnections key={`quests-${selectedRole}-${locale}-${gameVersion || entity?.game_version || "current"}`}

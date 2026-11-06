@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import { api } from "@/api/client";
 import { CharacterModelImport } from "@/components/characters/CharacterModelImport";
 import { CharacterProfileVisual } from "@/components/characters/CharacterProfileVisual";
@@ -123,6 +124,7 @@ export function NpcProfile({
 }) {
   const locale = useLocale();
   const { character, npc } = data;
+  const searchInput = useRef<HTMLInputElement>(null);
   const name = localizedText(
     character.name,
     character.canonical_name || `NPC ${npc.blueprint_id}`,
@@ -210,7 +212,7 @@ export function NpcProfile({
           A participant in a conversation is not necessarily this NPC.
         </p>
         <form
-          className="dialogue-search"
+          className="dialogue-search" noValidate
           onSubmit={(event) => {
             event.preventDefault();
             setPage(1);
@@ -218,11 +220,18 @@ export function NpcProfile({
           }}
         >
           <input
+            ref={searchInput}
             aria-label="Search NPC dialogue"
             value={input}
             onChange={(event) => setInput(event.target.value)}
             placeholder="Search dialogue"
           />
+          {(input || query) && <button type="button" className="search-clear" aria-label="Clear dialogue search" onClick={() => {
+            setInput('');
+            setQuery('');
+            setPage(1);
+            searchInput.current?.focus();
+          }}><X size={16} aria-hidden="true" /></button>}
           <button type="submit">Find lines</button>
         </form>
         {error ? (

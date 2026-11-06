@@ -13,7 +13,7 @@ function render(result) {
   const exports = {};
   const components = new Proxy({}, { get: (_, name) => name });
   vm.runInNewContext(code, { exports, AbortController, URLSearchParams,
-    require: (id) => id === 'react' ? { useState: () => [initial[index++], () => {}], useEffect: () => {} }
+    require: (id) => id === 'react' ? { useState: () => [initial[index++], () => {}], useEffect: () => {}, useRef: () => ({ current: null }) }
       : id === 'react/jsx-runtime' ? { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) }
       : id === '@/hooks/useLocale' ? { useLocale: () => 'en' }
       : id === '@/data/localized' ? { localizedText: (value, fallback = '') => value?.content || value || fallback }
@@ -31,4 +31,23 @@ test('NPC profile labels interaction participants and bounds dialogue with pagin
   assert.equal(pagination.props.pageSize, 20);
   assert.equal(pagination.props.total, 21);
   assert(tree.some((node) => node.type === 'NpcShops'));
+});
+
+test('clearing NPC dialogue search resets its query and page and restores focus', () => {
+  const slots = [0, 'visitor', 'visitor', 3, { total: 0, results: [] }, '', 0];
+  let index = 0; let focused = false;
+  const exports = {};
+  const components = new Proxy({}, { get: (_, name) => name });
+  vm.runInNewContext(code, { exports, AbortController, URLSearchParams,
+    require: (id) => id === 'react' ? { useState: () => { const i = index++; return [slots[i], (value) => { slots[i] = value; }]; }, useEffect: () => {}, useRef: () => ({ current: { focus: () => { focused = true; } } }) }
+      : id === 'react/jsx-runtime' ? { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) }
+      : id === '@/hooks/useLocale' ? { useLocale: () => 'en' }
+      : id === '@/data/localized' ? { localizedText: (value, fallback = '') => value?.content || value || fallback }
+      : components });
+  const tree = nodes(exports.NpcProfile({ data: { character: { canonical_key: 'character:npc:1' }, npc: { blueprint_id: 1, name_scope: 'blueprint', name_variants: [], shop_count: 0 } } }));
+  tree.find((node) => node.props['aria-label'] === 'Clear dialogue search').props.onClick();
+  assert.equal(slots[1], '');
+  assert.equal(slots[2], '');
+  assert.equal(slots[3], 1);
+  assert.equal(focused, true);
 });
