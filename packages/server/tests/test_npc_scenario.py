@@ -1,4 +1,27 @@
 from wuwa_story.ingestion.npc_scenario import scenario_actor_edges
+from wuwa_story.ingestion.npc_sources import normalize_npcs
+
+
+def test_shared_speaker_name_key_never_merges_blueprints_or_instances():
+    blueprints = [{"Id": i, "BlueprintType": str(i), "EntityType": "Npc"} for i in (1, 2)]
+    templates = [{"BlueprintType": str(i), "ComponentsData": {"BaseInfoComponent": {
+        "Category": {"MainType": "Npc"}, "TidName": "Speaker_7_Name"}}} for i in (1, 2)]
+    instances = [{"BlueprintType": "1", "MapId": i, "EntityId": i,
+                  "ComponentsData": {"BaseInfoComponent": {"TidName": key}}}
+                 for i, key in ((10, "Speaker_7_Name"), (20, "Speaker_8_Name"))]
+    rows = normalize_npcs(blueprints, templates, instances, {}, speakers=[{"Id": 7}, {"Id": 8}])
+    assert [row["id"] for row in rows] == ["character:npc:1", "character:npc:2"]
+    assert all(row["npc"]["speakers"] == [] for row in rows)
+    assert {v["name"]["key"] for v in rows[0]["npc"]["name_variants"]} == {
+        "Speaker_7_Name", "Speaker_8_Name"}
+
+
+def test_same_entity_id_for_different_blueprints_is_not_identity_evidence():
+    npcs = [(f"character:npc:{i}", {"blueprint_type": str(i), "instances": [
+        {"map_id": i, "entity_id": 10}]}) for i in (1, 2)]
+    row = {"StateKey": "x_1_1", "Actions": [{"Name": "BeginFlowTemplate", "Params": {
+        "Actors": [{"EntityId": 10, "TalkerId": 7}]}}]}
+    assert list(scenario_actor_edges(npcs, [(0, row)], "3.7", {10: {"1", "2"}})) == []
 
 
 def test_actor_flow_and_adjacent_speech_are_context_specific():

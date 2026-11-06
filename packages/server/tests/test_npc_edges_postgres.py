@@ -118,6 +118,21 @@ async def test_npc_source_edges_and_seller_api_replay(tmp_path, monkeypatch):
             assert sales["total"] == 1 and sales["results"][0]["offers"][0]["quantity"] == 3
             proofs = list(await session.scalars(select(EdgeEvidence)))
             assert all(proof.source_record_id is not None for proof in proofs)
+            # A second release adds evidence, not duplicate global edges; retries
+            # of either release must not add duplicate evidence.
+            for identity, path, row in ((11, entity_source, native_entity),
+                    (12, flow_source, {"StateKey": state, "Actions": json.dumps(actions)}),
+                    (13, shop_source, files["shop/shopfixed.json"][0])):
+                await session.execute(text(f"INSERT INTO {r}.source_file VALUES (:id,2,:path)"),
+                                      {"id": identity, "path": path})
+                await session.execute(text(f"INSERT INTO {r}.source_record VALUES (:id,2,:id,0,CAST(:data AS jsonb))"),
+                                      {"id": identity, "data": json.dumps(row)})
+            await session.commit()
+            for _ in range(2):
+                assert await import_canonical_edges(adapter, session, 2) == 8
+                assert await import_npc_scenario_edges(session, 2, "3.7.2", entity_source) == 2
+                assert await session.scalar(select(func.count()).select_from(Edge)) == 9
+                assert await session.scalar(select(func.count()).select_from(EdgeEvidence)) == 20
     finally:
         await mapped.dispose()
         async with engine.begin() as connection:

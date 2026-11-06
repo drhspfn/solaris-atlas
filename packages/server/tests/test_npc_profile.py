@@ -23,7 +23,7 @@ async def test_profile_keeps_flows_separate_and_has_no_guessed_portrait(monkeypa
                 "flow_references": [{"flow": ["A", 1, 2], "basis": "explicit_flow_triple"}]}
     session = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(first=lambda: None)))
     result = await npc_profile.npc_profile(session, node, character, metadata, 5, "en")
-    assert result["npc"]["speakers"] == ["speaker:9"]
+    assert result["npc"]["speakers"] == []
     assert result["npc"]["flow_reference_count"] == 1
     assert "flow_references" not in result["npc"]
     assert result["media"]["image_url"] is None
@@ -125,10 +125,24 @@ async def test_no_speaker_does_not_assume_flow_participants(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_dialogue_is_paged_and_uses_explicit_speaker_participation(monkeypatch):
+async def test_stale_speaker_does_not_add_unrelated_dialogue_or_quests(monkeypatch):
+    monkeypatch.setattr(npc_profile, "npc_record", AsyncMock(return_value=(
+        SimpleNamespace(id=1), None, {"speakers": ["speaker:9"]}, 5)))
+    monkeypatch.setattr(npc_profile, "npc_flow_state_ids", AsyncMock(return_value=[]))
+    session = SimpleNamespace(scalar=AsyncMock(return_value=1), scalars=AsyncMock())
+    dialogue = await npc_profile.npc_dialogue.__wrapped__(
+        "character:npc:1", locale="en", q="", limit=20, offset=0, session=session)
+    quests = await npc_profile.npc_quests.__wrapped__(
+        "character:npc:1", locale="en", limit=20, offset=0, session=session)
+    assert dialogue["results"] == [] and quests["results"] == []
+    session.scalars.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dialogue_is_paged_and_ignores_stale_name_based_speaker(monkeypatch):
     monkeypatch.setattr(npc_profile, "npc_record", AsyncMock(return_value=(SimpleNamespace(id=1), None,
                                                                            {"speakers": ["speaker:9"], "flow_references": []}, 5)))
-    monkeypatch.setattr(npc_profile, "npc_flow_state_ids", AsyncMock(return_value=[]))
+    monkeypatch.setattr(npc_profile, "npc_flow_state_ids", AsyncMock(return_value=[21]))
     line = SimpleNamespace(localization_key_id=12, inline_text="fallback")
     node = SimpleNamespace(canonical_key="dialogue:1")
     state = SimpleNamespace(node_id=21, state_key="A/1/2")
@@ -143,7 +157,8 @@ async def test_dialogue_is_paged_and_uses_explicit_speaker_participation(monkeyp
                                                         q="hello", limit=20, offset=20, session=session)
     assert result["total"] == 25 and result["results"][0]["text"]["content"] == "Hello"
     sql = str(session.execute.call_args_list[0].args[0])
-    assert "participation_spoken" in sql and "LIMIT" in sql and "OFFSET" in sql
+    assert "participation_spoken" not in sql and "LIMIT" in sql and "OFFSET" in sql
+    assert result["results"][0]["speaker_relation"] == "interaction_participant"
     assert "localization_value" in sql
 
 

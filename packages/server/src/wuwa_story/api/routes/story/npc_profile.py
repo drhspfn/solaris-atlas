@@ -122,7 +122,7 @@ async def npc_profile(session, node, character, npc, release_id, locale):
                           "aliases": [],
                           "description": character.description, "playable": False},
             "npc": {"blueprint_id": npc.get("blueprint_id"), "blueprint_type": npc.get("blueprint_type"),
-                    "speakers": npc.get("speakers") or [],
+                    "speakers": [],
                     "name_scope": "instance" if scoped_name else "blueprint",
                     "name_variants": variants,
                     "flow_reference_count": len(npc.get("flow_references") or []),
@@ -212,16 +212,14 @@ async def npc_dialogue(canonical_key: str, locale: str = "en", game_version: str
     locale_id = await session.scalar(select(Locale.id).where(Locale.code == locale))
     if locale_id is None:
         raise HTTPException(400, "unknown locale")
-    speakers = [key for key in npc.get("speakers") or [] if isinstance(key, str)]
-    speaker_ids = list(await session.scalars(select(Node.id).where(Node.canonical_key.in_(speakers)))) if speakers else []
     if release_id is None:
         return {"results": [], "total": 0, "limit": limit, "offset": offset}
+    # Older imports may contain name-derived speakers; only flow context is
+    # supported until there is a separately evidenced NPC identity crosswalk.
     state_ids = await npc_flow_state_ids(session, node.id, npc, release_id)
-    if not speaker_ids and not state_ids:
+    if not state_ids:
         return {"results": [], "total": 0, "limit": limit, "offset": offset}
-    participation = dialogue_participation(release_id, speaker_ids=speaker_ids)
-    own_lines = select(participation.c.line_id, participation.c.state_id, participation.c.speaker_id)
-    selected = interaction_dialogue(release_id, state_ids).union(own_lines).subquery()
+    selected = interaction_dialogue(release_id, state_ids).subquery()
     query = select(selected.c.line_id, selected.c.state_id, selected.c.speaker_id).join(
         DialogueLine, DialogueLine.node_id == selected.c.line_id)
     if q.strip():
@@ -255,8 +253,7 @@ async def npc_dialogue(canonical_key: str, locale: str = "en", game_version: str
     for line, line_node, state, speaker_id, actor_context in page:
         results.append({"canonical_key": line_node.canonical_key, "flow_state": state.state_key,
                         "speaker": await _node_label(session, speaker_id, locale) if speaker_id is not None else None,
-                        "speaker_relation": "confirmed_npc_speaker" if speaker_id in speaker_ids else
-                                            "npc_actor_context" if actor_context else "interaction_participant",
+                        "speaker_relation": "npc_actor_context" if actor_context else "interaction_participant",
                         "text": await _localized(session, line.localization_key_id, locale, release_id)
                                 or {"inline_text": line.inline_text}, "quests": quests_by_state[state.node_id]})
     return {"results": results, "total": total, "limit": limit, "offset": offset}
@@ -268,14 +265,9 @@ async def npc_quests(canonical_key: str, locale: str = "en", game_version: str |
                      limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0),
                      session: AsyncSession = Depends(get_session)):
     node, _, npc, release_id = await npc_record(session, canonical_key, game_version)
-    speakers = [key for key in npc.get("speakers") or [] if isinstance(key, str)]
-    speaker_ids = list(await session.scalars(select(Node.id).where(Node.canonical_key.in_(speakers)))) if speakers else []
     if release_id is None:
         return {"results": [], "total": 0, "limit": limit, "offset": offset}
     state_ids = set(await npc_flow_state_ids(session, node.id, npc, release_id))
-    if speaker_ids:
-        participation = dialogue_participation(release_id, speaker_ids=speaker_ids)
-        state_ids.update(await session.scalars(select(participation.c.state_id).distinct()))
     if not state_ids:
         return {"results": [], "total": 0, "limit": limit, "offset": offset}
     links = quest_state_links(release_id, state_ids=state_ids)

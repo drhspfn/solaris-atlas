@@ -41,8 +41,6 @@ def normalize_npcs(blueprints: list[dict[str, Any]], templates: list[dict[str, A
     instances: dict[Any, list[tuple[int, dict[str, Any]]]] = defaultdict(list)
     for index, row in enumerate(entities):
         instances[row.get("BlueprintType")].append((index, row))
-    speaker_keys = {f"Speaker_{row['Id']}_Name": f"speaker:{row['Id']}"
-                    for row in speakers if row.get("Id") is not None}
     info_by_id: dict[Any, list[dict[str, Any]]] = defaultdict(list)
     fixed_by_shop: dict[Any, list[dict[str, Any]]] = defaultdict(list)
     for row in shop_info:
@@ -108,7 +106,6 @@ def normalize_npcs(blueprints: list[dict[str, Any]], templates: list[dict[str, A
                 if type(obj.get("MontageId")) is int:
                     montage_refs.append({"id": obj["MontageId"], "is_abp": obj.get("IsAbp"),
                                          "source": source, "path": path})
-        proven_speakers = [speaker_keys[name["key"]]] if name and name["key"] in speaker_keys else []
         base_model = components.get("ModelComponent") or {}
         base_model = base_model if isinstance(base_model, dict) else {}
         base_type = base_model.get("ModelType") or {}
@@ -132,7 +129,8 @@ def normalize_npcs(blueprints: list[dict[str, Any]], templates: list[dict[str, A
                "name_variants": [{"name": localization(key), "sources": sources}
                                  for key, sources in sorted(variants.items(), key=lambda item: item[0] or "")],
                "shop_ids": sorted(shop_ids), "shop_actions": shop_actions,
-               "speakers": proven_speakers, "flow_references": flows,
+               # A Speaker_<id>_Name key is a label, not a person crosswalk.
+               "speakers": [], "flow_references": flows,
                "shops": [{"id": sid, "shopinfo": info_by_id[sid],
                           "shopfixed": fixed_by_shop[sid]}
                          for sid in sorted(shop_ids)],
