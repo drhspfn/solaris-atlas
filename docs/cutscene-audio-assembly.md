@@ -7,6 +7,13 @@ eight `VideoView` calls to AudioSystem: two posts, three stop actions, two state
 changes, and one seek. It is not a complete audit of the game or its native C++
 runtime. Source snippets and game binaries are not included here.
 
+The complete native catalog smoke scanned 347,962 records: 21,149 FlowState,
+26,067 QuestNodeData, 85,911 LevelPlayNodeData and 214,835 level entities.
+All four sources completed without record errors in 38.6 seconds. Empty movie
+names are native callback-only no-ops; ordinary string parameters and structured
+Name/Type properties do not abort traversal. Malformed records retain their
+diagnostics while later records continue to be examined.
+
 ## Finite mechanism matrix
 
 | # | Mechanism | Verified behavior and implementation boundary |

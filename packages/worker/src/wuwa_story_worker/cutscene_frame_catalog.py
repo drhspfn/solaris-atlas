@@ -10,7 +10,7 @@ from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
 
-from wuwa_story_worker.cutscene_frame_events import discover_movie_audio
+from wuwa_story_worker.cutscene_frame_events import discover_movie_audio, movie_frame_bindings
 from wuwa_story_worker.map_sources import integer, open_db, table, text
 
 # Same native readers used by map_sources/quest_interactions. Quest/LevelPlay
@@ -29,23 +29,29 @@ def _launchers(value, path, conditional=False):
         for index, item in enumerate(value):
             yield from _launchers(item, f'{path}[{index}]', conditional)
     elif isinstance(value, dict):
-        nested = conditional or value.get('Name') in {'If', 'Branch', 'Random', 'Switch'} or value.get('Type') in {
-            'If', 'Condition', 'Branch', 'Random', 'Switch', 'Selector', 'Select'}
+        name, kind = value.get('Name'), value.get('Type')
+        nested = conditional or isinstance(name, str) and name in {'If', 'Branch', 'Random', 'Switch'} or (
+            isinstance(kind, str) and kind in {'If', 'Condition', 'Branch', 'Random', 'Switch', 'Selector', 'Select'})
         if value.get('Name') == 'PlayMovie':
             yield path, value, conditional
             nested = True
         for key, item in value.items():
             child = path + '.' + key
-            if isinstance(item, str) and key in {'Actions', 'Data', 'Params', 'EventActions', 'Mp4FrameEvents'}:
+            if (isinstance(item, str) and key in {'Actions', 'Data', 'Params', 'EventActions', 'Mp4FrameEvents'}
+                    and item.lstrip().startswith(('{', '['))):
                 item = json.loads(item)
                 child += '<json>'
-            yield from _launchers(item, child, nested or key in _ALTERNATIVES)
+            if isinstance(item, (dict, list)):
+                yield from _launchers(item, child, nested or key in _ALTERNATIVES)
 
 
 def _binding(action, source, path, conditional):
     params = action.get('Params')
     params = json.loads(params) if isinstance(params, str) else params
     name = params.get('VideoName') if isinstance(params, dict) else None
+    if name == '':
+        # VideoLauncher.ShowVideoCg('', callback) invokes callback without opening.
+        return None
     if not isinstance(name, str) or not name:
         raise ValueError('PlayMovie has no exact VideoName')
     parsed = discover_movie_audio([action], video_name=name, source={**source, 'raw_path': path})
@@ -77,12 +83,12 @@ def _fingerprint(directory):
 @lru_cache(maxsize=2)
 def _catalog(fingerprint):
     result = {'bindings': {}, 'sources': [], 'unresolved': []}
-    deadline = time.monotonic() + 30
     for spec, identity in zip(_SOURCES, fingerprint, strict=True):
+        deadline = time.monotonic() + 60
         filename, query, field, slot = spec
         path = Path(identity[0])
         source = {'file': filename, 'json_field': field, 'vtable_offset': 4 + slot * 2}
-        coverage = {**source, 'status': 'not_read', 'records': 0, 'launchers': 0}
+        coverage = {**source, 'status': 'not_read', 'records': 0, 'launchers': 0, 'record_errors': 0, 'noop_launchers': 0}
         result['sources'].append(coverage)
         if identity[1] is None or identity[1] > 512 * 1024**2:
             coverage['status'] = 'missing' if identity[1] is None else 'size_bound_exceeded'
@@ -93,31 +99,38 @@ def _catalog(fingerprint):
         try:
             with closing(open_db(path)) as db:
                 db.execute('PRAGMA query_only=ON')
-                db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+                db.set_progress_handler(lambda deadline=deadline: int(time.monotonic() >= deadline), 1000)
                 for row in db.execute(query):
                     if time.monotonic() >= deadline:
-                        raise TimeoutError('Native launcher catalog30s bound')
-                    blob = row[-1]
-                    native = table(blob)
-                    key = row[0]
-                    if filename == 'db_level_entity.db':
-                        if tuple(integer(native, i) for i in range(3)) != tuple(row[:3]):
-                            raise ValueError('LevelEntity identity differs from native record')
-                        record_key = f'{row[0]}:{row[1]}:{row[2]}'
-                    else:
-                        if text(native, 0) != key:
-                            raise ValueError('Story key differs from native record')
-                        record_key = str(key)
-                    raw = text(native, slot)
-                    value = json.loads(raw) if raw else ([] if field == 'Actions' else {})
-                    proof = {**source, 'key': record_key, 'record_sha256': hashlib.sha256(blob).hexdigest()}
-                    root = filename + '[' + json.dumps(record_key, ensure_ascii=False) + '].' + field + '<json>'
+                        raise TimeoutError('Native launcher source60s bound')
                     coverage['records'] += 1
-                    for at, action, conditional in _launchers(value, root):
-                        binding = _binding(action, proof, at, conditional)
-                        result['bindings'].setdefault(binding['video_name'], []).append(binding)
-                        coverage['launchers'] += 1
-                coverage['status'] = 'reviewed'
+                    record_key = ':'.join(str(v) for v in row[:-1])
+                    try:
+                        blob = row[-1]
+                        native = table(blob)
+                        key = row[0]
+                        if filename == 'db_level_entity.db':
+                            if tuple(integer(native, i) for i in range(3)) != tuple(row[:3]):
+                                raise ValueError('LevelEntity identity differs from native record')
+                        elif text(native, 0) != key:
+                            raise ValueError('Story key differs from native record')
+                        raw = text(native, slot)
+                        value = json.loads(raw) if raw else ([] if field == 'Actions' else {})
+                        proof = {**source, 'key': record_key, 'record_sha256': hashlib.sha256(blob).hexdigest()}
+                        root = filename + '[' + json.dumps(record_key, ensure_ascii=False) + '].' + field + '<json>'
+                        for at, action, conditional in _launchers(value, root):
+                            binding = _binding(action, proof, at, conditional)
+                            if binding is None:
+                                coverage['noop_launchers'] += 1
+                                continue
+                            result['bindings'].setdefault(binding['video_name'], []).append(binding)
+                            coverage['launchers'] += 1
+                    except (ValueError, IndexError, TypeError, RecursionError, struct.error) as error:
+                        coverage['record_errors'] += 1
+                        result['unresolved'].append({'code': 'native_record_decode_incomplete',
+                            'source': {**source, 'key': record_key}, 'error': type(error).__name__,
+                            'reason': str(error)[:160]})
+                coverage['status'] = 'reviewed_with_record_errors' if coverage['record_errors'] else 'reviewed'
         except (sqlite3.Error, ValueError, IndexError, TypeError, TimeoutError, RecursionError, struct.error) as error:
             coverage['status'] = 'incomplete'
             result['unresolved'].append({'code': 'native_source_decode_incomplete', 'source': source,
@@ -151,6 +164,10 @@ def catalog_movie_frame_bindings(config_directory: Path, name: str) -> list[dict
         raise ValueError('Select a movie name')
     catalog = _catalog(_fingerprint(Path(config_directory).resolve()))
     bindings = deepcopy(catalog['bindings'].get(name, []))
+    if not bindings and (Path(config_directory) / 'db_flowState.db').is_file():
+        # Generic exact-name native reader, independent of the broad scan budget.
+        # This preserves source identity; never manufactures a movie/state mapping.
+        bindings = movie_frame_bindings(Path(config_directory), name)
     if not bindings:
         bindings.append({'video_name': name, 'source': {'catalog_sources': deepcopy(catalog['sources'])},
             'events': [], 'frame_actions': [], 'complete': False,
