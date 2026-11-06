@@ -18,7 +18,12 @@ from wuwa_story.db.models.graph import Edge, Node
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.storage import FileReference, FileVariant
 from wuwa_story.db.session import SessionFactory
-from wuwa_story.ingestion.cutscenes import Clip, CutsceneRecipe, PlaybackFlow
+from wuwa_story.ingestion.cutscenes import (
+    CUTSCENE_ASSEMBLY_SCHEMA,
+    Clip,
+    CutsceneRecipe,
+    PlaybackFlow,
+)
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
 
@@ -58,6 +63,7 @@ async def missing_cutscene_identities(names: set[str], *, source_context: dict,
         refs = await verified_references(session, storage, "cutscene_flow", source, names)
         present = {ref.source_path for ref in refs
                    if ref.metadata_json.get("publication_complete")
+                   and ref.metadata_json.get('game_source', {}).get('cutscene_assembly_schema') == CUTSCENE_ASSEMBLY_SCHEMA
                    and (source['asset_version'] not in {'3.7.0', '3.7.1'}
                         or ref.source_path not in WWISE_REPAIR_CUTSCENES
                         or ref.metadata_json['game_source'].get('wwise_renderer_schema') == WWISE_RENDERER_SCHEMA)
@@ -391,6 +397,7 @@ async def import_cutscene_recipe(
                     source_context, {"path": engine, "kind": "video"}, list(dict.fromkeys(originals)),
                     recipe_sha256=recipe_hash, recipe=requested_spec.model_dump(mode="json"),
                     analyze_variants=analyze_variants,
+                    cutscene_assembly_schema=CUTSCENE_ASSEMBLY_SCHEMA,
                     wwise_renderer_schema=WWISE_RENDERER_SCHEMA,
                     **({'caption_audio_schema': CAPTION_AUDIO_SCHEMA}
                        if source_context.get('caption_audio_schema') == CAPTION_AUDIO_SCHEMA else {}),

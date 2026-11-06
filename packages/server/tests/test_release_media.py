@@ -441,6 +441,8 @@ async def test_waiting_release_lock_refreshes_stale_coordinators_and_preserves_p
                            "targets": targets, "parent_id": parent}
                 if kind == "tree_order":
                     request["index_schema"] = 3
+                if kind in {"cutscene_assets", "cutscene"}:
+                    request['cutscene_assembly_schema'] = release_media.CUTSCENE_ASSEMBLY_SCHEMA
                 sync.add(release_media.ProcessingRun(
                     id=identity, processor_id=4,
                     input_hash=hashlib.sha256(json.dumps(request, sort_keys=True).encode()).digest(),

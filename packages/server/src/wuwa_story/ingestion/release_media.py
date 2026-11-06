@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import JSONPATH, insert
 from wuwa_story.db.models.core import Cutscene, QuestAction, QuestState, VoiceReference
 from wuwa_story.db.models.graph import Node, NodeRevision
 from wuwa_story.db.models.ops import GameRelease, ProcessingRun, Processor
+from wuwa_story.ingestion.cutscenes import CUTSCENE_ASSEMBLY_SCHEMA
 from wuwa_story.ingestion.media_jobs import publish_media_job
 from wuwa_story.ingestion.media_workspaces import retain_workspace, workspace_expired
 
@@ -94,6 +95,8 @@ async def enqueue_release_media(
                                       "cutscene" else "voice_packages" if kind in {"voices", "character_voices"} else "prepare")
         request = {"release_id": release_id, "game_version": release.game_version,
                    "kind": kind, "targets": targets, "parent_id": dependency}
+        if kind in {'cutscene_assets', 'cutscene'}:
+            request['cutscene_assembly_schema'] = CUTSCENE_ASSEMBLY_SCHEMA
         if kind == 'tree_order':
             request['index_schema'] = 3
             if repair_story:

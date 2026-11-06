@@ -249,9 +249,11 @@ async def test_selective_extraction_includes_exact_caption_external_names(source
 
 @pytest.mark.asyncio
 async def test_old_completed_publication_only_rechecked_when_caption_coverage_required(monkeypatch):
-    legacy = SimpleNamespace(source_path='cutscene:Legacy', metadata_json={'publication_complete': True, 'game_source': {}})
+    legacy = SimpleNamespace(source_path='cutscene:Legacy', metadata_json={'publication_complete': True,
+                            'game_source': {'cutscene_assembly_schema': cutscene_import.CUTSCENE_ASSEMBLY_SCHEMA}})
     current = SimpleNamespace(source_path='cutscene:Current', metadata_json={'publication_complete': True,
-                                   'game_source': {'caption_audio_schema': 1}})
+                                   'game_source': {'caption_audio_schema': 1,
+                                                   'cutscene_assembly_schema': cutscene_import.CUTSCENE_ASSEMBLY_SCHEMA}})
     session = AsyncMock()
     factory = Mock()
     factory.return_value.__aenter__ = AsyncMock(return_value=session)
