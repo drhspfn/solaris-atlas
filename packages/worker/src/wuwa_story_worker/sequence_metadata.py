@@ -127,9 +127,15 @@ async def retained_bundle(session, storage, root, target, source):
         proof = (metadata or {}).get('game_source') or {}
         # This checks source identity only. The original manifest's incomplete
         # controls remain untouched and the normal publisher still reports partial.
-        identity = {**metadata, 'game_source': {**
-                                                proof, 'control_sources_complete': True}}
-        if not matches_source(identity, source, {**target, 'sequence_metadata_revision': None}):
+        # Older JSON archives predate soundtrack decoding. Check their extraction
+        # tools here; the new audio renderer records its own current tool hashes.
+        def extraction_tools(values):
+            return {key: value for key, value in values.items()
+                    if key not in {'WUWA_VGMSTREAM_PATH', 'WUWA_WWISER_PATH'}}
+        identity = {**metadata, 'game_source': {**proof, 'control_sources_complete': True,
+                    'tools': extraction_tools(proof.get('tools', {}))}}
+        extraction_source = {**source, 'tools': extraction_tools(source.get('tools', {}))}
+        if not matches_source(identity, extraction_source, {**target, 'sequence_metadata_revision': None}):
             continue
         if (proof.get('sequence_metadata_revision') or 0) >= target['sequence_metadata_revision']:
             return None

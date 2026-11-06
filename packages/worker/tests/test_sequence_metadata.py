@@ -90,14 +90,16 @@ def test_retained_entry_checksum_mismatch_refuses_recompile(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('revision', [None, 2, 3])
-async def test_retained_lookup_downloads_only_stale_exact_source_revision(tmp_path, revision):
+@pytest.mark.parametrize('extractor_changed', [False, True])
+async def test_retained_lookup_downloads_only_stale_exact_source_revision(tmp_path, revision, extractor_changed):
     from wuwa_story_worker.sequence_metadata import retained_bundle
 
     path, target, _, _ = retained(tmp_path)
     proof = {'schema_version': 1, 'package_path': target['path'], 'asset_version': '3.7.1',
              'download_id': 'a' * 64, 'spine_recipe': 4, 'presentation_sha256': target['presentation_sha256'],
              'sequence_media_schema': 1, 'sequence_metadata_revision': revision, 'control_sources_complete': False,
-             'source_files': [{'package_path': 'Client/Content/Aki/Scene.uasset', 'sha256': 'a' * 64}]}
+             'source_files': [{'package_path': 'Client/Content/Aki/Scene.uasset', 'sha256': 'a' * 64}],
+             'tools': {'WUWA_FMODEL_PATH': 'a' * 64}}
     session = AsyncMock()
     session.execute.return_value = [({'game_source': proof}, 'retained-object')]
     calls = []
@@ -108,9 +110,12 @@ async def test_retained_lookup_downloads_only_stale_exact_source_revision(tmp_pa
 
     storage = SimpleNamespace(backend='s3', bucket='media', get=get)
     result = await retained_bundle(session, storage, tmp_path / 'job', target,
-                                   {'asset_version': '3.7.1', 'download_id': 'a' * 64})
-    assert bool(result) is (revision is None)
-    assert calls == (['retained-object'] if revision is None else [])
+                                   {'asset_version': '3.7.1', 'download_id': 'a' * 64,
+                                    'tools': {'WUWA_FMODEL_PATH': ('b' if extractor_changed else 'a') * 64,
+                                              'WUWA_VGMSTREAM_PATH': 'c' * 64, 'WUWA_WWISER_PATH': 'd' * 64}})
+    expected = revision is None and not extractor_changed
+    assert bool(result) is expected
+    assert calls == (['retained-object'] if expected else [])
 
 
 @pytest.mark.asyncio
