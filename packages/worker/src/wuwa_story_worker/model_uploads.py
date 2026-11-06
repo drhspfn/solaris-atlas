@@ -27,16 +27,38 @@ from wuwa_story_worker.transient_workspace import transient_workspace
 logger = logging.getLogger(__name__)
 
 
-def decode_bundles(archive, root, job, expected_forms):
+def _component_summary(path):
+    """Validate a static component GLB, or use the usual skinned-model validator."""
+    with path.open("rb") as stream:
+        header = stream.read(20)
+        if len(header) != 20:
+            raise ValueError("Invalid GLB output")
+        magic, version, size, length, kind = struct.unpack("<4sIIII", header)
+        if (magic != b"glTF" or version != 2 or size != path.stat().st_size
+                or kind != 0x4E4F534A or length > size - 20):
+            raise ValueError("Invalid GLB output")
+        data = json.loads(stream.read(length))
+    if data.get("skins"):
+        return glb_summary(path)
+    if (not data.get("meshes") or data.get("animations")
+            or any("uri" in item for item in data.get("images", []))
+            or any("uri" in item for item in data.get("buffers", []))):
+        raise ValueError("Invalid static component model")
+    return {"bytes": size, "bones": 0, "textures": len(data.get("images", [])),
+            "sha256": digest(path)}
+
+
+def decode_bundles(archive, root, job, expected_forms, *, expected_components=None):
     manifest = read_archive(archive, root)
     if (manifest.get("character_key"), manifest.get("game_version")) != (job.character_key, job.game_version):
         raise ValueError(
             "Archive belongs to another character or snapshot; download its recipe again")
-    forms = [entry["form"] for entry in manifest["forms"]]
+    roots = [entry for entry in manifest["forms"] if not entry["form"]["id"].startswith("component-")]
+    forms = [entry["form"] for entry in roots]
     if forms != expected_forms:
         raise ValueError(
             "Archive forms no longer match authored model sources; rebuild with a fresh recipe")
-    included = ["animations" in entry["files"] for entry in manifest["forms"]]
+    included = ["animations" in entry["files"] for entry in roots]
     if any(included) != all(included):
         raise ValueError(
             "Archive must include animations for every form, or for none")
@@ -44,6 +66,35 @@ def decode_bundles(archive, root, job, expected_forms):
                                     owner_node_id=job.owner_node_id, release_id=job.release_id, game_version=job.game_version,
                                     asset_version=manifest.get("asset_version"), tier=manifest.get("tier"),
                                     download_id=digest(archive), include_animations=all(included))
+    children = [entry for entry in manifest["forms"] if entry["form"].get("component")]
+    if children:
+        # The archive is untrusted; its claimed Blueprint and component name prove nothing.
+        if not isinstance(expected_components, dict) or set(expected_components) != {
+            entry["form"]["id"] for entry in children
+        }:
+            raise ValueError("Archive components require trusted authored component identities")
+        for entry in children:
+            expected = expected_components[entry["form"]["id"]]
+            if (not isinstance(expected, dict)
+                    or expected.get("component") != entry["form"]["component"]
+                    or expected.get("model") != entry["provenance"].get("model")):
+                raise ValueError("Archive component does not match its trusted authored identity")
+    entries = {entry["form"]["id"]: entry for entry in manifest["forms"]}
+    for entry in manifest["forms"]:
+        component = entry["form"].get("component")
+        if component is None:
+            continue
+        parent = entries[component["parent_form_id"]]
+        parent_form = parent["form"]
+        blueprint = (parent_form.get("component_blueprint")
+                     or (parent_form.get("model") if not parent_form.get("component")
+                         and not parent_form.get("data_asset") and not parent_form.get("blueprint_model")
+                         else parent["provenance"].get("model")))
+        source = component["source"]["blueprint"]
+        if not isinstance(blueprint, str) or authored_package(
+            source if source.startswith("/Game/") else "/Game/" + source
+        ) != authored_package(blueprint if blueprint.startswith("/Game/") else "/Game/" + blueprint):
+            raise ValueError("Archive component source does not match its parent Blueprint")
     bundles = []
     for entry in manifest["forms"]:
         form = entry["form"]
@@ -56,16 +107,20 @@ def decode_bundles(archive, root, job, expected_forms):
                 os.link(source, destination)
             except OSError:
                 shutil.copyfile(source, destination)
-        summaries = {kind: glb_summary(output / FILES[kind], allow_animations=kind == "animations")
-                     for kind in ("preview", "download", *(["animations"] if all(included) else []))}
+        summaries = {
+            kind: (_component_summary(output / FILES[kind])
+                   if form.get("component") and kind != "animations"
+                   else glb_summary(output / FILES[kind], allow_animations=kind == "animations"))
+            for kind in ("preview", "download", *(["animations"] if "animations" in entry["files"] else []))
+        }
         if summaries["preview"]["bones"] != summaries["download"]["bones"]:
             raise ValueError("Compact and full model rigs disagree")
         with (output / "character.glb").open("rb") as stream:
             length = struct.unpack_from("<I", stream.read(20), 12)[0]
             full = json.loads(stream.read(length))
         bones = {full["nodes"][index]["name"]
-                 for skin in full["skins"] for index in skin["joints"]}
-        if all(included):
+                 for skin in full.get("skins", []) for index in skin["joints"]}
+        if "animations" in entry["files"]:
             animation_summary(output / "animations.glb", bones)
         if "facial" in entry["files"]:
             pack = validate_facial_pack(json.loads(
@@ -78,14 +133,19 @@ def decode_bundles(archive, root, job, expected_forms):
         for field in ('data_asset', 'blueprint_model'):
             if form.get(field) and entry['provenance'].get(field) != form[field]:
                 raise ValueError('Archive NPC setup does not match its authored data asset or Blueprint')
-        model = form['model']
+        model = form.get("model")
+        if form.get("component"):
+            model = entry["provenance"].get("model", model)
+            if not isinstance(model, str):
+                raise ValueError("Archive component has no model source")
+            authored_package(model if model.startswith("/Game/") else "/Game/" + model)
         if form.get('data_asset') or form.get('blueprint_model'):
             model = entry['provenance'].get('model')
             if not isinstance(model, str):
                 raise ValueError('Archive NPC setup has no resolved master mesh')
             authored_package('/Game/' + model)
         provenance = {**entry["provenance"], "model": model,
-                      "form_source": form["source"], "local_archive_sha256": publication.download_id}
+                      "form_source": form.get("source", form.get("component", {}).get("source")), "local_archive_sha256": publication.download_id}
         bundles.append((form, output, summaries, provenance))
     return publication, bundles
 

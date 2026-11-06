@@ -92,3 +92,37 @@ async def test_uploaded_model_publishes_without_game_client_or_extraction(tmp_pa
     assert publish.call_args.kwargs["publication_payload"] == job.model_dump()
     storage.delete.assert_awaited_once()
     assert not list((tmp_path / "transient-jobs").glob("*/model.zip"))
+
+
+def test_decode_component_checks_parent_source_and_allows_static_mesh(tmp_path):
+    _, root, job = portable(tmp_path)
+    root = {**root, "component_blueprint": "Aki/Npc/Blueprint"}
+    output = tmp_path / "static"
+    output.mkdir()
+    payload = json.dumps({"asset": {"version": "2.0"}, "nodes": [],
+                          "meshes": [{"primitives": []}]}).encode()
+    payload += b" " * (-len(payload) % 4)
+    raw = struct.pack("<4sIII4s", b"glTF", 2, 20 + len(payload), len(payload), b"JSON") + payload
+    for name in ("preview.glb", "character.glb"):
+        (output / name).write_bytes(raw)
+    child = {"id": "component-0123456789abcdef", "label": "Fox", "order": 1,
+             "component": {"id": "fox", "parent_form_id": root["id"],
+                           "source": {"blueprint": "Aki/Npc/Blueprint", "component": "Fox"}}}
+    metadata = {"character_key": job.character_key, "game_version": job.game_version,
+                "asset_version": "3.7.0", "tier": "hd"}
+    bundles = [(root, tmp_path / "bundle", {}, {"model": root["model"]}),
+               (child, output, {}, {"model": "Aki/Npc/Fox"})]
+    archive = tmp_path / "linked.zip"
+    write_archive(archive, metadata, bundles)
+    with pytest.raises(ValueError, match="trusted authored"):
+        model_uploads.decode_bundles(archive, tmp_path / "untrusted", job, [root])
+    trusted = {child["id"]: {"component": child["component"].copy(), "model": "Aki/Npc/Fox"}}
+    _, decoded = model_uploads.decode_bundles(archive, tmp_path / "linked", job, [root],
+                                              expected_components=trusted)
+    assert len(decoded) == 2 and decoded[1][2]["download"]["bones"] == 0
+    child["component"]["source"] = {"blueprint": "Aki/Npc/Other", "component": "Fox"}
+    wrong = tmp_path / "wrong-blueprint.zip"
+    write_archive(wrong, metadata, bundles)
+    with pytest.raises(ValueError, match="parent Blueprint"):
+        model_uploads.decode_bundles(wrong, tmp_path / "wrong-blueprint", job, [root],
+                                     expected_components={child["id"]: {"component": child["component"], "model": "Aki/Npc/Fox"}})

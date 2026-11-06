@@ -86,6 +86,8 @@ async def published_model_files(session, owner_node_id, release_id, bucket):
                 FileReference.metadata_json["form_id"].label("form_id"),
                 FileReference.metadata_json["form_label"].label("form_label"),
                 FileReference.metadata_json["form_order"].label("form_order"),
+                FileReference.metadata_json["component"].label("component"),
+                FileReference.metadata_json["scene"].label("scene"),
             )
             .join(FileObject, FileObject.id == FileReference.file_id)
             .join(FileLocation, FileLocation.file_id == FileObject.id)

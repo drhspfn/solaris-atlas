@@ -163,16 +163,10 @@ async def public_character_model(session, owner_node_id, release):
     # Rows are newest first. Never combine files from different publications.
     bundles = {}
     malformed = set()
-    for (
-        reference_type,
-        model_bundle_id,
-        object_key,
-        size_bytes,
-        viewer_object_key,
-        form_id,
-        form_label,
-        form_order,
-    ) in rows:
+    for row in rows:
+        values = tuple(row) + (None,) * (10 - len(row))
+        (reference_type, model_bundle_id, object_key, size_bytes, viewer_object_key,
+         form_id, form_label, form_order, component, scene) = values
         if not model_bundle_id:
             continue
         forms = bundles.setdefault(model_bundle_id, {})
@@ -181,7 +175,7 @@ async def public_character_model(session, owner_node_id, release):
         form_order = 0 if form_order is None else form_order
         if (
             not isinstance(form_id, str)
-            or re.fullmatch(r"default|mesh-[1-9][0-9]*(?:-form-[1-9][0-9]*)?", form_id) is None
+            or re.fullmatch(r"default|mesh-[1-9][0-9]*(?:-form-[1-9][0-9]*)?|component-[a-f0-9]{16}", form_id) is None
             or not isinstance(form_label, str)
             or not form_label.strip()
             or type(form_order) is not int
@@ -189,18 +183,43 @@ async def public_character_model(session, owner_node_id, release):
         ):
             malformed.add(model_bundle_id)
             continue
-        form = forms.setdefault(form_id, {"label": form_label, "order": form_order, "files": {}})
-        if (form["label"], form["order"]) != (form_label, form_order):
+        is_component = form_id.startswith("component-")
+        if (is_component and (not isinstance(component, dict)
+                              or not isinstance(component.get("id"), str)
+                              or not isinstance(component.get("parent_form_id"), str))
+                or not is_component and component is not None
+                or scene is not None and (is_component or not isinstance(scene, dict))):
+            malformed.add(model_bundle_id)
+            continue
+        form = forms.setdefault(form_id, {"label": form_label, "order": form_order,
+                                         "files": {}, "component": component, "scene": scene})
+        if (form["label"], form["order"], form["component"], form["scene"]) != (form_label, form_order, component, scene):
             malformed.add(model_bundle_id)
         form["files"].setdefault(
             REFERENCE_TYPES[reference_type], (object_key, size_bytes, viewer_object_key)
         )
+    def valid_graph(forms):
+        components = {key: value for key, value in forms.items() if value["component"] is not None}
+        if not 1 <= len(forms) - len(components) <= 16 or len(components) > 32:
+            return False
+        for key in components:
+            seen, current = set(), key
+            while current in components:
+                if current in seen:
+                    return False
+                seen.add(current)
+                current = components[current]["component"]["parent_form_id"]
+            if current not in forms:
+                return False
+        return True
+
     bundle = next(
         (
             forms
             for bundle_id, forms in bundles.items()
             if bundle_id not in malformed
             and forms
+            and valid_graph(forms)
             and all(
                 "preview" in form["files"] and "download" in form["files"]
                 for form in forms.values()
@@ -211,7 +230,7 @@ async def public_character_model(session, owner_node_id, release):
     if bundle is not None:
         storage = S3Storage(settings)
         result["status"] = "ready"
-        for form_id, form in sorted(bundle.items(), key=lambda item: (item[1]["order"], item[0])):
+        def public_assets(form_id, form):
             public_form = {
                 "id": form_id,
                 "label": form["label"],
@@ -231,6 +250,28 @@ async def public_character_model(session, owner_node_id, release):
                     r"model-viewer/[0-9a-f]{64}/index\.html", viewer_object_key
                 ):
                     public_form["viewer_url"] = storage.public_url(viewer_object_key)
+            return public_form
+
+        ordered = sorted(bundle.items(), key=lambda item: (item[1]["order"], item[0]))
+        for form_id, form in ordered:
+            if form["component"] is not None:
+                continue
+            public_form = public_assets(form_id, form)
+            linked = []
+            for child_id, child in ordered:
+                if child["component"] is None:
+                    continue
+                parent = child["component"]["parent_form_id"]
+                ancestor = parent
+                while bundle[ancestor]["component"] is not None:
+                    ancestor = bundle[ancestor]["component"]["parent_form_id"]
+                if ancestor == form_id:
+                    linked.append({**public_assets(child_id, child), "parent_id": parent,
+                                   "component": child["component"]})
+            if linked or form["scene"] is not None:
+                public_form["linked_models"] = linked
+            if form["scene"] is not None:
+                public_form["scene"] = form["scene"]
             result["forms"].append(public_form)
         for kind in (*REFERENCE_TYPES.values(), "viewer_url"):
             result[kind] = result["forms"][0][kind]

@@ -57,3 +57,36 @@ def test_archive_rejects_unsafe_or_corrupt_members(tmp_path, mutation):
     with pytest.raises(ValueError):
         read_archive(path, tmp_path / "decoded")
     assert not (tmp_path / "outside").exists()
+
+
+def component(form_id, parent, source_id, blueprint="Aki/Model"):
+    return {"id": form_id, "label": source_id, "order": 1, "component": {
+        "id": source_id, "parent_form_id": parent,
+        "source": {"blueprint": blueprint, "component": source_id}}}
+
+
+def test_component_graph_round_trip_deduplicates_shared_objects(tmp_path):
+    root = bundle(tmp_path)
+    child = component("component-0123456789abcdef", root[0]["id"], "fox")
+    grandchild = component("component-fedcba9876543210", child["id"], "hat")
+    path = tmp_path / "graph.zip"
+    manifest = write_archive(path, {"character_key": "character:1"},
+                             [root, (child, root[1], {}, {}), (grandchild, root[1], {}, {})])
+    assert len(manifest["objects"]) == 2
+    assert read_archive(path, tmp_path / "decoded") == manifest
+
+
+@pytest.mark.parametrize("mutation", ["cycle", "missing", "duplicate"])
+def test_component_graph_rejects_invalid_links(tmp_path, mutation):
+    root = bundle(tmp_path)
+    child = component("component-0123456789abcdef", root[0]["id"], "fox")
+    other = component("component-fedcba9876543210", child["id"], "hat")
+    if mutation == "cycle":
+        child["component"]["parent_form_id"] = other["id"]
+    elif mutation == "missing":
+        child["component"]["parent_form_id"] = "mesh-9"
+    else:
+        other["component"]["id"] = "fox"
+    with pytest.raises(ValueError):
+        write_archive(tmp_path / "bad.zip", {"character_key": "character:1"},
+                      [root, (child, root[1], {}, {}), (other, root[1], {}, {})])
