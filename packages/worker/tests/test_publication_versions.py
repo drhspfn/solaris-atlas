@@ -13,6 +13,81 @@ from wuwa_story_worker import entity_media, sequence_fragments
 from wuwa_story_worker.publication_versions import preserve_story_reference
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('has_missing_targets', [False, True])
+async def test_reuse_transaction_commits_before_build_and_inventory_session(tmp_path, monkeypatch, has_missing_targets):
+    from wuwa_story_worker import media_diagnostics, sequence_metadata
+
+    request = MediaRequest(download_id='a' * 64, asset_version='3.7.1', game_version='3.7.0',
+                           release_id=21, entities=['character:1'], kinds=['image'])
+    (tmp_path / 'plan.json').write_text(json.dumps({'id': request.download_id, 'version': '3.7.1', 'tier': 'hd'}))
+    (tmp_path / 'status.json').write_text(json.dumps({'id': request.download_id, 'state': 'downloaded'}))
+    target = {'owner': 1, 'release_id': 21, 'path': 'asset:ue:/Game/Portrait', 'kind': 'image', 'language': None}
+    payload = {'request': request.model_dump(), 'run_id': 28057, 'targets': [target]}
+    run = SimpleNamespace(id=28057, status='queued', metadata_json={'payload': payload})
+    session, inventory_session = AsyncMock(), AsyncMock()
+    session.get.return_value = run
+    events = []
+    transaction = {'dirty': False}
+
+    async def commit():
+        transaction['dirty'] = False
+        events.append('commit')
+
+    async def reuse(*args, **kwargs):
+        transaction['dirty'] = True  # Reused voice references and mark_dirty share this transaction.
+        events.append('reuse')
+        return [target] if has_missing_targets else []
+
+    async def retained(*args, **kwargs):
+        assert not transaction['dirty'], 'reuse locks held during retained bundle lookup'
+        events.append('retained')
+
+    async def build(*args, **kwargs):
+        assert not transaction['dirty'], 'reuse locks held during lengthy build'
+        events.append('build')
+        return [], [target['path']]
+
+    async def open_inventory():
+        assert not transaction['dirty'], 'reuse locks held while a separate inventory session runs'
+        events.append('inventory_session')
+        return inventory_session
+
+    factory, inventory_factory = Mock(), Mock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    inventory_factory.return_value.__aenter__ = AsyncMock(side_effect=open_inventory)
+    inventory_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    session.commit.side_effect = commit
+    monkeypatch.setattr(entity_media, 'SessionFactory', factory)
+    monkeypatch.setattr(entity_media, 'validate_plan', lambda _: None)
+    monkeypatch.setattr(entity_media, 'missing_media_targets', AsyncMock(side_effect=reuse))
+    monkeypatch.setattr(sequence_metadata, 'retained_bundle', AsyncMock(side_effect=retained))
+    monkeypatch.setattr(entity_media, 'build_entity_files', AsyncMock(side_effect=build))
+    monkeypatch.setattr(entity_media, 'S3Storage', lambda _: AsyncMock())
+    monkeypatch.setattr(media_diagnostics, 'SessionFactory', inventory_factory)
+    monkeypatch.setattr(media_diagnostics, 'S3Storage', lambda _: AsyncMock())
+    monkeypatch.setattr(media_diagnostics, 'write_inventory', lambda *args, **kwargs: {})
+    service = AsyncMock()
+    service.register_file.return_value = SimpleNamespace(id=12)
+    monkeypatch.setattr(media_diagnostics, 'FileRegistrationService', lambda _: service)
+    tool = tmp_path / 'tool'
+    tool.write_bytes(b'pinned tool')
+    monkeypatch.setattr(entity_media, 'tool_path', lambda _: tool)
+
+    await entity_media._process_entity_workspace(payload, None, tmp_path)
+
+    reuse_commit = events.index('commit', events.index('reuse') + 1)
+    assert reuse_commit < events.index('inventory_session')
+    if has_missing_targets:
+        assert reuse_commit < events.index('retained') < events.index('build')
+    else:
+        assert 'retained' not in events and 'build' not in events
+    inventory_session.commit.assert_awaited_once()
+    assert run.status == ('partial' if has_missing_targets else 'completed')
+    assert run.raw_output['skipped'] == int(not has_missing_targets)
+
+
 def proof(**changes):
     return {'schema_version': 1, 'asset_version': '3.7.1', 'download_id': 'a' * 64,
             'package_path': 'story_sequence:flow_state:Story_28_1',

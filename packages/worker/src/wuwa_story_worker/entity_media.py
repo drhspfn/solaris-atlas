@@ -429,6 +429,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 targets = await missing_media_targets(
                     session, payload["targets"], source=source, storage=storage,
                     require_spine_playback=get_settings().story_spine_playback_enabled)
+                # Release reuse/projection locks before builds and the separate inventory session.
+                await session.commit()
                 missing_identities = {target_identity(t) for t in targets}
                 skipped = len(payload["targets"]) - len(targets)
                 voice_provenance = {}
