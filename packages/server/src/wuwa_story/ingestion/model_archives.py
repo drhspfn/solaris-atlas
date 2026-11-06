@@ -24,7 +24,7 @@ def digest(path):
 def validate_manifest(data):
     if not isinstance(data, dict) or data.get("format") != FORMAT:
         raise ValueError("Unsupported model archive")
-    if not re.fullmatch(r"character:[1-9][0-9]*", str(data.get("character_key", ""))):
+    if not re.fullmatch(r"character:(?:npc:)?[1-9][0-9]*", str(data.get("character_key", ""))):
         raise ValueError("Invalid archive character")
     if not isinstance(data.get("forms"), list) or not 1 <= len(data["forms"]) <= 16:
         raise ValueError("Archive must contain 1..16 forms")

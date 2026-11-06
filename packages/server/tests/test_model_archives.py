@@ -30,6 +30,12 @@ def test_portable_bundle_deduplicates_forms_and_omits_local_secrets(tmp_path):
         write_archive(path, {"character_key": "character:1"}, [first])
 
 
+def test_npc_model_archive_round_trips(tmp_path):
+    path = tmp_path / "npc.zip"
+    manifest = write_archive(path, {"character_key": "character:npc:17288"}, [bundle(tmp_path)])
+    assert read_archive(path, tmp_path / "decoded") == manifest
+
+
 @pytest.mark.parametrize("mutation", ["traversal", "checksum", "duplicate"])
 def test_archive_rejects_unsafe_or_corrupt_members(tmp_path, mutation):
     first = bundle(tmp_path)

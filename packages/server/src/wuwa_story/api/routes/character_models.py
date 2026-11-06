@@ -3,7 +3,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.auth.dependencies import require_admin, require_csrf
 from wuwa_story.db.models.ops import ProcessingRun, Processor
-from wuwa_story.db.repositories.character_models import model_recipe, model_release
+from wuwa_story.db.repositories.character_models import (
+    model_recipe,
+    model_release,
+    npc_model_recipe,
+)
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.character_models import (
@@ -33,7 +37,13 @@ async def character_model_recipe(character_key: str, game_version: str | None = 
     if node is None or release is None:
         raise HTTPException(404, "Character or snapshot not found")
     try:
-        recipe = await model_recipe(session, release.id, int(node.canonical_key.split(":")[1]))
+        if node.canonical_key.startswith("character:npc:"):
+            recipe = await npc_model_recipe(
+                session, release.id, node.id, int(
+                    node.canonical_key.rsplit(":", 1)[1])
+            )
+        else:
+            recipe = await model_recipe(session, release.id, int(node.canonical_key.split(":")[1]))
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
     return {"format": "solaris-model-recipe-v1", "character_key": node.canonical_key,
@@ -85,7 +95,8 @@ async def create_character_model(
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
     except Exception as error:
-        raise HTTPException(503, "Character model queue unavailable; retry import") from error
+        raise HTTPException(
+            503, "Character model queue unavailable; retry import") from error
     return {"id": run.id, "status": run.status}
 
 

@@ -79,6 +79,17 @@ def test_animation_catalog_uses_exact_skeleton_reference_not_folder_name(tmp_pat
     assert {row["name"] for row in rows.values() if row["matches_skeleton"]} == {"Stand1", "Stand2"}
 
 
+def test_npc_common_anim_requires_exact_exported_skeleton(tmp_path):
+    root = tmp_path / "Client/Content/Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003/CommonAnim"
+    root.mkdir(parents=True)
+    skeleton = "/Game/Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003/Model/NH_FemaleMS_003_Skeleton"
+    for name, target in [("Stand01", skeleton), ("Other", skeleton + "_other")]:
+        (root / f"{name}.json").write_text(json.dumps([{"Type": "AnimSequence", "Name": name,
+            "Properties": {"Skeleton": {"ObjectPath": target}}}]))
+    sources = animation_sources(tmp_path, skeleton)
+    assert [row["name"] for row in sources.values() if row["matches_skeleton"]] == ["Stand01"]
+
+
 def test_constant_tracks_retain_values_and_duration_without_single_key_baking():
     position = [SimpleNamespace(frame=0, value=(1, 2, 3))]
     rotation = [
@@ -347,6 +358,19 @@ def test_rig_glb_stats_checks_actual_header_joints_morphs_and_embedded_textures(
         "vertices": 3,
         "textures": 1,
     }
+
+
+def test_rigid_accessory_geometry_requires_a_named_accessory_ancestor(tmp_path):
+    document = rig_document()
+    document["meshes"].append({"primitives": [{"attributes": {"POSITION": 0}}]})
+    document["nodes"] = [{"extras": {"accessory_name": "WeaponCase0"}, "children": [1]}, {"mesh": 1}]
+    path = tmp_path / "character.glb"
+    write_test_glb(path, document)
+    assert rig_glb_stats(path, 2, 1, 1)["vertices"] == 6
+    document["nodes"][0].pop("extras")
+    write_test_glb(path, document)
+    with pytest.raises(ValueError, match="skinned geometry"):
+        rig_glb_stats(path, 2, 1, 1)
 
 
 @pytest.mark.parametrize(

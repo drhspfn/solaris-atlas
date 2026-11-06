@@ -35,7 +35,7 @@ PROCESSOR = "character_model"
 
 class CharacterModelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    character_key: str = Field(pattern=r"^character:[1-9][0-9]*$")
+    character_key: str = Field(pattern=r"^character:(?:npc:)?[1-9][0-9]*$")
     game_version: str | None = Field(default=None, min_length=1, max_length=64)
     force: bool = Field(default=False, strict=True)
     include_animations: bool = Field(default=True, strict=True)
@@ -46,7 +46,7 @@ class CharacterModelJob(BaseModel):
     schema_version: Literal[1] = 1
     job_type: Literal["media.character_model"] = "media.character_model"
     run_id: int = Field(gt=0, strict=True)
-    character_key: str = Field(pattern=r"^character:[1-9][0-9]*$")
+    character_key: str = Field(pattern=r"^character:(?:npc:)?[1-9][0-9]*$")
     owner_node_id: int = Field(gt=0, strict=True)
     release_id: int = Field(gt=0, strict=True)
     game_version: str = Field(min_length=1, max_length=64)

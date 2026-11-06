@@ -15,6 +15,7 @@ from sqlalchemy import select
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
+from wuwa_story.db.repositories.character_models import npc_model_recipe
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.character_models import CharacterModelJob
 from wuwa_story.storage.hashing import content_object_key
@@ -30,11 +31,13 @@ from wuwa_story_worker.media_provenance import sha256, temporary_entity_workspac
 from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.model_animation_merge import merge_animation_glbs
 from wuwa_story_worker.model_facial import validate_facial_pack
-from wuwa_story_worker.model_forms import resolve_model_forms
+from wuwa_story_worker.model_forms import resolve_model_forms, resolve_recipe_forms
 from wuwa_story_worker.model_publication import ensure_glb_download
 from wuwa_story_worker.model_sources import (
     exported_package,
     glb_summary,
+    npc_blueprint_attachments,
+    npc_material_overrides,
     spring_profile,
 )
 from wuwa_story_worker.tooling import asset_workspace, tool_path
@@ -85,17 +88,35 @@ async def source_forms(session, release_id, role):
     return resolve_model_forms(role, preloads, morphs)
 
 
-async def extract_model(root, sources, fmodel, converter, include_animations=True, *, local_client=None):
+async def job_forms(session, job):
+    if job.character_key.startswith("character:npc:"):
+        recipe = await npc_model_recipe(session, job.release_id, job.owner_node_id,
+                                        int(job.character_key.rsplit(":", 1)[1]))
+        return resolve_recipe_forms(recipe)
+    role = await source_row(session, job.release_id, "BinData/role/roleinfo.json",
+                            int(job.character_key.split(":")[1]))
+    return await source_forms(session, job.release_id, role)
+
+
+async def extract_model(root, sources, fmodel, converter, include_animations=True, *, local_client=None,
+                        additional_filters=()):
     model_dir = sources["model"].rsplit("/", 1)[0]
     filters = [model_dir + "/", *sources["blueprints"]]
+    if sources.get("component_blueprint"):
+        filters.append(sources["component_blueprint"])
     if include_animations:
         # Derive the authored character root, including sibling CommonAnim/Seq
         # directories. Exact skeleton references filter variants after conversion.
-        character_dir = "/".join(sources["model"].split("/")[:5])
+        character_dir = ((sources["model"].rsplit("/Model/", 1)[0]
+                          if "/Model/" in sources["model"] else model_dir)
+                         if sources["model"].startswith("Aki/Character/NPC/")
+                         else "/".join(sources["model"].split("/")[:5]))
         gender_dir = "/".join(sources["model"].split("/")[:4])
         filters = [
             character_dir + "/",
             *sources["blueprints"],
+            *([sources["component_blueprint"]] if sources.get("component_blueprint") else []),
+            *sources.get("montages", []),
             # Shared movement sets are named BaseAnim, BaseAnim2, etc.
             gender_dir + "/BaseAnim",
             # Cooked clips can use Engine compression settings as well as ACL.
@@ -106,6 +127,7 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
             # the authored root. Ownership is checked by skeleton metadata.
             character_dir.rsplit("/", 1)[1],
         ]
+    filters.extend(additional_filters)
     if local_client is None:
         receipt = await export_assets(root, fmodel, "|".join(filters))
     else:
@@ -250,6 +272,26 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
     model, converted, cooked, manifest = await extract_model(
         root, sources, fmodel, converter, include_animations, **options
     )
+    if include_animations and sources.get("component_blueprint"):
+        from wuwa_story_worker.model_sources import npc_animation_references
+
+        refs = set()
+        for blueprint in [*sources["blueprints"], *sources.get("montages", [])]:
+            path = cooked / "Client/Content" / (blueprint + ".json")
+            if path.is_file():
+                refs.update(npc_animation_references(json.loads(path.read_text(encoding="utf-8-sig"))))
+        missing = [ref for ref in refs if not (cooked / "Client/Content" / (ref + ".json")).is_file()]
+        if missing:
+            extra_root = root / "referenced-animations"
+            extra_root.mkdir()
+            _, extra_converted, extra_cooked, extra_manifest = await extract_model(
+                extra_root, sources, fmodel, converter, False, additional_filters=sorted(missing), **options
+            )
+            shutil.copytree(extra_converted, converted, dirs_exist_ok=True)
+            shutil.copytree(extra_cooked, cooked, dirs_exist_ok=True)
+            manifest["files"].extend(extra_manifest["files"])
+            if any(not (cooked / "Client/Content" / (ref + ".json")).is_file() for ref in missing):
+                raise ValueError("An explicitly referenced NPC animation was not exported")
     output = root / "bundle"
     output.mkdir()
     model_metadata = json.loads(
@@ -264,6 +306,66 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
     if len(skeletons) != 1 or not skeletons[0]:
         raise ValueError("The exported character mesh has no exact skeleton reference")
     skeleton = exported_package(skeletons[0])
+    socket_path = cooked / "Client/Content" / (skeleton + ".json")
+    if sources.get("component_blueprint") and not socket_path.is_file():
+        skeleton_root = root / "referenced-skeleton"
+        skeleton_root.mkdir()
+        _, skeleton_converted, skeleton_cooked, skeleton_receipt = await extract_model(
+            skeleton_root, sources, fmodel, converter, False, additional_filters=[skeleton], **options
+        )
+        shutil.copytree(skeleton_converted, converted, dirs_exist_ok=True)
+        shutil.copytree(skeleton_cooked, cooked, dirs_exist_ok=True)
+        manifest["files"].extend(skeleton_receipt["files"])
+        if not socket_path.is_file():
+            raise ValueError("The exact authored NPC skeleton metadata was not exported")
+    attachments = []
+    material_overrides = {}
+    if sources.get("component_blueprint"):
+        blueprint_path = cooked / "Client/Content" / (sources["component_blueprint"] + ".json")
+        if not blueprint_path.is_file():
+            raise ValueError("The authored NPC component blueprint was not exported")
+        blueprint_rows = json.loads(blueprint_path.read_text(encoding="utf-8-sig"))
+        attachments = npc_blueprint_attachments(blueprint_rows, sources["model"])
+        material_overrides = npc_material_overrides(blueprint_rows)
+        if material_overrides:
+            material_root = root / "npc-materials"
+            material_root.mkdir()
+            _, part_converted, part_cooked, receipt = await extract_model(
+                material_root, sources, fmodel, converter, False,
+                additional_filters=sorted({path.rsplit("/", 1)[0] + "/" for path in material_overrides.values()}),
+                **options
+            )
+            shutil.copytree(part_converted, converted, dirs_exist_ok=True)
+            shutil.copytree(part_cooked, cooked, dirs_exist_ok=True)
+            manifest["files"].extend(receipt["files"])
+            if any(not (cooked / "Client/Content" / (path + ".json")).is_file()
+                   for path in material_overrides.values()):
+                raise ValueError("The authored NPC material override was not exported")
+        socket_rows = json.loads(socket_path.read_text(encoding="utf-8-sig")) if socket_path.is_file() else []
+        sockets = {row.get("Properties", {}).get("SocketName"): row.get("Properties", {})
+                   for row in socket_rows if row.get("Type") == "SkeletalMeshSocket"}
+        for index, attachment in enumerate(attachments):
+            if attachment["parent"] != "CharacterMesh0":
+                raise ValueError("NPC accessory has an unsupported attachment parent")
+            socket = sockets.get(attachment["socket"])
+            if socket:
+                attachment["bone"] = socket.get("BoneName")
+                attachment["socket_location"] = socket.get("RelativeLocation")
+                attachment["socket_rotation"] = socket.get("RelativeRotation")
+                attachment["socket_scale"] = socket.get("RelativeScale")
+            else:
+                # Unreal permits attaching directly to a named bone.
+                attachment["bone"] = attachment["socket"]
+            subroot = root / f"attachment-{index}"
+            subroot.mkdir()
+            accessory, converted_part, cooked_part, receipt = await extract_model(
+                subroot, {"model": attachment["model"], "blueprints": []}, fmodel, converter,
+                False, **options
+            )
+            shutil.copytree(converted_part, converted, dirs_exist_ok=True)
+            shutil.copytree(cooked_part, cooked, dirs_exist_ok=True)
+            manifest["files"].extend(receipt["files"])
+            attachment["file"] = str(converted / accessory.relative_to(converted_part))
     extra_models = [
         component_model(component, converted, cooked, skeleton)
         for component in sources.get("extra_models", [])
@@ -293,6 +395,14 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         "--preview-texture-size",
         "512",
     ]
+    if attachments:
+        attachment_path = root / "attachments.json"
+        attachment_path.write_text(json.dumps(attachments), encoding="utf-8")
+        command.extend(["--attachments", attachment_path.resolve()])
+    if material_overrides:
+        material_path = root / "npc-material-overrides.json"
+        material_path.write_text(json.dumps(material_overrides), encoding="utf-8")
+        command.extend(["--material-overrides", material_path.resolve()])
     plan_path = output / "animation-plan.json"
     await progress("rig_and_animation_plan" if include_animations else "rig")
     await run_blender(
@@ -566,13 +676,7 @@ async def process_character_model(payload):
                 raise ValueError("Model job payload does not match its durable run")
             if run.status in {"completed", "cancelled"}:
                 return
-            role = await source_row(
-                session,
-                job.release_id,
-                "BinData/role/roleinfo.json",
-                int(job.character_key.split(":")[1]),
-            )
-            forms = await source_forms(session, job.release_id, role)
+            forms = await job_forms(session, job)
         client = (
             asset_workspace() / "assets" / f"{job.asset_version}-{job.tier}-{job.download_id[:16]}"
         )

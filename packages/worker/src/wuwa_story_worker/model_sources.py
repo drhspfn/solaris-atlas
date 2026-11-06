@@ -47,13 +47,13 @@ def npc_model_sources(component):
     if not isinstance(npc_model, dict) or npc_model.get("Type") != "Mesh":
         raise ValueError("NPC model does not specify an exact mesh")
     mesh = authored_package(npc_model.get("Mesh"))
-    if not mesh.startswith("Aki/Character/NPC/") or "/Model/" not in mesh:
+    if not mesh.startswith("Aki/Character/NPC/"):
         raise ValueError("Authored mesh is not an NPC rig")
     abp = model_type.get("Abp")
     return {"model": mesh, "blueprints": [authored_package(abp)] if abp else []}
 
 
-def npc_blueprint_attachments(rows):
+def npc_blueprint_attachments(rows, primary_model=None):
     """Read explicitly attached component templates from cooked Blueprint metadata."""
     components = {row.get("Name"): row for row in rows if isinstance(row, dict)}
     attachments = []
@@ -68,11 +68,14 @@ def npc_blueprint_attachments(rows):
         mesh = properties.get("SkeletalMesh") or properties.get("StaticMesh")
         if not isinstance(mesh, dict) or not mesh.get("ObjectPath"):
             continue
+        model = exported_package(mesh["ObjectPath"])
+        if model == primary_model and not node.get("AttachToName"):
+            continue
         if not node.get("ParentComponentOrVariableName") or not node.get("AttachToName"):
             raise ValueError("NPC accessory is missing its explicit parent or socket")
         attachments.append({
             "name": node.get("InternalVariableName") or name,
-            "model": authored_package(mesh["ObjectPath"]),
+            "model": model,
             "parent": node["ParentComponentOrVariableName"],
             "socket": node["AttachToName"],
             "location": properties.get("RelativeLocation"),
@@ -81,6 +84,47 @@ def npc_blueprint_attachments(rows):
             "visible": properties.get("bVisible", True) and not properties.get("bHiddenInGame", False),
         })
     return attachments
+
+
+def npc_animation_references(value):
+    """Find explicit sequence references in authored ABP and montage exports."""
+    result = set()
+    if isinstance(value, dict):
+        if str(value.get("ObjectName", "")).startswith("AnimSequence'"):
+            result.add(exported_package(value.get("ObjectPath", "")))
+        for child in value.values():
+            result.update(npc_animation_references(child))
+    elif isinstance(value, list):
+        for child in value:
+            result.update(npc_animation_references(child))
+    return result
+
+
+def npc_material_overrides(rows):
+    """Resolve indexed material overrides on the authored primary mesh component."""
+    result = {}
+    names = {"CharacterMesh0"}
+    for row in rows:
+        if row.get("Type") != "SCS_Node":
+            continue
+        properties = row.get("Properties", {})
+        if properties.get("InternalVariableName") == "CharacterMesh0":
+            reference = properties.get("ComponentTemplate", {}).get("ObjectName", "")
+            names.add(reference.rsplit(":", 1)[-1].removesuffix("'"))
+    for row in rows:
+        if row.get("Type") != "SkeletalMeshComponent" or row.get("Name") not in names:
+            continue
+        properties = row.get("Properties", {})
+        for index, material in enumerate(properties.get("OverrideMaterials", [])):
+            if material is None:
+                continue
+            if not isinstance(material, dict) or not material.get("ObjectPath"):
+                raise ValueError("Invalid NPC material slot override")
+            path = exported_package(material["ObjectPath"])
+            if index in result and result[index] != path:
+                raise ValueError("Conflicting NPC material slot overrides")
+            result[index] = path
+    return result
 
 
 def exported_package(value):

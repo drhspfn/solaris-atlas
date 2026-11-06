@@ -461,7 +461,22 @@ def rig_glb_stats(path: Path, bones: int, morph_targets: int, textures: int) -> 
         or any("uri" in buffer for buffer in document.get("buffers", []))
     ):
         raise ValueError(f"Rig GLB textures must be present and embedded: {stats}")
-    if not primitives or any("JOINTS_0" not in p["attributes"] for p in primitives):
+    nodes = document.get("nodes", [])
+    accessory_meshes = set()
+    def accessory_children(index):
+        node = nodes[index]
+        if "mesh" in node:
+            accessory_meshes.add(node["mesh"])
+        for child in node.get("children", []):
+            accessory_children(child)
+    for index, node in enumerate(nodes):
+        if node.get("extras", {}).get("accessory_name"):
+            accessory_children(index)
+    if not primitives or not any("JOINTS_0" in p["attributes"] for p in primitives) or any(
+        "JOINTS_0" not in primitive["attributes"] and index not in accessory_meshes
+        for index, mesh in enumerate(document.get("meshes", []))
+        for primitive in mesh["primitives"]
+    ):
         raise ValueError("Rig GLB has no skinned geometry")
     return stats
 
@@ -470,6 +485,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--extra-model", action="append", type=Path, default=[])
+    parser.add_argument("--attachments", type=Path)
+    parser.add_argument("--material-overrides", type=Path)
     parser.add_argument("--converted", type=Path, required=True)
     parser.add_argument("--source-json", type=Path, required=True)
     parser.add_argument("--skeleton", required=True)
@@ -566,6 +583,18 @@ def main():
     if armature is None or armature.type != "ARMATURE":
         raise ValueError("Export has no skinned armature")
     if not batch_mode:
+        if args.material_overrides:
+            overrides = json.loads(args.material_overrides.read_text(encoding="utf-8"))
+            primary_meshes = [obj for obj in armature.children_recursive if obj.type == "MESH"]
+            for slot, package in overrides.items():
+                slot = int(slot)
+                matching = [obj for obj in primary_meshes if slot < len(obj.data.materials)]
+                if not matching:
+                    raise ValueError(f"NPC material override references missing slot {slot}")
+                name = package.rsplit("/", 1)[-1]
+                material = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+                for obj in matching:
+                    obj.data.materials[slot] = material
         for extra_model in args.extra_model:
             extra = UEFormatImport(UEModelOptions()).import_file(extra_model)
             if extra is None or extra.type != "ARMATURE":
@@ -578,6 +607,57 @@ def main():
                     if modifier.type == "ARMATURE" and modifier.object == extra:
                         modifier.object = armature
             bpy.data.objects.remove(extra, do_unlink=True)
+        if args.attachments:
+            import math
+
+            from mathutils import Euler, Matrix
+
+            def transform(location, rotation, scale):
+                location, rotation, scale = location or {}, rotation or {}, scale or {}
+                translation = Matrix.Translation((location.get("X", 0) * .01,
+                                                  -location.get("Y", 0) * .01,
+                                                  location.get("Z", 0) * .01))
+                angles = Euler(tuple(math.radians(value) for value in (
+                    rotation.get("Roll", 0), -rotation.get("Pitch", 0), -rotation.get("Yaw", 0))), "XYZ")
+                scaling = Matrix.Diagonal((scale.get("X", 1), scale.get("Y", 1), scale.get("Z", 1), 1))
+                return translation @ angles.to_matrix().to_4x4() @ scaling
+
+            for attachment in json.loads(args.attachments.read_text(encoding="utf-8")):
+                bone = attachment.get("bone")
+                if bone not in armature.data.bones:
+                    raise ValueError(f"NPC accessory targets unknown bone: {bone}")
+                imported = UEFormatImport(UEModelOptions()).import_file(attachment["file"])
+                if imported is None:
+                    raise ValueError("NPC accessory could not be imported")
+                objects = list(imported.children_recursive) if imported.type == "ARMATURE" else [imported]
+                geometry = [obj for obj in objects if obj.type == "MESH"]
+                if not geometry:
+                    raise ValueError("NPC accessory has no geometry")
+                anchor = bpy.data.objects.new("accessory:" + attachment["name"], None)
+                bpy.context.collection.objects.link(anchor)
+                anchor.parent = armature
+                anchor.parent_type = "BONE"
+                anchor.parent_bone = bone
+                anchor.matrix_parent_inverse = Matrix.Identity(4)
+                local = (transform(attachment.get("socket_location"), attachment.get("socket_rotation"),
+                                   attachment.get("socket_scale")) @
+                         transform(attachment.get("location"), attachment.get("rotation"),
+                                   attachment.get("scale")))
+                bpy.context.view_layer.update()
+                anchor.matrix_world = armature.matrix_world @ armature.data.bones[bone].matrix_local @ local
+                anchor["accessory_name"] = attachment["name"]
+                anchor["socket"] = attachment["socket"]
+                anchor["default_visible"] = attachment["visible"]
+                anchor["attachment_manifest"] = json.dumps(
+                    {key: value for key, value in attachment.items() if key != "file"}, separators=(",", ":")
+                )
+                for obj in geometry:
+                    for modifier in list(obj.modifiers):
+                        if modifier.type == "ARMATURE":
+                            obj.modifiers.remove(modifier)
+                    obj.parent = anchor
+                if imported.type == "ARMATURE":
+                    bpy.data.objects.remove(imported, do_unlink=True)
     if batch_mode:
         bones = {bone.name for bone in armature.data.bones}
         if set(plan["bones"]) != bones:
@@ -846,6 +926,7 @@ def main():
             export_optimize_disable_viewport=True,
             export_skins=True,
             export_anim_single_armature=True,
+            export_extras=True,
         )
         with indexed_gltf_references(GlTF2Exporter, (Accessor, BufferView)):
             if "FINISHED" not in bpy.ops.export_scene.gltf(**options):
