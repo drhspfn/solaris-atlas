@@ -37,9 +37,16 @@ export function EncounterCinematicBoundary({
           ? `In-game scene · ${componentCount} video components available`
           : playbackResolved
             ? "Playback available"
-            : "Playback pending"}
+            : media.some((item) => item.kind === "sequence")
+              ? "In-game cinematic · playback unavailable"
+              : "Video not available yet"}
         {unplaced ? " · placement unknown" : ""}
       </p>
+      {media.some((item) => item.kind === "sequence") && (!playbackResolved || componentCount > 0) && (
+        <p className={styles.note}>
+          This cinematic is rendered by the game engine. Full scene playback cannot currently be reconstructed here.
+        </p>
+      )}
       {children}
       <div className={styles.marker}>End scene</div>
       <details className={styles.source}>

@@ -344,6 +344,11 @@ class EvidenceTools:
                     "asset_node_id": asset_id,
                     "canonical_key": key,
                     "context_inferred": inferred,
+                    "quest_association": "possible" if inferred else "source_linked",
+                    "context_warning": (
+                        "Possible quest connection only. Inspect the scene, but do not assert its occurrence or order in this quest."
+                        if inferred else None
+                    ),
                     "visual_reference_id": report.id if report else None,
                     "recording_version": report.metadata_json["asset_version"] if report else None,
                     "visual_status": "available" if report else "not_analyzed",
@@ -383,7 +388,10 @@ class EvidenceTools:
             raise ValueError("Asset is not a linked cutscene variant in this quest")
         report = await visual_reference(self.session, asset_node_id)
         if report is None:
-            return {"asset_node_id": asset_node_id, "status": "not_analyzed"}
+            return {"asset_node_id": asset_node_id, "status": "not_analyzed",
+                    "context_inferred": asset["context_inferred"],
+                    "quest_association": asset["quest_association"],
+                    "context_warning": asset["context_warning"]}
         metadata = report.metadata_json
         events = metadata["events"][offset : offset + limit]
         receipt = self.visual_evidence.get(
@@ -397,6 +405,8 @@ class EvidenceTools:
         return {
             "asset_node_id": asset_node_id,
             "context_inferred": asset["context_inferred"],
+            "quest_association": asset["quest_association"],
+            "context_warning": asset["context_warning"],
             "visual_reference_id": report.id,
             "snapshot_id": self.release_id,
             "asset_version": metadata["asset_version"],

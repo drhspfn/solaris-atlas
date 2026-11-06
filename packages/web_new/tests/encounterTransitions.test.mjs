@@ -229,8 +229,16 @@ test('component availability never claims full cinematic playback', () => {
     const markup = renderToStaticMarkup(React.createElement(EncounterCinematicBoundary,
       { media: [cinematic()], componentCount: 2, playbackResolved }));
     assert.match(markup, /In-game scene · 2 video components available/);
-    assert.doesNotMatch(markup, /Playback pending|Playback available|full playback/i);
+    assert.doesNotMatch(markup, /Playback pending|Playback available/);
+    assert.match(markup, /Full scene playback cannot currently be reconstructed here/);
   }
+});
+
+test('missing recorded video is not mislabeled as unsupported engine rendering', () => {
+  const markup = renderToStaticMarkup(React.createElement(EncounterCinematicBoundary,
+    { media: [cinematic({ kind: 'cutscene' })] }));
+  assert.match(markup, /Video not available yet/);
+  assert.doesNotMatch(markup, /rendered by the game engine|cannot currently be reconstructed/);
 });
 
 test('flow content owns video components while fallback remains available without content', () => {
@@ -324,7 +332,9 @@ test('authored boundaries never claim a whole sequence is an MP4 or completed pl
     React.createElement('p', { id: 'line-SHUTUP' }, 'SHUT UP!')));
   assert.match(markup, /class="marker">Scene<\/div>/); assert.match(markup, /End scene/);
   const visible = markup.split('<details class="source">')[0];
-  assert.match(visible, /Playback pending/);
+  assert.match(visible, /In-game cinematic · playback unavailable/);
+  assert.match(visible, /rendered by the game engine/);
+  assert.doesNotMatch(visible, /Playback pending/);
   assert.doesNotMatch(visible, /Action boundaries|cinematic action|In-game cinematic sequence/);
   assert.match(markup, /do not establish playback duration or completion/);
   assert.doesNotMatch(markup, /<video|MP4|M0334_1Z|DA_M0334|Playback completed/);

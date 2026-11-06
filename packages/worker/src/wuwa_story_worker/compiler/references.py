@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from wuwa_story.ingestion.authored_flow_context import FLOWS, PLOT, STATES, authored_flow_context
 from wuwa_story.ingestion.runtime_media import quest_runtime_links
 from wuwa_story.ingestion.scenario_context import scenario_links
 
@@ -69,6 +70,7 @@ def compile_reference_tables(root: Path, writer: Writer,
 
     quest_nodes = root / "BinData/QuestNodeData/questnodedata.json"
     level_nodes = root / "BinData/LevelPlayNodeData/levelplaynodedata.json"
+    scenario_anchors = []
     if quest_nodes.is_file():
         for link in quest_runtime_links(enumerate(read_json(quest_nodes)), writer.ids):
             if link['from'] in writer.ids:
@@ -78,6 +80,7 @@ def compile_reference_tables(root: Path, writer: Writer,
         for link in scenario_links(enumerate(read_json(quest_nodes)),
                                    enumerate(read_json(level_nodes)), state_keys):
             if link["from"].removeprefix("quest:") in quest_ids:
+                scenario_anchors.append({**link, 'type': 'references_scenario_flow_state'})
                 writer.edge(link["from"], link["to"], "references_scenario_flow_state",
                             link["basis"], link["source"], link["raw_path"],
                             {"relation": "inference"})
@@ -397,8 +400,8 @@ def compile_reference_tables(root: Path, writer: Writer,
     required = {key: value for key, value in requirements(optional_rows(QUEST_NODES)).items()
                 if key in dungeon_ids}
     memberships = level_memberships(optional_rows(LEVELS), required)
-    links = dungeon_links(required, memberships,
-                          optional_rows(LEVEL_NODES), state_keys)
+    links = list(dungeon_links(required, memberships,
+                              optional_rows(LEVEL_NODES), state_keys))
     counts["dungeon_context_links"] = 0
     for link in links:
         if link["from"] not in writer.ids:
@@ -406,4 +409,15 @@ def compile_reference_tables(root: Path, writer: Writer,
         writer.edge(link["from"], link["to"], RELATION, link["basis"],
                     link["source"], link["raw_path"], {"relation": "exact_join"})
         counts["dungeon_context_links"] += 1
+    anchors = scenario_anchors + [{**link, 'type': RELATION} for link in links
+                                  if link['from'] in writer.ids]
+    counts['authored_flow_context_links'] = 0
+    for link in authored_flow_context(optional_rows(QUEST_NODES), optional_rows(FLOWS),
+                                     optional_rows(STATES), anchors, optional_rows(PLOT)):
+        if link['from'] in writer.ids and link['to'] in writer.ids:
+            writer.edge(link['from'], link['to'], link['type'], link['basis'],
+                        link['source'], link['raw_path'], {key: link[key] for key in (
+                            'relation', 'confidence', 'context_basis', 'candidate_quest_count',
+                            'runtime_order_confirmed')})
+            counts['authored_flow_context_links'] += 1
     return counts
