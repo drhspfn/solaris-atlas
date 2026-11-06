@@ -140,3 +140,14 @@ def test_same_authored_component_can_be_reused_under_distinct_roots(tmp_path):
         root, (other, root[1], {}, root[3]),
         (first, root[1], {}, {}), (second, root[1], {}, {})])
     assert read_archive(path, tmp_path / "decoded") == manifest
+
+
+def test_component_unknown_visibility_and_parent_remain_unknown(tmp_path):
+    root = bundle(tmp_path)
+    child = component("component-0123456789abcdef", root[0]["id"], "effect")
+    child["component"].update(default_visible=None, parent_component=None,
+                              transform={"location": {}, "rotation": {}, "scale": {}})
+    path = tmp_path / "effect.zip"
+    manifest = write_archive(path, {"character_key": "character:1"},
+                             [root, (child, root[1], {}, {})])
+    assert read_archive(path, tmp_path / "decoded") == manifest

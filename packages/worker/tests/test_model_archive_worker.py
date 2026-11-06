@@ -126,3 +126,81 @@ def test_decode_component_checks_parent_source_and_allows_static_mesh(tmp_path):
     with pytest.raises(ValueError, match="parent Blueprint"):
         model_uploads.decode_bundles(wrong, tmp_path / "wrong-blueprint", job, [root],
                                      expected_components={child["id"]: {"component": child["component"], "model": "Aki/Npc/Fox"}})
+
+@pytest.mark.asyncio
+async def test_trusted_discovery_prepares_matching_component(tmp_path, monkeypatch):
+    import hashlib
+
+    _, form, job = portable(tmp_path)
+    form["component_blueprint"] = "Aki/Npc/Blueprint"
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "plan.json").write_text(json.dumps({"id": "x", "version": "3.7.0", "tier": "hd"}))
+    (client / "status.json").write_text(json.dumps({"id": "x", "state": "downloaded"}))
+    monkeypatch.setattr(model_uploads, "inspect_installed_clients", lambda _: [
+        {"path": str(client), "download_id": "x", "version": "3.7.0", "tier": "hd", "state": "downloaded"}])
+    monkeypatch.setattr(model_uploads, "validate_plan", lambda _: None)
+    monkeypatch.setattr(model_uploads, "tool_path", lambda _: tmp_path / "tool")
+    extract = AsyncMock(return_value=(None, None, tmp_path, {}))
+    monkeypatch.setattr(character_models, "extract_model", extract)
+    relation = {"id": "Fox", "name": "Fox", "label": "Fox", "parent_component": "CharacterMesh0",
+                "socket": "hand", "default_visible": True, "bindings": [], "cues": [],
+                "source": {"blueprint": form["component_blueprint"], "component": "Fox"}}
+    recipe = {"model": "Aki/Npc/Fox", "blueprints": [], "montages": [], "component": relation}
+    discover = AsyncMock(return_value=[recipe])
+    monkeypatch.setattr(character_models, "discover_scene_components", discover)
+    expected = await model_uploads.discover_upload_components(tmp_path, [form], "3.7.0", "hd")
+    identity = "component-" + hashlib.sha256((form["id"] + "|Fox").encode()).hexdigest()[:16]
+    assert expected == {identity: {"model": recipe["model"], "component": {
+        **relation, "baked": True, "parent_form_id": form["id"]}}}
+    assert extract.await_args.kwargs["metadata_only"] is True
+    discover.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_linked_upload_requires_unambiguous_matching_client(tmp_path, monkeypatch):
+    monkeypatch.setattr(model_uploads, "inspect_installed_clients", lambda _: [])
+    with pytest.raises(ValueError, match="matching ready installed client"):
+        await model_uploads.discover_upload_components(tmp_path, [], "3.7.0", "hd")
+
+@pytest.mark.asyncio
+async def test_process_linked_upload_uses_trusted_discovery(tmp_path, monkeypatch):
+    _, form, job = portable(tmp_path)
+    form["component_blueprint"] = "Aki/Npc/Blueprint"
+    child = {"id": "component-0123456789abcdef", "label": "Fox", "order": 1,
+             "component": {"id": "fox", "parent_form_id": form["id"],
+                           "source": {"blueprint": form["component_blueprint"], "component": "Fox"}}}
+    archive = tmp_path / "linked.zip"
+    write_archive(archive, {"character_key": job.character_key, "game_version": job.game_version,
+                            "asset_version": "3.7.0", "tier": "hd"},
+                  [(form, tmp_path / "bundle", {}, {"model": form["model"]}),
+                   (child, tmp_path / "bundle", {}, {"model": "Aki/Npc/Fox"})])
+    job = job.model_copy(update={"archive_bytes": archive.stat().st_size})
+    run = NS(status="queued", metadata_json={"payload": job.model_dump()})
+    session = NS(get=AsyncMock(return_value=run))
+
+    @asynccontextmanager
+    async def context(*args):
+        yield session
+
+    async def get(key):
+        yield archive.read_bytes()
+
+    monkeypatch.setattr(model_uploads, "S3Storage", lambda _: NS(get=get, delete=AsyncMock()))
+    monkeypatch.setattr(model_uploads, "engine", NS(connect=context))
+    monkeypatch.setattr(model_uploads, "job_lock", context)
+    monkeypatch.setattr(model_uploads, "SessionFactory", context)
+    monkeypatch.setattr(model_uploads, "asset_workspace", lambda: tmp_path / "assets")
+    monkeypatch.setattr(model_uploads, "update_admin_run", AsyncMock())
+    discover = AsyncMock(return_value={child["id"]: {"component": child["component"], "model": "Aki/Npc/Fox"}})
+    monkeypatch.setattr(model_uploads, "discover_upload_components", discover)
+    monkeypatch.setattr(character_models, "job_forms", AsyncMock(return_value=[form]))
+    publish = AsyncMock()
+    monkeypatch.setattr(character_models, "publish_forms", publish)
+    await model_uploads.process_model_upload(job.model_dump())
+    assert discover.await_args.args[1:] == ([form], "3.7.0", "hd")
+    assert len(publish.await_args.args[1]) == 2
+    discover.return_value[child["id"]]["model"] = "Aki/Npc/Other"
+    with pytest.raises(ValueError, match="trusted authored identity"):
+        await model_uploads.process_model_upload(job.model_dump())
+    assert publish.await_count == 1

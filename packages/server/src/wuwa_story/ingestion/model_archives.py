@@ -62,10 +62,13 @@ def validate_manifest(data):
             if (not isinstance(form.get("label"), str) or not form["label"].strip()
                     or type(form.get("order")) is not int or form["order"] < 0):
                 raise ValueError("Invalid archive component label or order")
-            for key in ("name", "label", "parent_component"):
+            for key in ("name", "label"):
                 if key in component and (not isinstance(component[key], str) or not component[key].strip()):
                     raise ValueError("Invalid archive component metadata")
-            if ("default_visible" in component and type(component["default_visible"]) is not bool
+            if ("parent_component" in component and component["parent_component"] is not None
+                    and (not isinstance(component["parent_component"], str) or not component["parent_component"].strip())
+                    or "default_visible" in component and component["default_visible"] is not None
+                    and type(component["default_visible"]) is not bool
                     or "socket" in component and component["socket"] is not None
                     and (not isinstance(component["socket"], str) or not component["socket"].strip())
                     or any(key in component and not isinstance(component[key], list)

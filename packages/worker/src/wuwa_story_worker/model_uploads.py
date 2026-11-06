@@ -6,22 +6,32 @@ import logging
 import os
 import shutil
 import struct
+from pathlib import Path
 
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.character_models import CharacterModelJob
-from wuwa_story.ingestion.model_archives import CHUNK_BYTES, FILES, digest, read_archive
+from wuwa_story.ingestion.client_assets import inspect_installed_clients
+from wuwa_story.ingestion.model_archives import (
+    CHUNK_BYTES,
+    FILES,
+    digest,
+    read_archive,
+    validate_manifest,
+)
 from wuwa_story.ingestion.model_uploads import ModelUploadJob, chunk_count, chunk_key
 from wuwa_story.storage.s3 import S3Storage
 
 from wuwa_story_worker.broker import job_lock
+from wuwa_story_worker.client_assets import validate_plan
 from wuwa_story_worker.job_tracking import update_admin_run
+from wuwa_story_worker.linked_component_forms import prepare_linked_component
 from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.model_animations import animation_summary
 from wuwa_story_worker.model_facial import validate_facial_pack
 from wuwa_story_worker.model_sources import authored_package, glb_summary
-from wuwa_story_worker.tooling import asset_workspace
+from wuwa_story_worker.tooling import asset_workspace, tool_path
 from wuwa_story_worker.transient_workspace import transient_workspace
 
 logger = logging.getLogger(__name__)
@@ -48,8 +58,8 @@ def _component_summary(path):
             "sha256": digest(path)}
 
 
-def decode_bundles(archive, root, job, expected_forms, *, expected_components=None):
-    manifest = read_archive(archive, root)
+def decode_bundles(archive, root, job, expected_forms, *, expected_components=None, _manifest=None):
+    manifest = read_archive(archive, root) if _manifest is None else validate_manifest(_manifest)
     if (manifest.get("character_key"), manifest.get("game_version")) != (job.character_key, job.game_version):
         raise ValueError(
             "Archive belongs to another character or snapshot; download its recipe again")
@@ -150,6 +160,109 @@ def decode_bundles(archive, root, job, expected_forms, *, expected_components=No
     return publication, bundles
 
 
+async def discover_upload_components(root, forms, asset_version, tier, *, include_animations=True):
+    """Independently derive component identities from a matching installed client."""
+    from wuwa_story_worker.character_models import discover_scene_components, extract_model
+
+    clients = [client for client in await asyncio.to_thread(inspect_installed_clients, asset_workspace())
+               if client.get("version") == asset_version and client.get("tier") == tier
+               and client.get("state") == "downloaded"]
+    if len(clients) != 1:
+        raise ValueError("Linked model upload requires exactly one matching ready installed client")
+    client = clients[0]
+    client_path = Path(client["path"])
+    plan = json.loads((client_path / "plan.json").read_text(encoding="utf-8"))
+    status = json.loads((client_path / "status.json").read_text(encoding="utf-8"))
+    validate_plan(plan)
+    if (plan.get("id") != client.get("download_id") or plan.get("version") != asset_version
+            or plan.get("tier") != tier or status.get("state") != "downloaded"
+            or status.get("id") != plan.get("id")):
+        raise ValueError("Linked model client identity changed")
+    local_client = {"game": client_path / "game", "keys": client_path / "keys.txt", "processors": 1}
+    result = {}
+    for form in forms:
+        if not form.get("component_blueprint"):
+            continue
+        workspace = root / ("discovery-" + form["id"])
+        workspace.mkdir()
+        sources = dict(form)
+        if sources.get("blueprint_model"):
+            from wuwa_story_worker.npc_setup import blueprint_sources
+
+            package, visited = sources["blueprint_model"], set()
+            for depth in range(8):
+                if package in visited:
+                    raise ValueError("Cyclic NPC Blueprint model inheritance")
+                visited.add(package)
+                setup_root = workspace / f"blueprint-{depth}"
+                setup_root.mkdir()
+                _, _, setup_cooked, _ = await extract_model(
+                    setup_root, {"model": package, "blueprints": []},
+                    tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
+                    False, metadata_only=True, local_client=local_client)
+                path = setup_cooked / "Client/Content" / (package + ".json")
+                resolved = blueprint_sources(json.loads(path.read_text(encoding="utf-8-sig")), package)
+                if "model" in resolved:
+                    sources = {**sources, **resolved,
+                               "blueprints": sources["blueprints"] or resolved.get("blueprints", [])}
+                    break
+                package = resolved["parent"]
+            else:
+                raise ValueError("NPC Blueprint model inheritance exceeds eight authored parents")
+        if sources.get("data_asset"):
+            from wuwa_story_worker.npc_setup import setup_sources
+
+            setup_root = workspace / "setup"
+            setup_root.mkdir()
+            _, _, setup_cooked, _ = await extract_model(
+                setup_root, sources, tool_path("WUWA_FMODEL_PATH"),
+                tool_path("WUWA_TEXTURE_CONVERTER_PATH"), False,
+                metadata_only=True, local_client=local_client)
+            path = setup_cooked / "Client/Content" / (sources["data_asset"] + ".json")
+            sources = {**sources, **setup_sources(json.loads(path.read_text(encoding="utf-8-sig")),
+                                                   sources["data_asset"])}
+        model = sources["model"]
+        character_dir = ((model.rsplit("/Model/", 1)[0] if "/Model/" in model else model.rsplit("/", 1)[0])
+                         if model.startswith("Aki/Character/NPC/") else "/".join(model.split("/")[:5]))
+        filters = [sources["component_blueprint"], *sources.get("blueprints", [])]
+        if include_animations:
+            filters.extend([*sources.get("montages", []), character_dir + "/",
+                            "/".join(model.split("/")[:4]) + "/BaseAnim",
+                            "Engine/Content/Animation/DefaultAnim", "ACLAnim", "ACLPlugin.uplugin",
+                            character_dir.rsplit("/", 1)[-1]])
+        else:
+            filters.append(model.rsplit("/", 1)[0] + "/")
+        _, _, cooked, _ = await extract_model(
+            workspace, sources, tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
+            False, local_client=local_client, metadata_only=True, additional_filters=filters)
+        from wuwa_story_worker.model_sources import npc_animation_references
+        from wuwa_story_worker.npc_accessories import visibility_sources
+
+        refs = set(visibility_sources(model))
+        for blueprint in [*sources["blueprints"], *sources.get("montages", [])]:
+            path = cooked / "Client/Content" / (blueprint + ".json")
+            if path.is_file():
+                refs.update(npc_animation_references(json.loads(path.read_text(encoding="utf-8-sig"))))
+        missing = [ref for ref in refs if not (cooked / "Client/Content" / (ref + ".json")).is_file()]
+        if missing:
+            extra_root = workspace / "referenced-animations"
+            extra_root.mkdir()
+            _, _, extra_cooked, _ = await extract_model(
+                extra_root, sources, tool_path("WUWA_FMODEL_PATH"),
+                tool_path("WUWA_TEXTURE_CONVERTER_PATH"), False, metadata_only=True,
+                additional_filters=sorted(missing), local_client=local_client)
+            shutil.copytree(extra_cooked, cooked, dirs_exist_ok=True)
+            if any(not (cooked / "Client/Content" / (ref + ".json")).is_file() for ref in missing):
+                raise ValueError("An explicitly referenced NPC animation was not exported")
+        recipes = await discover_scene_components(workspace, sources, cooked, local_client=local_client)
+        for recipe in recipes:
+            identity, relation = prepare_linked_component(form, recipe)
+            if identity in result or len(result) >= 32:
+                raise ValueError("Duplicate or excessive authored components")
+            result[identity] = {"component": relation, "model": recipe["model"]}
+    return result
+
+
 async def process_model_upload(payload):
     from wuwa_story_worker.character_models import job_forms, publish_forms
 
@@ -183,7 +296,27 @@ async def process_model_upload(payload):
                         if received != expected:
                             raise ValueError(
                                 "Stored model upload chunk is incomplete")
-                publication, bundles = await asyncio.to_thread(decode_bundles, archive, root, job, forms)
+                manifest = await asyncio.to_thread(read_archive, archive, root)
+                if ((manifest.get("character_key"), manifest.get("game_version"))
+                        != (job.character_key, job.game_version)
+                        or [entry["form"] for entry in manifest["forms"]
+                            if not entry["form"]["id"].startswith("component-")] != forms):
+                    raise ValueError("Archive identity or authored model forms do not match")
+                expected_components = None
+                if any(entry["form"].get("component") for entry in manifest["forms"]):
+                    # Validate the declared client version before using it to find local assets.
+                    CharacterModelJob(run_id=job.run_id, character_key=job.character_key,
+                        owner_node_id=job.owner_node_id, release_id=job.release_id,
+                        game_version=job.game_version, asset_version=manifest.get("asset_version"),
+                        tier=manifest.get("tier"), download_id=await asyncio.to_thread(digest, archive))
+                    expected_components = await discover_upload_components(
+                        root, forms, manifest["asset_version"], manifest["tier"],
+                        include_animations="animations" in next(
+                            entry["files"] for entry in manifest["forms"]
+                            if not entry["form"]["id"].startswith("component-")))
+                publication, bundles = await asyncio.to_thread(
+                    decode_bundles, archive, root, job, forms,
+                    expected_components=expected_components, _manifest=manifest)
                 await update_admin_run(job.run_id, "character_model", "running", raw_output={"stage": "publish"})
                 await publish_forms(publication, bundles, publication_payload=job.model_dump())
             for index in range(chunk_count(job)):
