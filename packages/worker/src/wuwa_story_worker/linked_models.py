@@ -280,8 +280,9 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
                 "properties": p, "event": event, "source": {"package": clip, "notify": obj.get("Name")}}
 
     effect_seen = set()
+    effect_occurrences = {}
 
-    def effect(ref, clip, context, event, notify, path=(), group_entries=()):
+    def effect(ref, clip, context, event, notify, event_index, path=(), group_entries=()):
         package = _package(ref)
         if not package:
             return
@@ -310,7 +311,7 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
                         if message not in diagnostics:
                             diagnostics.append(message)
                         continue
-                    effect(nested, clip, context, event, notify, (*path, package),
+                    effect(nested, clip, context, event, notify, event_index, (*path, package),
                            (*group_entries, {"group": package, "index": index, "value": e.get("Value")}))
             if item.get("Type") != "EffectModelSkeletalMesh_C":
                 continue
@@ -319,38 +320,58 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
                 diagnostics.append(f"Effect missing explicit mesh or animation: {package}")
                 continue
             group_id = ":".join(f"{entry['group']}[{entry['index']}]" for entry in group_entries)
-            id_ = f"effect:{clip}:{notify.get('Name')}:{group_id}:{package}"
-            r = next((x for x in recipes if x["id"] == id_), None)
+            occurrence = (clip, event_index, notify.get("Name"), group_id, package)
+            id_ = f"effect:{clip}:{event_index}:{notify.get('Name')}:{group_id}:{package}"
+            notify_props = _props(notify)
+            parent = None if notify_props.get("Attached") is False else "CharacterMesh0"
+            transform = {"location": notify_props.get("Location"),
+                         "rotation": notify_props.get("Rotation"),
+                         "scale": notify_props.get("Scale")}
+            # Only share an instance across distinct clips. Repeated uses inside
+            # the same clip can overlap and must remain independently visible.
+            r = effect_occurrences.get(occurrence)
             if r is None:
-                r = recipe(id_, "effect", model, {"blueprint": bp, "component": id_,
-                    "effect": package, "effect_chain": list(path), "properties": p,
-                    "model_type": "effect_spawned_skeletal_mesh", "group_entries": list(group_entries)})
-                r["default_visible"] = False
-                r["parent_component"] = (None if _props(notify).get("Attached") is False
-                                         else "CharacterMesh0")
-                if _props(notify).get("Attached") is False:
-                    r["diagnostics"].append("Effect is explicitly detached; world placement requires runtime semantics")
-                r["socket"] = _props(notify).get("SocketName")
-                socket_data = sockets.get(r["socket"])
-                if socket_data:
-                    r["socket_transform"] = {"bone": socket_data.get("BoneName"),
-                                             **_transform(socket_data), "source": skeleton}
-                r["transform"] = {"location": _props(notify).get("Location"),
-                                  "rotation": _props(notify).get("Rotation"),
-                                  "scale": _props(notify).get("Scale")}
+                r = next((item for item in recipes if item["kind"] == "effect"
+                          and item["model"] == model and item["parent_component"] == parent
+                          and item["socket"] == notify_props.get("SocketName")
+                          and item["transform"] == transform
+                          and item["source"].get("effect_slot") == notify_props.get("EffectSlotName")
+                          and all(b.get("parent_clip") != clip for b in item["bindings"])), None)
+                if r is None:
+                    r = recipe(id_, "effect", model, {"blueprint": bp, "component": id_,
+                        "effect": package, "effect_chain": list(path), "properties": p,
+                        "model_type": "effect_spawned_skeletal_mesh", "group_entries": list(group_entries),
+                        "effect_slot": notify_props.get("EffectSlotName"), "effect_instances": []})
+                    r["default_visible"] = False
+                    r["parent_component"] = parent
+                    if parent is None:
+                        r["diagnostics"].append("Effect is explicitly detached; world placement requires runtime semantics")
+                    r["socket"] = notify_props.get("SocketName")
+                    socket_data = sockets.get(r["socket"])
+                    if socket_data:
+                        r["socket_transform"] = {"bone": socket_data.get("BoneName"),
+                                                 **_transform(socket_data), "source": skeleton}
+                    r["transform"] = transform
+                    recipes.append(r)
+                    model_rows = load(model) or []
+                    mesh = next((x for x in model_rows if x.get("Type") == "SkeletalMesh"), {})
+                    child_skeleton = _package(_props(mesh).get("Skeleton"))
+                    if child_skeleton:
+                        r["source"]["skeleton"] = child_skeleton
+                        load(child_skeleton)
+                instance = {"effect": package, "effect_chain": list(path),
+                            "group_entries": list(group_entries), "notify": notify.get("Name"),
+                            "parent_clip": clip, "event_index": event_index, "properties": p}
+                r["source"]["effect_instances"].append(instance)
                 r["bindings"].append({"parent_key": None, "parent_clip": clip, "child_clip": child,
                     "kind": "effect", "secondary_table": None, "node": None,
                     "source": {"effect": package, "looping": p.get("Looping"),
-                               "sync_event_time": _props(notify).get("SyncEventTimeToEffectTime"),
-                               "sync_event_time_continuous": _props(notify).get("SyncEventTimeContinuous")}})
-                recipes.append(r)
+                               "sync_event_time": notify_props.get("SyncEventTimeToEffectTime"),
+                               "sync_event_time_continuous": notify_props.get("SyncEventTimeContinuous"),
+                               "group_entries": list(group_entries), "notify": notify.get("Name"),
+                               "event_index": event_index}})
+                effect_occurrences[occurrence] = r
                 load(child)
-                model_rows = load(model) or []
-                mesh = next((x for x in model_rows if x.get("Type") == "SkeletalMesh"), {})
-                child_skeleton = _package(_props(mesh).get("Skeleton"))
-                if child_skeleton:
-                    r["source"]["skeleton"] = child_skeleton
-                    load(child_skeleton)
             r["cues"].append(cue_for(event, notify, clip, context))
 
     root_cues = []
@@ -359,7 +380,7 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
         for row in data:
             if row.get("Type") not in ("AnimSequence", "AnimMontage"):
                 continue
-            for event in _props(row).get("Notifies", []):
+            for event_index, event in enumerate(_props(row).get("Notifies", [])):
                 ref = event.get("NotifyStateClass") or event.get("Notify") or {}
                 try:
                     obj = data[int(ref.get("ObjectPath", "").rsplit(".", 1)[1])]
@@ -369,7 +390,7 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
                 typ, p = obj.get("Type", ""), _props(obj)
                 for context in contexts.get(clip, [{}]):
                     if "Effect" in typ and p.get("EffectDataAssetRef"):
-                        effect(p["EffectDataAssetRef"], clip, context, event, obj)
+                        effect(p["EffectDataAssetRef"], clip, context, event, obj, event_index)
                     target = p.get("MeshName") or p.get("ComponentName") or p.get("ChildMeshName")
                     is_hide = "HideMesh" in typ
                     if not any(x in typ for x in ("SubMeshControl", "ChangeSlot", "HideMesh")):

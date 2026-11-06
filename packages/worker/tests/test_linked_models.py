@@ -171,3 +171,54 @@ def test_effect_group_skips_explicit_non_model_dependencies(tmp_path):
     result, = discover(tmp_path, {"component_blueprint": "Aki/BP", "animation_resources": ["Aki/Idle"]})
     assert result["required_resources"] == ["Aki/ModelEffect"]
     assert any("EffectModelNiagara_C" in d for d in result["diagnostics"])
+
+
+def test_effect_instances_merge_only_across_distinct_clips(tmp_path):
+    export(tmp_path, "Aki/BP", [])
+    export(tmp_path, "Aki/Effect", [{"Type": "EffectModelSkeletalMesh_C", "Properties": {
+        "SkeletalMeshRef": ref("Aki/Pet"), "AnimationRef": ref("Aki/PetClip")}}])
+    for clip, names in (("Aki/Idle1", ["first", "second"]), ("Aki/Idle2", ["third"])):
+        exports = [{"Type": "AnimSequence", "Properties": {
+            "Notifies": [event(name, i + 1) for i, name in enumerate(names)]}}]
+        exports += [{"Type": "AnimNotifyStateEffect_C", "Name": name, "Properties": {
+            "EffectDataAssetRef": {"AssetPathName": "/Game/Aki/Effect.Effect"},
+            "SocketName": "Root", "EffectSlotName": "pet"}} for name in names]
+        export(tmp_path, clip, exports)
+    result = discover(tmp_path, {"component_blueprint": "Aki/BP",
+                                 "animation_resources": ["Aki/Idle1", "Aki/Idle2"]})
+    assert len(result) == 2
+    assert sorted(len(r["bindings"]) for r in result) == [1, 2]
+    assert sorted(len(r["cues"]) for r in result) == [1, 2]
+    shared = next(r for r in result if len(r["bindings"]) == 2)
+    assert {b["parent_clip"] for b in shared["bindings"]} == {"Aki/Idle1", "Aki/Idle2"}
+    assert len(shared["source"]["effect_instances"]) == 2
+
+
+def test_repeated_same_notify_object_stays_separate(tmp_path):
+    export(tmp_path, "Aki/BP", [])
+    export(tmp_path, "Aki/Idle", [
+        {"Type": "AnimSequence", "Properties": {"Notifies": [event("same", 1), event("same", 1, 1)]}},
+        {"Type": "AnimNotifyStateEffect_C", "Name": "same", "Properties": {
+            "EffectDataAssetRef": {"AssetPathName": "/Game/Aki/Effect.Effect"}}},
+    ])
+    export(tmp_path, "Aki/Effect", [{"Type": "EffectModelSkeletalMesh_C", "Properties": {
+        "SkeletalMeshRef": ref("Aki/Pet"), "AnimationRef": ref("Aki/PetClip")}}])
+    recipes = discover(tmp_path, {"component_blueprint": "Aki/BP", "animation_resources": ["Aki/Idle"]})
+    assert len(recipes) == 2
+    assert recipes[0]["id"] != recipes[1]["id"]
+
+
+def test_distinct_effect_slots_do_not_merge(tmp_path):
+    export(tmp_path, "Aki/BP", [])
+    export(tmp_path, "Aki/Effect", [{"Type": "EffectModelSkeletalMesh_C", "Properties": {
+        "SkeletalMeshRef": ref("Aki/Pet"), "AnimationRef": ref("Aki/PetClip")}}])
+    for clip, slot in (("Aki/Idle1", "left"), ("Aki/Idle2", "right")):
+        export(tmp_path, clip, [
+            {"Type": "AnimSequence", "Properties": {"Notifies": [event("effect", 1)]}},
+            {"Type": "AnimNotifyStateEffect_C", "Name": "effect", "Properties": {
+                "EffectDataAssetRef": {"AssetPathName": "/Game/Aki/Effect.Effect"},
+                "EffectSlotName": slot}},
+        ])
+    result = discover(tmp_path, {"component_blueprint": "Aki/BP",
+                                 "animation_resources": ["Aki/Idle1", "Aki/Idle2"]})
+    assert len(result) == 2
