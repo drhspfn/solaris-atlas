@@ -339,7 +339,7 @@ async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffm
         stems.append({"role": role, "language": language,
                       "rover": rover,
                       "path": destination.name, "sources": evidence,
-                      "evidence": "VideoSound seconds and enabled VideoCaption frame timing / exact PlotAudio external filenames; original embedded audio remains an unseparated mix."})
+                      "evidence": "Source-authored VideoSound/caption or movie frame-event timing; native event routing retained with source files. Original embedded audio remains an unseparated mix."})
     stems = collapse_shared_stems(stems, work)
     return CutsceneAudioRecipe.model_validate({"asset": video.asset, "asset_version": asset_version,
                                               "duration": duration, "stems": stems})
