@@ -43,6 +43,23 @@ def test_decoding_uses_archive_identity_and_rejects_stale_authored_forms(tmp_pat
         model_uploads.decode_bundles(archive, tmp_path / "wrong", wrong, [form])
 
 
+def test_npc_data_asset_archive_retains_resolved_mesh_and_checks_setup_identity(tmp_path):
+    _, base, job = portable(tmp_path)
+    form = {**base, 'model': 'Aki/Npc/Setup', 'data_asset': 'Aki/Npc/Setup'}
+    job = job.model_copy(update={'character_key': 'character:npc:1908'})
+    provenance = {'model': 'Aki/Npc/MasterMesh', 'data_asset': form['data_asset']}
+    identity = {'character_key': job.character_key, 'game_version': job.game_version,
+                'asset_version': '3.7.1', 'tier': 'hd'}
+    archive = tmp_path / 'npc.zip'
+    write_archive(archive, identity, [(form, tmp_path/'bundle', {}, provenance)])
+    _, bundles = model_uploads.decode_bundles(archive, tmp_path/'npc-decoded', job, [form])
+    assert bundles[0][3]['model'] == 'Aki/Npc/MasterMesh'
+    wrong = tmp_path/'wrong-setup.zip'
+    write_archive(wrong, identity, [(form, tmp_path/'bundle', {}, {**provenance, 'data_asset': 'Other'})])
+    with pytest.raises(ValueError, match='setup does not match'):
+        model_uploads.decode_bundles(wrong, tmp_path/'npc-wrong', job, [form])
+
+
 @pytest.mark.asyncio
 async def test_uploaded_model_publishes_without_game_client_or_extraction(tmp_path, monkeypatch):
     archive, form, job = portable(tmp_path)

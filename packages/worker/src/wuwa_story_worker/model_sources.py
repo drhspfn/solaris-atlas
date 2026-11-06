@@ -36,21 +36,32 @@ def model_sources(role, preload):
     return {"model": mesh, "blueprints": sorted(set(blueprints))}
 
 
-def npc_model_sources(component):
+def npc_model_sources(component, preloads=()):
     """Resolve only the mesh and animation blueprint explicitly authored for an NPC."""
     if not isinstance(component, dict) or component.get("Disabled") is True:
         raise ValueError("NPC model component is missing or disabled")
     model_type = component.get("ModelType")
+    if isinstance(model_type, dict) and model_type.get('Type') == 'ModelId':
+        identity = model_type.get('ModelId')
+        matches = [row for row in preloads if type(identity) is int and identity > 0
+                   and row.get('Id') == identity]
+        if len(matches) != 1 or len(matches[0].get('Meshes') or []) != 1:
+            raise ValueError('NPC ModelId requires one exact authored mesh preload')
+        row = matches[0]
+        return {'model': authored_package(row['Meshes'][0]),
+                'blueprints': sorted({authored_package(path) for path in row.get('AnimationBlueprints') or []}),
+                'component_blueprint': authored_package(row['ActorClassPath']) if row.get('ActorClassPath') else None,
+                'animation_resources': sorted({authored_package(path) for path in row.get('Animations') or []})}
     if not isinstance(model_type, dict) or model_type.get("Type") != "Npc":
         raise ValueError("Expected an NPC model component")
     npc_model = model_type.get("NpcModel")
-    if not isinstance(npc_model, dict) or npc_model.get("Type") != "Mesh":
+    if not isinstance(npc_model, dict) or npc_model.get("Type") not in {"Mesh", "Da"}:
         raise ValueError("NPC model does not specify an exact mesh")
-    mesh = authored_package(npc_model.get("Mesh"))
-    if not mesh.startswith("Aki/Character/NPC/"):
-        raise ValueError("Authored mesh is not an NPC rig")
+    data_asset = npc_model.get("Type") == "Da"
+    mesh = authored_package(npc_model.get("Da" if data_asset else "Mesh"))
     abp = model_type.get("Abp")
-    return {"model": mesh, "blueprints": [authored_package(abp)] if abp else []}
+    return {"model": mesh, "blueprints": [authored_package(abp)] if abp else [],
+            **({'data_asset': mesh} if data_asset else {})}
 
 
 def npc_blueprint_attachments(rows, primary_model=None):

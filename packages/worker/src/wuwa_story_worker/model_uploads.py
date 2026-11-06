@@ -20,7 +20,7 @@ from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.model_animations import animation_summary
 from wuwa_story_worker.model_facial import validate_facial_pack
-from wuwa_story_worker.model_sources import glb_summary
+from wuwa_story_worker.model_sources import authored_package, glb_summary
 from wuwa_story_worker.tooling import asset_workspace
 from wuwa_story_worker.transient_workspace import transient_workspace
 
@@ -75,7 +75,15 @@ def decode_bundles(archive, root, job, expected_forms):
             if any(track["target"].casefold() not in targets for clip in pack["clips"] for track in clip["tracks"]):
                 raise ValueError(
                     "Facial curves do not match the uploaded model")
-        provenance = {**entry["provenance"], "model": form["model"],
+        if form.get('data_asset') and entry['provenance'].get('data_asset') != form['data_asset']:
+            raise ValueError('Archive NPC setup does not match its authored data asset')
+        model = form['model']
+        if form.get('data_asset'):
+            model = entry['provenance'].get('model')
+            if not isinstance(model, str):
+                raise ValueError('Archive NPC setup has no resolved master mesh')
+            authored_package('/Game/' + model)
+        provenance = {**entry["provenance"], "model": model,
                       "form_source": form["source"], "local_archive_sha256": publication.download_id}
         bundles.append((form, output, summaries, provenance))
     return publication, bundles

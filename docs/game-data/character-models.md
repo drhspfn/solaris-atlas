@@ -402,3 +402,30 @@ Authorization header. This rule allows public data reads; it grants no upload,
 delete or administrative access. The production CDN was checked during migration
 and did not return `Access-Control-Allow-Origin` for the site's Origin header.
 Verify that header on an actual GLB and physics/animation object before rollout.
+
+### NPC recipes and modular appearances
+
+NPC profiles use the same administrator import/upload dialog and local
+`wuwa-model` CLI. Recipes identify `character:npc:<BlueprintConfig.Id>` and retain
+effective world-instance model overrides. Unrelated interaction/quest overrides
+do not create duplicate model forms. NPC model generation is manual; the native
+catalog backfill only registers recipes and relationships.
+
+Supported sources include explicit NPC meshes, exact single-mesh `ModelId`
+preloads (including animals), and `PD_NpcSetupData_C` modular setup assets.
+For modular NPCs the authored master rig drives body, face and hair parts;
+the low-detail carrier geometry is omitted. Every weighted part bone and its
+ancestors must match the master rest pose. Unused helper bones may differ.
+Material overrides and required face-atlas textures are retained. The current
+base-color preview selects the neutral face-atlas tile; dynamic expression
+material curves and the original game lighting/shaders are not reconstructed.
+Unsupported compositions fail with a reason instead of publishing missing parts.
+
+Blueprint accessory components retain parent, socket/bone, relative transform
+and visibility in GLB extras. The viewer lists only these declared elements.
+Authored `TsAnimNotifyHideBone` events are also preserved with source sequence,
+time, target bone, hide flag and probability. Cristoforo's mask is verified as
+bone-controlled geometry (`Bone_Piao027_M`), whereas Rosemary's folded umbrella
+is a socket attachment (`WeaponCase0` / `WeaponProp02`). Visibility controls for
+bone elements run after animation updates. Notify events do not establish which
+animation state the game initially selects; the viewer does not infer one.

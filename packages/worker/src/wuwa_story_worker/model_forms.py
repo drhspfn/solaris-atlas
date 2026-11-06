@@ -55,10 +55,12 @@ def resolve_npc_forms(npc):
     for components, instance in candidates:
         component = components.get("ModelComponent") or npc.get("model")
         # Some templates describe only instance models; preserve those instead.
-        if not component:
+        if not component or component.get('Disabled') is True:
             continue
-        resolved = npc_model_sources(component)
-        model_type = component["ModelType"]
+        model_type = component.get("ModelType") or {}
+        if model_type.get('Type') == 'ModelId' and model_type.get('ModelId') == 0:
+            continue  # Authored invisible/gameplay-only template, not a missing mesh.
+        resolved = npc_model_sources(component, npc.get('model_preloads') or [])
         blueprint = model_type.get("BlueprintPath")
         appearance_components = {
             name: value for name, value in components.items()
@@ -66,12 +68,13 @@ def resolve_npc_forms(npc):
         }
         appearance = {
             **resolved,
-            "component_blueprint": authored_package(blueprint) if blueprint else None,
+            "component_blueprint": authored_package(blueprint) if blueprint else resolved.get('component_blueprint'),
             "overrides": dict(appearance_fields(component)),
             "components": appearance_components,
         }
         identity = json.dumps(appearance, sort_keys=True, ensure_ascii=True)
-        montages = set(montage_paths(components)) | set(montage_paths(npc.get("montages", [])))
+        montages = (set(montage_paths(components)) | set(montage_paths(npc.get("montages", [])))
+                    | set(resolved.get('animation_resources', [])))
         if identity in seen:
             form = seen[identity]
             form["montages"] = sorted(set(form["montages"]) | montages)

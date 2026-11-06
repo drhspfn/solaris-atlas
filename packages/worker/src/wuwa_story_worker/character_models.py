@@ -99,7 +99,7 @@ async def job_forms(session, job):
 
 
 async def extract_model(root, sources, fmodel, converter, include_animations=True, *, local_client=None,
-                        additional_filters=()):
+                        additional_filters=(), metadata_only=False):
     model_dir = sources["model"].rsplit("/", 1)[0]
     filters = [model_dir + "/", *sources["blueprints"]]
     if sources.get("component_blueprint"):
@@ -127,6 +127,8 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
             # the authored root. Ownership is checked by skeleton metadata.
             character_dir.rsplit("/", 1)[1],
         ]
+    if metadata_only:
+        filters = [sources['model']]
     filters.extend(additional_filters)
     if local_client is None:
         receipt = await export_assets(root, fmodel, "|".join(filters))
@@ -175,6 +177,8 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
         inputs += ["-i", (raw / "Engine").resolve()]
     common = [converter, *inputs, "-g", "GAME_WutheringWaves", "-p", "*.uasset"]
     await tool([*common, "-f", "json", "-o", cooked.resolve(), "-y"], root / "metadata.log")
+    if metadata_only:
+        return None, converted, cooked, json.loads(receipt.read_text(encoding='utf-8'))
     await tool(
         [
             *common,
@@ -233,7 +237,7 @@ async def model_progress(run_id, stage, **details):
         )
 
 
-def component_model(component, converted, cooked, skeleton):
+def component_model(component, converted, cooked, skeleton, *, master_pose=False):
     metadata_path = cooked / "Client/Content" / (component + ".json")
     component_path = converted / "Client/Content" / (component + ".uemodel")
     if not component_path.is_file() or not metadata_path.is_file():
@@ -247,7 +251,7 @@ def component_model(component, converted, cooked, skeleton):
     if (
         len(component_skeletons) != 1
         or not component_skeletons[0]
-        or exported_package(component_skeletons[0]) != skeleton
+        or (not master_pose and exported_package(component_skeletons[0]) != skeleton)
     ):
         raise ValueError("Character component uses a different skeleton")
     return component_path.resolve()
@@ -269,13 +273,52 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         raise ValueError("UEFormat importer unavailable; use the dedicated model worker image")
     await progress("extract")
     options = {"local_client": local_client} if local_client is not None else {}
-    model, converted, cooked, manifest = await extract_model(
-        root, sources, fmodel, converter, include_animations, **options
-    )
-    if include_animations and sources.get("component_blueprint"):
-        from wuwa_story_worker.model_sources import npc_animation_references
+    setup_receipt = None
+    if sources.get('data_asset'):
+        from wuwa_story_worker.npc_setup import setup_sources
 
-        refs = set()
+        setup_root = root / 'npc-setup'
+        setup_root.mkdir()
+        _, _, setup_cooked, setup_receipt = await extract_model(
+            setup_root, sources, fmodel, converter, False, metadata_only=True, **options)
+        setup_path = setup_cooked / 'Client/Content' / (sources['data_asset'] + '.json')
+        if not setup_path.is_file():
+            raise ValueError('The authored NPC setup asset was not exported')
+        sources = {**sources, **setup_sources(
+            json.loads(setup_path.read_text(encoding='utf-8-sig')), sources['data_asset'])}
+    component_filters = {path.rsplit('/', 1)[0] + '/' for path in sources.get('extra_models', [])}
+    component_filters.update(path.rsplit('/', 1)[0] + '/'
+        for slots in sources.get('part_material_overrides', {}).values() for path in slots.values())
+    model, converted, cooked, manifest = await extract_model(
+        root, sources, fmodel, converter, include_animations,
+        additional_filters=sorted(component_filters), **options
+    )
+    if setup_receipt:
+        manifest['files'].extend(setup_receipt['files'])
+        from wuwa_story_worker.model_bundle import base_color_texture
+
+        missing_textures = set()
+        for slots in sources.get('part_material_overrides', {}).values():
+            for package in slots.values():
+                path = converted / 'Client/Content' / (package + '.json')
+                if path.is_file():
+                    reference, texture = base_color_texture(json.loads(path.read_text(encoding='utf-8-sig')), converted)
+                    if reference and texture is None:
+                        missing_textures.add(exported_package(reference))
+        if missing_textures:
+            texture_root = root / 'npc-part-textures'
+            texture_root.mkdir()
+            _, part_converted, part_cooked, receipt = await extract_model(
+                texture_root, sources, fmodel, converter, False,
+                additional_filters=sorted(missing_textures), **options)
+            shutil.copytree(part_converted, converted, dirs_exist_ok=True)
+            shutil.copytree(part_cooked, cooked, dirs_exist_ok=True)
+            manifest['files'].extend(receipt['files'])
+    if sources.get("component_blueprint"):
+        from wuwa_story_worker.model_sources import npc_animation_references
+        from wuwa_story_worker.npc_accessories import visibility_sources
+
+        refs = set(visibility_sources(sources['model']))
         for blueprint in [*sources["blueprints"], *sources.get("montages", [])]:
             path = cooked / "Client/Content" / (blueprint + ".json")
             if path.is_file():
@@ -285,13 +328,27 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
             extra_root = root / "referenced-animations"
             extra_root.mkdir()
             _, extra_converted, extra_cooked, extra_manifest = await extract_model(
-                extra_root, sources, fmodel, converter, False, additional_filters=sorted(missing), **options
+                extra_root, sources, fmodel, converter, False, additional_filters=sorted(missing),
+                metadata_only=not include_animations, **options
             )
             shutil.copytree(extra_converted, converted, dirs_exist_ok=True)
             shutil.copytree(extra_cooked, cooked, dirs_exist_ok=True)
             manifest["files"].extend(extra_manifest["files"])
             if any(not (cooked / "Client/Content" / (ref + ".json")).is_file() for ref in missing):
                 raise ValueError("An explicitly referenced NPC animation was not exported")
+    bone_visibility = {}
+    if sources.get('component_blueprint'):
+        from wuwa_story_worker.npc_accessories import npc_bone_visibility_notifies, visibility_label
+
+        for path in cooked.rglob('*.json'):
+            rows = json.loads(path.read_text(encoding='utf-8-sig'))
+            if not isinstance(rows, list) or not any(
+                row.get('Type') == 'TsAnimNotifyHideBone_C' for row in rows if isinstance(row, dict)):
+                continue
+            for event in npc_bone_visibility_notifies(rows):
+                event['source'] = path.relative_to(cooked).with_suffix('').as_posix()
+                event['label'] = visibility_label(sources['model'], event['bone'])
+                bone_visibility.setdefault(event['bone'], []).append(event)
     output = root / "bundle"
     output.mkdir()
     model_metadata = json.loads(
@@ -367,7 +424,8 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
             manifest["files"].extend(receipt["files"])
             attachment["file"] = str(converted / accessory.relative_to(converted_part))
     extra_models = [
-        component_model(component, converted, cooked, skeleton)
+        component_model(component, converted, cooked, skeleton,
+                        master_pose=sources.get('master_pose', False))
         for component in sources.get("extra_models", [])
     ]
     command = [
@@ -403,6 +461,18 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         material_path = root / "npc-material-overrides.json"
         material_path.write_text(json.dumps(material_overrides), encoding="utf-8")
         command.extend(["--material-overrides", material_path.resolve()])
+    if sources.get('master_pose'):
+        command.append('--master-pose')
+    if sources.get('hide_primary_geometry'):
+        command.append('--hide-primary-geometry')
+    if sources.get('part_material_overrides'):
+        material_path = root / 'npc-part-materials.json'
+        material_path.write_text(json.dumps(sources['part_material_overrides']), encoding='utf-8')
+        command.extend(['--part-material-overrides', material_path.resolve()])
+    if bone_visibility:
+        visibility_path = root / 'npc-bone-visibility.json'
+        visibility_path.write_text(json.dumps(bone_visibility), encoding='utf-8')
+        command.extend(['--bone-visibility', visibility_path.resolve()])
     plan_path = output / "animation-plan.json"
     await progress("rig_and_animation_plan" if include_animations else "rig")
     await run_blender(
@@ -511,6 +581,8 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         "source_files": manifest["files"],
         "model": sources["model"],
         "extra_models": sources.get("extra_models", []),
+        **({'bone_visibility_events': bone_visibility} if bone_visibility else {}),
+        **({'data_asset': sources['data_asset']} if sources.get('data_asset') else {}),
         "blueprints": sources["blueprints"],
         "tools": {
             name: sha256(path)

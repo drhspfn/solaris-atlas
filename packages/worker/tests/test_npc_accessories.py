@@ -2,7 +2,19 @@ from copy import deepcopy
 
 import pytest
 
-from wuwa_story_worker.npc_accessories import npc_bone_visibility_notifies
+from wuwa_story_worker.npc_accessories import (
+    CRISTOFORO_MODEL,
+    npc_bone_visibility_notifies,
+    visibility_label,
+    visibility_sources,
+)
+
+
+def test_mask_control_uses_only_its_verified_mesh_and_bone():
+    assert visibility_sources(CRISTOFORO_MODEL)[0].endswith('/Stand2')
+    assert visibility_sources(CRISTOFORO_MODEL + '_Other') == []
+    assert visibility_label(CRISTOFORO_MODEL, 'Bone_Piao027_M') == 'Mask'
+    assert visibility_label('Other', 'Bone_Piao027_M') == 'Bone: Bone_Piao027_M'
 
 
 def test_cristoforo_maskoff_notify_is_an_event_not_a_guessed_default():

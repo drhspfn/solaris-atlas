@@ -3,6 +3,18 @@
 import math
 import re
 
+CRISTOFORO_MODEL = 'Aki/Character/NPC/MaleXL/Function/NH_MaleXL_002/Model/NH_MaleXL_002'
+
+
+def visibility_sources(model):
+    # The shared mesh owns the mask; the alternate authored idle documents how
+    # to hide it even when the requested build omits downloadable animations.
+    return ['Aki/Character/NPC/MaleXL/Function/NH_MaleXL_002/CommonAnim/Stand2'] if model == CRISTOFORO_MODEL else []
+
+
+def visibility_label(model, bone):
+    return 'Mask' if model == CRISTOFORO_MODEL and bone == 'Bone_Piao027_M' else 'Bone: ' + bone
+
 
 def npc_bone_visibility_notifies(rows):
     """Return enabled hide-bone notifies and their sequence-relative times."""

@@ -24,8 +24,7 @@ def test_npc_model_sources_use_iris_authored_mesh_and_abp():
         "blueprints": ["Aki/Character/NPC/FemaleMS/Function/NH_FemaleMS_003/ABP_NH_MN_FemaleMS_003"],
     }
     component["ModelType"]["NpcModel"] = {"Type": "Da", "Da": root + "/Other"}
-    with pytest.raises(ValueError, match="exact mesh"):
-        npc_model_sources(component)
+    assert npc_model_sources(component)['data_asset'] == root[6:] + '/Other'
 
 
 def test_avidius_model_outside_model_directory_is_valid():
@@ -33,6 +32,15 @@ def test_avidius_model_outside_model_directory_is_valid():
     mesh = "/Game/Aki/Character/NPC/MaleM/Special/NH_MaleM_136_02/NH_MaleM_136_02.NH_MaleM_136_02"
     component = {"ModelType": {"Type": "Npc", "NpcModel": {"Type": "Mesh", "Mesh": mesh},
         "Abp": "/Game/Aki/Character/NPC/MaleM/BPData/ABP_NH_MaleM_136.ABP_NH_MaleM_136_C"}}
+    assert npc_model_sources(component)["model"] == mesh[6:].split(".")[0]
+
+
+@pytest.mark.parametrize("mesh", [
+    "/Game/Aki/Character/Role/FemaleM/Yangyang/Model/Yangyang.Yangyang",
+    "/Game/Aki/Character/Monster/MonsterNPC/Model/MonsterNPC.MonsterNPC",
+])
+def test_npc_authored_mesh_is_not_restricted_to_npc_directory(mesh):
+    component = {"ModelType": {"Type": "Npc", "NpcModel": {"Type": "Mesh", "Mesh": mesh}}}
     assert npc_model_sources(component)["model"] == mesh[6:].split(".")[0]
 
 
