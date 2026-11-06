@@ -147,12 +147,20 @@ async def test_trusted_discovery_prepares_matching_component(tmp_path, monkeypat
                 "socket": "hand", "default_visible": True, "bindings": [], "cues": [],
                 "source": {"blueprint": form["component_blueprint"], "component": "Fox"}}
     recipe = {"model": "Aki/Npc/Fox", "blueprints": [], "montages": [], "component": relation}
-    discover = AsyncMock(return_value=[recipe])
+    child_relation = {**relation, "id": "Hat", "name": "Hat", "parent_component": "Fox", "socket": None,
+                      "source": {"blueprint": form["component_blueprint"], "component": "Hat"}}
+    nested = {**recipe, "model": "Aki/Npc/Hat", "component": child_relation}
+    discover = AsyncMock(return_value=[nested, recipe])
     monkeypatch.setattr(character_models, "discover_scene_components", discover)
     expected = await model_uploads.discover_upload_components(tmp_path, [form], "3.7.0", "hd")
     identity = "component-" + hashlib.sha256((form["id"] + "|Fox").encode()).hexdigest()[:16]
-    assert expected == {identity: {"model": recipe["model"], "component": {
-        **relation, "baked": True, "parent_form_id": form["id"]}}}
+    child_id = "component-" + hashlib.sha256((form["id"] + "|Hat").encode()).hexdigest()[:16]
+    assert expected == {
+        identity: {"model": recipe["model"], "component": {
+            **relation, "baked": True, "parent_form_id": form["id"]}},
+        child_id: {"model": nested["model"], "component": {
+            **child_relation, "baked": False, "parent_form_id": identity}},
+    }
     assert extract.await_args.kwargs["metadata_only"] is True
     discover.assert_awaited_once()
 
@@ -204,3 +212,32 @@ async def test_process_linked_upload_uses_trusted_discovery(tmp_path, monkeypatc
     with pytest.raises(ValueError, match="trusted authored identity"):
         await model_uploads.process_model_upload(job.model_dump())
     assert publish.await_count == 1
+
+
+def test_decode_nested_component_uses_root_blueprint_not_parent_mesh(tmp_path):
+    _, root, job = portable(tmp_path)
+    root = {**root, "component_blueprint": "Aki/Npc/Blueprint"}
+    def component(identity, parent, source):
+        return {"id": identity, "label": source, "order": 1, "component": {
+            "id": source, "parent_form_id": parent,
+            "source": {"blueprint": root["component_blueprint"], "component": source}}}
+    first = component("component-0123456789abcdef", root["id"], "OtherCase1")
+    nested = component("component-fedcba9876543210", first["id"], "Sword")
+    metadata = {"character_key": job.character_key, "game_version": job.game_version,
+                "asset_version": "3.7.0", "tier": "hd"}
+    entries = [(root, tmp_path / "bundle", {}, {"model": root["model"]}),
+               (first, tmp_path / "bundle", {}, {"model": "Aki/Prop/Case"}),
+               (nested, tmp_path / "bundle", {}, {"model": "Aki/Prop/Sword"})]
+    archive = tmp_path / "nested.zip"
+    write_archive(archive, metadata, entries)
+    trusted = {form["id"]: {"component": form["component"], "model": provenance["model"]}
+               for form, _, _, provenance in entries[1:]}
+    _, decoded = model_uploads.decode_bundles(archive, tmp_path / "nested", job, [root],
+                                               expected_components=trusted)
+    assert decoded[2][0]["component"]["parent_form_id"] == first["id"]
+    nested["component"]["source"]["blueprint"] = "Aki/Npc/Other"
+    wrong = tmp_path / "nested-wrong.zip"
+    write_archive(wrong, metadata, entries)
+    with pytest.raises(ValueError, match="parent Blueprint"):
+        model_uploads.decode_bundles(wrong, tmp_path / "nested-wrong", job, [root],
+                                     expected_components=trusted)

@@ -26,7 +26,7 @@ from wuwa_story.storage.s3 import S3Storage
 from wuwa_story_worker.broker import job_lock
 from wuwa_story_worker.client_assets import validate_plan
 from wuwa_story_worker.job_tracking import update_admin_run
-from wuwa_story_worker.linked_component_forms import prepare_linked_component
+from wuwa_story_worker.linked_component_forms import prepare_linked_components
 from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.model_animations import animation_summary
 from wuwa_story_worker.model_facial import validate_facial_pack
@@ -95,6 +95,8 @@ def decode_bundles(archive, root, job, expected_forms, *, expected_components=No
         if component is None:
             continue
         parent = entries[component["parent_form_id"]]
+        while parent["form"].get("component") is not None:
+            parent = entries[parent["form"]["component"]["parent_form_id"]]
         parent_form = parent["form"]
         blueprint = (parent_form.get("component_blueprint")
                      or (parent_form.get("model") if not parent_form.get("component")
@@ -255,8 +257,9 @@ async def discover_upload_components(root, forms, asset_version, tier, *, includ
             if any(not (cooked / "Client/Content" / (ref + ".json")).is_file() for ref in missing):
                 raise ValueError("An explicitly referenced NPC animation was not exported")
         recipes = await discover_scene_components(workspace, sources, cooked, local_client=local_client)
-        for recipe in recipes:
-            identity, relation = prepare_linked_component(form, recipe)
+        for recipe, (identity, relation) in zip(
+            recipes, prepare_linked_components(form, recipes), strict=True
+        ):
             if identity in result or len(result) >= 32:
                 raise ValueError("Duplicate or excessive authored components")
             result[identity] = {"component": relation, "model": recipe["model"]}
