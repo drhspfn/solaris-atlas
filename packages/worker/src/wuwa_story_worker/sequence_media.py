@@ -20,6 +20,21 @@ def sequence_media_score(exports):
     # coupling sequence_controls' public entry point to parser initialization.
     from wuwa_story_worker.sequence_controls import object_path
 
+    def audio_event_path(value):
+        if isinstance(value, dict):
+            if value.get('SubPathString'):
+                return None
+            value = value.get('ObjectPath') or value.get('AssetPathName')
+        path = object_path(value)
+        if not path or path.endswith('/') or any(c in path for c in ('\\', '?', '#', '%', ':')):
+            return None
+        package, dot, name = path.rpartition('.')
+        if dot:
+            if name != PurePosixPath(package).name:
+                return None
+            return package
+        return path
+
     by_id = {f'{e["Package"]}.{e["_export_index"]}': e for e in exports}
     streams = {}
     for export in exports:
@@ -125,7 +140,8 @@ def sequence_media_score(exports):
         kind = export.get('Type')
         if kind not in {'MovieSceneMediaSection', 'MovieSceneSubSection', 'MovieSceneCinematicShotSection',
                         'MovieSceneSkeletalAnimationSection', 'MovieSceneCameraCutSection',
-                        'MovieSceneSpawnSection', 'MovieSceneDialogueSection', 'MovieSceneEventTriggerSection'}:
+                        'MovieSceneSpawnSection', 'MovieSceneDialogueSection', 'MovieSceneEventTriggerSection',
+                        'MovieSceneKuroAudioEventSection'}:
             continue
         props = export.get('Properties') or {}
         scene = owner_scene(export)
@@ -140,6 +156,7 @@ def sequence_media_score(exports):
         section_kind = {'MovieSceneMediaSection': 'movie_fragment',
                         'MovieSceneSkeletalAnimationSection': 'skeletal_animation',
                         'MovieSceneCameraCutSection': 'camera', 'MovieSceneSpawnSection': 'camera',
+                        'MovieSceneKuroAudioEventSection': 'audio_event',
                         'MovieSceneDialogueSection': 'dialogue', 'MovieSceneEventTriggerSection': 'event'}.get(kind, 'subsequence')
         section = {
             'source': f'{export["Package"]}.{export["_export_index"]}',
@@ -181,6 +198,21 @@ def sequence_media_score(exports):
                 section['dialogue_origin'] = 'cinematic'
             elif section_kind == 'event':
                 section['event_channel'] = props.get('EventChannel')
+            elif section_kind == 'audio_event':
+                hard = audio_event_path(props.get('AudioEvent'))
+                soft = audio_event_path(props.get('SoftAudioEvent'))
+                section['audio_event'] = props.get('AudioEvent')
+                section['soft_audio_event'] = props.get('SoftAudioEvent')
+                section['parameters'].update({key: props[key] for key in ('bSyncAudio', 'FadeDuration') if key in props})
+                if hard and soft and hard != soft:
+                    section['reference'] = None
+                    section['status'] = 'unresolved_audio_event'
+                    section['diagnostics'] = [{'code': 'conflicting_audio_event_references'}]
+                else:
+                    section['reference'] = hard or soft
+                    section['status'] = 'referenced' if section['reference'] else 'unresolved_audio_event'
+                    if section['reference']:
+                        section['reference_field'] = 'AudioEvent' if hard else 'SoftAudioEvent'
         sections.append(section)
     scenes = [{'source': f'{export["Package"]}.{export["_export_index"]}',
                'sequence': (export.get('Outer') or {}).get('ObjectPath'),
