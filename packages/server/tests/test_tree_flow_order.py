@@ -254,8 +254,8 @@ async def test_related_state_is_visible_in_media_manifest_without_global_positio
     for name in ['cutscene_flows', 'cutscene_videos', 'caption_texts']:
         monkeypatch.setattr(media, name, AsyncMock(return_value={}))
     session = SimpleNamespace(scalars=AsyncMock(return_value=[]), scalar=AsyncMock(return_value=None),
-                              execute=AsyncMock(return_value=SimpleNamespace(
-                                  all=lambda: [(action, state, 'quest_action:Story_28_1:1')])),
+                              execute=AsyncMock(side_effect=[SimpleNamespace(
+                                  all=lambda: [(action, state, 'quest_action:Story_28_1:1')]), []]),
                               get=AsyncMock(return_value=SimpleNamespace(game_version='3.1.0')))
     result = await media.quest_media('114000031', '3.1.0', 'en', session)
     event, = result['events']
@@ -264,7 +264,7 @@ async def test_related_state_is_visible_in_media_manifest_without_global_positio
     assert event['source'] == {'record_id': 35940570, 'release_id': 15}
     assert not event['story_order_mapped'] and not event['context_inferred']
     assert 'story_position' not in event
-    query = str(session.execute.await_args.args[0].compile(
+    query = str(session.execute.await_args_list[0].args[0].compile(
         dialect=postgresql.dialect(), compile_kwargs={'literal_binds': True}))
     # Included through related encounter despite empty original quest states.
     assert '4648369' in query

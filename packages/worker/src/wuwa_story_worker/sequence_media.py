@@ -219,6 +219,43 @@ def sequence_media_score(exports):
                'range': export.get('Properties', {}).get('PlaybackRange'),
                'clock': scene_clock(export)}
               for export in exports if export.get('Type') == 'MovieScene']
-    return {'sections': sections, 'scenes': scenes, 'complete_video': False,
+    # Only explicit DA resource references and MovieScene ownership prove a
+    # relationship. Ambiguous/missing exports do not authorize a scene.
+    sequences = [export for export in exports if export.get('Type') == 'LevelSequence']
+    def sequence_id(reference):
+        if not isinstance(reference, str):
+            return None
+        exact = [item for item in sequences if f'{item["Package"]}.{item["_export_index"]}' == reference]
+        matches = exact or [item for item in sequences if item['Package'] == reference]
+        return f'{matches[0]["Package"]}.{matches[0]["_export_index"]}' if len(matches) == 1 else None
+
+    by_sequence = {}
+    for scene in scenes:
+        owner = sequence_id(object_path(scene['sequence']))
+        if owner:
+            by_sequence.setdefault(owner, []).append(scene['source'])
+    asset_scenes = []
+    for export in exports:
+        if export.get('Type') != 'BP_SequenceData_C' or not isinstance(export.get('Name'), str):
+            continue
+        resources = (export.get('Properties') or {}).get('剧情资源')
+        if not isinstance(resources, list) or len(resources) != 1 or not isinstance(resources[0], dict):
+            continue
+        root = sequence_id(object_path(resources[0].get('ObjectPath')))
+        if not root or len(by_sequence.get(root, [])) != 1:
+            continue
+        reachable, pending = set(), list(by_sequence[root])
+        while pending:
+            scene = pending.pop()
+            if scene in reachable:
+                continue
+            reachable.add(scene)
+            for section in sections:
+                if section.get('kind') == 'subsequence' and section.get('scene_source') == scene:
+                    child = sequence_id(section.get('reference'))
+                    if child and len(by_sequence.get(child, [])) == 1:
+                        pending.extend(by_sequence[child])
+        asset_scenes.append({'asset': export['Package'] + '.' + export['Name'], 'scenes': sorted(reachable)})
+    return {'sections': sections, 'scenes': scenes, 'sequence_assets': asset_scenes, 'complete_video': False,
             'timing_basis': 'owning_movie_scene_tick_resolution',
             'runtime_traversal': False}

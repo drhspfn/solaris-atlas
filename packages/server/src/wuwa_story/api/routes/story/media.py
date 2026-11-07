@@ -25,13 +25,15 @@ from wuwa_story.db.models.storage import FileLocation, FileReference
 from wuwa_story.db.repositories.nodes import get_quest
 from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.cutscenes import Clip, PlaybackFlow
+from wuwa_story.ingestion.spine_presentation import flow_presentation
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.story import media as story_media
+from wuwa_story.story import runtime_service
 from wuwa_story.story.cutscene_occurrences import group_cutscene_occurrences
 from wuwa_story.story.cutscene_publications import publication_order, publication_types
+from wuwa_story.story.scene_continuations import scene_continuations
 from wuwa_story.story.service import _quest_page_state_ids
 from wuwa_story.story.tree_order import authored_order
-from wuwa_story.story.scene_continuations import scene_continuations
 
 router = APIRouter(tags=["story browsing"])
 
@@ -311,6 +313,7 @@ async def quest_media(
                 "kind": {"plays_cutscene": "cutscene", "plays_sequence_asset": "sequence",
                          "posts_audio_event": "audio_event"}[link["relation"]],
                 "action": action_key, "flow_state": state.state_key,
+                "_sequence_owner": state.node_id,
                 "action_index": action.action_index, "reference": link["canonical_key"],
                 "context_inferred": state.node_id in contextual_state_ids,
                 "story_order_mapped": bool(tree_order and state.state_key in tree_order['mapped_flow_states']),
@@ -328,6 +331,9 @@ async def quest_media(
                 entry['review_position'] = [*review_position, action.action_index, -1]
                 entry['review_order_source'] = tree_order['review_source']
             sources.append((entry, link['node_id']))
+    state_owners = defaultdict(set)
+    for _, state, _ in action_rows:
+        state_owners[state.state_key].add(state.node_id)
     for block, ref in runtime_refs:
         entry = {
             'kind': ref['kind'], 'action': block['id'] + ref['raw_path'],
@@ -345,9 +351,64 @@ async def quest_media(
         if block.get('interaction_id'):
             entry['interaction_id'] = block['interaction_id']
             entry['action'] += ':' + block['interaction_id']
+        source = block.get('source') or {}
+        owners = state_owners.get(source.get('key'), set())
+        if (ref['kind'] == 'sequence' and source.get('file') == 'BinData/flowState/flowstate.json'
+                and len(owners) == 1):
+            entry['_sequence_owner'] = next(iter(owners))
+            entry['_sequence_cue_path'] = ref['raw_path']
         sources.append((entry, runtime_nodes.get(ref['reference'])))
+    sequence_owners = {entry['_sequence_owner'] for entry, _ in sources
+                       if entry['kind'] == 'sequence' and '_sequence_owner' in entry}
+    presentations = {}
+    if sequence_owners:
+        rows = await session.execute(
+            select(NodeRevision.node_id, SourceRecord.data)
+            .join(SourceRecord, SourceRecord.id == NodeRevision.source_record_id)
+            .where(NodeRevision.node_id.in_(sequence_owners), NodeRevision.release_id == release_id,
+                   SourceRecord.release_id == release_id)
+            .order_by(NodeRevision.revision.desc()))
+        for owner, raw in rows:
+            if owner not in presentations and isinstance(raw, dict):
+                presentations[owner] = flow_presentation(raw)
+    sequence_media = await runtime_service.sequence_playback(
+        session, [], release_id, {owner: value['sha256'] for owner, value in presentations.items()}) if presentations else {}
     events = []
     for entry, target_id in sources:
+        owner = entry.pop('_sequence_owner', None)
+        cue_path = entry.pop('_sequence_cue_path', None)
+        if entry['kind'] == 'sequence' and owner in sequence_media:
+            media = sequence_media[owner]
+            asset = entry.get('engine_path')
+            cues = [cue for cue in presentations[owner]['cues'] if cue['kind'] == 'sequence'
+                    and cue['asset'] == asset and (cue_path is None or cue.get('source_path') == cue_path)]
+            asset_bindings = media.get('sequence_assets')
+            bindings = [item for item in (asset_bindings if isinstance(asset_bindings, list) else []) if isinstance(item, dict)
+                        and item.get('asset') == asset and isinstance(item.get('scenes'), list)
+                        and item['scenes'] and all(isinstance(scene, str) and scene for scene in item['scenes'])]
+            media_scenes = media.get('scenes')
+            source_scenes = [scene['source'] for scene in (media_scenes if isinstance(media_scenes, list) else [])
+                             if isinstance(scene, dict) and isinstance(scene.get('source'), str) and scene['source']]
+            all_cues = [cue for cue in presentations[owner]['cues'] if cue['kind'] == 'sequence']
+            if not bindings and len(all_cues) == 1 and len(cues) == 1 and len(source_scenes) == 1:
+                bindings = [{'asset': asset, 'scenes': source_scenes}]
+            if len(cues) == 1 and len(bindings) == 1:
+                scenes = set(bindings[0]['scenes'])
+                entry['sequence_media'] = {**media, 'sequence_assets': bindings,
+                    'sections': [section for section in media['sections'] if section.get('scene_source') in scenes],
+                    'scenes': [scene for scene in (media_scenes if isinstance(media_scenes, list) else [])
+                               if isinstance(scene, dict) and scene.get('source') in scenes]}
+            elif cues or entry.get('story_block_id'):
+                composition = media.get('composition') or {'schema_version': 1, 'reasons': []}
+                entry['sequence_media'] = {**media, 'sequence_assets': [], 'sections': [], 'scenes': [],
+                    'composition': {**composition, 'state': 'unsupported',
+                                    'reasons': [*composition.get('reasons', []), {'code': 'scene_binding_unavailable'}]}}
+        elif entry['kind'] == 'sequence' and entry.get('story_block_id'):
+            # Runtime actions are sourced from quest/level nodes, not a flow
+            # state. Asset equality alone does not prove a flow ownership link.
+            entry['sequence_media'] = {'schema_version': 1, 'complete_video': False, 'sections': [],
+                'composition': {'schema_version': 1, 'state': 'unsupported',
+                                'reasons': [{'code': 'flow_owner_unavailable'}]}}
         if entry["kind"] == "cutscene":
             entry["playback"] = flows.get(target_id)
             entry["transcript_states"] = sorted(set(transcript_states[target_id]))
