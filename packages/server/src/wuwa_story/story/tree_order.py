@@ -14,6 +14,7 @@ from wuwa_story.ingestion.level_interactions import verified_interactions
 from wuwa_story.ingestion.quest_tree_order import records_match
 from wuwa_story.story.media import media_links
 from wuwa_story.story.runtime_blocks import dungeon_requirement, project_blocks
+from wuwa_story.story.review_order import quest_review_order
 
 
 def flow_positions(quest_nodes: list[dict], quest_records: dict[int, dict],
@@ -59,7 +60,7 @@ def flow_positions(quest_nodes: list[dict], quest_records: dict[int, dict],
     return sorted(found.items(), key=lambda item: (item[1], item[0]))
 
 
-async def authored_order(session, quest_id: int, release_id: int | None):
+async def _authored_tree_order(session, quest_id: int, release_id: int | None):
     """Resolve full order, or independently verified encounters without quest positions."""
     if release_id is None:
         return None
@@ -97,7 +98,8 @@ async def authored_order(session, quest_id: int, release_id: int | None):
             if matched:
                 quest_tree = tree
                 quest_nodes = [{**node, 'path': []} for node in matched]
-                qrecords = {node['id']: qrecords[node['id']] for node in matched}
+                qrecords = {node['id']: qrecords[node['id']]
+                            for node in matched}
                 break
     if quest_tree is None:
         return None
@@ -122,7 +124,8 @@ async def authored_order(session, quest_id: int, release_id: int | None):
                 if isinstance(record.get('Condition'), dict)
                 and isinstance(record['Condition'].get('Condition'), dict)
                 and record['Condition']['Condition'].get('IsExitDungeon') is True} - {None}
-    exit_ids -= {membership['dungeon_id'] for membership in dungeon_memberships.values()}
+    exit_ids -= {membership['dungeon_id']
+                 for membership in dungeon_memberships.values()}
     dungeon_instances = {}
     if exit_ids:
         instance_rows = await session.execute(select(SourceRecord.row_index, SourceRecord.data,
@@ -195,7 +198,8 @@ async def authored_order(session, quest_id: int, release_id: int | None):
                             client={'asset_version': quest_tree.asset_version,
                                     'download_id': quest_tree.download_id})
     if related:
-        blocks = [block for block in blocks if block.get('encounter', {}).get('trees') or block.get('transition')]
+        blocks = [block for block in blocks if block.get(
+            'encounter', {}).get('trees') or block.get('transition')]
         if not blocks:
             return None
         source_rows = await session.execute(select(SourceRecord.id, SourceRecord.row_index,
@@ -211,7 +215,8 @@ async def authored_order(session, quest_id: int, release_id: int | None):
                          flow_states=[], media=[], interactions=[])
             block['source'].update(sources[block['source']['key']])
             if block.get('transition'):
-                block['transition']['source'].update(sources[block['source']['key']])
+                block['transition']['source'].update(
+                    sources[block['source']['key']])
             encounter = block.get('encounter')
             if not encounter:
                 continue
@@ -275,3 +280,50 @@ async def authored_order(session, quest_id: int, release_id: int | None):
     return {'state_ids': ordered, 'asset_version': quest_tree.asset_version,
             'mapped_flow_states': [key for key, _ in positions],
             'positions': all_positions, 'blocks': blocks}
+
+
+async def authored_order(session, quest_id: int, release_id: int | None):
+    tree = await _authored_tree_order(session, quest_id, release_id)
+    if tree and tree.get('ordering') != 'related':
+        return tree
+    review = await quest_review_order(session, quest_id, release_id)
+    if review is None:
+        return tree
+    # Archive slots span dungeon trees even when client binaries differ from
+    # the snapshot. They must not become verified runtime positions.
+    result = {**(tree or {'asset_version': None, 'positions': {}, 'mapped_flow_states': [], 'blocks': []}),
+              'ordering': 'review', 'review_positions': review['positions'],
+              'review_source': review['source']}
+    result['state_ids'] = list(dict.fromkeys(
+        [*review['state_ids'], *(tree or {}).get('state_ids', [])]))
+    actions = list(await session.execute(select(QuestAction.node_id, QuestAction.quest_state_node_id,
+                                                QuestAction.action_index).where(QuestAction.quest_state_node_id.in_(review['state_ids']))))
+    memberships = set(await source_parents(session, {a for a, _, _ in actions}, ('contains_action',), release_id))
+    movies = await media_links(session, [a for a, s, _ in actions if (a, s) in memberships], ('plays_cutscene',), release_id)
+    subtitles = await media_links(session, list({link['node_id'] for links in movies.values() for link in links}),
+                                  ('has_transcript_state',), release_id)
+    state_keys = dict((await session.execute(select(QuestState.node_id, QuestState.state_key).where(
+        QuestState.node_id.in_(review['state_ids'])))).all())
+    captions = {}
+    for action, state, index in actions:
+        position = review['positions'].get(state_keys.get(state))
+        if position is None:
+            continue
+        for movie in movies.get(action, []):
+            for caption in subtitles.get(movie['node_id'], []):
+                captions.setdefault(caption['node_id'], set()).add(
+                    (*position, index, 0))
+    if captions:
+        caption_keys = dict((await session.execute(select(QuestState.node_id, QuestState.state_key).where(
+            QuestState.node_id.in_(captions)))).all())
+        state_keys.update(caption_keys)
+        for identity, positions in captions.items():
+            if len(positions) == 1 and identity in caption_keys:
+                result['review_positions'].setdefault(
+                    caption_keys[identity], next(iter(positions)))
+                if identity not in result['state_ids']:
+                    result['state_ids'].append(identity)
+    # Caption states belong beside their movie, not at the end of the query.
+    result['state_ids'].sort(key=lambda identity: result['review_positions'].get(
+        state_keys.get(identity), (10**9,)))
+    return result

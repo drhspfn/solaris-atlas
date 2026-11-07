@@ -31,6 +31,7 @@ from wuwa_story.story.cutscene_occurrences import group_cutscene_occurrences
 from wuwa_story.story.cutscene_publications import publication_order, publication_types
 from wuwa_story.story.service import _quest_page_state_ids
 from wuwa_story.story.tree_order import authored_order
+from wuwa_story.story.scene_continuations import scene_continuations
 
 router = APIRouter(tags=["story browsing"])
 
@@ -321,6 +322,10 @@ async def quest_media(
             position = (tree_order or {}).get('positions', {}).get(state.state_key)
             if position:
                 entry['story_position'] = [*position, action.action_index, -1]
+            review_position = (tree_order or {}).get('review_positions', {}).get(state.state_key)
+            if review_position is not None:
+                entry['review_position'] = [*review_position, action.action_index, -1]
+                entry['review_order_source'] = tree_order['review_source']
             sources.append((entry, link['node_id']))
     for block, ref in runtime_refs:
         entry = {
@@ -386,6 +391,7 @@ async def quest_media(
     package_scenes = await _links(session, [quest.node_id], ("references_packaged_cutscene",), release_id)
     related = {link["node_id"]: link for link in package_scenes.get(quest.node_id, [])}
     package_flows = await cutscene_flows(session, list(related)) if related else {}
+    continuations = await scene_continuations(session, list(related), quest.node_id, release_id, locale)
     return group_cutscene_occurrences({
         "quest": f"quest:{game_quest_id}",
         "game_version": (await session.get(GameRelease, release_id)).game_version,
@@ -394,6 +400,7 @@ async def quest_media(
         "related_cutscenes": [{"name": link["canonical_key"].removeprefix("cutscene:"),
                                "playable": node_id in package_flows,
                                "playback": package_flows.get(node_id),
+                               "continuations": continuations.get(node_id, []),
                                "context_inferred": True}
                               for node_id, link in related.items()
                               if not any(event['reference'] == link['canonical_key'] for event in events)],

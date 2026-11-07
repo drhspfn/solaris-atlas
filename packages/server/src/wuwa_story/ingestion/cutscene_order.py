@@ -9,11 +9,13 @@ from wuwa_story.db.models.core import (
     CutsceneStoryOrder,
     QuestAction,
     QuestNode,
+    QuestState,
 )
 from wuwa_story.db.models.graph import NodeRevision
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.repositories import cutscenes
 from wuwa_story.story.domain import authored_order
+from wuwa_story.story.review_order import SOURCE as REVIEW, review_positions
 
 QUESTS = "BinData/QuestData/questdata.json"
 TREE = "BinData/QuestTree/questtreenode.json"
@@ -54,21 +56,28 @@ async def project(session, release_id):
     records = list(await session.execute(
         select(SourceFile.logical_source_path, SourceRecord.data)
         .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
-        .where(SourceRecord.release_id == release_id, SourceFile.logical_source_path.in_((QUESTS, TREE)))
+        .where(SourceRecord.release_id == release_id, SourceFile.release_id == release_id,
+               SourceFile.logical_source_path.in_((QUESTS, TREE, REVIEW)))
         .order_by(SourceFile.logical_source_path, SourceRecord.row_index)
     ))
     quests = [data for path, data in records if path == QUESTS]
     tree = [data for path, data in records if path == TREE]
     ranks = quest_order(quests, tree)
+    review_rows = defaultdict(list)
+    for path, data in records:
+        if path == REVIEW and type(data.get('QuestId')) is int:
+            review_rows[data['QuestId']].append(data.get('Data'))
+    reviews = {identity: review_positions(values[0]) for identity, values in review_rows.items() if len(values) == 1}
     scenes = list(await session.execute(cutscenes.scene_query(release_id, playable=False)))
     owners = await cutscenes.owners(session, [scene.node_id for scene in scenes], release_id)
     movies = await cutscenes.source_parents(session, [scene.node_id for scene in scenes],
                                            ("plays_cutscene",), release_id)
-    actions = {action: (state, index) for action, state, index in await session.execute(
-        select(QuestAction.node_id, QuestAction.quest_state_node_id, QuestAction.action_index)
+    actions = {action: (state, index, key) for action, state, index, key in await session.execute(
+        select(QuestAction.node_id, QuestAction.quest_state_node_id, QuestAction.action_index, QuestState.state_key)
+        .join(QuestState, QuestState.node_id == QuestAction.quest_state_node_id)
         .where(QuestAction.node_id.in_([action for _, action in movies]))
     )} if movies else {}
-    refs = await cutscenes.source_parents(session, {state for state, _ in actions.values()},
+    refs = await cutscenes.source_parents(session, {state for state, _, _ in actions.values()},
                                           ("references_flow_state",), release_id)
     nodes = {node: (quest, row) for node, quest, row in await session.execute(
         select(QuestNode.node_id, QuestNode.game_quest_id, SourceRecord.row_index)
@@ -80,15 +89,21 @@ async def project(session, release_id):
     for scene_id, action in movies:
         if action not in actions:
             continue
-        state, action_index = actions[action]
+        state, action_index, _ = actions[action]
         for target, owner in refs:
             if target == state and owner in nodes and nodes[owner][1] is not None:
                 quest_id, row = nodes[owner]
                 positions[(scene_id, quest_id)].append((row, action_index))
     ranked = defaultdict(list)
+    scene_actions = defaultdict(list)
+    for scene_id, action in movies:
+        if action in actions:
+            scene_actions[scene_id].append(actions[action])
     for scene_id, quest, _, inferred in owners:
         if quest.game_quest_id in ranks:
-            position = max(positions.get((scene_id, quest.game_quest_id), [(-1, -1)]))
+            review = reviews.get(quest.game_quest_id, {})
+            review_points = [(*review[key], index) for _, index, key in scene_actions[scene_id] if key in review]
+            position = max(review_points or positions.get((scene_id, quest.game_quest_id), [(-1, -1)]))
             ranked[scene_id].append((ranks[quest.game_quest_id], inferred, position))
     values = []
     for scene in scenes:

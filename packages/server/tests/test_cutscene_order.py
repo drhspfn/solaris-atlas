@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -6,6 +7,29 @@ from fastapi import HTTPException
 from wuwa_story.api.pagination import cursor_page, cursor_scope, decode_cursor, encode_cursor
 from wuwa_story.api.routes.cutscenes import catalog
 from wuwa_story.ingestion.cutscene_order import quest_order
+
+
+@pytest.mark.asyncio
+async def test_catalog_uses_archive_sequence_for_nested_scenes_instead_of_source_row_order(monkeypatch):
+    from wuwa_story.ingestion import cutscene_order as module
+    from wuwa_story.story.review_order import SOURCE
+    quest = SimpleNamespace(game_quest_id=100)
+    session = SimpleNamespace(execute=AsyncMock(side_effect=[
+        [(module.QUESTS, {'QuestId': 100, 'Data': {'ChapterId': 1}}),
+         (SOURCE, {'QuestId': 100, 'Data': [
+             {'Flow': {'FlowListName': 'Story', 'FlowId': 1, 'StateId': 99}},
+             {'Flow': {'FlowListName': 'Story', 'FlowId': 1, 'StateId': 1}}]})],
+        [SimpleNamespace(node_id=5, cg_name='M0385'),
+         SimpleNamespace(node_id=6, cg_name='M0390')],
+        [(50, 500, 1, 'Story_1_99'), (60, 600, 1, 'Story_1_1')],
+    ]))
+    monkeypatch.setattr(module.cutscenes, 'owners', AsyncMock(
+        return_value=[(5, quest, '', True), (6, quest, '', True)]))
+    monkeypatch.setattr(module.cutscenes, 'source_parents',
+                        AsyncMock(side_effect=[[(5, 50), (6, 60)], []]))
+    result = await module.project(session, 21)
+    assert [row['cutscene_node_id'] for row in result] == [5, 6]
+    assert [row['sort_index'] for row in result] == [0, 1]
 
 
 def test_story_order_uses_chapters_and_authored_links_not_quest_ids():

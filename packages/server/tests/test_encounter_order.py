@@ -301,7 +301,7 @@ async def test_loader_pins_release_and_download_and_does_not_rank_dungeon_states
 
 @pytest.mark.asyncio
 async def test_legacy_import_without_client_tree_does_not_guess_sibling_order():
-    session = SimpleNamespace(scalars=AsyncMock(return_value=[]))
+    session = SimpleNamespace(scalars=AsyncMock(return_value=[]), execute=AsyncMock(return_value=[]))
     assert await tree_order.authored_order(session, 114000031, 1) is None
     session.scalars.assert_awaited_once()
 
