@@ -118,4 +118,3 @@ test('inline conversation fetches state-scoped dialogue in pages of 20 with norm
   assert(tree.some(node => node.type === 'p' && node.props.children === 'Line 25'));
   assert(!JSON.stringify(tree).includes('TECHNICAL_FLOW_'));
 });
-
