@@ -57,7 +57,8 @@ def test_selects_authored_gender_state_with_verified_ids(tmp_path, rover):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("renditions", [0, 1, 2])
-async def test_render_requires_one_authored_rendition_and_preserves_source_evidence(tmp_path, monkeypatch, renditions):
+@pytest.mark.parametrize("initial_state", [False, True])
+async def test_render_requires_one_authored_rendition_and_preserves_source_evidence(tmp_path, monkeypatch, renditions, initial_state):
     bank = tmp_path / "play_scene.bnk"
     bank.write_bytes(b"bank")
     init = tmp_path / "Init.bnk"
@@ -72,6 +73,10 @@ async def test_render_requires_one_authored_rendition_and_preserves_source_evide
     monkeypatch.setattr(wwise_banks, "tool_path", lambda _: renderer)
     from wuwa_story_worker import cutscene_import
     monkeypatch.setattr(cutscene_import, "soundtrack_wem", lambda *_: wem)
+    if initial_state:
+        monkeypatch.setattr(wwise_banks, 'event_timeline', lambda *_: {
+            'actions': [{'kind': 'SetState', 'time_ms': 0, 'state_group_id': 30, 'state_id': 31},
+                        {'kind': 'Play', 'time_ms': 0, 'target_id': 10}]})
     commands = []
 
     async def run(args, timeout):
@@ -98,8 +103,11 @@ async def test_render_requires_one_authored_rendition_and_preserves_source_evide
         output, evidence = await wwise_banks.render_bank(bank, tmp_path, tmp_path / "work", tmp_path / "decoder", "female", run)
         assert output.is_file() and bank in evidence and init in evidence and wem in evidence
         assert any(path.suffix == ".txtp" for path in evidence)
-        assert commands[1][commands[1].index("-gf") + 1] == str(wwise_banks.event_id("play_scene"))
-        assert "-gwd" in commands[1] and "-gra" in commands[1]
+        command = next(command for command in commands if "-gf" in command)
+        assert command[command.index("-gf") + 1] == str(wwise_banks.event_id("play_scene"))
+        assert "-gwd" in command and "-gra" in command
+        if initial_state:
+            assert '(30=31)' in command
 
 
 @pytest.mark.asyncio

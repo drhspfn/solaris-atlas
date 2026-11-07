@@ -336,6 +336,38 @@ def validate_event_timeline(timeline: dict, xml: Path | None = None) -> list[str
     return sorted(f'({group}={value})' for group, value in bindings.items())
 
 
+def initial_parameters(timeline, bank_xml, init_xml):
+    """Retain startup side effects even when this closed audio graph does not consume them."""
+    actions = timeline['actions']
+    if any(a['kind'] not in {'SetState', 'Play', 'PlayEvent'} for a in actions):
+        raise ValueError('Event requires a shared running control timeline')
+    try:
+        return validate_event_timeline(timeline, bank_xml)
+    except ValueError:
+        states = [a for a in actions if a['kind'] == 'SetState']
+        plays = [i for i, a in enumerate(actions) if a['kind'] == 'Play']
+        if (not states or not plays or any(a['time_ms'] != 0 for a in states)
+                or any(i >= min(plays) for i, a in enumerate(actions) if a['kind'] == 'SetState')):
+            raise
+        bindings = {}
+        for state in states:
+            group, value = state['state_group_id'], state['state_id']
+            if group in bindings and bindings[group] != value:
+                raise ValueError('Conflicting initial audio states') from None
+            # STMG defines global state identities; only HIRC audio/bus nodes
+            # consume them. An unconsumed state may still affect other events.
+            for path in (bank_xml, init_xml):
+                for node in ET.parse(path).iter('object'):
+                    if (node.find("field[@name='ulID']") is not None
+                            and node.get('name', '').startswith('CAk')
+                            and not node.get('name', '').startswith(('CAkAction', 'CAkEvent'))
+                            and node.find(f".//field[@value='{group}']") is not None):
+                        raise ValueError('Initial State has an unsupported native audio consumer') from None
+            bindings[group] = value
+        return sorted(f'({group}={value})' for group, value in bindings.items())
+
+
+
 async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover, run_tool, *, language: str | None = None):
     """Return (decoded WAV, durable evidence) for exactly one authored event."""
     from wuwa_story_worker.cutscene_import import soundtrack_wem
@@ -372,7 +404,15 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
     timeline = event_timeline(xml, event_id(bank.stem))
     controls = root / 'event-timeline.json'
     controls.write_text(json.dumps(timeline, indent=2), encoding='utf-8')
-    state_params = validate_event_timeline(timeline, xml)
+    try:
+        state_params = validate_event_timeline(timeline, xml)
+    except ValueError:
+        if len(initializers) != 1:
+            raise
+        init_xml = root / 'init.xml'
+        await run_tool([sys.executable, str(renderer), '-d', 'xml', '-dn',
+                        str(root / 'init'), '--', str(root / 'Init.bnk')], 120)
+        state_params = initial_parameters(timeline, xml, init_xml)
     params = await asyncio.to_thread(rover_parameters, xml, rover, language=language)
     for param in state_params:
         if any(other.split('=')[0] == param.split('=')[0] and other != param for other in params):
