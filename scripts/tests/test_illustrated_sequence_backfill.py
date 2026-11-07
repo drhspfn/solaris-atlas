@@ -62,6 +62,20 @@ def test_legacy_spine_sequence_requires_full_source():
     assert script.check_sources([row], [ref], client, [target])[0] == 'target_has_no_revision_5_invalidation'
 
 
+def test_fresh_client_requires_explicit_distinct_source_and_never_reuses_bundle():
+    client, row, target, ref = sample()
+    ref.metadata_json['game_source'].update(download_id='a' * 64, asset_version='3.7.0')
+    replacement = {**client, 'download_id': 'b' * 64}
+    assert script.check_sources([row], [ref], replacement, [target])[0] == 'workspace_source_mismatch'
+    assert script.check_sources([row], [ref], replacement, [target], fresh_client=True) == (
+        None, 'full_source_required', [])
+    ref.metadata_json['game_source']['presentation_sha256'] = 'c' * 64
+    assert script.check_sources([row], [ref], replacement, [target], fresh_client=True)[0] == 'presentation_source_mismatch'
+    ref.metadata_json['game_source'].update(download_id='b' * 64, asset_version='3.7.1')
+    assert script.check_sources([row], [ref], replacement, [target], fresh_client=True)[0] == 'fresh_client_requires_distinct_audited_source'
+    assert script.check_sources([row], [], replacement, [target], fresh_client=True)[0] == 'audit_reference_changed'
+
+
 @pytest.mark.parametrize('status', ['pending', 'queued', 'running', 'waiting_dependency',
                                      'completed', 'partial', 'failed', 'enqueue_failed', 'cancelled'])
 def test_never_republishes_an_existing_run(status):

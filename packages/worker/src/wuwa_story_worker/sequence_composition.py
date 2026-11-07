@@ -172,6 +172,8 @@ def _plans(archive, manifest):
     if len(exports) != 1:
         raise UnsupportedComposition('Prefab asset is missing or ambiguous')
     layout = prefab_layout(exports[0])
+    if 'Loop' in layout['sequences']:
+        raise UnsupportedComposition('Looping UI property sequences need timed composition playback')
     actors = copy.deepcopy(layout['actors'])
     actions = [(first, 'Start')]
     for event, call in calls[1:-1]:

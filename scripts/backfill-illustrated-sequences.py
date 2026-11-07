@@ -49,7 +49,7 @@ def audit_scope(audit, release_id, entity=None):
     return dict(sorted(grouped.items()))
 
 
-def check_sources(rows, refs, client, targets, extraction_tools=None):
+def check_sources(rows, refs, client, targets, extraction_tools=None, fresh_client=False):
     """Validate audited identities; return source mode and retained bundle IDs."""
     by_id = {r.id: r for r in refs}
     retained = []
@@ -61,8 +61,16 @@ def check_sources(rows, refs, client, targets, extraction_tools=None):
                 or ref.reference_type != row['reference_type']):
             return 'audit_reference_changed', None, []
         source = (ref.metadata_json or {}).get('game_source') or {}
-        if any(source.get(k) != client.get(k) for k in ('download_id', 'asset_version', 'tier')):
+        differs = any(source.get(k) != client.get(k) for k in ('download_id', 'asset_version', 'tier'))
+        if differs and not fresh_client:
             return 'workspace_source_mismatch', None, []
+        # A different download makes the worker's source identity reject the
+        # audited old bundle; same-client rebuilds require a different path.
+        if fresh_client and (not differs or source.get('download_id') == client.get('download_id')
+                or not isinstance(source.get('download_id'), str)
+                or len(source['download_id']) != 64 or not source.get('asset_version')
+                or source.get('tier') not in ('sd', 'hd', 'uhd')):
+            return 'fresh_client_requires_distinct_audited_source', None, []
         matching = [t for t in targets if t.get('owner') == ref.owner_node_id
                     and t.get('path') == ref.source_path and t.get('reference_type') == ref.reference_type]
         if len(matching) != 1:
@@ -77,7 +85,7 @@ def check_sources(rows, refs, client, targets, extraction_tools=None):
         revision = source.get('sequence_metadata_revision') or 0
         if not isinstance(revision, int) or revision < 0 or revision >= EXPECTED_REVISION:
             return 'source_revision_not_eligible', None, []
-        if revision < 4:
+        if fresh_client or revision < 4:
             full_source_required = True
             continue
         files = source.get('source_files') or []
@@ -128,9 +136,11 @@ async def main(args):
     audit_bytes = args.audit.read_bytes()
     scope = audit_scope(json.loads(audit_bytes), args.release_id, args.entity)
     identity = {'audit_sha256': hashlib.sha256(audit_bytes).hexdigest(), 'release_id': args.release_id,
-                'workspace_id': args.workspace_id, 'revision': EXPECTED_REVISION}
+                'workspace_id': args.workspace_id, 'revision': EXPECTED_REVISION,
+                'fresh_client': args.fresh_client}
     checkpoint = json.loads(args.checkpoint.read_text(encoding='utf-8')) if args.checkpoint.exists() else {
         'identity': identity, 'entries': {}}
+    checkpoint.get('identity', {}).setdefault('fresh_client', False)
     if checkpoint.get('identity') != identity:
         raise ValueError(
             'Checkpoint audit/release/workspace/revision differs; use a separate checkpoint')
@@ -186,8 +196,29 @@ async def main(args):
                     targets = await entity_media_targets(session, request)
                     refs = list(await session.scalars(select(FileReference).where(
                         FileReference.id.in_(result['audit_reference_ids']))))
-                    reason, source_mode, retained_ids = check_sources(scope[owner], refs, client, targets, extraction_tools)
+                    reason, source_mode, retained_ids = check_sources(
+                        scope[owner], refs, client, targets, extraction_tools, args.fresh_client)
                     result['source_mode'] = source_mode
+                    if args.fresh_client:
+                        result['source_transition'] = [{
+                            'reference_id': ref.id,
+                            'from_asset_version': ((ref.metadata_json or {}).get('game_source') or {}).get('asset_version'),
+                            'from_download_id': ((ref.metadata_json or {}).get('game_source') or {}).get('download_id'),
+                            'to_asset_version': client['asset_version'], 'to_download_id': client['download_id'],
+                        } for ref in refs]
+                    if not reason and args.fresh_client:
+                        # missing_media_targets may reuse an existing matching reference
+                        # across releases; do not label that path a fresh extraction.
+                        paths = {t['path'] for t in targets if t.get('kind') == 'spine'}
+                        existing = list(await session.scalars(select(FileReference).where(
+                            FileReference.owner_node_id == refs[0].owner_node_id,
+                            FileReference.source_path.in_(paths),
+                            FileReference.metadata_json['game_source']['download_id'].as_string() == client['download_id'],
+                            FileReference.metadata_json['game_source']['asset_version'].as_string() == client['asset_version'],
+                            FileReference.metadata_json['game_source']['tier'].as_string() == client['tier'])))
+                        if existing:
+                            reason = 'new_client_reference_exists_review_before_fresh_import'
+                            result['existing_new_client_reference_ids'] = [ref.id for ref in existing]
                     if not reason:
                         result['retained_reference_ids'] = retained_ids
                         result['full_source_reference_ids'] = [ref.id for ref in refs if ref.id not in retained_ids]
@@ -276,6 +307,8 @@ if __name__ == '__main__':
     parser.add_argument('--limit', type=int, default=1,
                         choices=range(1, 51), metavar='1..50')
     parser.add_argument('--entity')
+    parser.add_argument('--fresh-client', action='store_true',
+                        help='Explicitly import audited older-client scenes from the selected new client')
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--checkpoint', type=Path, required=True)
     parser.add_argument('--apply', action='store_true')

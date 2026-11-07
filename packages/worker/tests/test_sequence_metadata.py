@@ -122,7 +122,8 @@ def test_revision_five_rebuilds_composition_from_retained_verified_bundle(tmp_pa
 @pytest.mark.parametrize('revision', [None, 2, 3, 4, 5])
 @pytest.mark.parametrize('extractor_changed', [False, True])
 @pytest.mark.parametrize('target_revision', [2, 4, 5])
-async def test_retained_lookup_downloads_only_stale_exact_source_revision(tmp_path, revision, extractor_changed, target_revision):
+@pytest.mark.parametrize('retryable', [False, True])
+async def test_retained_lookup_downloads_only_stale_exact_source_revision(tmp_path, revision, extractor_changed, target_revision, retryable):
     from wuwa_story_worker.sequence_metadata import retained_bundle
 
     path, target, _, _ = retained(tmp_path)
@@ -133,7 +134,10 @@ async def test_retained_lookup_downloads_only_stale_exact_source_revision(tmp_pa
              'source_files': [{'package_path': 'Client/Content/Aki/Scene.uasset', 'sha256': 'a' * 64}],
              'tools': {'WUWA_FMODEL_PATH': 'a' * 64}}
     session = AsyncMock()
-    session.execute.return_value = [({'game_source': proof}, 'retained-object')]
+    metadata = {'game_source': proof}
+    if retryable:
+        metadata['sequence_media'] = {'composition': {'state': 'failed', 'reasons': [{'code': 'render_failed'}]}}
+    session.execute.return_value = [(metadata, 'retained-object')]
     calls = []
 
     async def get(key):
@@ -145,7 +149,7 @@ async def test_retained_lookup_downloads_only_stale_exact_source_revision(tmp_pa
                                    {'asset_version': '3.7.1', 'download_id': 'a' * 64,
                                     'tools': {'WUWA_FMODEL_PATH': ('b' if extractor_changed else 'a') * 64,
                                               'WUWA_VGMSTREAM_PATH': 'c' * 64, 'WUWA_WWISER_PATH': 'd' * 64}})
-    expected = (not extractor_changed and (revision or 0) < target_revision
+    expected = (not extractor_changed and ((revision or 0) < target_revision or retryable)
                 and (target_revision < 4 or (revision or 0) >= 4))
     assert bool(result) is expected
     assert calls == (['retained-object'] if expected else [])
