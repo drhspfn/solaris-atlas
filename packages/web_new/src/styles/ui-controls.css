@@ -52,3 +52,12 @@
 
 .ui-tabs-full-width { width: 100%; }
 .ui-tabs-full-width > .ui-tab { flex: 1 1 0; min-width: 0; }
+.ui-copyable { display:flex; align-items:stretch; gap:8px; min-width:0; position:relative; }
+.ui-copyable .ui-input { flex:1; width:100%; }
+.ui-copyable-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:0 16px; min-height:44px; border:1px solid var(--accent-mint); border-radius:var(--radius-sm); background:var(--accent-mint); color:var(--bg-root); font:inherit; font-weight:600; cursor:pointer; }
+.ui-copyable-button:hover:not(:disabled) { background:var(--accent-mint-strong); }
+.ui-copyable-button:focus-visible { outline:2px solid var(--accent-mint-strong); outline-offset:2px; }
+.ui-copyable-button:disabled { opacity:.45; cursor:default; }
+.ui-copyable-status { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+@media (max-width:480px) { .ui-copyable-button { padding:0 12px; } }
+.ui-copyable-error { position:absolute; top:100%; left:0; color:var(--danger, #ef9b9b); font-size:12px; margin-top:4px; }

@@ -1,0 +1,32 @@
+.mcp-page { max-width: 1120px; padding-top: 36px; padding-bottom: 96px; }
+.mcp-breadcrumb { display:flex; gap:12px; color:var(--text-muted); font-size:13px; margin-bottom:44px; }
+.mcp-breadcrumb a,.mcp-return { color:var(--accent-mint); text-decoration:none; }
+.mcp-hero { padding-bottom:40px; border-bottom:1px solid var(--border-default); }
+.mcp-eyebrow { color:var(--accent-mint); font-size:11px; font-weight:700; letter-spacing:.14em; }
+.mcp-hero-heading { display:flex; align-items:center; justify-content:space-between; gap:32px; }
+.mcp-hero h1 { font-size:clamp(38px,5vw,64px); letter-spacing:-.045em; line-height:1.08; margin:20px 0; }
+.mcp-hero h1 span { color:var(--accent-mint); }
+.mcp-hero p { max-width:680px; font-size:18px; line-height:1.7; color:var(--text-secondary); margin:0; }
+.mcp-hero-mark { display:grid; place-items:center; width:120px; height:120px; flex:none; border:1px solid var(--border-default); border-radius:50%; color:var(--accent-mint); background:var(--surface-1); }
+.mcp-hero-tags { display:flex; flex-wrap:wrap; gap:10px; margin-top:28px; }
+.mcp-hero-tags span { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--border-default); border-radius:999px; padding:7px 12px; color:var(--text-secondary); font-size:12px; }
+.mcp-hero-tags .mcp-dot { border:0; padding:0; width:7px; height:7px; background:var(--accent-mint); }
+.mcp-panel { border:1px solid var(--border-default); border-radius:var(--radius-lg); background:var(--surface-1); padding:28px; margin-top:32px; }
+.mcp-section-heading { display:flex; gap:16px; align-items:center; }
+.mcp-icon { display:grid; place-items:center; width:44px; height:44px; border:1px solid var(--border-default); border-radius:10px; color:var(--accent-mint); flex:none; }
+.mcp-section-heading h2 { margin:4px 0 0; font-size:23px; }
+.mcp-panel > p,.mcp-tools > p { color:var(--text-secondary); line-height:1.7; margin:20px 0; }
+.mcp-connect label { display:block; margin:24px 0 10px; font-size:13px; font-weight:600; }
+.mcp-connect label span { color:var(--text-muted); font-weight:400; }
+.mcp-connect .ui-input { font-family:monospace; font-size:14px; }
+.mcp-panel .mcp-note { margin:10px 0 0; font-size:13px; color:var(--text-muted); }
+.mcp-tools { margin-top:64px; }
+.mcp-tool-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:24px; }
+.mcp-tool { padding:20px; border:1px solid var(--border-default); border-radius:var(--radius-md); background:var(--surface-1); }
+.mcp-tool-title { display:flex; justify-content:space-between; align-items:center; gap:12px; color:var(--accent-mint); }
+.mcp-tool-title code { overflow-wrap:anywhere; font-size:14px; }
+.mcp-tool p { color:var(--text-secondary); line-height:1.6; font-size:14px; margin:12px 0 0; }
+.mcp-clients { margin-top:64px; }
+.mcp-return { display:inline-flex; align-items:center; gap:10px; font-size:14px; font-weight:600; }
+.mcp-return:hover,.mcp-breadcrumb a:hover { text-decoration:underline; }
+@media(max-width:700px) { .mcp-page { padding-top:24px; padding-bottom:64px; } .mcp-breadcrumb { margin-bottom:32px; } .mcp-hero-mark { display:none; } .mcp-panel { padding:20px; } .mcp-tool-grid { grid-template-columns:1fr; } .mcp-tools,.mcp-clients { margin-top:48px; } }
