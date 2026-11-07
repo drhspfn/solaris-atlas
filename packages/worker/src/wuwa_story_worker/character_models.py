@@ -31,7 +31,7 @@ from wuwa_story_worker.linked_component_forms import (
     prepare_linked_component,
     prepare_linked_components,
 )
-from wuwa_story_worker.media_provenance import sha256, temporary_entity_workspace
+from wuwa_story_worker.media_provenance import prepare_entity_workspace, sha256, temporary_entity_workspace
 from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.model_animation_merge import merge_animation_glbs
 from wuwa_story_worker.model_facial import validate_facial_pack
@@ -897,6 +897,8 @@ async def build_scene_bundles(staging, forms, *, include_animations=True, **opti
     for form in forms:
         root = staging / form["id"]
         root.mkdir()
+        if options.get("local_client") is None:
+            prepare_entity_workspace(staging, root)
         output, summaries, provenance = await build_bundle(
             root, form, include_animations=include_animations, **options)
         provenance["form_source"] = form.get("source")
@@ -915,6 +917,8 @@ async def build_scene_bundles(staging, forms, *, include_animations=True, **opti
                           "order": len(children), "component": relation}
             child_root = staging / component_id
             child_root.mkdir()
+            if options.get("local_client") is None:
+                prepare_entity_workspace(staging, child_root)
             # Static props have no synthetic animation pack. Independent child rigs
             # export only their own authored animation blueprint/sequence resources.
             animated = include_animations and bool(recipe.get("blueprints") or recipe.get("montages"))
