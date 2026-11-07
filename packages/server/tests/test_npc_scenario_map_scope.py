@@ -87,3 +87,21 @@ def test_unnamed_mixed_template_without_map_proof_is_not_selected(candidates):
     for _, data in candidates:
         data["instances"][0]["name"] = None
     assert edges(candidates, {}) == []
+
+
+@pytest.mark.parametrize("maps", [{STATE: {906}}, {STATE: {909, 906}}])
+def test_unique_entity_cannot_override_conflicting_authored_map(maps):
+    only = [npc("character:npc:2595", "player", 909, "Abby")]
+    result = list(scenario_actor_edges(
+        only, [flow()], "3.7", {ENTITY: {"player"}},
+        placement_blueprints={(909, ENTITY): {"player"}}, flow_maps=maps,
+    ))
+    assert result == []
+
+
+def test_unique_entity_without_map_keeps_existing_source_backed_fallback():
+    only = [npc("character:npc:2595", "player", 909, "Abby")]
+    result = list(scenario_actor_edges(only, [flow()], "3.7", {ENTITY: {"player"}},
+                                       placement_blueprints={(909, ENTITY): {"player"}}, flow_maps={}))
+    assert result[0]["from"] == "character:npc:2595"
+    assert result[0]["type"] == "references_flow_state"
