@@ -31,7 +31,11 @@ from wuwa_story_worker.linked_component_forms import (
     prepare_linked_component,
     prepare_linked_components,
 )
-from wuwa_story_worker.media_provenance import prepare_entity_workspace, sha256, temporary_entity_workspace
+from wuwa_story_worker.media_provenance import (
+    prepare_entity_workspace,
+    sha256,
+    temporary_entity_workspace,
+)
 from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.model_animation_merge import merge_animation_glbs
 from wuwa_story_worker.model_facial import validate_facial_pack
