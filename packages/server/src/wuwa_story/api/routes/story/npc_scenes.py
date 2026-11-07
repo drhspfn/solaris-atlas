@@ -10,7 +10,7 @@ from wuwa_story.api.routes.story.npc_profile import (
     npc_flow_state_ids,
     npc_record,
 )
-from wuwa_story.db.models.core import DialogueLine, Quest, QuestState
+from wuwa_story.db.models.core import DialogueLine, Quest, QuestAction, QuestState
 from wuwa_story.db.models.graph import Node
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.repositories.quest_scope import quest_state_links
@@ -28,17 +28,28 @@ router = APIRouter(tags=["story browsing"])
 
 def scene_preview_rows(release_id, state_ids):
     """Limit source dialogue per requested state with deterministic ordering."""
-    lines = interaction_dialogue(release_id, state_ids).subquery()
+    lines = interaction_dialogue(release_id, state_ids, include_action=True).subquery()
     ranked = (
         select(
             lines.c.state_id,
             lines.c.line_id,
             lines.c.speaker_id,
+            Node.canonical_key.label("canonical_key"),
             func.row_number()
-            .over(partition_by=lines.c.state_id, order_by=(Node.canonical_key, lines.c.speaker_id))
+            .over(
+                partition_by=lines.c.state_id,
+                order_by=(
+                    QuestAction.action_index.asc().nulls_last(),
+                    DialogueLine.source_index.asc().nulls_last(),
+                    Node.id,
+                    lines.c.speaker_id.asc().nulls_last(),
+                ),
+            )
             .label("position"),
         )
         .join(Node, Node.id == lines.c.line_id)
+        .join(DialogueLine, DialogueLine.node_id == lines.c.line_id)
+        .outerjoin(QuestAction, QuestAction.node_id == lines.c.action_id)
         .subquery()
     )
     return select(ranked).where(ranked.c.position <= 3).subquery()
@@ -82,16 +93,16 @@ async def npc_scenes(
     ranked = scene_preview_rows(release_id, page)
     previews = list(
         await session.execute(
-            select(DialogueLine, ranked.c.state_id, ranked.c.speaker_id)
+            select(DialogueLine, ranked.c.state_id, ranked.c.speaker_id, ranked.c.canonical_key)
             .join(ranked, ranked.c.line_id == DialogueLine.node_id)
             .order_by(ranked.c.state_id, ranked.c.position)
         )
     )
     speaker_ids = {speaker for _, speaker in participants}
-    speaker_ids.update(speaker for _, _, speaker in previews if speaker is not None)
+    speaker_ids.update(speaker for _, _, speaker, _ in previews if speaker is not None)
     await prefetch_node_labels(session, sorted(speaker_ids), locale)
     await prefetch_localizations(
-        session, [line.localization_key_id for line, _, _ in previews], locale, release_id
+        session, [line.localization_key_id for line, _, _, _ in previews], locale, release_id
     )
     labels = {
         speaker: await _node_label(session, speaker, locale) for speaker in sorted(speaker_ids)
@@ -100,10 +111,12 @@ async def npc_scenes(
     for identity, speaker in participants:
         speakers_by_state[identity].append(labels[speaker])
     previews_by_state = {identity: [] for identity in page}
-    for line, identity, speaker in previews:
+    for line, identity, speaker, canonical_key in previews:
         localized = await _localized(session, line.localization_key_id, locale, release_id)
         value = (localized or {}).get("content") or line.inline_text or ""
-        previews_by_state[identity].append({"text": value, "speaker": labels.get(speaker)})
+        previews_by_state[identity].append(
+            {"canonical_key": canonical_key, "text": value, "speaker": labels.get(speaker)}
+        )
 
     links = quest_state_links(release_id, state_ids=page)
     associations = list(
