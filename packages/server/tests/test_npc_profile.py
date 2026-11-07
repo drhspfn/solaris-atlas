@@ -7,6 +7,37 @@ from fastapi import HTTPException
 from wuwa_story.api.routes.story import npc_profile
 
 
+@pytest.mark.parametrize("localized", [None, {"content": None, "resolution": "missing_key"}])
+def test_dialogue_inline_text_uses_localized_content_shape(localized):
+    text = npc_profile.dialogue_text(localized, "Authored subtitle")
+    assert text["content"] == text["inline_text"] == "Authored subtitle"
+    assert text["resolution"] == "inline"
+
+
+@pytest.mark.asyncio
+async def test_christoforo_scene_reports_unavailable_text_without_fabricating_it(monkeypatch):
+    # Release 21 flow 剧情_2_5_隐海试验场_失忘彼岸_2_1 has 13 TidTalk keys,
+    # including Main_Linaxita_FuLuoLuoCE_70_11, but no retained localization or inline text.
+    monkeypatch.setattr(npc_profile, "npc_record", AsyncMock(return_value=(SimpleNamespace(id=1), None, {}, 21)))
+    monkeypatch.setattr(npc_profile, "npc_flow_state_ids", AsyncMock(return_value=[2499781]))
+    monkeypatch.setattr(npc_profile, "prefetch_node_labels", AsyncMock())
+    monkeypatch.setattr(npc_profile, "prefetch_localizations", AsyncMock())
+    monkeypatch.setattr(npc_profile, "_localized", AsyncMock(return_value=None))
+    monkeypatch.setattr(npc_profile, "_node_label", AsyncMock(return_value={"label": "Phrolova"}))
+    state = SimpleNamespace(node_id=2499781, state_key="剧情_2_5_隐海试验场_失忘彼岸_2_1")
+    page = [(SimpleNamespace(localization_key_id=None, inline_text=None),
+             SimpleNamespace(canonical_key=f"dialogue:{index}"), state, 560, False)
+            for index in range(13)]
+    session = SimpleNamespace(scalar=AsyncMock(side_effect=[1, 13]),
+                              execute=AsyncMock(side_effect=[page, []]))
+    result = await npc_profile.npc_dialogue.__wrapped__(
+        "character:npc:15697", locale="en", q="", limit=20, offset=0,
+        state_id=2499781, session=session)
+    assert result["total"] == 13
+    assert all(row["text"] == {"content": None, "inline_text": None, "resolution": "unavailable"}
+               for row in result["results"])
+
+
 def test_shop_price_decoder_accepts_native_key_value_rows():
     assert npc_profile.price_pairs([{"Key": 1, "Value": 50}, {"Key": 2, "Value": 0}]) == [(1, 50), (2, 0)]
     assert npc_profile.price_pairs({"1": 50}) == [(1, 50)]

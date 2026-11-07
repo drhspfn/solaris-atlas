@@ -28,6 +28,16 @@ from wuwa_story.urls import node_address
 router = APIRouter(tags=["story browsing"])
 
 
+def dialogue_text(localized, inline_text):
+    """Expose authored inline text through the same content field as localization."""
+    if localized and localized.get("content"):
+        return localized
+    if inline_text:
+        return {**(localized or {}), "content": inline_text, "inline_text": inline_text,
+                "resolution": "inline"}
+    return localized or {"content": None, "inline_text": inline_text, "resolution": "unavailable"}
+
+
 def source_edge(owner_id, target, relation, release_id):
     return select(Edge.id).join(RelationType, RelationType.id == Edge.relation_type_id).where(
         Edge.from_node_id.in_(owner_id if isinstance(owner_id, (list, tuple)) else [owner_id]),
@@ -307,8 +317,8 @@ async def npc_dialogue(canonical_key: str, locale: str = "en", game_version: str
         results.append({"canonical_key": line_node.canonical_key, "flow_state": state.state_key,
                         "speaker": await _node_label(session, speaker_id, locale) if speaker_id is not None else None,
                         "speaker_relation": "npc_actor_context" if actor_context else "interaction_participant",
-                        "text": await _localized(session, line.localization_key_id, locale, release_id)
-                                or {"inline_text": line.inline_text}, "quests": quests_by_state[state.node_id]})
+                        "text": dialogue_text(await _localized(session, line.localization_key_id, locale, release_id),
+                                              line.inline_text), "quests": quests_by_state[state.node_id]})
     return {"results": results, "total": total, "limit": limit, "offset": offset}
 
 
