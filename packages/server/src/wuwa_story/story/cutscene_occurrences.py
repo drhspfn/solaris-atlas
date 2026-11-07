@@ -14,7 +14,8 @@ def group_cutscene_occurrences(manifest):
         # A mapped invocation determines placement; evidence is never discarded
         # merely because another invocation uses the same published movie.
         ordered = sorted(entries, key=lambda e: (
-            not bool(e.get('story_position')), e.get('story_position') or [],
+            not bool(e.get('story_position') or e.get('review_position')),
+            e.get('story_position') or e.get('review_position') or [],
             e.get('flow_state', ''), e.get('action_index', 0)))
         primary = deepcopy(ordered[0])
         points = []
@@ -34,4 +35,10 @@ def group_cutscene_occurrences(manifest):
         primary['transcript_states'] = sorted({state for e in ordered
                                                for state in e.get('transcript_states', [])})
         result['events'].append(primary)
+    # Query order is a technical state-key order. Grouping invocations must not
+    # leak that order into the scene navigation once authored positions exist.
+    # Unmapped events retain their stable discovery order, after mapped events.
+    result['events'].sort(key=lambda event: (
+        not bool(event.get('story_position') or event.get('review_position')),
+        event.get('story_position') or event.get('review_position') or []))
     return result

@@ -43,12 +43,14 @@ async def search_dialogue(
     release_id = await _release_id(session, game_version)
     locale_row = await repository.locale(session, locale)
     if locale_row is None:
-        raise StoryBrowsingError(status_code=400, detail=f"unknown locale: {locale}")
+        raise StoryBrowsingError(
+            status_code=400, detail=f"unknown locale: {locale}")
     character_node = None
     if character:
         character_node = await node_lookup(session, character, ("character",))
         if character_node is None:
-            raise StoryBrowsingError(status_code=404, detail="character not found")
+            raise StoryBrowsingError(
+                status_code=404, detail="character not found")
     states = None
     if quest_id is not None:
         quest = await repository.quest_by_game_id(session, quest_id)
@@ -99,14 +101,16 @@ async def quest_transcript(
     release_id = await _release_id(session, game_version)
     states = await _quest_page_state_ids(session, quest.node_id, release_id)
     tree_order = await authored_order(session, quest.game_quest_id, release_id)
-    related_encounters = bool(tree_order and tree_order.get('ordering') == 'related')
+    related_encounters = bool(
+        tree_order and tree_order.get('ordering') == 'related')
     if tree_order:
         states = list(set(states) | set(tree_order['state_ids']))
     character_node = None
     if character:
         character_node = await node_lookup(session, character, ("character",))
         if character_node is None:
-            raise StoryBrowsingError(status_code=404, detail="character not found")
+            raise StoryBrowsingError(
+                status_code=404, detail="character not found")
     locale_row = await repository.locale(session, locale) if q else None
     rows, offset = await repository.quest_transcript_rows(
         session,
@@ -121,7 +125,8 @@ async def quest_transcript(
         ordered_states=tree_order['state_ids'] if tree_order and not related_encounters else None,
     )
     if rows is None:
-        raise StoryBrowsingError(status_code=404, detail="Cited passage not found in this quest")
+        raise StoryBrowsingError(
+            status_code=404, detail="Cited passage not found in this quest")
     scene_rows = await repository.quest_scenes(session, quest.node_id)
     await prefetch_dialogue(session, rows, locale, release_id, include_raw=include_raw)
     media_by_line = await dialogue_media(session, [row[0].node_id for row in rows], release_id)
@@ -132,12 +137,19 @@ async def quest_transcript(
             line['illustration'] = illustrations[row[0].node_id]
     if tree_order:
         for row, line in zip(rows, lines, strict=True):
-            line['story_order_mapped'] = row[2].state_key in tree_order.get('positions', {})
+            line['story_order_mapped'] = row[2].state_key in tree_order.get(
+                'positions', {})
             if position := tree_order.get('positions', {}).get(row[2].state_key):
-                line['story_position'] = [*position, row[1].action_index, row[0].source_index]
+                line['story_position'] = [*position,
+                                          row[1].action_index, row[0].source_index]
+            if position := tree_order.get('review_positions', {}).get(row[2].state_key):
+                line['review_position'] = [*position,
+                                           row[1].action_index, row[0].source_index]
     return {
         "quest": await _quest_info(session, quest, locale, game_version),
         "ordering_semantics": (
+            "Archive review order from this story snapshot; runtime branch order is not established."
+            if tree_order and tree_order.get('ordering') == 'review' else
             "Related encounters retain their local authored structure; their positions in this quest are unknown."
             if related_encounters else
             f"Authored tree order from game client {tree_order['asset_version']}; "
@@ -146,6 +158,7 @@ async def quest_transcript(
             "Authored state/action/talk ordering; branches and runtime conditions are not flattened into a guaranteed playthrough."
         ),
         "tree_order_asset_version": tree_order['asset_version'] if tree_order and not related_encounters else None,
+        "review_order_source": (tree_order or {}).get('review_source'),
         "scenes": scene_payloads(scene_rows),
         "story_blocks": await present_blocks(session, tree_order, locale, release_id),
         "filters": {"character": character, "text": q, "locale": locale},

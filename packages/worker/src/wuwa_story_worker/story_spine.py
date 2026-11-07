@@ -222,7 +222,8 @@ async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentati
     sequence_paths = sorted({cue['asset'].split('.')[0] for cue in (presentation or {}).get('cues', [])
                              if cue['kind'] == 'sequence'})
     if sequence_paths:
-        _, missing_controls = await prefab_images(root, sequence_paths, assets=assets, include_sequences=True)
+        _, missing_controls = await prefab_images(root, sequence_paths, assets=assets, include_sequences=True,
+                                                  control_sources_only=True)
         from wuwa_story_worker.sequence_controls import opened_ui_resources, sequence_control_score
         score = await asyncio.to_thread(sequence_control_score, assets, presentation)
         from wuwa_story_worker.sequence_fragments import prepare_sequence_fragments

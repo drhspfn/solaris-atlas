@@ -5,6 +5,7 @@ type Line = {
   flow_state: string;
   action?: { index: number } | null;
   story_position?: number[];
+  review_position?: number[];
 };
 
 export function compareStoryPosition(a: number[], b: number[]) {
@@ -20,7 +21,9 @@ export function visibleCutsceneEntries(
   partial = false,
   interactionIds = new Set<string>(),
 ) {
-  const positioned = lines.filter((line) => line.story_position);
+  const positioned = lines.filter(
+    (line) => line.story_position || line.review_position,
+  );
   const seen = new Set<string>();
   return events.flatMap((event) => {
     if (event.kind !== "cutscene") return [event];
@@ -30,16 +33,18 @@ export function visibleCutsceneEntries(
     const points = [event, ...(event.entry_points || [])];
     const visible = (point: (typeof points)[number]) => {
       if (point.interaction_id) return interactionIds.has(point.interaction_id);
-      if (point.story_position && positioned.length)
+      const position = point.story_position || point.review_position;
+      if (position && positioned.length)
         return (
           !partial ||
           (compareStoryPosition(
-            point.story_position,
-            positioned[0].story_position!,
+            position,
+            (positioned[0].story_position || positioned[0].review_position)!,
           ) >= 0 &&
             compareStoryPosition(
-              point.story_position,
-              positioned.at(-1)!.story_position!,
+              position,
+              (positioned.at(-1)!.story_position ||
+                positioned.at(-1)!.review_position)!,
             ) <= 0)
         );
       return lines.some((line) => line.flow_state === point.flow_state);
@@ -57,6 +62,7 @@ export function visibleCutsceneEntries(
         ...event,
         ...point,
         story_position: point.story_position,
+        review_position: point.review_position,
         interaction_id: point.interaction_id,
         story_block_id: point.story_block_id,
         context_inferred: point.context_inferred,
@@ -76,7 +82,9 @@ export function cutsceneSlots(
   kinds: QuestMediaEvent["kind"][] = ["cutscene"],
 ) {
   const slots = new Map<number, QuestMediaEvent[]>();
-  const positioned = lines.filter((line) => line.story_position);
+  const positioned = lines.filter(
+    (line) => line.story_position || line.review_position,
+  );
   const interactions = new Set(
     events.flatMap((event) =>
       event.interaction_id ? [event.interaction_id] : [],
@@ -88,26 +96,33 @@ export function cutsceneSlots(
     partial,
     interactions,
   ).filter((entry) => kinds.includes(entry.kind))) {
-    if (event.story_position && positioned.length) {
+    const position = event.story_position || event.review_position;
+    if (position && positioned.length) {
       if (
         partial &&
         (compareStoryPosition(
-          event.story_position,
-          positioned[0].story_position!,
+          position,
+          (positioned[0].story_position || positioned[0].review_position)!,
         ) < 0 ||
           compareStoryPosition(
-            event.story_position,
-            positioned.at(-1)!.story_position!,
+            position,
+            (positioned.at(-1)!.story_position ||
+              positioned.at(-1)!.review_position)!,
           ) > 0)
       )
         continue;
       let slot = lines.findIndex(
         (line) =>
-          line.story_position &&
-          compareStoryPosition(line.story_position, event.story_position!) >= 0,
+          (line.story_position || line.review_position) &&
+          compareStoryPosition(
+            (line.story_position || line.review_position)!,
+            position,
+          ) >= 0,
       );
       if (slot < 0) {
-        const last = lines.findLastIndex((line) => !!line.story_position);
+        const last = lines.findLastIndex(
+          (line) => !!(line.story_position || line.review_position),
+        );
         slot = last + 1;
       }
       slots.set(slot, [...(slots.get(slot) || []), event]);
@@ -152,8 +167,12 @@ export function cutsceneSlots(
   }
   for (const entries of slots.values())
     entries.sort((a, b) =>
-      a.story_position && b.story_position
-        ? compareStoryPosition(a.story_position, b.story_position)
+      (a.story_position || a.review_position) &&
+      (b.story_position || b.review_position)
+        ? compareStoryPosition(
+            (a.story_position || a.review_position)!,
+            (b.story_position || b.review_position)!,
+          )
         : a.flow_state < b.flow_state
           ? -1
           : a.flow_state > b.flow_state

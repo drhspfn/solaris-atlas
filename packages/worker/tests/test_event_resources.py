@@ -138,6 +138,58 @@ def test_script_receiver_classes_are_followed_only_for_control_exports():
     assert list(ui_references(value, include_sequences=True)) == [('dependency', '/Game/Story/Actor')]
 
 
+def test_control_only_follows_sequence_wrappers_but_defers_visuals_and_gameplay():
+    def receiver(path):
+        return {'Token': 'EX_Context', 'ObjectExpression': {'Variable': {'Property': {
+            'PropertyClass': {'ObjectName': "BlueprintGeneratedClass'Actor_C'", 'ObjectPath': path}}}}}
+
+    value = {'nested': [
+        {'ObjectName': "LevelSequence'Scene'", 'ObjectPath': '/Game/Story/Scene'},
+        {'ObjectName': "BlueprintGeneratedClass'Wrapper_C'", 'ObjectPath': '/Game/Aki/Sequence/Manager/Wrapper'},
+        receiver('/Game/Aki/Sequence/Manager/Wrapper'),
+        {**receiver('/Game/Aki/Character/Role/Test/Seq/Actor'), 'material': {
+            'ObjectName': "MaterialInstanceConstant'ActorMaterial'", 'ObjectPath': '/Game/Actor/Material'}},
+        {'ObjectName': "BlueprintGeneratedClass'Actor_C'", 'ObjectPath': '/Game/Aki/Character/Role/Test/Seq/Actor'},
+        {'ObjectName': "PrefabAsset'Prefab'", 'ObjectPath': '/Game/UI/Prefabs/Prefab'},
+        {'ObjectName': "Texture2D'Image'", 'ObjectPath': '/Game/UI/Image/Image'},
+        {'ObjectName': "Material'Material'", 'ObjectPath': '/Game/UI/Material'},
+        {'ObjectName': "SpineAtlasAsset'Atlas'", 'ObjectPath': '/Game/UI/Atlas'},
+    ]}
+    assert set(ui_references(value, control_sources_only=True)) == {
+        ('dependency', '/Game/Story/Scene'), ('dependency', '/Game/Aki/Sequence/Manager/Wrapper'),
+        ('dependency', '/Game/Aki/Character/Role/Test/Seq/Actor')}
+    default = set(ui_references(value, include_sequences=True))
+    assert ('dependency', '/Game/Aki/Character/Role/Test/Seq/Actor') in default
+    assert ('dependency', '/Game/UI/Prefabs/Prefab') in default
+    assert ('image', '/Game/UI/Image/Image') in default
+    assert ('dependency', '/Game/UI/Atlas') in default
+    assert ('dependency', '/Game/Actor/Material') in default
+
+
+@pytest.mark.asyncio
+async def test_control_only_uses_separate_reference_cache(tmp_path, monkeypatch):
+    from wuwa_story_worker import event_resources
+
+    source = '/Game/Story/Controller'
+    package_index(tmp_path, [source])
+    tool = tmp_path / 'tool'
+    tool.write_bytes(b'tool')
+    output = tmp_path / 'export'
+    (output / 'files').mkdir(parents=True)
+    digest = event_resources._sha256(tool)[:16]
+    for prefix, refs in [('ui-json-sequences-v3-', [['image', '/Game/UI/Image/Unrelated']]),
+                         ('ui-json-control-only-v1-', [])]:
+        cache = output / (prefix + digest)
+        cache.mkdir()
+        (cache / 'references.json').write_text(json.dumps(refs), encoding='utf-8')
+    monkeypatch.setattr(event_resources, 'tool_path', lambda _: tool)
+    monkeypatch.setattr(event_resources, 'export_assets', AsyncMock(return_value=output / 'manifest.json'))
+    images, missing = await event_resources.prefab_images(tmp_path, [source], control_sources_only=True)
+    assert images == [] and missing == []
+    images, missing = await event_resources.prefab_images(tmp_path, [source], include_sequences=True)
+    assert [image['path'] for image in images] == ['/Game/UI/Image/Unrelated'] and missing == []
+
+
 @pytest.mark.asyncio
 async def test_dependency_walk_caches_decodes_handles_cycles_and_keeps_partial_results(tmp_path, monkeypatch):
     from wuwa_story_worker import event_resources

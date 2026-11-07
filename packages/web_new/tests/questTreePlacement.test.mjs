@@ -150,3 +150,31 @@ test("mapped scene appears before its caption lines; unmapped scene stays separa
   assert.deepEqual(result.get(1), [mapped]);
   assert.deepEqual(result.get(2), [unknown]);
 });
+
+test("archive review places nested movie before later dialogue without claiming a runtime position", () => {
+  const lines = [
+    { id: "before", flow_state: "z", review_position: [48, 4, 0] },
+    { id: "after", flow_state: "a", review_position: [452, 1, 0] },
+  ];
+  const early = {
+    kind: "cutscene",
+    reference: "cutscene:M0385",
+    flow_state: "other",
+    action_index: 6,
+    review_position: [48, 6, -1],
+    story_order_mapped: false,
+  };
+  const final = {
+    ...early,
+    reference: "cutscene:M0390",
+    review_position: [451, 1, -1],
+  };
+  const slots = cutsceneSlots(lines, [final, early]);
+  assert.deepEqual(
+    slots.get(1).map((event) => event.reference),
+    ["cutscene:M0385", "cutscene:M0390"],
+  );
+  assert.equal(slots.get(1)[0].story_position, undefined);
+  assert.equal(slots.get(1)[0].story_order_mapped, false);
+  assert.equal(cutsceneSlots(lines.slice(1), [early], true).size, 0);
+});

@@ -608,6 +608,15 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     initialTranscript: { lines: windowLines, offset: 1, limit: 2, story_blocks: blocks },
     initialMedia: { events, related_cutscenes: [] },
   }));
+  renderMedia(lines, [], [
+    { ...primary, reference: 'cutscene:direct', flow_state: 'Before', story_position: undefined, story_order_mapped: false },
+    { ...primary, reference: 'cutscene:context', flow_state: 'Before', story_position: undefined, context_inferred: true, story_order_mapped: false },
+    { ...primary, reference: 'cutscene:mapped', flow_state: 'Before', story_position: [1], story_order_mapped: true },
+  ]);
+  const sceneEntries = sidebarGroups.find((group) => group.id === 'scenes').entries;
+  assert.deepEqual(Array.from(sceneEntries, (entry) => entry.note), [
+    'Position not mapped', 'Possible connection · position not mapped', undefined,
+  ]);
   for (const withBoundary of [true, false]) {
     const audioMarkup = renderMedia(lines, [{ id: 'soundtrack-gate', title: 'Battle', position: [2],
       branches: [], flow_states: [], source, encounter: encounter(node('soundtrack-root', { flow_states: [

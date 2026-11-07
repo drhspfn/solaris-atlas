@@ -133,7 +133,9 @@ export function FlowPlayer({
     ...new Set(
       tracks
         ?.map((track) => track.language)
-        .filter((language): language is NonNullable<typeof language> => !!language) || [],
+        .filter(
+          (language): language is NonNullable<typeof language> => !!language,
+        ) || [],
     ),
   ];
   const selectedTracks = selectCutsceneTracks(
@@ -141,7 +143,13 @@ export function FlowPlayer({
     voiceLanguage,
     clipRover(flow, clipId, preferredRover),
   );
-  const captionDisplay = useMemo(() => display ? ({ ...display, gender: clipRover(flow, clipId, preferredRover) }) : undefined, [display, flow, clipId, preferredRover]);
+  const captionDisplay = useMemo(
+    () =>
+      display
+        ? { ...display, gender: clipRover(flow, clipId, preferredRover) }
+        : undefined,
+    [display, flow, clipId, preferredRover],
+  );
   const timeline = cutsceneTimeline(flow, choices, preferredRover, durations);
   const timelineClip = timeline.clips.find((entry) => entry.id === clipId);
   const position =
@@ -268,10 +276,14 @@ export function FlowPlayer({
   if (!source || !activeClip) return null;
   const interactive = (node?.kind === "choice" && !automaticTarget) || !node;
   return (
-    <section className="quest-cutscene" aria-label={`Cutscene ${gameTextPlainText(title, display)}`}>
+    <section
+      className="quest-cutscene"
+      aria-label={`Cutscene ${gameTextPlainText(title, display)}`}
+    >
       <header>
         <h3>
-          <Film size={18} /> Cutscene · <PlayerText value={title} display={display} />
+          <Film size={18} /> Cutscene ·{" "}
+          <PlayerText value={title} display={display} />
         </h3>
         <AnalysisActions
           target={{
@@ -558,8 +570,13 @@ export function FlowPlayer({
       <footer>
         {source.description && (
           <details className="cutscene-description">
-            <summary><PlayerText value={source.description.title} display={display} /> · AI description</summary>
-            <p><PlayerText value={source.description.text} display={display} /></p>
+            <summary>
+              <PlayerText value={source.description.title} display={display} />{" "}
+              · AI description
+            </summary>
+            <p>
+              <PlayerText value={source.description.text} display={display} />
+            </p>
             {source.description.chapters.map((chapter) => (
               <section key={chapter.start}>
                 <button
@@ -578,7 +595,9 @@ export function FlowPlayer({
                   {String(Math.floor(chapter.start % 60)).padStart(2, "0")} ·{" "}
                   <PlayerText value={chapter.title} display={display} />
                 </button>
-                <p><PlayerText value={chapter.text} display={display} /></p>
+                <p>
+                  <PlayerText value={chapter.text} display={display} />
+                </p>
               </section>
             ))}
             <small>
@@ -626,7 +645,20 @@ export function Cutscene({
     return (
       <section id={cutsceneAnchor(event)} className="quest-runtime-block">
         <span className="eyebrow left">IN-GAME SCENE</span>
-        <h3><PlayerText value={event.title} fallback="Scripted scene" display={display} /></h3>
+        <h3>
+          <PlayerText
+            value={event.title}
+            fallback="Scripted scene"
+            display={display}
+          />
+        </h3>
+        {!event.story_position && (
+          <p>
+            {event.review_position
+              ? "Shown in archive review order."
+              : "Position in the story is not mapped."}
+          </p>
+        )}
         <p>
           This scene is rendered by the game engine; no standalone video is
           available.
@@ -658,6 +690,14 @@ export function Cutscene({
             : "Possible quest connection; occurrence and position in the story are unconfirmed."}
         </p>
       )}
+      {!event.story_position &&
+        (!event.context_inferred || event.story_order_mapped) && (
+          <p>
+            {event.review_position
+              ? "Shown in archive review order."
+              : "Position in the story is not mapped."}
+          </p>
+        )}
       {flow ? (
         <FlowPlayer
           key={`${flow.asset_version}-${flow.entry}`}
@@ -712,8 +752,27 @@ export function RelatedQuestCutscenes({
           className="quest-cutscene-anchor"
           key={scene.name}
         >
+          {scene.continuations?.map((quest) => (
+            <p key={quest.game_quest_id}>
+              Continues in a later quest:{" "}
+              <Link
+                to={`${quest.quest_href || `/quests/${quest.game_quest_id}`}${manifest.game_version ? `?game_version=${encodeURIComponent(manifest.game_version)}` : ""}`}
+              >
+                <PlayerText
+                  value={quest.title}
+                  fallback="Continue the story"
+                  display={display}
+                />{" "}
+                ↗
+              </Link>
+            </p>
+          ))}
           {scene.playback ? (
-            <FlowPlayer flow={scene.playback} title={scene.name} display={display} />
+            <FlowPlayer
+              flow={scene.playback}
+              title={scene.name}
+              display={display}
+            />
           ) : (
             <p>
               {scene.name} ·{" "}
