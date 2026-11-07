@@ -71,7 +71,7 @@ Solaris Atlas should feel like an editorial field atlas assembled from quiet res
 - **Memorable signature:** Thin mint and cyan resonance paths connecting story entities.
 - **Restraint:** Most surfaces stay near-monochrome. Semantic colors identify entity type in small marks only.
 - **Anti-references:** Neon cyberpunk, terminal green, generic SaaS panels and glass effects.
-- **Token ownership/runtime mapping:** The maintained Next.js frontend uses `packages/web_new/src/styles/index.css` for the canonical runtime palette. `site-shell.css` consumes these tokens for the header, footer and shared selectors. `packages/web` is the legacy frontend. No separate generated theme exists.
+- **Token ownership/runtime mapping:** The maintained Next.js frontend uses `packages/web_new/src/styles/index.css` for the canonical runtime palette. `site-shell.css` consumes these tokens for the header, footer and shared selectors. `packages/web` is the legacy frontend. The server-rendered internal console adapts this palette in `packages/server/src/wuwa_story/admin/statics/solaris-admin.css`. No separate generated theme exists.
 
 ## Colors
 

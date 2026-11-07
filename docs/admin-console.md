@@ -6,7 +6,9 @@ It uses **Starlette-admin's SQLAlchemy adapter**: the library queries the mapped
 models directly and generates tables, filters, forms, details and confirmation
 dialogs. The budget overview uses reusable server-rendered components; it has no
 separate frontend application or REST data provider. The Python registration lives in
-`packages/server/src/wuwa_story/admin/composition.py`.
+`packages/server/src/wuwa_story/admin/composition.py`. The shared dark theme is in
+`packages/server/src/wuwa_story/admin/statics/solaris-admin.css`; it adapts
+Tabler and the table and select widgets to the Solaris palette.
 
 ## Accounts and sessions
 

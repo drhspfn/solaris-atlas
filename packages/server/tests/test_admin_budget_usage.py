@@ -40,13 +40,19 @@ async def test_budget_page_uses_real_admin_templates(monkeypatch):
         return True
 
     monkeypatch.setattr(InternalAuth, "is_authenticated", authenticated)
-    monkeypatch.setattr(InternalAuth, "get_admin_user", lambda self, request: None)
+    monkeypatch.setattr(InternalAuth, "get_admin_user",
+                        lambda self, request: None)
     engine = create_async_engine("sqlite+aiosqlite://")
     app = FastAPI()
     install_admin(app, engine, Settings(_env_file=None, app_env="test"))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/console/usage/list")
+        users = await client.get("/console/users/create")
+        stylesheet = await client.get("/console/statics/solaris-admin.css")
     await engine.dispose()
     assert response.status_code == 200
     assert "Daily budget overview" in response.text
     assert 'id="dt"' in response.text
+    assert "data-bs-theme" in response.text and "solaris-admin.css" in response.text
+    assert users.status_code == 200 and "solaris-admin.css" in users.text
+    assert stylesheet.status_code == 200 and "--tblr-body-bg: #090e0f" in stylesheet.text

@@ -1,0 +1,96 @@
+/* Solaris Atlas palette, adapted to Tabler's native dark components. */
+[data-bs-theme="dark"] {
+  color-scheme: dark;
+  --tblr-body-color: #e8eceb;
+  --tblr-body-color-rgb: 232, 236, 235;
+  --tblr-body-bg: #090e0f;
+  --tblr-body-bg-rgb: 9, 14, 15;
+  --tblr-secondary-color: #a0aaa8;
+  --tblr-secondary-bg: #121a1b;
+  --tblr-secondary-bg-rgb: 18, 26, 27;
+  --tblr-tertiary-bg: #0f1617;
+  --tblr-tertiary-bg-rgb: 15, 22, 23;
+  --tblr-border-color: #293738;
+  --tblr-border-color-translucent: rgba(160, 170, 168, .16);
+  --tblr-link-color: #9bd9c0;
+  --tblr-link-color-rgb: 155, 217, 192;
+  --tblr-link-hover-color: #b2e7d1;
+  --tblr-link-hover-color-rgb: 178, 231, 209;
+  --tblr-primary: #9bd9c0;
+  --tblr-primary-rgb: 155, 217, 192;
+  --tblr-primary-text-emphasis: #b2e7d1;
+  --tblr-primary-bg-subtle: #162b24;
+  --tblr-primary-border-subtle: #356354;
+}
+body, .page-wrapper { background: #090e0f; }
+.navbar-vertical, .navbar { --tblr-navbar-bg: #0f1617; background-color: #0f1617; }
+.navbar-vertical { border-right: 1px solid #293738; }
+.navbar-brand h3 { color: #e8eceb; white-space: normal; line-height: 1.3; }
+.navbar-vertical .nav-link.active, .navbar-vertical .active > .nav-link { background: #162021; color: #b2e7d1; }
+.navbar-vertical .nav-item.active::after { border-color: #9bd9c0; }
+.card, .dropdown-menu, .modal-content { background-color: #0f1617; border-color: #293738; }
+.card { border-radius: 12px; }
+.card-header, .card-footer { background-color: #121a1b; border-color: #293738; }
+.form-control, .form-select, .form-check-input, .input-group-text { background-color: #121a1b; border-color: #354645; color: #e8eceb; }
+.form-control:focus, .form-select:focus { background-color: #121a1b; border-color: #9bd9c0; color: #e8eceb; box-shadow: 0 0 0 .2rem rgba(155,217,192,.2); }
+.form-control::placeholder { color: #a0aaa8; opacity: 1; }
+.form-control:disabled, .form-select:disabled { background-color: #162021; color: #a0aaa8; }
+.btn-primary { --tblr-btn-color: #09110e; --tblr-btn-bg: #9bd9c0; --tblr-btn-border-color: #9bd9c0; --tblr-btn-hover-color: #09110e; --tblr-btn-hover-bg: #b2e7d1; --tblr-btn-hover-border-color: #b2e7d1; --tblr-btn-active-color: #09110e; --tblr-btn-active-bg: #83c2a9; --tblr-btn-active-border-color: #83c2a9; }
+.btn-secondary { --tblr-btn-color: #e8eceb; --tblr-btn-bg: #243432; --tblr-btn-border-color: #354645; --tblr-btn-hover-color: #fff; --tblr-btn-hover-bg: #354b46; --tblr-btn-hover-border-color: #4d6b61; }
+.table { --tblr-table-bg: #0f1617; --tblr-table-color: #e8eceb; --tblr-table-border-color: #293738; --tblr-table-striped-bg: #121a1b; --tblr-table-hover-bg: #162021; --tblr-table-hover-color: #e8eceb; }
+.table thead th { background-color: #121a1b; color: #a0aaa8; border-color: #293738; }
+.dropdown-item { color: #e8eceb; }
+.dropdown-item:hover, .dropdown-item:focus, .dropdown-item.active { background-color: #243432; color: #fff; }
+:focus-visible { outline: 2px solid #9bd9c0; outline-offset: 2px; }
+/* DataTables provides its own light popup styles outside Tabler. */
+html[data-bs-theme="dark"] div.dt-button-collection,
+html[data-bs-theme="dark"] div.dt-button-collection.fixed {
+  background: #121a1b;
+  border: 1px solid #354645;
+  color: #e8eceb;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .45);
+}
+html[data-bs-theme="dark"] div.dt-button-collection .dt-button {
+  color: #e8eceb;
+}
+html[data-bs-theme="dark"] div.dt-button-collection .dt-button:hover {
+  background: #243432;
+  color: #fff;
+}
+/* Reusable budget overview, using the same surfaces as the admin cards. */
+.sa-budget { --sa-mint: #9bd9c0; --sa-muted: #a0aaa8; background: #0f1617; color: #e8eceb; border: 1px solid #293738; border-radius: 12px; margin-bottom: 1rem; padding: clamp(1.25rem, 3vw, 2rem); }
+.sa-budget__eyebrow { color: var(--sa-mint); font-size: .7rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+.sa-budget__title { color: #e8eceb; font-size: 1.4rem; margin: .35rem 0 .5rem; }
+.sa-budget__intro { color: var(--sa-muted); max-width: 65ch; }
+.sa-budget__metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .75rem; margin: 1.5rem 0; }
+.sa-metric { background: #121a1b; border: 1px solid #293738; border-radius: 10px; display: flex; flex-direction: column; gap: .45rem; padding: 1rem; min-width: 0; }
+.sa-metric__label { color: var(--sa-muted); font-size: .75rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+.sa-metric__value { color: #e8eceb; font-size: 1.25rem; overflow-wrap: anywhere; }
+.sa-metric__detail { color: var(--sa-muted); font-size: .8rem; }
+.sa-budget__note { border-left: 2px solid var(--sa-mint); color: #c5cfcb; margin: 0; padding-left: .85rem; }
+/* Select2 supplies its own light theme instead of using native form controls. */
+html[data-bs-theme="dark"] .select2-container--default .select2-selection--single,
+html[data-bs-theme="dark"] .select2-container--default .select2-selection--multiple,
+html[data-bs-theme="dark"] .select2-dropdown,
+html[data-bs-theme="dark"] .select2-search--dropdown .select2-search__field {
+  background: #121a1b;
+  border-color: #354645;
+  color: #e8eceb;
+}
+html[data-bs-theme="dark"] .select2-container--default .select2-selection--single .select2-selection__rendered,
+html[data-bs-theme="dark"] .select2-results__option { color: #e8eceb; }
+html[data-bs-theme="dark"] .select2-container--default .select2-selection--single .select2-selection__placeholder { color: #a0aaa8; }
+html[data-bs-theme="dark"] .select2-container--default .select2-results__option--highlighted[aria-selected],
+html[data-bs-theme="dark"] .select2-container--default .select2-results__option[aria-selected="true"] { background: #243432; color: #e8eceb; }
+html[data-bs-theme="dark"] .select2-container--default .select2-selection--multiple .select2-selection__choice { background: #243432; border-color: #354645; color: #e8eceb; }
+html[data-bs-theme="dark"] div.dt-button-collection .dt-button-collection-close { background: #243432; color: #e8eceb; border-color: #354645; }
+/* Align the brand with sidebar navigation and allow its title to wrap. */
+.navbar-vertical .navbar-brand { width: 100%; min-height: 4.5rem; height: auto; justify-content: flex-start; padding: 1rem; margin: 0; }
+.navbar-vertical .brand-link { display: block; max-width: 100%; white-space: normal; }
+.navbar-vertical .navbar-brand h3 { margin: 0; font-size: .95rem; line-height: 1.4; overflow-wrap: anywhere; }
+@media (max-width: 991.98px) {
+  .navbar-vertical .navbar-brand { width: auto; min-height: 0; max-width: 70%; padding: .75rem; }
+}
+/* The library applies negative brand margins at desktop widths. */
+html[data-bs-theme="dark"] .navbar-vertical .navbar-brand { margin-inline: 0; padding-inline: 1rem; }
+html[data-bs-theme="dark"] .navbar-vertical .brand-link { padding-inline: .125rem; }
