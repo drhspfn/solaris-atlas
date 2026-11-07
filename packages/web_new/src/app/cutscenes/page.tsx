@@ -23,6 +23,7 @@ export default async function Page({
   for (const key of ["q", "game_version", "playable", "offset", "locale"]) {
     if (typeof params[key] === "string") query.set(key, params[key]);
   }
+  if (!query.has("playable")) query.set("playable", "false");
   const [initial, releases] = await Promise.all([
     serverApi<CutscenePage>(`/cutscenes?${query}`),
     serverApi<{ game_version: string }[]>("/releases"),

@@ -101,6 +101,7 @@ export function CutsceneArchive({
     }
     const controller = new AbortController();
     const search = new URLSearchParams(query);
+    if (!search.has("playable")) search.set("playable", "false");
     search.delete("cursor");
     search.set("locale", locale);
     if (refresh) search.set("_refresh", String(refresh));
@@ -135,6 +136,7 @@ export function CutsceneArchive({
     setLoadingMore(true);
     setMoreError("");
     const search = new URLSearchParams(query);
+    if (!search.has("playable")) search.set("playable", "false");
     search.delete("offset");
     search.set("cursor", data.next_cursor);
     search.set("locale", locale);
@@ -231,7 +233,7 @@ export function CutsceneArchive({
           <span>Availability</span>
           <Select
             label="Availability"
-            value={params?.get("playable") || "true"}
+            value={params?.get("playable") || "false"}
             onChange={(value) => filter("playable", value)}
             options={[
               { value: "true", label: "Ready to watch" },
