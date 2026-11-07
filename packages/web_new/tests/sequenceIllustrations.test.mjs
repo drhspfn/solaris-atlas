@@ -111,12 +111,12 @@ test("illustrated dialogue supports keyboard and click advancement without hijac
     ),
     "utf8",
   );
-  assert.match(scene, /event\.key === 'ArrowRight'/);
-  assert.match(scene, /event\.key === 'ArrowLeft'/);
+  assert.match(scene, /event\.key === ["']ArrowRight["']/);
+  assert.match(scene, /event\.key === ["']ArrowLeft["']/);
   assert.match(scene, /event\.target !== event\.currentTarget/);
   assert.match(
     scene,
-    /closest\('button, a, input, select, textarea, summary, audio, video'\)/,
+    /closest\(\s*["']button, a, input, select, textarea, summary, audio, video["'],?\s*\)/,
   );
-  assert.match(scene, /if \(transcript \|\| current >= lines\.length - 1/);
+  assert.match(scene, /transcript\s*\|\|\s*current >= lines\.length - 1/);
 });

@@ -31,7 +31,12 @@ function load(path) {
   });
   return exports;
 }
-const { sequenceFrameForLine, readingDelay, enrichSequenceLines, sequenceBackgroundMusic } = load("story/sequenceReader");
+const {
+  sequenceFrameForLine,
+  readingDelay,
+  enrichSequenceLines,
+  sequenceBackgroundMusic,
+} = load("story/sequenceReader");
 const { illustratedRuns } = load("story/questReading");
 const line = { text: { key: "dialogue.key" } };
 const frame = (scene, time, id) => ({
@@ -129,52 +134,109 @@ test("voice key matching is exact and reading delay is bounded", () => {
   assert.equal(readingDelay("x".repeat(100), -1), 5500);
 });
 
-test('fourteen source-matched lines without original illustrations form one reader', () => {
-  const cues = Array.from({ length: 14 }, (_, index) => cue('scene', index, `line.${index}`));
-  const first = { ...frame('scene', 0, 1), sample_time_seconds: 1.033 };
-  const data = media(first, frame('scene', 8, 2), ...cues);
-  const lines = cues.map((item, index) => ({ id: `id.${index}`, flow_state: 'fox', text: { key: item.text_key } }));
-  const result = enrichSequenceLines(lines, [{ flow_state: 'fox', sequence_media: data }]);
+test("fourteen source-matched lines without original illustrations form one reader", () => {
+  const cues = Array.from({ length: 14 }, (_, index) =>
+    cue("scene", index, `line.${index}`),
+  );
+  const first = { ...frame("scene", 0, 1), sample_time_seconds: 1.033 };
+  const data = media(first, frame("scene", 8, 2), ...cues);
+  const lines = cues.map((item, index) => ({
+    id: `id.${index}`,
+    flow_state: "fox",
+    text: { key: item.text_key },
+  }));
+  const result = enrichSequenceLines(lines, [
+    { flow_state: "fox", sequence_media: data },
+  ]);
   assert.equal(illustratedRuns(result).length, 1);
   assert.equal(illustratedRuns(result)[0].length, 14);
-  assert.equal(result[0].illustration.images[0].url, '/1.png');
+  assert.equal(result[0].illustration.images[0].url, "/1.png");
   assert.equal(sequenceFrameForLine(data, result[8]).file_id, 2);
   assert.equal(lines[0].illustration, undefined);
 });
 
-test('no enrichment for wrong flow, missing cues, future frames, or ambiguous sources', () => {
-  const line = { id: 'one', flow_state: 'fox', text: { key: 'dialogue.key' } };
-  const good = media(frame('scene', 0, 1), cue('scene', 0));
+test("no enrichment for wrong flow, missing cues, future frames, or ambiguous sources", () => {
+  const line = { id: "one", flow_state: "fox", text: { key: "dialogue.key" } };
+  const good = media(frame("scene", 0, 1), cue("scene", 0));
   for (const sources of [
-    [{ flow_state: 'other', sequence_media: good }],
-    [{ flow_state: 'fox', sequence_media: media(frame('scene', 1, 1), cue('scene', 0)) }],
-    [{ flow_state: 'fox', sequence_media: media(frame('scene', 0, 1), cue(null, 0)) }],
-    [{ flow_state: 'fox', sequence_media: good }, { flow_state: 'fox', sequence_media: good }],
-  ]) assert.equal(enrichSequenceLines([line], sources)[0].illustration, undefined);
+    [{ flow_state: "other", sequence_media: good }],
+    [
+      {
+        flow_state: "fox",
+        sequence_media: media(frame("scene", 1, 1), cue("scene", 0)),
+      },
+    ],
+    [
+      {
+        flow_state: "fox",
+        sequence_media: media(frame("scene", 0, 1), cue(null, 0)),
+      },
+    ],
+    [
+      { flow_state: "fox", sequence_media: good },
+      { flow_state: "fox", sequence_media: good },
+    ],
+  ])
+    assert.equal(
+      enrichSequenceLines([line], sources)[0].illustration,
+      undefined,
+    );
 });
 
-test('background music must be uniquely published and explicitly marked music', () => {
-  const track = (role, url) => ({ role, url, status: 'published' });
-  const section = (...tracks) => ({ kind: 'audio_event', tracks });
-  assert.equal(sequenceBackgroundMusic(media(section(track('mixed', '/mixed.ogg')))), undefined);
-  assert.equal(sequenceBackgroundMusic(media(section(track('music', '/music.ogg')))), '/music.ogg');
-  assert.equal(sequenceBackgroundMusic(media(section(track('music', '/a.ogg'), track('music', '/b.ogg')))), undefined);
+test("background music must be uniquely published and explicitly marked music", () => {
+  const track = (role, url) => ({ role, url, status: "published" });
+  const section = (...tracks) => ({ kind: "audio_event", tracks });
+  assert.equal(
+    sequenceBackgroundMusic(media(section(track("mixed", "/mixed.ogg")))),
+    undefined,
+  );
+  assert.equal(
+    sequenceBackgroundMusic(media(section(track("music", "/music.ogg")))),
+    "/music.ogg",
+  );
+  assert.equal(
+    sequenceBackgroundMusic(
+      media(section(track("music", "/a.ogg"), track("music", "/b.ogg"))),
+    ),
+    undefined,
+  );
 });
 
-test('quest and encounter paths enrich lines before creating reader groups', () => {
-  const page = readFileSync(new URL('../src/components/quest/QuestPageClient.tsx', import.meta.url), 'utf8');
+test("quest and encounter paths enrich lines before creating reader groups", () => {
+  const page = readFileSync(
+    new URL("../src/components/quest/QuestPageClient.tsx", import.meta.url),
+    "utf8",
+  );
   assert.match(page, /illustratedRuns\(\s*enrichSequenceLines\(shown\.filter/);
   assert.match(page, /illustratedRuns\(\s*enrichSequenceLines\(selected\.map/);
   assert.match(page, /flow\.sequence_media \? \[\{ flow_state: flow\.state/);
-  assert.match(page, /backgroundMusic=\{sequenceBackgroundMusic\(sequenceForRun\(run\)\)\}/);
+  assert.match(
+    page,
+    /backgroundMusic=\{sequenceBackgroundMusic\(sequenceForRun\(run\)\)\}/,
+  );
 });
 
-test('music starts on reader gestures and is independent of line changes', () => {
-  const scene = readFileSync(new URL('../src/components/story/QuestIllustratedScene.tsx', import.meta.url), 'utf8');
-  assert.match(scene, /if \(userGesture\) startMusic\(\)/);
-  assert.match(scene, /if \(!auto\) startMusic\(\)/);
-  assert.match(scene, /audio\.play\(\)\.catch\(\(\) => setMusicError\(true\)\)/);
-  assert.match(scene, /ref=\{music\} data-scene-background-music controls loop/);
-  assert.match(scene, /querySelectorAll<HTMLMediaElement>\('\.quest-scene-dialogue audio, \.quest-scene-dialogue video'\)/);
+test("music starts on reader gestures and is independent of line changes", () => {
+  const scene = readFileSync(
+    new URL(
+      "../src/components/story/QuestIllustratedScene.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(scene, /if \(userGesture\) \{\s*startMusic\(\)/);
+  assert.match(scene, /if \(!auto\) \{\s*startMusic\(\)/);
+  assert.match(
+    scene,
+    /audio\.play\(\)\.catch\(\(\) => setMusicError\(true\)\)/,
+  );
+  assert.match(
+    scene,
+    /ref=\{music\}\s+data-scene-background-music\s+controls\s+loop/,
+  );
+  assert.match(
+    scene,
+    /querySelectorAll<HTMLMediaElement>\(\s*["']\.quest-scene-dialogue audio, \.quest-scene-dialogue video["'],?\s*\)/,
+  );
   assert.doesNotMatch(scene, /<audio[^>]*key=\{(?:current|index)/);
 });

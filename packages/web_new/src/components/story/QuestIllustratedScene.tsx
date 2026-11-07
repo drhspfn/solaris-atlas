@@ -1,11 +1,11 @@
-'use client';
+"use client";
 
-import { BookOpen, ChevronLeft, ChevronRight } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { QuestIllustration, type Illustration } from './QuestIllustration';
-import type { SequenceMedia } from './encounterTransitions';
-import { readingDelay, sequenceFrameForLine } from './sequenceReader';
-import { mediaViewerUrl } from '../ui/mediaViewerUtils';
+import { BookOpen, ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { QuestIllustration, type Illustration } from "./QuestIllustration";
+import type { SequenceMedia } from "./encounterTransitions";
+import { readingDelay, sequenceFrameForLine } from "./sequenceReader";
+import { mediaViewerUrl } from "../ui/mediaViewerUtils";
 
 export function QuestIllustratedScene({
   lines,
@@ -16,7 +16,21 @@ export function QuestIllustratedScene({
   backgroundMusic,
   readingMillisecondsPerCharacter = 55,
 }: {
-  lines: Array<{ id: string; illustration: Illustration; text?: { key?: string | null; content?: string | null; inline_text?: string | null }; media?: { voice_references?: Array<{ plot_audio_id?: string | null; file_name?: string | null }> } }>;
+  lines: Array<{
+    id: string;
+    illustration: Illustration;
+    text?: {
+      key?: string | null;
+      content?: string | null;
+      inline_text?: string | null;
+    };
+    media?: {
+      voice_references?: Array<{
+        plot_audio_id?: string | null;
+        file_name?: string | null;
+      }>;
+    };
+  }>;
   renderLine: (line: any) => ReactNode;
   anchors: Map<string, string>;
   focusLine?: string | null;
@@ -27,6 +41,7 @@ export function QuestIllustratedScene({
   const [index, setIndex] = useState(0);
   const [transcript, setTranscript] = useState(false);
   const [auto, setAuto] = useState(false);
+  const [startedByUser, setStartedByUser] = useState(false);
   const [autoError, setAutoError] = useState(false);
   const [musicError, setMusicError] = useState(false);
   const root = useRef<HTMLElement>(null);
@@ -35,9 +50,11 @@ export function QuestIllustratedScene({
   const current = Math.min(index, lines.length - 1);
   const stopAudio = () =>
     root.current
-      ?.querySelectorAll<HTMLMediaElement>('.quest-scene-dialogue audio, .quest-scene-dialogue video')
+      ?.querySelectorAll<HTMLMediaElement>(
+        ".quest-scene-dialogue audio, .quest-scene-dialogue video",
+      )
       .forEach((media) => {
-        if (!media.closest('.quest-illustration')) media.pause();
+        if (!media.closest(".quest-illustration")) media.pause();
       });
   const startMusic = () => {
     const audio = music.current;
@@ -46,33 +63,83 @@ export function QuestIllustratedScene({
     void audio.play().catch(() => setMusicError(true));
   };
   const select = (next: number, userGesture = false) => {
-    if (userGesture) startMusic();
+    if (userGesture) {
+      startMusic();
+      setStartedByUser(true);
+      setAutoError(false);
+    }
     stopAudio();
     active.current = next;
     setIndex(next);
   };
   useEffect(() => {
-    if (!auto || transcript || !lines.length) return;
-    const container = root.current?.querySelector<HTMLElement>('[data-scene-active="true"]');
-    const audio = container?.querySelector<HTMLAudioElement>('.dialogue-voice audio');
+    if (!startedByUser || transcript || !lines.length) return;
+    const container = root.current?.querySelector<HTMLElement>(
+      '[data-scene-active="true"]',
+    );
+    const audio = container?.querySelector<HTMLAudioElement>(
+      ".dialogue-voice audio",
+    );
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (!audio) return;
+    const fail = () => {
+      if (!cancelled) {
+        setAuto(false);
+        setAutoError(true);
+      }
+    };
+    audio.addEventListener("error", fail);
+    void audio.play().catch(fail);
+    return () => {
+      cancelled = true;
+      audio.removeEventListener("error", fail);
+    };
+  }, [startedByUser, transcript, current, lines[current]?.id]);
+  useEffect(() => {
+    if (!auto || transcript || !lines.length) return;
+    const container = root.current?.querySelector<HTMLElement>(
+      '[data-scene-active="true"]',
+    );
+    const audio = container?.querySelector<HTMLAudioElement>(
+      ".dialogue-voice audio",
+    );
+    let cancelled = false;
     const advance = () => {
       if (cancelled) return;
       if (current < lines.length - 1) select(current + 1);
       else setAuto(false);
     };
     if (audio) {
-      audio.addEventListener('ended', advance);
-      const fail = () => { if (!cancelled) { setAuto(false); setAutoError(true); } };
-      audio.addEventListener('error', fail);
-      void audio.play().catch(fail);
-      return () => { cancelled = true; audio.removeEventListener('ended', advance); audio.removeEventListener('error', fail); };
+      audio.addEventListener("ended", advance);
+      if (audio.ended)
+        void audio.play().catch(() => {
+          if (!cancelled) {
+            setAuto(false);
+            setAutoError(true);
+          }
+        });
+      return () => {
+        cancelled = true;
+        audio.removeEventListener("ended", advance);
+      };
     }
-    const text = lines[current].text?.content || lines[current].text?.inline_text || '';
-    timer = setTimeout(advance, readingDelay(text, readingMillisecondsPerCharacter));
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [auto, transcript, current, lines[current]?.id, readingMillisecondsPerCharacter]);
+    const text =
+      lines[current].text?.content || lines[current].text?.inline_text || "";
+    const timer = setTimeout(
+      advance,
+      readingDelay(text, readingMillisecondsPerCharacter),
+    );
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    auto,
+    transcript,
+    current,
+    lines[current]?.id,
+    readingMillisecondsPerCharacter,
+  ]);
   useEffect(() => {
     let frame: number | undefined;
     const reveal = () => {
@@ -82,39 +149,54 @@ export function QuestIllustratedScene({
       } catch {
         return;
       }
-      const next = lines.findIndex((line) => anchors.get(line.id) === id || line.id === focusLine);
+      const next = lines.findIndex(
+        (line) => anchors.get(line.id) === id || line.id === focusLine,
+      );
       if (next >= 0) {
         if (next !== active.current) select(next);
         setTranscript(false);
         if (frame !== undefined) cancelAnimationFrame(frame);
         frame = requestAnimationFrame(() => {
-          const target = document.getElementById(anchors.get(lines[next].id) || '');
-          if (target && root.current?.contains(target)) target.scrollIntoView({ block: 'center' });
+          const target = document.getElementById(
+            anchors.get(lines[next].id) || "",
+          );
+          if (target && root.current?.contains(target))
+            target.scrollIntoView({ block: "center" });
         });
       }
     };
     reveal();
-    window.addEventListener('hashchange', reveal);
+    window.addEventListener("hashchange", reveal);
     return () => {
-      window.removeEventListener('hashchange', reveal);
+      window.removeEventListener("hashchange", reveal);
       if (frame !== undefined) cancelAnimationFrame(frame);
     };
   }, [lines, anchors, focusLine]);
   if (!lines.length) return null;
   const frame = sequenceFrameForLine(sequenceMedia, lines[current]);
-  const backdrop: Illustration = frame ? { id: `sequence:${frame.file_id}`, kind: 'image', images: [{ rover: null, engine_path: '', url: frame.url! }] } : lines[current].illustration;
+  const backdrop: Illustration = frame
+    ? {
+        id: `sequence:${frame.file_id}`,
+        kind: "image",
+        images: [{ rover: null, engine_path: "", url: frame.url! }],
+      }
+    : lines[current].illustration;
   return (
     <section
-      className={`quest-illustrated-scene${transcript ? ' is-transcript' : ''}`}
+      className={`quest-illustrated-scene${transcript ? " is-transcript" : ""}`}
       ref={root}
       aria-label="Illustrated dialogue"
       tabIndex={0}
       onKeyDown={(event) => {
         if (transcript || event.target !== event.currentTarget) return;
-        if (event.key === 'ArrowRight' || event.key === 'Enter' || event.key === ' ') {
+        if (
+          event.key === "ArrowRight" ||
+          event.key === "Enter" ||
+          event.key === " "
+        ) {
           event.preventDefault();
           if (current < lines.length - 1) select(current + 1, true);
-        } else if (event.key === 'ArrowLeft') {
+        } else if (event.key === "ArrowLeft") {
           event.preventDefault();
           if (current > 0) select(current - 1, true);
         }
@@ -122,18 +204,33 @@ export function QuestIllustratedScene({
     >
       <noscript>
         <style>
-          {'.quest-illustrated-scene [hidden]{display:block}.quest-scene-transport{display:none}'}
+          {
+            ".quest-illustrated-scene [hidden]{display:block}.quest-scene-transport{display:none}"
+          }
         </style>
       </noscript>
       <QuestIllustration illustration={backdrop} presentation="background" />
-      <div className="quest-scene-dialogue" aria-live={transcript ? 'off' : 'polite'}
+      <div
+        className="quest-scene-dialogue"
+        aria-live={transcript ? "off" : "polite"}
         onClick={(event) => {
-          if (transcript || current >= lines.length - 1 ||
-              (event.target as HTMLElement).closest('button, a, input, select, textarea, summary, audio, video')) return;
+          if (
+            transcript ||
+            current >= lines.length - 1 ||
+            (event.target as HTMLElement).closest(
+              "button, a, input, select, textarea, summary, audio, video",
+            )
+          )
+            return;
           select(current + 1, true);
-        }}>
+        }}
+      >
         {lines.map((line, position) => (
-          <div key={line.id} data-scene-active={!transcript && position === current} hidden={!transcript && position !== current}>
+          <div
+            key={line.id}
+            data-scene-active={!transcript && position === current}
+            hidden={!transcript && position !== current}
+          >
             {renderLine(line)}
           </div>
         ))}
@@ -164,8 +261,17 @@ export function QuestIllustratedScene({
           type="button"
           aria-pressed={auto}
           disabled={transcript}
-          onClick={() => { setAutoError(false); if (!auto) startMusic(); setAuto(value => !value); }}
-        >{auto ? 'Auto on' : 'Auto off'}</button>
+          onClick={() => {
+            setAutoError(false);
+            if (!auto) {
+              startMusic();
+              setStartedByUser(true);
+            }
+            setAuto((value) => !value);
+          }}
+        >
+          {auto ? "Auto on" : "Auto off"}
+        </button>
         <button
           type="button"
           aria-pressed={transcript}
@@ -176,12 +282,32 @@ export function QuestIllustratedScene({
           }}
         >
           <BookOpen size={16} />
-          {transcript ? 'Scene view' : 'Read transcript'}
+          {transcript ? "Scene view" : "Read transcript"}
         </button>
       </footer>
-      {autoError && <p role="status">Voice could not be played. Continue manually or try auto again.</p>}
-      {musicError && <p role="status">Background music could not start. Use the music controls to retry.</p>}
-      {backgroundMusic && mediaViewerUrl(backgroundMusic) && <audio ref={music} data-scene-background-music controls loop preload="none" src={backgroundMusic} aria-label="Scene background music" onPlaying={() => setMusicError(false)} onError={() => setMusicError(true)} />}
+      {autoError && (
+        <p role="status">
+          Voice could not be played. Use the voice control to retry.
+        </p>
+      )}
+      {musicError && (
+        <p role="status">
+          Background music could not start. Use the music controls to retry.
+        </p>
+      )}
+      {backgroundMusic && mediaViewerUrl(backgroundMusic) && (
+        <audio
+          ref={music}
+          data-scene-background-music
+          controls
+          loop
+          preload="none"
+          src={backgroundMusic}
+          aria-label="Scene background music"
+          onPlaying={() => setMusicError(false)}
+          onError={() => setMusicError(true)}
+        />
+      )}
     </section>
   );
 }
