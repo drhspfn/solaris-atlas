@@ -17,6 +17,8 @@ function archive(queryText) {
   const mocks = {
     react: { useState: (value) => [value, () => {}], useEffect() {}, useRef: (value) => ({ current: value }) },
     'lucide-react': dummy, '@/api/client': dummy, '@/hooks/useLocale': { useLocale: () => 'en' },
+    '@/hooks/usePlayerDisplay': { usePlayerDisplay: () => ({ name: 'Rover', gender: 'ask' }) },
+    '@/components/dialogue/PlayerText': { PlayerText: 'PlayerText' },
     '@/lib/router': { Link: 'a', useSearchParams: () => [query, (update) => { query = update(query); }] },
     '@/lib/routeKey': dummy, '@/components/ui/Feedback': dummy,
     '@/components/ui/Select': { Select: 'atlas-select' }, '@/components/ui/InfiniteScroll': { InfiniteScroll: 'infinite-scroll' },
