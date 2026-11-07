@@ -6,6 +6,8 @@ import { Film, RefreshCw, X } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 
 import { api, ApiError } from '@/api/client';
+import { usePlayerDisplay } from '@/hooks/usePlayerDisplay';
+import type { PlayerDisplay } from '@/components/dialogue/PlayerText';
 import { useAuth } from '@/auth/AuthProvider';
 import { FlowPlayer } from '@/components/story/QuestCutscenes';
 import { type CutsceneFlow } from '@/components/story/QuestMediaReferences';
@@ -42,7 +44,7 @@ const resumable = new Set([
   'paused_input',
 ]);
 
-function CutscenePreview({ asset }: { asset: Asset }) {
+function CutscenePreview({ asset, display }: { asset: Asset; display: PlayerDisplay }) {
   const [open, setOpen] = useState(false);
   const [flow, setFlow] = useState<CutsceneFlow | null>(null);
   const [error, setError] = useState('');
@@ -84,7 +86,7 @@ function CutscenePreview({ asset }: { asset: Asset }) {
             </button>
           </p>
         ) : flow ? (
-          <FlowPlayer flow={flow} title={`Cutscene · ${asset.reference.split('/').at(-1)}`} />
+          <FlowPlayer display={display} flow={flow} title={`Cutscene · ${asset.reference.split('/').at(-1)}`} />
         ) : (
           <p role="status">Loading video…</p>
         ))}
@@ -93,6 +95,7 @@ function CutscenePreview({ asset }: { asset: Asset }) {
 }
 
 export function CutsceneAnalysisClient() {
+  const display = usePlayerDisplay();
   const { refresh: refreshAuth } = useAuth();
   const [params, setParams] = useSearchParams();
   const selectedJob = params.get('job');
@@ -326,7 +329,7 @@ export function CutsceneAnalysisClient() {
             >
               Analyze cutscene
             </button>
-            <CutscenePreview asset={asset} />
+            <CutscenePreview asset={asset} display={display} />
           </article>
         ))}
         {assets && !loading && !assets.assets.length && (

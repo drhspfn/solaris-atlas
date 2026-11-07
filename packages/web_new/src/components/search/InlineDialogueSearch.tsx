@@ -1,5 +1,6 @@
 'use client';
 
+import { gameTextPlainText } from '../../data/gameText';
 import { Search, X } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from '@/lib/router';
@@ -104,7 +105,7 @@ export function InlineDialogueSearch({
               { value: '', label: 'All appearances' },
               ...quests.map((entry: any) => {
                 const quest = entry.quest || entry;
-                return { value: quest.game_quest_id, label: quest.name?.content || `Quest ${quest.game_quest_id}` };
+                return { value: quest.game_quest_id, label: gameTextPlainText(quest.name, playerDisplay, `Quest ${quest.game_quest_id}`) };
               }),
             ]}
           />

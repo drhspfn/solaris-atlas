@@ -27,6 +27,8 @@ import { selectCharacterVariant, type CharacterVariant } from '@/data/characterI
 import { localizedText } from '@/data/localized';
 import { useLocale } from '@/hooks/useLocale';
 import { usePlayerDisplay } from '@/hooks/usePlayerDisplay';
+import { PlayerText } from '@/components/dialogue/PlayerText';
+import { gameTextPlainText } from '@/data/gameText';
 import { Link } from '@/lib/router';
 import { questPath } from '@/lib/routeKey';
 
@@ -130,7 +132,7 @@ export function EntityProfileClient({
       </div>
     );
 
-  if (data?.npc) return <NpcProfile key={data.character.canonical_key} data={data} initialModel={initialModel} gameVersion={gameVersion} />;
+  if (data?.npc) return <NpcProfile key={data.character.canonical_key} data={data} initialModel={initialModel} gameVersion={gameVersion} display={playerDisplay} />;
 
   const npcContextKey = data?.npc_context_key || data?.npc_context?.canonical_key;
   const entity = data?.[kind];
@@ -212,7 +214,7 @@ export function EntityProfileClient({
     (use: any) => !use.character?.canonical_key,
   );
 
-  const introduction = description || (kind === 'character' ? archive?.biography?.replace(/<[^>]*>/g, '').trim() : '') ||
+  const introduction = description || (kind === 'character' ? archive?.biography : '') ||
     (kind === 'character' ? 'A character recorded in the Solaris Atlas story archive.' : 'Explore source-backed details and story links for this entry.');
 
   const content = (
@@ -224,15 +226,15 @@ export function EntityProfileClient({
         <ChevronRight size={13} />
         <Link to={`/catalog/${kind}`}>{categoryTitle[kind]}</Link>
         <ChevronRight size={13} />
-        <span>{name}</span>
+        <span><PlayerText value={name} display={playerDisplay} /></span>
       </div>
       <div className={`profile-hero${kind === 'character' ? ' character-profile-hero' : ''}`}>
         {kind === 'character' ? (
-          <CharacterProfileVisual key={entity?.canonical_key ?? selectedRole} characterKey={entity?.canonical_key ?? selectedRole} name={name} portraitUrl={portraitUrl}
+          <CharacterProfileVisual key={entity?.canonical_key ?? selectedRole} characterKey={entity?.canonical_key ?? selectedRole} name={gameTextPlainText(name, playerDisplay)} portraitUrl={portraitUrl}
             initialModel={selectedRole === entityKey ? initialModel : null} refreshKey={modelRevision} />
         ) : (
           <div className={`profile-portrait art-${kind}`}>
-            {portraitUrl && <img className="character-portrait-image" src={apiUrl(portraitUrl.replace(/^\/api/, ''))} alt={`${name} portrait`} />}
+            {portraitUrl && <img className="character-portrait-image" src={apiUrl(portraitUrl.replace(/^\/api/, ''))} alt={`${gameTextPlainText(name, playerDisplay)} portrait`} />}
             <div className="portrait-rings" />
             {!portraitUrl && <span>{kind === 'item' ? '✧' : '⌖'}</span>}
             <small>{kind.toUpperCase()}</small>
@@ -241,13 +243,13 @@ export function EntityProfileClient({
         <div className="profile-main">
           <span className="eyebrow left">{categoryTitle[kind].toUpperCase()} PROFILE</span>
           <div className="character-profile-title-row">
-            <h1>{name}<span className="heading-period">.</span></h1>
+            <h1><PlayerText value={name} display={playerDisplay} /><span className="heading-period">.</span></h1>
             {kind === 'character' && entity?.canonical_key && (
               <CharacterModelImport characterKey={entity.canonical_key} variant="actions"
                 onComplete={() => setModelRevision((value) => value + 1)} />
             )}
           </div>
-          <p>{introduction}</p>
+          <p><PlayerText value={introduction} display={playerDisplay} /></p>
           {selectedVariant && (
             <div className="rover-variant-controls" aria-label="Rover appearance and element">
               <div>
@@ -290,6 +292,7 @@ export function EntityProfileClient({
         (archive && profileRole === selectedRole ? (
           <CharacterArchive
             key={`archive:${selectedRole}`}
+            display={playerDisplay}
             archive={archive}
             introduction={introduction}
             materials={characterMaterials}
@@ -305,7 +308,7 @@ export function EntityProfileClient({
         ))}
       {kind === 'character' && profileRole === selectedRole && data?.npc_context && npcContextKey && (
         <NpcInteractions key={npcContextKey} characterKey={npcContextKey}
-          npc={data.npc_context} gameVersion={gameVersion} />
+          npc={data.npc_context} gameVersion={gameVersion} display={playerDisplay} />
       )}
       <div className="profile-columns">
         <section className="content-panel">
@@ -320,8 +323,8 @@ export function EntityProfileClient({
             }
             count={kind === 'item' ? undefined : kind === 'character' ? data?.connections_summary?.quests?.total ?? quests.length : quests.length}
           />
-          {kind === 'item' && <ItemAcquisition data={data} locale={locale} />}
-          {kind === 'item' && entity?.game_item_id != null && <NpcSellers key={entity.game_item_id} itemId={entity.game_item_id} locale={locale} />}
+          {kind === 'item' && <ItemAcquisition data={data} locale={locale} display={playerDisplay} />}
+          {kind === 'item' && entity?.game_item_id != null && <NpcSellers key={entity.game_item_id} itemId={entity.game_item_id} locale={locale} display={playerDisplay} />}
           {kind === 'character' ? (
             profileRole === selectedRole && profileLocale === locale ? (
               <CharacterConnections key={`quests-${selectedRole}-${locale}-${gameVersion || entity?.game_version || "current"}`}
@@ -339,7 +342,7 @@ export function EntityProfileClient({
                     <span className="connection-index">{String(i + 1).padStart(2, '0')}</span>
                     <div>
                       <strong>
-                        {localizedText(quest.name, localizedText(quest.title, `Quest ${id}`))}
+                        <PlayerText value={quest.name} fallback={localizedText(quest.title, `Quest ${id}`)} display={playerDisplay} />
                       </strong>
                       <small>
                         {quest.classification?.kind && quest.classification.kind !== 'unclassified'
@@ -403,7 +406,7 @@ export function EntityProfileClient({
                   >
                     <span className="connection-index">{String(index + 1).padStart(2, '0')}</span>
                     <div>
-                      <strong>{localizedText(quest.name, `Quest ${questId}`)}</strong>
+                      <strong><PlayerText value={quest.name} fallback={`Quest ${questId}`} display={playerDisplay} /></strong>
                       <small>
                         Hand-in · {use.required_count ?? '—'} required · node {use.quest_node_key}
                       </small>
@@ -430,7 +433,7 @@ export function EntityProfileClient({
                         <span className="connection-index">{String(i + 1).padStart(2, '0')}</span>
                         <div>
                           <strong>
-                            {localizedText(quest.name, localizedText(quest.title, `Quest ${id}`))}
+                            <PlayerText value={quest.name} fallback={localizedText(quest.title, `Quest ${id}`)} display={playerDisplay} />
                           </strong>
                           <small>
                             {quest.classification?.kind && quest.classification.kind !== 'unclassified'
@@ -472,7 +475,7 @@ export function EntityProfileClient({
                 };
                 return <Link to={entityPath(item)} className="connection-row" key={i}>
                   <span className="connection-index">↗</span>
-                  <div><strong>{target.label || target.canonical_key}</strong>
+                  <div><strong><PlayerText value={target.label} fallback={target.canonical_key} display={playerDisplay} /></strong>
                     <small>{(link.relation || link.basis || 'Related entry').replaceAll('_', ' ')}</small></div>
                   <ArrowRight size={16} />
                 </Link>;
@@ -514,7 +517,7 @@ export function EntityProfileClient({
                           </span>
                           <div>
                             <Link to={characterHref}>
-                              {character.label || character.canonical_key}
+                              <PlayerText value={character.label} fallback={character.canonical_key} display={playerDisplay} />
                             </Link>
                             <small>
                               Resonator
@@ -623,7 +626,7 @@ export function EntityProfileClient({
                   node_type: data.hierarchy.parent.type,
                 })}
               >
-                {data.hierarchy.parent.label}
+                <PlayerText value={data.hierarchy.parent.label} display={playerDisplay} />
                 <ArrowRight size={14} />
               </Link>
             </div>
@@ -643,7 +646,7 @@ export function EntityProfileClient({
                     node_type: child.type,
                   })}
                 >
-                  {child.label || child.canonical_key}
+                  <PlayerText value={child.label} fallback={child.canonical_key} display={playerDisplay} />
                   <ArrowRight size={14} />
                 </Link>
               ))}
@@ -660,7 +663,7 @@ export function EntityProfileClient({
     </div>
   );
   return kind === 'character' ? (
-    <CharacterMediaProvider key={entity?.canonical_key ?? selectedRole} archive={profileRole === selectedRole ? archive : null} portraitUrl={portraitUrl} name={name}>
+    <CharacterMediaProvider key={entity?.canonical_key ?? selectedRole} archive={profileRole === selectedRole ? archive : null} portraitUrl={portraitUrl} name={gameTextPlainText(name, playerDisplay)}>
       {content}
     </CharacterMediaProvider>
   ) : content;

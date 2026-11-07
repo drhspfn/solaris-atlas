@@ -4,6 +4,7 @@ import { ArrowUp, BookOpen, ChevronRight, Users } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 import { api } from '@/api/client';
 import { PlayerText } from '@/components/dialogue/PlayerText';
+import { gameTextPlainText } from '@/data/gameText';
 import { QuestSidebar, type SidebarGroup } from './QuestSidebar';
 import { activityDestination, dialogueSearchIndex } from './questSidebarModel';
 import { localizedText } from '@/data/localized';
@@ -369,7 +370,7 @@ export function QuestPageClient({
   const activityBlocks = [...activitySlots.values()].flat();
   const mountedActivityAnchors = new Map(activityBlocks.map((block) => [block.id, runtimeBlockAnchor(block.id)]));
   const searchText = (value: unknown, fallback: string) =>
-    localizedText(value, fallback).replace(/\{PlayerName\}/gi, playerDisplay.name);
+    gameTextPlainText(value, playerDisplay, fallback);
   const dialogueSearch = dialogueSearchIndex(lines.map((line: any) => ({
     flow_state: line.flow_state, text: searchText(line.text, ''),
   })));
@@ -470,7 +471,7 @@ export function QuestPageClient({
         return (
           <Fragment key={line.id}>
             {scenes.get(slot)?.map((event) => (
-              <Cutscene key={`${event.action}-${event.reference}`} event={event} />
+              <Cutscene key={`${event.action}-${event.reference}`} event={event} display={playerDisplay} />
             ))}
             {run
               ? run[0].id === line.id && (
@@ -489,7 +490,7 @@ export function QuestPageClient({
         );
       }),
       ...(scenes.get(selected.length) || []).map((event) => (
-        <Cutscene key={`${event.action}-${event.reference}`} event={event} />
+        <Cutscene key={`${event.action}-${event.reference}`} event={event} display={playerDisplay} />
       )),
     ];
   };
@@ -560,7 +561,7 @@ export function QuestPageClient({
         ?.filter(
           (event) => !inlineStates.has(event.flow_state) && !forkMediaOwners.has(event.flow_state),
         )
-        .map((event) => <Cutscene key={`${event.action}-${event.reference}`} event={event} />);
+        .map((event) => <Cutscene key={`${event.action}-${event.reference}`} event={event} display={playerDisplay} />);
     if (!embedded && (inlineStates.has(line.flow_state) || forkOwners.has(line.id)))
       return (
         <Fragment key={line.id}>
@@ -788,7 +789,7 @@ export function QuestPageClient({
         <ChevronRight size={13} />
         <Link to="/story-map">Story map</Link>
         <ChevronRight size={13} />
-        <span>{quest.name?.content || `Quest ${questKey}`}</span>
+        <span><PlayerText value={quest.name} fallback={`Quest ${questKey}`} display={playerDisplay} /></span>
       </div>
       <section className="quest-hero">
         <div className="quest-emblem">
@@ -799,7 +800,7 @@ export function QuestPageClient({
           <span className="eyebrow left">QUEST DOSSIER / {quest.quest_type || 'NARRATIVE'}</span>
           <div className="quest-title-row">
             <h1>
-              {quest.name?.content || `Quest ${questKey}`}
+              <PlayerText value={quest.name} fallback={`Quest ${questKey}`} display={playerDisplay} />
               <span className="heading-period">.</span>
             </h1>
             <AnalysisActions
@@ -851,7 +852,7 @@ export function QuestPageClient({
       )}
       {continuity && (
         <QuestContinuity
-          continuity={continuity}
+          continuity={continuity} display={playerDisplay}
           title={quest.name?.content || `Quest ${questKey}`}
         />
       )}
@@ -898,8 +899,8 @@ export function QuestPageClient({
             />
           ))}
           {hasMediaReferences && <QuestMediaReferences manifest={media} stateAnchors={new Map()} />}
-          <QuestCutscenes manifest={media} stateAnchors={new Map()} />
-          <RelatedQuestCutscenes manifest={media} />
+          <QuestCutscenes display={playerDisplay} manifest={media} stateAnchors={new Map()} />
+          <RelatedQuestCutscenes display={playerDisplay} manifest={media} />
         </section>
       ) : (
         <>
@@ -969,7 +970,7 @@ export function QuestPageClient({
                     !inlineStates.has(event.flow_state) && !forkMediaOwners.has(event.flow_state),
                 )
                 .map((event) => (
-                  <Cutscene key={`${event.action}-${event.reference}`} event={event} />
+                  <Cutscene key={`${event.action}-${event.reference}`} event={event} display={playerDisplay} />
                 ))}
               {activitySlots.get(shown.length)?.map((block) => (
                 <QuestRuntimeBlock
@@ -982,7 +983,7 @@ export function QuestPageClient({
                 />
               ))}
               {contextualCutscenes.map((event) => (
-                <Cutscene key={`${event.action}-${event.reference}`} event={event} />
+                <Cutscene key={`${event.action}-${event.reference}`} event={event} display={playerDisplay} />
               ))}
               {!!activitySlots.get(-1)?.length && (
                 <section aria-label="Related activities">
@@ -995,7 +996,7 @@ export function QuestPageClient({
                   ))}
                 </section>
               )}
-              <RelatedQuestCutscenes manifest={media} />
+              <RelatedQuestCutscenes display={playerDisplay} manifest={media} />
             </div>
           </div>
         </>

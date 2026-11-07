@@ -11,7 +11,7 @@ import { EmptyInline, ErrorPanel, PageLoader } from '@/components/ui/Feedback';
 import { APP_SETTINGS } from '@/config/settings';
 import { type Entity, entityPath } from '@/data/entities';
 import { localizedText } from '@/data/localized';
-import { interpolatePlayerName } from '@/data/playerName';
+import { gameTextPlainText } from '@/data/gameText';
 import { questPassagePath } from '@/data/story';
 import { useLocale } from '@/hooks/useLocale';
 import { usePlayerDisplay } from '@/hooks/usePlayerDisplay';
@@ -105,10 +105,7 @@ export function NodeExplorerPage({
         <ErrorPanel message={error || 'Node not found'} onRetry={() => setRetry((value) => value + 1)} />
       </div>
     );
-  const dialogueText = interpolatePlayerName(
-    localizedText(narrative?.dialogue?.text, narrative?.dialogue?.text?.inline_text || ''),
-    playerDisplay.name,
-  );
+  const dialogueText = gameTextPlainText(narrative?.dialogue?.text, playerDisplay, narrative?.dialogue?.text?.inline_text || '');
   const title = dialogueText || node.canonical_key;
   return (
     <div className="page-container">
@@ -222,7 +219,7 @@ export function NodeExplorerPage({
                     key={quest.canonical_key || id}
                   >
                     <span>
-                      <strong>{localizedText(quest.name, `Quest ${id}`)}</strong>
+                      <strong><PlayerText value={quest.name} fallback={`Quest ${id}`} display={playerDisplay} /></strong>
                       <small>{quest.context_inferred ? 'Possible quest connection · open related scene →' : 'Open quest at this line →'}</small>
                     </span>
                     <ArrowRight size={15} />

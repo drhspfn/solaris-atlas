@@ -59,3 +59,8 @@ test('unknown HTML and markup in player names stay escaped and never become exec
   assert.doesNotMatch(html, /<img|<script/); assert.match(html, /&lt;img/); assert.match(html, /\$&amp;&lt;script&gt;/);
   assert.equal(gameTextPlainText('{PlayerName}', { ...display, name: '$&' }), '$&');
 });
+
+ test('localized inline content follows the same formatter without hiding resolved text', () => {
+ assert.equal(gameTextPlainText({ content: null, inline_text: '{Male=Sir;Female=Lady} {PlayerName}' }, display), 'Lady Rover name');
+ assert.equal(gameTextPlainText({ content: 'Resolved', inline_text: 'Other' }, display), 'Resolved');
+ });
