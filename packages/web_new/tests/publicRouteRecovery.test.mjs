@@ -82,6 +82,8 @@ function harness(path, name, props, initialQuery = '', hash = '') {
   const mocks = {
     react, '@/api/client': api, '../../api/client': api,
     '@/lib/router': router, '@/hooks/useLocale': { useLocale: () => locale },
+    '@/hooks/usePlayerDisplay': { usePlayerDisplay: () => ({ name: 'Rover' }) },
+    '@/data/gameText': { gameTextPlainText: (value) => value },
     '../../hooks/useLocale': { useLocale: () => locale },
     '@/config/settings': settings, '../../config/settings': settings,
     '@/components/ui/Select': { Select: 'atlas-select' },
@@ -184,7 +186,7 @@ test('existing chapter hashes mount the owning page before scrolling and focusin
   h.render(); h.render();
   assert.equal(h.navigations.length, 1, 'resolved hashes must not start a navigation/render loop');
   assert.deepEqual(h.focused, ['story-chapter-group-2'], 'ordinary rerenders must not steal focus');
-  assert.equal(nodes(h.render()).find((node) => node.type === 'h2' && node.props.id === 'story-chapter-group-2').props.children, 'Chapter 2');
+  assert.equal(nodes(h.render()).find((node) => node.type === 'h2' && node.props.id === 'story-chapter-group-2').props.children.props.value, 'Chapter 2');
   h.hash('#story-chapter-group-1');
   assert.equal(h.focused.at(-1), 'story-chapter-group-1', 'same-page hashes focus without a new render');
 });

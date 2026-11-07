@@ -40,13 +40,16 @@ export function storyChapterGroups(chapters: Chapter[]): StoryChapterGroup[] {
 }
 
 /** Search the entire selection, then bound the mounted source nodes across acts. */
-export function storyMapPage(groups: StoryChapterGroup[], query: string, requestedPage: unknown) {
+export function storyMapPage(
+  groups: StoryChapterGroup[], query: string, requestedPage: unknown,
+  plainText: (value: string) => string = (value) => value,
+) {
   const needle = query.trim().toLocaleLowerCase();
   const matches = groups.map((group) => {
     const acts = group.acts.map((act) => ({ ...act, nodes: act.nodes.filter((node) => !needle ||
       [act.title, act.act_title, act.snapshot_game_version, node.title, node.chapter_label,
         ...node.quests.map((quest) => quest.title)]
-        .some((value) => value?.toLocaleLowerCase().includes(needle))) }))
+        .some((value) => value && plainText(value).toLocaleLowerCase().includes(needle))) }))
       .filter((act) => act.nodes.length);
     return { ...group, acts, count: acts.reduce((sum, act) => sum + act.nodes.length, 0) };
   }).filter((group) => group.count);
