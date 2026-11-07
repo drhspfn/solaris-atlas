@@ -9,6 +9,17 @@ from wuwa_story_worker.archive_index import index_voice_paths
 from wuwa_story_worker.event_resources import ui_references
 
 
+def test_sequence_cast_blueprints_are_retained_without_loading_gameplay_models():
+    cast = {'BindingBP': [{'ObjectName': "BlueprintGeneratedClass'BP_Hsin_Seq_C'",
+                          'ObjectPath': '/Game/Aki/Character/Role/FemaleXL/Hsin/Seq/BP_Hsin_Seq'}]}
+    assert list(ui_references(cast)) == []
+    assert list(ui_references(cast, include_sequences=True)) == [
+        ('dependency', '/Game/Aki/Character/Role/FemaleXL/Hsin/Seq/BP_Hsin_Seq')]
+    ordinary = {'ObjectName': "BlueprintGeneratedClass'BP_Hsin_C'",
+                'ObjectPath': '/Game/Aki/Character/Role/FemaleXL/Hsin/BP_Hsin'}
+    assert list(ui_references(ordinary, include_sequences=True)) == []
+
+
 def package_index(root, paths):
     log = root / "archive-index.log"
     files = ["Client/Content/" + path.removeprefix("/Game/") + suffix

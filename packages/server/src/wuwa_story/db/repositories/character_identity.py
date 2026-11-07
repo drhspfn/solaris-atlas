@@ -7,6 +7,7 @@ from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.ingestion.character_identity import character_kind
+from wuwa_story.ingestion.sequence_speaker_crosswalk import FLOW_PATH, SEQUENCE_ACTOR_BASIS
 from wuwa_story.ingestion.speaker_crosswalk import (
     PERSONAL_PORTRAIT_BASIS,
     PLOT_GUEST_BASIS,
@@ -19,7 +20,7 @@ def speaker_crosswalk(release_id, character_ids=None):
     """The same evidenced identity contract for profiles and relation indexing.
 
     SpeakerEntityLink is an unversioned convenience projection. Only the exact
-    source graph and matching portrait or PlotGuest evidence for this release
+    source graph and matching portrait, PlotGuest or sequence-actor evidence for this release
     establish membership. Legacy exact_join/card evidence remains archived but
     is not an identity proof.
     """
@@ -34,7 +35,8 @@ def speaker_crosswalk(release_id, character_ids=None):
             and_(EdgeEvidence.source_file_path == path, SourceFile.logical_source_path == path,
                  EdgeEvidence.explanation.startswith(basis, autoescape=True))
             for path, basis in ((SPEAKER_PATH, PERSONAL_PORTRAIT_BASIS),
-                                (PLOT_GUEST_PATH, PLOT_GUEST_BASIS))
+                                (PLOT_GUEST_PATH, PLOT_GUEST_BASIS),
+                                (FLOW_PATH, SEQUENCE_ACTOR_BASIS))
         )),
     ).correlate(Edge)
     record = proof.with_only_columns(
