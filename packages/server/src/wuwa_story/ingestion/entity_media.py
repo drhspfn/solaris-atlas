@@ -17,7 +17,7 @@ from wuwa_story.ingestion.dungeon_context import walk
 from wuwa_story.ingestion.spine_presentation import SPINE_RECIPE, flow_presentation
 from wuwa_story.ingestion.talk_backgrounds import background_config
 
-SEQUENCE_METADATA_REVISION = 3
+SEQUENCE_METADATA_REVISION = 4
 
 
 class MediaRequest(BaseModel):

@@ -50,7 +50,8 @@ async def publish_media_job(payload: dict, job_id: str, queue_name: str = MEDIA_
         await connection.close()
 
 
-async def enqueue_entity_media(session, request: MediaRequest, *, retry_partial: bool = False) -> ProcessingRun:
+async def enqueue_entity_media(session, request: MediaRequest, *, retry_partial: bool = False,
+                               republish_queued: bool = False) -> ProcessingRun:
     if request.workspace_id is not None:
         await retain_workspace(session, request.workspace_id)
     targets = await entity_media_targets(session, request)
@@ -78,6 +79,13 @@ async def enqueue_entity_media(session, request: MediaRequest, *, retry_partial:
         .order_by(ProcessingRun.id.desc())
         .limit(1)
     )
+    if run and republish_queued and run.status in ("queued", "waiting_dependency"):
+        # Explicit recovery after queue loss: deliver the same pinned job, never
+        # allocate another identity or reset a worker's running/finished state.
+        stored = run.metadata_json
+        await session.commit()
+        await publish_media_job(stored["payload"], digest.hex(), stored["queue"])
+        return run
     if run and (run.status in ("running", "queued", "waiting_dependency") or (run.status == "partial" and not retry_partial)):
         return run
     if run is None:
