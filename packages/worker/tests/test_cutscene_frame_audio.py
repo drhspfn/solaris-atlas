@@ -172,8 +172,9 @@ def test_unconsumed_initial_state_is_explicit_and_consuming_state_remains_guarde
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('initial_stop,fresh_start', [(False, True), (True, True), (True, False)])
 @pytest.mark.parametrize('group', ['', 'group = -S1 #p 0.01\n'])
-async def test_flat_layer_render_keeps_authored_txtp_commands(tmp_path, monkeypatch, group):
+async def test_flat_layer_render_keeps_authored_txtp_commands(tmp_path, monkeypatch, group, initial_stop, fresh_start):
     bank_xml, init_xml = native_xml(tmp_path)
     bank = tmp_path / 'example.bnk'
     bank.write_bytes(b'bank')
@@ -184,7 +185,8 @@ async def test_flat_layer_render_keeps_authored_txtp_commands(tmp_path, monkeypa
     renderer = tmp_path / 'wwiser'
     renderer.write_bytes(b'tool')
     monkeypatch.setattr(audio, 'tool_path', lambda _: renderer)
-    monkeypatch.setattr(audio, 'event_timeline', lambda *_: {'actions': [{'kind': 'Play'}]})
+    monkeypatch.setattr(audio, 'event_timeline', lambda *_: {'actions':
+        ([{'kind':'Stop','time_ms':0}] if initial_stop else []) + [{'kind':'Play','time_ms':0}]})
     monkeypatch.setattr(audio, 'rover_parameters', lambda *_args, **_kw: [])
     commands = []
 
@@ -203,7 +205,11 @@ async def test_flat_layer_render_keeps_authored_txtp_commands(tmp_path, monkeypa
         return None
 
     monkeypatch.setattr(audio, 'run_tool', run)
-    stems = await audio.render_role_stems(bank, inputs, tmp_path / 'render', tmp_path / 'decoder')
+    if initial_stop and not fresh_start:
+        with pytest.raises(ValueError, match='shared running audio context'):
+            await audio.render_role_stems(bank, inputs, tmp_path/'render', tmp_path/'decoder', fresh_start=False)
+        return
+    stems = await audio.render_role_stems(bank, inputs, tmp_path / 'render', tmp_path / 'decoder', fresh_start=fresh_start)
     assert [stem['role'] for stem in stems] == ['music']
     assert stems[0]['duration_seconds'] == 1
     assert commands == ['wem/101.wem #p 0.25 #v -6.0\n' + group]

@@ -20,7 +20,7 @@ from wuwa_story_worker import broker, cutscene_frame_stems
 ])
 async def test_operational_failure_is_not_published_as_missing_audio(tmp_path, monkeypatch, error):
     event = SimpleNamespace(bank='event.bnk', audio_directory='audio', rover=None,
-                            language='en', reference='/Game/Event.Event')
+                            language='en', reference='/Game/Event.Event', start_seconds=0)
     video = SimpleNamespace(frame_audio=[event])
     missing = []
     monkeypatch.setattr(cutscene_frame_stems, 'render_role_stems', AsyncMock(side_effect=error))
@@ -33,7 +33,7 @@ async def test_operational_failure_is_not_published_as_missing_audio(tmp_path, m
 @pytest.mark.asyncio
 async def test_unsupported_source_still_keeps_video_and_reports_missing_audio(tmp_path, monkeypatch):
     event = SimpleNamespace(bank='event.bnk', audio_directory='audio', rover=None,
-                            language='en', reference='/Game/Event.Event')
+                            language='en', reference='/Game/Event.Event', start_seconds=0)
     video = SimpleNamespace(frame_audio=[event])
     monkeypatch.setattr(cutscene_frame_stems, 'render_role_stems', AsyncMock(side_effect=ValueError('unknown native role')))
     missing = []
