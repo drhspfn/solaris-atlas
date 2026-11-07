@@ -13,6 +13,7 @@ import { ErrorPanel } from "@/components/ui/Feedback";
 import { Pagination } from "@/components/ui/Pagination";
 import { PanelTitle } from "@/components/ui/PanelTitle";
 import { localizedText } from "@/data/localized";
+import { gameTextRuns } from "@/data/gameText";
 import { conversationSpeakerName } from "@/data/npcContext";
 import { useLocale } from "@/hooks/useLocale";
 import { Link } from "@/lib/router";
@@ -206,7 +207,7 @@ export function NpcInteractions({ characterKey, npc, gameVersion }: {
                 className="npc-dialogue-card"
                 key={`${line.canonical_key}:${line.flow_state}:${line.speaker?.canonical_key || 'none'}`}
               >
-                <p className="npc-dialogue-text">{localizedText(line.text, "Text unavailable")}</p>
+                <p className="npc-dialogue-text">{gameTextRuns(localizedText(line.text, "Text unavailable")).map((run, i) => <span key={i} style={run.color ? { color: run.color } : undefined}>{run.text}</span>)}</p>
                 <div className="npc-dialogue-meta">
                   <span>{conversationSpeakerName(line.speaker?.label)}</span>
                   <small>{line.speaker_relation === 'confirmed_npc_speaker' ? 'Confirmed speaker' : line.speaker_relation === 'npc_actor_context' ? 'Associated line' : 'Conversation participant'}</small>

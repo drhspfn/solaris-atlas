@@ -7,6 +7,7 @@ import { ErrorPanel } from '@/components/ui/Feedback';
 import { Pagination } from '@/components/ui/Pagination';
 import { PanelTitle } from '@/components/ui/PanelTitle';
 import { localizedText } from '@/data/localized';
+import { gameTextRuns } from '@/data/gameText';
 import { conversationSpeakerName } from '@/data/npcContext';
 import { useLocale } from '@/hooks/useLocale';
 import { Link } from '@/lib/router';
@@ -48,10 +49,10 @@ function Conversation({ scene, characterKey, gameVersion }: { scene: Scene; char
     return `${questPath(quest)}?${params}`;
   };
   return <article className="npc-scene-card">
-    <div className="npc-scene-intro"><MessageCircle size={19} aria-hidden="true" /><h3>{localizedText(scene.title, 'Conversation')}</h3></div>
+    <div className="npc-scene-intro"><MessageCircle size={19} aria-hidden="true" /><h3>{gameTextRuns(localizedText(scene.title, 'Conversation')).map(run => run.text).join('')}</h3></div>
     {!!speakers.length && <p className="npc-scene-speakers">{speakers.join(' · ')}</p>}
     <div className="npc-scene-preview">{scene.preview.slice(0, 2).map((line, index) =>
-      <p key={line.canonical_key || index}>{localizedText(line.text)}</p>)}</div>
+      <p key={line.canonical_key || index}>{gameTextRuns(localizedText(line.text)).map((run, i) => <span key={i} style={run.color ? { color: run.color } : undefined}>{run.text}</span>)}</p>)}</div>
     {!!scene.quests.length && <div className="npc-scene-quests">{scene.quests.map(quest =>
       <Link key={quest.canonical_key} to={questHref(quest)}>{localizedText(quest.name, 'Open quest')}<ArrowUpRight size={14} aria-hidden="true" /></Link>)}</div>}
     <details className="npc-scene-reader" onToggle={event => setOpen(event.currentTarget.open)}>
@@ -59,7 +60,7 @@ function Conversation({ scene, characterKey, gameVersion }: { scene: Scene; char
       {open && (error ? <ErrorPanel message={error} onRetry={() => setRetry(value => value + 1)} /> : !data ?
         <p className="npc-context-loading" role="status">Loading conversation…</p> : <>
           <div className="npc-scene-lines">{data.results.map((line, index) => <div className="npc-scene-line" key={line.canonical_key || index}>
-            <strong>{conversationSpeakerName(line.speaker?.label)}</strong><p>{localizedText(line.text)}</p>
+            <strong>{conversationSpeakerName(line.speaker?.label)}</strong><p>{gameTextRuns(localizedText(line.text)).map((run, i) => <span key={i} style={run.color ? { color: run.color } : undefined}>{run.text}</span>)}</p>
           </div>)}</div>
           {data.total > LINES_PER_PAGE && <Pagination mode="pages" page={page} pageSize={LINES_PER_PAGE} total={data.total}
             onPageChange={setPage} ariaLabel="Conversation pages" />}

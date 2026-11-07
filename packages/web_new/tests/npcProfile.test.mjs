@@ -6,6 +6,12 @@ import ts from 'typescript';
 
 const source = readFileSync(new URL('../src/components/profile/NpcProfile.tsx', import.meta.url), 'utf8');
 const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+const compile = path => ts.transpileModule(readFileSync(new URL(path, import.meta.url), 'utf8'),
+  { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+const colors = {};
+vm.runInNewContext(compile('../src/data/gameTextColors.ts'), { exports: colors });
+const gameText = {};
+vm.runInNewContext(compile('../src/data/gameText.ts'), { exports: gameText, require: () => colors });
 const speakerHelpers = {};
 vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../src/data/npcContext.ts', import.meta.url), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: speakerHelpers });
@@ -21,6 +27,7 @@ function render(result, npc = { shop_count: 1 }, gameVersion) {
       : id === '@/hooks/useLocale' ? { useLocale: () => 'en' }
       : id === '@/data/localized' ? { localizedText: (value, fallback = '') => value?.content || value || fallback }
       : id === '@/data/npcContext' ? speakerHelpers
+      : id === '@/data/gameText' ? gameText
       : id === '@/lib/routeKey' ? { questPath: quest => `/quests/${quest.canonical_key}` }
       : components });
   return nodes(exports.NpcInteractions({ characterKey: 'character:npc:17288', npc, gameVersion }));
@@ -53,6 +60,7 @@ test('clearing NPC dialogue search resets its query and page and restores focus'
       : id === '@/hooks/useLocale' ? { useLocale: () => 'en' }
       : id === '@/data/localized' ? { localizedText: (value, fallback = '') => value?.content || value || fallback }
       : id === '@/data/npcContext' ? speakerHelpers
+      : id === '@/data/gameText' ? gameText
       : components });
   const tree = nodes(exports.NpcInteractions({ characterKey: 'character:npc:1', npc: { shop_count: 0 } }));
   tree.find((node) => node.props['aria-label'] === 'Clear dialogue search').props.onClick();
@@ -71,6 +79,7 @@ test('NPC profile delegates interactions to its canonical key', () => {
       : id === '@/hooks/useLocale' ? { useLocale: () => 'en' }
       : id === '@/data/localized' ? { localizedText: (value, fallback = '') => value?.content || value || fallback }
       : id === '@/data/npcContext' ? speakerHelpers
+      : id === '@/data/gameText' ? gameText
       : components });
   const npc = { blueprint_id: 1, name_scope: 'blueprint', name_variants: [], shop_count: 1 };
   const tree = nodes(exports.NpcProfile({ data: { character: { canonical_key: 'character:npc:1' }, npc }, gameVersion: '3.7' }));
@@ -91,6 +100,7 @@ test('quest appearances render localized, accessible links in a compact grid', (
       : id === '@/hooks/useLocale' ? { useLocale: () => 'en' }
       : id === '@/data/localized' ? { localizedText: (value, fallback = '') => value?.content || value || fallback }
       : id === '@/data/npcContext' ? speakerHelpers
+      : id === '@/data/gameText' ? gameText
       : id === '@/lib/routeKey' ? { questPath: quest => `/quests/${quest.canonical_key}` }
       : components });
   const interactions = nodes(exports.NpcInteractions({ characterKey: 'character:npc:1', npc: { shop_count: 0 }, gameVersion: '3.7.1' }));
@@ -135,4 +145,15 @@ test('dialogue cards use the shared speaker display names', () => {
     const card = tree.find(node => node.props.className === 'npc-dialogue-meta');
     assert.equal(nodes(card).find(node => node.type === 'span').props.children, expected);
   }
+});
+
+test('NPC dialogue renders supported game colors as text spans', () => {
+  const tree = render({ total: 1, results: [{ canonical_key: 'talk_item:1', flow_state: 'flow',
+    speaker: null, speaker_relation: 'interaction_participant',
+    text: { content: 'Hello <color=Highlight>Rover</color> <unknown>tag</unknown>' }, quests: [] }] });
+  const text = tree.find(node => node.props.className === 'npc-dialogue-text');
+  const spans = nodes(text).filter(node => node.type === 'span');
+  assert(spans.some(node => node.props.children === 'Rover' && node.props.style?.color === '#F7EBA6FF'));
+  assert(spans.some(node => node.props.children.includes('<unknown>tag</unknown>')));
+  assert(!JSON.stringify(text).includes('<color='));
 });
