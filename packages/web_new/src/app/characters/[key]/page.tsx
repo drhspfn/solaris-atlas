@@ -30,7 +30,9 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
     localizedText(character?.name) ||
     localizedText(character?.canonical_name) ||
     `Character · ${entityId}`;
-  const profileType = data?.npc ? 'NPC' : character?.playable === true ? 'Resonator' : 'Character';
+  const profileType = data?.npc
+    ? data.npc.kind === 'template' ? 'NPC Template' : 'NPC'
+    : character?.playable === true ? 'Resonator' : 'Character';
   const title = `${name} — ${profileType} Profile`;
   const description = (
     (data?.npc ? localizedText(character?.description) : archive?.biography) ||

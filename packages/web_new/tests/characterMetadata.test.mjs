@@ -37,8 +37,8 @@ test('NPC metadata uses NPC data even when an archive biography exists', async (
 });
 test('mixed NPC template preserves its source-provided description', async () => {
   const description = 'This game configuration is shared by differently named world actors.';
-  const result = await metadata({ character: { name: 'Shared NPC template', description }, npc: { name_scope: 'blueprint' } });
-  assertTitles(result, 'Shared NPC template — NPC Profile');
+  const result = await metadata({ character: { name: 'Shared NPC template', description }, npc: { kind: 'template', name_scope: 'blueprint' } });
+  assertTitles(result, 'Shared NPC template — NPC Template Profile');
   assert.equal(result.description, description);
 });
 test('playable and other story roles use their type and keep biographies', async () => {
@@ -51,4 +51,11 @@ test('playable and other story roles use their type and keep biographies', async
 test('missing profile uses a neutral character fallback', async () => {
   const result = await metadata(null);
   assertTitles(result, 'Character · abby — Character Profile');
+});
+
+test('NPC kind controls template classification rather than the displayed name', async () => {
+  const template = await metadata({ character: { name: 'Abby', playable: false }, npc: { kind: 'template' } });
+  assertTitles(template, 'Abby — NPC Template Profile');
+  const npc = await metadata({ character: { name: 'Shared NPC template', playable: false }, npc: { kind: 'npc' } });
+  assertTitles(npc, 'Shared NPC template — NPC Profile');
 });
