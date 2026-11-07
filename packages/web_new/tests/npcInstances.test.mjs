@@ -8,10 +8,10 @@ const source = readFileSync(new URL('../src/components/profile/NpcInstances.tsx'
 const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
 function nodes(node) { return !node || typeof node !== 'object' ? [] : [node, ...[node.props?.children].flat(Infinity).flatMap(nodes)]; }
 
-test('instance list fetches versioned server pages and keeps map/entity distinctions', async () => {
+test('locations render published map links and page server results', async () => {
   const slots = [], effects = [], requests = [];
   let index = 0, effectIndex = 0, pending = [];
-  const instances = Array.from({ length: 21 }, (_, i) => ({ map_id: 10, entity_id: i + 1,
+  const instances = Array.from({ length: 9 }, (_, i) => ({ id: i + 1, names: { en: `Town ${i + 1}` }, map_names: { en: "Solaris" }, href: `/map?map=2&marker=${i + 1}`,
     name: { content: `Instance ${i + 1}` }, character_key: `character:npc:${i + 1}` }));
   const exports = {};
   vm.runInNewContext(code, { exports, URLSearchParams, AbortController, require: id => {
@@ -19,7 +19,8 @@ test('instance list fetches versioned server pages and keeps map/entity distinct
       useEffect: (run, deps) => { const i = effectIndex++; if (!effects[i] || deps.some((v, j) => v !== effects[i].deps[j])) pending.push(() => { effects[i]?.cleanup?.(); effects[i] = { deps, cleanup: run() }; }); } };
     if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
     if (id === '@/hooks/useLocale') return { useLocale: () => 'en' };
-    if (id === '@/api/client') return { api: async url => { requests.push(url); const offset = Number(new URL(url, 'https://example.test').searchParams.get('offset')); return { results: instances.slice(offset, offset + 20), total: instances.length }; } };
+    if (id === '@/api/client') return { api: async url => { requests.push(url); const offset = Number(new URL(url, 'https://example.test').searchParams.get('offset')); return { results: instances.slice(offset, offset + 8), total: instances.length }; } };
+    if (id === '@/lib/router') return { Link: 'Link' };
     if (id === '@/components/ui/Pagination') return { Pagination: 'Pagination' };
     return { localizedText: (value, fallback) => value?.content || value || fallback };
   } });
@@ -27,16 +28,16 @@ test('instance list fetches versioned server pages and keeps map/entity distinct
   assert(render().some(node => node.props.role === 'status'));
   await Promise.resolve(); await Promise.resolve();
   let tree = render();
-  assert.equal(tree.filter(node => node.props.className === 'plain-row').length, 20);
+  assert.equal(tree.filter(node => node.props.className === 'npc-location-card').length, 8);
   tree.find(node => node.type === 'Pagination').props.onPageChange(2);
   render();
   await Promise.resolve(); await Promise.resolve();
   tree = render();
-  assert.equal(tree.filter(node => node.props.className === 'plain-row').length, 1);
-  assert(tree.some(node => node.type === 'span' && node.props.children === 'Instance 21'));
-  assert.deepEqual(Array.from(tree.find(node => node.type === 'small').props.children), ['Map ', 10, ' · Entity ', 21]);
+  assert.equal(tree.filter(node => node.props.className === 'npc-location-card').length, 1);
+  assert(tree.some(node => node.type === 'strong' && node.props.children === 'Town 9'));
+  assert.equal(tree.find(node => node.type === 'Link').props.to, '/map?map=2&marker=9'); assert(!JSON.stringify(tree).includes('Entity'));
   const params = new URL(requests[1], 'https://example.test').searchParams;
-  assert.equal(params.get('offset'), '20');
+  assert.equal(params.get('offset'), '8');
   assert.equal(params.get('game_version'), '3.7');
   assert.equal(params.get('locale'), 'en');
 });
