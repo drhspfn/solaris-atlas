@@ -39,3 +39,15 @@ async def test_reconstructed_music_loops_and_remains_an_independent_stem(tmp_pat
     assert 'reconstructed' in result.stems[0].evidence
     assert calls[0][calls[0].index('-stream_loop')+1] == '-1'
     assert '105.3' in calls[0]
+
+def test_music_separation_preserves_native_sequence_and_discards_only_parallel_effects():
+    from wuwa_story_worker.cutscene_music_context import music_recipe
+    body = 'wem/1.wem #E #B 10.0\nwem/2.wem #i #b 100.35 #v -4.0dB #@loop\ngroup = -S2 ##loop\nwem/3.wem #e #v -6.0dB\ngroup = -L2 #@layer-v'
+    roles = {1: {'role': 'music'}, 2: {'role': 'music'}, 3: {'role': 'effects'}}
+    result = music_recipe(body, roles)
+    assert result == '\n'.join(body.splitlines()[:3])
+    with pytest.raises(ValueError, match='without altering native timing'):
+        music_recipe('wem/1.wem\nwem/3.wem\ngroup = -S2', roles)
+
+    with pytest.raises(ValueError, match='without altering native timing'):
+        music_recipe(body.replace('-L2 #@layer-v', '-L2 #v -6dB #@layer-v'), roles)
