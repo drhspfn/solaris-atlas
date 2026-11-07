@@ -50,3 +50,30 @@ async def test_backfill_is_idempotent_and_requests_only_current_character_pages(
     dirty.assert_not_awaited()
     await module.backfill(apply=True, refresh_all=True)
     dirty.assert_awaited_once_with(session, "character", {12})
+
+
+@pytest.mark.asyncio
+async def test_artwork_repair_preserves_non_rover_public_family(monkeypatch):
+    family = {"family": "character:1603", "canonical_key": "character:1603"}
+    character = Row(metadata_json={"game_character_id": 5038, "public_identity": family})
+    rows = [(MAIN_ROLE_PATH, {}), ("BinData/role/roleinfo.json", {"Id": 5038, "RoleType": 2})]
+    session = Row(scalar=AsyncMock(return_value=21), execute=AsyncMock(), commit=AsyncMock())
+
+    async def execute(statement):
+        query = str(statement)
+        if query.startswith("SET LOCAL"):
+            return []
+        if "raw.source_record" in query:
+            return rows
+        return [(character, Row(id=12, status="active"))]
+
+    session.execute.side_effect = execute
+    class Context:
+        async def __aenter__(self): return session
+        async def __aexit__(self, *_): return None
+    monkeypatch.setattr(module, "SessionFactory", Context)
+    monkeypatch.setattr(module, "main_role_identities", lambda *_: {1501: {"family": "rover"}})
+    monkeypatch.setattr(module, "mark_dirty", AsyncMock())
+    result = await module.backfill(apply=True, refresh_all=True)
+    assert result["changed"] == 0
+    assert character.metadata_json["public_identity"] == family
