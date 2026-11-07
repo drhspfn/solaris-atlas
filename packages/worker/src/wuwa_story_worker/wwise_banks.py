@@ -345,7 +345,10 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
     initializers = sorted(path for path in audio.rglob("Init.bnk") if path.is_file()
                           and not path.resolve().is_relative_to(work.resolve()))
     if len(initializers) > 1:
-        raise ValueError("Ambiguous Wwise Init bank")
+        hashes = {hashlib.sha256(path.read_bytes()).digest() for path in initializers}
+        if len(hashes) > 1:
+            raise ValueError("Ambiguous Wwise Init bank")
+        initializers = initializers[:1]
     selection = str(rover).encode() + (b'\0language:' + language.encode('ascii') if language is not None else b'')
     fingerprint = hashlib.sha256(bank.read_bytes() + selection + renderer.read_bytes())
     fingerprint.update(Path(__file__).read_bytes())

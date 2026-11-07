@@ -143,6 +143,27 @@ async def test_real_flow_and_segment_readers_do_not_duplicate_generations(publis
 
 
 @pytest.mark.asyncio
+async def test_complete_flow_outweighs_new_incomplete_generation(published, monkeypatch):
+    _, _, reader, add, location = published
+    monkeypatch.setattr(media, 'get_settings', lambda: SimpleNamespace(s3_bucket='test'))
+    monkeypatch.setattr(media, 'S3Storage', lambda _: SimpleNamespace(public_url=lambda key: key))
+    monkeypatch.setattr(media, 'audio_bundles', AsyncMock(return_value={}))
+    monkeypatch.setattr(media, 'cutscene_videos', AsyncMock(return_value={5: {'url': 'full.mp4'}}))
+    flow = {'entry': 'clip', 'evidence': 'intact', 'nodes': [{'id': 'clip', 'kind': 'clip',
+        'asset': 'asset:ue:/Game/Test.Test', 'segment': 'segment-intro'}]}
+    add('cutscene_flow', 1, None, {'flow': flow, 'publication_complete': True})
+    add('cutscene_segment', 2, 2, {'segment_id': 'segment-intro', 'start_frame': 0, 'fps': 30})
+    location(2, 'complete.mp4')
+    add('cutscene_flow_v2', 10, None, {'flow': {**flow, 'evidence': 'partial'},
+                                      'publication_complete': False})
+    add('cutscene_segment_v2', 11, 11, {'segment_id': 'segment-intro', 'start_frame': 0, 'fps': 30})
+    location(11, 'partial.mp4')
+    result = await media.cutscene_flows(reader, [5])
+    assert result[5]['evidence'] == 'intact'
+    assert result[5]['media']['segment-intro']['url'] == 'complete.mp4'
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('v2', [False, True])
 async def test_visual_analysis_tracks_preferred_bytes_not_late_legacy_writer(published, v2):
     _, session, _, add, _ = published

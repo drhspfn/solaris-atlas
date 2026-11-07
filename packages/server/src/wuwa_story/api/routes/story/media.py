@@ -97,7 +97,11 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
     )
     selected = {}
     for reference in rows:
-        selected.setdefault(reference.owner_node_id, reference)
+        previous = selected.get(reference.owner_node_id)
+        # An incomplete newer rebuild must not hide an intact published flow.
+        if previous is None or (reference.metadata_json.get("publication_complete") is True
+                                and previous.metadata_json.get("publication_complete") is not True):
+            selected[reference.owner_node_id] = reference
     result = {}
     for owner_id, reference in selected.items():
         cutscene_key = reference.metadata_json.get("cutscene_key") or getattr(reference, "source_path", None)
@@ -138,6 +142,9 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
                 .where(
                     FileReference.owner_node_id.in_([node.id for node in nodes]),
                     FileReference.reference_type.in_(publication_types("cutscene_segment")),
+                    FileReference.reference_type == "cutscene_segment"
+                    if reference.reference_type == "cutscene_flow"
+                    and reference.metadata_json.get("publication_complete") is True else True,
                     or_(FileReference.reference_type == "cutscene_segment",
                         FileReference.metadata_json["cutscene_key"].astext == cutscene_key)
                     if cutscene_key is not None else True,
