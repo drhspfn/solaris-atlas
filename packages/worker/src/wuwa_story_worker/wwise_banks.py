@@ -413,6 +413,8 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
         await run_tool([sys.executable, str(renderer), '-d', 'xml', '-dn',
                         str(root / 'init'), '--', str(root / 'Init.bnk')], 120)
         state_params = initial_parameters(timeline, xml, init_xml)
+        raise ValueError('Wwise startup State requires external music context: '
+                         + ', '.join(state_params))
     params = await asyncio.to_thread(rover_parameters, xml, rover, language=language)
     for param in state_params:
         if any(other.split('=')[0] == param.split('=')[0] and other != param for other in params):
