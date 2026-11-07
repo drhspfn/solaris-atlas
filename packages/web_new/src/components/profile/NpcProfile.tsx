@@ -13,6 +13,7 @@ import { ErrorPanel } from "@/components/ui/Feedback";
 import { Pagination } from "@/components/ui/Pagination";
 import { PanelTitle } from "@/components/ui/PanelTitle";
 import { localizedText } from "@/data/localized";
+import { conversationSpeakerName } from "@/data/npcContext";
 import { useLocale } from "@/hooks/useLocale";
 import { Link } from "@/lib/router";
 import { questPath } from "@/lib/routeKey";
@@ -197,7 +198,7 @@ export function NpcInteractions({ characterKey, npc, gameVersion }: {
               >
                 <p className="npc-dialogue-text">{localizedText(line.text, "Text unavailable")}</p>
                 <div className="npc-dialogue-meta">
-                  <span>{line.speaker?.label || 'Speaker'}</span>
+                  <span>{conversationSpeakerName(line.speaker?.label)}</span>
                   <small>{line.speaker_relation === 'confirmed_npc_speaker' ? 'Confirmed speaker' : line.speaker_relation === 'npc_actor_context' ? 'Associated line' : 'Conversation participant'}</small>
                 </div>
                 {line.quests.map((quest) => (

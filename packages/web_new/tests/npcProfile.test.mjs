@@ -6,6 +6,9 @@ import ts from 'typescript';
 
 const source = readFileSync(new URL('../src/components/profile/NpcProfile.tsx', import.meta.url), 'utf8');
 const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+const speakerHelpers = {};
+vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../src/data/npcContext.ts', import.meta.url), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: speakerHelpers });
 function nodes(node) { return !node || typeof node !== 'object' ? [] : [node, ...[node.props?.children].flat(Infinity).flatMap(nodes)]; }
 function render(result) {
   let index = 0;
@@ -17,6 +20,7 @@ function render(result) {
       : id === 'react/jsx-runtime' ? { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) }
       : id === '@/hooks/useLocale' ? { useLocale: () => 'en' }
       : id === '@/data/localized' ? { localizedText: (value, fallback = '') => value?.content || value || fallback }
+      : id === '@/data/npcContext' ? speakerHelpers
       : components });
   return nodes(exports.NpcInteractions({ characterKey: 'character:npc:17288', npc: { shop_count: 1 } }));
 }
@@ -47,6 +51,7 @@ test('clearing NPC dialogue search resets its query and page and restores focus'
       : id === 'react/jsx-runtime' ? { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) }
       : id === '@/hooks/useLocale' ? { useLocale: () => 'en' }
       : id === '@/data/localized' ? { localizedText: (value, fallback = '') => value?.content || value || fallback }
+      : id === '@/data/npcContext' ? speakerHelpers
       : components });
   const tree = nodes(exports.NpcInteractions({ characterKey: 'character:npc:1', npc: { shop_count: 0 } }));
   tree.find((node) => node.props['aria-label'] === 'Clear dialogue search').props.onClick();
@@ -64,6 +69,7 @@ test('NPC profile delegates interactions to its canonical key', () => {
       : id === 'react/jsx-runtime' ? { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) }
       : id === '@/hooks/useLocale' ? { useLocale: () => 'en' }
       : id === '@/data/localized' ? { localizedText: (value, fallback = '') => value?.content || value || fallback }
+      : id === '@/data/npcContext' ? speakerHelpers
       : components });
   const npc = { blueprint_id: 1, name_scope: 'blueprint', name_variants: [], shop_count: 1 };
   const tree = nodes(exports.NpcProfile({ data: { character: { canonical_key: 'character:npc:1' }, npc }, gameVersion: '3.7' }));
@@ -83,6 +89,7 @@ test('quest appearances render localized, accessible links in a compact grid', (
       : id === 'react/jsx-runtime' ? { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) }
       : id === '@/hooks/useLocale' ? { useLocale: () => 'en' }
       : id === '@/data/localized' ? { localizedText: (value, fallback = '') => value?.content || value || fallback }
+      : id === '@/data/npcContext' ? speakerHelpers
       : id === '@/lib/routeKey' ? { questPath: quest => `/quests/${quest.canonical_key}` }
       : components });
   const interactions = nodes(exports.NpcInteractions({ characterKey: 'character:npc:1', npc: { shop_count: 0 } }));
@@ -94,4 +101,15 @@ test('quest appearances render localized, accessible links in a compact grid', (
   assert.equal(link.props.to, '/quests/quest:1');
   assert.equal(link.props.children, 'A localized quest');
   assert(rendered.some(node => node.props.className === 'npc-quest-grid'));
+});
+
+test('dialogue cards use the shared speaker display names', () => {
+  for (const [label, expected] of [['{PlayerName}', 'Rover'], ['speaker:123', 'Unknown speaker'],
+    ['???', 'Unknown speaker'], ['{message}Visitor', 'Visitor']]) {
+    const tree = render({ total: 1, results: [{ canonical_key: 'talk_item:1', flow_state: 'flow',
+      speaker: { canonical_key: 'speaker:123', label }, speaker_relation: 'interaction_participant',
+      text: { content: 'Hello' }, quests: [] }] });
+    const card = tree.find(node => node.props.className === 'npc-dialogue-meta');
+    assert.equal(nodes(card).find(node => node.type === 'span').props.children, expected);
+  }
 });
