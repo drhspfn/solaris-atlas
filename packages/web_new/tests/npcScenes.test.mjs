@@ -12,6 +12,10 @@ function compile(path, jsx = false) {
 function nodes(node) {
   return !node || typeof node !== 'object' ? [] : [node, ...[node.props?.children].flat(Infinity).flatMap(nodes)];
 }
+const colors = {};
+vm.runInNewContext(compile('../src/data/gameTextColors.ts'), { exports: colors });
+const gameText = {};
+vm.runInNewContext(compile('../src/data/gameText.ts'), { exports: gameText, require: () => colors });
 const helpers = {};
 vm.runInNewContext(compile('../src/data/npcContext.ts'), { exports: helpers });
 const code = compile('../src/components/profile/NpcFlowParticipants.tsx', true);
@@ -20,11 +24,11 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 function harness() {
   const requests = [];
   const scenes = Array.from({ length: 105 }, (_, i) => ({
-    state_id: i + 1, flow_state: `TECHNICAL_FLOW_${i + 1}`, title: `Conversation ${i + 1}`,
+    state_id: i + 1, flow_state: `TECHNICAL_FLOW_${i + 1}`, title: `Conversation <color=Highlight>${i + 1}</color>`,
     speakers: [{ label: '{message} Abby' }, { label: '{PlayerName}' }, { label: 'speaker:123' }],
-    preview: [{ canonical_key: `line:${i}`, text: `Preview ${i + 1}`, speaker: null }], quests: [],
+    preview: [{ canonical_key: `line:${i}`, text: `Preview <color=Highlight>${i + 1}</color>`, speaker: null }], quests: [],
   }));
-  const lines = Array.from({ length: 25 }, (_, i) => ({ canonical_key: `line:${i}`, text: `Line ${i + 1}`,
+  const lines = Array.from({ length: 25 }, (_, i) => ({ canonical_key: `line:${i}`, text: `Line <color=Highlight>${i + 1}</color>`,
     speaker: { label: i === 0 ? '{message} Abby' : i === 1 ? '{PlayerName}' : 'speaker:123' } }));
   let active;
   const exports = {};
@@ -46,6 +50,7 @@ function harness() {
       return { results: source.slice(offset, offset + limit), total: source.length };
     } };
     if (id === '@/data/npcContext') return helpers;
+    if (id === '@/data/gameText') return gameText;
     if (id === '@/data/localized') return { localizedText: (value, fallback = '') => value?.content || value || fallback };
     if (id === '@/lib/router') return { Link: 'Link' };
     if (id === '@/lib/routeKey') return { questPath: quest => `/quests/${quest.canonical_key}` };
@@ -80,11 +85,13 @@ test('scene pages reach entries beyond 100 and never display technical flow keys
   assert.equal(params.get('locale'), 'en');
   assert.equal(params.get('game_version'), '3.7');
   const scene = tree.find(node => typeof node.type === 'function' && node.type.name === 'Conversation');
-  assert.equal(scene.props.scene.title, 'Conversation 105');
+  assert.equal(scene.props.scene.title, 'Conversation <color=Highlight>105</color>');
   const renderScene = h.component(scene.type, scene.props);
   const display = renderScene();
   assert(display.some(node => node.type === 'h3' && node.props.children === 'Conversation 105'));
   assert(!JSON.stringify(display).includes('TECHNICAL_FLOW_'));
+  assert(!JSON.stringify(display).includes('<color='));
+  assert(display.some(node => node.type === 'span' && node.props.children === '105' && node.props.style?.color === '#F7EBA6FF'));
   assert(display.some(node => node.props.className === 'npc-scene-speakers' && node.props.children === 'Abby · Rover · Unknown speaker'));
 });
 
@@ -115,6 +122,7 @@ test('inline conversation fetches state-scoped dialogue in pages of 20 with norm
   assert.equal(second.searchParams.get('state_id'), '1');
   assert.equal(second.searchParams.get('offset'), '20');
   assert.equal(tree.filter(node => node.props.className === 'npc-scene-line').length, 5);
-  assert(tree.some(node => node.type === 'p' && node.props.children === 'Line 25'));
+  assert(tree.some(node => node.type === 'span' && node.props.children === '25' && node.props.style?.color === '#F7EBA6FF'));
+  assert(!JSON.stringify(tree).includes('<color='));
   assert(!JSON.stringify(tree).includes('TECHNICAL_FLOW_'));
 });
