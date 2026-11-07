@@ -279,6 +279,15 @@ async def test_npc_catalog_projection_uses_scoped_name_without_playable_archive(
 
 
 @pytest.mark.asyncio
+async def test_grouped_character_projection_does_not_claim_representative_slug(context):
+    context.node.slug = "7-source-role"
+    context.profile["character"]["slug"] = "99-representative"
+    result = await builders.build_entity(context.session, "character", 7, "ja", "current")
+    assert result["slug"] == "7-source-role"
+    assert result["payload"]["profile"]["character"]["slug"] == "99-representative"
+
+
+@pytest.mark.asyncio
 async def test_quest_materializes_all_transcript_pages(context):
     context.node_type.key = "quest"
     first = [{"id": f"line:{i}"} for i in range(2000)]
