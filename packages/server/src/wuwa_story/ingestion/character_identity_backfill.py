@@ -44,13 +44,16 @@ async def backfill(*, apply=False, refresh=False, refresh_all=False):
         changed, refresh_ids, family_ids = [], set(), set()
         characters = await session.execute(select(Character, Node).join(Node, Node.id == Character.node_id))
         for character, node in characters:
+            metadata = character.metadata_json or {}
+            # Native blueprint IDs and RoleInfo IDs are separate namespaces.
+            if metadata.get("role_type") == 6 or isinstance(metadata.get("npc"), dict):
+                continue
             role_id = (character.metadata_json or {}).get("game_character_id")
             if role_id not in roles:
                 continue
             identity = identities.get(role_id)
             if identity:
                 family_ids.add(node.id)
-            metadata = character.metadata_json or {}
             role = roles.get(role_id, {})
             fields = inherited_character_fields(
                 role, roles.get(role.get("SkillId"), {}))
