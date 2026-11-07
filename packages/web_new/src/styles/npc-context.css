@@ -33,7 +33,7 @@
 .npc-scene-line strong { display: block; color: var(--mint); font-size: 12px; font-weight: 600; margin-bottom: 7px; }
 .npc-scene-line p { margin: 0; color: var(--text-primary); font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
 .npc-location-card:focus-visible, .npc-scene-reader > summary:focus-visible, .npc-scene-quests a:focus-visible { outline: 2px solid var(--mint); outline-offset: 4px; }
-.npc-conversations .pagination, .npc-context-section .pagination { margin-top: 22px; }
+.npc-conversations .ui-pagination, .npc-context-section .ui-pagination, .npc-section .ui-pagination { margin-top: 22px; }
 @media (max-width: 680px) {
   .npc-context-section.content-panel { padding: 18px; margin-top: 18px; }
   .npc-location-grid, .npc-scene-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
