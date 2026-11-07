@@ -179,3 +179,54 @@ async def test_npc_export_does_not_schedule_template_skill_or_yangyang_images():
     assert [target["path"] for target in result] == [own]
     assert all("SkillGroupId" not in str(
         call.args[0]) for call in session.scalars.await_args_list)
+
+@pytest.mark.parametrize("skill_id", [1208, 1603])
+def test_story_role_rejects_foreign_head_set_but_keeps_owned_card(skill_id):
+    from wuwa_story.ingestion.character_artwork import inherited_character_fields
+
+    heads = {
+        field: f"/Game/Common/T_IconRoleHead{size}_53_UI.T_IconRoleHead{size}_53_UI"
+        for field, size in [("RoleHeadIcon", "80"), ("RoleHeadIconBig", "150"),
+                            ("RoleHeadIconLarge", "256"), ("RoleHeadIconCircle", "Circle256"),
+                            ("Card", "175")]
+    }
+    role = {"Id": 99901, "RoleType": 2, "Name": "person", "Introduction": "person-info",
+            "SkillId": skill_id, "FormationRoleCard": "person-card", "RolePortrait": "person-portrait", **heads}
+    template = {"Id": skill_id, "Name": "person" if skill_id == 1603 else "other",
+                "Introduction": "person-info" if skill_id == 1603 else "other-info",
+                "FormationRoleCard": "person-card" if skill_id == 1603 else "other-card",
+                "RolePortrait": "person-portrait" if skill_id == 1603 else "other-portrait",
+                "RoleHeadIcon": "different-head"}
+    assert inherited_character_fields(role, template) == set(heads)
+    # An actual copy of the source head owner retains its artwork.
+    owner = {**role, "Id": 1210}
+    assert inherited_character_fields(role, owner) == set()
+    # A matching name alone cannot establish ownership.
+    assert "FormationRoleCard" in inherited_character_fields(role, {**template, "Introduction": "other-info", "FormationRoleCard": "person-card"})
+
+
+def test_only_reused_creature_default_is_rejected():
+    from wuwa_story.ingestion.character_artwork import inherited_character_fields
+
+    default = "/Game/Common/IconMonsterHead/T_IconMonsterHead_115_UI.T_IconMonsterHead_115_UI"
+    real = "/Game/Common/IconMonsterHead/T_IconMonsterHead_976_UI.T_IconMonsterHead_976_UI"
+    role = {"Id": 5057, "RoleType": 2, "RoleHeadIcon": default,
+            "RoleHeadIconBig": default, "Card": default, "RolePortrait": real}
+    assert inherited_character_fields(role, {}) == {"RoleHeadIcon", "RoleHeadIconBig", "Card"}
+    assert inherited_character_fields({**role, "RoleHeadIcon": real}, {}) == {"RoleHeadIconBig", "Card"}
+    assert inherited_character_fields({**role, "RoleType": 1}, {}) == set()
+
+@pytest.mark.asyncio
+async def test_story_role_export_keeps_corroborated_card_and_omits_foreign_head():
+    head = "/Game/Common/T_IconRoleHead80_53_UI.T_IconRoleHead80_53_UI"
+    card = "/Game/Common/IconRolePile/owned-card"
+    role = {"Id": 99901, "RoleType": 2, "SkillId": 42, "Name": "person",
+            "Introduction": "person-info", "RoleHeadIcon": head, "FormationRoleCard": card}
+    template = {**role, "Id": 42, "RoleType": 1, "RoleHeadIcon": "/Game/own-head"}
+    session = AsyncMock()
+    session.scalar.side_effect = [1, SimpleNamespace(id=99901), role, None]
+    session.scalars.side_effect = [[template], [], []]
+    targets = await entity_media_targets(session, MediaRequest(
+        download_id="a" * 64, asset_version="3.7.0", game_version="3.7.0",
+        entities=["character:99901"], kinds=["image"]))
+    assert [target["path"] for target in targets] == [card]
