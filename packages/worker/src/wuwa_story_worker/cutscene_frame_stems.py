@@ -16,7 +16,8 @@ async def prepare_frame_stems(video, assets, work, decoder, rovers, missing_asse
             destination = work / f'{index}-{rover or "shared"}'
             try:
                 stems = await render_role_stems(
-                    bank, audio, destination, decoder, language=event.language, rover=rover)
+                    bank, audio, destination, decoder, language=event.language, rover=rover,
+                    fresh_start=event.start_seconds == 0 and len({item.reference for item in video.frame_audio}) == 1)
                 for stem in stems:
                     if stem['role'] == 'voice' and event.language is None:
                         raise ValueError('Voice bus has no source-backed playback language')

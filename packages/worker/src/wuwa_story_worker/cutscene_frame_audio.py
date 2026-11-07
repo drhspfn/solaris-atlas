@@ -32,7 +32,7 @@ from wuwa_story_worker.wwise_banks import (
 )
 
 
-async def render_role_stems(bank, audio, work, decoder, *, language=None, rover=None):
+async def render_role_stems(bank, audio, work, decoder, *, language=None, rover=None, fresh_start=True):
     """Render independent native top-level layers, preserving each TXTP command.
 
     Homogeneous role groups retain their native sequence/delay commands intact.
@@ -50,6 +50,8 @@ async def render_role_stems(bank, audio, work, decoder, *, language=None, rover=
         await run_tool([sys.executable, str(renderer), '-d', 'xml', '-dn', str(output.with_suffix('')), '--', str(source)], 120)
     timeline = event_timeline(bank_xml, event_id(bank.stem))
     (work / 'event-timeline.json').write_text(json.dumps(timeline, indent=2))
+    if not fresh_start and any(action['kind'] == 'Stop' for action in timeline['actions']):
+        raise ValueError('Frame Stop requires the shared running audio context')
     params = _initial_parameters(timeline, bank_xml, init_xml)
     requested = rover_parameters(bank_xml, rover, language=language)
     if any(p.split('=')[0] == q.split('=')[0] and p != q for p in params for q in requested):
@@ -331,7 +333,8 @@ async def prepare_frame_audio(root, assets, movie_name, bindings, fmodel, decode
                 xml, 'female', language=track['language']) else (None,)
             for rover in variants:
                 rendered = await render_role_stems(bank, audio, output / (rover or 'shared'),
-                    decoder, language=track['language'], rover=rover)
+                    decoder, language=track['language'], rover=rover,
+                    fresh_start=track['start_seconds'] == 0 and len({item['reference'] for item in result['soundtracks']}) == 1)
                 for stem in rendered:
                     role = stem['role']
                     language = track['language'] if role == 'voice' else None
