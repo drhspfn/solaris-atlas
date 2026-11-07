@@ -117,12 +117,11 @@ test('quest appearances render localized, accessible links in a compact grid', (
   assert(rendered.some(node => node.props.className === 'npc-quest-grid'));
 });
 
-test('conversations are hidden for zero flow references', () => {
-  const empty = render({ total: 0, results: [] }, { shop_count: 0, flow_reference_count: 0 });
-  assert(!empty.some(node => node.type === 'NpcFlowParticipants'));
-  assert(!empty.some(node => node.props.title === 'Conversations'));
-  const available = render({ total: 0, results: [] }, { shop_count: 0, flow_reference_count: 1 });
-  assert(available.some(node => node.type === 'NpcFlowParticipants'));
+test('conversation lookup runs even without placed flow references', () => {
+  const tree = render({ total: 0, results: [] }, { shop_count: 0, flow_reference_count: 0 }, '3.7.1');
+  const conversations = tree.find(node => node.type === 'NpcFlowParticipants');
+  assert.equal(conversations.props.characterKey, 'character:npc:17288');
+  assert.equal(conversations.props.gameVersion, '3.7.1');
 });
 
 test('dialogue quest links preserve locale and game version', () => {

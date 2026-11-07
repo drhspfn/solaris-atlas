@@ -51,3 +51,20 @@ retained; unsupported material compositions fail without publishing partial file
 No schema migration or reimport is required. Deploy API and web together through
 selective deployment; active media workers remain untouched. Rollback uses the
 previous API/web image pair.
+
+## Map-scoped NPC actor repair
+
+NPC entity IDs are unique within a map, not across the whole game. Flow actor
+bindings now resolve their map through an authored LevelPlay owner and its exact
+PlayFlow reference before joining a native `(MapId, EntityId)` placement. Shared
+or conflicting map owners remain unresolved. This adds scene context; it never
+turns a local actor binding into a global speaker/person identity.
+
+For existing data, run `python -m wuwa_story.ingestion.npc_scenario` with
+`--release-id`, the retained native `--entity-source` path, and optionally
+`--source-record-id` for a canary. The default plans without writing; `--apply`
+upserts the graph and queues affected character projections. Only the latest
+snapshot can use current-client NPC placements. Repeating the repair must retain
+stable edge/evidence identities. No media extraction or schema migration is
+required. Keep an independent log/receipt for the background repair and preserve
+active media workers during deployment.

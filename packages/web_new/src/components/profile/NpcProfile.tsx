@@ -249,8 +249,7 @@ export function NpcInteractions({ characterKey, npc, gameVersion }: {
         gameVersion={gameVersion}
       />
       {npc.shop_count > 0 && <NpcShops characterKey={characterKey} gameVersion={gameVersion} />}
-      {npc.flow_reference_count !== 0 &&
-        <NpcFlowParticipants characterKey={characterKey} gameVersion={gameVersion} />}
+      <NpcFlowParticipants characterKey={characterKey} gameVersion={gameVersion} />
   </>;
 }
 
