@@ -120,3 +120,17 @@ Explicitly TEST-labelled native flows remain in the source report but do not
 replace or conflict with production launcher audio. Other conflicting runtime
 contexts remain unresolved. These paths do not infer songs from filenames or
 merge mutually exclusive gameplay branches.
+
+### Authored song precedence (M0390 overlap correction)
+
+An explicitly posted song at movie time zero takes precedence over a fixed-start
+persistent-background reconstruction. Both may contain the same song at
+different phases and must not play simultaneously. The consumer bank/state
+evidence is retained for localized-event validation; the approximate background
+WAV is not added as a second playable stem. Other authored layers are preserved.
+A song carried from dialogue also takes precedence, with its elapsed-time
+limitation still recorded explicitly.
+
+The two published M0390 bundles retain song file 602271 and remove reconstructed
+phase file 603174 from playback. Original manifests and sources remain available
+for audit. Reimport recipes now include the fallback policy in their identity.

@@ -70,3 +70,18 @@ def test_initial_stop_only_clears_preexisting_music_not_the_new_event(tmp_path):
     for actions in ([play, stop], [{**stop, 'time_ms': 1000}, play], [stop]):
         with pytest.raises(ValueError, match='shared running control timeline'):
             initial_parameters({'actions': actions}, xml, xml)
+
+
+@pytest.mark.parametrize('start,reconstructed_source,expected', [(0,False,1),(15,False,2),(0,True,1)])
+def test_movie_song_supersedes_only_approximate_background(start,reconstructed_source,expected):
+    from pathlib import Path
+    from wuwa_story_worker.cutscene_music_context import select_music_stems
+    song = {'role':'music','start_seconds':start,'sources':[Path('song.wem')],
+            'source':{'reconstruction':'dialogue'} if reconstructed_source else {}}
+    bed = {'role':'music','start_seconds':0,'sources':[Path('bed.xml'),Path('bed.wav')], 'fixed_start':True}
+    result=select_music_stems([song],[bed])
+    assert len(result)==expected
+    if expected==1:
+        assert result[0]['sources']==[Path('song.wem'),Path('bed.xml')]
+        assert song['sources']==[Path('song.wem')]
+    assert select_music_stems([],[bed])==[bed]
