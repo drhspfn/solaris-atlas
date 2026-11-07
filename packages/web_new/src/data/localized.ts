@@ -3,10 +3,10 @@ export function localizedText(value: unknown, fallback = ''): string {
     const text = value.trim();
     return text && !isSourcePlaceholder(text) ? text : fallback;
   }
-  if (value && typeof value === 'object' && 'content' in value) {
-    const content = (value as { content?: unknown }).content;
-    if (typeof content === 'string' && content.trim() && !isSourcePlaceholder(content)) {
-      return content;
+  if (value && typeof value === 'object') {
+    const record = value as { content?: unknown; inline_text?: unknown };
+    for (const content of [record.content, record.inline_text]) {
+      if (typeof content === 'string' && content.trim() && !isSourcePlaceholder(content)) return content;
     }
   }
   return fallback;

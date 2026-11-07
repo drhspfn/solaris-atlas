@@ -18,6 +18,8 @@ const TrackPlayer = () => null;
 function setup() {
   let selected = '';
   const mocks = {
+    '@/components/dialogue/PlayerText': { PlayerText: ({ value, fallback = '' }) => String(value || fallback).replace(/<[^>]*>/g, '') },
+    '@/data/gameText': { gameTextPlainText: value => value.replace(/<[^>]*>/g, '') },
     react: { ...React, useState: () => [selected, value => { selected = value; }] },
     '@/lib/router': {}, '../../api/client': { apiUrl: url => url }, '../../data/entities': {},
     '../../data/locales': { availableLocales: locales }, '@/components/ui/Select': { Select },
@@ -116,6 +118,8 @@ for (const gameVersion of ['3.5.0', undefined]) {
     const states = [], effects = [], requests = [];
     let stateIndex = 0, effectIndex = 0, pending = [];
     const mocks = {
+      '@/components/dialogue/PlayerText': { PlayerText: ({ value, fallback = '' }) => String(value || fallback).replace(/<[^>]*>/g, '') },
+      '@/data/gameText': { gameTextPlainText: value => value.replace(/<[^>]*>/g, '') },
       react: { ...React, useState(initial) {
         const i = stateIndex++;
         if (!(i in states)) states[i] = initial;

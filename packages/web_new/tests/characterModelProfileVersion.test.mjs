@@ -17,6 +17,7 @@ test('character page loads its model independently of the selected game version'
     '@/hooks/useLocale': { useLocale: () => 'en' },
     '@/hooks/usePlayerDisplay': { usePlayerDisplay: () => ({}) },
     '@/data/localized': { localizedText: (value, fallback = '') => value?.content || fallback },
+    '@/data/gameText': { gameTextPlainText: (value, _display, fallback = '') => typeof value === 'string' ? value : value?.content || fallback },
     '@/data/entities': { categoryTitle: { character: 'Characters' } },
     '@/config/settings': { APP_SETTINGS: { limits: { relatedPreview: 5, biographyPreviewCharacters: 100 } } },
   };

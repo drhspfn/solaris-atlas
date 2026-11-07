@@ -10,13 +10,15 @@ const compile = path => ts.transpileModule(readFileSync(new URL(path, import.met
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 const colors = {};
 vm.runInNewContext(compile('../src/data/gameTextColors.ts'), { exports: colors });
+const localized = {};
+vm.runInNewContext(compile('../src/data/localized.ts'), { exports: localized });
 const gameText = {};
-vm.runInNewContext(compile('../src/data/gameText.ts'), { exports: gameText, require: () => colors });
+vm.runInNewContext(compile('../src/data/gameText.ts'), { exports: gameText, require: id => id === './localized' ? localized : colors });
 const speakerHelpers = {};
 vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../src/data/npcContext.ts', import.meta.url), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: speakerHelpers });
 function nodes(node) { return !node || typeof node !== 'object' ? [] : [node, ...[node.props?.children].flat(Infinity).flatMap(nodes)]; }
-function render(result, npc = { shop_count: 1 }, gameVersion) {
+function render(result, npc = { shop_count: 1 }, gameVersion, display) {
   let index = 0;
   const initial = ['', '', 1, result, '', 0];
   const exports = {};
@@ -30,7 +32,7 @@ function render(result, npc = { shop_count: 1 }, gameVersion) {
       : id === '@/data/gameText' ? gameText
       : id === '@/lib/routeKey' ? { questPath: quest => `/quests/${quest.canonical_key}` }
       : components });
-  return nodes(exports.NpcInteractions({ characterKey: 'character:npc:17288', npc, gameVersion }));
+  return nodes(exports.NpcInteractions({ characterKey: 'character:npc:17288', npc, gameVersion, display }));
 }
 test('NPC profile labels interaction participants and bounds dialogue with pagination', () => {
   const tree = render({ total: 21, results: [{ canonical_key: 'talk_item:1', flow_state: 'flow',
@@ -113,7 +115,8 @@ test('quest appearances render localized, accessible links in a compact grid', (
   const rendered = nodes(quests.type(quests.props));
   const link = rendered.find(node => node.props.className === 'npc-quest-card');
   assert.equal(link.props.to, '/quests/quest:1?locale=en&game_version=3.7.1');
-  assert.equal(link.props.children, 'A localized quest');
+  assert.equal(link.props.children.type, 'PlayerText');
+  assert.equal(link.props.children.props.value.content, 'A localized quest');
   assert(rendered.some(node => node.props.className === 'npc-quest-grid'));
 });
 
@@ -136,23 +139,29 @@ test('dialogue quest links preserve locale and game version', () => {
 });
 
 test('dialogue cards use the shared speaker display names', () => {
-  for (const [label, expected] of [['{PlayerName}', 'Rover'], ['speaker:123', 'Unknown speaker'],
+  for (const [label, expected] of [['{PlayerName}', '{PlayerName}'], ['speaker:123', 'Unknown speaker'],
     ['???', 'Unknown speaker'], ['{message}Visitor', 'Visitor']]) {
     const tree = render({ total: 1, results: [{ canonical_key: 'talk_item:1', flow_state: 'flow',
       speaker: { canonical_key: 'speaker:123', label }, speaker_relation: 'interaction_participant',
       text: { content: 'Hello' }, quests: [] }] });
     const card = tree.find(node => node.props.className === 'npc-dialogue-meta');
-    assert.equal(nodes(card).find(node => node.type === 'span').props.children, expected);
+    const name = nodes(card).find(node => node.type === 'PlayerText');
+    assert.equal(name.props.value, expected);
+    assert.equal(name.props.display.name, 'Rover');
   }
 });
 
-test('NPC dialogue renders supported game colors as text spans', () => {
+test('NPC dialogue passes game text and preferences to the shared renderer', () => {
+  const display = { name: 'Astra', colorMode: 'custom', customColor: '#abcdef', gender: 'female' };
   const tree = render({ total: 1, results: [{ canonical_key: 'talk_item:1', flow_state: 'flow',
-    speaker: null, speaker_relation: 'interaction_participant',
-    text: { content: 'Hello <color=Highlight>Rover</color> <unknown>tag</unknown>' }, quests: [] }] });
+    speaker: { canonical_key: 'speaker:1', label: '{PlayerName}' }, speaker_relation: 'interaction_participant',
+    text: { content: 'Hello <color=Highlight>{PlayerName}</color> {Male=he;Female=she}' }, quests: [] }] },
+    { shop_count: 1 }, undefined, display);
   const text = tree.find(node => node.props.className === 'npc-dialogue-text');
-  const spans = nodes(text).filter(node => node.type === 'span');
-  assert(spans.some(node => node.props.children === 'Rover' && node.props.style?.color === '#F7EBA6FF'));
-  assert(spans.some(node => node.props.children.includes('<unknown>tag</unknown>')));
-  assert(!JSON.stringify(text).includes('<color='));
+  const renderer = nodes(text).find(node => node.type === 'PlayerText');
+  assert.equal(renderer.props.value.content, 'Hello <color=Highlight>{PlayerName}</color> {Male=he;Female=she}');
+  assert.equal(renderer.props.display, display);
+  assert.equal(nodes(tree.find(node => node.props.className === 'npc-dialogue-meta')).find(node => node.type === 'PlayerText').props.value, '{PlayerName}');
+  assert.equal(tree.find(node => node.type === 'NpcShops').props.display, display);
+  assert.equal(tree.find(node => node.type === 'NpcFlowParticipants').props.display, display);
 });

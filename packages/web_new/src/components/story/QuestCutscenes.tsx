@@ -1,13 +1,13 @@
 "use client";
 
+import { gameTextPlainText } from "../../data/gameText";
 import { Film } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@/lib/router";
 
 import { APP_SETTINGS } from "../../config/settings";
-import { usePlayerDisplay } from "../../hooks/usePlayerDisplay";
 import { useNarrativePreferences } from "../../preferences/NarrativePreferences";
-import { PlayerText } from "../dialogue/PlayerText";
+import { PlayerText, type PlayerDisplay } from "../dialogue/PlayerText";
 import { AnalysisActions } from "./AnalysisActions";
 import { cutsceneAnchor, packageCutsceneAnchor } from "./cutsceneAnchor";
 import { CutsceneControls } from "./CutsceneControls";
@@ -80,15 +80,17 @@ export function FlowPlayer({
   title,
   anchor,
   captions,
+  display,
 }: {
   flow: CutsceneFlow;
   title: string;
   anchor?: string;
   captions?: QuestMediaEvent["captions"];
+  display?: PlayerDisplay;
 }) {
   const { preferredRover, voiceLanguage, setVoiceLanguage } =
     useNarrativePreferences();
-  const playerDisplay = usePlayerDisplay();
+
   const [musicVolume, setMusicVolume] = useState<number>(
     APP_SETTINGS.cutscene.musicLevel,
   );
@@ -139,6 +141,7 @@ export function FlowPlayer({
     voiceLanguage,
     clipRover(flow, clipId, preferredRover),
   );
+  const captionDisplay = useMemo(() => display ? ({ ...display, gender: clipRover(flow, clipId, preferredRover) }) : undefined, [display, flow, clipId, preferredRover]);
   const timeline = cutsceneTimeline(flow, choices, preferredRover, durations);
   const timelineClip = timeline.clips.find((entry) => entry.id === clipId);
   const position =
@@ -265,10 +268,10 @@ export function FlowPlayer({
   if (!source || !activeClip) return null;
   const interactive = (node?.kind === "choice" && !automaticTarget) || !node;
   return (
-    <section className="quest-cutscene" aria-label={`Cutscene ${title}`}>
+    <section className="quest-cutscene" aria-label={`Cutscene ${gameTextPlainText(title, display)}`}>
       <header>
         <h3>
-          <Film size={18} /> Cutscene · {title}
+          <Film size={18} /> Cutscene · <PlayerText value={title} display={display} />
         </h3>
         <AnalysisActions
           target={{
@@ -408,7 +411,7 @@ export function FlowPlayer({
               .map((cue) => (
                 <p key={`${cue.key}-${cue.start}`}>
                   <PlayerText
-                    display={playerDisplay}
+                    display={captionDisplay}
                     value={{ content: cue.text }}
                   />
                 </p>
@@ -458,7 +461,7 @@ export function FlowPlayer({
                     } else advance(option.next);
                   }}
                 >
-                  {option.label}
+                  <PlayerText value={option.label} display={display} />
                 </button>
               ))
             ) : (
@@ -555,8 +558,8 @@ export function FlowPlayer({
       <footer>
         {source.description && (
           <details className="cutscene-description">
-            <summary>{source.description.title} · AI description</summary>
-            <p>{source.description.text}</p>
+            <summary><PlayerText value={source.description.title} display={display} /> · AI description</summary>
+            <p><PlayerText value={source.description.text} display={display} /></p>
             {source.description.chapters.map((chapter) => (
               <section key={chapter.start}>
                 <button
@@ -573,9 +576,9 @@ export function FlowPlayer({
                 >
                   {Math.floor(chapter.start / 60)}:
                   {String(Math.floor(chapter.start % 60)).padStart(2, "0")} ·{" "}
-                  {chapter.title}
+                  <PlayerText value={chapter.title} display={display} />
                 </button>
-                <p>{chapter.text}</p>
+                <p><PlayerText value={chapter.text} display={display} /></p>
               </section>
             ))}
             <small>
@@ -612,7 +615,9 @@ export function FlowPlayer({
 export function Cutscene({
   event,
   anchor,
+  display,
 }: {
+  display?: PlayerDisplay;
   event: QuestMediaEvent;
   anchor?: string;
 }) {
@@ -621,7 +626,7 @@ export function Cutscene({
     return (
       <section id={cutsceneAnchor(event)} className="quest-runtime-block">
         <span className="eyebrow left">IN-GAME SCENE</span>
-        <h3>{event.title || "Scripted scene"}</h3>
+        <h3><PlayerText value={event.title} fallback="Scripted scene" display={display} /></h3>
         <p>
           This scene is rendered by the game engine; no standalone video is
           available.
@@ -657,6 +662,7 @@ export function Cutscene({
         <FlowPlayer
           key={`${flow.asset_version}-${flow.entry}`}
           flow={flow}
+          display={display}
           title={
             event.title ||
             Object.values(flow.media).find((media) => media.description?.title)
@@ -678,7 +684,9 @@ export function Cutscene({
 
 export function RelatedQuestCutscenes({
   manifest,
+  display,
 }: {
+  display?: PlayerDisplay;
   manifest: QuestMediaManifest | null;
 }) {
   if (!manifest) return null;
@@ -705,7 +713,7 @@ export function RelatedQuestCutscenes({
           key={scene.name}
         >
           {scene.playback ? (
-            <FlowPlayer flow={scene.playback} title={scene.name} />
+            <FlowPlayer flow={scene.playback} title={scene.name} display={display} />
           ) : (
             <p>
               {scene.name} ·{" "}
@@ -726,7 +734,9 @@ export function RelatedQuestCutscenes({
 export function QuestCutscenes({
   manifest,
   stateAnchors,
+  display,
 }: {
+  display?: PlayerDisplay;
   manifest: QuestMediaManifest | null;
   stateAnchors: Map<string, string>;
 }) {
@@ -738,6 +748,7 @@ export function QuestCutscenes({
           <Cutscene
             key={`${event.action}-${event.reference}`}
             event={event}
+            display={display}
             anchor={stateAnchors.get(event.flow_state)}
           />
         ))}

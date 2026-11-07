@@ -13,6 +13,7 @@ import { EmptyState, ErrorPanel } from "@/components/ui/Feedback";
 import { APP_SETTINGS } from "@/config/settings";
 import { categories, categoryTitle, type Entity } from "@/data/entities";
 import { useLocale } from "@/hooks/useLocale";
+import { usePlayerDisplay } from "@/hooks/usePlayerDisplay";
 import { Link } from "@/lib/router";
 
 const emptyItems: Entity[] = [];
@@ -30,6 +31,7 @@ export function CatalogClient({
 }) {
   const searchInput = useRef<HTMLInputElement>(null);
   const locale = useLocale();
+  const display = usePlayerDisplay();
   const [characterKind, setCharacterKind] = useState("playable");
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<Entity[]>(initialItems);
@@ -228,7 +230,7 @@ export function CatalogClient({
         <>
           <div className="entity-grid">
             {list.map((item, i) => (
-              <EntityCard item={item} index={i} key={`${item.id}-${i}`} />
+              <EntityCard item={item} index={i} display={display} key={`${item.id}-${i}`} />
             ))}
           </div>
           {!searchResults && total > APP_SETTINGS.limits.catalogPage && (

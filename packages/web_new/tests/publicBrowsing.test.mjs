@@ -7,6 +7,16 @@ import ts from 'typescript';
 
 const require = createRequire(import.meta.url);
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+function loadData(path) {
+  const exports = {};
+  const code = ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: {
+    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
+  } }).outputText;
+  vm.runInNewContext(code, { exports, require: (id) => id.startsWith('.')
+    ? loadData(new URL(`${id}.ts`, path)) : require(id) });
+  return exports;
+}
+const gameText = loadData(new URL('../src/data/gameText.ts', import.meta.url));
 
 // Follow the existing quest/node effect harness: execute real component lifecycles,
 // including late responses from transports that ignore cancellation.
@@ -48,7 +58,9 @@ function harness(component, props) {
       apiUrl: (path) => path,
     },
     '@/hooks/useLocale': { useLocale: () => locale },
-    '@/hooks/usePlayerDisplay': { usePlayerDisplay: () => ({}) },
+    '@/hooks/usePlayerDisplay': { usePlayerDisplay: () => ({ name: 'Rover', gender: 'ask' }) },
+    '@/components/dialogue/PlayerText': { PlayerText: 'PlayerText' },
+    '@/data/gameText': gameText,
     '@/lib/router': { Link: 'a' },
     '@/data/entities': { categories: [], categoryTitle: { character: 'Characters', item: 'Items' } },
     '@/data/localized': { localizedText: (value, fallback = '') => value || fallback },
@@ -150,7 +162,9 @@ test('profile and archive load in parallel; restoring English rejects late local
   h.pending[1].resolve({ artwork: [{ url: '/late.png' }] });
   await tick();
   const tree = h.render();
-  assert.equal(find(tree, (node) => node.type === 'h1').props.children[0], 'Original');
+  const heading = find(tree, (node) => node.type === 'h1').props.children[0];
+  assert.equal(heading.type, 'PlayerText');
+  assert.equal(heading.props.value, 'Original');
   assert.equal(find(tree, (node) => node.props?.archive)?.props.archive, initialArchive);
 });
 

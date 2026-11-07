@@ -55,14 +55,20 @@ function loadPreferences(): Preferences {
 }
 
 export function NarrativePreferencesProvider({ children }: { children: ReactNode }) {
-  const [preferences, setPreferences] = useState(loadPreferences);
+  const [preferences, setPreferences] = useState<Preferences>(defaults);
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
+    setPreferences(loadPreferences());
+    setLoaded(true);
+  }, []);
+  useEffect(() => {
+    if (!loaded) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
     } catch {
       // Settings remain active for this page session if storage is unavailable.
     }
-  }, [preferences]);
+  }, [preferences, loaded]);
   function update(patch: Partial<Preferences>) {
     setPreferences((current) => ({ ...current, ...patch }));
   }

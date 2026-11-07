@@ -30,6 +30,8 @@ const { CharacterMediaProvider, CharacterMediaGallery, useCharacterMedia } = loa
   './characterMediaItems': mediaHelpers,
 });
 const { CharacterArchive } = load('../src/components/characters/CharacterArchive.tsx', {
+  '@/components/dialogue/PlayerText': { PlayerText: ({ value, fallback = '' }) => String(value || fallback).replace(/<[^>]*>/g, '') },
+    '@/data/gameText': { gameTextPlainText: value => value.replace(/<[^>]*>/g, '') },
   '@/lib/router': { Link: 'a' },
   '../../api/client': { apiUrl: (url) => url },
   '../../data/entities': {},

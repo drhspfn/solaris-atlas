@@ -78,6 +78,7 @@ function questHarness({
       "../src/components/quest/questSidebarModel.ts",
       {},
     ),
+    "@/data/gameText": { gameTextPlainText: (value, _display, fallback = "") => typeof value === "string" ? value : value?.content || fallback },
     "@/data/localized": load("../src/data/localized.ts", {}),
     "@/components/story/cutsceneAnchor": load(
       "../src/components/story/cutsceneAnchor.ts",

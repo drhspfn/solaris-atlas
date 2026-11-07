@@ -6,14 +6,15 @@ import { useNarrativePreferences } from '../preferences/NarrativePreferences';
 
 /** Resolve personalized dialogue presentation once in the owning page/component. */
 export function usePlayerDisplay() {
-  const { user } = useAuth();
-  const { nameMode, colorMode, customColor } = useNarrativePreferences();
+  const { user, loading } = useAuth();
+  const { nameMode, colorMode, customColor, preferredRover } = useNarrativePreferences();
   return useMemo(
     () => ({
-      name: playerName(user?.nickname, nameMode),
+      name: loading ? 'Rover' : playerName(user?.nickname, nameMode),
+      gender: preferredRover,
       colorMode,
       customColor,
     }),
-    [user?.nickname, nameMode, colorMode, customColor],
+    [user?.nickname, loading, nameMode, colorMode, customColor, preferredRover],
   );
 }

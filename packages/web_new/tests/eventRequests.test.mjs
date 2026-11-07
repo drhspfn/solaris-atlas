@@ -43,6 +43,7 @@ function harness() {
     '../ui/RenderedAnimation': { RenderedAnimation: ({ fallback }) => fallback },
     '../ui/animationPreview': animationPreview,
     '@/api/client': { api: (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject })) },
+    '@/components/dialogue/PlayerText': { PlayerText: ({ value, fallback = '' }) => value || fallback },
   }, { AbortController, document: { body: { style: { overflow: '' } } },
     setInterval: () => 1, clearInterval() {} });
   return { props, requests, selections,

@@ -80,3 +80,21 @@ one-based page, pageSize, total and onPageChange. mode="cursor" accepts
 hasPrevious, hasNext, onPrevious and onNext; callers retain their opaque tokens.
 An optional label overrides the range summary. disabled suspends both actions.
 Search forms use shared Input/Button controls, with an unframed clear icon.
+
+## Game-authored text
+
+Use `PlayerText` from `components/dialogue/PlayerText` for game dialogue, names,
+descriptions and titles. The component has no preference or auth hooks. Resolve
+`usePlayerDisplay()` once in the page owner and pass its memoized `display` to
+children. `className`, `style` and span accessibility attributes are forwarded.
+Use `gameTextPlainText(value, display, fallback)` for search and accessible labels;
+it shares the same parser rather than stripping markup independently.
+
+The parser selects `{Male=...;Female=...}` before interpreting supported colors,
+annotations, emphasis and line breaks. An unset/ask gender uses the authored male
+alternative until a Rover is chosen. Player names are substituted after parsing
+and cannot inject markup. Unknown markup stays escaped. Numeric talent parameters
+remain the talent component's responsibility before passing text to PlayerText.
+
+Missing localized text may fall back to authored inline text. If both are absent,
+show an unavailable-text indication; do not infer dialogue from speaker names.

@@ -3,6 +3,7 @@
 import { ArrowLeft, ArrowRight, GitBranch } from 'lucide-react';
 import { Link } from '@/lib/router';
 import { questPath } from '@/lib/routeKey';
+import { PlayerText, type PlayerDisplay } from '@/components/dialogue/PlayerText';
 
 import type { QuestContinuity as Continuity } from '../../data/story';
 
@@ -10,10 +11,12 @@ function NeighborLinks({
   entries,
   version,
   direction,
+  display,
 }: {
   entries: Continuity['quest_tree_nodes'][number]['neighbors'];
   version: string;
   direction: 'previous' | 'next';
+  display?: PlayerDisplay;
 }) {
   const seen = new Set<number>();
   const quests = entries
@@ -42,7 +45,7 @@ function NeighborLinks({
           >
             {direction === 'previous' && <ArrowLeft size={16} aria-hidden="true" />}
             <span>
-              {quest.title || `Quest ${quest.id}`}
+              <PlayerText value={quest.title} fallback={`Quest ${quest.id}`} display={display} />
               <small>Quest {quest.id}</small>
             </span>
             {direction === 'next' && <ArrowRight size={16} aria-hidden="true" />}
@@ -55,7 +58,7 @@ function NeighborLinks({
   );
 }
 
-export function QuestContinuity({ continuity, title }: { continuity: Continuity; title: string }) {
+export function QuestContinuity({ continuity, title, display }: { continuity: Continuity; title: string; display?: PlayerDisplay }) {
   const version = continuity.selected_game_version;
   const previous = continuity.quest_tree_nodes.flatMap((node) =>
     node.neighbors.filter((neighbor) => neighbor.relation === 'quest_tree_predecessor'),
@@ -73,8 +76,8 @@ export function QuestContinuity({ continuity, title }: { continuity: Continuity;
           <span className="eyebrow left">STORY PATH / SNAPSHOT {version}</span>
           <h2 id="quest-continuity-title">Where this quest belongs</h2>
           <p>
-            {chapter || 'Chapter not recorded'}
-            {continuity.quest_type.name?.content && ` · ${continuity.quest_type.name.content}`}
+            <PlayerText value={chapter} fallback="Chapter not recorded" display={display} />
+            {continuity.quest_type.name?.content && <> · <PlayerText value={continuity.quest_type.name} display={display} /></>}
           </p>
         </div>
         <Link to={`/story-map?game_version=${encodeURIComponent(version)}`}>
@@ -84,13 +87,13 @@ export function QuestContinuity({ continuity, title }: { continuity: Continuity;
       </div>
       {continuity.quest_tree_nodes.length ? (
         <div className="quest-continuity-grid">
-          <NeighborLinks entries={previous} version={version} direction="previous" />
+          <NeighborLinks entries={previous} version={version} direction="previous" display={display} />
           <div className="quest-continuity-current">
             <small>CURRENT TREE NODE</small>
-            <strong>{continuity.quest_tree_nodes[0].name?.content || continuity.quest}</strong>
+            <strong><PlayerText value={continuity.quest_tree_nodes[0].name} fallback={continuity.quest} display={display} /></strong>
             <span>{continuity.quest_tree_nodes[0].canonical_key}</span>
           </div>
-          <NeighborLinks entries={next} version={version} direction="next" />
+          <NeighborLinks entries={next} version={version} direction="next" display={display} />
         </div>
       ) : continuity.prerequisites.length || continuity.required_by.length ? (
         <div className="quest-continuity-grid">
@@ -104,7 +107,7 @@ export function QuestContinuity({ continuity, title }: { continuity: Continuity;
               >
                 <ArrowLeft size={16} aria-hidden="true" />
                 <span>
-                  {entry.name?.content || entry.quest}
+                  <PlayerText value={entry.name} fallback={entry.quest} display={display} />
                   <small>Prerequisite</small>
                 </span>
               </Link>
@@ -112,7 +115,7 @@ export function QuestContinuity({ continuity, title }: { continuity: Continuity;
           </div>
           <div className="quest-continuity-current">
             <small>CURRENT QUEST</small>
-            <strong>{title}</strong>
+            <strong><PlayerText value={title} display={display} /></strong>
             <span>{continuity.quest}</span>
           </div>
           <div className="quest-continuity-side">
@@ -124,7 +127,7 @@ export function QuestContinuity({ continuity, title }: { continuity: Continuity;
                 title={`${entry.source.file} ${entry.source.raw_path}`}
               >
                 <span>
-                  {entry.name?.content || entry.quest}
+                  <PlayerText value={entry.name} fallback={entry.quest} display={display} />
                   <small>Requires this quest</small>
                 </span>
                 <ArrowRight size={16} aria-hidden="true" />

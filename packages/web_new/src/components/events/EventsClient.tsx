@@ -3,6 +3,9 @@ import '@/styles/events.css';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api } from '@/api/client';
+import { PlayerText } from '@/components/dialogue/PlayerText';
+import { gameTextPlainText } from '@/data/gameText';
+import { usePlayerDisplay } from '@/hooks/usePlayerDisplay';
 import { Select } from '@/components/ui/Select';
 import { ErrorPanel } from '@/components/ui/Feedback';
 import { EventDetails } from './EventDetails';
@@ -50,6 +53,7 @@ export function EventsPage({
   initialData?: EventsResponse | null;
   initialEventIds?: number[];
 }) {
+  const display = usePlayerDisplay();
   const [server, setServer] = useState<Server>('europe');
   const [kind, setKind] = useState<EventFilter>('all');
   const [events, setEvents] = useState(initialData?.events ?? []);
@@ -116,7 +120,7 @@ export function EventsPage({
     runs.some(
       (event) =>
         matchesEventType(event, kind) &&
-        event.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+        gameTextPlainText(event.title, display).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
     ),
   );
   const visible = matching.filter((runs) => !chosen.length || chosen.includes(runs[0].id));
@@ -263,7 +267,7 @@ export function EventsPage({
                 checked={chosen.includes(runs[0].id)}
                 onChange={() => toggle(runs[0].id)}
               />
-              <span>{runs[runs.length - 1].title}</span>
+              <span><PlayerText value={runs[runs.length - 1].title} display={display} /></span>
               <small>{runs.filter((event) => event.starts_at).length} runs</small>
             </label>
           ))}
@@ -278,9 +282,9 @@ export function EventsPage({
               <button
                 key={runs[0].id}
                 onClick={() => toggle(runs[0].id)}
-                aria-label={`Remove ${runs[0].title} from selection`}
+                aria-label={`Remove ${gameTextPlainText(runs[0].title, display)} from selection`}
               >
-                {runs[0].title}
+                <PlayerText value={runs[0].title} display={display} />
                 <X size={14} />
               </button>
             ))}
@@ -419,11 +423,11 @@ export function EventsPage({
                             } as CSSProperties
                           }
                           onClick={(click) => openEvent(event, click.currentTarget)}
-                          aria-label={`${event.title}, ${formatDate(event.starts_at)} to ${event.ends_at ? formatDate(event.ends_at) : 'end date unavailable'}`}
+                          aria-label={`${gameTextPlainText(event.title, display)}, ${formatDate(event.starts_at)} to ${event.ends_at ? formatDate(event.ends_at) : 'end date unavailable'}`}
                         >
                           <EventArtwork event={event} />
                           <span className="events-bar-copy">
-                            <strong>{event.title}</strong>
+                            <strong><PlayerText value={event.title} display={display} /></strong>
                             <small>
                               {event.game_version ? `v${event.game_version} · ` : ''}
                               {now === null
@@ -459,7 +463,7 @@ export function EventsPage({
                   openEvent(event, click.currentTarget);
                 }}
               >
-                <span>{event.title}</span>
+                <span><PlayerText value={event.title} display={display} /></span>
                 <small>
                   {formatDate(event.starts_at)} →{' '}
                   {event.ends_at
@@ -501,7 +505,7 @@ export function EventsPage({
                     >
                       <EventArtwork event={event} />
                       <span>
-                        <strong>{event.title}</strong>
+                        <strong><PlayerText value={event.title} display={display} /></strong>
                         <small>
                           {kindLabels[event.kind]}
                           {event.catalog_version ? ` · Client ${event.catalog_version}` : ''}
@@ -531,6 +535,7 @@ export function EventsPage({
       )}
       {selected && (
         <EventDetails
+          display={display}
           returnFocus={returnFocus.current}
           fallbackFocus={chart.current}
           event={selected}

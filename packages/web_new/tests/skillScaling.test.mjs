@@ -25,8 +25,10 @@ const code = ts.transpileModule(
   },
 ).outputText;
 
-function load(react = React) {
+function load(react = React, playerText = ({ value, fallback = "" }) => String(value || fallback).replace(/<[^>]*>/g, ""), gameText = { gameTextPlainText: value => value.replace(/<[^>]*>/g, "") }) {
   const mocks = {
+    '@/components/dialogue/PlayerText': { PlayerText: playerText },
+    '@/data/gameText': gameText,
     react,
     "@/lib/router": { Link: "a" },
     "../../api/client": { apiUrl: (url) => url },
@@ -546,4 +548,101 @@ test("available materials, chain and voice events retain their sections", () => 
   }));
   for (const label of ['Profile &amp; progression', 'Max level 90', 'Upgrade materials', 'First sequence', 'Voice lines', 'Attack'])
     assert.ok(markup.includes(label), label);
+});
+
+test("archive passes complete authored markup and display to the shared renderer", () => {
+  const calls = [];
+  const PlayerText = (props) => {
+    calls.push(props);
+    return "rendered";
+  };
+  const { CharacterArchive } = load(React, PlayerText);
+  const display = {
+    name: "Custom Rover",
+    colorMode: "accent",
+    customColor: "",
+  };
+  const archive = {
+    biography: "<color=Highlight>Meet {PlayerName}</color>",
+    profile: { voice_actors: {} },
+    artwork: [],
+    skills: [
+      skill({
+        name: "Talent",
+        description: "<color=Wind>Damage {0}</color> {PlayerName}",
+        description_params: ["12.30%"],
+        attributes: [],
+      }),
+    ],
+    skill_tree: [],
+    resonance_chain: [
+      {
+        id: 1,
+        order: 1,
+        name: "Sequence",
+        description: "<i>Power {0}</i>",
+        description_params: ["3"],
+      },
+    ],
+    voice_lines: [
+      {
+        id: 3,
+        order: 1,
+        title: "Greeting",
+        text: "<color=Highlight>Hello {PlayerName}</color>",
+      },
+    ],
+    other_voice_events: [],
+  };
+  renderToStaticMarkup(
+    React.createElement(CharacterArchive, {
+      archive,
+      locale: "en",
+      characterKey: "character:1",
+      materials: [],
+      display,
+    }),
+  );
+  for (const value of [
+    "<color=Highlight>Meet {PlayerName}</color>",
+    "<color=Wind>Damage 12.30%</color> {PlayerName}",
+    "<i>Power 3</i>",
+    "<color=Highlight>Hello {PlayerName}</color>",
+  ]) {
+    assert(
+      calls.some((call) => call.value === value && call.display === display),
+      value,
+    );
+  }
+});
+
+
+test("talent renders real game text with formatted parameters and selected Rover", () => {
+  const compile = path => ts.transpileModule(readFileSync(new URL(path, import.meta.url), "utf8"), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  function module(path, mocks = {}) {
+    const exports = {};
+    vm.runInNewContext(compile(path), { exports, require: id => mocks[id] ?? require(id) });
+    return exports;
+  }
+  const colors = module("../src/data/gameTextColors.ts");
+  const localized = module("../src/data/localized.ts");
+  const gameText = module("../src/data/gameText.ts", { "./gameTextColors": colors, "./localized": localized });
+  const { PlayerText } = module("../src/components/dialogue/PlayerText.tsx", {
+    "../../data/gameText": gameText, "../../data/localized": localized,
+  });
+  const { CharacterArchive } = load(React, PlayerText, gameText);
+  const markup = renderToStaticMarkup(React.createElement(CharacterArchive, {
+    locale: "en", characterKey: "character:1", materials: [],
+    display: { name: "Astra", gender: "female", colorMode: "accent", customColor: "" },
+    archive: { profile: { voice_actors: {} }, artwork: [], skill_tree: [], resonance_chain: [],
+      voice_lines: [], other_voice_events: [], skills: [skill({ attributes: [],
+        description: "<color=Highlight>{PlayerName} {Male=he;Female=she} gains {0}</color>",
+        description_params: ["12.30%"] })] },
+  }));
+  assert.match(markup, /Astra/);
+  assert.match(markup, /she gains 12\.30%/);
+  assert.match(markup, /#F7EBA6FF/i);
+  assert.doesNotMatch(markup, /&lt;color|\{PlayerName\}|Male=/);
 });

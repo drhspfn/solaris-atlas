@@ -2,6 +2,7 @@
 import { ExternalLink, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '@/api/client';
+import { PlayerText, type PlayerDisplay } from '@/components/dialogue/PlayerText';
 import { EventArtwork } from './EventArtwork';
 import { kindLabels, timeZoneLabel } from './calendar';
 import { artworkGroups, countdown, type GameEvent } from './calendar';
@@ -9,6 +10,7 @@ import { RenderedAnimation } from '../ui/RenderedAnimation';
 import { selectAnimationClip } from '../ui/animationPreview';
 
 export function EventDetails({
+  display,
   event: selection,
   history,
   timeZone,
@@ -18,6 +20,7 @@ export function EventDetails({
   returnFocus,
   fallbackFocus,
 }: {
+  display: PlayerDisplay;
   event: GameEvent;
   history: GameEvent[];
   timeZone: string;
@@ -107,17 +110,17 @@ export function EventDetails({
           {kindLabels[event.kind]}
           {event.game_version ? ` · v${event.game_version}` : ''}
         </span>
-        <h2 id="event-modal-title">{event.title}</h2>
+        <h2 id="event-modal-title"><PlayerText value={event.title} display={display} /></h2>
         <p className="events-detail-dates">
           {event.starts_at
             ? `${format(event.starts_at)} → ${event.ends_at ? format(event.ends_at) : event.kind === 'permanent' ? 'Permanent' : 'End date unavailable'} (${timeZoneLabel(timeZone, new Date(event.starts_at).getTime())})`
             : 'Opening dates are supplied by the game server, not the client catalog.'}
         </p>
         <p className="events-description">
-          {event.description || 'No description is included in the client catalog.'}
+          <PlayerText value={event.description} fallback="No description is included in the client catalog." display={display} />
         </p>
-        {!!event.featured_names?.length && <p>Featured: {event.featured_names.join(', ')}</p>}
-        {!!event.up_names?.length && <p>Also featured: {event.up_names.join(', ')}</p>}
+        {!!event.featured_names?.length && <p>Featured: {event.featured_names.map((name, index) => <span key={index}>{index > 0 && ', '}<PlayerText value={name} display={display} /></span>)}</p>}
+        {!!event.up_names?.length && <p>Also featured: {event.up_names.map((name, index) => <span key={index}>{index > 0 && ', '}<PlayerText value={name} display={display} /></span>)}</p>}
           {event.spine?.map((scene) => {
             const preview = selectAnimationClip(scene.animation_preview, scene.animation);
             return (
@@ -139,9 +142,9 @@ export function EventDetails({
               {event.rewards.map((reward, index) => (
                 <li key={`${reward.id}-${index}`}>
                   {reward.href ? (
-                    <a href={reward.href}>{reward.name || 'Reward details'}</a>
+                    <a href={reward.href}><PlayerText value={reward.name} fallback="Reward details" display={display} /></a>
                   ) : (
-                    reward.name || 'Unnamed reward'
+                    <PlayerText value={reward.name} fallback="Unnamed reward" display={display} />
                   )}
                   {reward.value ? ` ×${reward.value}` : ''}
                 </li>

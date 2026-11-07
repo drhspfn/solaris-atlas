@@ -70,3 +70,13 @@ test('empty chapters do not shift the existing chapter numbering', () => {
   const withEmpty = storyChapterGroups([chapter(8, 'Empty', 0, 1), ...chapters]);
   assert.deepEqual(withEmpty.map((group) => [group.index, group.title]), groups.map((group) => [group.index, group.title]));
 });
+
+
+test('search compares player-facing plain text while preserving authored values', () => {
+  const authored = chapter(9, '<i>Hello {PlayerName}</i>', 1, 900);
+  authored.nodes[0].title = '<i>Hello {PlayerName}</i>';
+  const page = storyMapPage(storyChapterGroups([authored]), 'hello rover', 1,
+    (value) => value.replace(/<[^>]*>/g, '').replace(/\{PlayerName\}/gi, 'Rover'));
+  assert.equal(page.total, 1);
+  assert.equal(page.visibleGroups[0].acts[0].nodes[0].title, '<i>Hello {PlayerName}</i>');
+});

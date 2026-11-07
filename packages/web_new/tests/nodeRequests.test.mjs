@@ -51,7 +51,7 @@ function nodeHarness({ incomplete = false, holdRequests = false } = {}) {
     '@/hooks/useLocale': { useLocale: () => locale },
     '@/hooks/usePlayerDisplay': { usePlayerDisplay: () => ({}) },
     '@/data/localized': { localizedText: (_value, fallback) => fallback },
-    '@/data/playerName': { interpolatePlayerName: (value) => value },
+    '@/data/gameText': { gameTextPlainText: (value, _display, fallback = '') => typeof value === 'string' ? value : value?.content || fallback },
     '@/config/settings': { APP_SETTINGS: { limits: { relatedNodes: 100 } } },
   });
   const source = readFileSync(new URL('../src/components/nodes/NodeExplorerClient.tsx', import.meta.url), 'utf8');

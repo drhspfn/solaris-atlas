@@ -3,6 +3,9 @@
 import { ArrowRight, BookOpen, ChevronRight, GitBranch, Search, X } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/api/client';
+import { PlayerText, type PlayerDisplay } from '@/components/dialogue/PlayerText';
+import { gameTextPlainText } from '@/data/gameText';
+import { usePlayerDisplay } from '@/hooks/usePlayerDisplay';
 import { ErrorPanel, PageLoader } from '@/components/ui/Feedback';
 import { Select } from '@/components/ui/Select';
 import type { StoryMap, StoryTreeNode } from '@/data/story';
@@ -19,7 +22,7 @@ const questTypes = [
   { id: 2, label: 'Side stories' },
 ];
 
-function StoryStep({ node, version }: { node: StoryTreeNode; version: string }) {
+function StoryStep({ node, version, display }: { node: StoryTreeNode; version: string; display: PlayerDisplay }) {
   return (
     <li className="story-step">
       <span className="story-step-marker" aria-hidden="true" />
@@ -28,9 +31,9 @@ function StoryStep({ node, version }: { node: StoryTreeNode; version: string }) 
           <span className="story-step-index">
             {node.source_kind === 'quest_tree' ? 'PATH' : 'QUEST'} {node.id}
           </span>
-          {node.chapter_label && <span className="story-step-chapter">{node.chapter_label}</span>}
+          {node.chapter_label && <span className="story-step-chapter"><PlayerText value={node.chapter_label} display={display} /></span>}
         </div>
-        {node.source_kind === 'quest_tree' && <h3>{node.title}</h3>}
+        {node.source_kind === 'quest_tree' && <h3><PlayerText value={node.title} display={display} /></h3>}
         {node.quests.length > 0 ? (
           <div className="story-step-quests">
             {node.quests.map((quest) => (
@@ -41,7 +44,7 @@ function StoryStep({ node, version }: { node: StoryTreeNode; version: string }) 
               >
                 <BookOpen size={16} aria-hidden="true" />
                 <span>
-                  <strong>{quest.title}</strong>
+                  <strong><PlayerText value={quest.title} display={display} /></strong>
                   <small>
                     Quest {quest.game_quest_id}
                     {quest.first_observed_game_version &&
@@ -79,6 +82,7 @@ export function StoryMapClient({ initialMap, initialPage = 1, initialQuery = '' 
 }) {
   const searchInput = useRef<HTMLInputElement>(null);
   const locale = useLocale();
+  const display = usePlayerDisplay();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const selectionKey = params?.toString() || '';
@@ -123,8 +127,8 @@ export function StoryMapClient({ initialMap, initialPage = 1, initialQuery = '' 
 
   const groupedChapters = useMemo(() => storyChapterGroups(map?.chapters || []), [map]);
   const total = groupedChapters.reduce((sum, group) => sum + group.count, 0);
-  const paging = useMemo(() => storyMapPage(groupedChapters, query, requestedPage),
-    [groupedChapters, query, requestedPage]);
+  const paging = useMemo(() => storyMapPage(groupedChapters, query, requestedPage, (value) => gameTextPlainText(value, display)),
+    [groupedChapters, query, requestedPage, display]);
   const resolvedHash = useRef('');
   const pendingHash = useRef('');
 
@@ -320,9 +324,9 @@ export function StoryMapClient({ initialMap, initialPage = 1, initialQuery = '' 
                             ? `QUEST TREE CHAPTER ${group.acts[0].id}`
                             : group.unchaptered
                               ? 'QUESTS WITHOUT A CHAPTER'
-                              : group.subtitle || 'QUEST CHAPTER'}
+                              : group.subtitle ? <PlayerText value={group.subtitle} display={display} /> : 'QUEST CHAPTER'}
                         </small>
-                        <h2 id={`story-chapter-group-${group.index}`} tabIndex={-1}>{group.title}</h2>
+                        <h2 id={`story-chapter-group-${group.index}`} tabIndex={-1}><PlayerText value={group.title} display={display} /></h2>
                       </div>
                       <b>
                         {group.count}{' '}
@@ -335,13 +339,12 @@ export function StoryMapClient({ initialMap, initialPage = 1, initialQuery = '' 
                           !group.unchaptered &&
                           act.act_title !== group.title && (
                             <h3>
-                              {[act.act_number, act.act_title].filter(Boolean).join(' · ') ||
-                                `Act ${act.id}`}
+                              <PlayerText value={[act.act_number, act.act_title].filter(Boolean).join(' · ')} fallback={`Act ${act.id}`} display={display} />
                             </h3>
                           )}
                         <ol className="story-steps" start={act.start}>
                           {act.nodes.map((node) => (
-                            <StoryStep key={node.id} node={node} version={group.version} />
+                            <StoryStep key={node.id} node={node} version={group.version} display={display} />
                           ))}
                         </ol>
                       </div>

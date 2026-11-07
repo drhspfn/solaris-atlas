@@ -11,6 +11,7 @@ function harness(name, query, props = {}) {
     react: { useState(value) { const i = cursor++; if (!(i in slots)) slots[i] = value; return [slots[i], next => { slots[i] = typeof next === 'function' ? next(slots[i]) : next; }]; }, useRef: () => ({ current: null }), useEffect() {} },
     '@/lib/router': { Link: 'a', useSearchParams: () => new URLSearchParams(query), useNavigate: () => value => navigations.push(value) },
     '@/hooks/useLocale': { useLocale: () => 'en' },
+    '@/hooks/usePlayerDisplay': { usePlayerDisplay: () => ({ name: 'Rover' }) },
     '@/components/ui/Button': { Button: 'button' }, '@/components/ui/Input': { Input: 'input' }, '@/components/ui/Pill': { Pill: 'Pill' },
     '@/data/entities': { categories: [{ key: 'character', label: 'Characters' }, { key: 'quest', label: 'Quests' }], categoryTitle: { character: 'Characters', quest: 'Quests' } },
     '@/config/settings': { APP_SETTINGS: { presentation: { skeletonCount: 1 } } },

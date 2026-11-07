@@ -4,6 +4,8 @@ import { ArrowLeft, ArrowRight, Film, Play, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/api/client";
 import { useLocale } from "@/hooks/useLocale";
+import { usePlayerDisplay } from "@/hooks/usePlayerDisplay";
+import { PlayerText } from "@/components/dialogue/PlayerText";
 import { Link, useSearchParams } from "@/lib/router";
 import { questPath } from "@/lib/routeKey";
 import { Select } from "@/components/ui/Select";
@@ -56,6 +58,7 @@ export function CutsceneArchive({
   versions: string[];
 }) {
   const selectedLocale = useLocale();
+  const display = usePlayerDisplay();
   const [params, setParams] = useSearchParams();
   const locale = params?.get("locale") || selectedLocale;
   const query = params?.toString() || "";
@@ -295,11 +298,11 @@ export function CutsceneArchive({
                         {scene.name} · v{scene.first_observed_game_version}
                         {scene.title_kind === "analysis" ? " · AI title" : ""}
                       </small>
-                      <h2>{scene.title}</h2>
+                      <h2><PlayerText value={scene.title} display={display} /></h2>
                       <span>
                         {scene.quests[0]?.name === scene.title
                           ? "Quest scene"
-                          : scene.quests[0]?.name || "Story position not yet linked"}
+                          : <PlayerText value={scene.quests[0]?.name} fallback="Story position not yet linked" display={display} />}
                         {scene.ordering_basis === "fallback"
                           ? " · Order unconfirmed"
                           : ""}
@@ -325,6 +328,7 @@ export function CutsceneRecord({
   initial: CutsceneDetail | null;
 }) {
   const selectedLocale = useLocale();
+  const display = usePlayerDisplay();
   const [params] = useSearchParams();
   const locale = params?.get("locale") || selectedLocale;
   const version = params?.get("game_version") || "";
@@ -375,13 +379,13 @@ export function CutsceneRecord({
         <span className="eyebrow">
           {data.name} / SNAPSHOT {data.game_version}
         </span>
-        <h1>{data.title}</h1>
+        <h1><PlayerText value={data.title} display={display} /></h1>
         {data.title_kind === "analysis" && (
           <p>AI title · Grounded in the scene analysis</p>
         )}
       </header>
       {data.event.playback ? (
-        <Cutscene event={{ ...data.event, title: data.title }} />
+        <Cutscene event={{ ...data.event, title: data.title }} display={display} />
       ) : (
         <div className="empty-inline">
           This scene is recorded in the game data, but a playable export is not
@@ -402,7 +406,7 @@ export function CutsceneRecord({
               to={`${questPath(passage)}?game_version=${data.game_version}&locale=${locale}${passage.focus_line ? `&line=${encodeURIComponent(passage.focus_line)}` : ""}#${passage.package_related ? packageCutsceneAnchor(data.name) : cutsceneAnchor(passage)}`}
             >
               <span>
-                {passage.name}
+                <PlayerText value={passage.name} display={display} />
                 <small>
                   {passage.package_related
                     ? "Related video package · exact story position is unknown"

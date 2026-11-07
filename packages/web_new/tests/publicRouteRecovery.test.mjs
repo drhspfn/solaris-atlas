@@ -7,6 +7,16 @@ import ts from 'typescript';
 
 const require = createRequire(import.meta.url);
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+function loadData(path) {
+  const exports = {};
+  const code = ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: {
+    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
+  } }).outputText;
+  vm.runInNewContext(code, { exports, require: (id) => id.startsWith('.')
+    ? loadData(new URL(`${id}.ts`, path)) : require(id) });
+  return exports;
+}
+const gameText = loadData(new URL('../src/data/gameText.ts', import.meta.url));
 const dummy = new Proxy({}, { get: () => () => null });
 function compile(path, mocks, globals = {}) {
   const code = ts.transpileModule(readFileSync(new URL(path, import.meta.url), 'utf8'), {
@@ -82,6 +92,8 @@ function harness(path, name, props, initialQuery = '', hash = '') {
   const mocks = {
     react, '@/api/client': api, '../../api/client': api,
     '@/lib/router': router, '@/hooks/useLocale': { useLocale: () => locale },
+    '@/hooks/usePlayerDisplay': { usePlayerDisplay: () => ({ name: 'Rover' }) },
+    '@/data/gameText': gameText, '../../data/gameText': gameText,
     '../../hooks/useLocale': { useLocale: () => locale },
     '@/config/settings': settings, '../../config/settings': settings,
     '@/components/ui/Select': { Select: 'atlas-select' },
@@ -184,7 +196,7 @@ test('existing chapter hashes mount the owning page before scrolling and focusin
   h.render(); h.render();
   assert.equal(h.navigations.length, 1, 'resolved hashes must not start a navigation/render loop');
   assert.deepEqual(h.focused, ['story-chapter-group-2'], 'ordinary rerenders must not steal focus');
-  assert.equal(nodes(h.render()).find((node) => node.type === 'h2' && node.props.id === 'story-chapter-group-2').props.children, 'Chapter 2');
+  assert.equal(nodes(h.render()).find((node) => node.type === 'h2' && node.props.id === 'story-chapter-group-2').props.children.props.value, 'Chapter 2');
   h.hash('#story-chapter-group-1');
   assert.equal(h.focused.at(-1), 'story-chapter-group-1', 'same-page hashes focus without a new render');
 });
@@ -274,7 +286,7 @@ test('cutscene detail restores SSR and ignores obsolete locale responses', async
   h.locale('en'); h.render();
   assert.equal(h.calls[0].options.signal.aborted, true);
   h.calls[0].resolve({ ...initial, title: 'Stale scene' }); await tick();
-  assert.equal(nodes(h.render()).find((node) => node.type === 'h1').props.children, 'Original scene');
+  assert.equal(nodes(h.render()).find((node) => node.type === 'h1').props.children.props.value, 'Original scene');
 });
 
 for (const [path, name, props] of [
