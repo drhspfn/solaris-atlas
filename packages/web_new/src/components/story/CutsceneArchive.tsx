@@ -185,13 +185,13 @@ export function CutsceneArchive({
         }}
       >
         <label className="cutscene-filter">
-          Scene code
+          Scene name or code
           <div className="cutscene-search">
             <Search size={17} aria-hidden="true" />
             <input
               ref={searchInput}
               name="q"
-              placeholder="M0311…"
+              placeholder="Search scenes…"
               value={searchText}
               onChange={(event) => setSearchText(event.target.value)}
               maxLength={128}

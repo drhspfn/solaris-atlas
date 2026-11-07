@@ -21,6 +21,24 @@ def prop():
 
 
 @pytest.mark.asyncio
+async def test_nested_export_inherits_client_workspace(tmp_path, monkeypatch):
+    nested = tmp_path / "referenced-animations"
+    nested.mkdir()
+
+    async def export(root, *_):
+        assert (root / "plan.json").read_text(encoding="utf-8") == "plan.json"
+        assert (root / "status.json").is_file()
+        assert (root / "keys.txt").is_file()
+        assert (root / "game").resolve() == (tmp_path / "game").resolve()
+        raise RuntimeError("export reached")
+
+    monkeypatch.setattr(models, "export_assets", export)
+    with pytest.raises(RuntimeError, match="export reached"):
+        await models.extract_model(nested, {"model": "Aki/Character/Test", "blueprints": []},
+                                   "fmodel", "converter", False)
+
+
+@pytest.mark.asyncio
 async def test_scene_retains_static_prop_without_requiring_body_animation_pack(tmp_path, monkeypatch):
     seen = []
 
