@@ -368,7 +368,7 @@ def initial_parameters(timeline, bank_xml, init_xml):
 
 
 
-async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover, run_tool, *, language: str | None = None):
+async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover, run_tool, *, language: str | None = None, startup_states=None, external_states=None):
     """Return (decoded WAV, durable evidence) for exactly one authored event."""
     from wuwa_story_worker.cutscene_import import soundtrack_wem
 
@@ -382,6 +382,8 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
             raise ValueError("Ambiguous Wwise Init bank")
         initializers = initializers[:1]
     selection = str(rover).encode() + (b'\0language:' + language.encode('ascii') if language is not None else b'')
+    if startup_states or external_states:
+        selection += json.dumps([startup_states, external_states], sort_keys=True).encode()
     fingerprint = hashlib.sha256(bank.read_bytes() + selection + renderer.read_bytes())
     fingerprint.update(Path(__file__).read_bytes())
     for initializer in initializers:
@@ -402,6 +404,10 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
     await run_tool([sys.executable, str(renderer), "-d", "xml", "-dn", str(root / "bank"),
                     "--", str(source)], 120)
     timeline = event_timeline(xml, event_id(bank.stem))
+    if startup_states:
+        timeline['actions'][:0] = [{'kind': 'SetState', 'time_ms': 0, 'state_group_id': int(group),
+                                  'state_id': int(value), 'source': 'fixed-start reconstruction'}
+                                 for group, value in startup_states.items()]
     controls = root / 'event-timeline.json'
     controls.write_text(json.dumps(timeline, indent=2), encoding='utf-8')
     try:
@@ -413,8 +419,10 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
         await run_tool([sys.executable, str(renderer), '-d', 'xml', '-dn',
                         str(root / 'init'), '--', str(root / 'Init.bnk')], 120)
         state_params = initial_parameters(timeline, xml, init_xml)
-        raise ValueError('Wwise startup State requires external music context: '
-                         + ', '.join(state_params))
+        if not state_params or not set(state_params).issubset(
+                {f'({group}={value})' for group, value in (external_states or {}).items()}):
+            raise ValueError('Wwise startup State requires external music context: '
+                             + ', '.join(state_params))
     params = await asyncio.to_thread(rover_parameters, xml, rover, language=language)
     for param in state_params:
         if any(other.split('=')[0] == param.split('=')[0] and other != param for other in params):

@@ -651,6 +651,8 @@ async def cutscene(payload, parent):
     if frame_audio and isinstance(recipe.get('flow'), dict):
         sources = [binding.get('source', {}) for binding in frame_report['contexts'] if binding.get('events')]
         recipe['flow']['evidence'] += '; Movie frame audio sources: ' + json.dumps(sources, ensure_ascii=False, sort_keys=True)
+    from wuwa_story_worker.cutscene_music_context import prepare_music_context
+    await prepare_music_context(root, assets, payload['targets'][0], recipe)
     recipe_path = work / "recipe.json"
     save_json(recipe_path, recipe)
     entries = []
