@@ -96,7 +96,10 @@ async def test_render_requires_one_authored_rendition_and_preserves_source_evide
             Path(args[args.index("-o") + 1]).write_bytes(b"RIFF" + b"x" * 48)
         return SimpleNamespace(stderr=b"")
 
-    if renditions != 1:
+    if initial_state:
+        with pytest.raises(ValueError, match='requires external music context'):
+            await wwise_banks.render_bank(bank, tmp_path, tmp_path / 'work', tmp_path / 'decoder', 'female', run)
+    elif renditions != 1:
         with pytest.raises(ValueError, match="explicit non-gender selection"):
             await wwise_banks.render_bank(bank, tmp_path, tmp_path / "work", tmp_path / "decoder", "female", run)
     else:
