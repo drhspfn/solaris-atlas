@@ -62,12 +62,27 @@ async def prepare_music_context(root, assets, movie, recipe):
                'audio_directory': folder.relative_to(assets).as_posix(),
                'state_group': state['state_group_id'], 'state': state['state_id'],
                'source_event': state_event,
-               'evidence': 'Client state event selects native persistent music switch. Reconstructed from phase entry at movie time zero; previous combat crossfade is not reproduced.'}
+               'evidence': 'Client state event selects native persistent music switch. Reconstructed from phase entry at movie time zero; previous combat crossfade is not reproduced. Fallback only: a verified movie-clock song takes precedence.'}
     (folder / 'reconstruction.json').write_text(json.dumps(context, indent=2))
     for video in recipe['videos']:
         video['music_context'] = context
     recipe['flow']['evidence'] += '; Fixed-start reconstructed music: ' + \
         context['evidence']
+
+
+def select_music_stems(authored, reconstructed):
+    """An explicitly posted song supersedes approximate background reconstruction."""
+    primary = next((index for index, stem in enumerate(authored)
+                    if stem['role'] == 'music' and stem['start_seconds'] == 0), None)
+    if primary is None:
+        return [*authored, *reconstructed]
+    selected = [dict(stem) for stem in authored]
+    # Keep state-consumer evidence used to validate the native voice/effect bank,
+    # but do not play a second approximation of the movie's own song.
+    evidence = [path for stem in reconstructed for path in stem['sources']
+                if Path(path).suffix != '.wav']
+    selected[primary]['sources'] = list(dict.fromkeys([*selected[primary]['sources'], *evidence]))
+    return selected
 
 
 def music_recipe(body, roles):

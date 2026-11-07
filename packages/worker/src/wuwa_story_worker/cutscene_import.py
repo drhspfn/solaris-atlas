@@ -345,7 +345,7 @@ async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffm
         stems.append({"role": role, "language": language,
                       "rover": rover,
                       "path": destination.name, "sources": evidence,
-                      "evidence": "Fixed-start reconstructed persistent music phase; native routing and gain; looped to movie duration." if role == "music" and getattr(video, "music_context", None) else "Fixed-start reconstructed continuation of music from preceding dialogue; original elapsed player/sequence time is not reproduced." if role == "music" and any(stem.get("source", {}).get("reconstruction") for stem in frame_stems or []) else "Source-authored VideoSound/caption or movie frame-event timing; native event routing retained with source files. Original embedded audio remains an unseparated mix."})
+                      "evidence": "Fixed-start reconstructed persistent music phase; native routing and gain; looped to movie duration." if role == "music" and any(stem.get("fixed_start") for stem in frame_stems or [] if stem["role"] == "music") else "Fixed-start reconstructed continuation of music from preceding dialogue; original elapsed player/sequence time is not reproduced." if role == "music" and any(stem.get("source", {}).get("reconstruction") for stem in frame_stems or []) else "Source-authored VideoSound/caption or movie frame-event timing; native event routing retained with source files. Original embedded audio remains an unseparated mix."})
     stems = collapse_shared_stems(stems, work)
     return CutsceneAudioRecipe.model_validate({"asset": video.asset, "asset_version": asset_version,
                                               "duration": duration, "stems": stems})
@@ -430,7 +430,7 @@ async def import_cutscene_recipe(
         originals_by_asset = {}
         published_references = {}
         resolved_videos = []
-        from wuwa_story_worker.cutscene_music_context import render_music_context
+        from wuwa_story_worker.cutscene_music_context import render_music_context, select_music_stems
         music_stems = {}
         for video in spec.videos:
             if video.music_context:
@@ -461,7 +461,7 @@ async def import_cutscene_recipe(
                       if isinstance(node, Clip) and node.asset == video.asset and node.rover}
             frame_stems = await prepare_frame_stems(
                 video, assets, work / f'frame-{index}', decoder, rovers, missing_assets)
-            frame_stems.extend(music_stems.get(video.asset, []))
+            frame_stems = select_music_stems(frame_stems, music_stems.get(video.asset, []))
             if source_context is not None:
                 originals = [movie] if direct else [exported, movie]
                 if not direct:
