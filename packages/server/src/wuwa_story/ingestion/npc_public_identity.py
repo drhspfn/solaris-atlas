@@ -258,6 +258,35 @@ def identities(characters, roles, preloads):
                 "identity_schema": 1,
                 **proof,
             }
+    for character in characters:
+        key = character["key"]
+        identity = character.get("identity")
+        if (
+            not key.startswith("character:npc:")
+            or character.get("name_key")
+            or (identity and not _owned(identity))
+        ):
+            continue
+        variants = (character.get("npc") or {}).get("name_variants") or []
+        names = {
+            (variant.get("name") or {}).get("key")
+            for variant in variants
+            if isinstance(variant, dict) and isinstance(variant.get("name"), dict)
+        }
+        names = {name for name in names if isinstance(name, str) and name.strip()}
+        if len(names) > 1:
+            result[key] = {
+                "family": key,
+                "canonical_key": key,
+                "variant_key": key,
+                "selectable": False,
+                "has_npc": False,
+                "has_story": False,
+                "identity_source": "npc_public_identity",
+                "identity_schema": 1,
+                "classification": "mixed_instances",
+                "resolution": "mixed_instance_name_scope",
+            }
     return result
 
 
