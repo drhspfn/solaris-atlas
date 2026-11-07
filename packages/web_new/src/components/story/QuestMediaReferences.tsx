@@ -23,6 +23,7 @@ export interface MediaAssetReference {
     soundtrack: string;
     subtitles_included: boolean;
     timeline_offset?: number;
+    duration_seconds?: number | null;
     audio_tracks?: CutsceneAudioTrack[] | null;
     asset_node_id?: number;
     description?: {

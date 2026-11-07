@@ -1,13 +1,18 @@
-import { preferredRoverTarget } from './preferredRover';
-import type { CutsceneFlow } from './QuestMediaReferences';
+import { preferredRoverTarget } from "./preferredRover";
+import type { CutsceneFlow } from "./QuestMediaReferences";
 
 export function cutsceneTimeline(
   flow: CutsceneFlow,
   choices: Record<string, string>,
-  preference: 'ask' | 'male' | 'female',
+  preference: "ask" | "male" | "female",
   durations: Record<string, number>,
 ) {
-  const clips: { id: string; start: number; duration: number; mediaStart: number }[] = [];
+  const clips: {
+    id: string;
+    start: number;
+    duration: number;
+    mediaStart: number;
+  }[] = [];
   const decisions: { id: string; time: number; unresolved: boolean }[] = [];
   const visited = new Set<string>();
   let id: string | null = flow.entry;
@@ -20,18 +25,26 @@ export function cutsceneTimeline(
       complete = false;
       break;
     }
-    if (node.kind === 'choice') {
-      const selected = choices[node.id] || preferredRoverTarget(node, preference);
+    if (node.kind === "choice") {
+      const selected =
+        choices[node.id] || preferredRoverTarget(node, preference);
       decisions.push({ id: node.id, time: total, unresolved: !selected });
       id = selected || node.options[0]?.next || null;
     } else {
-      const end = node.end ?? durations[node.segment || node.asset];
-      if (end === undefined || !Number.isFinite(end)) {
+      const key = node.segment || node.asset;
+      const end =
+        node.end ?? durations[key] ?? flow.media[key]?.duration_seconds;
+      if (end == null || !Number.isFinite(end) || end <= node.start) {
         complete = false;
         break;
       }
       const duration = Math.max(0, end - node.start);
-      clips.push({ id: node.id, start: total, duration, mediaStart: node.start });
+      clips.push({
+        id: node.id,
+        start: total,
+        duration,
+        mediaStart: node.start,
+      });
       total += duration;
       id = node.next;
     }
@@ -40,19 +53,28 @@ export function cutsceneTimeline(
   return { clips, decisions, total, complete };
 }
 
-export function timelineTarget(timeline: ReturnType<typeof cutsceneTimeline>, position: number) {
+export function timelineTarget(
+  timeline: ReturnType<typeof cutsceneTimeline>,
+  position: number,
+) {
   const time = Math.max(0, Math.min(position, timeline.total));
-  const decision = timeline.decisions.find((entry) => entry.unresolved && time >= entry.time);
+  const decision = timeline.decisions.find(
+    (entry) => entry.unresolved && time >= entry.time,
+  );
   if (decision) return { id: decision.id, time: null };
   const clip =
-    timeline.clips.find((entry) => time < entry.start + entry.duration) || timeline.clips.at(-1);
+    timeline.clips.find((entry) => time < entry.start + entry.duration) ||
+    timeline.clips.at(-1);
   return clip
-    ? { id: clip.id, time: clip.mediaStart + Math.min(clip.duration, time - clip.start) }
+    ? {
+        id: clip.id,
+        time: clip.mediaStart + Math.min(clip.duration, time - clip.start),
+      }
     : null;
 }
 
 export function playbackVolume(master: number, music: number, role: string) {
-  return Math.max(0, Math.min(1, master * (role === 'music' ? music : 1)));
+  return Math.max(0, Math.min(1, master * (role === "music" ? music : 1)));
 }
 
 export function chapterPosition(
@@ -64,7 +86,7 @@ export function chapterPosition(
   if (assetId === undefined || !Number.isFinite(originalTime)) return null;
   for (const clip of timeline.clips) {
     const node = flow.nodes.find((entry) => entry.id === clip.id);
-    if (node?.kind !== 'clip') continue;
+    if (node?.kind !== "clip") continue;
     const media = flow.media[node.segment || node.asset];
     if (!media) continue;
     const start = (media.timeline_offset || 0) + clip.mediaStart;
