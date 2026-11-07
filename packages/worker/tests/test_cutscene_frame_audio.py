@@ -172,7 +172,8 @@ def test_unconsumed_initial_state_is_explicit_and_consuming_state_remains_guarde
 
 
 @pytest.mark.asyncio
-async def test_flat_layer_render_keeps_authored_txtp_commands(tmp_path, monkeypatch):
+@pytest.mark.parametrize('group', ['', 'group = -S1 #p 0.01\n'])
+async def test_flat_layer_render_keeps_authored_txtp_commands(tmp_path, monkeypatch, group):
     bank_xml, init_xml = native_xml(tmp_path)
     bank = tmp_path / 'example.bnk'
     bank.write_bytes(b'bank')
@@ -193,7 +194,7 @@ async def test_flat_layer_render_keeps_authored_txtp_commands(tmp_path, monkeypa
             target.write_bytes((init_xml if args[-1].endswith('Init.bnk') else bank_xml).read_bytes())
         elif '-go' in args:
             folder = audio.Path(args[args.index('-go') + 1])
-            (folder / 'event.txtp').write_text('wem/101.wem #p 0.25 #v -6.0\n')
+            (folder / 'event.txtp').write_text('wem/101.wem #p 0.25 #v -6.0\n' + group)
         else:
             commands.append(audio.Path(args[-1]).read_text())
             with wave.open(args[args.index('-o') + 1], 'wb') as stream:
@@ -205,7 +206,7 @@ async def test_flat_layer_render_keeps_authored_txtp_commands(tmp_path, monkeypa
     stems = await audio.render_role_stems(bank, inputs, tmp_path / 'render', tmp_path / 'decoder')
     assert [stem['role'] for stem in stems] == ['music']
     assert stems[0]['duration_seconds'] == 1
-    assert commands == ['wem/101.wem #p 0.25 #v -6.0\n']
+    assert commands == ['wem/101.wem #p 0.25 #v -6.0\n' + group]
     assert stems[0]['media_ids'] == [101]
 
 

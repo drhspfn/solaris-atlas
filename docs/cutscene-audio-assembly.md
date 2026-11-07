@@ -92,3 +92,31 @@ OOM process exits and allocation failures propagate to the job layer.
 The existing broker retry classifier includes temporary disk/memory/file-handle
 resource errors; missing authored files and permission failures are not blindly
 retried. Operational failures must not be published as terminal missing audio.
+
+## Movie songs and dialogue continuations (2026-11-07)
+
+Verified client 3.7.1 source paths for the 3.7.0 story snapshot:
+
+- M0389 posts `play_all_sound_m0389_music_lyric` through `Mp4FrameEvents`
+  at movie second zero. Its initial Stop clears the previously running game
+  music before the new Play. In a fresh isolated render it has no playing
+  instance to stop; the original control timeline remains retained as evidence.
+  Stops after a Play or at nonzero times still require a shared runtime.
+- M0390 posts `play_all_sound_m0390_lyric` at movie second zero. Its localized
+  VideoSound also sets group 2267264624 to 4278155591. The native consumer in
+  `play_story_music_3_7_boss_tianyansuxin` selects node 731374590 and its authored
+  intro/loop. The companion bank and every selected media source are retained.
+  The prior combat phase is reconstructed from its fixed entry, not presented
+  as an exact reproduction of the combat-to-video crossfade.
+- M3_13_03_1 follows ShowTalk posting `play_all_sound_m3_13_03_lyric`, at
+  TalkItemId 34 / Offset -1 in the same native flow. Retain that explicit
+  continuation, including its source position, rather than treating a frameless
+  PlayMovie as proof of no music. Standalone playback reconstructs its start at
+  movie time zero: player choice delays and the preceding sequence elapsed time
+  are not reproduced. The native TXTP `group = -S1 #p 0.01` and its source
+  volume envelope stay intact; homogeneous role groups require no flattening.
+
+Explicitly TEST-labelled native flows remain in the source report but do not
+replace or conflict with production launcher audio. Other conflicting runtime
+contexts remain unresolved. These paths do not infer songs from filenames or
+merge mutually exclusive gameplay branches.

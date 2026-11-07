@@ -35,7 +35,8 @@ from wuwa_story_worker.wwise_banks import (
 async def render_role_stems(bank, audio, work, decoder, *, language=None, rover=None):
     """Render independent native top-level layers, preserving each TXTP command.
 
-    Nested groups or shared state timelines remain explicit unsupported cases.
+    Homogeneous role groups retain their native sequence/delay commands intact.
+    Mixed nested groups or shared state timelines remain explicit unsupported cases.
     No whole-event render is repeated for each role, and no WEM is normalized.
     """
     bank, audio, work, decoder = map(Path, (bank, audio, work, decoder))
@@ -73,12 +74,14 @@ async def render_role_stems(bank, audio, work, decoder, *, language=None, rover=
     lines = [line.strip() for line in body.splitlines() if line.strip()]
     layers = [line for line in lines if re.match(r'^wem/[0-9]+\.wem(?:\s|$)', line)]
     groups = [line for line in lines if line.startswith('group')]
-    if (not layers or len(lines) != len(layers) + len(groups)
-            or (len(layers) > 1 and groups != [f'group = -L{len(layers)} #@layer-v'])
-            or (len(layers) == 1 and groups)):
-        raise ValueError('Role separation requires independent native top-level layers')
+    if not layers or len(lines) != len(layers) + len(groups):
+        raise ValueError('Role separation requires a supported native recipe')
     identities = {int(re.match(r'wem/(\d+)\.wem', line)[1]) for line in layers}
     roles = audio_bus_roles(bank_xml, init_xml, identities)
+    homogeneous = len({proof['role'] for proof in roles.values()}) == 1
+    if not homogeneous and ((len(layers) > 1 and groups != [f'group = -L{len(layers)} #@layer-v'])
+                            or (len(layers) == 1 and groups)):
+        raise ValueError('Role separation requires independent native top-level layers')
     wem = generated / 'wem'
     wem.mkdir(exist_ok=True)
     for identity in identities:
@@ -91,7 +94,7 @@ async def render_role_stems(bank, audio, work, decoder, *, language=None, rover=
     for role in sorted({p['role'] for p in roles.values()}):
         selected = [line for line in layers if roles[int(re.match(r'wem/(\d+)\.wem', line)[1])]['role'] == role]
         recipe = generated / (role + '.txtp')
-        recipe.write_text('\n'.join(selected + ([f'group = -L{len(selected)} #@layer-v'] if len(selected) > 1 else [])) + '\n')
+        recipe.write_text(body if homogeneous else '\n'.join(selected + ([f'group = -L{len(selected)} #@layer-v'] if len(selected) > 1 else [])) + '\n')
         wav = work / (role + '.wav')
         await run_tool([str(decoder.resolve()), '-i', '-o', str(wav), str(recipe)], 300)
         with wave.open(str(wav)) as stream:

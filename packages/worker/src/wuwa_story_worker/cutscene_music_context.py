@@ -11,7 +11,8 @@ from wuwa_story_worker.wwise_banks import bank_media_ids, event_id, event_timeli
 # Explicit client event pair, verified through the state's native switch consumer.
 MUSIC_EVENTS = {'M0357': ('set_state_boss_3_3_aliefuyi_m0357_stage3_loop',
                           'play_music_boss_3_3_aliefuyi'),
-                'C0030': ('map_main_tinyuan', 'map_main_tinyuan')}
+                'C0030': ('map_main_tinyuan', 'map_main_tinyuan'),
+                'M0390': ('play_all_sound_m0390', 'play_story_music_3_7_boss_tianyansuxin')}
 
 
 async def prepare_music_context(root, assets, movie, recipe):
@@ -20,8 +21,13 @@ async def prepare_music_context(root, assets, movie, recipe):
     import sys
     state_event, music_event = MUSIC_EVENTS[movie]
     prefix = 'Client/Content/Aki/WwiseAudio_Generated/'
-    expected = [prefix + 'Init.bnk', *(prefix + 'Event/' + event + '.bnk'
-                                      for event in (state_event, music_event))]
+    from wuwa_story_worker.cutscene_import import confined
+    state_bank = next((confined(assets, track['bank']) for video in recipe['videos']
+                       for track in video.get('soundtrack', [])
+                       if track.get('bank') and Path(track['bank']).stem == state_event), None)
+    expected = [prefix + 'Init.bnk', prefix + 'Event/' + music_event + '.bnk']
+    if state_bank is None:
+        expected.append(prefix + 'Event/' + state_event + '.bnk')
     receipt = await export_assets(root, tool_path('WUWA_FMODEL_PATH'), '|'.join(expected))
     files = receipt.parent / 'files'
     folder = assets / 'fixed-music' / movie
@@ -31,16 +37,21 @@ async def prepare_music_context(root, assets, movie, recipe):
         if not source.is_file():
             raise ValueError('Music context source is missing: ' + path)
         shutil.copyfile(source, folder / source.name)
+    if state_bank is not None:
+        shutil.copyfile(state_bank, folder / (state_event + '.bnk'))
     state_xml = folder / 'state.xml'
     await run_tool([sys.executable, str(tool_path('WUWA_WWISER_PATH')), '-d', 'xml', '-dn',
                     str(folder / 'state'), '--', str(folder / (state_event + '.bnk'))], 120)
     timeline = event_timeline(state_xml, event_id(state_event))
-    states = [action for action in timeline['actions'] if action['kind'] == 'SetState']
+    states = [action for action in timeline['actions']
+              if action['kind'] == 'SetState']
     if len(states) != 1 or states[0]['time_ms'] != 0:
-        raise ValueError('Music context is no longer a deterministic startup state')
+        raise ValueError(
+            'Music context is no longer a deterministic startup state')
     state = states[0]
     ids = bank_media_ids((folder / (music_event + '.bnk')).read_bytes())
-    media_paths = [prefix + 'Media/' + str(identity) + '.wem' for identity in ids]
+    media_paths = [prefix + 'Media/' +
+                   str(identity) + '.wem' for identity in ids]
     receipt = await export_assets(root, tool_path('WUWA_FMODEL_PATH'), '|'.join(media_paths))
     for path in media_paths:
         source = receipt.parent / 'files' / path
@@ -55,7 +66,8 @@ async def prepare_music_context(root, assets, movie, recipe):
     (folder / 'reconstruction.json').write_text(json.dumps(context, indent=2))
     for video in recipe['videos']:
         video['music_context'] = context
-    recipe['flow']['evidence'] += '; Fixed-start reconstructed music: ' + context['evidence']
+    recipe['flow']['evidence'] += '; Fixed-start reconstructed music: ' + \
+        context['evidence']
 
 
 def music_recipe(body, roles):
@@ -87,20 +99,22 @@ def music_recipe(body, roles):
         return '\n'.join(lines)
     if (parallel is None or any(len(child[1]) != 1 for child in parallel)
             or not re.fullmatch(r'group\s*=\s*-L\d+\s+#@layer-v', lines[-1])):
-        raise ValueError('Music cannot be separated without altering native timing')
+        raise ValueError(
+            'Music cannot be separated without altering native timing')
     selected = [child for child in parallel if child[1] == {'music'}]
     if not selected:
         raise ValueError('Native music context contains no music')
     return '\n'.join([line for child in selected for line in child[0]] +
-                      ([f'group = -L{len(selected)} #@layer-v'] if len(selected) > 1 else []))
+                     ([f'group = -L{len(selected)} #@layer-v'] if len(selected) > 1 else []))
 
 
 async def render_music_context(context, assets, work, decoder):
     from wuwa_story_worker.cutscene_import import confined
     from wuwa_story_worker.cutscene_frame_audio import audio_bus_roles
-    bank, audio = confined(assets, context.bank), confined(assets, context.audio_directory)
+    bank, audio = confined(assets, context.bank), confined(
+        assets, context.audio_directory)
     output, sources = await render_bank(bank, audio, work, decoder, None,
-        run_tool, startup_states={context.state_group: context.state})
+                                        run_tool, startup_states={context.state_group: context.state})
     xml = next(path for path in sources if path.name == 'bank.xml')
     import sys
     init_xml = xml.parent / 'init.xml'
@@ -109,10 +123,12 @@ async def render_music_context(context, assets, work, decoder):
     identities = {int(path.stem) for path in sources if path.suffix == '.wem'}
     roles = audio_bus_roles(xml, init_xml, identities)
     if not roles:
-        raise ValueError('Reconstructed context contains no verified music sources')
+        raise ValueError(
+            'Reconstructed context contains no verified music sources')
     if any(item['role'] != 'music' for item in roles.values()):
         recipe = next(path for path in sources if path.suffix == '.txtp')
-        body = recipe.read_text(encoding='utf-8-sig').split('# AUTOGENERATED', 1)[0]
+        body = recipe.read_text(
+            encoding='utf-8-sig').split('# AUTOGENERATED', 1)[0]
         selected = recipe.parent / 'music-only.txtp'
         selected.write_text(music_recipe(body, roles), encoding='utf-8')
         output = recipe.parent / 'music-only.wav'

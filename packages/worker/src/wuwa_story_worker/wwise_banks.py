@@ -339,6 +339,14 @@ def validate_event_timeline(timeline: dict, xml: Path | None = None) -> list[str
 def initial_parameters(timeline, bank_xml, init_xml):
     """Retain startup side effects even when this closed audio graph does not consume them."""
     actions = timeline['actions']
+    plays = [index for index, action in enumerate(actions) if action['kind'] == 'Play']
+    # A fresh isolated event has no previous playing instances. An authored Stop
+    # before its first Play only clears the game's pre-existing ambience/music.
+    # Later stops can truncate this event and must not be discarded.
+    stops = [index for index, action in enumerate(actions) if action['kind'] == 'Stop']
+    if stops and plays and all(actions[index]['time_ms'] == 0 and index < min(plays) for index in stops):
+        actions = [action for action in actions if action['kind'] != 'Stop']
+        timeline = {**timeline, 'actions': actions}
     if any(a['kind'] not in {'SetState', 'Play', 'PlayEvent'} for a in actions):
         raise ValueError('Event requires a shared running control timeline')
     try:
