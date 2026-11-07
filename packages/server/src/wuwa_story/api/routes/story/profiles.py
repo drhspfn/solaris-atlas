@@ -55,7 +55,7 @@ from wuwa_story.storage.entity_media import entity_image_urls
 from wuwa_story.story import usecases
 from wuwa_story.story.domain import StoryBrowsingError
 from wuwa_story.story.service import prefetch_dialogue, prefetch_localizations, prefetch_node_labels
-from wuwa_story.urls import node_address
+from wuwa_story.urls import node_address, numeric_id
 
 router = APIRouter(tags=["story browsing"])
 
@@ -829,6 +829,8 @@ async def character_profile(
     from wuwa_story.api.routes.story.npc_profile import npc_profile, npc_record
 
     candidate = await get_node(session, canonical_key, ("character",))
+    if candidate is None and (identifier := numeric_id(canonical_key)) is not None:
+        candidate = await session.get(Node, identifier)
     candidate_character = await session.get(Character, candidate.id) if candidate else None
     identity = ((candidate_character.metadata_json or {}).get("public_identity") or {}) if candidate_character else {}
     representative = identity.get("canonical_key")

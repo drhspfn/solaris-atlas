@@ -3,9 +3,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from wuwa_story.api.routes.story import npc_profile
+from wuwa_story.api.routes.story import npc_profile, profiles
+from wuwa_story.db.models.core import Character
+from wuwa_story.db.models.graph import Node
 from wuwa_story.db.repositories.character_identity import character_family
 from wuwa_story.db.repositories.npc_family import combine_npc_records
+from wuwa_story.read_models.readers.entities import ProjectedPayload
 
 
 def member(node_id, *, instances=(), flows=(), shops=()):
@@ -56,3 +59,33 @@ async def test_group_instance_page_is_bounded_and_localized(monkeypatch):
     assert result["total"] == 60 and len(result["results"]) == 20
     assert result["results"][0]["entity_id"] == 20
     assert result["results"][0]["name"] == {"content": "Cristoforo"}
+
+
+@pytest.mark.asyncio
+async def test_numeric_npc_profile_resolves_source_family_before_cached_profile(monkeypatch):
+    character, node = member(1)
+    character.metadata_json["role_type"] = 6
+    monkeypatch.setattr(profiles, "get_node", AsyncMock(return_value=None))
+    async def get(model, identity):
+        assert identity == 1
+        return node if model is Node else character if model is Character else None
+    session = Row(get=get)
+    monkeypatch.setattr(npc_profile, "npc_record", AsyncMock(return_value=(node, character, {}, 21)))
+    render = AsyncMock(return_value=ProjectedPayload({"character": {"canonical_key": node.canonical_key}}))
+    monkeypatch.setattr(npc_profile, "npc_profile", render)
+    result = await profiles.character_profile("1", session=session, connections_limit=12)
+    assert result["character"]["canonical_key"] == "character:npc:1"
+    render.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_shared_template_is_not_titled_as_one_of_its_different_people(monkeypatch):
+    character, node = member(1)
+    character.name_key_id = 7
+    character.canonical_name = "Abby"
+    character.description = None
+    character.metadata_json["public_identity"] = {"classification": "mixed_instances"}
+    monkeypatch.setattr(npc_profile, "_localized", AsyncMock(return_value={"content": "Abby"}))
+    result = await npc_profile.npc_profile(Row(), node, character, {}, 21, "en")
+    assert result["character"]["name"]["content"] == "Shared NPC template"
+    assert "differently named" in result["character"]["description"]

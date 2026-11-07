@@ -144,13 +144,16 @@ async def character_family(session, character, node, localize, release_id=None):
 
 def public_character_filter(role_type, identity, canonical_key, kind="playable", *, title=None):
     """Apply category and family paging before LIMIT, in both search backends."""
+    mixed = identity["classification"].as_string() == "mixed_instances"
     category = {
         "playable": role_type == 1,
         "story": or_(role_type.in_((2, 4, 5)), identity["has_story"].as_boolean().is_(True)),
         "npc": or_(role_type == 6, identity["has_npc"].as_boolean().is_(True)),
-        "technical": or_(role_type.is_(None), role_type.not_in((1, 2, 4, 5, 6))),
+        "technical": or_(role_type.is_(None), role_type.not_in((1, 2, 4, 5, 6)), mixed),
         "all": True,
     }[kind]
+    if kind not in ("all", "technical"):
+        category = and_(category, or_(identity["classification"].as_string().is_(None), ~mixed))
     if title is not None:
         # Unnamed scenario/templates remain addressable graph records rather
         # than person cards. Apply before counting/paging in both read paths.
@@ -170,5 +173,7 @@ async def annotate_character_cards(session, results):
             continue
         info = metadata[row["id"]] or {}
         row["character_kind"] = character_kind(info.get("role_type"))
+        if (info.get("public_identity") or {}).get("classification") == "mixed_instances":
+            row["character_kind"] = "technical"
         if (info.get("public_identity") or {}).get("family") == "rover":
             row["title"] = "Rover"
