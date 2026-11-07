@@ -121,6 +121,11 @@ async def character_family(session, character, node, localize, release_id=None):
         statement = statement.where(select(NodeRevision.id).where(
             NodeRevision.node_id == Node.id, NodeRevision.release_id == release_id).exists())
     rows = list(await session.execute(statement))
+    if identity["family"] != "rover":
+        return [member.node_id for member, _ in rows], {
+            "canonical_key": identity["canonical_key"], "variants": [],
+            "members": [member_node.canonical_key for _, member_node in rows],
+        }
     variants = []
     for member, member_node in rows:
         variant = member.metadata_json["public_identity"]
@@ -147,9 +152,9 @@ def public_character_filter(role_type, identity, canonical_key, kind="playable",
         "all": True,
     }[kind]
     if title is not None:
-        # Unnamed native templates remain addressable graph records, not public
-        # NPC cards. Apply this before counting/paging, not after loading rows.
-        category = and_(category, or_(role_type.is_(None), role_type != 6,
+        # Unnamed scenario/templates remain addressable graph records rather
+        # than person cards. Apply before counting/paging in both read paths.
+        category = and_(category, or_(role_type.is_(None), role_type.not_in((2, 4, 5, 6)),
             and_(func.length(func.trim(title)) > 0, title != canonical_key)))
     primary = identity["canonical_key"].as_string()
     return and_(category, or_(primary.is_(None), primary == canonical_key))
@@ -165,5 +170,5 @@ async def annotate_character_cards(session, results):
             continue
         info = metadata[row["id"]] or {}
         row["character_kind"] = character_kind(info.get("role_type"))
-        if info.get("public_identity"):
+        if (info.get("public_identity") or {}).get("family") == "rover":
             row["title"] = "Rover"

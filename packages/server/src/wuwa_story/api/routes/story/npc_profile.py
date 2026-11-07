@@ -12,6 +12,7 @@ from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.search import SearchDocument
 from wuwa_story.db.repositories.character_identity import dialogue_participation
 from wuwa_story.db.repositories.nodes import get_node
+from wuwa_story.db.repositories.npc_family import combine_npc_records, npc_family_records
 from wuwa_story.db.repositories.quest_scope import quest_state_links
 from wuwa_story.db.session import get_session
 from wuwa_story.story.service import (
@@ -29,7 +30,8 @@ router = APIRouter(tags=["story browsing"])
 
 def source_edge(owner_id, target, relation, release_id):
     return select(Edge.id).join(RelationType, RelationType.id == Edge.relation_type_id).where(
-        Edge.from_node_id == owner_id, Edge.to_node_id == target, Edge.layer == "source",
+        Edge.from_node_id.in_(owner_id if isinstance(owner_id, (list, tuple)) else [owner_id]),
+        Edge.to_node_id == target, Edge.layer == "source",
         RelationType.key == relation,
         select(EdgeEvidence.id).where(EdgeEvidence.edge_id == Edge.id,
                                      EdgeEvidence.release_id == release_id).exists(),
@@ -62,7 +64,7 @@ async def npc_flow_state_ids(session, node_id, npc, release_id):
     valid = [flow for flow in refs if isinstance(flow, list) and len(flow) == 3
              and isinstance(flow[0], str) and type(flow[1]) is int and type(flow[2]) is int]
     states = set(await session.scalars(select(QuestState.node_id).where(
-        source_edge(node_id, QuestState.node_id, "references_flow_state", release_id))))
+        source_edge(npc.get("owner_ids", [node_id]), QuestState.node_id, "references_flow_state", release_id))))
     for offset in range(0, len(valid), 100):
         conditions = [and_(QuestState.flow_list_name == name, QuestState.flow_id == flow_id,
                            QuestState.state_id == state_id) for name, flow_id, state_id in valid[offset:offset + 100]]
@@ -79,7 +81,18 @@ async def npc_record(session, identity, game_version=None):
     current = await _release_id(session, None)
     if game_version and (not current or await _release_id(session, game_version) != current):
         raise HTTPException(404, "NPC data is not available for this snapshot")
-    return node, character, metadata["npc"], current
+    members = await npc_family_records(session, character, node)
+    npc = combine_npc_records(members)
+    # A playable representative keeps the normal playable page; /npcs endpoints
+    # still serve its combined world interactions through every original NPC URL.
+    identity = metadata.get("public_identity") or {}
+    anchor = identity.get("canonical_key")
+    if anchor and anchor.startswith("character:npc:"):
+        for member, member_node in members:
+            if member_node.canonical_key == anchor:
+                character, node = member, member_node
+                break
+    return node, character, npc, current
 
 
 def price_pairs(value):
@@ -127,9 +140,33 @@ async def npc_profile(session, node, character, npc, release_id, locale):
                     "name_variants": variants,
                     "flow_reference_count": len(npc.get("flow_references") or []),
                     "instances": [{"map_id": item.get("map_id"), "entity_id": item.get("entity_id"),
-                                   "name": item.get("name")} for item in instances[:10]],
+                                   "name": item.get("name"), "character_key": item.get("character_key")}
+                                  for item in instances[:10]],
+                    "member_keys": npc.get("member_keys", [node.canonical_key]),
+                    "blueprint_count": len(npc.get("member_keys") or [node.canonical_key]),
                     "instance_count": len(instances), "shop_count": len(npc.get("shops") or [])},
             "media": {"status": "asset_not_extracted", "image_url": None}}
+
+
+@router.get("/npcs/{canonical_key:path}/instances")
+async def npc_instances(canonical_key: str, locale: str = "en", game_version: str | None = None,
+                        limit: int = Query(20, ge=1, le=50), offset: int = Query(0, ge=0),
+                        session: AsyncSession = Depends(get_session)):
+    _, _, npc, release_id = await npc_record(session, canonical_key, game_version)
+    instances = npc.get("instances") or []
+    page = instances[offset:offset + limit]
+    keys = {item.get("name", {}).get("key") for item in page if isinstance(item.get("name"), dict)} - {None}
+    key_ids = dict((await session.execute(select(LocalizationKey.key, LocalizationKey.id).where(
+        LocalizationKey.key.in_(keys)))).all()) if keys else {}
+    await prefetch_localizations(session, list(key_ids.values()), locale, release_id)
+    results = []
+    for item in page:
+        name = item.get("name") or {}
+        localized = await _localized(session, key_ids.get(name.get("key")), locale, release_id) if isinstance(name, dict) else None
+        results.append({"map_id": item.get("map_id"), "entity_id": item.get("entity_id"),
+                        "character_key": item.get("character_key"),
+                        "name": localized or {"content": name.get("en")} if isinstance(name, dict) else None})
+    return {"results": results, "total": len(instances), "limit": limit, "offset": offset}
 
 
 @router.get("/npcs/{canonical_key:path}/shops")
@@ -231,7 +268,7 @@ async def npc_dialogue(canonical_key: str, locale: str = "en", game_version: str
     rows = query.subquery()
     total = await session.scalar(select(func.count()).select_from(rows)) or 0
     page = list(await session.execute(select(DialogueLine, Node, QuestState, rows.c.speaker_id,
-        source_edge(node.id, DialogueLine.node_id, "presents_talk_item", release_id)).join(
+        source_edge(npc.get("owner_ids", [node.id]), DialogueLine.node_id, "presents_talk_item", release_id)).join(
         rows, rows.c.line_id == DialogueLine.node_id).join(Node, Node.id == DialogueLine.node_id).join(
         QuestState, QuestState.node_id == rows.c.state_id).order_by(Node.canonical_key, QuestState.state_key)
         .offset(offset).limit(limit)))

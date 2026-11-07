@@ -828,9 +828,13 @@ async def character_profile(
     # NPC metadata is stored on its typed character, independently of playable projections.
     from wuwa_story.api.routes.story.npc_profile import npc_profile, npc_record
 
-    candidate = (await get_node(session, canonical_key, ("character",))
-                 if not canonical_key.startswith("character:") or canonical_key.startswith("character:npc:")
-                 else None)
+    candidate = await get_node(session, canonical_key, ("character",))
+    candidate_character = await session.get(Character, candidate.id) if candidate else None
+    identity = ((candidate_character.metadata_json or {}).get("public_identity") or {}) if candidate_character else {}
+    representative = identity.get("canonical_key")
+    if candidate and identity.get("family") != "rover" and representative and representative != candidate.canonical_key:
+        return await character_profile(representative, locale=locale, game_version=game_version,
+                                       session=session, connections_limit=connections_limit)
     if candidate and candidate.canonical_key.startswith("character:npc:"):
         node, character, npc, release_id = await npc_record(session, candidate.canonical_key, game_version)
         return await npc_profile(session, node, character, npc, release_id, locale)
@@ -861,6 +865,18 @@ async def character_profile(
         return element_names[key]
 
     member_ids, family = await character_family(session, character, node, element_name, release_id)
+    # World incarnations keep their own placements, options and shops even when
+    # the public representative is the playable character.
+    npc_context = None
+    if family and (character.metadata_json or {}).get("public_identity", {}).get("family") != "rover":
+        from wuwa_story.db.repositories.npc_family import combine_npc_records, npc_family_records
+
+        npc_members = await npc_family_records(session, character, node)
+        if npc_members:
+            npc_data = combine_npc_records(npc_members)
+            member, member_node = npc_members[0]
+            context_profile = await npc_profile(session, member_node, member, npc_data, release_id, locale)
+            npc_context = {**context_profile["npc"], "canonical_key": member_node.canonical_key}
     quest_info_cache: dict[int, dict[str, Any]] = {}
 
     async def character_quest_info(quest: Quest) -> dict[str, Any]:
@@ -1149,6 +1165,7 @@ async def character_profile(
     )
     return {
         "family": family,
+        **({"npc_context": npc_context} if npc_context else {}),
         "character": {
             "canonical_key": node.canonical_key,
             **node_address(node, "character"),
