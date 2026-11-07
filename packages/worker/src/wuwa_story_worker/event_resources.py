@@ -62,8 +62,9 @@ async def annotate_image_packages(root: Path, records: dict) -> list[dict]:
     return list(missing.values())
 
 
-def ui_references(value, *, include_sequences=False):
+def ui_references(value, *, include_sequences=False, control_sources_only=False):
     """Yield typed references, excluding script classes, audio and gameplay assets."""
+    include_sequences = include_sequences or control_sources_only
     if isinstance(value, dict):
         if include_sequences and value.get('Token') == 'EX_Context':
             receiver = value.get('ObjectExpression') or {}
@@ -83,21 +84,24 @@ def ui_references(value, *, include_sequences=False):
         kind = value.get("ObjectName", "").partition("'")[0]
         path = texture_path(raw) if isinstance(raw, str) else None
         if path:
-            if kind in IMAGE_TYPES or (not kind and any(p in path for p in ("/Image/", "/Atlas/"))):
+            if not control_sources_only and (kind in IMAGE_TYPES or (not kind and any(p in path for p in ("/Image/", "/Atlas/")))):
                 yield "image", path
-            elif (kind in DEPENDENCY_TYPES or (include_sequences and kind in SEQUENCE_TYPES)
+            elif ((not control_sources_only and kind in DEPENDENCY_TYPES) or (include_sequences and kind in SEQUENCE_TYPES)
                   or (include_sequences and kind == 'BlueprintGeneratedClass'
-                      and path.startswith('/Game/Aki/Character/Role/') and '/Seq/' in path)
-                  or (not kind and "/Prefabs/" in path)):
+                      and ((control_sources_only and path.startswith('/Game/Aki/Sequence/'))
+                           or (path.startswith('/Game/Aki/Character/Role/') and '/Seq/' in path)))
+                  or (not control_sources_only and not kind and "/Prefabs/" in path)):
                 yield "dependency", path
         for child in value.values():
-            yield from ui_references(child, include_sequences=include_sequences)
+            yield from ui_references(child, include_sequences=include_sequences, control_sources_only=control_sources_only)
     elif isinstance(value, list):
         for child in value:
-            yield from ui_references(child, include_sequences=include_sequences)
+            yield from ui_references(child, include_sequences=include_sequences, control_sources_only=control_sources_only)
 
 
-async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = None, include_sequences=False):
+async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = None, include_sequences=False,
+                        control_sources_only=False):
+    include_sequences = include_sequences or control_sources_only
     pending = set(paths)
     seen = set()
     images = {}
@@ -144,7 +148,7 @@ async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = N
                 receipt = await export_assets(root, fmodel, package.rsplit(".", 1)[0])
             raw = receipt.parent / "files"
             output = receipt.parent / \
-                (("ui-json-sequences-v3-" if include_sequences else "ui-json-references-v2-") +
+                (("ui-json-control-only-v1-" if control_sources_only else "ui-json-sequences-v3-" if include_sequences else "ui-json-references-v2-") +
                  _sha256(converter)[:16] + ('-' + hashlib.sha256(source.encode()).hexdigest()[:16] if batched else ''))
             output.mkdir(exist_ok=True)
             complete = output / "references.json"
@@ -174,7 +178,8 @@ async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = N
                                                 "WUWA_READ_SCRIPT_DATA": "1" if include_sequences else "0"})
                     references = sorted({ref for path in output.rglob("*.json") if path != complete
                                          for ref in ui_references(json.loads(path.read_text(encoding="utf-8-sig")),
-                                                                  include_sequences=include_sequences)})
+                                                                  include_sequences=include_sequences,
+                                                                  control_sources_only=control_sources_only)})
                     if not list(output.rglob("*.json")):
                         raise ValueError("Prefab converter produced no JSON")
                     temporary = complete.with_suffix(".partial")

@@ -203,7 +203,7 @@ async def test_controller_exports_and_flow_scores_survive_as_separate_archive_ou
         if not kwargs:
             assets.update(fixture_assets)
             return [], []
-        assert paths == ['/Game/Controller'] and kwargs['include_sequences']
+        assert paths == ['/Game/Controller'] and kwargs == {'include_sequences': True, 'control_sources_only': True}
         assets['/Game/Controller'] = {'raw': control, 'decoded': decoded,
                                       'package': 'Client/Controller.uasset', 'decode_failed': True}
         return [], [{'expected': '/Game/Controller', 'status': 'dependency_failed'}]
