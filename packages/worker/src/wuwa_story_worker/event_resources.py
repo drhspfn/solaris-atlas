@@ -66,7 +66,7 @@ def ui_references(value, *, include_sequences=False, control_sources_only=False)
     """Yield typed references, excluding script classes, audio and gameplay assets."""
     include_sequences = include_sequences or control_sources_only
     if isinstance(value, dict):
-        if include_sequences and value.get('Token') == 'EX_Context':
+        if include_sequences and not control_sources_only and value.get('Token') == 'EX_Context':
             receiver = value.get('ObjectExpression') or {}
             variable = receiver.get('Variable') or {}
             actor_class = (variable.get('Property') or {}).get('PropertyClass')
@@ -87,9 +87,8 @@ def ui_references(value, *, include_sequences=False, control_sources_only=False)
             if not control_sources_only and (kind in IMAGE_TYPES or (not kind and any(p in path for p in ("/Image/", "/Atlas/")))):
                 yield "image", path
             elif ((not control_sources_only and kind in DEPENDENCY_TYPES) or (include_sequences and kind in SEQUENCE_TYPES)
-                  or (include_sequences and kind == 'BlueprintGeneratedClass'
-                      and ((control_sources_only and path.startswith('/Game/Aki/Sequence/'))
-                           or (path.startswith('/Game/Aki/Character/Role/') and '/Seq/' in path)))
+                  or (include_sequences and not control_sources_only and kind == 'BlueprintGeneratedClass'
+                      and path.startswith('/Game/Aki/Character/Role/') and '/Seq/' in path)
                   or (not control_sources_only and not kind and "/Prefabs/" in path)):
                 yield "dependency", path
         for child in value.values():
@@ -99,6 +98,22 @@ def ui_references(value, *, include_sequences=False, control_sources_only=False)
             yield from ui_references(child, include_sequences=include_sequences, control_sources_only=control_sources_only)
 
 
+def control_receiver_paths(assets):
+    """Follow missing blueprint receivers reached by authored event entry points."""
+    from wuwa_story_worker.sequence_controls import sequence_control_score
+
+    for event in sequence_control_score(assets)['events']:
+        for call in event['calls']:
+            receiver = call.get('receiver') or {}
+            reference = (receiver.get('class') or receiver.get('reference')) if isinstance(receiver, dict) else None
+            name = reference.get('ObjectName') if isinstance(reference, dict) else None
+            if not isinstance(name, str) or not name.startswith("BlueprintGeneratedClass'"):
+                continue
+            raw = reference.get('ObjectPath')
+            if isinstance(raw, str) and (path := texture_path(raw)):
+                yield path
+
+
 async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = None, include_sequences=False,
                         control_sources_only=False):
     include_sequences = include_sequences or control_sources_only
@@ -106,6 +121,7 @@ async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = N
     seen = set()
     images = {}
     missing = []
+    controls = {}
     fmodel, converter = tool_path("WUWA_FMODEL_PATH"), tool_path(
         "WUWA_TEXTURE_CONVERTER_PATH")
     index = await ensure_archive_index(root, fmodel, root) if pending else None
@@ -148,7 +164,7 @@ async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = N
                 receipt = await export_assets(root, fmodel, package.rsplit(".", 1)[0])
             raw = receipt.parent / "files"
             output = receipt.parent / \
-                (("ui-json-control-only-v1-" if control_sources_only else "ui-json-sequences-v3-" if include_sequences else "ui-json-references-v2-") +
+                (("ui-json-control-only-v2-" if control_sources_only else "ui-json-sequences-v3-" if include_sequences else "ui-json-references-v2-") +
                  _sha256(converter)[:16] + ('-' + hashlib.sha256(source.encode()).hexdigest()[:16] if batched else ''))
             output.mkdir(exist_ok=True)
             complete = output / "references.json"
@@ -191,6 +207,9 @@ async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = N
             if assets is not None:
                 assets[source] = {'raw': raw,
                                   'decoded': output, 'package': package}
+            if control_sources_only:
+                controls[source] = {'raw': raw, 'decoded': output, 'package': package}
+                pending.update(path for path in control_receiver_paths(controls) if path not in seen)
             for kind, path in references:
                 if kind == "image":
                     images.setdefault(

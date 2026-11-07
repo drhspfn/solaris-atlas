@@ -155,9 +155,7 @@ def test_control_only_follows_sequence_wrappers_but_defers_visuals_and_gameplay(
         {'ObjectName': "Material'Material'", 'ObjectPath': '/Game/UI/Material'},
         {'ObjectName': "SpineAtlasAsset'Atlas'", 'ObjectPath': '/Game/UI/Atlas'},
     ]}
-    assert set(ui_references(value, control_sources_only=True)) == {
-        ('dependency', '/Game/Story/Scene'), ('dependency', '/Game/Aki/Sequence/Manager/Wrapper'),
-        ('dependency', '/Game/Aki/Character/Role/Test/Seq/Actor')}
+    assert set(ui_references(value, control_sources_only=True)) == {('dependency', '/Game/Story/Scene')}
     default = set(ui_references(value, include_sequences=True))
     assert ('dependency', '/Game/Aki/Character/Role/Test/Seq/Actor') in default
     assert ('dependency', '/Game/UI/Prefabs/Prefab') in default
@@ -178,7 +176,7 @@ async def test_control_only_uses_separate_reference_cache(tmp_path, monkeypatch)
     (output / 'files').mkdir(parents=True)
     digest = event_resources._sha256(tool)[:16]
     for prefix, refs in [('ui-json-sequences-v3-', [['image', '/Game/UI/Image/Unrelated']]),
-                         ('ui-json-control-only-v1-', [])]:
+                         ('ui-json-control-only-v2-', [])]:
         cache = output / (prefix + digest)
         cache.mkdir()
         (cache / 'references.json').write_text(json.dumps(refs), encoding='utf-8')
@@ -188,6 +186,64 @@ async def test_control_only_uses_separate_reference_cache(tmp_path, monkeypatch)
     assert images == [] and missing == []
     images, missing = await event_resources.prefab_images(tmp_path, [source], include_sequences=True)
     assert [image['path'] for image in images] == ['/Game/UI/Image/Unrelated'] and missing == []
+
+
+@pytest.mark.asyncio
+async def test_control_discovery_follows_only_reached_receiver_methods(tmp_path, monkeypatch):
+    from wuwa_story_worker import event_resources
+
+    scene, wrapper = '/Game/Story/Scene', '/Game/Aki/Character/Role/Test/Seq/Wrapper'
+    entry = {'ObjectName': "Function'Director_C:Entry'", 'ObjectPath': scene + '.0'}
+    receiver = {'ObjectName': "BlueprintGeneratedClass'Wrapper_C'", 'ObjectPath': wrapper}
+    unused = {'ObjectName': "BlueprintGeneratedClass'Unused_C'", 'ObjectPath': '/Game/Other/Unused'}
+
+    def context(owner, target):
+        return {'Token': 'EX_Context', 'StatementIndex': 0,
+                'ObjectExpression': {'Token': 'EX_LocalVariable', 'Variable': {
+                    'Owner': owner, 'Property': {'Name': 'actor'}}},
+                'ContextExpression': {'Token': 'EX_LocalVirtualFunction', 'Function': target, 'Parameters': []}}
+
+    def fn(name, outer, actor, code):
+        return {'Type': 'Function', 'Name': name, 'Outer': outer,
+                'ChildProperties': [{'Name': 'actor', 'PropertyFlags': 'Parm', 'PropertyClass': actor}],
+                'ScriptBytecode': [code, {'Token': 'EX_Return', 'StatementIndex': 10,
+                                          'Expression': {'Token': 'EX_Nothing'}}]}
+
+    director = {'ObjectName': "BlueprintGeneratedClass'Director_C'", 'ObjectPath': scene + '.1'}
+    scene_exports = [fn('Entry', director, receiver, context(entry, 'Run')),
+                     {'Type': 'BlueprintGeneratedClass', 'Name': 'Director_C'},
+                     {'Type': 'MovieSceneEventTriggerSection', 'Properties': {'EventChannel': {
+                         'KeyTimes': [{'Value': 0}], 'KeyValues': [{'Ptrs': {'Function': entry}}]}}}]
+    other = {'ObjectName': "Function'Wrapper_C:Unrelated'", 'ObjectPath': wrapper + '.1'}
+    wrapper_exports = [fn('Run', receiver, receiver, {'Token': 'EX_Return', 'StatementIndex': 0,
+                                                       'Expression': {'Token': 'EX_Nothing'}}),
+                       fn('Unrelated', receiver, unused, context(other, 'NeverCalled')),
+                       {'Type': 'BlueprintGeneratedClass', 'Name': 'Wrapper_C'}]
+    tool = tmp_path / 'tool'
+    tool.write_bytes(b'tool')
+    package_index(tmp_path, [scene, wrapper])
+    receipts = {}
+    for source, exports in [(scene, scene_exports), (wrapper, wrapper_exports)]:
+        group = tmp_path / source.rsplit('/', 1)[-1]
+        (group / 'files').mkdir(parents=True)
+        decoded = group / ('ui-json-control-only-v2-' + event_resources._sha256(tool)[:16])
+        decoded.mkdir()
+        (decoded / 'references.json').write_text('[]', encoding='utf-8')
+        (decoded / 'asset.json').write_text(json.dumps(exports), encoding='utf-8')
+        receipts[source.rsplit('/', 1)[-1]] = group / 'manifest.json'
+
+    async def export(root, executable, path):
+        return receipts[path.rsplit('/', 1)[-1]]
+
+    exporter = AsyncMock(side_effect=export)
+    monkeypatch.setattr(event_resources, 'export_assets', exporter)
+    monkeypatch.setattr(event_resources, 'tool_path', lambda _: tool)
+    assets = {}
+    images, missing = await event_resources.prefab_images(tmp_path, [scene], assets=assets,
+                                                           control_sources_only=True)
+    assert images == [] and missing == []
+    assert set(assets) == {scene, wrapper}
+    assert exporter.await_count == 2
 
 
 @pytest.mark.asyncio

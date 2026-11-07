@@ -108,10 +108,12 @@ def test_retained_entry_checksum_mismatch_refuses_recompile(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('revision', [None, 2, 3])
 @pytest.mark.parametrize('extractor_changed', [False, True])
-async def test_retained_lookup_downloads_only_stale_exact_source_revision(tmp_path, revision, extractor_changed):
+@pytest.mark.parametrize('target_revision', [2, 4])
+async def test_retained_lookup_downloads_only_stale_exact_source_revision(tmp_path, revision, extractor_changed, target_revision):
     from wuwa_story_worker.sequence_metadata import retained_bundle
 
     path, target, _, _ = retained(tmp_path)
+    target['sequence_metadata_revision'] = target_revision
     proof = {'schema_version': 1, 'package_path': target['path'], 'asset_version': '3.7.1',
              'download_id': 'a' * 64, 'spine_recipe': 4, 'presentation_sha256': target['presentation_sha256'],
              'sequence_media_schema': 1, 'sequence_metadata_revision': revision, 'control_sources_complete': False,
@@ -130,7 +132,7 @@ async def test_retained_lookup_downloads_only_stale_exact_source_revision(tmp_pa
                                    {'asset_version': '3.7.1', 'download_id': 'a' * 64,
                                     'tools': {'WUWA_FMODEL_PATH': ('b' if extractor_changed else 'a') * 64,
                                               'WUWA_VGMSTREAM_PATH': 'c' * 64, 'WUWA_WWISER_PATH': 'd' * 64}})
-    expected = revision is None and not extractor_changed
+    expected = target_revision == 2 and revision is None and not extractor_changed
     assert bool(result) is expected
     assert calls == (['retained-object'] if expected else [])
 

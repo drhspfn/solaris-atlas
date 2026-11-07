@@ -237,11 +237,26 @@ async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentati
         # SpineBackground.Id anywhere. Keep its exact event evidence instead.
         additional, missing_prefabs = await prefab_images(root, sorted({v['prefab'] for v in variants + preloads}), assets=assets)
         textures.extend(additional)
+        prefab_sequences = set()
+        for prefab in {v['prefab'] for v in variants + preloads}:
+            asset = assets.get(prefab)
+            if not asset or asset.get('decode_failed'):
+                continue
+            for path in asset['decoded'].rglob('*.json'):
+                exports = json.loads(path.read_text(encoding='utf-8-sig'))
+                for export in exports if isinstance(exports, list) else []:
+                    if isinstance(export, dict) and export.get('Type') == 'PrefabAsset':
+                        prefab_sequences.update(ref for kind, ref in ui_references(
+                            export, control_sources_only=True) if kind == 'dependency')
+        if pending := sorted(prefab_sequences - assets.keys()):
+            _, missing_sequences = await prefab_images(root, pending, assets=assets, include_sequences=True,
+                                                        control_sources_only=True)
+            missing_controls.extend(missing_sequences)
         resource['variants'].extend(
             v for v in variants if v not in resource['variants'])
         resource['control_score'] = score
         resource['preloads'] = preloads
-        resource['control_sources'] = {'requested': sequence_paths, 'missing': missing_controls,
+        resource['control_sources'] = {'requested': sorted(set(sequence_paths) | prefab_sequences), 'missing': missing_controls,
                                        'timing_status': 'authored_frames' if score['events'] else 'unresolved'}
         resource['control_sources']['missing'].extend(
             unresolved + missing_prefabs + missing_preloads)

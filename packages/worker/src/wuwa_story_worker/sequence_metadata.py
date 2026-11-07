@@ -70,9 +70,11 @@ def recompile_bundle(bundle, output, target):
         if diagnostic not in missing:
             missing.append(diagnostic)
     for event in score['events']:
-        diagnostics = [d for d in event.get('diagnostics', []) if d.get('code') != 'unbound_event_function']
+        diagnostics = [d for d in event.get('diagnostics', []) if d.get(
+            'code') != 'unbound_event_function']
         if diagnostics:
-            diagnostic = {'status': 'unsupported_control', 'source': event['source'], 'diagnostics': diagnostics}
+            diagnostic = {'status': 'unsupported_control',
+                          'source': event['source'], 'diagnostics': diagnostics}
             if diagnostic not in missing:
                 missing.append(diagnostic)
     manifest['control_sources'] = {**control_sources, 'missing': missing}
@@ -125,16 +127,22 @@ async def retained_bundle(session, storage, root, target, source):
     ).order_by(FileReference.id.desc()))
     for metadata, key in rows:
         proof = (metadata or {}).get('game_source') or {}
+        # Revision 4 changes which reachable control packages are extracted.
+        # Re-scoring an older ZIP cannot supply newly discovered source bytes.
+        if target['sequence_metadata_revision'] >= 4 and (proof.get('sequence_metadata_revision') or 0) < 4:
+            continue
         # This checks source identity only. The original manifest's incomplete
         # controls remain untouched and the normal publisher still reports partial.
         # Older JSON archives predate soundtrack decoding. Check their extraction
         # tools here; the new audio renderer records its own current tool hashes.
+
         def extraction_tools(values):
             return {key: value for key, value in values.items()
                     if key not in {'WUWA_VGMSTREAM_PATH', 'WUWA_WWISER_PATH'}}
         identity = {**metadata, 'game_source': {**proof, 'control_sources_complete': True,
                     'tools': extraction_tools(proof.get('tools', {}))}}
-        extraction_source = {**source, 'tools': extraction_tools(source.get('tools', {}))}
+        extraction_source = {
+            **source, 'tools': extraction_tools(source.get('tools', {}))}
         if not matches_source(identity, extraction_source, {**target, 'sequence_metadata_revision': None}):
             continue
         if (proof.get('sequence_metadata_revision') or 0) >= target['sequence_metadata_revision']:
@@ -154,6 +162,7 @@ async def retained_bundle(session, storage, root, target, source):
             with zipfile.ZipFile(path) as archive:
                 manifest = json.loads(archive.read('manifest.json'))
             if not (manifest.get('control_sources') or {}).get('missing'):
-                raise ValueError('Incomplete provenance has no retained missing-control evidence')
+                raise ValueError(
+                    'Incomplete provenance has no retained missing-control evidence')
         return path
     return None
