@@ -37,6 +37,17 @@ const tools = [
     "get_character_timeline",
     "Explore a character’s recorded events and appearances.",
   ],
+  ["get_quest_profile", "Get quest details and story context."],
+  ["get_quest_media", "Find a quest’s cutscene references and playback context."],
+  ["get_character_profile", "Get a character’s profile, materials and story appearances."],
+  ["get_character_archive", "Explore character artwork, progression and voice lines."],
+  ["get_character_skills", "Get talents and their level-dependent values."],
+  ["get_character_model", "Find the character’s published 3D model."],
+  ["get_character_connections", "Search a character’s quest and character connections."],
+  ["get_item_profile", "Get item details and acquisition information."],
+  ["get_item_sellers", "Find NPC shops and item offers."],
+  ["search_cutscenes", "Search the cutscene archive."],
+  ["get_cutscene", "Get a cutscene’s public page, media and available descriptions."],
 ];
 
 export function McpDocsClient() {
