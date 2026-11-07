@@ -674,9 +674,18 @@ async def cutscene(payload, parent):
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         raise RuntimeError("ffmpeg is missing from the worker image")
-    result = await import_cutscene_recipe(recipe_path, assets, assets, assets, work,
-                                         tool_path("WUWA_VGMSTREAM_PATH"), Path(ffmpeg), missing_assets=missing_assets,
-                                         source_context=context)
+    try:
+        result = await import_cutscene_recipe(recipe_path, assets, assets, assets, work,
+                                             tool_path("WUWA_VGMSTREAM_PATH"), Path(ffmpeg), missing_assets=missing_assets,
+                                             source_context=context)
+    except ValueError:
+        if missing_assets:
+            entries.extend({"expected": name, "status": "not_resolved", "matches": []} for name in missing_assets)
+            report.update(requested=len(entries), found=sum(e["status"] == "found" for e in entries),
+                          missing=sum(e["status"] != "found" for e in entries))
+            await update_admin_run(payload["run_id"], "release_media", "running",
+                                   raw_output={"missing_assets": missing_assets, "media_report": report})
+        raise
     entries.extend({"expected": name, "status": "not_resolved", "matches": []} for name in missing_assets)
     report.update(requested=len(entries), found=sum(e["status"] == "found" for e in entries),
                   missing=sum(e["status"] != "found" for e in entries))
