@@ -1,5 +1,6 @@
 'use client';
 
+import { Skeleton, SkeletonGroup, TextSkeleton } from '@/components/ui/Skeleton';
 import '@/styles/story-agent.css';
 
 import { Film, RefreshCw, X } from 'lucide-react';
@@ -86,11 +87,38 @@ function CutscenePreview({ asset, display }: { asset: Asset; display: PlayerDisp
             </button>
           </p>
         ) : flow ? (
-          <FlowPlayer display={display} flow={flow} title={`Cutscene · ${asset.reference.split('/').at(-1)}`} />
+          <FlowPlayer
+            display={display}
+            flow={flow}
+            title={`Cutscene · ${asset.reference.split('/').at(-1)}`}
+          />
         ) : (
-          <p role="status">Loading video…</p>
+          <CutscenePreviewSkeleton />
         ))}
     </details>
+  );
+}
+
+export function CutsceneListSkeleton({ label }: { label: string }) {
+  return (
+    <SkeletonGroup label={label} className="cutscene-job-list">
+      {[0, 1, 2].map((row) => (
+        <article className="cutscene-job" key={row}>
+          <div>
+            <TextSkeleton lines={3} />
+          </div>
+          <Skeleton style={{ width: '8rem', height: '2rem' }} />
+        </article>
+      ))}
+    </SkeletonGroup>
+  );
+}
+
+export function CutscenePreviewSkeleton() {
+  return (
+    <SkeletonGroup label="Loading video">
+      <Skeleton style={{ width: '100%', aspectRatio: '16 / 9' }} />
+    </SkeletonGroup>
   );
 }
 
@@ -249,7 +277,6 @@ export function CutsceneAnalysisClient() {
       )}
       {actionError && <p role="alert">{actionError}</p>}
       {notice && <p role="status">{notice}</p>}
-      {loading && !jobs && <p role="status">Loading videos and analysis tasks…</p>}
       <h3>Imported videos</h3>
       <form onSubmit={search} className="cutscene-search" noValidate>
         <div className="cutscene-search-field">
@@ -307,6 +334,7 @@ export function CutsceneAnalysisClient() {
           </button>
         )}
       </form>
+      {loading && !assets && !error && <CutsceneListSkeleton label="Loading videos" />}
       <div aria-busy={loading} className="cutscene-job-list">
         {assets?.assets.map((asset) => (
           <article className="cutscene-job" key={`${asset.id}-${asset.game_version}`}>
@@ -373,6 +401,7 @@ export function CutsceneAnalysisClient() {
           All analysis tasks
         </button>
       )}
+      {loading && !jobs && !error && <CutsceneListSkeleton label="Loading analysis tasks" />}
       <div aria-busy={loading} className="cutscene-job-list">
         {jobs?.jobs.map((job) => (
           <article
@@ -388,7 +417,9 @@ export function CutsceneAnalysisClient() {
               <span className="agent-status">{statusLabel(job.status)}</span>
               <small>
                 Video version {job.game_version} · {job.step} requests ·{' '}
-                {job.title_only ? 'Title from existing observations' : `${job.frames_done} frames analyzed${job.frames_remaining > 0 ? ` · ${job.frames_remaining} remaining` : ''}`}
+                {job.title_only
+                  ? 'Title from existing observations'
+                  : `${job.frames_done} frames analyzed${job.frames_remaining > 0 ? ` · ${job.frames_remaining} remaining` : ''}`}
               </small>
               <small>
                 {(job.tokens_input || 0).toLocaleString('en-US')} input ·{' '}
@@ -406,7 +437,9 @@ export function CutsceneAnalysisClient() {
               {job.status === 'completed' && (
                 <small>
                   {job.title_only
-                    ? job.title_generated ? 'Title is ready.' : 'No suitable title could be generated from these observations.'
+                    ? job.title_generated
+                      ? 'Title is ready.'
+                      : 'No suitable title could be generated from these observations.'
                     : 'Visual evidence is ready. Analyze the quest to generate its reader description.'}
                 </small>
               )}

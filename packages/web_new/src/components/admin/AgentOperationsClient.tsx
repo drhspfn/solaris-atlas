@@ -1,5 +1,6 @@
 'use client';
 
+import { Skeleton, SkeletonGroup, TextSkeleton } from '@/components/ui/Skeleton';
 import { ArrowLeft, ArrowRight, Check, RefreshCw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -19,6 +20,41 @@ type Alert = {
 };
 type Alerts = { alerts: Alert[]; next_before: number | null };
 const money = (value: string) => `$${Number(value).toFixed(4)}`;
+
+export function AgentOperationsSkeleton({ kind }: { kind: 'alerts' | 'usage' }) {
+  return (
+    <SkeletonGroup label={`Loading ${kind}`}>
+      {kind === 'alerts' ? (
+        <div className="admin-alerts">
+          {[0, 1, 2].map((row) => (
+            <article className="content-panel admin-alert" key={row}>
+              <TextSkeleton lines={3} />
+            </article>
+          ))}
+        </div>
+      ) : (
+        <section className="content-panel agent-ledger">
+          <TextSkeleton lines={2} />
+          <div className="agent-table-scroll">
+            <table>
+              <tbody>
+                {[0, 1, 2].map((row) => (
+                  <tr key={row}>
+                    {[0, 1, 2, 3, 4].map((column) => (
+                      <td key={column}>
+                        <Skeleton style={{ width: '80%', height: '1em' }} />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+    </SkeletonGroup>
+  );
+}
 
 export function AgentOperationsClient({ kind }: { kind: 'alerts' | 'usage' }) {
   const { refresh: refreshAuth } = useAuth();
@@ -104,8 +140,9 @@ export function AgentOperationsClient({ kind }: { kind: 'alerts' | 'usage' }) {
         </p>
       )}
       <p className="agent-notice" role="status">
-        {notice || (updating ? 'Loading records…' : '')}
+        {notice}
       </p>
+      {!data && updating && !error && <AgentOperationsSkeleton kind={kind} />}
       {data && 'alerts' in data && (
         <>
           {!data.alerts.length && <p className="empty-inline">No open alerts on this page.</p>}

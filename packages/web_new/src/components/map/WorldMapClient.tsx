@@ -1,5 +1,6 @@
 'use client';
 
+import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton';
 import 'leaflet/dist/leaflet.css';
 import '@/styles/world-map.css';
 
@@ -21,6 +22,14 @@ import { useMapPreferences } from '@/hooks/useMapPreferences';
 import { useMapProgress } from '@/hooks/useMapProgress';
 import { compactMapLink, type MapPreferences } from '@/state/mapPreferences';
 import { canMarkFound, mapProgressKey } from '@/state/mapProgress';
+export function MapStatisticsSkeleton() {
+  return <SkeletonGroup label="Loading collection statistics"><ul className="atlas-statistics-list">
+    {[0, 1, 2].map((row) => <li key={row}><Skeleton style={{ width: '2rem', height: '2rem' }} />
+      <div className="atlas-statistics-type"><Skeleton style={{ width: '60%', height: '1em' }} />
+        <Skeleton style={{ width: '90%', height: '0.5rem' }} /></div></li>)}
+  </ul></SkeletonGroup>;
+}
+
 type Names = Record<string, string>;
 type Place = {
   id: number;
@@ -1076,7 +1085,7 @@ export function WorldMapPage() {
           <div className="atlas-source-filter" role="status">
             <span>
               {loading
-                ? 'Loading acquisition sources…'
+                ? <><span className="ui-skeleton-label">Loading acquisition sources</span><Skeleton style={{ width: '9rem', height: '1em' }} /></>
                 : `${sourceMarkers.length} acquisition locations`}
             </span>
             <button
@@ -1171,7 +1180,7 @@ export function WorldMapPage() {
             <span>Collection progress</span>
             <strong aria-live="polite">
               {loading
-                ? 'Loading…'
+                ? <><span className="ui-skeleton-label">Loading collection progress</span><Skeleton style={{ width: '6rem', height: '1em' }} /></>
                 : `${foundCount.toLocaleString()} / ${collection.length.toLocaleString()} found`}
             </strong>
           </div>
@@ -1207,7 +1216,7 @@ export function WorldMapPage() {
               affect these totals.
             </p>
             {loading ? (
-              <p role="status">Loading collection statistics…</p>
+              <MapStatisticsSkeleton />
             ) : error ? (
               <p role="status">Statistics are unavailable until map data loads.</p>
             ) : collectionTypes.length === 0 ? (
@@ -1470,7 +1479,7 @@ export function WorldMapPage() {
           <div role="status">
             {' '}
             {loading
-              ? 'Loading map objects…'
+              ? <><span className="ui-skeleton-label">Loading map objects</span><Skeleton style={{ width: '5rem', height: '1em' }} /></>
               : `${filtered.length.toLocaleString()} ${filtered.length === 1 ? 'object' : 'objects'}`}{' '}
             <span>Scroll to zoom · drag to explore</span>
           </div>

@@ -1,5 +1,6 @@
 'use client';
 
+import { Skeleton, SkeletonGroup, TextSkeleton } from '@/components/ui/Skeleton';
 import '@/styles/story-agent.css';
 
 import { ArrowLeft, ArrowRight, BookOpen, Play, RefreshCw } from 'lucide-react';
@@ -43,6 +44,32 @@ function Status({ status }: { status: string }) {
   );
 }
 
+export function AgentRunsSkeleton() {
+  return (
+    <SkeletonGroup label="Loading analysis runs">
+      {[0, 1, 2].map((row) => (
+        <div className="agent-run" key={row}>
+          <TextSkeleton lines={3} />
+        </div>
+      ))}
+    </SkeletonGroup>
+  );
+}
+
+export function AgentDetailSkeleton() {
+  return (
+    <SkeletonGroup label="Loading run details" className="agent-detail-body">
+      <div className="agent-detail-meta">
+        <Skeleton style={{ width: '65%', height: '1em' }} />
+      </div>
+      <div className="agent-progress">
+        <TextSkeleton lines={2} />
+      </div>
+      <TextSkeleton lines={3} />
+    </SkeletonGroup>
+  );
+}
+
 export function StoryAgentClient() {
   return <AgentWorkspace />;
 }
@@ -78,7 +105,9 @@ function AgentWorkspace() {
         `/admin/story-agent/jobs?limit=${APP_SETTINGS.storyAgent.pageSize}${before ? `&before=${encodeURIComponent(before)}` : ''}`,
         { signal: controller.signal },
       ),
-      api<AgentUsage>('/admin/story-agent/usage', { signal: controller.signal }),
+      api<AgentUsage>('/admin/story-agent/usage', {
+        signal: controller.signal,
+      }),
     ])
       .then(([jobs, costs]) => {
         if (!controller.signal.aborted) {
@@ -255,13 +284,9 @@ function AgentWorkspace() {
         <section className="content-panel agent-list" aria-labelledby="runs-heading">
           <div className="agent-panel-header">
             <h2 id="runs-heading">Analysis runs</h2>
-            <small>{data ? `${data.jobs.length} shown` : 'Loading…'}</small>
+            {data && <small>{`${data.jobs.length} shown`}</small>}
           </div>
-          {!data && !error && (
-            <p className="empty-inline" role="status">
-              Loading analysis runs…
-            </p>
-          )}
+          {!data && !error && <AgentRunsSkeleton />}
           {data?.jobs.length === 0 && (
             <p className="empty-inline">
               No runs on this page. Queue a quest to start researching.
@@ -389,11 +414,7 @@ function RunDetail({
           </button>
         </div>
       )}
-      {!job && !error && (
-        <p className="empty-inline" role="status">
-          Loading run details…
-        </p>
-      )}
+      {!job && !error && <AgentDetailSkeleton />}
       {job && (
         <>
           <div className="agent-detail-body">
