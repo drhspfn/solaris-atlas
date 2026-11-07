@@ -25,7 +25,12 @@ test('NPC profile labels interaction participants and bounds dialogue with pagin
     speaker: { canonical_key: 'speaker:9', label: 'Visitor' }, speaker_relation: 'interaction_participant',
     text: { content: 'Hello' }, quests: [] }] });
   const small = tree.filter((node) => node.type === 'small').flatMap((node) => node.props.children);
-  assert(small.includes('Interaction participant'));
+  assert(small.includes('Conversation participant'));
+  const card = tree.find(node => node.props.className === 'npc-dialogue-card');
+  const detail = nodes(card).find(node => node.type === 'details');
+  assert.equal(detail.props.open, undefined);
+  assert(nodes(detail).some(node => node.props.children?.includes?.('flow')));
+  assert(!nodes(card).filter(node => node.type === 'small').some(node => String(node.props.children).includes('flow')));
   const pagination = tree.find((node) => node.type === 'Pagination');
   assert.equal(pagination.props.pageSize, 20);
   assert.equal(pagination.props.total, 21);
@@ -66,4 +71,27 @@ test('NPC profile delegates interactions to its canonical key', () => {
   assert.equal(interactions.props.characterKey, 'character:npc:1');
   assert.equal(interactions.props.gameVersion, '3.7');
   assert.equal(interactions.props.npc, npc);
+});
+
+test('quest appearances render localized, accessible links in a compact grid', () => {
+  const exports = {};
+  const components = new Proxy({}, { get: (_, name) => name });
+  let index = 0;
+  const slots = ['', '', 1, { results: [], total: 0 }, '', 0];
+  vm.runInNewContext(code, { exports, AbortController, URLSearchParams,
+    require: id => id === 'react' ? { useState: () => [slots[index++], () => {}], useEffect: () => {}, useRef: () => ({ current: null }) }
+      : id === 'react/jsx-runtime' ? { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) }
+      : id === '@/hooks/useLocale' ? { useLocale: () => 'en' }
+      : id === '@/data/localized' ? { localizedText: (value, fallback = '') => value?.content || value || fallback }
+      : id === '@/lib/routeKey' ? { questPath: quest => `/quests/${quest.canonical_key}` }
+      : components });
+  const interactions = nodes(exports.NpcInteractions({ characterKey: 'character:npc:1', npc: { shop_count: 0 } }));
+  const quests = interactions.find(node => typeof node.type === 'function' && node.type.name === 'NpcQuests');
+  index = 0;
+  slots.splice(0, slots.length, 1, { results: [{ canonical_key: 'quest:1', game_quest_id: 1, name: { content: 'A localized quest' } }], total: 1 }, '', 0);
+  const rendered = nodes(quests.type(quests.props));
+  const link = rendered.find(node => node.props.className === 'npc-quest-card');
+  assert.equal(link.props.to, '/quests/quest:1');
+  assert.equal(link.props.children, 'A localized quest');
+  assert(rendered.some(node => node.props.className === 'npc-quest-grid'));
 });
