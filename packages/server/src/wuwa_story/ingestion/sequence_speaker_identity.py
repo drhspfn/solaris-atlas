@@ -50,7 +50,7 @@ def _speaker_keys(value):
     return result
 
 
-async def repair_sequence_speakers(session, release_id, source_record_id, assets, *, apply=False):
+async def repair_sequence_speakers(session, release_id, source_record_id, assets, *, apply=False, asset_source=None):
     release = await session.get(GameRelease, release_id)
     if release is None:
         raise ValueError('Unknown imported release')
@@ -83,6 +83,9 @@ async def repair_sequence_speakers(session, release_id, source_record_id, assets
                LocalizationValue.status == 'resolved_nonempty', LocalizationKey.key.in_(keys))
     )} if keys else {}
     links = list(sequence_speaker_links(roles, preloads, [flow], assets, english))
+    for link in links:
+        link['crosswalk']['asset_source'] = {
+            key: (asset_source or {}).get(key) for key in ('asset_version', 'download_id')}
     links = list({(r['from'], r['to'], r['source'], r['raw_path']): r for r in links}.values())
     node_keys = {r[side] for r in links for side in ('from', 'to')}
     known = {key: node_id for key, node_id in await session.execute(select(Node.canonical_key, Node.id).where(
@@ -163,7 +166,9 @@ async def main(args):
     assets = load_assets(args.assets_dir)
     async with SessionFactory() as session:
         report = await repair_sequence_speakers(session, args.release_id, args.source_record_id,
-                                                assets, apply=args.apply)
+                                                assets, apply=args.apply, asset_source={
+                                                    'asset_version': args.asset_version,
+                                                    'download_id': args.download_id})
     # Keep CLI output bounded even for exceptionally large crosswalks.
     report['affected_characters_count'] = len(report['affected_characters'])
     report['affected_characters'] = report['affected_characters'][:1000]
@@ -176,4 +181,6 @@ if __name__ == '__main__':
     parser.add_argument('--source-record-id', type=int, required=True)
     parser.add_argument('--assets-dir', required=True)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--asset-version')
+    parser.add_argument('--download-id')
     asyncio.run(main(parser.parse_args()))
