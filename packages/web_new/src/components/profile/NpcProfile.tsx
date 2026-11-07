@@ -12,8 +12,11 @@ import type { CharacterModelData } from "@/components/models/types";
 import { ErrorPanel } from "@/components/ui/Feedback";
 import { Pagination } from "@/components/ui/Pagination";
 import { PanelTitle } from "@/components/ui/PanelTitle";
-import { localizedText } from "@/data/localized";
-import { gameTextRuns } from "@/data/gameText";
+import { gameTextPlainText } from "@/data/gameText";
+import {
+  PlayerText,
+  type PlayerDisplay,
+} from "@/components/dialogue/PlayerText";
 import { conversationSpeakerName } from "@/data/npcContext";
 import { useLocale } from "@/hooks/useLocale";
 import { Link } from "@/lib/router";
@@ -21,10 +24,22 @@ import { questPath } from "@/lib/routeKey";
 import "@/styles/npc-profile.css";
 
 const PAGE_SIZE = 20;
+const DEFAULT_DISPLAY: PlayerDisplay = {
+  name: "Rover",
+  colorMode: "accent",
+  customColor: "",
+};
+
+function speakerName(label?: string) {
+  const normalized = conversationSpeakerName(label);
+  return normalized === "Rover" && /\{PlayerName\}/i.test(label || "")
+    ? "{PlayerName}"
+    : normalized;
+}
 
 type Npc = {
   blueprint_id: number;
-  name_scope: 'instance' | 'blueprint';
+  name_scope: "instance" | "blueprint";
   name_variants: string[];
   speakers: string[];
   flow_reference_count: number;
@@ -35,11 +50,18 @@ type Line = {
   flow_state: string;
   text: unknown;
   speaker: { label?: string; canonical_key: string } | null;
-  speaker_relation: 'confirmed_npc_speaker' | 'npc_actor_context' | 'interaction_participant';
+  speaker_relation:
+    | "confirmed_npc_speaker"
+    | "npc_actor_context"
+    | "interaction_participant";
   quests: { canonical_key: string; game_quest_id: number; name: unknown }[];
 };
 
-function questHref(quest: Line["quests"][number], locale: string, gameVersion?: string) {
+function questHref(
+  quest: Line["quests"][number],
+  locale: string,
+  gameVersion?: string,
+) {
   const [pathAndQuery, hash] = questPath(quest).split("#", 2);
   const [path, query] = pathAndQuery.split("?", 2);
   const params = new URLSearchParams(query);
@@ -51,9 +73,11 @@ function questHref(quest: Line["quests"][number], locale: string, gameVersion?: 
 function NpcQuests({
   characterKey,
   gameVersion,
+  display,
 }: {
   characterKey: string;
   gameVersion?: string;
+  display: PlayerDisplay;
 }) {
   const locale = useLocale();
   const [page, setPage] = useState(1);
@@ -98,19 +122,21 @@ function NpcQuests({
         <p role="status">Loading quests…</p>
       ) : (
         <>
-          {!result.results.length && (
-            <p>No linked quest appearances found.</p>
-          )}
+          {!result.results.length && <p>No linked quest appearances found.</p>}
           <div className="npc-quest-grid">
-          {result.results.map((quest) => (
-            <Link
-              className="npc-quest-card"
-              key={quest.canonical_key}
-              to={questHref(quest, locale, gameVersion)}
-            >
-              {localizedText(quest.name, `Quest ${quest.game_quest_id}`)}
-            </Link>
-          ))}
+            {result.results.map((quest) => (
+              <Link
+                className="npc-quest-card"
+                key={quest.canonical_key}
+                to={questHref(quest, locale, gameVersion)}
+              >
+                <PlayerText
+                  value={quest.name}
+                  fallback={`Quest ${quest.game_quest_id}`}
+                  display={display}
+                />
+              </Link>
+            ))}
           </div>
           {result.total > PAGE_SIZE && (
             <Pagination
@@ -128,8 +154,16 @@ function NpcQuests({
   );
 }
 
-export function NpcInteractions({ characterKey, npc, gameVersion }: {
-  characterKey: string; npc: Npc; gameVersion?: string;
+export function NpcInteractions({
+  characterKey,
+  npc,
+  gameVersion,
+  display = DEFAULT_DISPLAY,
+}: {
+  characterKey: string;
+  npc: Npc;
+  gameVersion?: string;
+  display?: PlayerDisplay;
 }) {
   const locale = useLocale();
   const searchInput = useRef<HTMLInputElement>(null);
@@ -165,11 +199,13 @@ export function NpcInteractions({ characterKey, npc, gameVersion }: {
       });
     return () => controller.abort();
   }, [characterKey, locale, query, page, retry, gameVersion]);
-  return <>
+  return (
+    <>
       <section className="content-panel full-panel npc-section">
         <PanelTitle number="01" title="Dialogue" />
         <form
-          className="dialogue-search" noValidate
+          className="dialogue-search"
+          noValidate
           onSubmit={(event) => {
             event.preventDefault();
             setPage(1);
@@ -183,12 +219,21 @@ export function NpcInteractions({ characterKey, npc, gameVersion }: {
             onChange={(event) => setInput(event.target.value)}
             placeholder="Search dialogue"
           />
-          {(input || query) && <button type="button" className="search-clear" aria-label="Clear dialogue search" onClick={() => {
-            setInput('');
-            setQuery('');
-            setPage(1);
-            searchInput.current?.focus();
-          }}><X size={16} aria-hidden="true" /></button>}
+          {(input || query) && (
+            <button
+              type="button"
+              className="search-clear"
+              aria-label="Clear dialogue search"
+              onClick={() => {
+                setInput("");
+                setQuery("");
+                setPage(1);
+                searchInput.current?.focus();
+              }}
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          )}
           <button type="submit">Find lines</button>
         </form>
         {error ? (
@@ -202,33 +247,53 @@ export function NpcInteractions({ characterKey, npc, gameVersion }: {
           <>
             {!result.results.length && <p>No linked dialogue found.</p>}
             <div className="npc-dialogue-list">
-            {result.results.map((line) => (
-              <article
-                className="npc-dialogue-card"
-                key={`${line.canonical_key}:${line.flow_state}:${line.speaker?.canonical_key || 'none'}`}
-              >
-                <p className="npc-dialogue-text">{gameTextRuns(localizedText(line.text, "Text unavailable")).map((run, i) => <span key={i} style={run.color ? { color: run.color } : undefined}>{run.text}</span>)}</p>
-                <div className="npc-dialogue-meta">
-                  <span>{conversationSpeakerName(line.speaker?.label)}</span>
-                  <small>{line.speaker_relation === 'confirmed_npc_speaker' ? 'Confirmed speaker' : line.speaker_relation === 'npc_actor_context' ? 'Associated line' : 'Conversation participant'}</small>
-                </div>
-                {line.quests.map((quest) => (
-                  <p className="npc-dialogue-quest" key={quest.canonical_key}>
-                    <Link to={questHref(quest, locale, gameVersion)}>
-                      {localizedText(
-                        quest.name,
-                        `Quest ${quest.game_quest_id}`,
-                      )}
-                    </Link>
+              {result.results.map((line) => (
+                <article
+                  className="npc-dialogue-card"
+                  key={`${line.canonical_key}:${line.flow_state}:${line.speaker?.canonical_key || "none"}`}
+                >
+                  <p className="npc-dialogue-text">
+                    <PlayerText
+                      value={line.text}
+                      fallback="Text unavailable"
+                      display={display}
+                    />
                   </p>
-                ))}
-                <details className="npc-dialogue-source">
-                  <summary>Source details</summary>
-                  <span>Story state: {line.flow_state}</span>
-                  {line.speaker?.canonical_key && <span>Speaker: {line.speaker.canonical_key}</span>}
-                </details>
-              </article>
-            ))}
+                  <div className="npc-dialogue-meta">
+                    <span>
+                      <PlayerText
+                        value={speakerName(line.speaker?.label)}
+                        display={display}
+                      />
+                    </span>
+                    <small>
+                      {line.speaker_relation === "confirmed_npc_speaker"
+                        ? "Confirmed speaker"
+                        : line.speaker_relation === "npc_actor_context"
+                          ? "Associated line"
+                          : "Conversation participant"}
+                    </small>
+                  </div>
+                  {line.quests.map((quest) => (
+                    <p className="npc-dialogue-quest" key={quest.canonical_key}>
+                      <Link to={questHref(quest, locale, gameVersion)}>
+                        <PlayerText
+                          value={quest.name}
+                          fallback={`Quest ${quest.game_quest_id}`}
+                          display={display}
+                        />
+                      </Link>
+                    </p>
+                  ))}
+                  <details className="npc-dialogue-source">
+                    <summary>Source details</summary>
+                    <span>Story state: {line.flow_state}</span>
+                    {line.speaker?.canonical_key && (
+                      <span>Speaker: {line.speaker.canonical_key}</span>
+                    )}
+                  </details>
+                </article>
+              ))}
             </div>
             {result.total > PAGE_SIZE && (
               <Pagination
@@ -243,29 +308,48 @@ export function NpcInteractions({ characterKey, npc, gameVersion }: {
           </>
         )}
       </section>
-      <NpcInstances key={characterKey} characterKey={characterKey} gameVersion={gameVersion} />
-      <NpcQuests
+      <NpcInstances
+        key={characterKey}
         characterKey={characterKey}
         gameVersion={gameVersion}
       />
-      {npc.shop_count > 0 && <NpcShops characterKey={characterKey} gameVersion={gameVersion} />}
-      <NpcFlowParticipants characterKey={characterKey} gameVersion={gameVersion} />
-  </>;
+      <NpcQuests
+        characterKey={characterKey}
+        gameVersion={gameVersion}
+        display={display}
+      />
+      {npc.shop_count > 0 && (
+        <NpcShops
+          characterKey={characterKey}
+          gameVersion={gameVersion}
+          display={display}
+        />
+      )}
+      <NpcFlowParticipants
+        characterKey={characterKey}
+        gameVersion={gameVersion}
+        display={display}
+      />
+    </>
+  );
 }
 
 export function NpcProfile({
   data,
   initialModel,
   gameVersion,
+  display = DEFAULT_DISPLAY,
 }: {
   data: { character: any; npc: Npc };
   initialModel?: CharacterModelData | null;
   gameVersion?: string;
+  display?: PlayerDisplay;
 }) {
   const { character, npc } = data;
-  const name = localizedText(
+  const name = gameTextPlainText(
     character.name,
-    character.canonical_name || `NPC ${npc.blueprint_id}`,
+    display,
+    gameTextPlainText(character.canonical_name, display, `NPC ${npc.blueprint_id}`),
   );
   const [revision, setRevision] = useState(0);
   return (
@@ -275,7 +359,13 @@ export function NpcProfile({
         <span> / </span>
         <Link to="/catalog/character">Characters</Link>
         <span> / </span>
-        <span>{name}</span>
+        <span>
+          <PlayerText
+            value={character.name}
+            fallback={name}
+            display={display}
+          />
+        </span>
       </div>
       <div className="profile-hero character-profile-hero npc-profile-hero">
         <CharacterProfileVisual
@@ -289,7 +379,11 @@ export function NpcProfile({
           <span className="eyebrow left">NPC PROFILE</span>
           <div className="character-profile-title-row">
             <h1>
-              {name}
+              <PlayerText
+                value={character.name}
+                fallback={name}
+                display={display}
+              />
               <span className="heading-period">.</span>
             </h1>
             <CharacterModelImport
@@ -299,18 +393,44 @@ export function NpcProfile({
             />
           </div>
           <p>
-            {localizedText(
-              character.description,
-              "An NPC recorded in the Solaris Atlas archive.",
-            )}
+            <PlayerText
+              value={character.description}
+              fallback="An NPC recorded in the Solaris Atlas archive."
+              display={display}
+            />
           </p>
-          {npc.name_scope === 'instance' && <p>This name is recorded for one appearance.{npc.name_variants.length > 1 ? ` Other recorded names: ${npc.name_variants.filter((variant) => variant !== name).join(', ')}.` : ''}</p>}
+          {npc.name_scope === "instance" && (
+            <p>
+              This name is recorded for one appearance.
+              {npc.name_variants.length > 1 && (
+                <>
+                  {" "}
+                  Other recorded names:{" "}
+                  {npc.name_variants
+                    .filter((variant) => variant !== name)
+                    .map((variant, index) => (
+                      <span key={`${variant}-${index}`}>
+                        {index > 0 && ", "}
+                        <PlayerText value={variant} display={display} />
+                      </span>
+                    ))}
+                  .
+                </>
+              )}
+            </p>
+          )}
           <div className="profile-tags">
             <span>NPC</span>
           </div>
         </div>
       </div>
-      <NpcInteractions key={character.canonical_key} characterKey={character.canonical_key} npc={npc} gameVersion={gameVersion} />
+      <NpcInteractions
+        key={character.canonical_key}
+        characterKey={character.canonical_key}
+        npc={npc}
+        gameVersion={gameVersion}
+        display={display}
+      />
     </div>
   );
 }

@@ -66,7 +66,7 @@ function harness() {
       return nodes(tree);
     };
   }
-  return { requests, render: component(exports.NpcFlowParticipants, { characterKey: 'character:npc:17288', gameVersion: '3.7' }), component };
+  return { requests, render: component(exports.NpcFlowParticipants, { characterKey: 'character:npc:17288', gameVersion: '3.7', display: { name: 'Astra', colorMode: 'accent', customColor: '', gender: 'female' } }), component };
 }
 
 test('scene pages reach entries beyond 100 and never display technical flow keys', async () => {
@@ -88,11 +88,12 @@ test('scene pages reach entries beyond 100 and never display technical flow keys
   assert.equal(scene.props.scene.title, 'Conversation <color=Highlight>105</color>');
   const renderScene = h.component(scene.type, scene.props);
   const display = renderScene();
-  assert(display.some(node => node.type === 'h3' && node.props.children === 'Conversation 105'));
+  assert(display.some(node => node.type === 'PlayerText' && node.props.value === 'Conversation <color=Highlight>105</color>'));
   assert(!JSON.stringify(display).includes('TECHNICAL_FLOW_'));
-  assert(!JSON.stringify(display).includes('<color='));
-  assert(display.some(node => node.type === 'span' && node.props.children === '105' && node.props.style?.color === '#F7EBA6FF'));
-  assert(display.some(node => node.props.className === 'npc-scene-speakers' && node.props.children === 'Abby · Rover · Unknown speaker'));
+  assert(display.some(node => node.type === 'PlayerText' && node.props.value === 'Preview <color=Highlight>105</color>'));
+  const speakers = display.find(node => node.props.className === 'npc-scene-speakers');
+  assert.deepEqual(nodes(speakers).filter(node => node.type === 'PlayerText').map(node => node.props.value), ['Abby', '{PlayerName}', 'Unknown speaker']);
+  assert(nodes(speakers).filter(node => node.type === 'PlayerText').every(node => node.props.display.name === 'Astra'));
 });
 
 test('inline conversation fetches state-scoped dialogue in pages of 20 with normalized speakers', async () => {
@@ -112,8 +113,8 @@ test('inline conversation fetches state-scoped dialogue in pages of 20 with norm
   assert.equal(first.searchParams.get('offset'), '0');
   assert.equal(first.searchParams.get('game_version'), '3.7');
   assert.equal(first.searchParams.get('locale'), 'en');
-  const names = tree.filter(node => node.type === 'strong').map(node => node.props.children);
-  assert.deepEqual(names.slice(0, 3), ['Abby', 'Rover', 'Unknown speaker']);
+  const names = tree.filter(node => node.type === 'strong').map(node => node.props.children.props.value);
+  assert.deepEqual(names.slice(0, 3), ['Abby', '{PlayerName}', 'Unknown speaker']);
   const pagination = tree.find(node => node.type === 'Pagination');
   assert.equal(pagination.props.pageSize, 20);
   assert.equal(pagination.props.total, 25);
@@ -122,7 +123,6 @@ test('inline conversation fetches state-scoped dialogue in pages of 20 with norm
   assert.equal(second.searchParams.get('state_id'), '1');
   assert.equal(second.searchParams.get('offset'), '20');
   assert.equal(tree.filter(node => node.props.className === 'npc-scene-line').length, 5);
-  assert(tree.some(node => node.type === 'span' && node.props.children === '25' && node.props.style?.color === '#F7EBA6FF'));
-  assert(!JSON.stringify(tree).includes('<color='));
+  assert(tree.some(node => node.type === 'PlayerText' && node.props.value === 'Line <color=Highlight>25</color>' && node.props.display.name === 'Astra'));
   assert(!JSON.stringify(tree).includes('TECHNICAL_FLOW_'));
 });
