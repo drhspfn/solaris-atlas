@@ -345,7 +345,7 @@ async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffm
         stems.append({"role": role, "language": language,
                       "rover": rover,
                       "path": destination.name, "sources": evidence,
-                      "evidence": "Fixed-start reconstructed boss music phase; native routing and gain; looped to movie duration." if role == "music" and getattr(video, "music_context", None) else "Source-authored VideoSound/caption or movie frame-event timing; native event routing retained with source files. Original embedded audio remains an unseparated mix."})
+                      "evidence": "Fixed-start reconstructed persistent music phase; native routing and gain; looped to movie duration." if role == "music" and getattr(video, "music_context", None) else "Fixed-start reconstructed continuation of music from preceding dialogue; original elapsed player/sequence time is not reproduced." if role == "music" and any(stem.get("source", {}).get("reconstruction") for stem in frame_stems or []) else "Source-authored VideoSound/caption or movie frame-event timing; native event routing retained with source files. Original embedded audio remains an unseparated mix."})
     stems = collapse_shared_stems(stems, work)
     return CutsceneAudioRecipe.model_validate({"asset": video.asset, "asset_version": asset_version,
                                               "duration": duration, "stems": stems})

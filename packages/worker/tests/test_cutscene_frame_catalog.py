@@ -203,3 +203,32 @@ def test_native_empty_movie_noop_and_unhashable_labels_do_not_abort_scan(configs
     assert catalog['sources'][0]['noop_launchers'] == 1
     binding, = catalog_movie_frame_bindings(configs, 'M0374')
     assert binding['complete'] and len(binding['events']) == 1
+
+
+def test_dialogue_song_continues_into_movie_and_test_context_is_kept_separate(configs):
+    event = {'Name':'PostAkEvent','Params':{'EventConfig':{'Type':'MusicSubtitle',
+        'MusicSubtitleGroupTag':'song', 'AkEvent':'/Game/Aki/WwiseAudio/Events/song.song'}}}
+    movie = {'Name':'PlayMovie','Params':{'VideoName':'Movie'}}
+    talk = {'Name':'ShowTalk','Params':{'TalkItems':[{'Id':34}],
+        'TalkFrameEvents':[{'Position':{'TalkItemId':34,'Offset':-1},
+                            'FrameEvent':{'EventKey':'A','EventActions':[event]}}]}}
+    insert(configs/'db_flowState.db','flowstate',('production',flow_blob('production',
+        [talk,{'Name':'SetPlotMode','Params':{}},movie])))
+    insert(configs/'db_flowState.db','flowstate',('SZY_TEST_3.7_1',flow_blob('SZY_TEST_3.7_1',[movie])))
+    bindings = catalog_movie_frame_bindings(configs,'Movie')
+    production = next(b for b in bindings if not b['development_only'])
+    assert production['complete'] and not production['unresolved']
+    song, = production['events']
+    assert song['reference'].endswith('/song.song') and song['start_seconds'] == 0
+    assert song['timing_basis'] == 'fixed_start_continuation'
+    assert song['source']['position'] == {'TalkItemId':34,'Offset':-1}
+    assert song['source']['raw_path'].endswith('TalkFrameEvents[0].FrameEvent.EventActions[0]')
+    assert 'elapsed' in song['source']['reconstruction']
+    assert next(b for b in bindings if b['development_only'])['events'] == []
+
+
+def test_does_not_carry_song_across_an_intervening_movie_or_nested_branch(configs):
+    from wuwa_story_worker.cutscene_frame_catalog import _preceding_music
+    movie = {'Name':'PlayMovie','Params':{'VideoName':'Movie'}}
+    assert _preceding_music([{'Name':'If','Params':{}},movie],movie,{},'Actions') == []
+    assert _preceding_music([{'Name':'PlayMovie','Params':{'VideoName':'Other'}},movie],movie,{},'Actions') == []

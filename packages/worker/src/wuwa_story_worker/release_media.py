@@ -542,7 +542,8 @@ async def frame_audio_inputs(root, assets, config, name, fmodel, work, voice_roo
         report['diagnostics'].append({'code': 'movie_launcher_context_unavailable'})
         return [], report
     renderable = [binding for binding in bindings if isinstance(binding.get('raw_action'), dict)
-                  and binding.get('complete') and not binding.get('unresolved')]
+                  and binding.get('complete') and not binding.get('unresolved')
+                  and not binding.get('development_only')]
     if not renderable:
         return [], report
     signatures = set()

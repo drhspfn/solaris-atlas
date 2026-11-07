@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 import sqlite3
 import struct
 import time
@@ -10,7 +11,7 @@ from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
 
-from wuwa_story_worker.cutscene_frame_events import discover_movie_audio, movie_frame_bindings
+from wuwa_story_worker.cutscene_frame_events import discover_movie_audio, discover_launcher_frame_audio, movie_frame_bindings
 from wuwa_story_worker.map_sources import integer, open_db, table, text
 
 # Same native readers used by map_sources/quest_interactions. Quest/LevelPlay
@@ -71,6 +72,56 @@ def _binding(action, source, path, conditional):
             'complete': not parsed['unresolved']}
 
 
+def _preceding_music(actions, movie, source, root):
+    """Retain explicit music crossing ShowTalk -> PlayMovie; never invent elapsed time."""
+    if not isinstance(actions, list) or not any(item is movie for item in actions):
+        return []
+    index = next(i for i, item in enumerate(actions) if item is movie)
+    before = index - 1
+    while before >= 0 and isinstance(actions[before], dict) and actions[before].get('Name') == 'SetPlotMode':
+        before -= 1
+    if before < 0 or not isinstance(actions[before], dict) or actions[before].get('Name') != 'ShowTalk':
+        return []
+    params = actions[before].get('Params', {})
+    if not isinstance(params, dict):
+        return []
+    events = []
+    frames, items = params.get('TalkFrameEvents', []), params.get('TalkItems', [])
+    if not isinstance(frames, list) or not isinstance(items, list):
+        return []
+    for i, frame in enumerate(frames):
+        if not isinstance(frame, dict) or not isinstance(frame.get('Position'), dict):
+            continue
+        position = frame.get('Position', {})
+        if not any(isinstance(item, dict) and item.get('Id') == position.get('TalkItemId') for item in items):
+            continue
+        definition = frame.get('FrameEvent', {})
+        frame_actions = definition.get('EventActions', []) if isinstance(definition, dict) else []
+        if not isinstance(frame_actions, list):
+            continue
+        for j, action in enumerate(frame_actions):
+            if not isinstance(action, dict) or not isinstance(action.get('Params'), dict):
+                continue
+            config = action['Params'].get('EventConfig')
+            if not isinstance(config, dict):
+                continue
+            if (action.get('Name') != 'PostAkEvent' or
+                    config.get('Type') != 'MusicSubtitle'):
+                continue
+            proof = {**source,
+                'raw_path': f'{root}[{before}].Params.TalkFrameEvents[{i}].FrameEvent.EventActions[{j}]',
+                'position': deepcopy(position),
+                'reconstruction': 'Fixed-start continuation from preceding dialogue; elapsed player/sequence time is not reproduced.'}
+            parsed = discover_launcher_frame_audio([{'Second': 0, 'EventActions': [action]}],
+                video_name=movie['Params']['VideoName'], source=proof)
+            for event in parsed['events']:
+                event['source'] = proof
+                event['timing_basis'] = 'fixed_start_continuation'
+                event.pop('raw_frame_event', None)
+                events.append(event)
+    return events
+
+
 def _fingerprint(directory):
     result = []
     for filename, *_ in _SOURCES:
@@ -123,6 +174,14 @@ def _catalog(fingerprint):
                             if binding is None:
                                 coverage['noop_launchers'] += 1
                                 continue
+                            binding['development_only'] = bool(re.search(r'(?:^|_)TEST(?:_|[ .])', record_key, re.I))
+                            if filename == 'db_flowState.db' and not conditional:
+                                carried = _preceding_music(value, action, proof, root)
+                                if len(carried) == 1 and not any(event['mode'] == 'MusicSubtitle' for event in binding['events']):
+                                    binding['events'].extend(carried)
+                                elif len(carried) > 1:
+                                    binding['unresolved'].append({'code': 'ambiguous_preceding_music', 'source': proof})
+                                    binding['complete'] = False
                             result['bindings'].setdefault(binding['video_name'], []).append(binding)
                             coverage['launchers'] += 1
                     except (ValueError, IndexError, TypeError, RecursionError, struct.error) as error:
@@ -138,13 +197,15 @@ def _catalog(fingerprint):
     for name, bindings in result['bindings'].items():
         timelines = set()
         for binding in bindings:
-            if binding['complete']:
+            if binding['complete'] and not binding.get('development_only'):
                 timelines.add(json.dumps([{key: event[key] for key in (
                     'reference', 'start_seconds', 'end_seconds', 'mode', 'operation', 'event_config')}
                     for event in binding['events']], sort_keys=True))
         if len(timelines) > 1:
             sources = [binding['source'] for binding in bindings]
             for binding in bindings:
+                if binding.get('development_only'):
+                    continue
                 binding['unresolved'].append({'code': 'conflicting_launcher_timelines',
                     'video_name': name, 'sources': deepcopy(sources)})
                 binding['complete'] = False
