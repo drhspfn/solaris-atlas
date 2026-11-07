@@ -195,3 +195,24 @@ async def test_exact_claim_filters_are_validated_before_database_access(filters)
     with pytest.raises(ValueError):
         await refresh.claim_refreshes(create, **filters)
     create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dirty_large_request_chunks_sorted_ids_without_extra_scope_generations():
+    session = AsyncMock()
+    session.scalar.return_value = None
+    await refresh.mark_dirty(session, 'quest', list(range(9000, 0, -1)) + [42], '3.7', debounce_seconds=0)
+    assert session.scalar.await_count == 1
+    statements = [call.args[0] for call in session.execute.await_args_list]
+    updates = [statement for statement in statements if getattr(statement, 'is_update', False)]
+    inserts = [statement for statement in statements if getattr(statement, 'is_insert', False)]
+    assert len(updates) == 1
+    assert len(inserts) > 1
+    values = []
+    for statement in inserts:
+        compiled = statement.compile(dialect=postgresql.dialect())
+        assert len(compiled.params) < 32767
+        values.extend(value for key, value in compiled.params.items() if key.startswith('entity_id'))
+        assert 'requested_generation' in str(compiled).split('DO UPDATE SET', 1)[1]
+    assert values == list(range(1, 9001))
+    session.commit.assert_not_awaited()

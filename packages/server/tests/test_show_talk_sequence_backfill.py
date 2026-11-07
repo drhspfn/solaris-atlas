@@ -128,3 +128,36 @@ def test_source_parser_matches_compiler_nested_ownership_and_ignores_names_only(
     assert link['from'] == 'nested_action:Story_28_1:$[7].Actions<json>[0].Params.TalkItems[0].Options[0].Actions[0]'
     assert link['raw_path'] == '$[7].Actions<json>[0].Params.TalkItems[0].Options[0].Actions[0].Params.SequenceDataAsset'
     assert link['source_record_id'] == 99 and link['to'] == 'asset:ue:' + ASSET
+
+
+@pytest.mark.asyncio
+async def test_interrupted_batched_repair_redirties_and_resumes(session, monkeypatch):
+    raw = {'StateKey': 'Story_28_1', 'Actions': json.dumps([
+        {'Name': 'ShowTalk', 'Params': {'SequenceDataAsset': ASSET}},
+        {'Name': 'ShowTalk', 'Params': {'SequenceDataAsset': '/Game/Aki/Other.DA'}},
+    ])}
+    await session.execute(text('UPDATE raw.source_record SET data=:data WHERE id=1021'), {'data': json.dumps(raw)})
+    await session.execute(text("INSERT INTO graph.node (id,type_id,canonical_key,metadata) VALUES (3,1,'action:Story_28_1:1','{}')"))
+    await session.execute(text("INSERT INTO graph.node_revision (node_id,release_id,revision,source_record_id,metadata) VALUES (3,21,1,1021,'{}')"))
+    await session.commit()
+    monkeypatch.setattr(repair, 'WRITE_BATCH_SIZE', 1)
+    original = repair.import_canonical_edges
+    calls = 0
+
+    async def interrupt_second(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError('interrupted')
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(repair, 'import_canonical_edges', interrupt_second)
+    with pytest.raises(RuntimeError, match='interrupted'):
+        await repair.backfill(session, 21, apply=True, max_links=10000)
+    await session.rollback()
+    assert await session.scalar(select(func.count()).select_from(EdgeEvidence)) == 1
+    monkeypatch.setattr(repair, 'import_canonical_edges', original)
+    assert (await repair.backfill(session, 21, apply=True, max_links=10000))['written'] == 1
+    assert (await repair.backfill(session, 21, apply=True, max_links=10000))['written'] == 0
+    assert await session.scalar(select(func.count()).select_from(EdgeEvidence)) == 2
+    assert session.invalidation.await_count == 3

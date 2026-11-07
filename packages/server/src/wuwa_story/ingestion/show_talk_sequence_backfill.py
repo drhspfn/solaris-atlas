@@ -26,6 +26,7 @@ from wuwa_story.ingestion.runtime_media import runtime_media
 
 SOURCE = 'BinData/flowState/flowstate.json'
 RELATION = 'plays_sequence_asset'
+WRITE_BATCH_SIZE = 1000
 
 
 def sequence_links(rows):
@@ -106,11 +107,15 @@ async def backfill(session, release_id, *, state_keys=(), apply=False, max_links
     if asset_type is None:
         raise ValueError('asset_reference node type is not seeded')
     if targets:
-        await session.execute(insert(Node.__table__).values([
+        asset_values = [
             {'canonical_key': key, 'type_id': asset_type, 'created_release_id': release_id,
              'metadata': {'source_file': SOURCE, 'source_row': link['row'], 'source_raw_path': link['raw_path']}}
             for key, link in sorted(targets.items())
-        ]).on_conflict_do_nothing(index_elements=[Node.canonical_key]))
+        ]
+        for start in range(0, len(asset_values), WRITE_BATCH_SIZE):
+            await session.execute(insert(Node.__table__).values(
+                asset_values[start:start + WRITE_BATCH_SIZE]
+            ).on_conflict_do_nothing(index_elements=[Node.canonical_key]))
         # Lock only these assets: concurrent release repairs must not allocate the
         # same per-node revision number. Existing node metadata stays untouched.
         assets = list(await session.execute(select(Node.canonical_key, Node.id, Node.type_id).where(
@@ -128,17 +133,22 @@ async def backfill(session, release_id, *, state_keys=(), apply=False, max_links
                    'content_hash': hashlib.sha256(key.encode()).digest(),
                    'metadata': {'source_file': SOURCE, 'source_row': link['row'], 'source_raw_path': link['raw_path']}}
                   for key, link in sorted(targets.items()) if ids[key] not in revised]
-        if values:
-            await session.execute(insert(NodeRevision.__table__).values(values))
+        for start in range(0, len(values), WRITE_BATCH_SIZE):
+            await session.execute(insert(NodeRevision.__table__).values(values[start:start + WRITE_BATCH_SIZE]))
     records = [{**link, 'version': release.game_version, 'source_repository': release.upstream_name,
                 'source_commit': release.upstream_commit} for link in missing]
     changed_assets = set(missing_revisions)
     await invalidate_repaired_quests(session, release,
         missing + [link for link in links if link['to'] in changed_assets])
     if records:
-        # One importer batch commits nodes, revisions and evidence atomically.
-        await import_canonical_edges(SimpleNamespace(iter_edges=lambda: iter(records)), session,
-                                     release_id, batch_size=max_links)
+        # Each importer batch commits. Re-dirty each subsequent batch in the
+        # same transaction as its edges, including after an interrupted retry.
+        for start in range(0, len(records), WRITE_BATCH_SIZE):
+            batch = records[start:start + WRITE_BATCH_SIZE]
+            if start:
+                await invalidate_repaired_quests(session, release, batch)
+            await import_canonical_edges(SimpleNamespace(iter_edges=lambda: iter(batch)), session,
+                                         release_id, batch_size=WRITE_BATCH_SIZE)
     await session.commit()
     report['written'] = len(records)
     return report
