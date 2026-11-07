@@ -1,0 +1,34 @@
+{% extends "list.html" %}
+{% import "components.html" as ui %}
+{% block head_css %}
+  {{ super() }}
+  <style>
+    .sa-budget { --sa-mint: #9bd9c0; --sa-muted: #a0aaa8; background: #0b1112; color: #e8eceb; border: 1px solid #293738; border-radius: 12px; margin-bottom: 1rem; padding: clamp(1.25rem, 3vw, 2rem); }
+    .sa-budget__eyebrow { color: var(--sa-mint); font-size: .7rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+    .sa-budget__title { color: #e8eceb; font-size: 1.4rem; margin: .35rem 0 .5rem; }
+    .sa-budget__intro { color: var(--sa-muted); max-width: 65ch; }
+    .sa-budget__metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .75rem; margin: 1.5rem 0; }
+    .sa-metric { background: #121a1b; border: 1px solid #293738; border-radius: 10px; display: flex; flex-direction: column; gap: .45rem; padding: 1rem; min-width: 0; }
+    .sa-metric__label { color: var(--sa-muted); font-size: .75rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+    .sa-metric__value { color: #e8eceb; font-size: 1.25rem; overflow-wrap: anywhere; }
+    .sa-metric__detail { color: var(--sa-muted); font-size: .8rem; }
+    .sa-budget__note { border-left: 2px solid var(--sa-mint); color: #c5cfcb; margin: 0; padding-left: .85rem; }
+  </style>
+{% endblock %}
+{% block content %}
+  {% set budget = model.budget_info() %}
+  <div class="container-fluid">
+    <section class="sa-budget" aria-labelledby="budget-overview-title">
+      <span class="sa-budget__eyebrow">Agent operations / Accounting</span>
+      <h2 class="sa-budget__title" id="budget-overview-title">Daily budget overview</h2>
+      <p class="sa-budget__intro">Monitor the daily limit and the ledger of provider charges and outstanding reservations.</p>
+      <div class="sa-budget__metrics">
+        {{ ui.metric("Daily budget", "$" ~ budget.daily_budget_usd, "Maximum per budget day") }}
+        {{ ui.metric("Token limit", "{:,}".format(budget.daily_token_limit) if budget.daily_token_limit else "No separate cap", "Per budget day") }}
+        {{ ui.metric("Budget day", budget.today, budget.timezone) }}
+      </div>
+      <p class="sa-budget__note">Costs include the safety margin. Reservations remain held until billing is confirmed; they are not completed charges.</p>
+    </section>
+  </div>
+  {{ super() }}
+{% endblock %}

@@ -4,8 +4,8 @@ The console is mounted by FastAPI at `/console` (direct API: `http://localhost:8
 Caddy routes `/console` and its assets to the API on the main site too.
 It uses **Starlette-admin's SQLAlchemy adapter**: the library queries the mapped
 models directly and generates tables, filters, forms, details and confirmation
-dialogs. There is no frontend application, REST data provider or project-owned
-HTML template. The Python registration lives in
+dialogs. The budget overview uses reusable server-rendered components; it has no
+separate frontend application or REST data provider. The Python registration lives in
 `packages/server/src/wuwa_story/admin/composition.py`.
 
 ## Accounts and sessions
@@ -41,6 +41,10 @@ Revoke action, never token hashes. Sign-out revokes the same database session.
   jobs, provider call accounting, daily usage and research notes.
 - Accounts: users and sessions.
 - Archive: quests, characters, releases, nodes, documents, events, notices and locales.
+
+The daily budget usage page shows the configured daily cost and token limits,
+budget timezone, current budget day, and the read-only spending and reservation
+ledger. The former `/admin/usage` page redirects to `/console/usage/list`.
 
 Users, memory and manual analysis tasks support creation/editing. Imported facts,
 execution history and audit records are read-only. Question answers remain on the

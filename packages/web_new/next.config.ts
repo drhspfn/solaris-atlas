@@ -21,6 +21,7 @@ const nextConfig: NextConfig = {
   async rewrites() {
     const apiTarget = process.env.API_PROXY_TARGET || process.env.INTERNAL_API_BASE || 'http://localhost:8000';
     return [
+      { source: '/console/:path*', destination: `${apiTarget}/console/:path*` },
       {
         source: '/api/:path*',
         destination: `${apiTarget}/:path*`,

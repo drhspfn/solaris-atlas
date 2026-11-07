@@ -1,8 +1,10 @@
 """Direct SQLAlchemy ModelViews. The library supplies all CRUD, forms and tables."""
 
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Select, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -70,7 +72,7 @@ class ReadOnly(ModelView):
     def can_delete(self, request: Request) -> bool:
         return False
 
-    async def find_all(self, request: Request, skip: int=0, limit: int=100, where: Any=None, order_by: list[str] | None=None) -> Sequence[Any]:
+    async def find_all(self, request: Request, skip: int = 0, limit: int = 100, where: Any = None, order_by: list[str] | None = None) -> Sequence[Any]:
         if not 0 <= skip <= 1_000_000 or not 1 <= limit <= 100:
             raise HTTPException(422, "Use a page size between 1 and 100.")
         return await super().find_all(request, skip, limit, where, order_by)
@@ -93,6 +95,22 @@ class ReadOnly(ModelView):
             raise FormValidationError(
                 {"_form": "Invalid values or stale revision. Reload and check the form."}) from None
         return super().handle_exception(exc)
+
+
+class BudgetUsage(ReadOnly):
+    fields = ["day", "spent_usd", "reserved_usd",
+              "spent_tokens", "reserved_tokens"]
+    fields_default_sort = [("day", True)]
+    list_template = "budget_usage.html"
+
+    def budget_info(self) -> dict[str, Any]:
+        settings = get_agent_settings()
+        return {
+            "daily_budget_usd": settings.daily_budget_usd,
+            "daily_token_limit": settings.daily_token_limit,
+            "timezone": settings.budget_timezone,
+            "today": datetime.now(UTC).astimezone(ZoneInfo(settings.budget_timezone)).date(),
+        }
 
 
 class Editable(ReadOnly):
@@ -128,13 +146,13 @@ class Editable(ReadOnly):
 
 class Users(Editable):
     fields: Sequence[Any] = ["id", "email", "nickname",
-              EnumField("role", choices=[(1, "User"),
-                        (2, "Administrator")], coerce=int),
-              EnumField("status", choices=[
-                        (1, "Active"), (2, "Disabled")], coerce=int),
-              PasswordField("password", label="New password", minlength=8, maxlength=128,
-                            help_text="Required for a new account. Leave blank when editing to keep the password.",
-                            exclude_from_list=True, exclude_from_detail=True), "created_at", "last_login_at"]
+                             EnumField("role", choices=[(1, "User"),
+                                                        (2, "Administrator")], coerce=int),
+                             EnumField("status", choices=[
+                                 (1, "Active"), (2, "Disabled")], coerce=int),
+                             PasswordField("password", label="New password", minlength=8, maxlength=128,
+                                           help_text="Required for a new account. Leave blank when editing to keep the password.",
+                                           exclude_from_list=True, exclude_from_detail=True), "created_at", "last_login_at"]
     exclude_fields_from_create = ["id", "created_at", "last_login_at"]
     exclude_fields_from_edit = exclude_fields_from_create
     searchable_fields = ["email", "nickname"]
@@ -153,7 +171,7 @@ class Users(Editable):
 
 class Sessions(ReadOnly):
     fields: Sequence[Any] = ["id", "user_id", "created_at",
-              "expires_at", "last_seen_at", "revoked_at"]
+                             "expires_at", "last_seen_at", "revoked_at"]
     row_actions = ["view", "revoke"]
 
     @row_action(name="revoke", text="Revoke session", icon_class="fa fa-ban", confirmation="End this session? Its next request will require sign-in.")
@@ -168,7 +186,7 @@ class Sessions(ReadOnly):
 
 class Memory(Editable):
     fields: Sequence[Any] = ["id", "key", EnumField("scope", choices=["short", "long"]), "text", "run_id", "node_id", "citations",
-              IntegerField("revision", read_only=True), "updated_at"]
+                             IntegerField("revision", read_only=True), "updated_at"]
     exclude_fields_from_list = ["text", "citations"]
     exclude_fields_from_create = ["id", "revision", "updated_at"]
     exclude_fields_from_edit = ["id", "key", "scope", "run_id", "updated_at"]
@@ -180,7 +198,7 @@ class Memory(Editable):
     async def edit(self, request: Request, pk: Any, data: dict[str, Any]) -> Any:
         return await self._save(request, data, pk)
 
-    async def _save(self, request: Request, data: dict[str, Any], pk: Any=None) -> Any:
+    async def _save(self, request: Request, data: dict[str, Any], pk: Any = None) -> Any:
         db = request.state.session
         try:
             previous = await self.find_by_pk(request, pk) if pk else None
@@ -208,7 +226,7 @@ class Memory(Editable):
 
 class Work(Editable):
     fields: Sequence[Any] = ["id", "kind", "node_id", "title", "text", "priority", "status", "run_id",
-              IntegerField("revision", read_only=True), "search_terms", "citations", "resolution", "updated_at"]
+                             IntegerField("revision", read_only=True), "search_terms", "citations", "resolution", "updated_at"]
     exclude_fields_from_list = [
         "text", "search_terms", "citations", "resolution"]
     exclude_fields_from_create = ["id", "kind", "status", "run_id",
@@ -249,13 +267,15 @@ class Work(Editable):
 
 class OpenQuestions(ReadOnly):
     """A custom ORM-backed page using the library's existing table components."""
-    fields: Sequence[Any] = ["id", "priority", "node_id", "title", "text", "status", "citations", "updated_at"]
+    fields: Sequence[Any] = ["id", "priority", "node_id",
+                             "title", "text", "status", "citations", "updated_at"]
     exclude_fields_from_list = ["text", "citations"]
     searchable_fields = ["title", "text"]
     fields_default_sort = [("priority", False), ("id", True)]
 
     def _conditions(self) -> tuple[Any, ...]:
-        active = select(DocumentHead.document_id).where(DocumentHead.document_id == AgentWorkItem.document_id).exists()
+        active = select(DocumentHead.document_id).where(
+            DocumentHead.document_id == AgentWorkItem.document_id).exists()
         return (AgentWorkItem.kind == "question", AgentWorkItem.status.in_(["open", "partial"]),
                 or_(AgentWorkItem.document_id.is_(None), active))
 
@@ -268,7 +288,7 @@ class OpenQuestions(ReadOnly):
 
 class Runs(ReadOnly):
     fields: Sequence[Any] = ["id", "status", "target_node_id", "prompt_version", "tokens_input",
-              "tokens_output", "cost", "started_at", "finished_at", "error"]
+                             "tokens_output", "cost", "started_at", "finished_at", "error"]
     searchable_fields = ["status", "prompt_version"]
     row_actions = ["view", "resume"]
 
@@ -291,7 +311,8 @@ class Runs(ReadOnly):
 
 
 class Quests(ReadOnly):
-    fields: Sequence[Any] = ["node_id", "game_quest_id", "quest_type", "region_id"]
+    fields: Sequence[Any] = ["node_id",
+                             "game_quest_id", "quest_type", "region_id"]
     row_actions = ["view", "analyze"]
 
     @row_action(name="analyze", text="Queue story analysis", icon_class="fa fa-book", confirmation="Queue a cited analysis of this quest in the latest imported version? Existing provider and daily budget limits apply.")

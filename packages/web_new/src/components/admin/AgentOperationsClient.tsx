@@ -1,13 +1,12 @@
 'use client';
 
-import { Skeleton, SkeletonGroup, TextSkeleton } from '@/components/ui/Skeleton';
+import { SkeletonGroup, TextSkeleton } from '@/components/ui/Skeleton';
 import { ArrowLeft, ArrowRight, Check, RefreshCw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { api, ApiError } from '@/api/client';
 import { useAuth } from '@/auth/AuthProvider';
 import { APP_SETTINGS } from '@/config/settings';
-import type { AgentUsage } from '@/data/storyAgent';
 import { Link, useSearchParams } from '@/lib/router';
 
 type Alert = {
@@ -19,48 +18,26 @@ type Alert = {
   citations: { node_id: number; quote: string; locale?: string }[];
 };
 type Alerts = { alerts: Alert[]; next_before: number | null };
-const money = (value: string) => `$${Number(value).toFixed(4)}`;
 
-export function AgentOperationsSkeleton({ kind }: { kind: 'alerts' | 'usage' }) {
+export function AgentOperationsSkeleton({ kind }: { kind: 'alerts' }) {
   return (
     <SkeletonGroup label={`Loading ${kind}`}>
-      {kind === 'alerts' ? (
-        <div className="admin-alerts">
-          {[0, 1, 2].map((row) => (
-            <article className="content-panel admin-alert" key={row}>
-              <TextSkeleton lines={3} />
-            </article>
-          ))}
-        </div>
-      ) : (
-        <section className="content-panel agent-ledger">
-          <TextSkeleton lines={2} />
-          <div className="agent-table-scroll">
-            <table>
-              <tbody>
-                {[0, 1, 2].map((row) => (
-                  <tr key={row}>
-                    {[0, 1, 2, 3, 4].map((column) => (
-                      <td key={column}>
-                        <Skeleton style={{ width: '80%', height: '1em' }} />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
+      <div className="admin-alerts">
+        {[0, 1, 2].map((row) => (
+          <article className="content-panel admin-alert" key={row}>
+            <TextSkeleton lines={3} />
+          </article>
+        ))}
+      </div>
     </SkeletonGroup>
   );
 }
 
-export function AgentOperationsClient({ kind }: { kind: 'alerts' | 'usage' }) {
+export function AgentOperationsClient({ kind }: { kind: 'alerts' }) {
   const { refresh: refreshAuth } = useAuth();
   const [params, setParams] = useSearchParams();
   const before = params.get('before');
-  const [data, setData] = useState<Alerts | AgentUsage | null>(null);
+  const [data, setData] = useState<Alerts | null>(null);
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
@@ -72,11 +49,8 @@ export function AgentOperationsClient({ kind }: { kind: 'alerts' | 'usage' }) {
   useEffect(() => {
     const controller = new AbortController();
     setUpdating(true);
-    const query =
-      kind === 'alerts'
-        ? `?limit=${APP_SETTINGS.storyAgent.pageSize}${before ? `&before=${encodeURIComponent(before)}` : ''}`
-        : '';
-    void api<Alerts | AgentUsage>(`/admin/story-agent/${kind}${query}`, {
+    const query = `?limit=${APP_SETTINGS.storyAgent.pageSize}${before ? `&before=${encodeURIComponent(before)}` : ''}`;
+    void api<Alerts>(`/admin/story-agent/${kind}${query}`, {
       signal: controller.signal,
     })
       .then((value) => {
@@ -118,11 +92,9 @@ export function AgentOperationsClient({ kind }: { kind: 'alerts' | 'usage' }) {
     <section className="agent-page">
       <header className="page-heading agent-heading">
         <div>
-          <h2>{kind === 'alerts' ? 'Alerts' : 'Usage'}</h2>
+          <h2>Alerts</h2>
           <p>
-            {kind === 'alerts'
-              ? 'Missing sources, unresolved questions and processing failures.'
-              : 'Daily spending, token usage and outstanding reservations.'}
+            Missing sources, unresolved questions and processing failures.
           </p>
         </div>
         <button
@@ -204,49 +176,7 @@ export function AgentOperationsClient({ kind }: { kind: 'alerts' | 'usage' }) {
           </div>
         </>
       )}
-      {data && 'days' in data && (
-        <section className="content-panel agent-ledger">
-          <div className="agent-panel-header">
-            <h2>Daily ledger</h2>
-          </div>
-          <p>
-            Cap {money(data.daily_budget_usd)} / day ·{' '}
-            {data.daily_token_limit
-              ? `${data.daily_token_limit.toLocaleString('en-US')} token cap`
-              : 'No separate daily token cap'}{' '}
-            · {data.timezone}
-          </p>
-          <p>
-            Today: {data.today}. Costs include the safety margin. Reservations remain held until
-            billing is confirmed; they are not completed charges.
-          </p>
-          <div className="agent-table-scroll" tabIndex={0} aria-label="Daily usage table">
-            <table>
-              <thead>
-                <tr>
-                  <th scope="col">Budget day</th>
-                  <th scope="col">Spent</th>
-                  <th scope="col">Reserved</th>
-                  <th scope="col">Used tokens</th>
-                  <th scope="col">Reserved tokens</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.days.map((day) => (
-                  <tr key={day.day}>
-                    <th scope="row">{day.day}</th>
-                    <td>{money(day.spent_usd)}</td>
-                    <td>{money(day.reserved_usd)}</td>
-                    <td>{day.spent_tokens.toLocaleString('en-US')}</td>
-                    <td>{day.reserved_tokens.toLocaleString('en-US')}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {!data.days.length && <p className="empty-inline">No spending recorded yet.</p>}
-        </section>
-      )}
+
     </section>
   );
 }

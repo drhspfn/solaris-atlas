@@ -86,6 +86,19 @@ def authorize(console):
     return client
 
 
+async def test_budget_usage_page_shows_limits_and_is_read_only(console):
+    client = console[0]
+    assert (await client.get("/console/usage/list")).status_code == 303
+    authorize(console)
+    response = await client.get("/console/usage/list")
+    assert response.status_code == 200
+    assert "Daily budget overview" in response.text
+    assert "No separate cap" in response.text
+    assert "Europe/Kyiv" in response.text
+    assert "Reservations remain held" in response.text
+    assert (await client.get("/console/usage/create")).status_code == 403
+
+
 async def test_generated_console_requires_live_admin_and_hides_secrets(console):
     client, _, settings, admin, member, _, member_token, *_ = console
     assert (await client.get("/console/api/users")).status_code == 303

@@ -70,10 +70,10 @@ export function AdminLayoutShell({ children }: { children: React.ReactNode }) {
               <Bell size={16} />
               Alerts
             </NavLink>
-            <NavLink to="/admin/usage">
+            <a href="/console/usage/list">
               <Coins size={16} />
               Usage
-            </NavLink>
+            </a>
           </nav>
         </aside>
         <div className="admin-content">{children}</div>
