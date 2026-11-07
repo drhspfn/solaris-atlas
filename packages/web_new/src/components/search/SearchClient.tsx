@@ -11,9 +11,11 @@ import { EmptyState, ErrorPanel } from "@/components/ui/Feedback";
 import { APP_SETTINGS } from "@/config/settings";
 import { categories, categoryTitle, type Entity } from "@/data/entities";
 import { useLocale } from "@/hooks/useLocale";
+import { usePlayerDisplay } from "@/hooks/usePlayerDisplay";
 import { Link, useSearchParams } from "@/lib/router";
 
 export function SearchClient() {
+  const display = usePlayerDisplay();
   const params = useSearchParams();
   const q = params?.get("q") || "";
   const storyMode = params?.get("mode") === "story";
@@ -137,7 +139,7 @@ export function SearchClient() {
               </p>
               <div className="entity-grid">
                 {data.map((item, i) => (
-                  <EntityCard item={item} index={i} key={`${item.id}-${i}`} />
+                  <EntityCard item={item} index={i} display={display} key={`${item.id}-${i}`} />
                 ))}
               </div>
             </>

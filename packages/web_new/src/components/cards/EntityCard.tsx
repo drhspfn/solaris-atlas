@@ -3,9 +3,10 @@ import { Link } from '@/lib/router';
 
 import { apiUrl } from '../../api/client';
 import { APP_SETTINGS } from '../../config/settings';
-import { display, type Entity, entityPath } from '../../data/entities';
+import { display as entityDisplay, type Entity, entityPath } from '../../data/entities';
+import { PlayerText, type PlayerDisplay } from '../dialogue/PlayerText';
 
-export function EntityCard({ item, index = 0 }: { item: Entity; index?: number }) {
+export function EntityCard({ item, index = 0, display }: { item: Entity; index?: number; display?: PlayerDisplay }) {
   const type = item.category ?? (item.node_type === 'area' ? 'location' : item.node_type);
   const imageUrl = item.character_kind === 'npc' ? null : item.image_url;
   return (
@@ -34,7 +35,7 @@ export function EntityCard({ item, index = 0 }: { item: Entity; index?: number }
       </div>
       <div className="entity-info">
         <div className="entity-title-row">
-          <h3>{display(item)}</h3>
+          <h3><PlayerText value={entityDisplay(item)} display={display} /></h3>
           <ArrowRight className="arrow-diagonal" />
         </div>
         <p>
