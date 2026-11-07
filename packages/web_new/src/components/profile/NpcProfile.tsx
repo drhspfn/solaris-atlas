@@ -13,9 +13,11 @@ import { ErrorPanel } from "@/components/ui/Feedback";
 import { Pagination } from "@/components/ui/Pagination";
 import { PanelTitle } from "@/components/ui/PanelTitle";
 import { localizedText } from "@/data/localized";
+import { conversationSpeakerName } from "@/data/npcContext";
 import { useLocale } from "@/hooks/useLocale";
 import { Link } from "@/lib/router";
 import { questPath } from "@/lib/routeKey";
+import "@/styles/npc-profile.css";
 
 const PAGE_SIZE = 20;
 
@@ -35,6 +37,15 @@ type Line = {
   speaker_relation: 'confirmed_npc_speaker' | 'npc_actor_context' | 'interaction_participant';
   quests: { canonical_key: string; game_quest_id: number; name: unknown }[];
 };
+
+function questHref(quest: Line["quests"][number], locale: string, gameVersion?: string) {
+  const [pathAndQuery, hash] = questPath(quest).split("#", 2);
+  const [path, query] = pathAndQuery.split("?", 2);
+  const params = new URLSearchParams(query);
+  params.set("locale", locale);
+  if (gameVersion) params.set("game_version", gameVersion);
+  return `${path}?${params}${hash ? `#${hash}` : ""}`;
+}
 
 function NpcQuests({
   characterKey,
@@ -73,10 +84,10 @@ function NpcQuests({
       });
     return () => controller.abort();
   }, [characterKey, gameVersion, locale, page, retry]);
+  if (result && !result.total) return null;
   return (
-    <section className="content-panel full-panel">
+    <section className="content-panel full-panel npc-section">
       <PanelTitle number="02" title="Quest appearances" />
-      <p>Quests linked to referenced interaction states or a confirmed speaker.</p>
       {error ? (
         <ErrorPanel
           message={error}
@@ -89,15 +100,17 @@ function NpcQuests({
           {!result.results.length && (
             <p>No linked quest appearances found.</p>
           )}
+          <div className="npc-quest-grid">
           {result.results.map((quest) => (
             <Link
-              className="plain-row"
+              className="npc-quest-card"
               key={quest.canonical_key}
-              to={questPath(quest)}
+              to={questHref(quest, locale, gameVersion)}
             >
               {localizedText(quest.name, `Quest ${quest.game_quest_id}`)}
             </Link>
           ))}
+          </div>
           {result.total > PAGE_SIZE && (
             <Pagination
               mode="pages"
@@ -152,12 +165,8 @@ export function NpcInteractions({ characterKey, npc, gameVersion }: {
     return () => controller.abort();
   }, [characterKey, locale, query, page, retry, gameVersion]);
   return <>
-      <section className="content-panel full-panel">
-        <PanelTitle number="01" title="Dialogue and quest appearances" />
-        <p>
-          Conversations from referenced interaction states and confirmed speakers.
-          A participant in a conversation is not necessarily this NPC.
-        </p>
+      <section className="content-panel full-panel npc-section">
+        <PanelTitle number="01" title="Dialogue" />
         <form
           className="dialogue-search" noValidate
           onSubmit={(event) => {
@@ -191,16 +200,20 @@ export function NpcInteractions({ characterKey, npc, gameVersion }: {
         ) : (
           <>
             {!result.results.length && <p>No linked dialogue found.</p>}
+            <div className="npc-dialogue-list">
             {result.results.map((line) => (
-              <div
-                className="quote-result"
+              <article
+                className="npc-dialogue-card"
                 key={`${line.canonical_key}:${line.flow_state}:${line.speaker?.canonical_key || 'none'}`}
               >
-                <p>{localizedText(line.text, "Text unavailable")}</p>
-                <small>{line.speaker?.label || line.speaker?.canonical_key || 'Speaker'} · {line.speaker_relation === 'confirmed_npc_speaker' ? 'Confirmed NPC speaker' : line.speaker_relation === 'npc_actor_context' ? 'NPC-associated line in this interaction' : 'Interaction participant'} · {line.flow_state}</small>
+                <p className="npc-dialogue-text">{localizedText(line.text, "Text unavailable")}</p>
+                <div className="npc-dialogue-meta">
+                  <span>{conversationSpeakerName(line.speaker?.label)}</span>
+                  <small>{line.speaker_relation === 'confirmed_npc_speaker' ? 'Confirmed speaker' : line.speaker_relation === 'npc_actor_context' ? 'Associated line' : 'Conversation participant'}</small>
+                </div>
                 {line.quests.map((quest) => (
-                  <p key={quest.canonical_key}>
-                    <Link to={questPath(quest)}>
+                  <p className="npc-dialogue-quest" key={quest.canonical_key}>
+                    <Link to={questHref(quest, locale, gameVersion)}>
                       {localizedText(
                         quest.name,
                         `Quest ${quest.game_quest_id}`,
@@ -208,8 +221,14 @@ export function NpcInteractions({ characterKey, npc, gameVersion }: {
                     </Link>
                   </p>
                 ))}
-              </div>
+                <details className="npc-dialogue-source">
+                  <summary>Source details</summary>
+                  <span>Story state: {line.flow_state}</span>
+                  {line.speaker?.canonical_key && <span>Speaker: {line.speaker.canonical_key}</span>}
+                </details>
+              </article>
             ))}
+            </div>
             {result.total > PAGE_SIZE && (
               <Pagination
                 mode="pages"
@@ -229,14 +248,8 @@ export function NpcInteractions({ characterKey, npc, gameVersion }: {
         gameVersion={gameVersion}
       />
       {npc.shop_count > 0 && <NpcShops characterKey={characterKey} gameVersion={gameVersion} />}
-      <section className="content-panel full-panel">
-          <PanelTitle number="04" title="Referenced story states" />
-          <p>
-            These authored flow references do not establish who speaks in a
-            scene.
-          </p>
-          <NpcFlowParticipants characterKey={characterKey} gameVersion={gameVersion} />
-      </section>
+      {npc.flow_reference_count !== 0 &&
+        <NpcFlowParticipants characterKey={characterKey} gameVersion={gameVersion} />}
   </>;
 }
 
@@ -264,7 +277,7 @@ export function NpcProfile({
         <span> / </span>
         <span>{name}</span>
       </div>
-      <div className="profile-hero character-profile-hero">
+      <div className="profile-hero character-profile-hero npc-profile-hero">
         <CharacterProfileVisual
           characterKey={character.canonical_key}
           name={name}
@@ -291,9 +304,8 @@ export function NpcProfile({
               "An NPC recorded in the Solaris Atlas archive.",
             )}
           </p>
-          {npc.name_scope === 'instance' && <p>This name is recorded for an instance of this blueprint.{npc.name_variants.length > 1 ? ` Other recorded names: ${npc.name_variants.filter((variant) => variant !== name).join(', ')}.` : ''}</p>}
+          {npc.name_scope === 'instance' && <p>This name is recorded for one appearance.{npc.name_variants.length > 1 ? ` Other recorded names: ${npc.name_variants.filter((variant) => variant !== name).join(', ')}.` : ''}</p>}
           <div className="profile-tags">
-            <span>{character.canonical_key}</span>
             <span>NPC</span>
           </div>
         </div>

@@ -30,10 +30,16 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
     localizedText(character?.name) ||
     localizedText(character?.canonical_name) ||
     `Character · ${entityId}`;
+  const profileType = data?.npc
+    ? data.npc.kind === 'template' ? 'NPC Template' : 'NPC'
+    : character?.playable === true ? 'Resonator' : 'Character';
+  const title = `${name} — ${profileType} Profile`;
   const description = (
-    archive?.biography ||
+    (data?.npc ? localizedText(character?.description) : archive?.biography) ||
     localizedText(character?.description) ||
-    `Lore, story appearances, voice lines and relations for ${name} in Solaris Atlas.`
+    (data?.npc
+      ? `Explore ${name}'s locations, interactions and story appearances in Solaris Atlas.`
+      : `Lore, story appearances, voice lines and relations for ${name} in Solaris Atlas.`)
   )
     .replace(/<[^>]*>/g, '')
     .replace(/\s+/g, ' ')
@@ -45,11 +51,11 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
   const imageUrl = image ? (image.startsWith('http') ? image : `${siteUrl}${image}`) : undefined;
 
   return {
-    title: `${name} — Character Profile`,
+    title,
     description,
     alternates: { canonical: publicPath("characters", character || {}, key) },
     openGraph: {
-      title: `${name} — Characters | Solaris Atlas`,
+      title: `${title} | Solaris Atlas`,
       description,
       type: 'profile',
       url: `${siteUrl}${publicPath("characters", character || {}, key)}`,
@@ -57,7 +63,7 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
     },
     twitter: {
       card: imageUrl ? 'summary_large_image' : 'summary',
-      title: `${name} — Characters | Solaris Atlas`,
+      title: `${title} | Solaris Atlas`,
       description,
       images: imageUrl ? [imageUrl] : undefined,
     },

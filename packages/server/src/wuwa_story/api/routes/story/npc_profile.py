@@ -5,7 +5,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.api.public_addresses import public_addresses
-from wuwa_story.db.models.core import Character, DialogueLine, Item, Quest, QuestState
+from wuwa_story.db.models.core import Character, DialogueLine, Item, Quest, QuestAction, QuestState
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node
 from wuwa_story.db.models.i18n import Locale, LocalizationKey, LocalizationValue
 from wuwa_story.db.models.ontology import RelationType
@@ -38,7 +38,7 @@ def source_edge(owner_id, target, relation, release_id):
     ).exists()
 
 
-def interaction_dialogue(release_id, state_ids):
+def interaction_dialogue(release_id, state_ids, *, include_action=False):
     """Include authored lines without a speaker as well as spoken lines in interaction states."""
     action_edge, talk_edge, spoken = (Edge.__table__.alias(name) for name in
                                        ("npc_actions", "npc_talks", "npc_spoken"))
@@ -48,14 +48,15 @@ def interaction_dialogue(release_id, state_ids):
             RelationType.key == relation).scalar_subquery(), select(EdgeEvidence.id).where(
             EdgeEvidence.edge_id == edge.c.id, EdgeEvidence.release_id == release_id).exists())
 
-    return (select(talk_edge.c.to_node_id.label("line_id"), action_edge.c.from_node_id.label("state_id"),
-                   spoken.c.to_node_id.label("speaker_id"))
+    query = (select(talk_edge.c.to_node_id.label("line_id"), action_edge.c.from_node_id.label("state_id"),
+                    spoken.c.to_node_id.label("speaker_id"))
             .select_from(action_edge).join(talk_edge, talk_edge.c.from_node_id == action_edge.c.to_node_id)
             .outerjoin(spoken, and_(spoken.c.from_node_id == talk_edge.c.to_node_id,
                                     evidenced(spoken, "spoken_by")))
             .join(DialogueLine, DialogueLine.node_id == talk_edge.c.to_node_id)
             .where(action_edge.c.from_node_id.in_(state_ids), evidenced(action_edge, "contains_action"),
                    evidenced(talk_edge, "presents_talk_item")).distinct())
+    return query.add_columns(action_edge.c.to_node_id.label("action_id")) if include_action else query
 
 
 async def npc_flow_state_ids(session, node_id, npc, release_id):
@@ -141,6 +142,7 @@ async def npc_profile(session, node, character, npc, release_id, locale):
                           "description": "This game configuration is shared by differently named world actors. Locations and conversations below retain their source context."
                           if mixed else character.description, "playable": False},
             "npc": {"blueprint_id": npc.get("blueprint_id"), "blueprint_type": npc.get("blueprint_type"),
+                    "kind": "template" if mixed else "npc",
                     "speakers": [],
                     "name_scope": "instance" if scoped_name else "blueprint",
                     "name_variants": variants,
@@ -250,7 +252,8 @@ async def npc_flow_participants(canonical_key: str, locale: str = "en", game_ver
 @public_addresses
 async def npc_dialogue(canonical_key: str, locale: str = "en", game_version: str | None = None,
                        q: str = Query("", max_length=128), limit: int = Query(20, ge=1, le=50),
-                       offset: int = Query(0, ge=0), session: AsyncSession = Depends(get_session)):
+                       offset: int = Query(0, ge=0), state_id: int | None = None,
+                       session: AsyncSession = Depends(get_session)):
     node, _, npc, release_id = await npc_record(session, canonical_key, game_version)
     locale_id = await session.scalar(select(Locale.id).where(Locale.code == locale))
     if locale_id is None:
@@ -260,10 +263,14 @@ async def npc_dialogue(canonical_key: str, locale: str = "en", game_version: str
     # Older imports may contain name-derived speakers; only flow context is
     # supported until there is a separately evidenced NPC identity crosswalk.
     state_ids = await npc_flow_state_ids(session, node.id, npc, release_id)
+    if state_id is not None:
+        if state_id not in state_ids:
+            raise HTTPException(404, "NPC scene not found")
+        state_ids = [state_id]
     if not state_ids:
         return {"results": [], "total": 0, "limit": limit, "offset": offset}
-    selected = interaction_dialogue(release_id, state_ids).subquery()
-    query = select(selected.c.line_id, selected.c.state_id, selected.c.speaker_id).join(
+    selected = interaction_dialogue(release_id, state_ids, include_action=True).subquery()
+    query = select(selected.c.line_id, selected.c.state_id, selected.c.speaker_id, selected.c.action_id).join(
         DialogueLine, DialogueLine.node_id == selected.c.line_id)
     if q.strip():
         match = select(LocalizationValue.key_id).where(
@@ -276,7 +283,10 @@ async def npc_dialogue(canonical_key: str, locale: str = "en", game_version: str
     page = list(await session.execute(select(DialogueLine, Node, QuestState, rows.c.speaker_id,
         source_edge(npc.get("owner_ids", [node.id]), DialogueLine.node_id, "presents_talk_item", release_id)).join(
         rows, rows.c.line_id == DialogueLine.node_id).join(Node, Node.id == DialogueLine.node_id).join(
-        QuestState, QuestState.node_id == rows.c.state_id).order_by(Node.canonical_key, QuestState.state_key)
+        QuestState, QuestState.node_id == rows.c.state_id).outerjoin(
+        QuestAction, QuestAction.node_id == rows.c.action_id).order_by(
+        QuestState.state_key, QuestState.node_id, QuestAction.action_index.asc().nulls_last(),
+        DialogueLine.source_index.asc().nulls_last(), Node.id, rows.c.speaker_id.asc().nulls_last())
         .offset(offset).limit(limit)))
     results = []
     await prefetch_node_labels(session, [speaker_id for _, _, _, speaker_id, _ in page if speaker_id is not None], locale)
