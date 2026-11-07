@@ -1,15 +1,16 @@
-'use client';
+"use client";
 
-import { ArrowUpRight } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { Link } from '@/lib/router';
-import { questPath } from '@/lib/routeKey';
+import { ArrowUpRight } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link } from "@/lib/router";
+import { questPath } from "@/lib/routeKey";
 
-import { api } from '../../api/client';
-import { APP_SETTINGS } from '../../config/settings';
-import type { ExplanationResults } from '../../data/explanations';
-import { ExplanationBlocks } from '../story/ExplanationBlocks';
-import { ExplanationHookReviews } from '../story/ExplanationContext';
+import { api } from "../../api/client";
+import { APP_SETTINGS } from "../../config/settings";
+import type { ExplanationResults } from "../../data/explanations";
+import { ExplanationBlocks } from "../story/ExplanationBlocks";
+import { ExplanationHookReviews } from "../story/ExplanationContext";
+import { Skeleton, SkeletonGroup, TextSkeleton } from "../ui/Skeleton";
 
 export function StoryQuestionResults({
   query,
@@ -21,20 +22,22 @@ export function StoryQuestionResults({
   locale: string;
 }) {
   const [data, setData] = useState<ExplanationResults | null>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     setData(null);
-    setError('');
+    setError("");
     if (!query.trim()) return () => controller.abort();
     const params = new URLSearchParams({
       q: query,
       locale,
       limit: String(APP_SETTINGS.limits.explanationSearch),
     });
-    if (version) params.set('game_version', version);
-    api<ExplanationResults>(`/story-analysis/search?${params}`, { signal: controller.signal })
+    if (version) params.set("game_version", version);
+    api<ExplanationResults>(`/story-analysis/search?${params}`, {
+      signal: controller.signal,
+    })
       .then((result) => {
         if (!controller.signal.aborted) setData(result);
       })
@@ -48,8 +51,8 @@ export function StoryQuestionResults({
       <div className="explanation-status">
         <h2>Follow the story, with sources.</h2>
         <p>
-          Search for an event, a faction, or a question. Results come from published quest
-          explanations.
+          Search for an event, a faction, or a question. Results come from
+          published quest explanations.
         </p>
       </div>
     );
@@ -62,19 +65,14 @@ export function StoryQuestionResults({
         </button>
       </div>
     );
-  if (!data)
-    return (
-      <p className="explanation-status" role="status">
-        Searching story notes…
-      </p>
-    );
+  if (!data) return <StoryQuestionResultsSkeleton />;
   if (!data.results.length)
     return (
       <div className="explanation-status">
         <h2>No matching explanations yet</h2>
         <p>
-          Try the name of a character or event. Only analyzed quests in the selected version and
-          language appear here.
+          Try the name of a character or event. Only analyzed quests in the
+          selected version and language appear here.
         </p>
         <Link to={`/search?${new URLSearchParams({ q: query, locale })}`}>
           Search source records instead
@@ -84,14 +82,21 @@ export function StoryQuestionResults({
   return (
     <div className="explanation-results">
       <p className="results-label">
-        {data.results.length} matches · {data.game_version} · sorted by relevance
+        {data.results.length} matches · {data.game_version} · sorted by
+        relevance
       </p>
       {data.results.map((result, index) => (
         <section className="quest-explanation" key={`${result.id}-${index}`}>
           <header className="explanation-result-heading">
             <div>
-              <span className="eyebrow left">QUEST {result.quest_id} · AI INTERPRETATION</span>
-              <h2>{result.is_supplement ? 'New context for this quest' : result.title}</h2>
+              <span className="eyebrow left">
+                QUEST {result.quest_id} · AI INTERPRETATION
+              </span>
+              <h2>
+                {result.is_supplement
+                  ? "New context for this quest"
+                  : result.title}
+              </h2>
             </div>
             <Link
               to={`${questPath(result)}?game_version=${encodeURIComponent(result.game_version)}&locale=${locale}`}
@@ -112,5 +117,28 @@ export function StoryQuestionResults({
         </section>
       ))}
     </div>
+  );
+}
+
+export function StoryQuestionResultsSkeleton() {
+  return (
+    <SkeletonGroup
+      className="explanation-results"
+      label="Searching story notes"
+    >
+      {Array.from({ length: 2 }, (_, index) => (
+        <section className="quest-explanation" key={index}>
+          <header className="explanation-result-heading">
+            <div style={{ width: "75%" }}>
+              <Skeleton
+                style={{ width: "40%", height: 10, marginBottom: 12 }}
+              />
+              <Skeleton style={{ width: "80%", height: 24 }} />
+            </div>
+          </header>
+          <TextSkeleton lines={3} />
+        </section>
+      ))}
+    </SkeletonGroup>
   );
 }

@@ -22,7 +22,7 @@ function archive(queryText) {
     '@/lib/router': { Link: 'a', useSearchParams: () => [query, (update) => { query = update(query); }] },
     '@/lib/routeKey': dummy, '@/components/ui/Feedback': dummy,
     '@/components/ui/Select': { Select: 'atlas-select' }, '@/components/ui/InfiniteScroll': { InfiniteScroll: 'infinite-scroll' },
-    './QuestCutscenes': dummy, './cutsceneAnchor': dummy,
+    './QuestCutscenes': dummy, './cutsceneAnchor': dummy, '../ui/Skeleton': dummy,
   };
   vm.runInNewContext(code, { exports, require: (id) => mocks[id] ?? require(id), URLSearchParams });
   const tree = exports.CutsceneArchive({ initial: null, versions: ['2.10.0', '2.9.0'] });

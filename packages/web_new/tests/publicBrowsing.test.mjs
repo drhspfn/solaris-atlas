@@ -50,6 +50,9 @@ function harness(component, props) {
     '@/components/ui/Button': { Button: 'button' },
     '@/components/ui/Pagination': { Pagination: 'Pagination' },
     '@/components/ui/Pill': { Pill: 'Pill' },
+    '@/components/ui/Skeleton': { SkeletonGroup: 'SkeletonGroup' },
+    '@/components/cards/EntityCard': { EntityCard: 'EntityCard', EntityCardSkeleton: 'EntityCardSkeleton' },
+    '@/components/ui/Feedback': { EmptyState: 'EmptyState', ErrorPanel: 'ErrorPanel' },
     '@/api/client': {
       api: (path, options) => new Promise((resolve, reject) => {
         calls.push({ path, signal: options.signal });
@@ -110,6 +113,7 @@ test('catalog SSR success avoids a duplicate read; paging back restores its entr
   h.render();
   assert.equal(h.calls.length, 1);
   const card = find(h.render(), (node) => node.props?.item);
+  assert.equal(find(h.render(), node => node.type === 'SkeletonGroup'), undefined);
   assert.equal(card.props.item, initialItems[0]);
 });
 
@@ -117,6 +121,8 @@ test('failed catalog SSR loads on the client and exposes an effective retry', as
   const h = harness('catalog/CatalogClient', { category: 'item', initialLoaded: false });
   h.render();
   assert.equal(h.calls.length, 1);
+  assert.ok(find(h.render(), node => node.type === 'SkeletonGroup' && node.props.label === 'Loading catalog'));
+  assert.ok(find(h.render(), node => node.type === 'EntityCardSkeleton'));
   h.pending[0].reject(new Error('Offline'));
   await tick();
   const error = find(h.render(), (node) => node.props?.message === 'Offline');
@@ -127,6 +133,8 @@ test('failed catalog SSR loads on the client and exposes an effective retry', as
   h.pending[1].resolve({ results: [], total: 0 });
   await tick();
   assert.equal(find(h.render(), (node) => node.props?.message), undefined);
+  assert.ok(find(h.render(), node => node.type === 'EmptyState'));
+  assert.equal(find(h.render(), node => node.type === 'SkeletonGroup'), undefined);
 });
 
 test('clearing a pending catalog search cancels it and ignores its late response', async () => {
