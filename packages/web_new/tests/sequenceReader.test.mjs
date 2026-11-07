@@ -190,10 +190,12 @@ test("background music must be uniquely published and explicitly marked music", 
     sequenceBackgroundMusic(media(section(track("mixed", "/mixed.ogg")))),
     undefined,
   );
-  assert.equal(
-    sequenceBackgroundMusic(media(section(track("music", "/music.ogg")))),
-    "/music.ogg",
-  );
+  const once = sequenceBackgroundMusic(media(section(track("music", "/music.ogg"))));
+  assert.equal(once.url, "/music.ogg");
+  assert.equal(once.loop, false);
+  const loop = sequenceBackgroundMusic(media(section({ ...track("music", "/music.ogg"), loop: true })));
+  assert.equal(loop.loop, true);
+  assert.equal(sequenceBackgroundMusic(media(section(track("music", "/music.ogg"), { ...track("music", "/music.ogg"), loop: true }))), undefined);
   assert.equal(
     sequenceBackgroundMusic(
       media(section(track("music", "/a.ogg"), track("music", "/b.ogg"))),
@@ -232,7 +234,7 @@ test("music starts on reader gestures and is independent of line changes", () =>
   );
   assert.match(
     scene,
-    /ref=\{music\}\s+data-scene-background-music\s+controls\s+loop/,
+    /ref=\{music\}\s+data-scene-background-music\s+controls\s+loop=\{backgroundMusic\.loop\}/,
   );
   assert.match(
     scene,

@@ -35,7 +35,7 @@ export function QuestIllustratedScene({
   anchors: Map<string, string>;
   focusLine?: string | null;
   sequenceMedia?: SequenceMedia;
-  backgroundMusic?: string | null;
+  backgroundMusic?: { url: string; loop: boolean } | null;
   readingMillisecondsPerCharacter?: number;
 }) {
   const [index, setIndex] = useState(0);
@@ -295,14 +295,14 @@ export function QuestIllustratedScene({
           Background music could not start. Use the music controls to retry.
         </p>
       )}
-      {backgroundMusic && mediaViewerUrl(backgroundMusic) && (
+      {backgroundMusic && mediaViewerUrl(backgroundMusic.url) && (
         <audio
           ref={music}
           data-scene-background-music
           controls
-          loop
+          loop={backgroundMusic.loop}
           preload="none"
-          src={backgroundMusic}
+          src={backgroundMusic.url}
           aria-label="Scene background music"
           onPlaying={() => setMusicError(false)}
           onError={() => setMusicError(true)}

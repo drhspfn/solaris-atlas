@@ -105,15 +105,18 @@ export function enrichSequenceLines<T extends Line>(lines: T[], sources: Sequenc
 
 export function sequenceBackgroundMusic(media?: SequenceMedia) {
   if (!media || media.schema_version !== 1) return undefined;
-  const urls = new Set<string>();
+  const tracks = new Map<string, { url: string; loop: boolean }>();
   for (const section of media.sections) {
     if (section.kind !== 'audio_event' || !Array.isArray(section.tracks)) continue;
     for (const track of section.tracks) {
       if (track && typeof track === 'object' && track.role === 'music' && track.status === 'published' &&
-          typeof track.url === 'string' && mediaViewerUrl(track.url)) urls.add(track.url);
+          typeof track.url === 'string' && mediaViewerUrl(track.url)) {
+        const music = { url: track.url, loop: track.loop === true };
+        tracks.set(JSON.stringify(music), music);
+      }
     }
   }
-  return urls.size === 1 ? [...urls][0] : undefined;
+  return tracks.size === 1 ? [...tracks.values()][0] : undefined;
 }
 
 // A reading aid, not an authored scene clock.
