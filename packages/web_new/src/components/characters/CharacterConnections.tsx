@@ -191,7 +191,8 @@ export function CharacterConnections({
         ? { ...summary, results: initialRows.slice(0, pageSize) }
         : { results: [], total: 0, has_more: false, next_cursor: null }
     : localPage;
-  const pending = loading || composing || draft.trim() !== selection.q;
+  const pending = loading || composing || draft.trim() !== selection.q ||
+    (server && !error && (!!selection.q || selection.cursor !== null) && result?.key !== key);
   const pageNumber = selection.history.length + 1;
 
   return (

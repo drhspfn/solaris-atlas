@@ -181,7 +181,6 @@ test("cursor paging preserves scope/version and previous restores bounded SSR pr
   const h = harness();
   h.render();
   h.pagination().onNext();
-  h.render();
   const pending = h.render();
   assert.equal(find(pending, (n) => n.type?.name === "CharacterConnectionsSkeleton").props.kind, "quests");
   assert.equal(questLinks(pending).length, 0);
@@ -216,7 +215,9 @@ test("search debounces, aborts superseded reads and clear rejects late responses
   h.render();
   h.input("Moon & Sun");
   assert.equal(h.calls.length, 0);
-  h.debounce();
+  const pending = h.debounce();
+  assert.equal(find(pending, (n) => n.type?.name === "CharacterConnectionsSkeleton").props.kind, "quests");
+  assert.equal(find(pending, (n) => n.type === "EmptyInline"), undefined);
   assert.equal(h.calls.length, 1);
   assert.equal(
     new URL(h.calls[0].path, "http://test").searchParams.get("q"),
@@ -265,8 +266,10 @@ test("failure exposes retry for the same selection and a successful empty state"
   assert.equal(find(h.render(), (n) => n.type?.name === "CharacterConnectionsSkeleton").props.kind, "quests");
   h.calls[0].reject(new Error("Offline"));
   await tick();
-  const error = find(h.render(), (n) => n.type === "ErrorPanel");
+  const failed = h.render();
+  const error = find(failed, (n) => n.type === "ErrorPanel");
   assert.equal(error.props.message, "Offline");
+  assert.equal(find(failed, (n) => n.type?.name === "CharacterConnectionsSkeleton"), undefined);
   error.props.onRetry();
   h.render();
   assert.equal(h.calls[0].path, h.calls[1].path);
