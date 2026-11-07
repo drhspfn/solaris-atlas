@@ -220,3 +220,95 @@ async def test_worker_refreshes_locked_reference_before_any_publication(tmp_path
         assert reference.metadata_json['game_source']['sequence_media_schema'] == incoming_schema
         fragments.assert_awaited_once()
         invalidate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sequence_repair_failure_rolls_back_reference_and_retry_repairs(tmp_path, monkeypatch):
+    from wuwa_story_worker import sequence_speaker_identity
+
+    request = MediaRequest(download_id='a' * 64, asset_version='3.7.1', game_version='3.7.0',
+                           release_id=21, entities=['flow_state:Story_28_1'], kinds=['image'])
+    (tmp_path / 'plan.json').write_text(json.dumps({'id': request.download_id, 'version': '3.7.1', 'tier': 'hd'}))
+    (tmp_path / 'status.json').write_text(json.dumps({'id': request.download_id, 'state': 'downloaded'}))
+    target = {'owner': 4648369, 'release_id': 21, 'path': 'story_sequence:flow_state:Story_28_1',
+              'kind': 'spine', 'language': None, 'reference_type': 'story_presentation',
+              'spine_recipe': 4, 'presentation_sha256': 'c' * 64, 'sequence_media_schema': 1}
+    payload = {'request': request.model_dump(), 'run_id': 26922, 'targets': [target]}
+    run = SimpleNamespace(id=26922, status='queued', metadata_json={'payload': payload})
+    # Emulate transaction visibility: only commit makes the pending reference
+    # visible to the next call to missing_media_targets.
+    state = {'pending': None, 'committed': None, 'links': False}
+    session = AsyncMock()
+    session.get.return_value = run
+    session.scalar.return_value = None
+
+    async def commit():
+        if state['pending'] is not None:
+            state['committed'] = copy.deepcopy(state['pending'])
+            state['pending'] = None
+
+    async def rollback():
+        state['pending'] = None
+
+    session.commit.side_effect = commit
+    session.rollback.side_effect = rollback
+    factory = Mock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(entity_media, 'SessionFactory', factory)
+    monkeypatch.setattr(entity_media, 'validate_plan', lambda _: None)
+
+    async def missing_targets(*args, **kwargs):
+        return [] if state['committed'] else [target]
+
+    monkeypatch.setattr(entity_media, 'missing_media_targets', AsyncMock(side_effect=missing_targets))
+    monkeypatch.setattr(entity_media, 'publish_inventory', AsyncMock(return_value={}))
+    monkeypatch.setattr(entity_media, 'S3Storage', lambda _: AsyncMock())
+    monkeypatch.delenv('WUWA_RIGLYPH_ENABLED', raising=False)
+    service = AsyncMock()
+    service.register_file.return_value = SimpleNamespace(id=11)
+    service.register_variant.return_value = SimpleNamespace(metadata_json={})
+
+    async def register_reference(*args, **kwargs):
+        state['pending'] = SimpleNamespace(file_id=None, metadata_json={})
+        return state['pending']
+
+    service.register_reference.side_effect = register_reference
+    monkeypatch.setattr(entity_media, 'FileRegistrationService', lambda _: service)
+    tool = tmp_path / 'tool'
+    tool.write_bytes(b'pinned tool')
+    monkeypatch.setattr(entity_media, 'tool_path', lambda _: tool)
+    raw = tmp_path / 'Client/Content/Aki/source.uasset'
+    raw.parent.mkdir(parents=True)
+    raw.write_bytes(b'pinned package')
+    bundle = tmp_path / 'source.zip'
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        archive.writestr('manifest.json', json.dumps({'control_sources': {}}))
+    build = AsyncMock(return_value=([(target, bundle, 'story_presentation', 'application/zip', [raw])], []))
+    monkeypatch.setattr(entity_media, 'build_entity_files', build)
+    monkeypatch.setattr(sequence_fragments, 'publish_sequence_fragments',
+                        AsyncMock(return_value={'schema_version': 1, 'sections': []}))
+    monkeypatch.setattr(sequence_fragments, 'invalidate_sequence_quests', AsyncMock())
+
+    async def repair(selected_session, path, selected_target):
+        assert selected_session is session and path == bundle and selected_target == target
+        assert state['pending'].metadata_json['sequence_media']['schema_version'] == 1
+        assert run.raw_output['published'] == 1
+        if not repair.called:
+            repair.called = True
+            raise RuntimeError('identity repair failed')
+        state['links'] = True
+        await selected_session.commit()  # The canonical edge importer commits its batch.
+
+    repair.called = False
+    actor_repair = AsyncMock(side_effect=repair)
+    monkeypatch.setattr(sequence_speaker_identity, 'repair_sequence_bundle_speakers', actor_repair)
+    with pytest.raises(RuntimeError, match='identity repair failed'):
+        await entity_media._process_entity_workspace(payload, None, tmp_path)
+    assert state['committed'] is None and state['pending'] is None and not state['links']
+    session.rollback.assert_awaited_once()
+
+    await entity_media._process_entity_workspace(payload, None, tmp_path)
+    assert state['committed'].file_id == 11 and state['links']
+    assert run.status == 'completed' and run.raw_output['published'] == 1
+    assert build.await_count == actor_repair.await_count == 2
