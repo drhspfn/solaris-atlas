@@ -21,7 +21,7 @@ function load(path, mocks = {}) {
 const preview = load('../src/components/ui/animationPreview.ts');
 const playback = load('../src/components/ui/RenderedAnimation.tsx', { './animationPreview': preview });
 const mediaHelpers = load('../src/components/characters/characterMediaItems.ts');
-const { CharacterMediaProvider, CharacterMediaGallery } = load('../src/components/characters/CharacterMedia.tsx', {
+const { CharacterMediaProvider, CharacterMediaGallery, useCharacterMedia } = load('../src/components/characters/CharacterMedia.tsx', {
   '@/api/client': { apiUrl: (url) => url },
   '@/components/ui/Button': { Button: ({ children, icon, ...props }) => React.createElement('button', props, icon, children) },
   '@/components/ui/MediaViewer': { MediaViewer: () => null },
@@ -37,7 +37,7 @@ const { CharacterArchive } = load('../src/components/characters/CharacterArchive
   '@/components/ui/Select': { Select: () => null },
   '@/components/ui/TrackPlayer': { TrackPlayer: () => null },
   '@/components/ui/RenderedAnimation': playback,
-  '@/components/characters/CharacterMedia': { CharacterMediaGallery },
+  '@/components/characters/CharacterMedia': { CharacterMediaGallery, useCharacterMedia },
   '@/components/ui/animationPreview': preview,
 });
 const clip = { animation: 'idle', url: 'https://cdn.test/idle.webm', mime_type: 'video/webm',

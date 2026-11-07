@@ -8,7 +8,7 @@ import { CharacterMediaProvider } from '@/components/characters/CharacterMedia';
 import '@/styles/character-profile.css';
 import { CharacterProfileVisual } from '@/components/characters/CharacterProfileVisual';
 import { CharacterModelImport } from '@/components/characters/CharacterModelImport';
-import { NpcProfile } from '@/components/profile/NpcProfile';
+import { NpcInteractions, NpcProfile } from '@/components/profile/NpcProfile';
 import {
   CharacterArchive,
   type CharacterArchiveData,
@@ -97,7 +97,7 @@ export function EntityProfileClient({
     }
     setArchive(null);
     setArchiveError('');
-    if (kind !== 'character' || data?.npc || selectedRole.startsWith('character:npc:')) return;
+    if (kind !== 'character' || data?.npc) return;
     const controller = new AbortController();
     api<CharacterArchiveData>(
       `/characters/${encodeURIComponent(selectedRole)}/archive?${gameVersion ? `game_version=${encodeURIComponent(gameVersion)}&` : ''}locale=${encodeURIComponent(locale)}`,
@@ -117,7 +117,10 @@ export function EntityProfileClient({
     if (family?.selected_key && family.selected_key !== data?.character?.canonical_key) {
       setSelectedRole(family.selected_key);
     }
-  }, [data]);
+    else if (kind === 'character' && !data?.npc && !family?.variants?.length && data?.character?.canonical_key) {
+      setSelectedRole(data.character.canonical_key);
+    }
+  }, [data, kind]);
 
   if (loading && !data) return <PageLoader />;
   if (error && !data)
@@ -129,6 +132,7 @@ export function EntityProfileClient({
 
   if (data?.npc) return <NpcProfile key={data.character.canonical_key} data={data} initialModel={initialModel} gameVersion={gameVersion} />;
 
+  const npcContextKey = data?.npc_context_key || data?.npc_context?.canonical_key;
   const entity = data?.[kind];
   const entityId = entity?.canonical_key?.split(':').at(-1) || entityKey;
   const fallbackName =
@@ -299,6 +303,10 @@ export function EntityProfileClient({
         ) : (
           <div className="character-archive-loading" role="status">Loading character details…</div>
         ))}
+      {kind === 'character' && profileRole === selectedRole && data?.npc_context && npcContextKey && (
+        <NpcInteractions key={npcContextKey} characterKey={npcContextKey}
+          npc={data.npc_context} gameVersion={gameVersion} />
+      )}
       <div className="profile-columns">
         <section className="content-panel">
           <PanelTitle
@@ -646,7 +654,7 @@ export function EntityProfileClient({
       {kind === 'character' && (
         <section className="content-panel full-panel">
           <PanelTitle number="03" title="Dialogue search" />
-          <InlineDialogueSearch character={entityKey} quests={quests} playerDisplay={playerDisplay} />
+          <InlineDialogueSearch character={selectedRole} quests={quests} playerDisplay={playerDisplay} />
         </section>
       )}
     </div>

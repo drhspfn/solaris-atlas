@@ -16,7 +16,7 @@ import { entityPath } from "../../data/entities";
 import { availableLocales } from "../../data/locales";
 import { Select } from "@/components/ui/Select";
 import { TrackPlayer } from "@/components/ui/TrackPlayer";
-import { CharacterMediaGallery } from "@/components/characters/CharacterMedia";
+import { CharacterMediaGallery, useCharacterMedia } from "@/components/characters/CharacterMedia";
 import type { AnimationPreview } from "@/components/ui/animationPreview";
 import "@/styles/character-voice-lines.css";
 import "@/styles/character-talents.css";
@@ -123,6 +123,11 @@ type MaterialUse = {
   required_count?: number;
   group_id?: number;
 };
+
+function hasVoiceLine(line: CharacterArchiveData["voice_lines"][number]) {
+  return !!(line.title?.trim() || line.text?.trim() || line.audio_event_path || line.audio_url ||
+    Object.values(line.audio_tracks ?? {}).some(Boolean) || line.audio_variants?.length);
+}
 
 function artworkLabel(art: CharacterArchiveData["artwork"][number]) {
   if (art.scope === "shared_resource") {
@@ -428,6 +433,7 @@ export function CharacterArchive({
   gameVersion?: string;
   introduction?: string;
 }) {
+  const { items: mediaItems } = useCharacterMedia();
   const [textLocale, setTextLocale] = useState(locale);
   const [textArchive, setTextArchive] = useState<{
     locale: string;
@@ -476,10 +482,28 @@ export function CharacterArchive({
     (art) =>
       art.kind === "RoleHeadIconLarge" && art.scope !== "shared_resource",
   );
+  const biography = archive?.biography &&
+    gameText(archive.biography).replace(/\s+/g, " ") !==
+      (introduction ? gameText(introduction).replace(/\s+/g, " ") : "");
+  const profile = archive?.profile;
+  const hasProfile = biography || profile?.max_level || profile?.element || profile?.quality ||
+    profile?.affiliation || profile?.country || profile?.birthday || profile?.talent ||
+    archive?.artwork.length || mediaItems.length || groups.size;
+  const skills = archive?.skills.filter((skill) =>
+    skill.name?.trim() || skill.description?.trim() || skill.attributes?.length,
+  ) ?? [];
+  const chain = archive?.resonance_chain.filter((entry) =>
+    entry.name?.trim() || entry.description?.trim(),
+  ) ?? [];
+  const voiceLines = spoken?.voice_lines.filter(hasVoiceLine) ?? [];
+  const voiceEvents = spoken?.other_voice_events.filter((event) => event.event?.trim()) ?? [];
+  const hasVoices = !!(archive?.voice_lines.some(hasVoiceLine) ||
+    archive?.other_voice_events.some((event) => event.event?.trim()) ||
+    voiceLines.length || voiceEvents.length);
 
   return (
     <div className="character-archive">
-      <details className="character-fold" open>
+      {!!hasProfile && <details className="character-fold" open>
         <summary>
           <BookOpen size={19} />
           <span>Profile & progression</span>
@@ -491,13 +515,9 @@ export function CharacterArchive({
           <ChevronDown size={17} />
         </summary>
         <div className="character-fold-body">
-          {archive?.biography &&
-            gameText(archive.biography).replace(/\s+/g, " ") !==
-              (introduction
-                ? gameText(introduction).replace(/\s+/g, " ")
-                : "") && (
+          {biography && (
               <p className="character-biography">
-                {gameText(archive.biography)}
+                {gameText(archive?.biography)}
               </p>
             )}
           <dl className="character-facts">
@@ -582,10 +602,8 @@ export function CharacterArchive({
               </details>
             </section>
           )}
-          <h3>
-            Upgrade materials <span>{groups.size}</span>
-          </h3>
-          {groups.size ? (
+          {!!groups.size && (<>
+            <h3>Upgrade materials <span>{groups.size}</span></h3>
             <div className="character-material-grid">
               {Array.from(groups.entries()).map(([key, group]) => (
                 <div className="character-material-card" key={key}>
@@ -619,30 +637,19 @@ export function CharacterArchive({
                 </div>
               ))}
             </div>
-          ) : (
-            <p className="character-muted">
-              No upgrade material records in this snapshot.
-            </p>
-          )}
+          </>)}
         </div>
-      </details>
+      </details>}
 
-      <details className="character-fold">
+      {!!skills.length && <details className="character-fold">
         <summary>
           <Swords size={19} />
           <span>Talents</span>
           <ChevronDown size={17} />
         </summary>
         <div className="character-fold-body">
-          {archive?.skills.length ? (
             <div className="character-skill-grid">
-              {archive.skills
-                .filter(
-                  (skill) =>
-                    skill.name?.trim() ||
-                    skill.description?.trim() ||
-                    skill.attributes?.length,
-                )
+              {skills
                 .map((skill) => (
                   <SkillCard
                     key={`${characterKey}-${skill.id}`}
@@ -650,23 +657,18 @@ export function CharacterArchive({
                   />
                 ))}
             </div>
-          ) : (
-            <p className="character-muted">
-              No skill records in this snapshot.
-            </p>
-          )}
         </div>
-      </details>
+      </details>}
 
-      <details className="character-fold">
+      {!!chain.length && <details className="character-fold">
         <summary>
           <Sparkles size={19} />
           <span>Resonance chain</span>
-          <small>{archive?.resonance_chain.length ?? 0} sequences</small>
+          <small>{chain.length} sequences</small>
           <ChevronDown size={17} />
         </summary>
         <div className="character-fold-body character-chain-grid">
-          {archive?.resonance_chain.map((chain) => (
+          {chain.map((chain) => (
             <article className="character-chain-card" key={chain.id}>
               <span className="character-chain-number">
                 {String(chain.order).padStart(2, "0")}
@@ -677,19 +679,14 @@ export function CharacterArchive({
               </div>
             </article>
           ))}
-          {!archive?.resonance_chain.length && (
-            <p className="character-muted">
-              No chain records in this snapshot.
-            </p>
-          )}
         </div>
-      </details>
+      </details>}
 
-      <details className="character-fold">
+      {hasVoices && <details className="character-fold">
         <summary>
           <Music2 size={19} />
           <span>Voice lines</span>
-          <small>{archive?.voice_lines.length ?? 0} entries</small>
+          <small>{voiceLines.length} entries</small>
           <ChevronDown size={17} />
         </summary>
         <div className="character-fold-body">
@@ -722,7 +719,7 @@ export function CharacterArchive({
             </p>
           )}
           <div className="character-voice-list" aria-busy={textLoading}>
-            {spoken?.voice_lines.map((line) => (
+            {voiceLines.map((line) => (
               <article className="character-voice-line" key={line.id}>
                 <div>
                   <small>{String(line.order).padStart(2, "0")}</small>
@@ -741,14 +738,14 @@ export function CharacterArchive({
               </article>
             ))}
           </div>
-          {!!spoken?.other_voice_events.length && (
+          {!!voiceEvents.length && (
             <details className="character-subfold">
               <summary>
                 Other character voice events{" "}
-                <span>{spoken.other_voice_events.length} event names</span>
+                <span>{voiceEvents.length} event names</span>
               </summary>
               <div className="character-asset-list">
-                {spoken.other_voice_events.map((event) => (
+                {voiceEvents.map((event) => (
                   <div key={`${event.category}-${event.event}`}>
                     <strong>
                       {event.category.replaceAll(/([a-z])([A-Z])/g, "$1 $2")}
@@ -761,7 +758,7 @@ export function CharacterArchive({
             </details>
           )}
         </div>
-      </details>
+      </details>}
     </div>
   );
 }

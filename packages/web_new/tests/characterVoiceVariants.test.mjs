@@ -21,7 +21,7 @@ function setup() {
     react: { ...React, useState: () => [selected, value => { selected = value; }] },
     '@/lib/router': {}, '../../api/client': { apiUrl: url => url }, '../../data/entities': {},
     '../../data/locales': { availableLocales: locales }, '@/components/ui/Select': { Select },
-    '@/components/ui/TrackPlayer': { TrackPlayer }, '@/components/characters/CharacterMedia': {},
+    '@/components/ui/TrackPlayer': { TrackPlayer }, '@/components/characters/CharacterMedia': { useCharacterMedia: () => ({ items: [] }) },
   };
   const exports = {};
   vm.runInNewContext(code, { exports, require: id => id.endsWith('.css') ? {} : mocks[id] ?? require(id) });
@@ -131,7 +131,7 @@ for (const gameVersion of ['3.5.0', undefined]) {
       } },
       '@/lib/router': {}, '../../data/entities': {}, '../../data/locales': { availableLocales: locales },
       '@/components/ui/Select': { Select }, '@/components/ui/TrackPlayer': { TrackPlayer },
-      '@/components/characters/CharacterMedia': {},
+      '@/components/characters/CharacterMedia': { useCharacterMedia: () => ({ items: [] }) },
       '../../api/client': { apiUrl: url => url, api: async url => {
         requests.push(url);
         const params = new URL(url, 'https://example.test').searchParams;
