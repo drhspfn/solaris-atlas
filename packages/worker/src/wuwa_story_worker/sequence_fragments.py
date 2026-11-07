@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import math
 import re
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -91,8 +92,10 @@ async def prepare_sequence_fragments(root, media, fmodel):
 async def publish_sequence_fragments(session, bundle, target, published, service, run_id, provenance):
     """Publish verified individual MP4s; retain authored section clocks and provenance."""
     import hashlib
+    import io
     import json
 
+    from PIL import Image, UnidentifiedImageError
     from sqlalchemy import select
     from wuwa_story.db.models.storage import FileObject, FileReference, FileType
     from wuwa_story.storage.hashing import content_object_key
@@ -122,6 +125,51 @@ async def publish_sequence_fragments(session, bundle, target, published, service
                 'Sequence fragments do not match the pinned client provenance')
         media = {**copy.deepcopy(media), 'schema_version': 1, 'complete_video': False,
                  'game_source': copy.deepcopy(provenance), 'components': []}
+        composition = manifest.get('composition')
+        frames = []
+        frame_bytes = 0
+        if composition is not None:
+            if (not isinstance(composition, dict) or type(composition.get('schema_version')) is not int
+                    or composition['schema_version'] != 1 or composition.get('state') not in ('ready', 'unsupported', 'failed')
+                    or not isinstance(composition.get('reasons'), list)
+                    or any(not isinstance(reason, dict) or not isinstance(reason.get('code'), str)
+                           or not reason['code'] for reason in composition['reasons'])
+                    or not isinstance(composition.get('frames'), list) or len(composition['frames']) > 256):
+                raise ValueError('Invalid sequence composition manifest')
+            media['composition'] = {key: copy.deepcopy(composition[key])
+                                    for key in ('schema_version', 'state', 'reasons')}
+            if composition['state'] == 'ready':
+                for frame in composition['frames']:
+                    if not isinstance(frame, dict):
+                        raise ValueError('Invalid sequence composition frame')
+                    entry = frame.get('file')
+                    time = frame.get('time_seconds')
+                    if (not isinstance(entry, str) or len(entry) > 1024 or not entry.startswith('composition/')
+                            or not entry.endswith('.png') or '\\' in entry
+                            or any(part in ('', '.', '..') for part in entry.split('/'))
+                            or any(not isinstance(frame.get(key), str) or not frame[key]
+                                   for key in ('source', 'scene_source'))
+                            or type(time) not in (int, float) or not math.isfinite(time) or time < 0
+                            or entry not in manifest['files'] or archive.namelist().count(entry) != 1):
+                        raise ValueError('Invalid sequence composition frame')
+                    expected = manifest['files'][entry]
+                    if (not isinstance(expected, dict) or type(expected.get('size_bytes')) is not int
+                            or not 0 < expected['size_bytes'] <= 16 * 1024 * 1024
+                            or not isinstance(expected.get('sha256'), str)
+                            or not re.fullmatch(r'[0-9a-f]{64}', expected['sha256'])):
+                        raise ValueError('Invalid sequence composition manifest entry')
+                    frame_bytes += expected['size_bytes']
+                    if frame_bytes > 128 * 1024 * 1024:
+                        raise ValueError('Sequence composition exceeds its archive size limit')
+                    data, expected = verified(archive, manifest, entry)
+                    try:
+                        with Image.open(io.BytesIO(data), formats=['PNG']) as image:
+                            if image.width * image.height > 16_777_216:
+                                raise ValueError('Sequence composition image is too large')
+                            image.verify()
+                    except (UnidentifiedImageError, OSError, SyntaxError) as error:
+                        raise ValueError('Invalid sequence composition PNG') from error
+                    frames.append((frame, data, expected))
         files = {}
         for section in media.get('sections', []):
             entry = section.get('file')
@@ -213,6 +261,39 @@ async def publish_sequence_fragments(session, bundle, target, published, service
                     'event_reference': section.get('reference'),
                     'language': track.get('language'), 'rover': track.get('rover')}
                 track.update(file_id=file.id, status='published', mime_type='audio/ogg')
+        illustrations = {}
+        for frame, data, expected in frames:
+            entry = frame['file']
+            if entry not in illustrations:
+                output = Path(bundle).parent / 'sequence-playback' / expected['sha256']
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_bytes(data)
+                digest = bytes.fromhex(expected['sha256'])
+                kind = await session.scalar(select(FileType.key).join(
+                    FileObject, FileObject.file_type_id == FileType.id).where(FileObject.sha256 == digest))
+                file = await service.register_file(session, output, kind or 'image', mime_type='image/png')
+                await service.register_variant(session, published.id, file.id, 'story_sequence_illustration', run_id)
+                reference = await session.scalar(select(FileReference).where(
+                    FileReference.owner_node_id == target['owner'], FileReference.release_id == target['release_id'],
+                    FileReference.reference_type == 'story_sequence_illustration',
+                    FileReference.source_path == target['path'], FileReference.source_name == entry,
+                    FileReference.metadata_json['asset_version'].astext == provenance['asset_version'],
+                    FileReference.metadata_json['download_id'].astext == provenance['download_id']))
+                if reference is None:
+                    reference = await service.register_reference(session, file_id=file.id,
+                        reference_type='story_sequence_illustration', owner_node_id=target['owner'],
+                        release_id=target['release_id'], source_path=target['path'], source_name=entry)
+                reference.file_id = file.id
+                reference.metadata_json = {'asset_version': provenance['asset_version'],
+                    'download_id': provenance['download_id'], 'bundle_file_id': published.id,
+                    'archive_entry': entry, 'game_source': copy.deepcopy(provenance),
+                    'frames': [{key: part[key] for key in ('source', 'scene_source', 'time_seconds')}
+                               for part, _, _ in frames if part['file'] == entry]}
+                illustrations[entry] = file.id
+                media['components'].append({'file_id': file.id, 'object_key': content_object_key(file.sha256),
+                    'size_bytes': len(data), 'mime_type': 'image/png', 'sha256': file.sha256.hex()})
+            media['sections'].append({'kind': 'illustration', 'status': 'published', 'file_id': illustrations[entry],
+                **{key: frame[key] for key in ('file', 'source', 'scene_source', 'time_seconds')}})
         return media
 
 

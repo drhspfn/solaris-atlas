@@ -1,5 +1,7 @@
 """Present source-backed runtime objectives without leaking raw action payloads."""
 
+import math
+
 from wuwa_story.db.repositories import story_browsing as repository
 from wuwa_story.story.service import _localized, prefetch_localizations
 
@@ -14,7 +16,7 @@ def encounter_nodes(blocks):
             yield from visit(tree['root'])
 
 
-async def sequence_playback(session, blocks, release_id):
+async def sequence_playback(session, blocks, release_id, flow_hashes=None):
     from wuwa_story.config.settings import get_settings
     from wuwa_story.db.repositories import sequence_playback as media_repository
     from wuwa_story.storage.s3 import S3Storage
@@ -37,6 +39,12 @@ async def sequence_playback(session, blocks, release_id):
                 expected[owner] = proof
     expected = {owner: proof for owner,
                 proof in expected.items() if owner not in conflicts}
+    for owner, digest in (flow_hashes or {}).items():
+        if type(owner) is int and isinstance(digest, str) and digest and owner not in conflicts:
+            if owner in expected and expected[owner][2] != digest:
+                expected.pop(owner)
+            elif owner not in expected:
+                expected[owner] = (None, None, digest)
     if not expected:
         return {}
     selected = {}
@@ -49,24 +57,48 @@ async def sequence_playback(session, blocks, release_id):
                 or media['schema_version'] != 1 or not isinstance(proof, dict)
                 or type(proof.get('schema_version')) is not int or proof['schema_version'] != 1
                 or media.get('game_source') != proof
-                or (proof.get('asset_version'), proof.get('download_id'),
-                    proof.get('presentation_sha256')) != expected[owner]
+                or not all(isinstance(proof.get(key), str) and proof[key]
+                           for key in ('asset_version', 'download_id', 'presentation_sha256'))
+                or proof['presentation_sha256'] != expected[owner][2]
+                or (expected[owner][0] is not None and
+                    (proof['asset_version'], proof['download_id']) != expected[owner][:2])
                 or any(metadata.get(key) != proof[key] for key in ('asset_version', 'download_id'))
                 or not isinstance(path, str) or proof.get('package_path') != path
                 or not isinstance(media.get('sections'), list)):
             continue
         authored_kinds = {'subsequence', 'camera',
                           'skeletal_animation', 'dialogue', 'event', 'flow_dialogue', 'audio_event'}
+        composition = media.get('composition')
+        if (not isinstance(composition, dict) or type(composition.get('schema_version')) is not int
+                or composition['schema_version'] != 1 or composition.get('state') not in ('ready', 'unsupported', 'failed')
+                or not isinstance(composition.get('reasons'), list)
+                or any(not isinstance(reason, dict) or not isinstance(reason.get('code'), str)
+                       or not reason['code'] for reason in composition['reasons'])):
+            composition = None
+        else:
+            composition = {key: composition[key] for key in (
+                'schema_version', 'state', 'reasons')}
         sections = [section for section in media['sections'] if isinstance(section, dict)
                     and ((section.get('kind') in authored_kinds and isinstance(section.get('source'), str))
                     or (section.get('kind') == 'movie_fragment' and section.get('status') == 'published'
                         and type(section.get('file_id')) is int
                         and all(isinstance(section.get(key), str) and section[key]
-                                for key in ('source', 'file', 'archive_path'))))]
+                                for key in ('source', 'file', 'archive_path')))
+                    or (composition is not None and composition['state'] == 'ready'
+                        and section.get('kind') == 'illustration' and section.get('status') == 'published'
+                        and type(section.get('file_id')) is int
+                        and all(isinstance(section.get(key), str) and section[key]
+                                for key in ('source', 'scene_source', 'file'))
+                        and type(section.get('time_seconds')) in (int, float)
+                        and math.isfinite(section['time_seconds']) and section['time_seconds'] >= 0))]
         # Choose only among fully matching proofs. A stale newer row cannot mask
         # a valid version, and an unavailable selected bundle never borrows files.
+        clean_media = {key: value for key,
+                       value in media.items() if key != 'composition'}
+        if composition is not None:
+            clean_media['composition'] = composition
         selected[owner] = {'file_id': file_id, 'source_path': path,
-                           'media': {**media, 'sections': sections}}
+                           'media': {**clean_media, 'sections': sections}}
     if not selected:
         return {}
     settings = get_settings()
@@ -83,15 +115,24 @@ async def sequence_playback(session, blocks, release_id):
         sections = [{**section, 'tracks': published_tracks(section)}
                     for section in bundle['media']['sections'] if section.get('kind') == 'audio_event']
         if any(section['tracks'] for section in sections):
-            audio_selected[owner] = {**bundle, 'media': {**bundle['media'], 'sections': sections}}
+            audio_selected[owner] = {
+                **bundle, 'media': {**bundle['media'], 'sections': sections}}
     audio_locations = (await media_repository.available_audio(session, audio_selected, release_id, settings.s3_bucket)
                        if audio_selected else {})
+    illustrations = (await media_repository.available_illustrations(session, selected, release_id, settings.s3_bucket)
+                     if any(section.get('kind') == 'illustration' for bundle in selected.values()
+                            for section in bundle['media']['sections']) else {})
     storage = S3Storage(settings)
 
     def present_section(owner, section):
         result = {key: value for key, value in section.items() if key != 'url'}
         if section.get('kind') == 'movie_fragment':
-            result['url'] = storage.public_url(locations[(owner, section['file_id'], section['source'])])
+            result['url'] = storage.public_url(
+                locations[(owner, section['file_id'], section['source'])])
+        elif section.get('kind') == 'illustration':
+            identity = (owner, section['file_id'], section['source'],
+                        section['scene_source'], section['time_seconds'])
+            result['url'] = storage.public_url(illustrations[identity])
         elif section.get('kind') == 'audio_event' and 'tracks' in section:
             result['tracks'] = [{**track, 'url': storage.public_url(audio_locations[(owner, track['file_id'], section['source'])])}
                                 for track in published_tracks(section)
@@ -102,7 +143,9 @@ async def sequence_playback(session, blocks, release_id):
                     'release_id': release_id, 'bundle_file_id': bundle['file_id'], 'sections': [
         present_section(owner, section)
         for section in bundle['media']['sections']
-        if section.get('kind') != 'movie_fragment' or (owner, section['file_id'], section['source']) in locations
+        if (section.get('kind') != 'movie_fragment' or (owner, section['file_id'], section['source']) in locations)
+        and (section.get('kind') != 'illustration' or
+             (owner, section['file_id'], section['source'], section['scene_source'], section['time_seconds']) in illustrations)
     ]} for owner, bundle in selected.items()}
 
 

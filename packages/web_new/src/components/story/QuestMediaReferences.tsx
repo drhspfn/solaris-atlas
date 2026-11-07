@@ -6,6 +6,7 @@ import { Select } from "../ui/Select";
 
 import { useNarrativePreferences } from "../../preferences/NarrativePreferences";
 import { cutsceneAnchor, packageCutsceneAnchor } from "./cutsceneAnchor";
+import type { SequenceMedia } from "./encounterTransitions";
 
 export interface MediaSource {
   file: string | null;
@@ -99,6 +100,7 @@ export interface QuestMediaEvent {
   transition?: boolean;
   title?: string;
   kind: "cutscene" | "sequence" | "audio_event";
+  sequence_media?: SequenceMedia;
   playback?: CutsceneFlow | null;
   action: string;
   flow_state: string;
@@ -320,7 +322,7 @@ export function DialogueAudioReference({
                 document
                   .querySelectorAll<HTMLMediaElement>("audio, video")
                   .forEach((other) => {
-                    if (other !== audio) other.pause();
+                    if (other !== audio && !other.hasAttribute("data-scene-background-music")) other.pause();
                   });
                 void audio.play().catch((error: DOMException) => {
                   // Moving to another scene intentionally interrupts pending playback.

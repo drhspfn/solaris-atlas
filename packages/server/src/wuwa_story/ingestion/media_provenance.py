@@ -9,6 +9,13 @@ from sqlalchemy import select
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 
 
+def composition_retryable(metadata: dict) -> bool:
+    composition = (metadata.get('sequence_media') or {}).get('composition') or {}
+    return (composition.get('state') == 'failed'
+            or any(reason.get('code') == 'renderer_disabled'
+                   for reason in composition.get('reasons', []) if isinstance(reason, dict)))
+
+
 def authored_package_path(target: dict) -> str:
     path = target.get("package_path") or target["path"]
     return path.split(".", 1)[0] if path.startswith("/Game/") else path
@@ -30,14 +37,18 @@ def matches_source(metadata: dict, source: dict, target: dict) -> bool:
     expected = {key: value for key, value in source.items()
                 if key != "tools" and (key != "voice_plan_id" or target.get("kind") != "image")}
     revision = target.get('sequence_metadata_revision')
-    sequence_audio = (target.get('path', '').startswith('story_sequence:')
-                      and type(revision) is int and revision >= 3)
+    sequence_target = target.get('path', '').startswith(
+        'story_sequence:') or (type(revision) is int and revision >= 5)
+    sequence_audio = sequence_target and type(
+        revision) is int and revision >= 3
     tools = {key: value for key, value in source.get("tools", {}).items()
              if (key != "WUWA_VGMSTREAM_PATH" or target.get("kind") != "image" or sequence_audio)
              and (key != 'WUWA_WWISER_PATH' or provenance.get('voice_variant') or sequence_audio)}
     return (
-        (not target.get('path', '').startswith('story_sequence:')
-         or target.get('sequence_metadata_revision') is None
+        ('soundtrack_context_sha256' not in target
+         or provenance.get('soundtrack_context_sha256') == target['soundtrack_context_sha256'])
+        and
+        (not sequence_target or target.get('sequence_metadata_revision') is None
          or provenance.get('sequence_metadata_revision') == target['sequence_metadata_revision'])
         and
         (target.get('kind') != 'spine' or provenance.get(
@@ -141,9 +152,15 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
                 target = {**base, 'source_name': reference.source_name}
                 expected[target_identity(target, reference_type)] = target
         metadata = reference.metadata_json or {}
+        composition = (metadata.get('sequence_media') or {}).get('composition') or {}
+        sequence = target is not None and (target.get('path', '').startswith('story_sequence:')
+                                           or target.get('sequence_metadata_revision') is not None)
+        if sequence and composition_retryable(metadata):
+            continue
+        illustrated = sequence and composition.get('state') in {'ready', 'unsupported'}
         preview = metadata.get('animation_preview') or {}
         native_ready = preview.get('recipe') == 'riglyph-native-v1' and preview.get('status') == 'ready' and preview.get('variants')
-        playable = not require_spine_playback or target is None or target.get('kind') != 'spine' or native_ready or ((metadata.get('playback') or {}).get('variants') and (metadata.get('playback') or {}).get('components') and not (metadata.get('playback') or {}).get('unsupported'))
+        playable = not require_spine_playback or target is None or target.get('kind') != 'spine' or native_ready or illustrated or ((metadata.get('playback') or {}).get('variants') and (metadata.get('playback') or {}).get('components') and not (metadata.get('playback') or {}).get('unsupported'))
         if target is not None and playable and matches_source(metadata, source, target):
             candidates.append((target_identity(target, reference_type), file.size_bytes,
                                location.object_key, reference, location))

@@ -25,13 +25,15 @@ from wuwa_story.db.models.storage import FileLocation, FileReference
 from wuwa_story.db.repositories.nodes import get_quest
 from wuwa_story.db.session import get_session
 from wuwa_story.ingestion.cutscenes import Clip, PlaybackFlow
+from wuwa_story.ingestion.spine_presentation import flow_presentation
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.story import media as story_media
+from wuwa_story.story import runtime_service
 from wuwa_story.story.cutscene_occurrences import group_cutscene_occurrences
 from wuwa_story.story.cutscene_publications import publication_order, publication_types
+from wuwa_story.story.scene_continuations import scene_continuations
 from wuwa_story.story.service import _quest_page_state_ids
 from wuwa_story.story.tree_order import authored_order
-from wuwa_story.story.scene_continuations import scene_continuations
 
 router = APIRouter(tags=["story browsing"])
 
@@ -41,6 +43,7 @@ async def _links(
 ) -> dict[int, list[dict[str, Any]]]:
     return await story_media.media_links(session, from_ids, relations, release_id)
 
+
 async def dialogue_media(
     session: AsyncSession, line_ids: list[int], release_id: int | None
 ) -> dict[int, dict[str, Any]]:
@@ -49,6 +52,7 @@ async def dialogue_media(
         session, line_ids, release_id, link_loader=_links,
         settings_factory=get_settings, storage_factory=S3Storage,
     )
+
 
 async def cutscene_videos(
     session: AsyncSession, asset_ids: list[int], asset_version: str | None = None,
@@ -63,7 +67,8 @@ async def cutscene_videos(
         select(FileReference, FileLocation.object_key)
         .join(FileLocation, FileLocation.file_id == FileReference.file_id)
         .where(FileReference.owner_node_id.in_(asset_ids),
-               FileReference.reference_type.in_(publication_types("cutscene_video")),
+               FileReference.reference_type.in_(
+                   publication_types("cutscene_video")),
                FileLocation.backend == "s3", FileLocation.bucket == settings.s3_bucket,
                FileLocation.available.is_(True), FileLocation.is_primary.is_(True))
         .where(FileReference.metadata_json["asset_version"].astext == asset_version if asset_version else True)
@@ -93,7 +98,8 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
         select(FileReference)
         .where(
             FileReference.owner_node_id.in_(cutscene_ids),
-            FileReference.reference_type.in_(publication_types("cutscene_flow")),
+            FileReference.reference_type.in_(
+                publication_types("cutscene_flow")),
         )
         .order_by(publication_order(FileReference.reference_type), FileReference.id.desc())
     )
@@ -106,12 +112,14 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
             selected[reference.owner_node_id] = reference
     result = {}
     for owner_id, reference in selected.items():
-        cutscene_key = reference.metadata_json.get("cutscene_key") or getattr(reference, "source_path", None)
+        cutscene_key = reference.metadata_json.get(
+            "cutscene_key") or getattr(reference, "source_path", None)
         flow = PlaybackFlow.model_validate(reference.metadata_json["flow"])
         keys = {node.asset for node in flow.nodes if isinstance(node, Clip)}
         nodes = list(await session.scalars(select(Node).where(Node.canonical_key.in_(keys))))
         videos = await cutscene_videos(
-            session, [node.id for node in nodes], reference.metadata_json["asset_version"],
+            session, [
+                node.id for node in nodes], reference.metadata_json["asset_version"],
             cutscene_key=cutscene_key,
         )
         media = {node.canonical_key: {**videos[node.id], "asset_node_id": node.id}
@@ -134,7 +142,8 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
                     "audio_tracks": bundles[asset.id]["tracks"],
                     "timeline_offset": 0,
                 }
-        segment_nodes = [node for node in flow.nodes if isinstance(node, Clip) and node.segment]
+        segment_nodes = [node for node in flow.nodes if isinstance(
+            node, Clip) and node.segment]
         if segment_nodes:
             settings = get_settings()
             storage = S3Storage(settings)
@@ -142,8 +151,10 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
                 select(FileReference, FileLocation.object_key)
                 .join(FileLocation, FileLocation.file_id == FileReference.file_id)
                 .where(
-                    FileReference.owner_node_id.in_([node.id for node in nodes]),
-                    FileReference.reference_type.in_(publication_types("cutscene_segment")),
+                    FileReference.owner_node_id.in_(
+                        [node.id for node in nodes]),
+                    FileReference.reference_type.in_(
+                        publication_types("cutscene_segment")),
                     FileReference.reference_type == "cutscene_segment"
                     if reference.reference_type == "cutscene_flow"
                     and reference.metadata_json.get("publication_complete") is True else True,
@@ -185,7 +196,8 @@ async def cutscene_flows(session: AsyncSession, cutscene_ids: list[int]) -> dict
                         "url": bundle["videos"][key],
                         "audio_tracks": bundle["tracks"],
                     }
-        required = {node.segment or node.asset for node in flow.nodes if isinstance(node, Clip)}
+        required = {
+            node.segment or node.asset for node in flow.nodes if isinstance(node, Clip)}
         # Publish the whole path or none of it; a broken branch is not a playable flow.
         if required.issubset(media):
             result[owner_id] = {
@@ -213,7 +225,8 @@ async def quest_media(
     game_quest_id = quest.game_quest_id
     release_id = await _release_id(session, game_version)
     if release_id is None:
-        raise HTTPException(status_code=404, detail="game version not imported")
+        raise HTTPException(
+            status_code=404, detail="game version not imported")
     tree_order = await authored_order(session, game_quest_id, release_id)
     state_ids = await _quest_page_state_ids(session, quest.node_id, release_id)
     if tree_order:
@@ -251,7 +264,7 @@ async def quest_media(
     cutscene_ids = [link["node_id"] for entries in action_links.values() for link in entries
                     if link["relation"] == "plays_cutscene"]
     cutscene_ids = list(set(cutscene_ids) | {runtime_nodes[ref['reference']] for _, ref in runtime_refs
-                                          if ref['kind'] == 'cutscene' and ref['reference'] in runtime_nodes})
+                                             if ref['kind'] == 'cutscene' and ref['reference'] in runtime_nodes})
     flows = await cutscene_flows(session, cutscene_ids)
     explanation = await session.scalar(
         select(Document)
@@ -262,7 +275,8 @@ async def quest_media(
             Document.document_type == f"story-explanation:{release_id}",
         )
         .order_by(
-            (Locale.code == locale).desc(), (Locale.code == "en").desc(), Document.revision.desc()
+            (Locale.code == locale).desc(), (Locale.code ==
+                                             "en").desc(), Document.revision.desc()
         )
         .limit(1)
     )
@@ -280,7 +294,8 @@ async def quest_media(
                         if report and report.id == description["visual_reference_id"]:
                             media["description"] = description
     variants = await _links(session, cutscene_ids, ("has_variant", "uses_audio_event", "uses_audio_event_normalized", "uses_caption"), release_id)
-    child_ids = [link["node_id"] for entries in variants.values() for link in entries]
+    child_ids = [link["node_id"] for entries in variants.values()
+                 for link in entries]
     assets = await _links(session, child_ids, ("references_asset",), release_id)
     playable = await cutscene_videos(session, [asset["node_id"] for entries in assets.values() for asset in entries])
     resource_rows = await session.execute(
@@ -311,6 +326,7 @@ async def quest_media(
                 "kind": {"plays_cutscene": "cutscene", "plays_sequence_asset": "sequence",
                          "posts_audio_event": "audio_event"}[link["relation"]],
                 "action": action_key, "flow_state": state.state_key,
+                "_sequence_owner": state.node_id,
                 "action_index": action.action_index, "reference": link["canonical_key"],
                 "context_inferred": state.node_id in contextual_state_ids,
                 "story_order_mapped": bool(tree_order and state.state_key in tree_order['mapped_flow_states']),
@@ -320,14 +336,20 @@ async def quest_media(
                 "reference_kind": "unreal_asset_path"
                 if link["canonical_key"].startswith("asset:ue:") else "cg_name",
             }
-            position = (tree_order or {}).get('positions', {}).get(state.state_key)
+            position = (tree_order or {}).get(
+                'positions', {}).get(state.state_key)
             if position:
                 entry['story_position'] = [*position, action.action_index, -1]
-            review_position = (tree_order or {}).get('review_positions', {}).get(state.state_key)
+            review_position = (tree_order or {}).get(
+                'review_positions', {}).get(state.state_key)
             if review_position is not None:
-                entry['review_position'] = [*review_position, action.action_index, -1]
+                entry['review_position'] = [
+                    *review_position, action.action_index, -1]
                 entry['review_order_source'] = tree_order['review_source']
             sources.append((entry, link['node_id']))
+    state_owners = defaultdict(set)
+    for _, state, _ in action_rows:
+        state_owners[state.state_key].add(state.node_id)
     for block, ref in runtime_refs:
         entry = {
             'kind': ref['kind'], 'action': block['id'] + ref['raw_path'],
@@ -345,12 +367,83 @@ async def quest_media(
         if block.get('interaction_id'):
             entry['interaction_id'] = block['interaction_id']
             entry['action'] += ':' + block['interaction_id']
+        source = block.get('source') or {}
+        owners = state_owners.get(source.get('key'), set())
+        if (ref['kind'] == 'sequence' and source.get('file') == 'BinData/flowState/flowstate.json'
+                and len(owners) == 1):
+            entry['_sequence_owner'] = next(iter(owners))
+            entry['_sequence_cue_path'] = ref['raw_path']
         sources.append((entry, runtime_nodes.get(ref['reference'])))
+    sequence_owners = {entry['_sequence_owner'] for entry, _ in sources
+                       if entry['kind'] == 'sequence' and '_sequence_owner' in entry}
+    presentations = {}
+    if sequence_owners:
+        rows = await session.execute(
+            select(NodeRevision.node_id, SourceRecord.data)
+            .join(SourceRecord, SourceRecord.id == NodeRevision.source_record_id)
+            .where(NodeRevision.node_id.in_(sequence_owners), NodeRevision.release_id == release_id,
+                   SourceRecord.release_id == release_id)
+            .order_by(NodeRevision.revision.desc()))
+        for owner, raw in rows:
+            if owner not in presentations and isinstance(raw, dict):
+                presentations[owner] = flow_presentation(raw)
+    sequence_media = await runtime_service.sequence_playback(
+        session, [], release_id, {owner: value['sha256'] for owner, value in presentations.items()}) if presentations else {}
     events = []
     for entry, target_id in sources:
+        owner = entry.pop('_sequence_owner', None)
+        cue_path = entry.pop('_sequence_cue_path', None)
+        if entry['kind'] == 'sequence' and owner in sequence_media:
+            media = sequence_media[owner]
+            asset = entry.get('engine_path')
+            cues = [cue for cue in presentations[owner]['cues'] if cue['kind'] == 'sequence'
+                    and cue['asset'] == asset and (cue_path is None or cue.get('source_path') == cue_path)]
+            asset_bindings = media.get('sequence_assets')
+            bindings = [item for item in (asset_bindings if isinstance(asset_bindings, list) else []) if isinstance(item, dict)
+                        and item.get('asset') == asset and isinstance(item.get('scenes'), list)
+                        and item['scenes'] and all(isinstance(scene, str) and scene for scene in item['scenes'])]
+            media_scenes = media.get('scenes')
+            source_scenes = [scene['source'] for scene in (media_scenes if isinstance(media_scenes, list) else [])
+                             if isinstance(scene, dict) and isinstance(scene.get('source'), str) and scene['source']]
+            all_cues = [cue for cue in presentations[owner]
+                        ['cues'] if cue['kind'] == 'sequence']
+            if not bindings and len(all_cues) == 1 and len(cues) == 1 and len(source_scenes) == 1:
+                bindings = [{'asset': asset, 'scenes': source_scenes}]
+
+            def flow_music(section, flow_owner=owner, digest=presentations[owner]['sha256'],
+                           client=media.get('game_source') or {}):
+                proof = section.get('source_proof')
+                return (section.get('kind') == 'audio_event' and section.get('scope') == 'flow'
+                        and section.get('reconstruction_kind') == 'levelplay_fixed_start'
+                        and isinstance(proof, dict) and proof.get('flow_owner') == flow_owner
+                        and proof.get('presentation_sha256') == digest and proof.get('release_id') == release_id
+                        and all(isinstance(client.get(key), str) and client[key] and proof.get(key) == client[key]
+                                for key in ('asset_version', 'download_id')))
+            if len(cues) == 1 and len(bindings) == 1:
+                scenes = set(bindings[0]['scenes'])
+                entry['sequence_media'] = {**media, 'sequence_assets': bindings,
+                                           'sections': [section for section in media['sections']
+                                 if (flow_music(section) if section.get('scope') == 'flow'
+                                     else section.get('scene_source') in scenes)],
+                                           'scenes': [scene for scene in (media_scenes if isinstance(media_scenes, list) else [])
+                                                      if isinstance(scene, dict) and scene.get('source') in scenes]}
+            elif cues or entry.get('story_block_id'):
+                composition = media.get('composition') or {
+                    'schema_version': 1, 'reasons': []}
+                entry['sequence_media'] = {**media, 'sequence_assets': [],
+                                           'sections': [section for section in media['sections'] if cues and flow_music(section)], 'scenes': [],
+                                           'composition': {**composition, 'state': 'unsupported',
+                                                           'reasons': [*composition.get('reasons', []), {'code': 'scene_binding_unavailable'}]}}
+        elif entry['kind'] == 'sequence' and entry.get('story_block_id'):
+            # Runtime actions are sourced from quest/level nodes, not a flow
+            # state. Asset equality alone does not prove a flow ownership link.
+            entry['sequence_media'] = {'schema_version': 1, 'complete_video': False, 'sections': [],
+                                       'composition': {'schema_version': 1, 'state': 'unsupported',
+                                                       'reasons': [{'code': 'flow_owner_unavailable'}]}}
         if entry["kind"] == "cutscene":
             entry["playback"] = flows.get(target_id)
-            entry["transcript_states"] = sorted(set(transcript_states[target_id]))
+            entry["transcript_states"] = sorted(
+                set(transcript_states[target_id]))
             # Timing schema is verified against the current client, not assumed for old builds.
             entry["captions"] = caption_tracks([
                 resource_raw[child["node_id"]]
@@ -364,21 +457,21 @@ async def quest_media(
                      "cg_id": resource_raw[child["node_id"]].get("CgId"),
                      "girl_or_boy": resource_raw[child["node_id"]].get("GirlOrBoy"),
                      "belong_branch": resource_raw[child["node_id"]].get("BelongBranch"),
-                 } if child["relation"] == "has_variant" and child["node_id"] in resource_raw else None,
-                 "caption": {
+                } if child["relation"] == "has_variant" and child["node_id"] in resource_raw else None,
+                    "caption": {
                      "localization_key": resource_raw[child["node_id"]].get("CaptionText"),
                      "show_moment": resource_raw[child["node_id"]].get("ShowMoment"),
                      "duration": resource_raw[child["node_id"]].get("Duration"),
                      "timing_unit": "unverified",
-                 } if child["relation"] == "uses_caption" and child["node_id"] in resource_raw else None,
-                 "assets": [
+                } if child["relation"] == "uses_caption" and child["node_id"] in resource_raw else None,
+                    "assets": [
                      {"reference": asset["canonical_key"],
                       "engine_path": asset["canonical_key"].removeprefix("asset:ue:")
                       if asset["canonical_key"].startswith("asset:ue:") else None,
                       "reference_kind": "unreal_asset_path", "basis": asset["basis"],
                       "source": asset["source"], "video": playable.get(asset["node_id"])}
                      for asset in assets.get(child["node_id"], [])
-                 ]}
+                ]}
                 for child in variants.get(target_id, [])
             ]
         events.append(entry)
@@ -386,11 +479,13 @@ async def quest_media(
         session, [quest.node_id], ("references_video_package",), release_id
     )
     package_assets = await _links(
-        session, [link["node_id"] for link in package_links.get(quest.node_id, [])],
+        session, [link["node_id"]
+                  for link in package_links.get(quest.node_id, [])],
         ("references_asset",), release_id,
     )
     package_scenes = await _links(session, [quest.node_id], ("references_packaged_cutscene",), release_id)
-    related = {link["node_id"]: link for link in package_scenes.get(quest.node_id, [])}
+    related = {link["node_id"]
+        : link for link in package_scenes.get(quest.node_id, [])}
     package_flows = await cutscene_flows(session, list(related)) if related else {}
     continuations = await scene_continuations(session, list(related), quest.node_id, release_id, locale)
     return group_cutscene_occurrences({

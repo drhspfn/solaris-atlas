@@ -228,9 +228,9 @@ test('component availability never claims full cinematic playback', () => {
   for (const playbackResolved of [false, true]) {
     const markup = renderToStaticMarkup(React.createElement(EncounterCinematicBoundary,
       { media: [cinematic()], componentCount: 2, playbackResolved }));
-    assert.match(markup, /In-game scene · 2 video components available/);
+    assert.match(markup, /Scene · 2 video components available/);
     assert.doesNotMatch(markup, /Playback pending|Playback available/);
-    assert.match(markup, /Full scene playback cannot currently be reconstructed here/);
+    assert.match(markup, /Full scene playback is not available here/);
   }
 });
 
@@ -332,8 +332,8 @@ test('authored boundaries never claim a whole sequence is an MP4 or completed pl
     React.createElement('p', { id: 'line-SHUTUP' }, 'SHUT UP!')));
   assert.match(markup, /class="marker">Scene<\/div>/); assert.match(markup, /End scene/);
   const visible = markup.split('<details class="source">')[0];
-  assert.match(visible, /In-game cinematic · playback unavailable/);
-  assert.match(visible, /rendered by the game engine/);
+  assert.match(visible, /Scene · full playback unavailable/);
+  assert.doesNotMatch(visible, /rendered by the game engine/);
   assert.doesNotMatch(visible, /Playback pending/);
   assert.doesNotMatch(visible, /Action boundaries|cinematic action|In-game cinematic sequence/);
   assert.match(markup, /do not establish playback duration or completion/);
@@ -360,14 +360,14 @@ test('published fragments deduplicate display files but retain original metadata
   ] };
   const before = JSON.stringify(media), playable = playableEncounterFragments(media);
   assert.deepEqual(Array.from(playable, p => p.file_id), [7, 10]); assert.equal(JSON.stringify(media), before);
-  const tree = QuestSequenceFragments({ media });
+  const tree = allNodes(QuestSequenceFragments({ media })).find(node => Array.isArray(node.props?.items));
   assert.equal(tree.props.items.length, 2);
   assert.equal(tree.props.items[0].src, 'https://cdn.test/M0334.webm');
   assert.equal(tree.props.items[0].start, undefined); assert.equal(tree.props.items[0].end, undefined);
   const list = tree.type(tree.props);
   allNodes(list).find(n => n.props?.onClick).props.onClick();
   assert.equal(opened.at(-1)[0][0].src, 'https://cdn.test/M0334.webm');
-  assert.equal(renderToStaticMarkup(React.createElement(QuestSequenceFragments, { media: { ...media, sections: [] } })), '');
+  assert.match(renderToStaticMarkup(React.createElement(QuestSequenceFragments, { media: { ...media, sections: [] } })), /illustrations have not been rendered/);
 });
 
 
@@ -443,7 +443,7 @@ test('soundtrack selectors expose only published languages and actual Rover alte
   assert.match(singleRover, /Soundtrack language/);
   assert.doesNotMatch(singleRover, /Soundtrack Rover/);
   for (const track of [soundtrackTrack({ status: 'pending' }), soundtrackTrack({ url: 'javascript:alert(1)' }),
-    soundtrackTrack({ file: 'audio/../wrong.ogg' })]) assert.equal(renderAudio([track]), '');
+    soundtrackTrack({ file: 'audio/../wrong.ogg' })]) assert.doesNotMatch(renderAudio([track]), /<audio\b/);
 });
 
 test('soundtrack selector changes choose one matching whole event without inventing Rover variants', () => {
@@ -489,7 +489,7 @@ test('published video components are actually reachable inside their flow disclo
   const markup = render(data);
   assert.match(markup, /Video components · 1/);
   assert.match(markup, /View video component 1/);
-  assert.match(markup, /used inside the game-rendered scene/);
+  assert.match(markup, /files are associated with the scene/);
   assert.doesNotMatch(markup, /<video/);
 });
 
@@ -526,6 +526,7 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     '@/components/story/cutsceneAnchor': loadStory('cutsceneAnchor'),
 
     '@/components/story/questReading': loadStory('questReading'),
+    '@/components/story/sequenceReader': loadStory('sequenceReader'),
     '@/components/story/cutscenePlacement': loadStory('cutscenePlacement'),
     '@/components/dialogue/PlayerText': { PlayerText: ({ value, fallback }) => typeof value === 'string' ? value : value?.content || fallback },
     '@/data/localized': { localizedText },
@@ -580,7 +581,7 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
   assert(start < markup.indexOf(components) && markup.indexOf(components) < markup.indexOf('SHUT UP!'),
     'video components belong inside Scene before its dialogue');
   const scene = markup.slice(start, end);
-  assert.match(scene, /In-game scene · 1 video components available/);
+  assert.match(scene, /Scene · 1 video components available/);
   assert.doesNotMatch(scene, /Playback pending|Playback available|full playback/i);
   assert.match(markup, /Read the dialogue shared by this branch/);
   assert.match(markup, /cited-passage/);

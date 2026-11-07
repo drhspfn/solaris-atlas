@@ -178,15 +178,15 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
             if retained is not None:
                 from wuwa_story_worker.sequence_metadata import recompile_bundle
                 bundle, originals = await asyncio.to_thread(recompile_bundle, retained,
-                    retained.with_name('recompiled.zip'), target)
+                                                            retained.with_name('recompiled.zip'), target)
             else:
                 bundle, originals = await build_spine_bundle(root, target['resource_id'], fmodel, converter,
-                                                         presentation=target.get(
+                                                             presentation=target.get(
                                                              'presentation'),
-                                                         **({'direct_resources': target['direct_resources']}
-                                                            if target.get('direct_resources') else {}),
-                                                         **({'sequence_metadata_revision': target['sequence_metadata_revision']}
-                                                            if target['path'].startswith('story_sequence:') and 'sequence_metadata_revision' in target else {}))
+                                                             **({'direct_resources': target['direct_resources']}
+                                                                if target.get('direct_resources') else {}),
+                                                             **({'sequence_metadata_revision': target['sequence_metadata_revision']}
+                                                                if 'sequence_metadata_revision' in target else {}))
         except BlockingIOError:
             raise
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
@@ -196,10 +196,11 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
                            target['resource_id'], str(error)[:500])
             missing.append(target['path'])
             continue
-        if target['path'].startswith('story_sequence:') and target.get('sequence_metadata_revision', 0) >= 3:
+        if target.get('sequence_metadata_revision', 0) >= 3:
             from wuwa_story_worker.sequence_audio_prepare import prepare_sequence_audio
-            bundle, audio_sources = await prepare_sequence_audio(root, bundle, fmodel, converter,
-                                                                 voice_root=voice_root)
+            bundle, audio_sources = await prepare_sequence_audio(
+                root, bundle, fmodel, converter, voice_root=voice_root,
+                **({'soundtrack_context': target['soundtrack_context']} if 'soundtrack_context' in target else {}))
             originals = [*originals, *audio_sources]
         files.append((target, bundle, 'unknown', 'application/zip', originals))
     voices = [t for t in targets if t["kind"] == "voice"]
@@ -259,17 +260,22 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
         variant_originals = []
         if unresolved:
             from wuwa_story_worker.character_voice_variants import verified_alternatives
-            bank_path = 'Client/Content/Aki/WwiseAudio_Generated/Event/' + source.rsplit('/', 1)[-1].split('.')[0] + '.bnk'
-            bank, init = banks.get(bank_path), banks.get('Client/Content/Aki/WwiseAudio_Generated/Init.bnk')
+            bank_path = 'Client/Content/Aki/WwiseAudio_Generated/Event/' + \
+                source.rsplit('/', 1)[-1].split('.')[0] + '.bnk'
+            bank, init = banks.get(bank_path), banks.get(
+                'Client/Content/Aki/WwiseAudio_Generated/Init.bnk')
             try:
                 if bank is None or init is None:
-                    raise ValueError('Exact pinned event bank and Init are required for alternatives')
+                    raise ValueError(
+                        'Exact pinned event bank and Init are required for alternatives')
                 alternatives, proof = await verified_alternatives(bank, init, root, cooked, tool)
                 variant_originals = [bank, init]
             except ValueError as error:
-                unresolved = {language: f'{reason}; {error}' for language, reason in unresolved.items()}
+                unresolved = {
+                    language: f'{reason}; {error}' for language, reason in unresolved.items()}
         for target in (t for t in voices if t["path"] == source):
-            choices = [v for v in alternatives if v['language'] == target['language']]
+            choices = [v for v in alternatives if v['language']
+                       == target['language']]
             if target['language'] in unresolved and choices:
                 names = sorted(v['source_name'] for v in choices)
                 for choice in choices:
@@ -391,6 +397,33 @@ async def _process_entity_media(payload: dict, connection) -> None:
         await finish_writes(_process_entity_workspace(payload, connection, root))
 
 
+async def resolve_soundtrack_targets(root, targets, fmodel, source):
+    """Resolve native context before deciding whether an existing bundle is reusable."""
+    from wuwa_story_worker.sequence_levelplay_context import resolve_levelplay_context
+
+    result = []
+    for original in targets:
+        target = dict(original)
+        if (target.get('kind') == 'spine' and target.get('sequence_metadata_revision', 0) >= 5
+                and target.get('presentation')):
+            context = await resolve_levelplay_context(root, target, fmodel, provenance=source)
+            if context is not None:
+                proof = context.get('source_proof') or {}
+                if (proof.get('asset_version') != source['asset_version']
+                        or proof.get('download_id') != source['download_id']
+                        or proof.get('release_id') != target['release_id']
+                        or proof.get('flow_owner') != target['owner']
+                        or proof.get('presentation_sha256') != target.get('presentation_sha256')):
+                    raise ValueError(
+                        'LevelPlay soundtrack context differs from its exact target')
+            target['soundtrack_context'] = context
+            target['soundtrack_context_sha256'] = hashlib.sha256(json.dumps(
+                context, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False
+            ).encode()).hexdigest()
+        result.append(target)
+    return result
+
+
 async def _process_entity_workspace(payload: dict, connection, root: Path) -> None:
     request = MediaRequest.model_validate(payload["request"])
     plan = json.loads((root / "plan.json").read_text(encoding="utf-8"))
@@ -421,8 +454,11 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 tool_names = ["WUWA_FMODEL_PATH",
                               "WUWA_TEXTURE_CONVERTER_PATH"]
                 if any(t["kind"] == "voice" or (t.get('path', '').startswith('story_sequence:')
-                       and t.get('sequence_metadata_revision', 0) >= 3) for t in payload["targets"]):
-                    tool_names.extend(["WUWA_VGMSTREAM_PATH", "WUWA_WWISER_PATH"])
+                       and t.get('sequence_metadata_revision', 0) >= 3)
+                       or (t.get('kind') == 'spine' and t.get('sequence_metadata_revision', 0) >= 5)
+                       for t in payload["targets"]):
+                    tool_names.extend(
+                        ["WUWA_VGMSTREAM_PATH", "WUWA_WWISER_PATH"])
                 tools = {name: await asyncio.to_thread(sha256, tool_path(name)) for name in tool_names}
                 source = {"asset_version": request.asset_version, "download_id": request.download_id,
                           "tier": request.tier, "voice_plan_id": request.voice_plan_id, "tools": tools}
@@ -432,8 +468,10 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 if voice_root is not None and request.voice_plan_id is None and "voice" in request.kinds:
                     source["voice_plan_id"] = json.loads(
                         (voice_root / "plan.json").read_text(encoding="utf-8"))["id"]
+                resolved_targets = await resolve_soundtrack_targets(
+                    root, payload['targets'], tool_path('WUWA_FMODEL_PATH'), source)
                 targets = await missing_media_targets(
-                    session, payload["targets"], source=source, storage=storage,
+                    session, resolved_targets, source=source, storage=storage,
                     require_spine_playback=get_settings().story_spine_playback_enabled)
                 # Release reuse/projection locks before builds and the separate inventory session.
                 await session.commit()
@@ -483,7 +521,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 for entry in entries:
                     if (entry['expected'], entry['language']) in voice_reasons and entry['status'] == 'found':
                         entry['status'] = 'partial'
-                report['missing'] = sum(e['status'] in {'not_resolved', 'partial'} for e in entries)
+                report['missing'] = sum(
+                    e['status'] in {'not_resolved', 'partial'} for e in entries)
                 report['found'] = len(entries) - report['missing']
                 run.raw_output = {"media_report": report, "published": 0}
                 await session.commit()
@@ -530,8 +569,10 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                                         'sequence_media_schema': target.get('sequence_media_schema'),
                                         'presentation_sha256': target.get('presentation_sha256'),
                                         'control_sources_complete': not controls.get('missing')}
-                        if target['path'].startswith('story_sequence:') and 'sequence_metadata_revision' in target:
+                        if 'sequence_metadata_revision' in target:
                             spine_source['sequence_metadata_revision'] = target['sequence_metadata_revision']
+                        if 'soundtrack_context_sha256' in target:
+                            spine_source['soundtrack_context_sha256'] = target['soundtrack_context_sha256']
                     provenance = await asyncio.to_thread(
                         source_provenance, request, target, originals, tools,
                         spine_source if target['kind'] == 'spine' else voice_provenance.get(
@@ -548,7 +589,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                             FileReference.release_id == target["release_id"],
                             FileReference.reference_type == reference_type,
                             FileReference.source_path == target["path"],
-                            FileReference.source_name == target.get('source_name', target["language"]),
+                            FileReference.source_name == target.get(
+                                'source_name', target["language"]),
                             FileReference.metadata_json["asset_version"].astext
                             == request.asset_version,
                         ).execution_options(populate_existing=True)
@@ -594,7 +636,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                             owner_node_id=target["owner"],
                             release_id=target["release_id"],
                             source_path=target["path"],
-                            source_name=target.get('source_name', target["language"]),
+                            source_name=target.get(
+                                'source_name', target["language"]),
                         )
                     reference.file_id = published.id
                     sequence_media = None
@@ -602,6 +645,10 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         from wuwa_story_worker.sequence_fragments import publish_sequence_fragments
                         sequence_media = await publish_sequence_fragments(
                             session, path, target, published, service, run.id, provenance)
+                        from wuwa_story.ingestion.media_provenance import composition_retryable
+                        if composition_retryable({'sequence_media': sequence_media}):
+                            riglyph_failures.append({'path': target['path'],
+                                                     'reasons': sequence_media['composition']['reasons']})
                     playback = None
                     if target['kind'] == 'spine' and not rendered_metadata and get_settings().story_spine_playback_enabled and (animation or {}).get('display') == 'animated':
                         from wuwa_story_worker.story_spine import publish_open_playback

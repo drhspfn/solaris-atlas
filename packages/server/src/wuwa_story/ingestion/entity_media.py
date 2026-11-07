@@ -17,7 +17,7 @@ from wuwa_story.ingestion.dungeon_context import walk
 from wuwa_story.ingestion.spine_presentation import SPINE_RECIPE, flow_presentation
 from wuwa_story.ingestion.talk_backgrounds import background_config
 
-SEQUENCE_METADATA_REVISION = 4
+SEQUENCE_METADATA_REVISION = 5
 
 
 class MediaRequest(BaseModel):
@@ -179,7 +179,8 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
             )
             if kind == 'flow_state':
                 presentation = flow_presentation(raw)
-                sequence_version = ({'sequence_media_schema': 1}
+                sequence_version = ({'sequence_media_schema': 1,
+                                     'sequence_metadata_revision': SEQUENCE_METADATA_REVISION}
                                     if any(cue['kind'] == 'sequence' for cue in presentation['cues']) else {})
                 targets.extend({'owner': node.id, 'release_id': release_id,
                                 'path': f'spine_background:{identity}', 'resource_id': identity,

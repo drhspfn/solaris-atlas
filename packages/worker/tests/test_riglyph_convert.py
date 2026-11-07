@@ -128,6 +128,37 @@ def test_atlas_page_resolves_verified_texture_with_different_casing(tmp_path, mo
     assert bundle.read_bytes() == original
 
 
+def test_explicit_component_binding_can_select_a_shared_atlas(tmp_path, monkeypatch):
+    entries = {'rig/a.skel': b'rig!', 'atlas/shared.atlas': b'page.png\nsize: 1,1\n',
+               'atlas/page.png': b'image', 'other/unused.atlas': b'other'}
+    manifest = {'skeletons': [{'file': 'rig/a.skel'}], 'files': {
+        name: {'size_bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+        for name, data in entries.items()}}
+    bundle = tmp_path / 'source.zip'
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        archive.writestr('manifest.json', json.dumps(manifest))
+        for name, data in entries.items():
+            archive.writestr(name, data)
+
+    def run(args, **kwargs):
+        atlas = Path(args[args.index('--atlas') + 1])
+        assert atlas.as_posix().endswith('/atlas/shared.atlas')
+        assert (atlas.parent / 'page.png').read_bytes() == b'image'
+        output = Path(args[-1])
+        output.mkdir()
+        (output / 'manifest.json').write_text('{}')
+        (output / 'skeleton.ir.json').write_text('{}')
+        return SimpleNamespace(stdout=json.dumps({'report': {
+            'losses': [], 'unsupported': [], 'bytesConsumed': 4}}))
+
+    monkeypatch.setattr('wuwa_story_worker.riglyph_convert.subprocess.run', run)
+    with pytest.raises(ValueError, match='one atlas'):
+        convert_archive(bundle, tmp_path / 'ambiguous', ['riglyph'])
+    with pytest.raises(ValueError, match='one atlas'):
+        convert_archive(bundle, tmp_path / 'missing', ['riglyph'], atlas_file='missing.atlas')
+    convert_archive(bundle, tmp_path / 'out', ['riglyph'], atlas_file='atlas/shared.atlas')
+
+
 @pytest.mark.parametrize('page', ['../escape.png', '/absolute.png', r'bad\page.png'])
 async def test_unsafe_atlas_page_is_rejected_before_cli(tmp_path, monkeypatch, page):
     entries = {'spine/a.skel': b'rig!', 'spine/a.atlas': (page+'\n').encode()}

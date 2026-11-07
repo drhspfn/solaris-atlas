@@ -26,6 +26,7 @@ import { QuestIllustration } from '@/components/story/QuestIllustration';
 import { QuestIllustratedScene } from '@/components/story/QuestIllustratedScene';
 import { QuestFork } from '@/components/story/QuestFork';
 import { illustratedRuns, questForks } from '@/components/story/questReading';
+import { enrichSequenceLines, sequenceBackgroundMusic, sequenceFrameForLine } from '@/components/story/sequenceReader';
 import '@/styles/quest-reader.css';
 import { QuestClassification } from '@/components/story/QuestClassification';
 import { QuestContinuity } from '@/components/story/QuestContinuity';
@@ -446,14 +447,22 @@ export function QuestPageClient({
       .filter((line: any, index: number) => videoSlots.has(index) || activitySlots.has(index))
       .map((line: any) => line.id),
   );
+  const sequenceSources = pageMediaEvents.filter(event => event.kind === 'sequence' && event.sequence_media);
   const sceneRuns = illustratedRuns(
-    shown.filter((line: any) => !inlineStates.has(line.flow_state) && !forkOwners.has(line.id)),
+    enrichSequenceLines(shown.filter((line: any) => !inlineStates.has(line.flow_state) && !forkOwners.has(line.id)), sequenceSources),
     breaks,
   );
   const sceneOwners = new Map(
     sceneRuns.flatMap((run) => run.map((line) => [line.id, run] as const)),
   );
-  const renderExcerpt = (selected: Array<{ line: any; index: number }>, events: any[]) => {
+  const sequenceForRun = (run: any[]) => {
+    if (run[0]?.sequenceMedia) return run[0].sequenceMedia;
+    const candidates = pageMediaEvents.filter(event => event.kind === 'sequence' && event.sequence_media &&
+      run.every(line => line.flow_state === event.flow_state) &&
+      run.some(line => sequenceFrameForLine(event.sequence_media, line)));
+    return candidates.length === 1 ? candidates[0].sequence_media : undefined;
+  };
+  const renderExcerpt = (selected: Array<{ line: any; index: number }>, events: any[], extraSources: Array<{ flow_state: string; sequence_media?: EncounterFlow['sequence_media'] }> = []) => {
     const scenes = cutsceneSlots(
       selected.map(({ line }) => line),
       events,
@@ -461,7 +470,7 @@ export function QuestPageClient({
       ['cutscene', 'sequence'],
     );
     const runs = illustratedRuns(
-      selected.map(({ line }) => line),
+      enrichSequenceLines(selected.map(({ line }) => line), [...events.filter(event => event.kind === 'sequence' && event.sequence_media), ...extraSources]),
       new Set(selected.filter((_, index) => scenes.has(index)).map(({ line }) => line.id)),
     );
     const owners = new Map(runs.flatMap((run) => run.map((line) => [line.id, run] as const)));
@@ -478,6 +487,8 @@ export function QuestPageClient({
                   <QuestIllustratedScene
                     key={run[0].id}
                     lines={run as any}
+                    sequenceMedia={sequenceForRun(run)}
+                    backgroundMusic={sequenceBackgroundMusic(sequenceForRun(run))}
                     anchors={lineAnchors}
                     focusLine={citedLine}
                     renderLine={(entry) =>
@@ -507,7 +518,8 @@ export function QuestPageClient({
       const events = pageMediaEvents.filter(event => event.kind === 'cutscene' &&
         encounterMediaOwners.get(event.reference) === flow.id &&
         parts.findIndex((part) => part.cinematics.some(scene => scene.reference === event.reference)) === index);
-      const content = renderExcerpt(part.lines.map((line: any) => indexedLines.get(line.id)!), events);
+      const content = renderExcerpt(part.lines.map((line: any) => indexedLines.get(line.id)!), events,
+        flow.sequence_media ? [{ flow_state: flow.state, sequence_media: flow.sequence_media }] : []);
       return part.cinematics.length
         ? <EncounterCinematicBoundary key={`${flow.id}-${index}`} media={part.cinematics} unplaced={!part.lines.length} playbackResolved={events.some(event => !!event.playback)} componentCount={index === componentPart ? componentCount : 0}>
             {index === componentPart && <QuestSequenceFragments media={flow.sequence_media} />}
@@ -579,6 +591,8 @@ export function QuestPageClient({
             <QuestIllustratedScene
               key={run[0].id}
               lines={run as any}
+              sequenceMedia={sequenceForRun(run)}
+              backgroundMusic={sequenceBackgroundMusic(sequenceForRun(run))}
               anchors={lineAnchors}
               focusLine={citedLine}
               renderLine={(entry) =>

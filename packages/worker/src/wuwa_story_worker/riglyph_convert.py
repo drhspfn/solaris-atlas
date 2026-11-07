@@ -8,7 +8,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 
-def convert_archive(bundle: Path, output: Path, cli: list[str], *, skeleton_file: str | None = None) -> None:
+def convert_archive(bundle: Path, output: Path, cli: list[str], *, skeleton_file: str | None = None,
+                    atlas_file: str | None = None) -> None:
     """Run the independent CLI; reject ambiguous or damaged source bundles."""
     with tempfile.TemporaryDirectory(prefix="riglyph-") as temporary:
         root = Path(temporary)
@@ -24,6 +25,8 @@ def convert_archive(bundle: Path, output: Path, cli: list[str], *, skeleton_file
             if str(skeleton) not in files:
                 raise ValueError("Skeleton is absent from the archive manifest")
             atlases = [PurePosixPath(name) for name in files if name.endswith(".atlas")]
+            if atlas_file is not None:
+                atlases = [path for path in atlases if path.as_posix() == atlas_file]
             local_atlases = [path for path in atlases if path.parent == skeleton.parent]
             if len(local_atlases) == 1:
                 atlases = local_atlases

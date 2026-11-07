@@ -7,3 +7,14 @@
 .components li { padding: 6px 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
 .components li > details { margin-top: 4px; }
 .components pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.illustrations { margin: 16px 0; min-width: 0; }
+.imageList { display: grid; gap: 20px; }
+.imageList figure { margin: 0; min-width: 0; }
+.imageButton { display: block; width: 100%; padding: 0; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-1); overflow: hidden; cursor: zoom-in; }
+.imageButton:focus-visible, .imageError button:focus-visible, .source summary:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
+.imageButton img { display: block; width: 100%; max-height: 40rem; object-fit: contain; }
+.imageList figcaption, .status { margin: 8px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.imageError { min-height: 12rem; display: grid; place-content: center; justify-items: center; gap: 8px; border: 1px solid var(--border-default); border-radius: var(--radius-md); color: var(--text-secondary); }
+.source { margin-top: 12px; color: var(--text-secondary); font-size: 13px; }
+.source summary { cursor: pointer; }
+.source pre { max-height: 16rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }

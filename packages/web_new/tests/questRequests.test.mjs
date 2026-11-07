@@ -94,6 +94,11 @@ function questHarness({
       questForks: () => [],
       illustratedRuns: () => [],
     },
+    "@/components/story/sequenceReader": {
+      enrichSequenceLines: (lines) => lines,
+      sequenceBackgroundMusic: () => undefined,
+      sequenceFrameForLine: () => undefined,
+    },
     "@/components/story/QuestRuntimeBlock": {
       runtimeBlockSlots: () => new Map(),
       encounterFlowOwners: () => new Map(),

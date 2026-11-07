@@ -4,6 +4,7 @@ import subprocess
 import wave
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -171,3 +172,148 @@ def test_discovery_uses_only_unique_completed_matching_voice_plan(tmp_path, monk
             assert audio._voice_root(None, '3.7.1') == path
     with pytest.raises(ValueError, match='unique completed matching'):
         audio._voice_root(None, '3.7.1')
+
+
+@pytest.mark.asyncio
+async def test_levelplay_music_is_packaged_as_one_fixed_start_audio_section(prepared, monkeypatch):
+    from wuwa_story_worker import sequence_music_context
+    from wuwa_story_worker.sequence_fragments import publish_sequence_fragments
+
+    root, voice, bundle, tools, _, _ = prepared
+    context = {'schema_version': 1, 'kind': 'levelplay_fixed_start',
+               'play_event': '/Game/Aki/WwiseAudio/Events/play_music',
+               'state_event': '/Game/Aki/WwiseAudio/Events/set_state',
+               'stop_event': '/Game/Aki/WwiseAudio/Events/stop_music',
+               'source_proof': {'asset_version': '3.7.1', 'download_id': 'base-plan'}}
+    music = AsyncMock(return_value=(
+        {'language': None, 'rover': None, 'status': 'rendered', 'loop': True},
+        b'OggS reconstructed', {'state.xml': b'bank proof'}, [], {'play_target': 30, 'bank_timelines': {}}))
+    monkeypatch.setattr(sequence_music_context,
+                        'prepare_levelplay_music', music)
+    output, _ = await audio.prepare_sequence_audio(root, bundle, tools['fmodel'], tools['converter'],
+                                                   voice_root=voice, soundtrack_context=context)
+    with zipfile.ZipFile(output) as archive:
+        controls = json.loads(archive.read('controls.json'))
+        section, = [s for s in controls['media']
+                    ['sections'] if s.get('reconstruction_kind')]
+        assert section['reference'] == context['play_event']
+        assert section['scope'] == 'flow'
+        assert section['source_proof'] == context['source_proof']
+        assert section['clock'] is None and section['range'] is None
+        assert section['loop'] and section['timing_basis'] == 'fixed_start_reconstruction'
+        assert section['music_binding'] == {'play_target': 30}
+        assert archive.read(section['tracks'][0]
+                            ['file']) == b'OggS reconstructed'
+        manifest = json.loads(archive.read('manifest.json'))
+        assert manifest['files'][section['tracks'][0]['file']]['sha256'] == hashlib.sha256(
+            b'OggS reconstructed').hexdigest()
+        assert any(name.endswith('/state.xml') for name in archive.namelist())
+    reference = SimpleNamespace()
+    with zipfile.ZipFile(output) as archive:
+        entries = {name: archive.read(name) for name in archive.namelist()}
+    controls = json.loads(entries['controls.json'])
+    controls['media']['sections'] = [s for s in controls['media']['sections'] if s.get('kind') != 'movie_fragment']
+    entries['controls.json'] = json.dumps(controls).encode()
+    manifest = json.loads(entries['manifest.json'])
+    manifest['files']['controls.json'] = {'size_bytes': len(entries['controls.json']),
+                                          'sha256': hashlib.sha256(entries['controls.json']).hexdigest()}
+    entries['manifest.json'] = json.dumps(manifest).encode()
+    with zipfile.ZipFile(output, 'w') as archive:
+        for name, data in entries.items():
+            archive.writestr(name, data)
+    service = SimpleNamespace(register_file=AsyncMock(return_value=SimpleNamespace(id=91)),
+                              register_variant=AsyncMock(), register_reference=AsyncMock(return_value=reference))
+    session = SimpleNamespace(scalar=AsyncMock(return_value=None))
+    published = await publish_sequence_fragments(session, output,
+        {'owner': 7, 'release_id': 21, 'path': 'story_sequence:flow_state:Flow'},
+        SimpleNamespace(id=90), service, 100, {'asset_version': '3.7.1', 'download_id': 'base-plan'})
+    section, = [s for s in published['sections'] if s.get('reconstruction_kind')]
+    assert section['tracks'][0]['status'] == 'published' and section['tracks'][0]['file_id'] == 91
+    assert section['tracks'][0]['role'] == 'music'
+    assert section['source_proof'] == context['source_proof'] and section['loop']
+
+
+@pytest.mark.asyncio
+async def test_unresolved_levelplay_music_does_not_discard_other_sequence_audio(prepared, monkeypatch):
+    from wuwa_story_worker import sequence_music_context
+
+    root, voice, bundle, tools, _, _ = prepared
+    context = {'play_event': 'play', 'source_proof': {'source': 'levelplay'}}
+    monkeypatch.setattr(sequence_music_context, 'prepare_levelplay_music', AsyncMock(
+        side_effect=ValueError('ambiguous')))
+    output, _ = await audio.prepare_sequence_audio(root, bundle, tools['fmodel'], tools['converter'],
+                                                   voice_root=voice, soundtrack_context=context)
+    with zipfile.ZipFile(output) as archive:
+        controls = json.loads(archive.read('controls.json'))
+        section, = [s for s in controls['media']
+                    ['sections'] if s.get('reconstruction_kind')]
+        assert section['status'] == 'unresolved_audio_event' and not section['tracks']
+        assert any(s.get('tracks') for s in controls['media']['sections'] if not s.get(
+            'reconstruction_kind'))
+        assert any(item.get('status') == 'unresolved_audio' for item in json.loads(
+            archive.read('manifest.json'))['control_sources']['missing'])
+
+
+@pytest.mark.asyncio
+async def test_successful_levelplay_retry_clears_only_its_own_previous_diagnostic(prepared, monkeypatch):
+    from wuwa_story_worker import sequence_music_context
+
+    root, voice, bundle, tools, _, _ = prepared
+    context = {'play_event': 'play', 'state_event': 'state',
+               'stop_event': 'stop', 'source_proof': {'source': 'levelplay'}}
+    identity = hashlib.sha256(json.dumps(context, ensure_ascii=False, sort_keys=True,
+                                         separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    stale = {'status': 'unresolved_audio', 'source': 'levelplay:' + identity,
+             'code': 'sequence_audio_unavailable', 'message': 'offline'}
+    other = {**stale, 'source': 'other'}
+    with zipfile.ZipFile(bundle) as archive:
+        entries = {name: archive.read(name) for name in archive.namelist()}
+    manifest = json.loads(entries['manifest.json'])
+    manifest['control_sources']['missing'].extend([stale, other])
+    entries['manifest.json'] = json.dumps(manifest).encode()
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        for name, data in entries.items():
+            archive.writestr(name, data)
+    monkeypatch.setattr(sequence_music_context, 'prepare_levelplay_music', AsyncMock(return_value=(
+        {'language': None, 'rover': None, 'status': 'rendered', 'loop': True},
+        b'OggS', {}, [], {'play_target': 30})))
+    output, _ = await audio.prepare_sequence_audio(root, bundle, tools['fmodel'], tools['converter'],
+                                                   voice_root=voice, soundtrack_context=context)
+    with zipfile.ZipFile(output) as archive:
+        missing = json.loads(archive.read('manifest.json'))[
+            'control_sources']['missing']
+    assert stale not in missing and other in missing
+
+
+@pytest.mark.asyncio
+async def test_authored_event_retry_clears_recovered_audio_errors_only(prepared):
+    root, voice, bundle, tools, _, _ = prepared
+    with zipfile.ZipFile(bundle) as archive:
+        entries = {name: archive.read(name) for name in archive.namelist()}
+    controls = json.loads(entries['controls.json'])
+    section = controls['media']['sections'][1]
+    section['diagnostics'] = [{'code': 'sequence_audio_unavailable', 'message': 'offline'},
+                              {'code': 'native_control_missing'}]
+    stale = {'status': 'unresolved_audio', 'source': section['source'],
+             'code': 'sequence_audio_unavailable', 'message': 'offline'}
+    other = {**stale, 'source': 'other'}
+    native = {'status': 'unresolved_control',
+              'source': section['source'], 'code': 'native_control_missing'}
+    manifest = json.loads(entries['manifest.json'])
+    manifest['control_sources']['missing'].extend([stale, other, native])
+    entries['controls.json'] = json.dumps(controls).encode()
+    manifest['files']['controls.json'] = {'size_bytes': len(entries['controls.json']),
+                                          'sha256': hashlib.sha256(entries['controls.json']).hexdigest()}
+    entries['manifest.json'] = json.dumps(manifest).encode()
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        for name, data in entries.items():
+            archive.writestr(name, data)
+    output, _ = await audio.prepare_sequence_audio(root, bundle, tools['fmodel'], tools['converter'], voice_root=voice)
+    with zipfile.ZipFile(output) as archive:
+        section = json.loads(archive.read('controls.json'))[
+            'media']['sections'][1]
+        missing = json.loads(archive.read('manifest.json'))[
+            'control_sources']['missing']
+    assert section['status'] == 'rendered'
+    assert section['diagnostics'] == [{'code': 'native_control_missing'}]
+    assert stale not in missing and other in missing and native in missing
