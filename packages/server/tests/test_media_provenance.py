@@ -8,6 +8,20 @@ from wuwa_story.ingestion.entity_media import MediaRequest
 from wuwa_story.ingestion.media_provenance import missing_media_targets
 
 
+def test_sequence_soundtrack_context_change_invalidates_reuse():
+    from wuwa_story.ingestion.media_provenance import matches_source
+
+    value = {**target('story_sequence:flow_state:Story'), 'kind': 'spine',
+             'spine_recipe': 4, 'sequence_metadata_revision': 5, 'soundtrack_context_sha256': 'a' * 64}
+    reference, _, _ = row(value, spine_recipe=4, sequence_metadata_revision=5)
+    source = {'asset_version': '3.7.0'}
+    assert not matches_source(reference.metadata_json, source, value)
+    reference.metadata_json['game_source']['soundtrack_context_sha256'] = 'a' * 64
+    assert matches_source(reference.metadata_json, source, value)
+    value['soundtrack_context_sha256'] = 'b' * 64
+    assert not matches_source(reference.metadata_json, source, value)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('tool', ['WUWA_VGMSTREAM_PATH', 'WUWA_WWISER_PATH'])
 @pytest.mark.parametrize('changed', [False, True])

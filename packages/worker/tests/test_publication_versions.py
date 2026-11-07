@@ -151,6 +151,8 @@ def test_sequence_backdrop_revision_five_cannot_be_downgraded_by_legacy_worker()
     legacy = proof(package_path='spine_background:850009')
     assert preserve_story_reference('story_spine', {'game_source': current}, legacy)
     assert not preserve_story_reference('story_spine', {'game_source': legacy}, current)
+    current['soundtrack_context_sha256'] = 'd' * 64
+    assert preserve_story_reference('story_spine', {'game_source': current}, legacy)
 
 
 @pytest.mark.asyncio

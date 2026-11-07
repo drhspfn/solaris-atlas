@@ -1,4 +1,7 @@
+import hashlib
+import json
 from copy import deepcopy
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -21,6 +24,14 @@ def timelines(monkeypatch):
 
 def binding():
     return music.levelplay_music_binding('state', 'play', 'stop', 'stage4', 'start', 'finish')
+
+
+def test_only_whole_file_native_loops_are_exposed():
+    assert music.whole_file_loop(
+        'wem/303.wem #i #b 30.0\ngroup = -S1 #p 0.01 #@loop')
+    assert not music.whole_file_loop('wem/303.wem #i #b 30.0')
+    with pytest.raises(ValueError, match='whole-file'):
+        music.whole_file_loop('wem/100.wem\nwem/303.wem #@loop\ngroup = -S2')
 
 
 def test_levelplay_binding_checks_the_consuming_play_and_keeps_source_timelines(timelines):
@@ -47,3 +58,36 @@ def test_ambiguous_or_incompatible_bank_controls_are_rejected(timelines, node, a
     timelines[0][node]['actions'] = actions
     with pytest.raises(ValueError):
         binding()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('context', [None, {'kind': 'levelplay_fixed_start', 'source_proof': {
+    'asset_version': '3.7.1', 'download_id': 'id', 'release_id': 21, 'flow_owner': 7,
+    'presentation_sha256': 'hash'}}])
+async def test_native_context_is_resolved_before_reuse_without_mutating_payload(monkeypatch, context):
+    from wuwa_story_worker import entity_media, sequence_levelplay_context
+
+    resolver = AsyncMock(return_value=context)
+    monkeypatch.setattr(sequence_levelplay_context,
+                        'resolve_levelplay_context', resolver)
+    original = {'kind': 'spine', 'sequence_metadata_revision': 5, 'presentation': {'source': {}},
+                'owner': 7, 'release_id': 21, 'presentation_sha256': 'hash'}
+    targets = await entity_media.resolve_soundtrack_targets('root', [original, {'kind': 'image'}], 'fmodel',
+                                                            {'download_id': 'id', 'asset_version': '3.7.1'})
+    digest = hashlib.sha256(json.dumps(context, ensure_ascii=False, sort_keys=True,
+                                       separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    assert targets[0]['soundtrack_context'] == context
+    assert targets[0]['soundtrack_context_sha256'] == digest
+    assert 'soundtrack_context' not in original and 'soundtrack_context' not in targets[1]
+    resolver.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_native_resolver_error_does_not_become_a_missing_context(monkeypatch):
+    from wuwa_story_worker import entity_media, sequence_levelplay_context
+
+    monkeypatch.setattr(sequence_levelplay_context, 'resolve_levelplay_context', AsyncMock(
+        side_effect=RuntimeError('unavailable')))
+    with pytest.raises(RuntimeError, match='unavailable'):
+        await entity_media.resolve_soundtrack_targets('root', [{'kind': 'spine', 'sequence_metadata_revision': 5,
+                                                                'presentation': {'source': {}}}], 'fmodel', {})

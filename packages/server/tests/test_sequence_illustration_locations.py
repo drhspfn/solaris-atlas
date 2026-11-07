@@ -112,39 +112,66 @@ async def test_quest_media_attaches_only_the_authored_flow_sequence(monkeypatch,
 @pytest.mark.parametrize('binding', [True, False])
 async def test_multi_sequence_event_does_not_receive_neighbor_frames(monkeypatch, binding):
     from wuwa_story.api.routes.story import media as route
+    from wuwa_story.ingestion.spine_presentation import flow_presentation
 
     raw = {'Actions': [{'Name': 'PlaySequenceData', 'Params': {'Path': '/Game/A.A'}},
                        {'Name': 'PlaySequenceData', 'Params': {'Path': '/Game/B.B'}}]}
     state = SimpleNamespace(node_id=7, state_key='Flow')
-    actions = [(SimpleNamespace(node_id=10 + i, action_index=i), state, f'action:{i}') for i in range(2)]
+    actions = [(SimpleNamespace(node_id=10 + i, action_index=i),
+                state, f'action:{i}') for i in range(2)]
+
     async def links(_session, nodes, relations, _release):
         if 'plays_sequence_asset' in relations:
             return {10 + i: [{'relation': 'plays_sequence_asset', 'canonical_key': 'asset:ue:/Game/' + name + '.' + name,
                              'node_id': 20 + i, 'basis': 'authored', 'source': {}}] for i, name in enumerate(('A', 'B'))}
         return {}
-    monkeypatch.setattr(route, 'get_quest', AsyncMock(return_value=SimpleNamespace(node_id=1, game_quest_id=1)))
+    monkeypatch.setattr(route, 'get_quest', AsyncMock(
+        return_value=SimpleNamespace(node_id=1, game_quest_id=1)))
     monkeypatch.setattr(route, '_release_id', AsyncMock(return_value=21))
     monkeypatch.setattr(route, 'authored_order', AsyncMock(return_value=None))
-    monkeypatch.setattr(route, '_quest_page_state_ids', AsyncMock(return_value=[7]))
+    monkeypatch.setattr(route, '_quest_page_state_ids',
+                        AsyncMock(return_value=[7]))
     monkeypatch.setattr(route, '_links', links)
     monkeypatch.setattr(route, 'cutscene_flows', AsyncMock(return_value={}))
     monkeypatch.setattr(route, 'cutscene_videos', AsyncMock(return_value={}))
     monkeypatch.setattr(route, 'caption_texts', AsyncMock(return_value={}))
     media = {'composition': {'schema_version': 1, 'state': 'ready', 'reasons': []},
-        'sections': [{'kind': 'illustration', 'scene_source': 'scene-a', 'url': 'a'},
-                     {'kind': 'illustration', 'scene_source': 'scene-b', 'url': 'b'}],
-        'scenes': [{'source': 'scene-a'}, {'source': 'scene-b'}],
-        'sequence_assets': ([{'asset': '/Game/A.A', 'scenes': ['scene-a']}] if binding else []) +
-                           [{'asset': '/Game/B.B', 'scenes': ['scene-b']}]}
-    monkeypatch.setattr(runtime_service, 'sequence_playback', AsyncMock(return_value={7: media}))
+             'game_source': {'asset_version': '3.7.1', 'download_id': 'client'},
+             'sections': [{'kind': 'illustration', 'scene_source': 'scene-a', 'url': 'a'},
+                          {'kind': 'illustration',
+                              'scene_source': 'scene-b', 'url': 'b'},
+                          {'kind': 'audio_event', 'scope': 'flow', 'reconstruction_kind': 'levelplay_fixed_start',
+                           'source_proof': {'flow_owner': 7, 'presentation_sha256': flow_presentation(raw)['sha256'],
+                                            'release_id': 21, 'asset_version': '3.7.1', 'download_id': 'client'},
+                           'tracks': [{'url': 'music'}]},
+                          {'kind': 'audio_event', 'scope': 'flow', 'reconstruction_kind': 'levelplay_fixed_start',
+                      'scene_source': 'scene-b',
+                           'source_proof': {'flow_owner': 8, 'presentation_sha256': flow_presentation(raw)['sha256'],
+                                            'release_id': 21, 'asset_version': '3.7.1', 'download_id': 'client'},
+                           'tracks': [{'url': 'wrong'}]}],
+             'scenes': [{'source': 'scene-a'}, {'source': 'scene-b'}],
+             'sequence_assets': ([{'asset': '/Game/A.A', 'scenes': ['scene-a']}] if binding else []) +
+             [{'asset': '/Game/B.B', 'scenes': ['scene-b']}]}
+    monkeypatch.setattr(runtime_service, 'sequence_playback',
+                        AsyncMock(return_value={7: media}))
     session = SimpleNamespace(scalars=AsyncMock(return_value=[]), scalar=AsyncMock(return_value=None),
-        execute=AsyncMock(side_effect=[SimpleNamespace(all=lambda: actions), [(7, raw)]]),
-        get=AsyncMock(return_value=SimpleNamespace(game_version='3.7.1')))
+                              execute=AsyncMock(side_effect=[SimpleNamespace(
+                                  all=lambda: actions), [(7, raw)]]),
+                              get=AsyncMock(return_value=SimpleNamespace(game_version='3.7.1')))
     result = await route.quest_media('1', '3.7.1', 'en', session)
     first, second = (event['sequence_media'] for event in result['events'])
-    assert [section['url'] for section in first['sections']] == (['a'] if binding else [])
-    assert [section['url'] for section in second['sections']] == ['b']
+    assert [section['url'] for section in first['sections']
+            if section['kind'] == 'illustration'] == (['a'] if binding else [])
+    assert [section['url'] for section in second['sections']
+            if section['kind'] == 'illustration'] == ['b']
+    assert [section['tracks'][0]['url'] for section in second['sections']
+            if section['kind'] == 'audio_event'] == ['music']
+    if binding:
+        assert [section['tracks'][0]['url'] for section in first['sections']
+                if section['kind'] == 'audio_event'] == ['music']
     if not binding:
+        assert [section['tracks'][0]['url'] for section in first['sections']
+                if section['kind'] == 'audio_event'] == ['music']
         assert first['composition']['state'] == 'unsupported'
         assert first['composition']['reasons'][-1]['code'] == 'scene_binding_unavailable'
 

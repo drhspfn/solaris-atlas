@@ -36,6 +36,32 @@ clear queues or blindly republish pending tasks. Resume from the durable receipt
 already-current inputs are reused by the existing enqueue/idempotency checks.
 Unsupported results must not be reported as ready animations.
 
+`scripts/backfill-illustrated-sequences.py` defaults to a read-only plan and a
+maximum of 50 flow owners per call. `--apply` dispatches only the audited scope,
+with a durable per-release checkpoint. `--fresh-client` is an explicit separate
+pass for older downloads: it records the client-version transition and requires
+a full extraction from the selected prepared client instead of reusing an old
+archive as new proof. Use separate checkpoints for these two source modes.
+
+## Reading and background audio
+
+The reading UI matches a dialogue's exact localization/voice key and MovieScene
+to its illustration state. Manual advance plays the selected voice; Auto moves
+on voice completion, or uses a bounded reading delay when no voice is available.
+The reading delay is a convenience, not the game's authored timing.
+
+Native LevelPlay context may supply a background music phase. The resolver binds
+the flow to its native tree, preceding Play, entering state and finishing Stop;
+Wwise independently verifies the state consumed by that Play and its matching
+Stop target. A rendered track is marked `role: music`, with an explicit native
+loop flag and `fixed_start_reconstruction` timing. It is one persistent audio
+element across dialogue changes, rather than a copy of a mixed soundtrack.
+
+The fox pilot verified the native node `683000006_32`, stage 4, one 30-second
+music loop, and three rendered illustrations on Linux. Targeted Python checks
+and the complete web test suite precede production publication. A normal
+production job must still verify their combined publication and public URLs.
+
 App deployment updates API/web only. Drain reviewed image-worker IDs gracefully
 before replacing workers; preserve unrelated imports and infrastructure. No
 database migration is required. Rollback uses the prior images; retained source

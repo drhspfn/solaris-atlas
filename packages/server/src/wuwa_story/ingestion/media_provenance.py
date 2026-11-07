@@ -37,12 +37,17 @@ def matches_source(metadata: dict, source: dict, target: dict) -> bool:
     expected = {key: value for key, value in source.items()
                 if key != "tools" and (key != "voice_plan_id" or target.get("kind") != "image")}
     revision = target.get('sequence_metadata_revision')
-    sequence_target = target.get('path', '').startswith('story_sequence:') or (type(revision) is int and revision >= 5)
-    sequence_audio = sequence_target and type(revision) is int and revision >= 3
+    sequence_target = target.get('path', '').startswith(
+        'story_sequence:') or (type(revision) is int and revision >= 5)
+    sequence_audio = sequence_target and type(
+        revision) is int and revision >= 3
     tools = {key: value for key, value in source.get("tools", {}).items()
              if (key != "WUWA_VGMSTREAM_PATH" or target.get("kind") != "image" or sequence_audio)
              and (key != 'WUWA_WWISER_PATH' or provenance.get('voice_variant') or sequence_audio)}
     return (
+        ('soundtrack_context_sha256' not in target
+         or provenance.get('soundtrack_context_sha256') == target['soundtrack_context_sha256'])
+        and
         (not sequence_target or target.get('sequence_metadata_revision') is None
          or provenance.get('sequence_metadata_revision') == target['sequence_metadata_revision'])
         and

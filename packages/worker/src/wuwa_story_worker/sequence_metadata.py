@@ -146,10 +146,15 @@ async def retained_bundle(session, storage, root, target, source):
                     'tools': extraction_tools(proof.get('tools', {}))}}
         extraction_source = {
             **source, 'tools': extraction_tools(source.get('tools', {}))}
-        if not matches_source(identity, extraction_source, {**target, 'sequence_metadata_revision': None}):
+        extraction_target = {key: value for key, value in target.items(
+        ) if key != 'soundtrack_context_sha256'}
+        extraction_target['sequence_metadata_revision'] = None
+        if not matches_source(identity, extraction_source, extraction_target):
             continue
+        context_changed = ('soundtrack_context_sha256' in target and
+                           proof.get('soundtrack_context_sha256') != target['soundtrack_context_sha256'])
         if ((proof.get('sequence_metadata_revision') or 0) >= target['sequence_metadata_revision']
-                and not composition_retryable(metadata or {})):
+                and not context_changed and not composition_retryable(metadata or {})):
             return None
         path = root / 'sequence-metadata' / \
             str(target['owner']) / 'retained.zip'
