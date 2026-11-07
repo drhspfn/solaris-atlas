@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/api/client';
+import { PlayerText, type PlayerDisplay } from '@/components/dialogue/PlayerText';
 import { ErrorPanel } from '@/components/ui/Feedback';
 import { Pagination } from '@/components/ui/Pagination';
 import { Link } from '@/lib/router';
@@ -9,7 +10,7 @@ import { Link } from '@/lib/router';
 type Seller = { canonical_key: string; href: string; name: string; offers: { shop_id: number; quantity: number | null }[] };
 const PAGE_SIZE = 20;
 
-export function NpcSellers({ itemId, locale }: { itemId: number; locale: string }) {
+export function NpcSellers({ itemId, locale, display }: { itemId: number; locale: string; display?: PlayerDisplay }) {
   const [page, setPage] = useState(1);
   const [result, setResult] = useState<{ results: Seller[]; total: number } | null>(null);
   const [error, setError] = useState('');
@@ -28,7 +29,7 @@ export function NpcSellers({ itemId, locale }: { itemId: number; locale: string 
     <p>Configured shop offers; current availability is not confirmed.</p>
     {error ? <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} /> : !result ? <p role="status">Loading shopkeepers…</p> : <>
       {result.results.map((seller) => <Link className="connection-row" key={seller.canonical_key} to={seller.href}>
-        <strong>{seller.name}</strong><small>{seller.offers.length} configured {seller.offers.length === 1 ? 'offer' : 'offers'}</small>
+        <strong><PlayerText value={seller.name} display={display} /></strong><small>{seller.offers.length} configured {seller.offers.length === 1 ? 'offer' : 'offers'}</small>
       </Link>)}
       {result.total > PAGE_SIZE && <Pagination mode="pages" page={page} pageSize={PAGE_SIZE} total={result.total} onPageChange={setPage} ariaLabel="Shopkeeper pages" />}
     </>}

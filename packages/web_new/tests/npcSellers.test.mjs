@@ -14,10 +14,13 @@ test('NPC sellers show scoped names and paginate results', () => {
   vm.runInNewContext(code, { exports, AbortController, URLSearchParams,
     require: (id) => id === 'react' ? { useState: () => [initial[index++], () => {}], useEffect: () => {} }
       : id === 'react/jsx-runtime' ? { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) } : components });
-  const tree = nodes(exports.NpcSellers({ itemId: 100, locale: 'en' }));
+  const display = { name: 'Rover', colorMode: 'game', customColor: '' };
+  const tree = nodes(exports.NpcSellers({ itemId: 100, locale: 'en', display }));
   const link = tree.find((node) => node.type === 'Link');
   assert.equal(link.props.to, '/characters/zahira');
-  assert(tree.some((node) => node.type === 'strong' && node.props.children === 'Zahira'));
+  const name = tree.find((node) => node.type === 'PlayerText');
+  assert.equal(name.props.value, 'Zahira');
+  assert.equal(name.props.display, display);
   assert.equal(tree.find((node) => node.type === 'Pagination').props.total, 21);
 });
 

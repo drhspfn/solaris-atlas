@@ -2,7 +2,8 @@ import { ArrowRight, MapPin, Swords } from 'lucide-react';
 import { Link } from '@/lib/router';
 import { publicPath, questPath } from '@/lib/routeKey';
 
-import { localizedText } from '../../data/localized';
+import { gameTextPlainText } from '../../data/gameText';
+import { PlayerText, type PlayerDisplay } from '../dialogue/PlayerText';
 import { EmptyInline } from '../ui/Feedback';
 
 type Text = { content?: string; key?: string } | null;
@@ -39,16 +40,16 @@ type Acquisition = {
   harvest_world_maps?: { map_id: number; named_region?: { canonical_key?: string; name: Text } }[];
 };
 
-export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: string }) {
+export function ItemAcquisition({ data, locale, display }: { data: Acquisition; locale: string; display?: PlayerDisplay }) {
   const maps = data.map_sources ?? [];
   const worlds = new Map<number, typeof maps>();
   for (const source of maps)
     worlds.set(source.map_id, [...(worlds.get(source.map_id) ?? []), source]);
   const shopNames = new Set(
-    (data.shop_offers ?? []).map((shop) => localizedText(shop.shop_name)).filter(Boolean),
+    (data.shop_offers ?? []).map((shop) => gameTextPlainText(shop.shop_name, display)).filter(Boolean),
   );
   const paths = (data.acquisition_paths ?? []).filter(
-    (path) => !shopNames.has(localizedText(path.description)),
+    (path) => !shopNames.has(gameTextPlainText(path.description, display)),
   );
   const shops = data.shop_offers ?? [];
   const banners = data.banner_sources ?? [];
@@ -76,8 +77,7 @@ export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: s
             <div key={banner.view_id}>
               <div className="plain-row">
                 <span>
-                  <strong>{localizedText(banner.title,
-                    banner.banner_type === 'permanent_weapon' ? 'Permanent weapon Convene' : `Weapon Convene ${banner.view_id}`)}</strong>
+                  <strong><PlayerText value={banner.title} fallback={banner.banner_type === 'permanent_weapon' ? 'Permanent weapon Convene' : `Weapon Convene ${banner.view_id}`} display={display} /></strong>
                   <small>{banner.roles.includes('featured') ? 'Featured weapon' :
                     banner.roles.includes('preview') ? 'Listed in banner preview' : 'Shown in banner artwork'}</small>
                 </span>
@@ -95,7 +95,7 @@ export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: s
           {[...worlds.entries()].map(([worldId, sources]) => (
             <details key={worldId} className="acquisition-world" open={worlds.size === 1}>
               <summary>
-                <strong>{name(sources[0].map_names) || 'World map'}</strong>
+                <strong><PlayerText value={name(sources[0].map_names)} fallback="World map" display={display} /></strong>
                 <small>
                   {sources.reduce((sum, source) => sum + source.count, 0)} locations ·{' '}
                   {sources.length} sources
@@ -109,14 +109,14 @@ export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: s
                 >
                   {source.kind === 'loot_preview' ? <Swords size={20} /> : <MapPin size={20} />}
                   <div>
-                    <strong>{name(source.names) || 'Collection points'}</strong>
+                    <strong><PlayerText value={name(source.names)} fallback="Collection points" display={display} /></strong>
                     <small>
                       {source.kind === 'loot_preview' ? 'Possible drops' : 'Gathering'} ·{' '}
                       {source.count} locations
                       {source.hidden_count > 0 ? ` · ${source.hidden_count} hidden` : ''}
                     </small>
                     <small>
-                      {name(source.map_names) || 'World map'} · {source.game_version}
+                      <PlayerText value={name(source.map_names)} fallback="World map" display={display} /> · {source.game_version}
                     </small>
                   </div>
                   <span className="small-link">
@@ -138,7 +138,7 @@ export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: s
               className="connection-row"
             >
               <div>
-                <strong>{localizedText(quest.name, `Quest ${quest.game_quest_id}`)}</strong>
+                <strong><PlayerText value={quest.name} fallback={`Quest ${quest.game_quest_id}`} display={display} /></strong>
                 <small>Listed in possible quest rewards</small>
               </div>
               <ArrowRight size={16} />
@@ -155,14 +155,11 @@ export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: s
           {shops.map((shop) => (
             <div className="plain-row" key={shop.offer_id}>
               <span>
-                <strong>{localizedText(shop.shop_name, `Shop ${shop.shop_id}`)}</strong>
+                <strong><PlayerText value={shop.shop_name} fallback={`Shop ${shop.shop_id}`} display={display} /></strong>
                 <small>
-                  {shop.prices
-                    ?.map(
-                      (price) =>
-                        `${price.amount} ${price.item?.label || `currency ${price.item_id}`}`,
-                    )
-                    .join(' + ')}{' '}
+                  {shop.prices?.map((price, index) => (
+                    <span key={index}>{index > 0 && ' + '}{price.amount} <PlayerText value={price.item?.label} fallback={`currency ${price.item_id}`} display={display} /></span>
+                  ))}{' '}
                   · limit {shop.purchase_limit ?? '—'}
                 </small>
               </span>
@@ -176,7 +173,7 @@ export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: s
           <h3>Recorded regions</h3>
           {regions.map((world) => (
             <div className="plain-row" key={world.map_id}>
-              <span>{localizedText(world.named_region?.name, `Map ${world.map_id}`)}</span>
+              <span><PlayerText value={world.named_region?.name} fallback={`Map ${world.map_id}`} display={display} /></span>
               <small>Region only · exact placements unavailable</small>
             </div>
           ))}
@@ -186,7 +183,7 @@ export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: s
               key={node.canonical_key}
               to={publicPath("locations", node)}
             >
-              <strong>{node.label}</strong>
+              <strong><PlayerText value={node.label} display={display} /></strong>
               <ArrowRight size={16} />
             </Link>
           ))}
@@ -197,7 +194,7 @@ export function ItemAcquisition({ data, locale }: { data: Acquisition; locale: s
           <h3>Other ways to obtain</h3>
           {paths.map((path) => (
             <div className="plain-row" key={path.id}>
-              <span>{localizedText(path.description, `Access path ${path.id}`)}</span>
+              <span><PlayerText value={path.description} fallback={`Access path ${path.id}`} display={display} /></span>
             </div>
           ))}
         </div>
