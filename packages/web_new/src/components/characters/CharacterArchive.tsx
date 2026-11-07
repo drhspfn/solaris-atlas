@@ -486,9 +486,9 @@ export function CharacterArchive({
     gameText(archive.biography).replace(/\s+/g, " ") !==
       (introduction ? gameText(introduction).replace(/\s+/g, " ") : "");
   const profile = archive?.profile;
-  const hasProfile = biography || profile?.max_level || profile?.element || profile?.quality ||
-    profile?.affiliation || profile?.country || profile?.birthday || profile?.talent ||
-    archive?.artwork.length || mediaItems.length || groups.size;
+  const hasProfileDetails = biography || profile?.element || profile?.quality ||
+    profile?.affiliation || profile?.country || profile?.birthday || profile?.talent || groups.size;
+  const hasProfile = hasProfileDetails || archive?.artwork.length || mediaItems.length;
   const skills = archive?.skills.filter((skill) =>
     skill.name?.trim() || skill.description?.trim() || skill.attributes?.length,
   ) ?? [];
@@ -508,7 +508,7 @@ export function CharacterArchive({
           <BookOpen size={19} />
           <span>Profile & progression</span>
           <small>
-            {archive?.profile.max_level
+            {hasProfileDetails && archive?.profile.max_level
               ? `Max level ${archive.profile.max_level}`
               : "Game records"}
           </small>

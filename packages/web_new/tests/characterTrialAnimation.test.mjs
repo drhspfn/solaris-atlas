@@ -44,7 +44,7 @@ const clip = { animation: 'idle', url: 'https://cdn.test/idle.webm', mime_type: 
   file_id: 2, width: 786, height: 2048 };
 const ready = { recipe: 'riglyph-native-v1', status: 'ready', variants: [clip] };
 function render(animation_preview, hasArchive = true) {
-  const archive = { profile: { voice_actors: {} }, skills: [], skill_tree: [], resonance_chain: [],
+  const archive = { profile: { voice_actors: {}, max_level: 90 }, skills: [], skill_tree: [], resonance_chain: [],
     voice_lines: [], other_voice_events: [],
     artwork: [{ kind: 'RoleHeadIconLarge', url: 'https://cdn.test/portrait.png' }],
     trial_spine: hasArchive ? { url: 'https://cdn.test/source.zip', file_id: 1, animation_preview } : null };
@@ -64,6 +64,8 @@ for (const value of [undefined, { status: 'static' }, { status: 'failed' },
 
 test('a character without an archived trial has no trial block', () => {
   assert.doesNotMatch(render(null, false), /Character trial animation|Download trial scene/);
+  assert.doesNotMatch(render(null, false), /Max level 90/);
+  assert.match(render(null, false), /Artwork and animation/);
 });
 
 test('a playable trial joins the shared gallery with a paused first-frame thumbnail and no raw scene download', () => {

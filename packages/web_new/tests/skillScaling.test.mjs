@@ -527,23 +527,23 @@ test("profile biography appears only when it adds to the header introduction", (
 
 test("empty archive hides progression, talents, chain and voice sections", () => {
   const { CharacterArchive } = load();
-  const archive = { profile: { voice_actors: {} }, artwork: [],
+  const archive = { profile: { voice_actors: {}, max_level: 90 }, artwork: [],
     skills: [skill({ name: null, description: null, attributes: [] })],
     resonance_chain: [{ id: 1, name: null, description: null }], voice_lines: [], other_voice_events: [] };
   const markup = renderToStaticMarkup(React.createElement(CharacterArchive, {
     archive, materials: [], locale: 'en', characterKey: 'character:1',
   }));
-  assert.doesNotMatch(markup, /Profile &amp; progression|Upgrade materials|>Talents<|Resonance chain|Voice lines/);
+  assert.doesNotMatch(markup, /Profile &amp; progression|Max level|Upgrade materials|>Talents<|Resonance chain|Voice lines/);
 });
 
 test("available materials, chain and voice events retain their sections", () => {
   const { CharacterArchive } = load();
-  const archive = { profile: { voice_actors: {} }, artwork: [], skills: [],
+  const archive = { profile: { voice_actors: {}, max_level: 90 }, artwork: [], skills: [],
     resonance_chain: [{ id: 1, order: 1, name: 'First sequence', description: null }],
     voice_lines: [], other_voice_events: [{ category: 'Battle', event: 'Attack' }] };
   const markup = renderToStaticMarkup(React.createElement(CharacterArchive, {
     archive, materials: [{ item_id: 5, kind: 'character_ascension' }], locale: 'en', characterKey: 'character:1',
   }));
-  for (const label of ['Profile &amp; progression', 'Upgrade materials', 'First sequence', 'Voice lines', 'Attack'])
+  for (const label of ['Profile &amp; progression', 'Max level 90', 'Upgrade materials', 'First sequence', 'Voice lines', 'Attack'])
     assert.ok(markup.includes(label), label);
 });
