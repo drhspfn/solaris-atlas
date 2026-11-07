@@ -51,6 +51,8 @@ def test_scene_proof_and_provenance():
         proof = edge['crosswalk']
         assert (proof['model_preload_id'], proof['model_preload_row'], proof['role_id'], proof['role_row']) == (100071, 9, 1311, 7)
         assert proof['actor_exports'] == data[3][ACTOR]
+        assert proof['sequence_asset_exports'] == data[3][DA]
+        assert proof['generated_asset_exports'] == data[3][GENERATED]
         for key, path in [('sequence_asset', DA), ('generated_asset', GENERATED), ('actor', ACTOR)]:
             raw = json.dumps(data[3][path], ensure_ascii=False, sort_keys=True, separators=(',', ':'))
             assert proof[key + '_package'] == path
@@ -102,6 +104,70 @@ def test_malformed_and_case_sensitive_paths():
     assert not run(data)
     data = fixture()
     data[3][ACTOR][1]['Properties']['TalkID'] = 0
+    assert not run(data)
+
+
+
+def test_default_alias_conflict_across_all_assets_keeps_corroborated_who():
+    data = fixture()
+    roles, preloads, _, assets, english = data
+    roles.append((8, {'Id': 1312, 'RoleType': 1, 'MeshId': 100072, 'Name': 'other'}))
+    preloads.append((10, {'Id': 100072, 'Meshes': ['/Game/Models/Other']}))
+    assets['/Game/Actors/Unbound'] = [
+        {'Type': 'SkeletalMeshComponent', 'Properties': {'SkeletalMesh': {'ObjectPath': '/Game/Models/Other'}}},
+        {'Name': 'Default__Other', 'Properties': {'TalkID': 450001}},
+    ]
+    result = run(data)
+    assert [(x['from'], x['crosswalk']['resolution']) for x in result] == [
+        ('speaker:400002', 'cast_and_corroborated_name')]
+    # A second blueprint for the same role is not an ambiguity.
+    assets['/Game/Actors/Unbound'][0]['Properties']['SkeletalMesh']['ObjectPath'] = MESH
+    assert {x['from'] for x in run(data)} == {'speaker:450001', 'speaker:400002'}
+
+
+def test_default_name_conflict_and_same_name_ambiguity():
+    data = fixture()
+    data[0].append((8, {'Id': 1312, 'RoleType': 1, 'Name': 'other'}))
+    data[4].update({'other': {'content': 'Other'}, 'Speaker_450001_Name': {'content': 'Other'}})
+    assert [x['from'] for x in run(data)] == ['speaker:400002']
+    data[4]['other']['content'] = 'Hsin'
+    data[4]['Speaker_450001_Name']['content'] = 'Hsin'
+    assert not run(data)
+    data[4]['Speaker_450001_Name']['content'] = 'Unknown'
+    assert [x['from'] for x in run(data)] == ['speaker:450001']
+
+
+@pytest.mark.parametrize('path', ['/Game/Sequence/../DA', '/Game//Sequence/DA', '/Game/Sequence/DA..DA'])
+def test_unsafe_paths_rejected_at_each_join(path):
+    for stage in ('sequence', 'generated', 'actor', 'mesh'):
+        data = fixture()
+        if stage == 'sequence':
+            data[2][0]['Params']['SequenceDataAsset'] = path
+        elif stage == 'generated':
+            data[3][DA][0]['Properties']['GeneratedData']['ObjectPath'] = path
+        elif stage == 'actor':
+            data[3][GENERATED][0]['Properties']['BindingBP'][0]['ObjectPath'] = path
+        else:
+            data[1][0][1]['Meshes'] = [path]
+            data[3][ACTOR][0]['Properties']['SkeletalMesh']['ObjectPath'] = path
+        data[3][path] = data[3][DA]
+        assert not run(data), stage
+
+
+def test_full_raw_exports_and_combined_size_limit():
+    data = fixture()
+    data[3][DA][0]['Properties']['extra'] = 'source data'
+    data[3][GENERATED][0]['Properties']['KeyFrames'] = [1, 2, 3]
+    proof = run(data)[0]['crosswalk']
+    assert proof['sequence_asset_exports'] == data[3][DA]
+    assert proof['generated_asset_exports'] == data[3][GENERATED]
+    for package in (DA, GENERATED, ACTOR):
+        oversized = copy.deepcopy(data)
+        oversized[3][package][0]['extra'] = 'x' * (2 * 1024 * 1024)
+        assert not run(oversized)
+    # The bound applies to the sum, even when no single export exceeds it.
+    data[3][DA][0]['extra'] = 'x' * (1024 * 1024)
+    data[3][GENERATED][0]['extra'] = 'x' * (1024 * 1024)
     assert not run(data)
 
 

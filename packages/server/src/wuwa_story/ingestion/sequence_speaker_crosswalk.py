@@ -11,7 +11,8 @@ FLOW_PATH = 'BinData/flowState/flowstate.json'
 def _package(value):
     if isinstance(value, dict):
         value = value.get('ObjectPath')
-    if not isinstance(value, str) or not value.startswith('/Game/'):
+    if (not isinstance(value, str) or not value.startswith('/Game/')
+            or '//' in value or '..' in value):
         return None
     package = value.split('.', 1)[0]
     return package if package != '/Game/' else None
@@ -24,9 +25,8 @@ def _properties(exports):
             if isinstance(item, dict) and isinstance(item.get('Properties'), dict)]
 
 
-def _digest(value):
-    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
-    return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+def _canonical(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
 def sequence_speaker_links(roles, preloads, flow_states, assets, english):
@@ -60,6 +60,30 @@ def sequence_speaker_links(roles, preloads, flow_states, assets, english):
             for path in {_package(path) for path in paths} - {None}:
                 meshes[path].append((identity, row, model, preload_row))
 
+    actors, default_owners = {}, defaultdict(set)
+    for package, exports in assets.items():
+        if not isinstance(package, str) or _package(package) != package or not isinstance(exports, list):
+            continue
+        defaults, owners = set(), set()
+        for obj in exports:
+            if not isinstance(obj, dict) or not isinstance(obj.get('Properties'), dict):
+                continue
+            props = obj['Properties']
+            name, talk = obj.get('Name'), props.get('TalkID')
+            if isinstance(name, str) and name.lower().startswith('default__') and type(talk) is int and talk > 0:
+                defaults.add(talk)
+            if obj.get('Type') == 'SkeletalMeshComponent':
+                owners.update(meshes.get(_package(props.get('SkeletalMesh')), []))
+        if len(defaults) != 1 or len(owners) != 1:
+            continue
+        owner = next(iter(owners))
+        role_id, _, model, _ = owner
+        if role_counts[role_id] != 1 or preload_counts[model] != 1:
+            continue
+        default = next(iter(defaults))
+        actors[package] = (default, owner)
+        default_owners[default].add(role_id)
+
     for flow_row, flow in flow_states:
         actions = flow.get('Actions')
         encoded = isinstance(actions, str)
@@ -90,27 +114,19 @@ def sequence_speaker_links(roles, preloads, flow_states, assets, english):
                         continue
                     for binding in bindings:
                         actor = _package(binding)
-                        exports = assets.get(actor)
-                        if not isinstance(exports, list):
+                        if actor not in actors:
                             continue
-                        defaults, owners = set(), set()
-                        for obj in exports:
-                            if not isinstance(obj, dict) or not isinstance(obj.get('Properties'), dict):
-                                continue
-                            props = obj['Properties']
-                            name = obj.get('Name')
-                            talk = props.get('TalkID')
-                            if isinstance(name, str) and name.lower().startswith('default__') and type(talk) is int and talk > 0:
-                                defaults.add(talk)
-                            if obj.get('Type') == 'SkeletalMeshComponent':
-                                owners.update(meshes.get(_package(props.get('SkeletalMesh')), []))
-                        if len(defaults) != 1 or len(owners) != 1:
+                        exports = assets[actor]
+                        raw_assets = [_canonical(value) for value in (da_exports, generated_exports, exports)]
+                        if sum(map(len, raw_assets)) > 2 * 1024 * 1024:
                             continue
-                        role_id, role_row, model, preload_row = next(iter(owners))
-                        if role_counts[role_id] != 1 or preload_counts[model] != 1:
-                            continue
-                        default = next(iter(defaults))
-                        candidates = [(default, 'default_talker')]
+                        default, (role_id, role_row, model, preload_row) = actors[actor]
+                        text = display(f'Speaker_{default}_Name')
+                        conflicting_name = (isinstance(text, str) and text
+                                            and any(owner != role_id for owner in names.get(text, [])))
+                        candidates = []
+                        if len(default_owners[default]) == 1 and not conflicting_name:
+                            candidates.append((default, 'default_talker'))
                         items = params.get('TalkItems')
                         if isinstance(items, list):
                             for item in items:
@@ -135,9 +151,11 @@ def sequence_speaker_links(roles, preloads, flow_states, assets, english):
                                     'method': 'exact_sequence_actor', 'resolution': resolution,
                                     'model_preload_id': model, 'model_preload_row': preload_row,
                                     'role_id': role_id, 'role_row': role_row,
-                                    'sequence_asset_package': da, 'sequence_asset_sha256': _digest(da_exports),
-                                    'generated_asset_package': generated, 'generated_asset_sha256': _digest(generated_exports),
-                                    'actor_package': actor, 'actor_sha256': _digest(exports),
+                                    'sequence_asset_package': da, 'sequence_asset_sha256': hashlib.sha256(raw_assets[0]).hexdigest(),
+                                    'generated_asset_package': generated, 'generated_asset_sha256': hashlib.sha256(raw_assets[1]).hexdigest(),
+                                    'actor_package': actor, 'actor_sha256': hashlib.sha256(raw_assets[2]).hexdigest(),
+                                    'sequence_asset_exports': da_exports,
+                                    'generated_asset_exports': generated_exports,
                                     'actor_exports': exports, 'default_talker_id': default,
                                 },
                             }
