@@ -86,6 +86,10 @@ def test_preview_sql_limits_each_selected_state_and_requires_release_evidence():
             "line:202:2",
         ]
         assert connection.execute(select(npc_scenes.scene_preview_rows(8, [202]))).all() == []
+        lines = npc_profile.interaction_dialogue(7, [101, 202, 303]).subquery()
+        states = select(lines.c.state_id).distinct().order_by(lines.c.state_id)
+        assert list(connection.execute(states).scalars()) == [101, 202]
+        assert list(connection.execute(states.limit(1).offset(1)).scalars()) == [202]
     engine.dispose()
 
 
@@ -118,11 +122,11 @@ async def test_scenes_page_first_and_return_readable_quest_titles(monkeypatch):
         [(42, 109)],
     ]
     session = SimpleNamespace(
-        scalar=AsyncMock(return_value=1),
+        scalar=AsyncMock(side_effect=[1, 121]),
         execute=AsyncMock(
             side_effect=[SimpleNamespace(all=lambda: query_results[0]), *query_results[1:]]
         ),
-        scalars=AsyncMock(return_value=[SimpleNamespace(node_id=42)]),
+        scalars=AsyncMock(side_effect=[[109, 110], [SimpleNamespace(node_id=42)]]),
     )
     result = await npc_scenes.npc_scenes.__wrapped__(
         "character:npc:1", locale="en", limit=2, offset=108, session=session
@@ -140,6 +144,23 @@ async def test_scenes_page_first_and_return_readable_quest_titles(monkeypatch):
     assert result["results"][1]["title"] == "Conversation"
     for call in session.execute.call_args_list:
         assert [109, 110] in call.args[0].compile().params.values()
+
+
+@pytest.mark.asyncio
+async def test_scene_states_without_evidenced_lines_produce_no_cards(monkeypatch):
+    monkeypatch.setattr(
+        npc_scenes, "npc_record", AsyncMock(return_value=(SimpleNamespace(id=1), None, {}, 7))
+    )
+    monkeypatch.setattr(npc_scenes, "npc_flow_state_ids", AsyncMock(return_value=[101, 202]))
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[1, 0]), scalars=AsyncMock(), execute=AsyncMock()
+    )
+    result = await npc_scenes.npc_scenes.__wrapped__(
+        "character:npc:1", locale="en", limit=8, offset=0, session=session
+    )
+    assert result == {"results": [], "total": 0, "limit": 8, "offset": 0}
+    session.scalars.assert_not_awaited()
+    session.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

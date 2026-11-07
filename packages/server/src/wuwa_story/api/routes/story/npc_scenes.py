@@ -69,8 +69,23 @@ async def npc_scenes(
     if await session.scalar(select(Locale.id).where(Locale.code == locale)) is None:
         raise HTTPException(400, "unknown locale")
     states = await npc_flow_state_ids(session, node.id, npc, release_id) if release_id else []
-    total = len(states)
-    page = states[offset : offset + limit]
+    if not states:
+        return {"results": [], "total": 0, "limit": limit, "offset": offset}
+    lines = interaction_dialogue(release_id, states).subquery()
+    scene_states = select(lines.c.state_id).distinct().subquery()
+    total = await session.scalar(select(func.count()).select_from(scene_states)) or 0
+    page = (
+        list(
+            await session.scalars(
+                select(scene_states.c.state_id)
+                .order_by(scene_states.c.state_id)
+                .offset(offset)
+                .limit(limit)
+            )
+        )
+        if total
+        else []
+    )
     if not page:
         return {"results": [], "total": total, "limit": limit, "offset": offset}
 
