@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { api } from '@/api/client';
 import { ErrorPanel } from '@/components/ui/Feedback';
 import { Pagination } from '@/components/ui/Pagination';
+import { PanelTitle } from '@/components/ui/PanelTitle';
 import { localizedText } from '@/data/localized';
 import { conversationSpeakerName } from '@/data/npcContext';
 import { useLocale } from '@/hooks/useLocale';
@@ -84,7 +85,8 @@ export function NpcFlowParticipants({ characterKey, gameVersion }: { characterKe
     return () => controller.abort();
   }, [characterKey, gameVersion, locale, page, retry]);
   if (data && !data.total) return null;
-  return <div className="npc-conversations">
+  return <section className="content-panel full-panel npc-context-section npc-conversations">
+    <PanelTitle number="04" title="Conversations" />
     {data && <p className="npc-context-count">{data.total} {data.total === 1 ? 'conversation' : 'conversations'}</p>}
     {error ? <ErrorPanel message={error} onRetry={() => setRetry(value => value + 1)} /> : !data ?
       <p className="npc-context-loading" role="status">Loading conversations…</p> : <>
@@ -93,5 +95,5 @@ export function NpcFlowParticipants({ characterKey, gameVersion }: { characterKe
         {data.total > PAGE_SIZE && <Pagination mode="pages" page={page} pageSize={PAGE_SIZE} total={data.total}
           onPageChange={setPage} ariaLabel="Conversation list pages" />}
       </>}
-  </div>;
+  </section>;
 }
