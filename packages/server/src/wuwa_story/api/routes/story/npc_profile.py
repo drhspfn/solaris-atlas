@@ -250,7 +250,8 @@ async def npc_flow_participants(canonical_key: str, locale: str = "en", game_ver
 @public_addresses
 async def npc_dialogue(canonical_key: str, locale: str = "en", game_version: str | None = None,
                        q: str = Query("", max_length=128), limit: int = Query(20, ge=1, le=50),
-                       offset: int = Query(0, ge=0), session: AsyncSession = Depends(get_session)):
+                       offset: int = Query(0, ge=0), state_id: int | None = None,
+                       session: AsyncSession = Depends(get_session)):
     node, _, npc, release_id = await npc_record(session, canonical_key, game_version)
     locale_id = await session.scalar(select(Locale.id).where(Locale.code == locale))
     if locale_id is None:
@@ -260,6 +261,10 @@ async def npc_dialogue(canonical_key: str, locale: str = "en", game_version: str
     # Older imports may contain name-derived speakers; only flow context is
     # supported until there is a separately evidenced NPC identity crosswalk.
     state_ids = await npc_flow_state_ids(session, node.id, npc, release_id)
+    if state_id is not None:
+        if state_id not in state_ids:
+            raise HTTPException(404, "NPC scene not found")
+        state_ids = [state_id]
     if not state_ids:
         return {"results": [], "total": 0, "limit": limit, "offset": offset}
     selected = interaction_dialogue(release_id, state_ids).subquery()
