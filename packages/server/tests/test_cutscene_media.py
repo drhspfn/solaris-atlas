@@ -14,13 +14,14 @@ async def test_latest_exact_asset_file_keeps_recording_version(monkeypatch):
     class Session:
         async def execute(self, query):
             assert query.compile().params['owner_node_id_1'] == [5]
-            return [(SimpleNamespace(owner_node_id=5, metadata_json={'asset_version': version, 'has_audio': True, 'soundtrack': 'music_and_effects'}), key)
+            return [(SimpleNamespace(owner_node_id=5, metadata_json={'asset_version': version, 'has_audio': True, 'duration_seconds': 94.5, 'soundtrack': 'music_and_effects'}), key)
                     for version, key in [('3.7.0', 'latest.mp4'), ('3.6.0', 'older.mp4')]]
 
     result = await media.cutscene_videos(Session(), [5])
     assert result[5]['url'].endswith('/latest.mp4')
     assert result[5]['asset_version'] == '3.7.0'
     assert result[5]['has_audio']
+    assert result[5]['duration_seconds'] == 94.5
     assert not result[5]['subtitles_included']
     assert await media.cutscene_videos(Session(), []) == {}
 
@@ -64,7 +65,7 @@ async def test_segment_flow_requires_every_exported_fragment(monkeypatch, separa
             self.execute_calls = 0
         async def scalars(self, query):
             self.scalars_calls += 1
-            return [SimpleNamespace(owner_node_id=1, metadata_json={"asset_version": "3.7.0", "flow": flow})] if self.scalars_calls == 1 else [SimpleNamespace(id=5, canonical_key=asset)]
+            return [SimpleNamespace(owner_node_id=1, reference_type="cutscene_flow", metadata_json={"asset_version": "3.7.0", "flow": flow})] if self.scalars_calls == 1 else [SimpleNamespace(id=5, canonical_key=asset)]
         async def execute(self, query):
             self.execute_calls += 1
             if self.execute_calls == 1:

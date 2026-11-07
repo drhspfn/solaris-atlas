@@ -169,6 +169,14 @@ export function FlowPlayer({
     });
   }, []);
 
+  const recordDuration = useCallback((key: string, video: HTMLVideoElement) => {
+    const duration = video.duration;
+    if (Number.isFinite(duration) && duration > 0)
+      setDurations((values) =>
+        values[key] === duration ? values : { ...values, [key]: duration },
+      );
+  }, []);
+
   useEffect(() => {
     if (node?.kind === "choice" && !automaticTarget && continuePlaying.current)
       choiceRef.current?.querySelector("button")?.focus();
@@ -351,15 +359,27 @@ export function FlowPlayer({
               pendingTime.current ?? activeClip.start;
             pendingTime.current = null;
             setTime(event.currentTarget.currentTime);
-            const duration = event.currentTarget.duration;
-            if (Number.isFinite(duration))
-              setDurations((values) => ({
-                ...values,
-                [activeClip.segment || activeClip.asset]: duration,
-              }));
+            recordDuration(
+              activeClip.segment || activeClip.asset,
+              event.currentTarget,
+            );
             transitioning.current = false;
             if (node?.kind === "clip" && continuePlaying.current)
               playVideo(event.currentTarget);
+          }}
+          onDurationChange={(event) => {
+            if (event.currentTarget === videoRef.current)
+              recordDuration(
+                activeClip.segment || activeClip.asset,
+                event.currentTarget,
+              );
+          }}
+          onLoadedData={(event) => {
+            if (event.currentTarget === videoRef.current)
+              recordDuration(
+                activeClip.segment || activeClip.asset,
+                event.currentTarget,
+              );
           }}
           onPlaying={(event) => {
             if (event.currentTarget === videoRef.current) setFailed(false);
@@ -543,6 +563,11 @@ export function FlowPlayer({
       {Object.entries(flow.media)
         .filter(
           ([key]) =>
+            key !== (activeClip.segment || activeClip.asset) &&
+            !(
+              Number.isFinite(flow.media[key].duration_seconds) &&
+              (flow.media[key].duration_seconds || 0) > 0
+            ) &&
             !Object.hasOwn(durations, key) &&
             flow.nodes.some(
               (entry) =>
@@ -554,14 +579,17 @@ export function FlowPlayer({
         .map(([key, media]) => (
           <video
             hidden
+            muted
             key={key}
             src={media.url}
             preload="metadata"
             onLoadedMetadata={(event) => {
-              const duration = event.currentTarget.duration;
-              if (Number.isFinite(duration))
-                setDurations((values) => ({ ...values, [key]: duration }));
+              recordDuration(key, event.currentTarget);
             }}
+            onDurationChange={(event) =>
+              recordDuration(key, event.currentTarget)
+            }
+            onLoadedData={(event) => recordDuration(key, event.currentTarget)}
           />
         ))}
       {fullscreenFailed && (

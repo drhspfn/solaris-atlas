@@ -79,6 +79,7 @@ async def cutscene_videos(
             "url": storage.public_url(object_key),
             "asset_version": reference.metadata_json.get("asset_version"),
             "has_audio": reference.metadata_json.get("has_audio", False),
+            "duration_seconds": reference.metadata_json.get("duration_seconds"),
             "soundtrack": reference.metadata_json.get("soundtrack"),
             "subtitles_included": reference.metadata_json.get("subtitles_included", False),
         })
