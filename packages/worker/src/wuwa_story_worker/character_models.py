@@ -138,6 +138,10 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
         filters = [sources['model']]
     filters.extend(additional_filters)
     if local_client is None:
+        # Nested exports (animations, accessories and materials) use their own
+        # output directories but still need the pinned client manifest and game.
+        if not (root / "plan.json").is_file():
+            prepare_entity_workspace(root.parent, root)
         receipt = await export_assets(root, fmodel, "|".join(filters))
     else:
         output = root / "exports" / "local"
