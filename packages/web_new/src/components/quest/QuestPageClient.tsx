@@ -7,7 +7,6 @@ import { PlayerText } from '@/components/dialogue/PlayerText';
 import { gameTextPlainText } from '@/data/gameText';
 import { QuestSidebar, type SidebarGroup } from './QuestSidebar';
 import { activityDestination, dialogueSearchIndex } from './questSidebarModel';
-import { localizedText } from '@/data/localized';
 import { cutsceneAnchor, packageCutsceneAnchor } from '@/components/story/cutsceneAnchor';
 import { isSourceOnlyActivity, sidebarActivityTitle } from '@/components/story/runtimeActivity';
 import { AnalysisActions } from '@/components/story/AnalysisActions';
@@ -395,6 +394,7 @@ export function QuestPageClient({
         const fallback = event.kind === 'cutscene' ? `Cutscene · ${event.reference.replace('cutscene:', '')}` : 'Story scene';
         return { id: cutsceneAnchor(event), title: event.title, fallback,
           searchText: searchText(event.title, fallback), inView: Boolean(anchor),
+          note: event.review_position ? 'Archive order' : !event.story_position ? (event.context_inferred ? 'Possible connection · position not mapped' : 'Position not mapped') : undefined,
           href: anchor ? `#${anchor}` : activityDestination({ id: '', flow_states:
             [event.flow_state, ...(event.transcript_states || [])].map((state) => ({ state })) }, new Map(), lines, searchParams?.toString() || ''),
         };
@@ -402,7 +402,7 @@ export function QuestPageClient({
       ...(media?.related_cutscenes || []).filter((scene) => !eventSceneNames.has(`cutscene:${scene.name}`)).map((scene) => ({
         id: packageCutsceneAnchor(scene.name), title: scene.name, fallback: 'Related scene',
         searchText: scene.name, href: `#${packageCutsceneAnchor(scene.name)}`, inView: true,
-        note: 'Related · position unknown',
+        note: scene.continuations?.length ? 'Continues in a later quest' : 'Related · position unknown',
       })),
     ] },
     { id: 'activities', title: 'Activities', entries: (transcript?.story_blocks || []).filter((block: any) => !isSourceOnlyActivity(block)).map((block: any) => ({
@@ -419,7 +419,7 @@ export function QuestPageClient({
           interactionOwners.set(flow.state, `${block.id}:${item.id}`);
   const inlineStates = new Set(
     shown
-      .filter((line: any) => !line.story_position && (interactionOwners.has(line.flow_state) || encounterOwners.has(line.flow_state)))
+      .filter((line: any) => !line.story_position && !line.review_position && (interactionOwners.has(line.flow_state) || encounterOwners.has(line.flow_state)))
       .map((line: any) => line.flow_state),
   );
   const indexedLines = new Map<string, { line: any; index: number }>(

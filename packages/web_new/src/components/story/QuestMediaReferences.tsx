@@ -90,6 +90,7 @@ export interface QuestMediaEvent {
   >;
   context_inferred?: boolean;
   story_order_mapped?: boolean;
+  review_position?: number[];
   story_position?: number[];
   story_block_id?: string;
   interaction_id?: string;
@@ -138,6 +139,11 @@ export interface QuestMediaManifest {
     playable: boolean;
     context_inferred: boolean;
     playback?: CutsceneFlow | null;
+    continuations?: Array<{
+      game_quest_id: number;
+      quest_href?: string;
+      title?: unknown;
+    }>;
   }>;
 }
 
