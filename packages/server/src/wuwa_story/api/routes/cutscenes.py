@@ -51,18 +51,39 @@ async def catalog(game_version: str | None = None, locale: str = "en",
             raise ValueError("Invalid cursor")
     except ValueError as exc:
         raise HTTPException(400, "Invalid cursor for these filters") from exc
-    total, rows = await repository.page(session, snapshot.id if snapshot else None, q.strip(), playable,
-                                        limit + 1, offset, position)
+    if q.strip():
+        # Source mode has no materialized title index. Resolve the same titles used
+        # for cards before paging, so quest/analysis titles are never lost.
+        rows = list(await session.execute(repository.archive_query(
+            snapshot.id if snapshot else None, "", playable)))
+        items = {}
+        for identity in {snapshot.id if snapshot else row.latest_release_id for row in rows}:
+            group = [row for row in rows if snapshot or row.latest_release_id == identity]
+            for start in range(0, len(group), 200):
+                items.update({item["node_id"]: item for item in await summaries(
+                    session, group[start:start + 200], identity, locale)})
+        needle = q.strip().casefold()
+        rows = [row for row in rows if any(
+            needle in str(value or "").casefold() for value in (
+                row.cg_name, items[row.node_id].get("title"), items[row.node_id].get("description")))]
+        total = len(rows)
+        if position:
+            rows = [row for row in rows if (
+                row.cursor_version_0, row.cursor_version_1, row.cursor_version_2,
+                row.cursor_index, row.cg_name, row.node_id) < tuple(position)]
+        rows = rows[offset:offset + limit + 1]
+    else:
+        total, rows = await repository.page(session, snapshot.id if snapshot else None, "", playable,
+                                            limit + 1, offset, position)
+        items = {}
+        # Resolve each scene in an actual containing snapshot.
+        for identity in {snapshot.id if snapshot else row.latest_release_id for row in rows}:
+            group = rows if snapshot else [row for row in rows if row.latest_release_id == identity]
+            items.update({item["node_id"]: item for item in await summaries(session, group, identity, locale)})
     rows, next_cursor = cursor_page(rows, limit, scope, lambda row: [
         revision, row.cursor_version_0, row.cursor_version_1, row.cursor_version_2,
         row.cursor_index, row.cg_name, row.node_id,
     ])
-    items = {}
-    # Resolve each scene in an actual containing snapshot, never fabricate an all-version graph.
-    for identity in {snapshot.id if snapshot else row.latest_release_id for row in rows}:
-        group = rows if snapshot else [
-            row for row in rows if row.latest_release_id == identity]
-        items.update({item["node_id"]: item for item in await summaries(session, group, identity, locale)})
     return {"game_version": snapshot.game_version if snapshot else None,
             "imported_game_versions": sorted(await repository.imported_versions(session), key=version_key, reverse=True),
             "total": total, "limit": limit, "offset": offset,

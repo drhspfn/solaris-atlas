@@ -1,7 +1,7 @@
 """Cutscene playback and authored-order archive projection reads."""
 
 from fastapi import HTTPException
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import func, or_, select, tuple_
 
 from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS
 from wuwa_story.read_models.readers import entities
@@ -77,12 +77,13 @@ async def cutscene_catalog(
     if playable:
         filters.append(catalog["playable"].as_boolean().is_(True))
     if q.strip():
-        text = (
-            func.coalesce(catalog["item"]["title"].as_string(), "")
-            + " "
-            + func.coalesce(catalog["item"]["name"].as_string(), "")
-        )
-        filters.append(text.icontains(q.strip(), autoescape=True))
+        query = q.strip()
+        filters.append(or_(
+            model.title.icontains(query, autoescape=True),
+            model.searchable_text.icontains(query, autoescape=True),
+            catalog["item"]["title"].as_string().icontains(query, autoescape=True),
+            catalog["item"]["name"].as_string().icontains(query, autoescape=True),
+        ))
     total = await session.scalar(select(func.count()).select_from(model).where(*filters))
     if position:
         filters.append(tuple_(*order[1:]) < tuple_(*position[1:]))

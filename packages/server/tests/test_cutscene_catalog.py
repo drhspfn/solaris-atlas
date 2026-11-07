@@ -275,3 +275,28 @@ async def test_scene_title_does_not_consume_stale_analysis(monkeypatch):
         "wuwa_story.story.cutscenes.quest_fingerprint", AsyncMock(return_value=b"new"))
     assert await descriptions(session, [(9, quest, None, False)], 7, "en") == {}
     session.get.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_catalog_searches_displayed_titles_before_paging(monkeypatch):
+    from wuwa_story.api.routes import cutscenes as route
+
+    def row(node_id, code, index):
+        return SimpleNamespace(node_id=node_id, cg_name=code, latest_release_id=7,
+            latest_game_version="1.0.0", first_observed_game_version="1.0.0", ordering_basis="story",
+            cursor_version_0=1, cursor_version_1=0, cursor_version_2=0, cursor_index=index)
+    rows = [row(3, "M3", 3), row(2, "Start", 2), row(1, "M1", 1)]
+    titles = {3: "Another scene", 2: "Utterance of Marvels: I", 1: "Utterance of Marvels: II"}
+    class Session:
+        async def scalar(self, *_args): return 4
+        async def execute(self, *_args): return rows
+    async def summaries(_session, group, _release, _locale):
+        return [{"node_id": item.node_id, "name": item.cg_name, "title": titles[item.node_id], "quests": []} for item in group]
+    monkeypatch.setattr(route.read_projections, "should_route_to_projection", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(route, "summaries", summaries)
+    monkeypatch.setattr(route.repository, "imported_versions", AsyncMock(return_value=["1.0.0"]))
+    first = await route.catalog(q="utterance of marvels", locale="en", playable=True, limit=1, offset=0, cursor=None, session=Session())
+    assert first["total"] == 2 and first["items"][0]["name"] == "Start"
+    second = await route.catalog(q="utterance of marvels", locale="en", playable=True, limit=1, offset=0, cursor=first["next_cursor"], session=Session())
+    assert second["total"] == 2 and second["items"][0]["name"] == "M1"
+    code = await route.catalog(q="start", locale="en", playable=True, limit=5, offset=0, cursor=None, session=Session())
+    assert code["total"] == 1 and code["items"][0]["title"] == titles[2]
