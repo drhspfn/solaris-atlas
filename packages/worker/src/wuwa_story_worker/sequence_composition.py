@@ -179,6 +179,8 @@ def _plans(archive, manifest):
         if not args or not isinstance(args[0], str):
             raise UnsupportedComposition('Unresolved UI sequence name')
         actions.append((event, args[0]))
+    if len(actions) > 32:
+        raise UnsupportedComposition('UI composition exceeds 32 settled states')
     plans = []
     for index, (event, key) in enumerate(actions):
         sequence = layout['sequences'].get(key)
@@ -200,6 +202,8 @@ def _plans(archive, manifest):
         layers = visible_layers(layout, actors)
         if not layers:
             raise UnsupportedComposition('No visible layers in settled frame')
+        if len(layers) > 16:
+            raise UnsupportedComposition('UI composition exceeds 16 visible layers')
         plans.append({'time': when, 'state_time': event['time_seconds'],
                       'sample': when - times[0], 'layers': layers,
                       'source': source, 'scene_source': scene, 'clip': opening['arguments'][2],
@@ -276,6 +280,8 @@ def _render(bundle, archive, manifest, plans, root, cli, native):
         canvas.save(result, format='PNG')
         name = f'composition/frame-{index:03}.png'
         frames[name] = result.getvalue()
+        if sum(len(data) for data in frames.values()) > 128 * 1024 * 1024:
+            raise ValueError('Composed illustrations exceed the publication size bound')
         plan['file'] = name
     return frames
 
