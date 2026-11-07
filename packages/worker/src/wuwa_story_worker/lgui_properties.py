@@ -9,6 +9,14 @@ import struct
 
 
 def properties(data, names, assets, *, depth=0):
+    result, consumed = property_prefix(data, names, assets, depth=depth)
+    if any(data[consumed:]) or len(data) - consumed > 4:
+        raise ValueError('Unexpected LGUI property trailer')
+    return result
+
+
+def property_prefix(data, names, assets, *, depth=0):
+    """Return a tagged struct and its extent when embedded in a native map."""
     if depth > 12 or not isinstance(data, (list, bytes)) or len(data) > 4 * 1024**2:
         raise ValueError('Invalid LGUI property stream bounds')
     data, offset, result = bytes(data), 0, {}
@@ -30,9 +38,7 @@ def properties(data, names, assets, *, depth=0):
     while offset < len(data):
         key = name()
         if key == 'None':
-            if any(data[offset:]) or len(data) - offset > 4:
-                raise ValueError('Unexpected LGUI property trailer')
-            return result
+            return result, offset
         kind = name()
         size, index = struct.unpack('<ii', take(8))
         if not 0 <= size <= len(data) or index != 0 or key in result:
