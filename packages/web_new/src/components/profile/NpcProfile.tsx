@@ -84,6 +84,7 @@ function NpcQuests({
       });
     return () => controller.abort();
   }, [characterKey, gameVersion, locale, page, retry]);
+  if (result && !result.total) return null;
   return (
     <section className="content-panel full-panel npc-section">
       <PanelTitle number="02" title="Quest appearances" />

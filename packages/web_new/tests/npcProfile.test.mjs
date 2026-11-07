@@ -96,6 +96,9 @@ test('quest appearances render localized, accessible links in a compact grid', (
   const interactions = nodes(exports.NpcInteractions({ characterKey: 'character:npc:1', npc: { shop_count: 0 }, gameVersion: '3.7.1' }));
   const quests = interactions.find(node => typeof node.type === 'function' && node.type.name === 'NpcQuests');
   index = 0;
+  slots.splice(0, slots.length, 1, { results: [], total: 0 }, '', 0);
+  assert.equal(quests.type(quests.props), null);
+  index = 0;
   slots.splice(0, slots.length, 1, { results: [{ canonical_key: 'quest:1', game_quest_id: 1, name: { content: 'A localized quest' } }], total: 1 }, '', 0);
   const rendered = nodes(quests.type(quests.props));
   const link = rendered.find(node => node.props.className === 'npc-quest-card');
