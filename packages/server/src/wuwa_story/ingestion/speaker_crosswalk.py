@@ -17,7 +17,7 @@ PLOT_GUEST_PATH = 'BinData/PlotGuest/plotguest.json'
 PLOT_GUEST_BASIS = 'Exact PlotGuest speaker reference with corroborated name: '
 PLOT_GUEST_ROLE_BASIS = 'Exact PlotGuest role reference: '
 PORTRAITS = {
-    'HeadIconAsset': ('RoleHeadIconCircle', 'RoleHeadIconLarge'),
+    'HeadIconAsset': ('RoleHeadIconCircle', 'RoleHeadIconLarge', 'RoleHeadIconBig'),
     'HeadRoundIconAsset': ('RoleHeadIconBig',),
     'HeadRoundIconAssetMaleVariant': ('RoleHeadIconBig',),
 }
@@ -172,6 +172,18 @@ def _portrait_links(roles, speakers, main_roles=()):
             continue
         target = identities.get(identity, {}).get(
             'canonical_key', f'character:{identity}')
+        parent = templates.get(role.get('ParentId'))
+        parent_id = None
+        if (role.get('RoleType') != 1 and parent and parent.get('RoleType') == 1
+                and role_counts.get(parent.get('Id')) == 1
+                and isinstance(role.get('Name'), str) and role['Name']
+                and role['Name'] == parent.get('Name')
+                and any(role.get(field) and role[field] == parent.get(field)
+                        for fields in PORTRAITS.values() for field in fields)):
+            # Trial/story copies are explicitly parented to the same person.
+            # Their duplicate head must not make the playable identity ambiguous.
+            parent_id = parent['Id']
+            target = identities.get(parent_id, {}).get('canonical_key', f'character:{parent_id}')
         inherited = inherited_character_fields(
             role, templates.get(role.get('SkillId'), {}))
         # Trial/technical RoleInfo rows also copy Rover cards. Only declared
@@ -187,7 +199,7 @@ def _portrait_links(roles, speakers, main_roles=()):
             asset = role.get(field)
             if isinstance(asset, str) and asset:
                 assets.setdefault((field, asset), []).append(
-                    (target, identity, row))
+                    (target, identity, row, parent_id))
     for row, speaker in speakers:
         identity = speaker.get('Id')
         if type(identity) is not int or speaker_counts[identity] != 1:
@@ -198,10 +210,11 @@ def _portrait_links(roles, speakers, main_roles=()):
             if not isinstance(asset, str) or not asset:
                 continue
             for role_field in role_fields:
-                for target, role_id, role_row in assets.get((role_field, asset), []):
+                for target, role_id, role_row, parent_id in assets.get((role_field, asset), []):
                     matches.append({
                         'character': target, 'role_id': role_id, 'role_row': role_row,
                         'role_field': role_field, 'speaker_field': field, 'asset_path': asset,
+                        **({'parent_role_id': parent_id} if parent_id is not None else {}),
                     })
         targets = {match['character'] for match in matches}
         method = 'exact_personal_portrait'
@@ -238,6 +251,7 @@ def _portrait_links(roles, speakers, main_roles=()):
             m['speaker_field'], m['role_id'], m['role_field']))
         detail = '; '.join(
             f"{m['speaker_field']}={m['asset_path']} = {ROLE_PATH}$[{m['role_row']}].{m['role_field']} (RoleInfo.Id={m['role_id']})"
+            + (f"; ParentId={m['parent_role_id']}, same Name key" if m.get('parent_role_id') is not None else '')
             for m in matches)
         if method == 'main_role_config_exact_asset':
             detail = f'{MAIN_ROLE_PATH} explicit family membership; ' + detail

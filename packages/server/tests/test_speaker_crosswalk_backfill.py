@@ -96,6 +96,20 @@ async def test_missing_convenience_link_is_repaired_even_when_graph_evidence_exi
 
 
 @pytest.mark.asyncio
+async def test_completed_source_repair_can_refresh_stale_character_pages(monkeypatch):
+    session, _, _, _, _ = fixture(monkeypatch)
+    await repair.backfill(session, 21, [1212], apply=True)
+    dirty = AsyncMock()
+    monkeypatch.setattr(repair, 'mark_dirty', dirty)
+    report = await repair.backfill(session, 21, [1212], apply=True, refresh=True)
+    assert report['written'] == 0 and report['refresh_characters'] == [12]
+    assert [call.args[3] for call in dirty.await_args_list] == ['current', '3.7.0']
+    assert all(call.args[1:3] == ('character', [12]) for call in dirty.await_args_list)
+    with pytest.raises(ValueError, match='requires --apply'):
+        await repair.backfill(session, 21, [1212], refresh=True)
+
+
+@pytest.mark.asyncio
 async def test_apply_requires_explicit_scope_and_snapshot_endpoints(monkeypatch):
     session, imported, known, _, _ = fixture(monkeypatch)
     with pytest.raises(ValueError, match='explicit role'):
