@@ -1,5 +1,6 @@
 'use client';
 
+import { Skeleton, SkeletonGroup, TextSkeleton } from '@/components/ui/Skeleton';
 import { ArrowRight, ShieldCheck, Sparkles } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 
@@ -87,7 +88,10 @@ export function LoginPageClient() {
     setBusy(true);
     setError('');
     try {
-      await api<CurrentUser>('/auth/login', { method: 'POST', body: { email, password } });
+      await api<CurrentUser>('/auth/login', {
+        method: 'POST',
+        body: { email, password },
+      });
       await refresh();
       navigate(returnTo, { replace: true });
     } catch (e) {
@@ -157,7 +161,10 @@ export function RegisterPageClient() {
     }
     setBusy(true);
     try {
-      await api('/auth/register', { method: 'POST', body: { email, nickname, password } });
+      await api('/auth/register', {
+        method: 'POST',
+        body: { email, nickname, password },
+      });
       await refresh();
       navigate('/', { replace: true });
     } catch (e) {
@@ -235,7 +242,10 @@ export function RegisterPageClient() {
 }
 
 export function GoogleCompletePageClient() {
-  const [pending, setPending] = useState<{ email: string; nickname: string } | null>(null);
+  const [pending, setPending] = useState<{
+    email: string;
+    nickname: string;
+  } | null>(null);
   const [nickname, setNickname] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -262,7 +272,10 @@ export function GoogleCompletePageClient() {
     setBusy(true);
     setError('');
     try {
-      await api('/auth/google/complete', { method: 'POST', body: { nickname, password } });
+      await api('/auth/google/complete', {
+        method: 'POST',
+        body: { nickname, password },
+      });
       await refresh();
       navigate('/', { replace: true });
     } catch (e) {
@@ -328,7 +341,10 @@ export function GoogleCompletePageClient() {
 }
 
 export function GoogleExistingLinkPageClient() {
-  const [pending, setPending] = useState<{ email: string; nickname: string } | null>(null);
+  const [pending, setPending] = useState<{
+    email: string;
+    nickname: string;
+  } | null>(null);
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -346,7 +362,10 @@ export function GoogleExistingLinkPageClient() {
     setBusy(true);
     setError('');
     try {
-      await api('/auth/google/link-existing', { method: 'POST', body: { password } });
+      await api('/auth/google/link-existing', {
+        method: 'POST',
+        body: { password },
+      });
       await refresh();
       navigate('/account', { replace: true });
     } catch (e) {
@@ -389,6 +408,27 @@ export function GoogleExistingLinkPageClient() {
         <Link to="/login">Return to sign in</Link>
       </p>
     </AuthFrame>
+  );
+}
+
+export function AccountSkeleton() {
+  return (
+    <SkeletonGroup label="Loading account" className="page-container account-page">
+      <div className="page-heading">
+        <div>
+          <TextSkeleton lines={3} />
+        </div>
+      </div>
+      <div className="account-grid">
+        {[0, 1].map((panel) => (
+          <section className="content-panel" key={panel}>
+            <Skeleton style={{ width: '45%', height: '1.5rem' }} />
+            <TextSkeleton lines={3} />
+            <Skeleton style={{ width: '50%', height: '2.75rem' }} />
+          </section>
+        ))}
+      </div>
+    </SkeletonGroup>
   );
 }
 
@@ -440,12 +480,7 @@ export function AccountPageClient() {
     }
   }
 
-  if (loading)
-    return (
-      <div className="page-container">
-        <p className="auth-copy">Loading account…</p>
-      </div>
-    );
+  if (loading) return <AccountSkeleton />;
 
   if (!user)
     return (

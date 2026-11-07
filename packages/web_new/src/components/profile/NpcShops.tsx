@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/api/client";
 import { ErrorPanel } from "@/components/ui/Feedback";
+import { Skeleton, SkeletonGroup } from "@/components/ui/Skeleton";
 import { Pagination } from "@/components/ui/Pagination";
 import { PanelTitle } from "@/components/ui/PanelTitle";
 import {
@@ -26,6 +27,14 @@ type Offer = {
 };
 type Shop = { id: number; name: unknown; offer_count: number };
 type Page<T> = { results: T[]; total: number };
+
+export function NpcShopSkeleton() {
+  return <div><Skeleton style={{ width: "45%", height: 16, margin: "8px 0" }} /></div>;
+}
+
+export function NpcOfferSkeleton() {
+  return <div className="plain-row"><div><Skeleton style={{ width: 180, height: 14 }} /><br /><Skeleton style={{ width: 140, height: 12 }} /></div><Skeleton style={{ width: 110, height: 14 }} /></div>;
+}
 
 function ItemLabel({ item, display }: { item: Item; display: PlayerDisplay }) {
   const label = <PlayerText value={item.label} display={display} />;
@@ -89,7 +98,7 @@ function ShopOffers({
           onRetry={() => setRetry((value) => value + 1)}
         />
       ) : !result ? (
-        <p role="status">Loading offers…</p>
+        <SkeletonGroup label="Loading offers">{Array.from({ length: 3 }, (_, i) => <NpcOfferSkeleton key={i} />)}</SkeletonGroup>
       ) : (
         <>
           {!result.results.length && <p>No fixed offers recorded.</p>}
@@ -201,7 +210,7 @@ export function NpcShops({
           onRetry={() => setRetry((value) => value + 1)}
         />
       ) : !result ? (
-        <p role="status">Loading shops…</p>
+        <SkeletonGroup label="Loading shops">{Array.from({ length: 3 }, (_, i) => <NpcShopSkeleton key={i} />)}</SkeletonGroup>
       ) : (
         <>
           {result.results.map((shop) => (

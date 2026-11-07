@@ -3,9 +3,10 @@
 import { ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "@/api/client";
-import { EntityCard } from "@/components/cards/EntityCard";
+import { EntityCard, EntityCardSkeleton } from "@/components/cards/EntityCard";
 import { SearchBox } from "@/components/search/SearchBox";
 import { StoryQuestionResults } from "@/components/search/StoryQuestionResults";
+import { SkeletonGroup } from "@/components/ui/Skeleton";
 import { Pill } from "@/components/ui/Pill";
 import { EmptyState, ErrorPanel } from "@/components/ui/Feedback";
 import { APP_SETTINGS } from "@/config/settings";
@@ -124,14 +125,11 @@ export function SearchClient() {
               onRetry={() => setRetry((value) => value + 1)}
             />
           ) : loading ? (
-            <div className="loading-grid">
-              {Array.from(
-                { length: APP_SETTINGS.presentation.skeletonCount },
-                (_, i) => (
-                  <div className="skeleton" key={i} />
-                ),
-              )}
-            </div>
+            <SkeletonGroup className="entity-grid" label="Loading search results">
+              {Array.from({ length: APP_SETTINGS.presentation.skeletonCount }, (_, i) => (
+                <EntityCardSkeleton key={i} />
+              ))}
+            </SkeletonGroup>
           ) : data.length ? (
             <>
               <p className="results-label">

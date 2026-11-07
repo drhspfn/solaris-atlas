@@ -8,6 +8,7 @@ import { gameTextPlainText } from '@/data/gameText';
 import { usePlayerDisplay } from '@/hooks/usePlayerDisplay';
 import { Select } from '@/components/ui/Select';
 import { ErrorPanel } from '@/components/ui/Feedback';
+import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton';
 import { EventDetails } from './EventDetails';
 import { EventArtwork } from './EventArtwork';
 import { EventArchiveHeader } from './EventArchiveHeader';
@@ -332,9 +333,7 @@ export function EventsPage({
           {timeZoneLabel(timeZone, now ?? 0)}.
         </p>
         {loading ? (
-          <p className="events-empty" role="status">
-            Reading the archive…
-          </p>
+          <EventTimelineSkeleton />
         ) : (
           <>
             <div
@@ -558,4 +557,15 @@ export function EventsPage({
       </footer>
     </main>
   );
+}
+
+export function EventTimelineSkeleton() {
+  return <SkeletonGroup label="Reading the archive" className="events-chart-scroll">
+    <div className="events-chart" style={{ minWidth: 600 }}>
+      <div className="events-axis"><Skeleton style={{ width: '100%', height: 54 }} /></div>
+      {Array.from({ length: 3 }, (_, index) => <div className="events-calendar-row" key={index} style={{ height: 60 }}>
+        <Skeleton className="events-bar" style={{ left: `${index * 12}%`, top: 8, width: '35%', height: 44 }} />
+      </div>)}
+    </div>
+  </SkeletonGroup>;
 }

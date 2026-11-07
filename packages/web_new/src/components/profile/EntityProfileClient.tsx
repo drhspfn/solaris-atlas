@@ -11,9 +11,10 @@ import { CharacterModelImport } from '@/components/characters/CharacterModelImpo
 import { NpcInteractions, NpcProfile } from '@/components/profile/NpcProfile';
 import {
   CharacterArchive,
+  CharacterArchiveSkeleton,
   type CharacterArchiveData,
 } from '@/components/characters/CharacterArchive';
-import { CharacterConnections } from '@/components/characters/CharacterConnections';
+import { CharacterConnections, CharacterConnectionsSkeleton } from '@/components/characters/CharacterConnections';
 import { ItemAcquisition } from '@/components/items/ItemAcquisition';
 import { NpcSellers } from '@/components/items/NpcSellers';
 import { InlineDialogueSearch } from '@/components/search/InlineDialogueSearch';
@@ -304,7 +305,7 @@ export function EntityProfileClient({
           <ErrorPanel message={`Character details unavailable: ${archiveError}`}
             onRetry={() => setArchiveRetry((value) => value + 1)} />
         ) : (
-          <div className="character-archive-loading" role="status">Loading character details…</div>
+          <CharacterArchiveSkeleton />
         ))}
       {kind === 'character' && profileRole === selectedRole && data?.npc_context && npcContextKey && (
         <NpcInteractions key={npcContextKey} characterKey={npcContextKey}
@@ -331,7 +332,7 @@ export function EntityProfileClient({
                 characterKey={selectedRole} section="quests" locale={locale}
                 gameVersion={gameVersion || entity?.game_version} initialRows={quests}
                 summary={data?.connections_preview?.quests || data?.connections_summary?.quests} playerDisplay={playerDisplay} />
-            ) : <p role="status">Loading story appearances…</p>
+            ) : <CharacterConnectionsSkeleton kind="quests" />
           ) : kind !== 'item' && quests.length ? (
             <div className="list-stack">
               {quests.map((q: any, i: number) => {
@@ -461,7 +462,7 @@ export function EntityProfileClient({
                 gameVersion={gameVersion || entity?.game_version}
                 initialRows={data?.connections_preview?.characters?.results || [...related, ...unresolvedSpeakerEvidence]}
                 summary={data?.connections_preview?.characters || data?.connections_summary?.characters} playerDisplay={playerDisplay} />
-            ) : <p role="status">Loading shared scenes and links…</p>
+            ) : <CharacterConnectionsSkeleton kind="characters" />
           ) : kind === 'item' ? null : related.length ? (
             <div className="list-stack">
               {visibleRelated.map((link: any, i: number) => {

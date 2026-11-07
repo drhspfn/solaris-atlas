@@ -1,3 +1,4 @@
+import { SkeletonGroup, TextSkeleton } from '../ui/Skeleton';
 import { useState } from 'react';
 
 import { api } from '../../api/client';
@@ -41,7 +42,7 @@ export function AgentStepTrace({ runId, callId }: { runId: number; callId: numbe
       }}
     >
       <summary>Step details</summary>
-      {loading && <p role="status">Loading step…</p>}
+      {loading && <AgentStepSkeleton />}
       {error && (
         <p role="alert">
           {error} <button onClick={() => void load()}>Retry</button>
@@ -90,5 +91,13 @@ export function AgentStepTrace({ runId, callId }: { runId: number; callId: numbe
         </>
       )}
     </details>
+  );
+}
+
+export function AgentStepSkeleton() {
+  return (
+    <SkeletonGroup label="Loading step details" className="page-skeleton">
+      <TextSkeleton lines={5} />
+    </SkeletonGroup>
   );
 }

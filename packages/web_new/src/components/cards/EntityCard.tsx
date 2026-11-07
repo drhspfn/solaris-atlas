@@ -5,6 +5,7 @@ import { apiUrl } from '../../api/client';
 import { APP_SETTINGS } from '../../config/settings';
 import { display as entityDisplay, type Entity, entityPath } from '../../data/entities';
 import { PlayerText, type PlayerDisplay } from '../dialogue/PlayerText';
+import { Skeleton } from '../ui/Skeleton';
 
 export function EntityCard({ item, index = 0, display }: { item: Entity; index?: number; display?: PlayerDisplay }) {
   const type = item.category ?? (item.node_type === 'area' ? 'location' : item.node_type);
@@ -50,4 +51,14 @@ export function EntityCard({ item, index = 0, display }: { item: Entity; index?:
       </div>
     </Link>
   );
+}
+
+export function EntityCardSkeleton() {
+  return <div className="entity-card">
+    <div className="entity-art has-image"><Skeleton style={{ height: '100%' }} /></div>
+    <div className="entity-info">
+      <div className="entity-title-row"><Skeleton style={{ width: '70%', height: 15 }} /></div>
+      <p><Skeleton style={{ width: '45%', height: 10 }} /></p>
+    </div>
+  </div>;
 }

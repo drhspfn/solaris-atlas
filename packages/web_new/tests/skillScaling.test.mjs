@@ -1,3 +1,4 @@
+import { skeletonComponents } from './skeletonComponents.mjs';
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -45,7 +46,7 @@ function load(react = React, playerText = ({ value, fallback = "" }) => String(v
   const exports = {};
   vm.runInNewContext(code, {
     exports,
-    require: (id) => (id.endsWith(".css") ? {} : (mocks[id] ?? require(id))),
+    require: (id) => (id.endsWith(".css") ? {} : (mocks[id] ?? (id.endsWith('/ui/Skeleton') ? skeletonComponents : require(id)))),
   });
   return exports;
 }
@@ -623,7 +624,7 @@ test("talent renders real game text with formatted parameters and selected Rover
   }).outputText;
   function module(path, mocks = {}) {
     const exports = {};
-    vm.runInNewContext(compile(path), { exports, require: id => mocks[id] ?? require(id) });
+    vm.runInNewContext(compile(path), { exports, require: id => mocks[id] ?? (id.endsWith('/ui/Skeleton') ? skeletonComponents : require(id)) });
     return exports;
   }
   const colors = module("../src/data/gameTextColors.ts");

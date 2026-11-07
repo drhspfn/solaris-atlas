@@ -1,5 +1,6 @@
 "use client";
 
+import { Skeleton, SkeletonGroup } from '../ui/Skeleton';
 import {
   Component,
   lazy,
@@ -262,9 +263,7 @@ function ModelViewerInstance({
           <CanvasBoundary key={attempt} retry={retry}>
             <Suspense
               fallback={
-                <p className="character-model-feedback" role="status">
-                  Loading viewer…
-                </p>
+                <ModelViewerSkeleton />
               }
             >
               <ModelCanvas
@@ -278,9 +277,7 @@ function ModelViewerInstance({
           </CanvasBoundary>
         )}
         {!state.ready && !state.error && (
-          <p className="model-stage-status" role="status">
-            {active ? state.status : "Preview loads when visible"}
-          </p>
+          <ModelViewerSkeleton label={active ? state.status : "Preview loads when visible"} />
         )}
         {state.error && (
           <div className="model-stage-status" role="alert">
@@ -538,7 +535,7 @@ function ModelViewerInstance({
                       <Checkbox label={component.name} checked={component.visible}
                         disabled={disabled} onChange={(event) => controller.current?.component(component.id, event.target.checked)} />
                       {component.override !== null && <Button size="sm" variant="ghost" onClick={() => controller.current?.component(component.id, null)}>Follow animation</Button>}
-                      {component.loading && <span role="status"> Loading…</span>}
+                      {component.loading && <SkeletonGroup label="Loading linked model"><Skeleton style={{width:"5rem"}} /></SkeletonGroup>}
                       {component.error && <div role="alert">{component.error}{" "}
                         <Button size="sm" onClick={() => controller.current?.component(component.id, true)}>Retry</Button>
                       </div>}
@@ -705,5 +702,23 @@ function ModelViewerInstance({
         </>
       )}
     </div>
+  );
+}
+
+export function ModelViewerSkeleton({
+  label = "Loading model viewer",
+}: {
+  label?: string;
+}) {
+  return (
+    <SkeletonGroup label={label} className="model-stage-status">
+      <Skeleton
+        style={{
+          width: "min(45vw, 220px)",
+          height: "8rem",
+          borderRadius: "40% 40% 12px 12px",
+        }}
+      />
+    </SkeletonGroup>
   );
 }

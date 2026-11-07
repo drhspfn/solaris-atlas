@@ -1,5 +1,6 @@
 'use client';
 
+import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton';
 import { useEffect, useState } from 'react';
 
 import { api } from '../../api/client';
@@ -11,7 +12,12 @@ type Task = {
   processor: string;
   status: string;
   error: string | null;
-  request: { kind?: string; game_version?: string; parent_id?: number; targets?: string[] };
+  request: {
+    kind?: string;
+    game_version?: string;
+    parent_id?: number;
+    targets?: string[];
+  };
   result: Record<string, unknown>;
   media_report_available?: boolean;
 };
@@ -70,6 +76,26 @@ function TaskRows({ rows }: { rows: Task[] }) {
   );
 }
 
+export function ProcessingTableSkeleton({ label, columns }: { label: string; columns: number }) {
+  return (
+    <SkeletonGroup label={label} className="agent-table-scroll">
+      <table>
+        <tbody>
+          {[0, 1, 2].map((row) => (
+            <tr key={row}>
+              {Array.from({ length: columns }, (_, column) => (
+                <td key={column}>
+                  <Skeleton style={{ width: '80%', height: '1em' }} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </SkeletonGroup>
+  );
+}
+
 export function ProcessingActivity() {
   const [tasks, setTasks] = useState<Tasks | null>(null);
   const [queues, setQueues] = useState<Queues | null>(null);
@@ -96,7 +122,10 @@ export function ProcessingActivity() {
         signal: controller.signal,
         cacheTtl: 0,
       }),
-      api<Queues>('/admin/data-operations/queues', { signal: controller.signal, cacheTtl: 0 }),
+      api<Queues>('/admin/data-operations/queues', {
+        signal: controller.signal,
+        cacheTtl: 0,
+      }),
     ])
       .then(([runs, broker]) => {
         if (!controller.signal.aborted) {
@@ -137,7 +166,9 @@ export function ProcessingActivity() {
           </p>
         )}
         {queues?.error && <p role="status">{queues.error}</p>}
-        {!queues && !error && <p role="status">Loading queue activity…</p>}
+        {!queues && !error && (
+          <ProcessingTableSkeleton label="Loading queue activity" columns={6} />
+        )}
         {queues?.available && (
           <QueueManager queues={queues.queues} refresh={() => setRevision((value) => value + 1)} />
         )}
@@ -172,7 +203,9 @@ export function ProcessingActivity() {
             worker slot; this does not confirm execution.
           </p>
         )}
-        {!tasks && <p>Loading current execution…</p>}
+        {!tasks && !error && (
+          <ProcessingTableSkeleton label="Loading current execution" columns={4} />
+        )}
       </section>
       <section className="content-panel data-operation-panel" aria-busy={loading}>
         <header className="agent-panel-header">
@@ -212,7 +245,10 @@ export function ProcessingActivity() {
           className="agent-table-scroll processing-history-frame"
           tabIndex={0}
           aria-label="Task history"
+          role={!tasks && !error ? 'status' : undefined}
+          aria-busy={!tasks && !error ? true : undefined}
         >
+          {!tasks && !error && <span className="ui-skeleton-label">Loading task history</span>}
           <table>
             <thead>
               <tr>
@@ -223,7 +259,19 @@ export function ProcessingActivity() {
               </tr>
             </thead>
             <tbody>
-              <TaskRows rows={tasks?.tasks ?? []} />
+              {!tasks && !error ? (
+                [0, 1, 2].map((row) => (
+                  <tr key={row}>
+                    {[0, 1, 2, 3].map((column) => (
+                      <td key={column}>
+                        <Skeleton style={{ width: '80%', height: '1em' }} />
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              ) : (
+                <TaskRows rows={tasks?.tasks ?? []} />
+              )}
             </tbody>
           </table>
         </div>

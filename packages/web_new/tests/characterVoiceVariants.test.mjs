@@ -1,3 +1,4 @@
+import { skeletonComponents } from './skeletonComponents.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -26,7 +27,7 @@ function setup() {
     '@/components/ui/TrackPlayer': { TrackPlayer }, '@/components/characters/CharacterMedia': { useCharacterMedia: () => ({ items: [] }) },
   };
   const exports = {};
-  vm.runInNewContext(code, { exports, require: id => id.endsWith('.css') ? {} : mocks[id] ?? require(id) });
+  vm.runInNewContext(code, { exports, require: id => id.endsWith('.css') ? {} : mocks[id] ?? (id.endsWith('/ui/Skeleton') ? skeletonComponents : require(id)) });
   return (line, textLocale = 'en') => exports.CharacterVoicePlayback({ line, textLocale });
 }
 const variants = locales.flatMap(({ code }) => [2, 1].map(n => ({
@@ -98,7 +99,7 @@ test('selected variant uses the unchanged generic player with no preload or auto
     const output = ts.transpileModule(readFileSync(new URL(`../src/components/ui/${name}.tsx`, import.meta.url), 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
     }).outputText;
-    vm.runInNewContext(output, { exports, require: id => id.endsWith('.css') ? {} : mocks[id] ?? require(id) });
+    vm.runInNewContext(output, { exports, require: id => id.endsWith('.css') ? {} : mocks[id] ?? (id.endsWith('/ui/Skeleton') ? skeletonComponents : require(id)) });
     return exports;
   }
   const audio = load('AudioPlayer', { './voicePlayback': {} });
@@ -145,7 +146,7 @@ for (const gameVersion of ['3.5.0', undefined]) {
     };
     const exports = {};
     vm.runInNewContext(code, { exports, AbortController,
-      require: id => id.endsWith('.css') ? {} : mocks[id] ?? require(id) });
+      require: id => id.endsWith('.css') ? {} : mocks[id] ?? (id.endsWith('/ui/Skeleton') ? skeletonComponents : require(id)) });
     const render = () => {
       stateIndex = 0; effectIndex = 0; pending = [];
       const tree = exports.CharacterArchive({ archive, materials: [], locale: 'en', characterKey: 'character:1608', gameVersion });

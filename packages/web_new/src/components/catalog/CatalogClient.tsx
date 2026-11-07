@@ -3,9 +3,10 @@
 import { ArrowRight, ChevronRight, Search, X } from "lucide-react";
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
-import { EntityCard } from "@/components/cards/EntityCard";
+import { EntityCard, EntityCardSkeleton } from "@/components/cards/EntityCard";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { SkeletonGroup } from "@/components/ui/Skeleton";
 import { Pill } from "@/components/ui/Pill";
 import { Pagination } from "@/components/ui/Pagination";
 import "@/styles/catalog-controls.css";
@@ -214,18 +215,11 @@ export function CatalogClient({
           onRetry={() => setRetry((value) => value + 1)}
         />
       ) : loading ? (
-        <div
-          className="loading-grid"
-          role="status"
-          aria-label="Loading catalog"
-        >
-          {Array.from(
-            { length: APP_SETTINGS.presentation.skeletonCount },
-            (_, i) => (
-              <div className="skeleton" key={i} />
-            ),
-          )}
-        </div>
+        <SkeletonGroup className="entity-grid" label="Loading catalog">
+          {Array.from({ length: APP_SETTINGS.presentation.skeletonCount }, (_, i) => (
+            <EntityCardSkeleton key={i} />
+          ))}
+        </SkeletonGroup>
       ) : list.length ? (
         <>
           <div className="entity-grid">

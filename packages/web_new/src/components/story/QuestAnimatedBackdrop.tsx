@@ -1,4 +1,5 @@
 'use client';
+import { Skeleton, SkeletonGroup } from '../ui/Skeleton';
 import { useEffect, useRef, useState } from 'react';
 import { Pause, Play } from 'lucide-react';
 import type { createSceneRenderer, OpenScene } from './openSceneWebGL';
@@ -153,9 +154,7 @@ export function QuestAnimatedBackdrop({
         aria-label="Animated story illustration"
       />
       {!ready && !error && (
-        <p role="status" className="quest-animation-message">
-          Loading animated scene…
-        </p>
+        <AnimatedBackdropSkeleton />
       )}
       {error && (
         <div className="quest-animation-message" role="alert">
@@ -181,5 +180,16 @@ export function QuestAnimatedBackdrop({
         </button>
       )}
     </div>
+  );
+}
+
+export function AnimatedBackdropSkeleton() {
+  return (
+    <SkeletonGroup
+      label="Loading animated scene"
+      className="quest-animation-message"
+    >
+      <Skeleton style={{ width: "min(70vw, 480px)", height: "5rem" }} />
+    </SkeletonGroup>
   );
 }

@@ -40,6 +40,7 @@ function harness() {
     },
     'lucide-react': { X: () => null, ExternalLink: () => null },
     './EventArtwork': { EventArtwork: () => null }, './calendar': calendar,
+    '../ui/Skeleton': { Skeleton: 'Skeleton', SkeletonGroup: 'SkeletonGroup' },
     '../ui/RenderedAnimation': { RenderedAnimation: ({ fallback }) => fallback },
     '../ui/animationPreview': animationPreview,
     '@/api/client': { api: (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject })) },
@@ -79,12 +80,13 @@ test('SSR requests summary and resolves slug filters without a detail request', 
 
 test('selection loads full gallery, retains image selection and cancels on close', async () => {
   const h = harness();
-  assert(nodes(h.render()).some((n) => n.props?.role === 'status'));
+  assert(nodes(h.render()).some((n) => n.type?.name === 'EventDetailsSkeleton'));
   assert.equal(h.requests.length, 1);
   assert.equal(h.requests[0].url, summary.detail_url);
   h.requests[0].resolve({ ...summary, detail_url: undefined,
     artwork: [{ path: 'full', role: 'content', url: 'full.png' }] });
   await flush();
+  assert.equal(nodes(h.render()).some((n) => n.type?.name === 'EventDetailsSkeleton'), false);
   const button = nodes(h.render()).find((n) => n.props?.['aria-label'] === 'Preview artwork 1');
   assert(button);
   button.props.onClick();

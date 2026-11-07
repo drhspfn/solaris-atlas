@@ -1,5 +1,6 @@
 'use client';
 
+import { SkeletonGroup, TextSkeleton } from '@/components/ui/Skeleton';
 import { useEffect, useState } from 'react';
 
 import { api, apiUrl } from '../../api/client';
@@ -36,6 +37,20 @@ const reasons: Record<string, string> = {
   not_in_export: 'Not found in export; archive index unavailable',
   not_resolved: 'No playable file resolved',
 };
+
+export function MediaImportReportSkeleton() {
+  return (
+    <SkeletonGroup label="Loading report">
+      <ul className="media-report-files">
+        {[0, 1, 2].map((row) => (
+          <li key={row}>
+            <TextSkeleton lines={2} />
+          </li>
+        ))}
+      </ul>
+    </SkeletonGroup>
+  );
+}
 
 export function MediaImportReport({ taskId }: { taskId: number }) {
   const [open, setOpen] = useState(false);
@@ -120,7 +135,7 @@ export function MediaImportReport({ taskId }: { taskId: number }) {
               </button>
             </p>
           )}
-          {loading && <p role="status">Loading report…</p>}
+          {loading && <MediaImportReportSkeleton />}
           {report && !loading && !error && (
             <>
               {report.summary.asset_version && (

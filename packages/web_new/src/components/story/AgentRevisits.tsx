@@ -1,5 +1,6 @@
 'use client';
 
+import { SkeletonGroup, TextSkeleton } from '../ui/Skeleton';
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from '@/lib/router';
 
@@ -66,7 +67,7 @@ export function AgentRevisits({ refresh }: { refresh: number }) {
           </button>
         </div>
       )}
-      {!data && !error && <p role="status">Loading reviews…</p>}
+      {!data && !error && <AgentReviewSkeleton />}
       {data?.revisits.length === 0 && (
         <p>No reviews on this page. New imports schedule flagged threads automatically.</p>
       )}
@@ -104,5 +105,17 @@ export function AgentRevisits({ refresh }: { refresh: number }) {
         )}
       </div>
     </details>
+  );
+}
+
+export function AgentReviewSkeleton() {
+  return (
+    <SkeletonGroup label="Loading reviews">
+      {[0, 1].map((index) => (
+        <article className="admin-alert" key={index}>
+          <TextSkeleton lines={3} />
+        </article>
+      ))}
+    </SkeletonGroup>
   );
 }

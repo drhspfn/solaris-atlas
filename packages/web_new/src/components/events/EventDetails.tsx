@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '@/api/client';
 import { PlayerText, type PlayerDisplay } from '@/components/dialogue/PlayerText';
 import { EventArtwork } from './EventArtwork';
+import { Skeleton, SkeletonGroup } from '../ui/Skeleton';
 import { kindLabels, timeZoneLabel } from './calendar';
 import { artworkGroups, countdown, type GameEvent } from './calendar';
 import { RenderedAnimation } from '../ui/RenderedAnimation';
@@ -183,7 +184,7 @@ export function EventDetails({
         <p className="events-countdown" role="timer">
           {clock === null ? 'Recorded schedule' : countdown(event, clock)}
         </p>
-        {loadingDetail && <p role="status">Loading event artwork…</p>}
+        {loadingDetail && <EventDetailsSkeleton />}
         {detailError && (
           <div role="alert">
             <p>{detailError}</p>
@@ -247,4 +248,11 @@ export function EventDetails({
       </div>
     </dialog>
   );
+}
+
+export function EventDetailsSkeleton() {
+  return <SkeletonGroup label="Loading event artwork" className="events-gallery">
+    <Skeleton style={{ width: '45%', marginBottom: 12 }} />
+    <div>{Array.from({ length: 4 }, (_, index) => <Skeleton key={index} style={{ height: 90 }} />)}</div>
+  </SkeletonGroup>;
 }

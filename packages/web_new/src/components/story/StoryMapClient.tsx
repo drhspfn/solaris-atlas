@@ -1,12 +1,13 @@
 'use client';
 
+import { Skeleton, SkeletonGroup, TextSkeleton } from '../ui/Skeleton';
 import { ArrowRight, BookOpen, ChevronRight, GitBranch, Search, X } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/api/client';
 import { PlayerText, type PlayerDisplay } from '@/components/dialogue/PlayerText';
 import { gameTextPlainText } from '@/data/gameText';
 import { usePlayerDisplay } from '@/hooks/usePlayerDisplay';
-import { ErrorPanel, PageLoader } from '@/components/ui/Feedback';
+import { ErrorPanel } from '@/components/ui/Feedback';
 import { Select } from '@/components/ui/Select';
 import type { StoryMap, StoryTreeNode } from '@/data/story';
 import { useLocale } from '@/hooks/useLocale';
@@ -269,7 +270,7 @@ export function StoryMapClient({ initialMap, initialPage = 1, initialQuery = '' 
         </div>
       </div>
       {loading ? (
-        <PageLoader />
+        <StoryMapSkeleton />
       ) : error ? (
         <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} />
       ) : (
@@ -371,5 +372,30 @@ export function StoryMapClient({ initialMap, initialPage = 1, initialQuery = '' 
         )
       )}
     </div>
+  );
+}
+
+export function StoryStepSkeleton() {
+  return (
+    <li className="story-step" aria-hidden="true">
+      <span className="story-step-marker" />
+      <div className="story-step-content skeleton-card-body">
+        <Skeleton style={{ width: "30%", height: ".7rem" }} />
+        <div className="story-quest-link">
+          <TextSkeleton lines={2} />
+        </div>
+      </div>
+    </li>
+  );
+}
+export function StoryMapSkeleton() {
+  return (
+    <SkeletonGroup label="Loading story map">
+      <ol className="story-step-list">
+        {[0, 1, 2, 3].map((index) => (
+          <StoryStepSkeleton key={index} />
+        ))}
+      </ol>
+    </SkeletonGroup>
   );
 }

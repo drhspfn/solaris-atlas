@@ -12,6 +12,7 @@ import { useLocale } from '../../hooks/useLocale';
 import { type PlayerDisplay, PlayerText } from '../dialogue/PlayerText';
 import { ErrorPanel } from '../ui/Feedback';
 import { Select } from '../ui/Select';
+import { Skeleton, SkeletonGroup, TextSkeleton } from '../ui/Skeleton';
 
 export function InlineDialogueSearch({
   character,
@@ -112,7 +113,7 @@ export function InlineDialogueSearch({
         )}
         <button>{busy ? 'Searching' : 'Find lines'}</button>
       </form>
-      {busy && <p role="status">Searching dialogue…</p>}
+      {busy && <SkeletonGroup label="Searching dialogue"><DialogueSearchRowSkeleton /><DialogueSearchRowSkeleton /></SkeletonGroup>}
       {error && <ErrorPanel message={error} onRetry={() => void search()} />}
       {searched && !busy && !error && !results.length && <p role="status">No matching dialogue lines. Try another phrase or quest.</p>}
       {results.map((r, i) => (
@@ -138,4 +139,11 @@ export function InlineDialogueSearch({
       ))}
     </>
   );
+}
+
+export function DialogueSearchRowSkeleton() {
+  return <div className="quote-result">
+    <TextSkeleton lines={2} />
+    <small><Skeleton style={{ width: '45%', height: 10 }} /></small>
+  </div>;
 }

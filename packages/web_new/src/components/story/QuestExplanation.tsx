@@ -1,4 +1,5 @@
 'use client';
+import { SkeletonGroup, TextSkeleton } from '../ui/Skeleton';
 import { publicPath } from '@/lib/routeKey';
 
 import { ArrowRight, ChevronDown, Network } from 'lucide-react';
@@ -64,9 +65,7 @@ export function QuestExplanation({
             </button>
           </div>
         ) : !data ? (
-          <p className="explanation-status" role="status">
-            Loading story notes…
-          </p>
+          <QuestExplanationSkeleton />
         ) : !explanation ? (
           <p className="explanation-status">
             Story notes are not available for this quest in the selected version yet.
@@ -166,5 +165,13 @@ export function QuestExplanation({
         </Link>
       </div>
     </details>
+  );
+}
+
+export function QuestExplanationSkeleton() {
+  return (
+    <SkeletonGroup label="Loading story notes" className="explanation-status">
+      <TextSkeleton lines={4} />
+    </SkeletonGroup>
   );
 }

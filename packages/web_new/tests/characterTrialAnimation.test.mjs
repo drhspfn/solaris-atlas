@@ -1,3 +1,4 @@
+import { skeletonComponents } from './skeletonComponents.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -15,7 +16,7 @@ function load(path, mocks = {}) {
   } }).outputText;
   const exports = {};
   vm.runInNewContext(code, { exports, URL, require: (id) =>
-    id.endsWith('.css') ? {} : mocks[id] ?? require(id) });
+    id.endsWith('.css') ? {} : mocks[id] ?? (id.endsWith('/ui/Skeleton') ? skeletonComponents : require(id)) });
   return exports;
 }
 const preview = load('../src/components/ui/animationPreview.ts');

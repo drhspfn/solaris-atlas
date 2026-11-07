@@ -4,6 +4,7 @@ import { ChevronDown, MessageCircle, ArrowUpRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "@/api/client";
 import { ErrorPanel } from "@/components/ui/Feedback";
+import { Skeleton, SkeletonGroup, TextSkeleton } from "@/components/ui/Skeleton";
 import { Pagination } from "@/components/ui/Pagination";
 import { PanelTitle } from "@/components/ui/PanelTitle";
 import {
@@ -43,6 +44,19 @@ function speakerName(label?: string) {
   return normalized === "Rover" && /\{PlayerName\}/i.test(label || "")
     ? "{PlayerName}"
     : normalized;
+}
+
+export function NpcConversationCardSkeleton() {
+  return <article className="npc-scene-card">
+    <div className="npc-scene-intro"><Skeleton style={{ width: 19, height: 19, flexShrink: 0 }} /><Skeleton style={{ width: "55%", height: 16 }} /></div>
+    <p className="npc-scene-speakers"><Skeleton style={{ width: "40%", height: 12 }} /></p>
+    <div className="npc-scene-preview"><TextSkeleton lines={2} /></div>
+    <div className="npc-scene-reader"><Skeleton style={{ width: 125, height: 13, marginTop: 14 }} /></div>
+  </article>;
+}
+
+export function NpcConversationLineSkeleton() {
+  return <div className="npc-scene-line"><strong><Skeleton style={{ width: 90, height: 12 }} /></strong><TextSkeleton lines={2} /></div>;
 }
 
 function Conversation({
@@ -160,9 +174,7 @@ function Conversation({
               onRetry={() => setRetry((value) => value + 1)}
             />
           ) : !data ? (
-            <p className="npc-context-loading" role="status">
-              Loading conversation…
-            </p>
+            <SkeletonGroup label="Loading conversation" className="npc-scene-lines">{Array.from({ length: 3 }, (_, i) => <NpcConversationLineSkeleton key={i} />)}</SkeletonGroup>
           ) : (
             <>
               <div className="npc-scene-lines">
@@ -251,9 +263,7 @@ export function NpcFlowParticipants({
           onRetry={() => setRetry((value) => value + 1)}
         />
       ) : !data ? (
-        <p className="npc-context-loading" role="status">
-          Loading conversations…
-        </p>
+        <SkeletonGroup label="Loading conversations" className="npc-scene-grid">{Array.from({ length: 4 }, (_, i) => <NpcConversationCardSkeleton key={i} />)}</SkeletonGroup>
       ) : (
         <>
           <div className="npc-scene-grid">
