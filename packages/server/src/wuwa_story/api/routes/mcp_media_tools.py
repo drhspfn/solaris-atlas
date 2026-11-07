@@ -33,7 +33,9 @@ TOOLS = [
           {"q": {"type": "string", "maxLength": 128}, "playable": {"type": "boolean", "default": True},
            **_PAGING, "cursor": {"type": "string", "maxLength": 2048}}),
     _tool("get_cutscene", "Get a cutscene's details, public page, playback media, captions, and available descriptions.",
-          {"name": {"type": "string", "description": "Cutscene resource name from search_cutscenes."}}, ("name",)),
+          {"name": {"type": "string", "description": "Cutscene resource name from search_cutscenes."},
+           "visual_offset": {"type": "integer", "minimum": 0, "default": 0},
+           "visual_limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 12}}, ("name",)),
 ]
 
 
@@ -49,6 +51,24 @@ def _pagination(arguments, default, maximum):
     if type(limit) is not int or not 1 <= limit <= maximum or type(offset) is not int or offset < 0:
         raise ValueError(f"limit must be between 1 and {maximum} and offset must be non-negative")
     return limit, offset
+
+
+async def _visual_reports(session, media, version, offset=0, limit=12):
+    from wuwa_story.agents.cutscene_vision import visual_reference
+
+    reports = []
+    for asset_id in dict.fromkeys(item.get("asset_node_id") for item in media.values() if item.get("asset_node_id") is not None):
+        report = await visual_reference(session, asset_id, version)
+        if report is None:
+            continue
+        metadata = report.metadata_json or {}
+        events = metadata.get("events") or []
+        reports.append({"asset_node_id": asset_id, "asset_version": metadata.get("asset_version"),
+                        "evidence_type": metadata.get("evidence_type"), "duration": metadata.get("duration"),
+                        "events": events[offset:offset + limit], "total_events": len(events),
+                        "next_offset": offset + limit if offset + limit < len(events) else None,
+                        "limitations": "AI observations of sampled frames, not authored dialogue or proof of earlier-version visuals."})
+    return reports
 
 
 async def dispatch(name, arguments, session):
@@ -80,10 +100,13 @@ async def dispatch(name, arguments, session):
                                         locale=locale, session=session)
         event = result.get("event") or {}
         playback = event.get("playback") or {}
-        descriptions = [media["description"] for media in (playback.get("media") or {}).values()
-                        if media.get("description") is not None]
+        media = playback.get("media") or {}
+        descriptions = [item["description"] for item in media.values() if item.get("description") is not None]
+        visual_offset, visual_limit = arguments.get("visual_offset", 0), arguments.get("visual_limit", 12)
+        if type(visual_offset) is not int or visual_offset < 0 or type(visual_limit) is not int or not 1 <= visual_limit <= 20:
+            raise ValueError("visual_offset must be non-negative and visual_limit must be between 1 and 20")
+        reports = await _visual_reports(session, media, playback.get("asset_version"), visual_offset, visual_limit)
         return {"data": result, "public_url": _page_url(result["name"], locale, result.get("game_version")),
                 "descriptions": {"public": {"available": bool(descriptions), "items": descriptions},
-                                 "system": {"available": False, "items": [],
-                                            "reason": "Separate system visual reports are not exposed by the public cutscene API."}}}
+                                 "system": {"available": bool(reports), "items": reports}}}
     raise ValueError(f"Unknown media tool: {name}")

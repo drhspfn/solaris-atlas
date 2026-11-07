@@ -62,6 +62,10 @@ def test_mcp_streamable_http_endpoint_lists_tools() -> None:
         "get_quest_transcript",
         "search_lore",
         "get_character_timeline",
+        "get_quest_profile", "get_quest_media",
+        "get_character_profile", "get_character_archive", "get_character_skills",
+        "get_character_model", "get_character_connections",
+        "get_item_profile", "get_item_sellers", "search_cutscenes", "get_cutscene",
     }
 
 
@@ -89,3 +93,49 @@ async def test_mcp_tool_uses_configured_async_session_factory(monkeypatch) -> No
     result = await mcp.handle_call_tool("get_quest", {"quest_id": "test-quest"})
 
     assert result[0].text == "Quest 'test-quest' not found."
+
+@pytest.mark.asyncio
+async def test_mcp_quest_profile_passes_snapshot_and_locale(monkeypatch) -> None:
+    import json
+
+    from wuwa_story.api.routes import mcp
+    from wuwa_story.api.routes.story import profiles
+    from wuwa_story.db import session
+
+    class Factory:
+        def __call__(self): return self
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return None
+
+    received = {}
+    async def profile(**kwargs):
+        received.update(kwargs)
+        return {"quest": {"game_quest_id": 123}}
+
+    monkeypatch.setattr(session, "SessionFactory", Factory())
+    monkeypatch.setattr(profiles, "quest_profile", profile)
+    result = await mcp.handle_call_tool("get_quest_profile", {"quest_id": "123", "locale": "ja", "game_version": "3.3.0"})
+    assert json.loads(result[0].text)["quest"]["game_quest_id"] == 123
+    assert received["locale"] == "ja"
+    assert received["game_version"] == "3.3.0"
+
+
+@pytest.mark.asyncio
+async def test_mcp_dispatches_character_tool(monkeypatch) -> None:
+    import json
+    from unittest.mock import AsyncMock
+
+    from wuwa_story.api.routes import mcp, mcp_character_tools
+    from wuwa_story.db import session
+
+    class Factory:
+        def __call__(self): return self
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return None
+
+    monkeypatch.setattr(session, "SessionFactory", Factory())
+    dispatch = AsyncMock(return_value={"skills": [{"name": "Attack", "values": [10, 20]}]})
+    monkeypatch.setattr(mcp_character_tools, "dispatch", dispatch)
+    response = await mcp.handle_call_tool("get_character_skills", {"canonical_key": "character:1211", "locale": "ja"})
+    assert json.loads(response[0].text)["skills"][0]["values"] == [10, 20]
+    assert dispatch.await_args.args[:2] == ("get_character_skills", {"canonical_key": "character:1211", "locale": "ja"})

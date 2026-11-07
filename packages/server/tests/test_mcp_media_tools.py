@@ -53,3 +53,18 @@ async def test_missing_description_and_unknown_tool(monkeypatch):
     assert result["descriptions"]["public"] == {"available": False, "items": []}
     with pytest.raises(ValueError, match="Unknown media tool"):
         await tools.dispatch("unknown", {}, "s")
+
+
+@pytest.mark.asyncio
+async def test_cutscene_reports_are_labelled_and_bounded(monkeypatch):
+    from wuwa_story.agents import cutscene_vision
+    report = SimpleNamespace(metadata_json={"asset_version": "3.7", "events": [{"text": str(i)} for i in range(25)]})
+    monkeypatch.setattr(cutscene_vision, "visual_reference", AsyncMock(return_value=report))
+    reports = await tools._visual_reports("session", {"a": {"asset_node_id": 7}, "b": {"asset_node_id": 7}}, "3.7", offset=2, limit=20)
+    assert len(reports) == 1
+    assert len(reports[0]["events"]) == 20
+    assert reports[0]["total_events"] == 25
+    assert reports[0]["next_offset"] == 22
+    assert reports[0]["events"][0]["text"] == "2"
+    assert "AI observations" in reports[0]["limitations"]
+    cutscene_vision.visual_reference.assert_awaited_once_with("session", 7, "3.7")
