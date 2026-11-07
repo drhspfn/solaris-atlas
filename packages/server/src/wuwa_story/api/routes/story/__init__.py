@@ -11,6 +11,7 @@ from wuwa_story.api.routes.story import (
     media,
     npc_profile,
     npc_sales,
+    npc_scenes,
     profiles,
     transcripts,
 )
@@ -32,6 +33,7 @@ router = APIRouter()
 router.include_router(catalog.router)
 router.include_router(npc_profile.router)
 router.include_router(npc_sales.router)
+router.include_router(npc_scenes.router)
 router.include_router(profiles.router)
 router.include_router(character_archive.router)
 router.include_router(character_connections.router)
