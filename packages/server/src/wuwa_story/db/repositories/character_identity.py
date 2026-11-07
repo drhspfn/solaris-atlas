@@ -7,13 +7,13 @@ from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.ingestion.character_identity import character_kind
+from wuwa_story.ingestion.sequence_speaker_crosswalk import FLOW_PATH, SEQUENCE_ACTOR_BASIS
 from wuwa_story.ingestion.speaker_crosswalk import (
     PERSONAL_PORTRAIT_BASIS,
     PLOT_GUEST_BASIS,
     PLOT_GUEST_PATH,
     SPEAKER_PATH,
 )
-from wuwa_story.ingestion.sequence_speaker_crosswalk import FLOW_PATH, SEQUENCE_ACTOR_BASIS
 
 
 def speaker_crosswalk(release_id, character_ids=None):
