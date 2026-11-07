@@ -5,6 +5,13 @@ import pytest
 from wuwa_story_worker import character_models as models
 
 
+@pytest.fixture(autouse=True)
+def client_workspace(tmp_path):
+    for name in ("plan.json", "status.json", "keys.txt"):
+        (tmp_path / name).write_text(name, encoding="utf-8")
+    (tmp_path / "game").mkdir()
+
+
 def prop():
     return {"model": "Aki/Character/Prop/Umbrella/Model/Umbrella", "blueprints": [],
             "component": {"id": "umbrella", "name": "WeaponCase0", "label": "Umbrella",
@@ -19,6 +26,10 @@ async def test_scene_retains_static_prop_without_requiring_body_animation_pack(t
 
     async def build(root, form, **options):
         seen.append((form, options))
+        assert (root / "plan.json").read_text(encoding="utf-8") == "plan.json"
+        assert (root / "status.json").is_file()
+        assert (root / "keys.txt").is_file()
+        assert (root / "game").resolve() == (tmp_path / "game").resolve()
         output = root / "bundle"
         output.mkdir()
         return output, {}, {"model": form["model"],

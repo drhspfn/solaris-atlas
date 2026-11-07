@@ -30,18 +30,23 @@ def package_path(path: Path) -> str:
     raise ValueError(f"Export has no stable game package path: {path.name}")
 
 
+def prepare_entity_workspace(client: Path, root: Path):
+    """Give an isolated export directory the pinned client manifest and archives."""
+    for name in ("plan.json", "status.json", "keys.txt"):
+        shutil.copyfile(client / name, root / name)
+    if os.name == "nt":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(root / "game"),
+                        str((client / "game").resolve())], check=True, capture_output=True)
+    else:
+        (root / "game").symlink_to((client / "game").resolve(), target_is_directory=True)
+
+
 @contextmanager
 def temporary_entity_workspace(client: Path):
     """Share downloaded archives read-only; every extracted byte belongs to this run."""
     base = client.parent.parent if client.parent.name == "assets" else client.parent
     with transient_workspace(base / "transient-jobs") as root:
-        for name in ("plan.json", "status.json", "keys.txt"):
-            shutil.copyfile(client / name, root / name)
-        if os.name == "nt":
-            subprocess.run(["cmd", "/c", "mklink", "/J", str(root / "game"),
-                            str((client / "game").resolve())], check=True, capture_output=True)
-        else:
-            (root / "game").symlink_to((client / "game").resolve(), target_is_directory=True)
+        prepare_entity_workspace(client, root)
         yield root
 
 
