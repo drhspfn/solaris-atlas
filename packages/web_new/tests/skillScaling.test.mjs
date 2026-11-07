@@ -25,8 +25,16 @@ const code = ts.transpileModule(
   },
 ).outputText;
 
-function load(react = React) {
+function load(
+  react = React,
+  playerText = ({ value, fallback = "" }) =>
+    String(value || fallback).replace(/<[^>]*>/g, ""),
+) {
   const mocks = {
+    "@/components/dialogue/PlayerText": { PlayerText: playerText },
+    "@/data/gameText": {
+      gameTextPlainText: (value) => value.replace(/<[^>]*>/g, ""),
+    },
     react,
     "@/lib/router": { Link: "a" },
     "../../api/client": { apiUrl: (url) => url },
@@ -36,7 +44,10 @@ function load(react = React) {
     },
     "@/components/ui/Select": { Select: () => null },
     "@/components/ui/TrackPlayer": { TrackPlayer: () => null },
-    "@/components/characters/CharacterMedia": { CharacterMediaGallery: () => null, useCharacterMedia: () => ({ items: [] }) },
+    "@/components/characters/CharacterMedia": {
+      CharacterMediaGallery: () => null,
+      useCharacterMedia: () => ({ items: [] }),
+    },
     "@/components/ui/RenderedAnimation": { RenderedAnimation: () => null },
     "@/components/ui/animationPreview": { selectAnimationClip: () => null },
   };
@@ -464,86 +475,235 @@ test("description binds only explicit backend parameters and masks unresolved to
   assert.doesNotMatch(h.markup(), /Authored 999%|missing \{1\}/);
 });
 
-
 test("Iuno confirmed SkillDetailNum fills source descriptions including named passives", () => {
   const cases = [
-  {
-    "id": 1003804,
-    "name": "Waxing Ascent",
-    "description": "Every time Iuno casts Basic Attack, Heavy Attack, Dodge Counter, Resonance Skill, Resonance Liberation, or Intro Skill, she gains {0} Shield equal to {1} of her ATK for {2}s. This Shield will not be passed on to the incoming Resonator.",
-    "description_params": [
-      "1",
-      "32%",
-      "15"
-    ]
-  },
-  {
-    "id": 1003805,
-    "name": "Derivation",
-    "description": "When Iuno casts Intro Skill or Resonance Liberation, she immediately gains {0} stacks of <color=Highlight><te href=141002>Blessing of the Wan Light</te></color>.",
-    "description_params": [
-      "5"
-    ]
-  },
-  {
-    "id": 1003809,
-    "name": "From Gloom to Gleam",
-    "description": "Attack the target to deal {0} <color=Wind>Aero DMG</color>. The incoming Resonator gains {1} Heavy Attack DMG Amplification for {2}s. This effect ends early if they are switched off the field.\nCasting <color=Highlight>Outro Skill</color> won't interrupt <color=Highlight>Heavy Attack - Absolute Fullness</color>, and the Outro Skill effect still applies.",
-    "description_params": [
-      "100%",
-      "50%",
-      "14"
-    ]
-  }
-];
+    {
+      id: 1003804,
+      name: "Waxing Ascent",
+      description:
+        "Every time Iuno casts Basic Attack, Heavy Attack, Dodge Counter, Resonance Skill, Resonance Liberation, or Intro Skill, she gains {0} Shield equal to {1} of her ATK for {2}s. This Shield will not be passed on to the incoming Resonator.",
+      description_params: ["1", "32%", "15"],
+    },
+    {
+      id: 1003805,
+      name: "Derivation",
+      description:
+        "When Iuno casts Intro Skill or Resonance Liberation, she immediately gains {0} stacks of <color=Highlight><te href=141002>Blessing of the Wan Light</te></color>.",
+      description_params: ["5"],
+    },
+    {
+      id: 1003809,
+      name: "From Gloom to Gleam",
+      description:
+        "Attack the target to deal {0} <color=Wind>Aero DMG</color>. The incoming Resonator gains {1} Heavy Attack DMG Amplification for {2}s. This effect ends early if they are switched off the field.\nCasting <color=Highlight>Outro Skill</color> won't interrupt <color=Highlight>Heavy Attack - Absolute Fullness</color>, and the Outro Skill effect still applies.",
+      description_params: ["100%", "50%", "14"],
+    },
+  ];
   for (const data of cases) {
-    const markup = cardHarness(skill({ ...data, max_level: 1, attributes: [] })).markup();
+    const markup = cardHarness(
+      skill({ ...data, max_level: 1, attributes: [] }),
+    ).markup();
     for (const value of data.description_params) assert(markup.includes(value));
     assert.doesNotMatch(markup, /\{\d+[^}]*\}|type="range"|role="tablist"/);
-    if (data.id === 1003804) assert.match(markup, /gains 1 Shield equal to 32% of her ATK for 15s/);
-    if (data.id === 1003805) assert.match(markup, /gains 5 stacks of Blessing of the Wan Light/);
+    if (data.id === 1003804)
+      assert.match(markup, /gains 1 Shield equal to 32% of her ATK for 15s/);
+    if (data.id === 1003805)
+      assert.match(markup, /gains 5 stacks of Blessing of the Wan Light/);
     if (data.id === 1003809) assert.match(markup, /deal 100% Aero DMG/);
   }
 });
 
-
 test("Iuno input hints use authored PC labels and leave unrelated text unchanged", () => {
-  const description = "{Cus:Ipt,Touch=Tap PC=Press Gamepad=Press} Basic Attack; " +
+  const description =
+    "{Cus:Ipt,Touch=Tap PC=Press Gamepad=Press} Basic Attack; " +
     "then {Cus:Ipt,Touch=tap PC=press Gamepad=press} again. " +
     "Localized текст stays. {Cus:Other,PC=Keep}";
   const markup = cardHarness(skill({ description, attributes: [] })).markup();
-  assert.match(markup, /Press Basic Attack; then press again\. Localized текст stays\. \{Cus:Other,PC=Keep\}/);
+  assert.match(
+    markup,
+    /Press Basic Attack; then press again\. Localized текст stays\. \{Cus:Other,PC=Keep\}/,
+  );
   assert.doesNotMatch(markup, /Cus:Ipt|Touch=|Gamepad=/);
 });
 
 test("profile biography appears only when it adds to the header introduction", () => {
   const { CharacterArchive } = load();
-  const archive = { biography: "<b>Guardian</b> of the Black Shores.", profile: { voice_actors: {} }, artwork: [], skills: [], skill_tree: [], resonance_chain: [], voice_lines: [], other_voice_events: [] };
-  const render = introduction => renderToStaticMarkup(React.createElement(CharacterArchive, { archive, introduction, materials: [], locale: 'en', characterKey: 'character:1505' }));
-  assert.doesNotMatch(render('Guardian  of the Black Shores.'), /character-biography/);
-  assert.match(render('A different summary.'), /character-biography/);
+  const archive = {
+    biography: "<b>Guardian</b> of the Black Shores.",
+    profile: { voice_actors: {} },
+    artwork: [],
+    skills: [],
+    skill_tree: [],
+    resonance_chain: [],
+    voice_lines: [],
+    other_voice_events: [],
+  };
+  const render = (introduction) =>
+    renderToStaticMarkup(
+      React.createElement(CharacterArchive, {
+        archive,
+        introduction,
+        materials: [],
+        locale: "en",
+        characterKey: "character:1505",
+      }),
+    );
+  assert.doesNotMatch(
+    render("Guardian  of the Black Shores."),
+    /character-biography/,
+  );
+  assert.match(render("A different summary."), /character-biography/);
   assert.match(render(undefined), /character-biography/);
 });
 
 test("empty archive hides progression, talents, chain and voice sections", () => {
   const { CharacterArchive } = load();
-  const archive = { profile: { voice_actors: {}, max_level: 90 }, artwork: [],
+  const archive = {
+    profile: { voice_actors: {}, max_level: 90 },
+    artwork: [],
     skills: [skill({ name: null, description: null, attributes: [] })],
-    resonance_chain: [{ id: 1, name: null, description: null }], voice_lines: [], other_voice_events: [] };
-  const markup = renderToStaticMarkup(React.createElement(CharacterArchive, {
-    archive, materials: [], locale: 'en', characterKey: 'character:1',
-  }));
-  assert.doesNotMatch(markup, /Profile &amp; progression|Max level|Upgrade materials|>Talents<|Resonance chain|Voice lines/);
+    resonance_chain: [{ id: 1, name: null, description: null }],
+    voice_lines: [],
+    other_voice_events: [],
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(CharacterArchive, {
+      archive,
+      materials: [],
+      locale: "en",
+      characterKey: "character:1",
+    }),
+  );
+  assert.doesNotMatch(
+    markup,
+    /Profile &amp; progression|Max level|Upgrade materials|>Talents<|Resonance chain|Voice lines/,
+  );
 });
 
 test("available materials, chain and voice events retain their sections", () => {
   const { CharacterArchive } = load();
-  const archive = { profile: { voice_actors: {}, max_level: 90 }, artwork: [], skills: [],
-    resonance_chain: [{ id: 1, order: 1, name: 'First sequence', description: null }],
-    voice_lines: [], other_voice_events: [{ category: 'Battle', event: 'Attack' }] };
-  const markup = renderToStaticMarkup(React.createElement(CharacterArchive, {
-    archive, materials: [{ item_id: 5, kind: 'character_ascension' }], locale: 'en', characterKey: 'character:1',
-  }));
-  for (const label of ['Profile &amp; progression', 'Max level 90', 'Upgrade materials', 'First sequence', 'Voice lines', 'Attack'])
+  const archive = {
+    profile: { voice_actors: {}, max_level: 90 },
+    artwork: [],
+    skills: [],
+    resonance_chain: [
+      { id: 1, order: 1, name: "First sequence", description: null },
+    ],
+    voice_lines: [],
+    other_voice_events: [{ category: "Battle", event: "Attack" }],
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(CharacterArchive, {
+      archive,
+      materials: [{ item_id: 5, kind: "character_ascension" }],
+      locale: "en",
+      characterKey: "character:1",
+    }),
+  );
+  for (const label of [
+    "Profile &amp; progression",
+    "Max level 90",
+    "Upgrade materials",
+    "First sequence",
+    "Voice lines",
+    "Attack",
+  ])
     assert.ok(markup.includes(label), label);
+});
+
+test("archive passes complete authored markup and display to the shared renderer", () => {
+  const calls = [];
+  const PlayerText = (props) => {
+    calls.push(props);
+    return "rendered";
+  };
+  const { CharacterArchive } = load(React, PlayerText);
+  const display = {
+    name: "Custom Rover",
+    colorMode: "accent",
+    customColor: "",
+  };
+  const archive = {
+    biography: "<color=Highlight>Meet {PlayerName}</color>",
+    profile: { voice_actors: {} },
+    artwork: [],
+    skills: [
+      skill({
+        name: "Talent",
+        description: "<color=Wind>Damage {0}</color> {PlayerName}",
+        description_params: ["12.30%"],
+        attributes: [],
+      }),
+    ],
+    skill_tree: [],
+    resonance_chain: [
+      {
+        id: 1,
+        order: 1,
+        name: "Sequence",
+        description: "<i>Power {0}</i>",
+        description_params: ["3"],
+      },
+    ],
+    voice_lines: [
+      {
+        id: 3,
+        order: 1,
+        title: "Greeting",
+        text: "<color=Highlight>Hello {PlayerName}</color>",
+      },
+    ],
+    other_voice_events: [],
+  };
+  renderToStaticMarkup(
+    React.createElement(CharacterArchive, {
+      archive,
+      locale: "en",
+      characterKey: "character:1",
+      materials: [],
+      display,
+    }),
+  );
+  for (const value of [
+    "<color=Highlight>Meet {PlayerName}</color>",
+    "<color=Wind>Damage 12.30%</color> {PlayerName}",
+    "<i>Power 3</i>",
+    "<color=Highlight>Hello {PlayerName}</color>",
+  ]) {
+    assert(
+      calls.some((call) => call.value === value && call.display === display),
+      value,
+    );
+  }
+});
+
+
+test("talent renders real game text with formatted parameters and selected Rover", () => {
+  const compile = path => ts.transpileModule(readFileSync(new URL(path, import.meta.url), "utf8"), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  function module(path, mocks = {}) {
+    const exports = {};
+    vm.runInNewContext(compile(path), { exports, require: id => mocks[id] ?? require(id) });
+    return exports;
+  }
+  const colors = module("../src/data/gameTextColors.ts");
+  const localized = module("../src/data/localized.ts");
+  const gameText = module("../src/data/gameText.ts", { "./gameTextColors": colors, "./localized": localized });
+  const { PlayerText } = module("../src/components/dialogue/PlayerText.tsx", {
+    "../../data/gameText": gameText, "../../data/localized": localized,
+  });
+  const { CharacterArchive } = load(React, PlayerText, gameText);
+  const markup = renderToStaticMarkup(React.createElement(CharacterArchive, {
+    locale: "en", characterKey: "character:1", materials: [],
+    display: { name: "Astra", gender: "female", colorMode: "accent", customColor: "" },
+    archive: { profile: { voice_actors: {} }, artwork: [], skill_tree: [], resonance_chain: [],
+      voice_lines: [], other_voice_events: [], skills: [skill({ attributes: [],
+        description: "<color=Highlight>{PlayerName} {Male=he;Female=she} gains {0}</color>",
+        description_params: ["12.30%"] })] },
+  }));
+  assert.match(markup, /Astra/);
+  assert.match(markup, /she gains 12\.30%/);
+  assert.match(markup, /#F7EBA6FF/i);
+  assert.doesNotMatch(markup, /&lt;color|\{PlayerName\}|Male=/);
 });

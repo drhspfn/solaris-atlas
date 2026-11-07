@@ -13,7 +13,9 @@ import { Link } from "@/lib/router";
 
 import { api, apiUrl } from "../../api/client";
 import { entityPath } from "../../data/entities";
+import { gameTextPlainText } from "@/data/gameText";
 import { availableLocales } from "../../data/locales";
+import { PlayerText, type PlayerDisplay } from "@/components/dialogue/PlayerText";
 import { Select } from "@/components/ui/Select";
 import { TrackPlayer } from "@/components/ui/TrackPlayer";
 import { CharacterMediaGallery, useCharacterMedia } from "@/components/characters/CharacterMedia";
@@ -142,22 +144,23 @@ function artworkLabel(art: CharacterArchiveData["artwork"][number]) {
 function gameText(
   value: string | null | undefined,
   params: string[] = [],
+  preserveMarkup = false,
+  display?: PlayerDisplay,
 ): string {
   if (!value) return "Text unavailable in this language.";
-  return value
-    .replace(/<[^>]*>/g, "")
-    .replace(
+  const formatted = value.replace(
       /\{(\d+)\}/g,
       (match, index: string) => params[Number(index)] ?? match,
     )
     .trim();
+  return preserveMarkup ? formatted : gameTextPlainText(formatted, display);
 }
 
 function talentText(
   value: string | null | undefined,
   params: string[] = [],
 ): string {
-  return gameText(value, params)
+  return gameText(value, params, true)
     .replace(
       /\{Cus:Ipt,Touch=(?:Tap|tap) PC=(Press|press) Gamepad=(?:Press|press)\}/g,
       "$1",
@@ -171,12 +174,13 @@ const voiceLocales = availableLocales.filter(({ code }) =>
 const initialVoiceLocale = (locale: string) =>
   voiceLocales.some((option) => option.code === locale) ? locale : "en";
 
-export function CharacterVoicePlayback({ line, textLocale }: {
+export function CharacterVoicePlayback({ line, textLocale, display }: {
   line: CharacterArchiveData['voice_lines'][number];
   textLocale: string;
+  display?: PlayerDisplay;
 }) {
   const [choice, setChoice] = useState('');
-  const label = gameText(line.title);
+  const label = gameText(line.title, [], false, display);
   const languageLabel = (language: string) =>
     availableLocales.find((option) => option.code === language)?.label ?? language;
   const mediaUrl = (url: string) => apiUrl(url.replace(/^\/api/, ''));
@@ -218,9 +222,10 @@ export function CharacterVoicePlayback({ line, textLocale }: {
 }
 
 export function SkillScaling({
-  skill,
+  skill, display,
 }: {
   skill: CharacterArchiveData["skills"][number];
+  display?: PlayerDisplay;
 }) {
   const [selectedLevel, setSelectedLevel] = useState(1);
   if (!skill.attributes?.length) return null;
@@ -230,7 +235,7 @@ export function SkillScaling({
     ? Math.max(1, Math.floor(skill.max_level))
     : 1;
   const level = Math.min(selectedLevel, maxLevel);
-  const skillLabel = skill.name ? talentText(skill.name) : "Talent";
+  const skillLabel = skill.name ? gameTextPlainText(talentText(skill.name), display) : "Talent";
 
   return (
     <div className="character-skill-scaling">
@@ -266,13 +271,11 @@ export function SkillScaling({
               .map((attribute) => (
                 <tr key={attribute.id}>
                   <th scope="row">
-                    {talentText(
-                      attribute.name || attribute.description || "Stat",
-                    )}
+                    <PlayerText value={talentText(attribute.name || attribute.description || "Stat")} display={display} />
                     {attribute.name &&
                       attribute.description &&
                       !/\{\d+[^}]*\}/.test(attribute.description) && (
-                        <small>{talentText(attribute.description)}</small>
+                        <small><PlayerText value={talentText(attribute.description)} display={display} /></small>
                       )}
                   </th>
                   <td>
@@ -301,9 +304,10 @@ export function SkillScaling({
 }
 
 export function SkillCard({
-  skill,
+  skill, display,
 }: {
   skill: CharacterArchiveData["skills"][number];
+  display?: PlayerDisplay;
 }) {
   const id = useId();
   const [tab, setTab] = useState("description");
@@ -313,7 +317,7 @@ export function SkillCard({
     skill.description,
     skill.description_params || [],
   );
-  const name = skill.name ? talentText(skill.name) : "Talent";
+  const name = skill.name ? gameTextPlainText(talentText(skill.name), display) : "Talent";
   const hasStats = !!skill.attributes?.length;
 
   useEffect(() => {
@@ -339,7 +343,7 @@ export function SkillCard({
             <Swords size={19} aria-hidden="true" />
           </span>
         )}
-        <h3>{name}</h3>
+        <h3><PlayerText value={skill.name ? talentText(skill.name) : "Talent"} display={display} /></h3>
       </div>
       {hasStats && (
         <div
@@ -390,7 +394,7 @@ export function SkillCard({
       >
         <div className="character-talent-description">
           <p ref={preview} className="character-talent-preview">
-            {description}
+            <PlayerText value={description} display={display} />
           </p>
           {canExpand && (
             <details>
@@ -398,7 +402,7 @@ export function SkillCard({
                 <span className="talent-read-more">Read more</span>
                 <span className="talent-show-less">Show less</span>
               </summary>
-              <p>{description}</p>
+              <p><PlayerText value={description} display={display} /></p>
             </details>
           )}
         </div>
@@ -411,7 +415,7 @@ export function SkillCard({
           aria-labelledby={`${id}-stats-tab`}
           hidden={tab !== "stats"}
         >
-          <SkillScaling skill={skill} />
+          <SkillScaling skill={skill} display={display} />
         </div>
       )}
     </article>
@@ -425,6 +429,7 @@ export function CharacterArchive({
   characterKey,
   gameVersion,
   introduction,
+  display,
 }: {
   archive: CharacterArchiveData | null;
   materials: MaterialUse[];
@@ -432,6 +437,7 @@ export function CharacterArchive({
   characterKey: string;
   gameVersion?: string;
   introduction?: string;
+  display?: PlayerDisplay;
 }) {
   const { items: mediaItems } = useCharacterMedia();
   const [textLocale, setTextLocale] = useState(locale);
@@ -483,8 +489,8 @@ export function CharacterArchive({
       art.kind === "RoleHeadIconLarge" && art.scope !== "shared_resource",
   );
   const biography = archive?.biography &&
-    gameText(archive.biography).replace(/\s+/g, " ") !==
-      (introduction ? gameText(introduction).replace(/\s+/g, " ") : "");
+    gameText(archive.biography, [], false, display).replace(/\s+/g, " ") !==
+      (introduction ? gameText(introduction, [], false, display).replace(/\s+/g, " ") : "");
   const profile = archive?.profile;
   const hasProfileDetails = biography || profile?.element || profile?.quality ||
     profile?.affiliation || profile?.country || profile?.birthday || profile?.talent || groups.size;
@@ -517,44 +523,44 @@ export function CharacterArchive({
         <div className="character-fold-body">
           {biography && (
               <p className="character-biography">
-                {gameText(archive?.biography)}
+                <PlayerText value={archive?.biography} display={display} />
               </p>
             )}
           <dl className="character-facts">
             {archive?.profile.element && (
               <div>
                 <dt>Attribute</dt>
-                <dd>{gameText(archive.profile.element)}</dd>
+                <dd><PlayerText value={archive.profile.element} display={display} /></dd>
               </div>
             )}
             {archive?.profile.quality && (
               <div>
                 <dt>Rarity</dt>
-                <dd>{gameText(archive.profile.quality)}</dd>
+                <dd><PlayerText value={archive.profile.quality} display={display} /></dd>
               </div>
             )}
             {archive?.profile.affiliation && (
               <div>
                 <dt>Affiliation</dt>
-                <dd>{gameText(archive.profile.affiliation)}</dd>
+                <dd><PlayerText value={archive.profile.affiliation} display={display} /></dd>
               </div>
             )}
             {archive?.profile.country && (
               <div>
                 <dt>Origin</dt>
-                <dd>{gameText(archive.profile.country)}</dd>
+                <dd><PlayerText value={archive.profile.country} display={display} /></dd>
               </div>
             )}
             {archive?.profile.birthday && (
               <div>
                 <dt>Birthday</dt>
-                <dd>{gameText(archive.profile.birthday)}</dd>
+                <dd><PlayerText value={archive.profile.birthday} display={display} /></dd>
               </div>
             )}
             {archive?.profile.talent && (
               <div>
                 <dt>Talent</dt>
-                <dd>{gameText(archive.profile.talent)}</dd>
+                <dd><PlayerText value={archive.profile.talent} display={display} /></dd>
               </div>
             )}
           </dl>
@@ -654,6 +660,7 @@ export function CharacterArchive({
                   <SkillCard
                     key={`${characterKey}-${skill.id}`}
                     skill={skill}
+                    display={display}
                   />
                 ))}
             </div>
@@ -674,8 +681,8 @@ export function CharacterArchive({
                 {String(chain.order).padStart(2, "0")}
               </span>
               <div>
-                <h3>{gameText(chain.name)}</h3>
-                <p>{gameText(chain.description, chain.description_params)}</p>
+                <h3><PlayerText value={chain.name} fallback="Text unavailable in this language." display={display} /></h3>
+                <p><PlayerText value={gameText(chain.description, chain.description_params, true)} display={display} /></p>
               </div>
             </article>
           ))}
@@ -705,7 +712,7 @@ export function CharacterArchive({
               }}
             />
             {spoken?.profile.voice_actors[textLocale] && (
-              <span>{gameText(spoken.profile.voice_actors[textLocale])}</span>
+              <span><PlayerText value={spoken.profile.voice_actors[textLocale]} display={display} /></span>
             )}
           </div>
           <p className="character-muted">
@@ -723,8 +730,8 @@ export function CharacterArchive({
               <article className="character-voice-line" key={line.id}>
                 <div>
                   <small>{String(line.order).padStart(2, "0")}</small>
-                  <h3>{gameText(line.title)}</h3>
-                  <p>{gameText(line.text)}</p>
+                  <h3><PlayerText value={line.title} fallback="Text unavailable in this language." display={display} /></h3>
+                  <p><PlayerText value={line.text} fallback="Text unavailable in this language." display={display} /></p>
                   {line.audio_event_path && (
                     <small
                       className="character-source-hint"
@@ -734,7 +741,7 @@ export function CharacterArchive({
                     </small>
                   )}
                 </div>
-                <CharacterVoicePlayback key={`${characterKey}:${line.id}`} line={line} textLocale={textLocale} />
+                <CharacterVoicePlayback key={`${characterKey}:${line.id}`} line={line} textLocale={textLocale} display={display} />
               </article>
             ))}
           </div>
