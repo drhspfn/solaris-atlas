@@ -43,6 +43,8 @@ from wuwa_story.db.repositories.read_models import ENTITY_READ_MODELS
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
 from wuwa_story.read_models.publication import publish_entry
 
+DIRTY_INSERT_BATCH_SIZE = 1000
+
 NODE_KINDS = {
     "character": ("character",), "item": ("item",), "location": ("location", "area"),
     "quest": ("quest",), "speaker": ("speaker",), "cutscene": ("cutscene",),
@@ -136,17 +138,18 @@ async def mark_dirty(session, kind, entity_ids, snapshot_key="current", *, debou
         await session.execute(insert(ReadProjectionDirty).values(
             kind=kind, entity_id=0, snapshot_key=snapshot_key, available_at=available,
         ).on_conflict_do_nothing())
-    statement = insert(ReadProjectionDirty).values([
-        {"kind": kind, "entity_id": identity, "snapshot_key": snapshot_key,
-         "available_at": available}
-        for identity in ids
-    ])
-    await session.execute(statement.on_conflict_do_update(
-        index_elements=[ReadProjectionDirty.kind, ReadProjectionDirty.entity_id,
-                        ReadProjectionDirty.snapshot_key],
-        set_={"requested_generation": ReadProjectionDirty.requested_generation + 1,
-              "available_at": available},
-    ))
+    for start in range(0, len(ids), DIRTY_INSERT_BATCH_SIZE):
+        statement = insert(ReadProjectionDirty).values([
+            {"kind": kind, "entity_id": identity, "snapshot_key": snapshot_key,
+             "available_at": available}
+            for identity in ids[start:start + DIRTY_INSERT_BATCH_SIZE]
+        ])
+        await session.execute(statement.on_conflict_do_update(
+            index_elements=[ReadProjectionDirty.kind, ReadProjectionDirty.entity_id,
+                            ReadProjectionDirty.snapshot_key],
+            set_={"requested_generation": ReadProjectionDirty.requested_generation + 1,
+                  "available_at": available},
+        ))
 
 
 async def _lock_scope(session, claim):

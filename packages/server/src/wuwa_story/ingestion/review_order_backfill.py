@@ -2,7 +2,8 @@
 
 Dry-run by default. Example: --all-releases --repair-links --apply. Run as a
 detached server job and retain stdout: each release commits independently;
-repeating a release is safe because graph evidence and dirty scopes coalesce.
+link repair stages may commit independently; repeating a release is safe because
+graph evidence and dirty scopes coalesce.
 """
 
 import argparse
@@ -19,6 +20,7 @@ from wuwa_story.db.models.ops import GameRelease, ImportRun
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.cutscene_order import rebuild
 from wuwa_story.ingestion.dungeon_backfill import backfill
+from wuwa_story.ingestion.show_talk_sequence_backfill import backfill as backfill_sequences
 from wuwa_story.read_models.refresh import mark_dirty
 from wuwa_story.story.review_order import SOURCE, review_positions
 from wuwa_story.story.service import _release_id
@@ -41,6 +43,7 @@ async def refresh_release(session, release, *, apply=False, repair_links=False, 
               'duplicate_quest_records': sum(count > 1 for count in counts.values())}
     if repair_links:
         report['links'] = await backfill(session, release.id, dry_run=not apply)
+        report['sequence_links'] = await backfill_sequences(session, release.id, apply=apply, max_links=10000)
     if apply:
         for start in range(0, len(identities), 100):
             batch = identities[start:start + 100]

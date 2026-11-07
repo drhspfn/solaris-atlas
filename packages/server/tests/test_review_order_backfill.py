@@ -18,10 +18,14 @@ async def test_rebuild_queues_scoped_projections_and_catalog_without_media_jobs(
     monkeypatch.setattr(module, 'mark_dirty', dirty)
     monkeypatch.setattr(module, 'rebuild', catalog)
     monkeypatch.setattr(module, 'backfill', graph)
+    sequences = AsyncMock(return_value={'written': 0})
+    monkeypatch.setattr(module, 'backfill_sequences', sequences)
     release = SimpleNamespace(id=21, game_version='3.7.0')
     report = await module.refresh_release(session, release, apply=apply, repair_links=True, current_release_id=21)
     assert report['quest_scopes'] == 1 and report['duplicate_quest_records'] == 1
     graph.assert_awaited_once_with(session, 21, dry_run=not apply)
+    sequences.assert_awaited_once_with(session, 21, apply=apply, max_links=10000)
+    assert report['sequence_links'] == {'written': 0}
     if apply:
         assert [call.args[3]
                 for call in dirty.await_args_list] == ['3.7.0', 'current']
@@ -32,3 +36,31 @@ async def test_rebuild_queues_scoped_projections_and_catalog_without_media_jobs(
         dirty.assert_not_awaited()
         catalog.assert_not_awaited()
         session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_without_link_repair_never_invokes_either_backfill(monkeypatch):
+    session = SimpleNamespace(scalars=AsyncMock(return_value=[]), commit=AsyncMock())
+    graph, sequences = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(module, 'backfill', graph)
+    monkeypatch.setattr(module, 'backfill_sequences', sequences)
+    report = await module.refresh_release(session, SimpleNamespace(id=21, game_version='3.7.0'))
+    graph.assert_not_awaited()
+    sequences.assert_not_awaited()
+    assert 'sequence_links' not in report
+
+
+@pytest.mark.asyncio
+async def test_sequence_repair_failure_stops_release_before_catalog_and_queue(monkeypatch):
+    flow = {'Flow': {'FlowListName': 'Story', 'FlowId': 1, 'StateId': 1}}
+    session = SimpleNamespace(scalars=AsyncMock(side_effect=[[{'QuestId': 100, 'Data': [flow]}], [10]]), commit=AsyncMock())
+    monkeypatch.setattr(module, 'backfill', AsyncMock(return_value={'written': 1}))
+    monkeypatch.setattr(module, 'backfill_sequences', AsyncMock(side_effect=ValueError('limit')))
+    dirty, catalog = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(module, 'mark_dirty', dirty)
+    monkeypatch.setattr(module, 'rebuild', catalog)
+    with pytest.raises(ValueError, match='limit'):
+        await module.refresh_release(session, SimpleNamespace(id=21, game_version='3.7.0'), apply=True, repair_links=True)
+    dirty.assert_not_awaited()
+    catalog.assert_not_awaited()
+    session.commit.assert_not_awaited()

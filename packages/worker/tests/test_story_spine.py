@@ -248,3 +248,56 @@ async def test_missing_spine_does_not_drop_successful_static_images(tmp_path, mo
     files, missing = await entity_media.build_entity_files(tmp_path, targets, tmp_path / 'tool', tmp_path / 'tool')
     assert len(files) == 1 and files[0][0] == targets[0]
     assert missing == ['spine_background:7']
+
+
+@pytest.mark.asyncio
+async def test_resolved_prefab_sequences_are_archived_with_bounded_control_discovery(tmp_path, monkeypatch):
+    from wuwa_story.ingestion.spine_presentation import flow_presentation
+
+    from wuwa_story_worker import sequence_controls, sequence_fragments, story_spine
+
+    config = tmp_path / 'config' / 'files'
+    config.mkdir(parents=True)
+    (config / 'db_SpineBackground.db').touch()
+    monkeypatch.setattr(story_spine, 'export_assets', AsyncMock(return_value=config.parent / 'manifest.json'))
+    prefab = '/Game/UI/Prefabs/Fox'
+    transitions = ['/Game/UI/Sequence/First', '/Game/UI/Sequence/Second']
+    decoded = tmp_path / 'prefab'
+    decoded.mkdir()
+    (decoded / 'asset.json').write_text(json.dumps([{'Type': 'PrefabAsset', 'Properties': {'refs': [
+        {'ObjectName': "LevelSequence'First'", 'ObjectPath': transitions[0]},
+        {'ObjectName': "LevelSequence'Second'", 'ObjectPath': transitions[1]},
+        {'ObjectName': "Material'M'", 'ObjectPath': '/Game/UI/Material'},
+    ]}}]), encoding='utf-8')
+    calls = []
+
+    async def extract(root, paths, *, assets, **kwargs):
+        calls.append((paths, kwargs))
+        if paths == [prefab]:
+            assets[prefab] = {'decoded': decoded}
+        if paths == transitions:
+            return [], [{'expected': transitions[1], 'status': 'not_in_client'}]
+        return [], []
+
+    monkeypatch.setattr(story_spine, 'prefab_images', extract)
+    monkeypatch.setattr(sequence_controls, 'sequence_control_score', lambda *_: {
+        'events': [], 'preloads': [], 'media': {'sections': []}})
+    monkeypatch.setattr(sequence_controls, 'opened_ui_resources', lambda _: [{'prefab_key': 'key'}])
+    monkeypatch.setattr(story_spine, 'sequence_prefabs', lambda _, entries: (
+        ([{'prefab': prefab, 'prefab_key': 'key'}] if entries else []), []))
+    monkeypatch.setattr(sequence_fragments, 'prepare_sequence_fragments', AsyncMock(return_value={
+        'media': {'sections': []}, 'files': {}, 'missing': []}))
+    monkeypatch.setattr(story_spine, 'build_icons', AsyncMock(return_value={}))
+    saved = {}
+    def bundle(output, resource, *args, **kwargs):
+        saved.update(resource)
+        return output, []
+    monkeypatch.setattr(story_spine, 'portable_bundle', bundle)
+    (tmp_path / 'plan.json').write_text(json.dumps({'version': '3.7.0', 'id': 'client', 'tier': 'hd'}))
+    presentation = flow_presentation({'Actions': [{'Name': 'ShowTalk', 'Params': {
+        'SequenceDataAsset': '/Game/Controller.Controller', 'TalkItems': []}}]})
+    await story_spine.build_spine_bundle(tmp_path, None, tmp_path / 'tool', tmp_path / 'tool',
+                                         presentation=presentation)
+    assert (transitions, {'include_sequences': True, 'control_sources_only': True}) in calls
+    assert saved['control_sources']['requested'] == ['/Game/Controller', *transitions]
+    assert saved['control_sources']['missing'] == [{'expected': transitions[1], 'status': 'not_in_client'}]

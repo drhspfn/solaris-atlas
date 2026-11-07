@@ -77,3 +77,27 @@ async def test_completed_job_is_rechecked_and_workspace_membership_is_durable(mo
     assert db.execute.await_args_list[0].args[1] == {"key": 4}
     assert "pg_advisory_xact_lock_shared(706" in str(db.execute.await_args_list[0].args[0])
     publish.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', ['queued', 'waiting_dependency', 'running'])
+async def test_explicit_recovery_redelivers_same_job_without_resetting_state(monkeypatch, status):
+    from types import SimpleNamespace
+    from wuwa_story.ingestion import media_jobs
+
+    payload = {'run_id': 100, 'pinned': True}
+    existing = SimpleNamespace(id=100, status=status,
+        metadata_json={'payload': payload, 'queue': 'wuwa.entity-images.v1'})
+    db = AsyncMock()
+    db.scalar.side_effect = [1, existing]
+    monkeypatch.setattr(media_jobs, 'entity_media_targets', AsyncMock(return_value=[{'kind': 'spine'}]))
+    publish = AsyncMock()
+    monkeypatch.setattr(media_jobs, 'publish_media_job', publish)
+    result = await media_jobs.enqueue_entity_media(db, request(), republish_queued=True)
+    assert result is existing and result.status == status
+    if status == 'running':
+        publish.assert_not_awaited()
+    else:
+        publish.assert_awaited_once()
+        assert publish.await_args.args[0] is payload
+        assert publish.await_args.args[2] == 'wuwa.entity-images.v1'
