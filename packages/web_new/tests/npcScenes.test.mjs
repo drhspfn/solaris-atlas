@@ -75,7 +75,9 @@ function harness(options = {}) {
 
 test('scene pages reach entries beyond 100 and never display technical flow keys', async () => {
   const h = harness();
-  assert(h.render().some(node => node.props.role === 'status'));
+  const loading = h.render().find(node => node.type === 'SkeletonGroup');
+  assert.equal(loading.props.label, 'Loading conversations');
+  assert.equal(loading.props.children.length, 4);
   await tick();
   let tree = h.render();
   const paging = tree.find(node => node.type === 'Pagination');
@@ -108,7 +110,7 @@ test('inline conversation fetches state-scoped dialogue in pages of 20 with norm
   assert.equal(h.requests.length, 1);
   tree.find(node => node.type === 'details').props.onToggle({ currentTarget: { open: true } });
   tree = renderScene();
-  assert(tree.some(node => node.props.role === 'status'));
+  assert.equal(tree.find(node => node.type === 'SkeletonGroup').props.label, 'Loading conversation');
   await tick(); tree = renderScene();
   const first = new URL(h.requests.at(-1), 'https://example.test');
   assert.equal(first.pathname, '/npcs/character%3Anpc%3A17288/dialogue');

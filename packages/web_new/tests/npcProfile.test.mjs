@@ -34,6 +34,13 @@ function render(result, npc = { shop_count: 1 }, gameVersion, display) {
       : components });
   return nodes(exports.NpcInteractions({ characterKey: 'character:npc:17288', npc, gameVersion, display }));
 }
+test('dialogue loading reserves dialogue card geometry', () => {
+  const loading = render(null).find(node => node.type === 'SkeletonGroup');
+  assert.equal(loading.props.label, 'Loading dialogue');
+  assert.equal(loading.props.className, 'npc-dialogue-list');
+  assert.equal(loading.props.children.length, 3);
+  assert(loading.props.children.every(node => node.type.name === 'NpcDialogueSkeleton'));
+});
 test('NPC profile labels interaction participants and bounds dialogue with pagination', () => {
   const tree = render({ total: 21, results: [{ canonical_key: 'talk_item:1', flow_state: 'flow',
     speaker: { canonical_key: 'speaker:9', label: 'Visitor' }, speaker_relation: 'interaction_participant',

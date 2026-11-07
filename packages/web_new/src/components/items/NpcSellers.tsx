@@ -4,11 +4,16 @@ import { useEffect, useState } from 'react';
 import { api } from '@/api/client';
 import { PlayerText, type PlayerDisplay } from '@/components/dialogue/PlayerText';
 import { ErrorPanel } from '@/components/ui/Feedback';
+import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton';
 import { Pagination } from '@/components/ui/Pagination';
 import { Link } from '@/lib/router';
 
 type Seller = { canonical_key: string; href: string; name: string; offers: { shop_id: number; quantity: number | null }[] };
 const PAGE_SIZE = 20;
+
+export function NpcSellerSkeleton() {
+  return <div className="connection-row"><Skeleton style={{ width: 140, height: 13 }} /><Skeleton style={{ width: 100, height: 10 }} /></div>;
+}
 
 export function NpcSellers({ itemId, locale, display }: { itemId: number; locale: string; display?: PlayerDisplay }) {
   const [page, setPage] = useState(1);
@@ -27,7 +32,7 @@ export function NpcSellers({ itemId, locale, display }: { itemId: number; locale
   if (result && result.total === 0) return null;
   return <div className="subsection"><h3>NPC shopkeepers</h3>
     <p>Configured shop offers; current availability is not confirmed.</p>
-    {error ? <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} /> : !result ? <p role="status">Loading shopkeepers…</p> : <>
+    {error ? <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} /> : !result ? <SkeletonGroup label="Loading shopkeepers">{Array.from({ length: 3 }, (_, i) => <NpcSellerSkeleton key={i} />)}</SkeletonGroup> : <>
       {result.results.map((seller) => <Link className="connection-row" key={seller.canonical_key} to={seller.href}>
         <strong><PlayerText value={seller.name} display={display} /></strong><small>{seller.offers.length} configured {seller.offers.length === 1 ? 'offer' : 'offers'}</small>
       </Link>)}

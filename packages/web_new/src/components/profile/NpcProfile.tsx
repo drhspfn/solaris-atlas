@@ -10,6 +10,7 @@ import { NpcInstances } from "@/components/profile/NpcInstances";
 import { NpcShops } from "@/components/profile/NpcShops";
 import type { CharacterModelData } from "@/components/models/types";
 import { ErrorPanel } from "@/components/ui/Feedback";
+import { Skeleton, SkeletonGroup, TextSkeleton } from "@/components/ui/Skeleton";
 import { Pagination } from "@/components/ui/Pagination";
 import { PanelTitle } from "@/components/ui/PanelTitle";
 import { gameTextPlainText } from "@/data/gameText";
@@ -70,6 +71,18 @@ function questHref(
   return `${path}?${params}${hash ? `#${hash}` : ""}`;
 }
 
+export function NpcQuestCardSkeleton() {
+  return <div className="npc-quest-card"><Skeleton style={{ width: "70%", height: 14 }} /></div>;
+}
+
+export function NpcDialogueSkeleton() {
+  return <article className="npc-dialogue-card">
+    <div className="npc-dialogue-text"><TextSkeleton lines={2} /></div>
+    <div className="npc-dialogue-meta"><Skeleton style={{ width: 100, height: 12 }} /><Skeleton style={{ width: 130, height: 12 }} /></div>
+    <div className="npc-dialogue-source"><Skeleton style={{ width: 90, height: 12 }} /></div>
+  </article>;
+}
+
 function NpcQuests({
   characterKey,
   gameVersion,
@@ -119,7 +132,7 @@ function NpcQuests({
           onRetry={() => setRetry((value) => value + 1)}
         />
       ) : !result ? (
-        <p role="status">Loading quests…</p>
+        <SkeletonGroup label="Loading quests" className="npc-quest-grid">{Array.from({ length: 4 }, (_, i) => <NpcQuestCardSkeleton key={i} />)}</SkeletonGroup>
       ) : (
         <>
           {!result.results.length && <p>No linked quest appearances found.</p>}
@@ -242,7 +255,7 @@ export function NpcInteractions({
             onRetry={() => setRetry((value) => value + 1)}
           />
         ) : !result ? (
-          <p role="status">Loading dialogue…</p>
+          <SkeletonGroup label="Loading dialogue" className="npc-dialogue-list">{Array.from({ length: 3 }, (_, i) => <NpcDialogueSkeleton key={i} />)}</SkeletonGroup>
         ) : (
           <>
             {!result.results.length && <p>No linked dialogue found.</p>}

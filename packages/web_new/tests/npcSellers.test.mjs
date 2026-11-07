@@ -7,6 +7,18 @@ import ts from 'typescript';
 const source = readFileSync(new URL('../src/components/items/NpcSellers.tsx', import.meta.url), 'utf8');
 const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
 function nodes(node) { return !node || typeof node !== 'object' ? [] : [node, ...[node.props?.children].flat(Infinity).flatMap(nodes)]; }
+test('seller loading uses row skeletons and an empty result hides the section', () => {
+  const exports = {}, components = new Proxy({}, { get: (_, name) => name });
+  let slots = [1, null, '', 0], index = 0;
+  vm.runInNewContext(code, { exports, AbortController, URLSearchParams,
+    require: id => id === 'react' ? { useState: () => [slots[index++], () => {}], useEffect: () => {} }
+      : id === 'react/jsx-runtime' ? { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) } : components });
+  const loading = nodes(exports.NpcSellers({ itemId: 100, locale: 'en' })).find(node => node.type === 'SkeletonGroup');
+  assert.equal(loading.props.label, 'Loading shopkeepers');
+  assert(loading.props.children.every(node => node.type.name === 'NpcSellerSkeleton'));
+  slots = [1, { total: 0, results: [] }, '', 0]; index = 0;
+  assert.equal(exports.NpcSellers({ itemId: 100, locale: 'en' }), null);
+});
 test('NPC sellers show scoped names and paginate results', () => {
   const result = { total: 21, results: [{ canonical_key: 'character:npc:17290', href: '/characters/zahira', name: 'Zahira', offers: [{ shop_id: 1 }] }] };
   const initial = [1, result, '', 0]; let index = 0; const exports = {};

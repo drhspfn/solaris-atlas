@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/Input";
 import { Pagination } from "@/components/ui/Pagination";
 import { Pill } from "@/components/ui/Pill";
 import { EmptyInline, ErrorPanel } from "@/components/ui/Feedback";
+import { Skeleton, SkeletonGroup, TextSkeleton } from "@/components/ui/Skeleton";
 import {
   PlayerText,
   type PlayerDisplay,
@@ -43,6 +44,14 @@ function rowText(row: any): string {
     .filter(Boolean)
     .join(" ")
     .toLocaleLowerCase();
+}
+
+export function CharacterConnectionsSkeleton({ kind }: { kind: "quests" | "characters" }) {
+  return <SkeletonGroup label={kind === "quests" ? "Loading story appearances" : "Loading character connections"} className="character-connections-list">
+    {Array.from({ length: 3 }, (_, i) => kind === "quests" ?
+      <div className="connection-row" key={i}><div><Skeleton style={{ width: 180, height: 13 }} /><Skeleton style={{ width: 100, height: 10 }} /></div></div> :
+      <article className="character-connection-card" key={i}><header><Skeleton style={{ width: 140, height: 13 }} /><Skeleton style={{ width: 80, height: 12 }} /></header><div className="character-connection-preview"><TextSkeleton lines={2} /></div></article>)}
+  </SkeletonGroup>;
 }
 
 export function CharacterConnections({
@@ -262,8 +271,7 @@ export function CharacterConnections({
         />
       )}
       {notice && <p role="status">{notice}</p>}
-      {pending && <p role="status">Loading {label}…</p>}
-      <div className="character-connections-list" aria-busy={pending}>
+      {pending ? <CharacterConnectionsSkeleton kind={section} /> : <div className="character-connections-list">
         {!pending && !error && !page.results.length && (
           <EmptyInline
             text={
@@ -373,7 +381,7 @@ export function CharacterConnections({
               </article>
             );
           })}
-      </div>
+      </div>}
       <Pagination
         mode="cursor"
         ariaLabel={`${label} pagination`}

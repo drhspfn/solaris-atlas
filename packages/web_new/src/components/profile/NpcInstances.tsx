@@ -4,6 +4,7 @@ import { ArrowUpRight, MapPin } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api } from '@/api/client';
 import { ErrorPanel } from '@/components/ui/Feedback';
+import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton';
 import { Pagination } from '@/components/ui/Pagination';
 import { useLocale } from '@/hooks/useLocale';
 import { Link } from '@/lib/router';
@@ -12,6 +13,11 @@ import '@/styles/npc-context.css';
 const PAGE_SIZE = 8;
 type Location = { id: number; names: Record<string, string>; map_names: Record<string, string>; href: string };
 type LocationPage = { results: Location[]; total: number };
+
+export function NpcLocationCardSkeleton() {
+  return <div className="npc-location-card"><Skeleton style={{ width: 20, height: 20, flexShrink: 0 }} />
+    <span><Skeleton style={{ width: 140, maxWidth: '100%', height: 15 }} /><Skeleton style={{ width: 100, height: 12 }} /><Skeleton style={{ width: 75, height: 12 }} /></span></div>;
+}
 
 export function NpcInstances({ characterKey, gameVersion }: { characterKey: string; gameVersion?: string }) {
   const locale = useLocale();
@@ -35,7 +41,7 @@ export function NpcInstances({ characterKey, gameVersion }: { characterKey: stri
     <div className="npc-context-heading"><h2><MapPin size={19} aria-hidden="true" />Where to meet</h2>
       {result && <span>{result.total} {result.total === 1 ? 'location' : 'locations'}</span>}</div>
     {error ? <ErrorPanel message={error} onRetry={() => setRetry(value => value + 1)} /> : !result ?
-      <p className="npc-context-loading" role="status">Finding map locations…</p> : <>
+      <SkeletonGroup label="Finding map locations" className="npc-location-grid">{Array.from({ length: 4 }, (_, i) => <NpcLocationCardSkeleton key={i} />)}</SkeletonGroup> : <>
         <div className="npc-location-grid">{result.results.map(location =>
           <Link className="npc-location-card" key={location.id} to={location.href}>
             <MapPin size={20} aria-hidden="true" />

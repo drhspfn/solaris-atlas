@@ -22,10 +22,13 @@ test('locations render published map links and page server results', async () =>
     if (id === '@/api/client') return { api: async url => { requests.push(url); const offset = Number(new URL(url, 'https://example.test').searchParams.get('offset')); return { results: instances.slice(offset, offset + 8), total: instances.length }; } };
     if (id === '@/lib/router') return { Link: 'Link' };
     if (id === '@/components/ui/Pagination') return { Pagination: 'Pagination' };
+    if (id === '@/components/ui/Skeleton') return { Skeleton: 'Skeleton', SkeletonGroup: 'SkeletonGroup' };
     return { localizedText: (value, fallback) => value?.content || value || fallback };
   } });
   function render() { index = effectIndex = 0; pending = []; const tree = exports.NpcInstances({ characterKey: 'character:npc:1', gameVersion: '3.7' }); for (const run of pending) run(); return nodes(tree); }
-  assert(render().some(node => node.props.role === 'status'));
+  const loading = render().find(node => node.type === 'SkeletonGroup');
+  assert.equal(loading.props.label, 'Finding map locations');
+  assert.equal(loading.props.children.length, 4);
   await Promise.resolve(); await Promise.resolve();
   let tree = render();
   assert.equal(tree.filter(node => node.props.className === 'npc-location-card').length, 8);
