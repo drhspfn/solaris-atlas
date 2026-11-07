@@ -245,7 +245,7 @@ def available_soundtracks(video, assets, audio, missing_assets=None):
     return video.model_copy(update={"soundtrack": tracks})
 
 
-async def decode_soundtrack(track, assets, audio, work, decoder, decoded):
+async def decode_soundtrack(track, assets, audio, work, decoder, decoded, music_context=None):
     if getattr(track, 'external_media', None):
         wem = confined(audio, track.external_media)
         key = ('external', wem)
@@ -261,7 +261,8 @@ async def decode_soundtrack(track, assets, audio, work, decoder, decoded):
     if key not in decoded:
         if track.media_id is None and has_authored_event(bank.read_bytes(), bank.stem):
             decoded[key] = await render_bank(bank, audio, work, decoder, getattr(track, "rover", None), run_tool,
-                                             language=getattr(track, 'language', None))
+                                             language=getattr(track, 'language', None),
+                                             external_states=({music_context.state_group: music_context.state} if music_context else None))
             return decoded[key]
         try:
             identity = bank_media_id(bank.read_bytes(), track.media_id)
@@ -269,7 +270,8 @@ async def decode_soundtrack(track, assets, audio, work, decoder, decoded):
             if track.media_id is not None or not any(text in str(error) for text in ("single-source", "Multiple music sources")):
                 raise
             decoded[key] = await render_bank(bank, audio, work, decoder, getattr(track, "rover", None), run_tool,
-                                             language=getattr(track, 'language', None))
+                                             language=getattr(track, 'language', None),
+                                             external_states=({music_context.state_group: music_context.state} if music_context else None))
         else:
             wem = soundtrack_wem(audio, identity)
             wav = work / f"{identity}.wav"
@@ -288,7 +290,7 @@ async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffm
     decoded = decoded if decoded is not None else {}
     groups = {}
     for index, track in enumerate(video.soundtrack):
-        wav, originals = await decode_soundtrack(track, assets, audio, work, decoder, decoded)
+        wav, originals = await decode_soundtrack(track, assets, audio, work, decoder, decoded, getattr(video, "music_context", None))
         evidence = []
         for source in originals:
             destination = work / f"source-{index}-{source.name}"
@@ -305,7 +307,8 @@ async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffm
             shutil.copyfile(source, destination)
             evidence.append(destination.name)
         timing = SimpleNamespace(start_seconds=stem['start_seconds'],
-                                 end_seconds=stem['end_seconds'], gain_db=0)
+                                 end_seconds=stem['end_seconds'], gain_db=0,
+                                 loop=stem.get('fixed_start', False))
         groups.setdefault((stem['role'], stem['language'], stem['rover']), []).append(
             (Path(stem['path']), timing, evidence))
     if embedded_audio:
@@ -325,6 +328,8 @@ async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffm
             evidence.append(original.name)
             input_index = 1
         for wav, track, sources in tracks:
+            if getattr(track, "loop", False):
+                command += ["-stream_loop", "-1"]
             command += ["-i", str(wav)]
             length = min(track.end_seconds or duration, duration) - track.start_seconds
             if length <= 0:
@@ -340,7 +345,7 @@ async def localized_audio_recipe(video, movie, assets, audio, work, decoder, ffm
         stems.append({"role": role, "language": language,
                       "rover": rover,
                       "path": destination.name, "sources": evidence,
-                      "evidence": "Source-authored VideoSound/caption or movie frame-event timing; native event routing retained with source files. Original embedded audio remains an unseparated mix."})
+                      "evidence": "Fixed-start reconstructed boss music phase; native routing and gain; looped to movie duration." if role == "music" and getattr(video, "music_context", None) else "Source-authored VideoSound/caption or movie frame-event timing; native event routing retained with source files. Original embedded audio remains an unseparated mix."})
     stems = collapse_shared_stems(stems, work)
     return CutsceneAudioRecipe.model_validate({"asset": video.asset, "asset_version": asset_version,
                                               "duration": duration, "stems": stems})
@@ -425,11 +430,16 @@ async def import_cutscene_recipe(
         originals_by_asset = {}
         published_references = {}
         resolved_videos = []
+        from wuwa_story_worker.cutscene_music_context import render_music_context
+        music_stems = {}
         for video in spec.videos:
+            if video.music_context:
+                music_stems[video.asset] = await render_music_context(
+                    video.music_context, assets, work / ('music-' + str(len(music_stems))), decoder)
             tracks = []
             for track in video.soundtrack:
                 try:
-                    await decode_soundtrack(track, assets, audio, work, decoder, decoded)
+                    await decode_soundtrack(track, assets, audio, work, decoder, decoded, getattr(video, "music_context", None))
                 except ValueError as error:
                     if missing_assets is None:
                         raise
@@ -451,6 +461,7 @@ async def import_cutscene_recipe(
                       if isinstance(node, Clip) and node.asset == video.asset and node.rover}
             frame_stems = await prepare_frame_stems(
                 video, assets, work / f'frame-{index}', decoder, rovers, missing_assets)
+            frame_stems.extend(music_stems.get(video.asset, []))
             if source_context is not None:
                 originals = [movie] if direct else [exported, movie]
                 if not direct:
@@ -458,7 +469,7 @@ async def import_cutscene_recipe(
                     if header.is_file():
                         originals.append(header)
                 for track in video.soundtrack:
-                    _, evidence = await decode_soundtrack(track, assets, audio, work, decoder, decoded)
+                    _, evidence = await decode_soundtrack(track, assets, audio, work, decoder, decoded, getattr(video, "music_context", None))
                     originals.extend(path for path in evidence if path.suffix.casefold() in {".wem", ".bnk"})
                 originals.extend(path for stem in frame_stems for path in stem['sources'])
                 native_originals, reconstruction_files = frame_provenance_files(originals, frame_stems)
@@ -495,7 +506,7 @@ async def import_cutscene_recipe(
                                and (len(rover_variants) < 2 or track.rover is None)]
             for track_index, track in enumerate(fallback_tracks, 1):
                 bank = confined(assets, track.bank) if track.bank else confined(audio, track.external_media)
-                wav, evidence = await decode_soundtrack(track, assets, audio, work, decoder, decoded)
+                wav, evidence = await decode_soundtrack(track, assets, audio, work, decoder, decoded, getattr(video, "music_context", None))
                 source_paths.extend((bank, path, wav) for path in evidence if path.suffix.casefold() == ".wem")
                 command.extend(["-i", str(wav)])
                 length = (track.end_seconds or duration) - track.start_seconds

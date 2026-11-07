@@ -141,8 +141,18 @@ class FrameAudioInput(StrictModel):
         return self
 
 
+class MusicContext(StrictModel):
+    bank: str = Field(min_length=1)
+    audio_directory: str = Field(min_length=1)
+    state_group: int = Field(gt=0, le=4294967295)
+    state: int = Field(gt=0, le=4294967295)
+    source_event: str = Field(pattern=r"^[A-Za-z0-9_]+$")
+    evidence: str = Field(min_length=1)
+
+
 class VideoInput(StrictModel):
     asset: str = Field(pattern=r"^asset:ue:/Game/")
+    music_context: MusicContext | None = None
     # 23 real caption voices already produce 92 localized inputs for one video.
     soundtrack: list[Soundtrack] = Field(default_factory=list, max_length=256)
     frame_audio: list[FrameAudioInput] = Field(default_factory=list, max_length=256)
@@ -150,6 +160,8 @@ class VideoInput(StrictModel):
     @model_serializer(mode="wrap")
     def preserve_legacy_identity(self, handler):
         value = handler(self)
+        if self.music_context is None:
+            value.pop('music_context', None)
         if not self.frame_audio:
             value.pop('frame_audio', None)
         return value
