@@ -408,7 +408,7 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
         timeline['actions'][:0] = [{'kind': 'SetState', 'time_ms': 0, 'state_group_id': int(group),
                                   'state_id': int(value), 'source': 'fixed-start reconstruction'}
                                  for group, value in startup_states.items()]
-    controls = root / 'event-timeline.json' 
+    controls = root / 'event-timeline.json'
     controls.write_text(json.dumps(timeline, indent=2), encoding='utf-8')
     try:
         state_params = validate_event_timeline(timeline, xml)
