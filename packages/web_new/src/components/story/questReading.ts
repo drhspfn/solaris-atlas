@@ -2,6 +2,7 @@ export type ReaderLine = {
   id: string;
   flow_state?: string;
   illustration?: { id: string; kind: string };
+  sequenceMedia?: unknown;
   player_choices?: Array<{
     id: string;
     text?: unknown;
@@ -81,6 +82,7 @@ export function illustratedRuns(lines: ReaderLine[], breakBefore = new Set<strin
       !breakBefore.has(line.id) &&
       last + 1 === index &&
       previous[0].flow_state === line.flow_state
+      && previous[0].sequenceMedia === line.sequenceMedia
     )
       previous.push(line);
     else runs.push([line]);

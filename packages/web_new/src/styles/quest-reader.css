@@ -34,6 +34,7 @@
 .quest-runtime-block > h3 { font-weight: 500; line-height: 1.6; }
 .quest-illustrated-scene { position: relative; isolation: isolate; min-width: 0; margin: 24px 0; padding-top: 1px; border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--bg-root); overflow: clip; }
 .quest-illustrated-scene .quest-illustration.is-background { position: absolute; inset: 0; z-index: 0; margin: 0; border: 0; border-radius: 0; }
+.quest-illustrated-scene:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
 .quest-illustration.is-background > img { width: 100%; height: 100%; max-height: none; object-fit: contain; object-position: center top; }
 .quest-illustration-placeholder { display: grid; justify-items: center; align-content: center; min-height: 180px; padding: 24px; color: var(--text-secondary); gap: 10px; }
 .quest-illustration-placeholder p { margin: 0; text-align: center; }

@@ -19,6 +19,8 @@ import {
   timelineTarget,
 } from "./cutsceneTimeline";
 import { preferredRoverTarget } from "./preferredRover";
+import { QuestSequenceFragments } from "./QuestSequenceFragments";
+import { QuestSequenceIllustrations } from "./QuestSequenceIllustrations";
 import {
   type CutsceneFlow,
   type CutsceneNode,
@@ -672,7 +674,7 @@ export function Cutscene({
   if (event.kind === "sequence")
     return (
       <section id={cutsceneAnchor(event)} className="quest-runtime-block">
-        <span className="eyebrow left">IN-GAME SCENE</span>
+        <span className="eyebrow left">SCENE</span>
         <h3>
           <PlayerText
             value={event.title}
@@ -687,10 +689,11 @@ export function Cutscene({
               : "Position in the story is not mapped."}
           </p>
         )}
-        <p>
-          This scene is rendered by the game engine; no standalone video is
-          available.
-        </p>
+        {event.sequence_media ? (
+          <QuestSequenceFragments media={event.sequence_media} />
+        ) : (
+          <QuestSequenceIllustrations />
+        )}
         <details>
           <summary>Source reference</summary>
           <small>{event.engine_path || event.reference}</small>

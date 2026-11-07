@@ -31,8 +31,27 @@ export type EncounterCinematic = {
   source: EncounterSource;
 };
 export type SequenceMedia = {
-  schema_version: 1; complete_video: false; game_source?: unknown;
-  sections: { kind: string; source?: unknown; reference?: string; status?: string; url?: string | null; file_id?: number | null; [key: string]: unknown }[];
+  schema_version: 1;
+  complete_video: false;
+  game_source?: unknown;
+  composition?: {
+    schema_version: 1;
+    state: "ready" | "unsupported" | "failed";
+    reasons: { code: string; [key: string]: unknown }[];
+    frames?: unknown[];
+  };
+  sections: {
+    kind: string;
+    source?: unknown;
+    scene_source?: unknown;
+    time_seconds?: number | null;
+    sample_time_seconds?: number | null;
+    reference?: string;
+    status?: string;
+    url?: string | null;
+    file_id?: number | null;
+    [key: string]: unknown;
+  }[];
 };
 export type EncounterFlow = {
   id: string;

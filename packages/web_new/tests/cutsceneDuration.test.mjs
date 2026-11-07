@@ -53,6 +53,8 @@ function player(value) {
     './AnalysisActions': { AnalysisActions: 'actions' },
     './cutsceneAnchor': {}, './CutsceneControls': { CutsceneControls: 'controls' },
     './CutsceneSound': { CutsceneSound: 'sound' },
+    './QuestSequenceFragments': { QuestSequenceFragments: 'fragments' },
+    './QuestSequenceIllustrations': { QuestSequenceIllustrations: 'illustrations' },
     './cutsceneAudioSelection': { selectCutsceneTracks: () => [], clipRover: () => 'female' },
     './cutsceneTimeline': timeline, './preferredRover': preferred,
     '@/lib/router': { Link: 'a' },
