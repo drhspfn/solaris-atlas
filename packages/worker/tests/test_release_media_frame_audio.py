@@ -60,7 +60,8 @@ async def test_exact_launcher_without_events_is_not_missing_audio(tmp_path, monk
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('diagnostics', [[], [{'code': 'native_source_unavailable'}]])
-async def test_cutscene_leaf_wires_frame_audio_after_merge_with_pinned_voice_and_report(tmp_path, monkeypatch, diagnostics):
+@pytest.mark.parametrize('failure', [None, 'missing', 'other'])
+async def test_cutscene_leaf_wires_frame_audio_after_merge_with_pinned_voice_and_report(tmp_path, monkeypatch, diagnostics, failure):
     assets = tmp_path / 'release-media/files'
     movie = assets / 'Client/Content/Aki/Movies/M0374.mp4'
     movie.parent.mkdir(parents=True)
@@ -104,11 +105,33 @@ async def test_cutscene_leaf_wires_frame_audio_after_merge_with_pinned_voice_and
         saved = json.loads(path.read_text(encoding='utf-8'))
         assert saved['videos'][0]['frame_audio'] == inputs
         assert 'db_flowState.db' in saved['flow']['evidence']
+        if failure:
+            if failure == 'missing':
+                kwargs['missing_assets'].append('event.bnk: unresolved audio')
+            raise ValueError('publication guard')
         return {'videos': 1}
 
     monkeypatch.setattr(release_media, 'import_cutscene_recipe', publish)
-    result, status = await release_media.cutscene({'targets': ['M0374'], 'run_id': 90, 'game_version': '3.7.0'},
-        {'asset_version': '3.7.1', 'workspace_id': 11, 'voice_plan_id': 'pinned'})
+    payload = {'targets': ['M0374'], 'run_id': 90, 'game_version': '3.7.0'}
+    parent = {'asset_version': '3.7.1', 'workspace_id': 11, 'voice_plan_id': 'pinned'}
+    if failure:
+        with pytest.raises(ValueError, match='publication guard'):
+            await release_media.cutscene(payload, parent)
+        missing = (['frame_audio:M0374:native_source_unavailable'] if diagnostics else [])
+        if failure == 'missing':
+            missing.append('event.bnk: unresolved audio')
+        if missing:
+            persisted = release_media.update_admin_run.await_args.kwargs['raw_output']
+            assert persisted['missing_assets'] == missing
+            entries = persisted['media_report']['entries']
+            assert [entry['expected'] for entry in entries if entry['status'] == 'not_resolved'] == missing
+            assert persisted['media_report']['requested'] == len(entries)
+            assert persisted['media_report']['missing'] == len(missing)
+        else:
+            assert release_media.update_admin_run.await_count == 1
+        release_media.cleanup_published_output.assert_not_awaited()
+        return
+    result, status = await release_media.cutscene(payload, parent)
     assert plans[-1]['frame_audio'] == inputs and 'frame_audio' not in plans[0]
     assert result['media_report']['frame_audio'] == report
     assert status == ('partial' if diagnostics else 'completed')
