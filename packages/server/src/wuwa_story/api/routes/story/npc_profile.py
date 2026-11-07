@@ -142,6 +142,7 @@ async def npc_profile(session, node, character, npc, release_id, locale):
                           "description": "This game configuration is shared by differently named world actors. Locations and conversations below retain their source context."
                           if mixed else character.description, "playable": False},
             "npc": {"blueprint_id": npc.get("blueprint_id"), "blueprint_type": npc.get("blueprint_type"),
+                    "kind": "template" if mixed else "npc",
                     "speakers": [],
                     "name_scope": "instance" if scoped_name else "blueprint",
                     "name_variants": variants,
