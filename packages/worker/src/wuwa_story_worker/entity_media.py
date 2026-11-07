@@ -631,12 +631,15 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                     # a later target or deployment must not roll back earlier media.
                     run.raw_output = {"media_report": report,
                                       "published": published_count + 1}
-                    await session.commit()
                     if target['kind'] == 'spine' and target['path'].startswith('story_sequence:'):
                         from wuwa_story_worker.sequence_speaker_identity import (
                             repair_sequence_bundle_speakers,
                         )
+                        # All file/reference metadata above is final. Commit it
+                        # with actor identities, so a failed identity write cannot
+                        # leave a published file that makes the retry skip repair.
                         await repair_sequence_bundle_speakers(session, path, target)
+                    await session.commit()
                     published_count += 1
                 run.status = "partial" if missing or unsupported_spine or incomplete_spine_controls or riglyph_failures else "completed"
                 run.raw_output = {
