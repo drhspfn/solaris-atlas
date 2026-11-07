@@ -10,7 +10,7 @@ const speakerHelpers = {};
 vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../src/data/npcContext.ts', import.meta.url), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: speakerHelpers });
 function nodes(node) { return !node || typeof node !== 'object' ? [] : [node, ...[node.props?.children].flat(Infinity).flatMap(nodes)]; }
-function render(result) {
+function render(result, npc = { shop_count: 1 }, gameVersion) {
   let index = 0;
   const initial = ['', '', 1, result, '', 0];
   const exports = {};
@@ -21,8 +21,9 @@ function render(result) {
       : id === '@/hooks/useLocale' ? { useLocale: () => 'en' }
       : id === '@/data/localized' ? { localizedText: (value, fallback = '') => value?.content || value || fallback }
       : id === '@/data/npcContext' ? speakerHelpers
+      : id === '@/lib/routeKey' ? { questPath: quest => `/quests/${quest.canonical_key}` }
       : components });
-  return nodes(exports.NpcInteractions({ characterKey: 'character:npc:17288', npc: { shop_count: 1 } }));
+  return nodes(exports.NpcInteractions({ characterKey: 'character:npc:17288', npc, gameVersion }));
 }
 test('NPC profile labels interaction participants and bounds dialogue with pagination', () => {
   const tree = render({ total: 21, results: [{ canonical_key: 'talk_item:1', flow_state: 'flow',
@@ -92,15 +93,34 @@ test('quest appearances render localized, accessible links in a compact grid', (
       : id === '@/data/npcContext' ? speakerHelpers
       : id === '@/lib/routeKey' ? { questPath: quest => `/quests/${quest.canonical_key}` }
       : components });
-  const interactions = nodes(exports.NpcInteractions({ characterKey: 'character:npc:1', npc: { shop_count: 0 } }));
+  const interactions = nodes(exports.NpcInteractions({ characterKey: 'character:npc:1', npc: { shop_count: 0 }, gameVersion: '3.7.1' }));
   const quests = interactions.find(node => typeof node.type === 'function' && node.type.name === 'NpcQuests');
   index = 0;
   slots.splice(0, slots.length, 1, { results: [{ canonical_key: 'quest:1', game_quest_id: 1, name: { content: 'A localized quest' } }], total: 1 }, '', 0);
   const rendered = nodes(quests.type(quests.props));
   const link = rendered.find(node => node.props.className === 'npc-quest-card');
-  assert.equal(link.props.to, '/quests/quest:1');
+  assert.equal(link.props.to, '/quests/quest:1?locale=en&game_version=3.7.1');
   assert.equal(link.props.children, 'A localized quest');
   assert(rendered.some(node => node.props.className === 'npc-quest-grid'));
+});
+
+test('conversations are hidden for zero flow references', () => {
+  const empty = render({ total: 0, results: [] }, { shop_count: 0, flow_reference_count: 0 });
+  assert(!empty.some(node => node.type === 'NpcFlowParticipants'));
+  assert(!empty.some(node => node.props.title === 'Conversations'));
+  const available = render({ total: 0, results: [] }, { shop_count: 0, flow_reference_count: 1 });
+  assert(available.some(node => node.type === 'NpcFlowParticipants'));
+});
+
+test('dialogue quest links preserve locale and game version', () => {
+  const tree = render({ total: 1, results: [{ canonical_key: 'talk_item:1', flow_state: 'flow',
+    speaker: null, speaker_relation: 'interaction_participant', text: { content: 'Hello' },
+    quests: [{ canonical_key: 'quest:7', game_quest_id: 7, name: { content: 'Quest' } }] }] },
+  { shop_count: 0, flow_reference_count: 0 }, '3.7.1');
+  const link = tree.find(node => node.props.to?.startsWith('/quests/quest:7'));
+  const query = new URLSearchParams(link.props.to.split('?')[1]);
+  assert.equal(query.get('locale'), 'en');
+  assert.equal(query.get('game_version'), '3.7.1');
 });
 
 test('dialogue cards use the shared speaker display names', () => {

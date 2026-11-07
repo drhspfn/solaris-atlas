@@ -38,6 +38,15 @@ type Line = {
   quests: { canonical_key: string; game_quest_id: number; name: unknown }[];
 };
 
+function questHref(quest: Line["quests"][number], locale: string, gameVersion?: string) {
+  const [pathAndQuery, hash] = questPath(quest).split("#", 2);
+  const [path, query] = pathAndQuery.split("?", 2);
+  const params = new URLSearchParams(query);
+  params.set("locale", locale);
+  if (gameVersion) params.set("game_version", gameVersion);
+  return `${path}?${params}${hash ? `#${hash}` : ""}`;
+}
+
 function NpcQuests({
   characterKey,
   gameVersion,
@@ -95,7 +104,7 @@ function NpcQuests({
             <Link
               className="npc-quest-card"
               key={quest.canonical_key}
-              to={questPath(quest)}
+              to={questHref(quest, locale, gameVersion)}
             >
               {localizedText(quest.name, `Quest ${quest.game_quest_id}`)}
             </Link>
@@ -203,7 +212,7 @@ export function NpcInteractions({ characterKey, npc, gameVersion }: {
                 </div>
                 {line.quests.map((quest) => (
                   <p className="npc-dialogue-quest" key={quest.canonical_key}>
-                    <Link to={questPath(quest)}>
+                    <Link to={questHref(quest, locale, gameVersion)}>
                       {localizedText(
                         quest.name,
                         `Quest ${quest.game_quest_id}`,
@@ -238,10 +247,8 @@ export function NpcInteractions({ characterKey, npc, gameVersion }: {
         gameVersion={gameVersion}
       />
       {npc.shop_count > 0 && <NpcShops characterKey={characterKey} gameVersion={gameVersion} />}
-      <section className="content-panel full-panel npc-section">
-          <PanelTitle number="04" title="Conversations" />
-          <NpcFlowParticipants characterKey={characterKey} gameVersion={gameVersion} />
-      </section>
+      {npc.flow_reference_count !== 0 &&
+        <NpcFlowParticipants characterKey={characterKey} gameVersion={gameVersion} />}
   </>;
 }
 
