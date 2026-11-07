@@ -124,7 +124,6 @@ export function McpDocsClient() {
             <article className="mcp-tool" key={name}>
               <div className="mcp-tool-title">
                 <code>{name}</code>
-                <ArrowRight size={16} aria-hidden="true" />
               </div>
               <p>{description}</p>
             </article>
