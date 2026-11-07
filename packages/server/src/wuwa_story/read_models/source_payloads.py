@@ -347,7 +347,9 @@ async def _build_entity(session, kind, entity_id, locale, snapshot_key):
         "sort_title": title.casefold(),
         "searchable_text": _searchable_text(kind, title, card, payload, version),
         "canonical_key": canonical_key,
-        "slug": entity.get("slug"),
+        # A family member may render its representative's profile, but its
+        # lookup address must remain unique to the original source node.
+        "slug": node.slug if kind == "character" else entity.get("slug"),
         "primary_image_url": primary_url,
         "primary_image_file_id": next(
             (

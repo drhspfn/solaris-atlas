@@ -844,9 +844,11 @@ async def character_profile(
         from wuwa_story.read_models.readers.character_connections import compact_character_profile
 
         return await compact_character_profile(
-            session, canonical_key, locale, game_version, connections_limit)
+            session, candidate.canonical_key if candidate else canonical_key,
+            locale, game_version, connections_limit)
     if read_projections.should_route_to_projection("character", game_version, locale=locale):
-        return await read_projections.profile_page(session, "character", canonical_key, locale, game_version)
+        return await read_projections.profile_page(session, "character",
+            candidate.canonical_key if candidate else canonical_key, locale, game_version)
     node = await get_node(session, canonical_key, ('character',))
     if node is None:
         raise HTTPException(status_code=404, detail="character not found")
