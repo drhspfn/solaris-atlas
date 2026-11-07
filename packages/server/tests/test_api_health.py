@@ -1,13 +1,26 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from wuwa_story.api.app import app
+from wuwa_story.api.app import app, settings
 
 
 def test_health_is_available_without_database() -> None:
     response = TestClient(app).get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_swagger_targets_configured_api_from_frontend_origin() -> None:
+    client = TestClient(app, base_url="http://localhost:3000")
+    schema = client.get("/openapi.json").json()
+    assert schema["servers"] == [{"url": settings.api_url.rstrip("/")}]
+    docs = client.get("/docs")
+    assert '"withCredentials": true' in docs.text
+    origin = settings.cors_origins[0]
+    health = client.get("/health", headers={"Origin": origin})
+    assert health.status_code == 200
+    assert health.headers["access-control-allow-origin"] == origin
+    assert health.headers["access-control-allow-credentials"] == "true"
 
 
 def test_mcp_streamable_http_endpoint_lists_tools() -> None:
