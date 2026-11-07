@@ -62,6 +62,9 @@ async def test_render_requires_one_authored_rendition_and_preserves_source_evide
     bank.write_bytes(b"bank")
     init = tmp_path / "Init.bnk"
     init.write_bytes(b"init")
+    duplicate = tmp_path / "previous-export" / "Init.bnk"
+    duplicate.parent.mkdir()
+    duplicate.write_bytes(b"init")
     wem = tmp_path / "123.wem"
     wem.write_bytes(b"media")
     renderer = tmp_path / "wwiser.pyz"
@@ -97,3 +100,16 @@ async def test_render_requires_one_authored_rendition_and_preserves_source_evide
         assert any(path.suffix == ".txtp" for path in evidence)
         assert commands[1][commands[1].index("-gf") + 1] == str(wwise_banks.event_id("play_scene"))
         assert "-gwd" in commands[1] and "-gra" in commands[1]
+
+
+@pytest.mark.asyncio
+async def test_distinct_init_banks_are_not_guessed(tmp_path, monkeypatch):
+    bank = tmp_path / 'scene.bnk'
+    bank.write_bytes(b'event')
+    (tmp_path / 'Init.bnk').write_bytes(b'one')
+    other = tmp_path / 'other'
+    other.mkdir()
+    (other / 'Init.bnk').write_bytes(b'two')
+    monkeypatch.setattr(wwise_banks, 'tool_path', lambda _: bank)
+    with pytest.raises(ValueError, match='Ambiguous Wwise Init bank'):
+        await wwise_banks.render_bank(bank, tmp_path, tmp_path / 'work', tmp_path / 'decoder', None, None)
