@@ -135,7 +135,7 @@ async def character_family(session, character, node, localize, release_id=None):
     }
 
 
-def public_character_filter(role_type, identity, canonical_key, kind="playable"):
+def public_character_filter(role_type, identity, canonical_key, kind="playable", *, title=None):
     """Apply category and family paging before LIMIT, in both search backends."""
     category = {
         "playable": role_type == 1,
@@ -144,6 +144,11 @@ def public_character_filter(role_type, identity, canonical_key, kind="playable")
         "technical": or_(role_type.is_(None), role_type.not_in((1, 2, 4, 5, 6))),
         "all": True,
     }[kind]
+    if title is not None:
+        # Unnamed native templates remain addressable graph records, not public
+        # NPC cards. Apply this before counting/paging, not after loading rows.
+        category = and_(category, or_(role_type.is_(None), role_type != 6,
+            and_(func.length(func.trim(title)) > 0, title != canonical_key)))
     primary = identity["canonical_key"].as_string()
     return and_(category, or_(primary.is_(None), primary == canonical_key))
 

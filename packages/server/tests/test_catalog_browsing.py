@@ -308,3 +308,12 @@ async def test_rover_family_collapses_before_paging_and_role_categories_are_expl
     npc = await browse(database, "character", character_kind="npc")
     assert [(row["id"], row["character_kind"]) for row in npc["results"]] == [(9991, "npc")]
     assert (await browse(database, "character", character_kind="all"))["total"] == 4
+
+
+@pytest.mark.asyncio
+async def test_unnamed_npc_templates_do_not_fill_public_catalog(database):
+    database.node(1, "character", role=6)
+    database.node(2, "character", role=6, search="Rosemary")
+    page = await browse(database, "character", character_kind="npc", limit=1)
+    assert page["total"] == 1
+    assert [row["title"] for row in page["results"]] == ["Rosemary"]

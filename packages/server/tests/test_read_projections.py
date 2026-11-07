@@ -158,6 +158,23 @@ async def test_catalog_pagination_and_empty_unpublished_scope_are_distinct(proje
 
 
 @pytest.mark.asyncio
+async def test_npc_catalog_counts_and_pages_named_records_only(projections):
+    for identity, title in [(1, "character:npc:1"), (2, ""), (3, "  "),
+                            (4, "Rosemary"), (5, "Cristoforo")]:
+        projections.entry("character", identity, title=title,
+                          canonical_key=f"character:npc:{identity}",
+                          role_type=6, payload=payload("character", role_type=6))
+    page = await reader.catalog_page(projections, "character", character_kind="npc", limit=1)
+    assert page["total"] == 2
+    assert [row["title"] for row in page["results"]] == ["Cristoforo"]
+    page = await reader.catalog_page(projections, "character", character_kind="npc", limit=1, offset=1)
+    assert [row["title"] for row in page["results"]] == ["Rosemary"]
+    assert (await reader.catalog_page(projections, "character", character_kind="all"))["total"] == 2
+    # The record is retained and can still be inspected through its exact URL.
+    assert (await reader.projection_entry(projections, "character", "character:npc:1")).entity_id == 1
+
+
+@pytest.mark.asyncio
 async def test_catalog_filters_primary_roles_and_quest_types_using_only_payload(projections):
     for identity, role in [(1, 2), (2, 1), (3, None)]:
         projections.entry("character", identity, payload=payload("character", role_type=role))

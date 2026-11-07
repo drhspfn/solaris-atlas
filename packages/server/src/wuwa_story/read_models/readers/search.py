@@ -101,7 +101,7 @@ async def search_page(
         )
         filters = [model.locale_id == locale_id, model.snapshot_key == snapshot, match]
         if kind == "character":
-            filters.append(public_character_filter(model.role_type, model.card["public_identity"], model.canonical_key, character_kind))
+            filters.append(public_character_filter(model.role_type, model.card["public_identity"], model.canonical_key, character_kind, title=model.title))
         if character_key:
             filters.append(model.card["character_keys"].contains([character_key]))
         if quest_id is not None:
