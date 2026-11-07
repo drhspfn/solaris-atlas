@@ -10,6 +10,27 @@ import { fileURLToPath } from 'node:url';
 const webDirectory = fileURLToPath(new URL('../', import.meta.url));
 const requests = [];
 const requestTimes = [];
+const visibleText = (html) => html.replace(/<!--[^]*?-->/g, '').replace(/<[^>]*>/g, '');
+function textInElements(html, tag) {
+  return [...html.matchAll(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`, 'gi'))]
+    .map((match) => visibleText(match[1]));
+}
+function detailsWithSummary(html, label) {
+  const opening = /<details\b[^>]*>\s*<summary\b[^>]*>([\s\S]*?)<\/summary>/gi;
+  for (const match of html.matchAll(opening)) {
+    if (visibleText(match[1]).trim() !== label) continue;
+    const innerStart = match.index + match[0].length;
+    const tags = /<\/?details\b[^>]*>/gi;
+    tags.lastIndex = innerStart;
+    let depth = 1, tag;
+    while ((tag = tags.exec(html))) {
+      depth += tag[0].startsWith('</') ? -1 : 1;
+      if (!depth) return html.slice(innerStart, tag.index);
+    }
+    assert.fail(`Unclosed details for ${label}`);
+  }
+  assert.fail(`Missing details with summary ${label}`);
+}
 const biography = 'Sanhua guards the magistrate of Jinzhou.';
 const portrait = 'https://cdn.solarisatlas.fun/objects/test-sanhua';
 const sharedQuestArtwork = 'https://cdn.solarisatlas.fun/objects/shared-quest-art';
@@ -737,7 +758,7 @@ for (const userAgent of ['Mozilla/5.0', 'TelegramBot (like TwitterBot)']) {
     assert.ok(head.includes(`content="${biography}"`));
     assert.ok(head.includes(`content="${portrait}"`));
     assert.ok(head.includes('href="https://solarisatlas.fun/characters/character%3A1102"'));
-    assert.match(main, /<h1>Sanhua/);
+    assert.ok(textInElements(main, 'h1').includes('Sanhua.'));
     assert.match(main, /Artwork and animation/);
     assert.match(main, /aria-label="View Trial animation"/);
     assert.match(main, /<video[^>]*src="https:\/\/cdn.test\/trial-idle.webm#t=0.001"/);
@@ -840,7 +861,7 @@ test('item details are visible without JavaScript', async () => {
   assert.equal(response.status, 200);
   const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
   const main = html.match(/<main>([\s\S]*?)<\/main>/)?.[1] ?? '';
-  assert.match(main, /<h1>Astrite/);
+  assert.ok(textInElements(main, 'h1').includes('Astrite.'));
   assert.ok(main.includes('A bright crystal.'));
   assert.doesNotMatch(html, /Opening archive record|id="S:\d+"/);
 });
@@ -857,14 +878,13 @@ test('optional interaction contains dialogue, choices, pictures and engine scene
   const response = await fetch(`${site}/quests/119000000`);
   assert.equal(response.status, 200);
   const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
-  const interaction =
-    html.match(/<details><summary>Inspect the fridge<\/summary>([\s\S]*?)client\.db/)?.[1] || '';
+  const interaction = detailsWithSummary(html, 'Inspect the fridge');
   assert.match(interaction, /Optional fridge dialogue/);
   assert.match(interaction, /Leave it here/);
   assert.match(interaction, /src="https:\/\/cdn.test\/story.png"/);
   assert.match(interaction, /rendered by the game engine/);
   assert.equal((html.match(/data-dialogue-key="optional-line"/g) || []).length, 1);
-  assert.equal((html.match(/Optional fridge dialogue/g) || []).length, 1);
+  assert.equal((visibleText(interaction).match(/Optional fridge dialogue/g) || []).length, 1);
   assert.match(html, /Mandatory dialogue/);
 });
 
@@ -1047,7 +1067,7 @@ test('permanent open-ended content is listed below the calendar without an endle
   const response = await fetch(`${site}/events`);
   const html = (await response.text()).replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
   assert.ok(html.includes('<h2>Permanent content</h2>'));
-  assert.ok(html.includes('<strong>Permanent test mode</strong>'));
+  assert.ok(textInElements(html, 'strong').includes('Permanent test mode'));
   assert.ok(html.includes('class="events-calendar-group"'));
   assert.doesNotMatch(html, /aria-label="Permanent test mode,/);
 });
