@@ -146,8 +146,8 @@ def public_character_filter(role_type, identity, canonical_key, kind="playable",
     """Apply category and family paging before LIMIT, in both search backends."""
     category = {
         "playable": role_type == 1,
-        "story": role_type.in_((2, 4, 5)),
-        "npc": role_type == 6,
+        "story": or_(role_type.in_((2, 4, 5)), identity["has_story"].as_boolean().is_(True)),
+        "npc": or_(role_type == 6, identity["has_npc"].as_boolean().is_(True)),
         "technical": or_(role_type.is_(None), role_type.not_in((1, 2, 4, 5, 6))),
         "all": True,
     }[kind]
