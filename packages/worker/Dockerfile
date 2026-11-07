@@ -89,8 +89,8 @@ RUN curl -fSL --retry 3 https://github.com/bnnm/wwiser/releases/download/v202608
     && cd /tools && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
 
 # Pin both the acceleration ABI and the release bytes; unsupported platforms fail at build time.
-RUN curl -fSL --retry 3 https://github.com/drhspfn/riglyph/releases/download/v0.16.1/riglyph-native-v0.16.1-linux-x64.tar.gz -o /tmp/riglyph-native.tar.gz \
-    && echo '4cf635052b6a64769d1e8dd2fc6836cce5b1ce4f2e1b6f4db312e492fed4b061  /tmp/riglyph-native.tar.gz' | sha256sum -c - \
+RUN curl -fSL --retry 3 https://github.com/drhspfn/riglyph/releases/download/v0.16.2/riglyph-native-v0.16.2-linux-x64.tar.gz -o /tmp/riglyph-native.tar.gz \
+    && echo 'c9f0cd017c7399512693cebd8d00d8b22df149aba2de372a1c4ece36c9cf25e1  /tmp/riglyph-native.tar.gz' | sha256sum -c - \
     && mkdir /tools/riglyph-native \
     && tar -xzf /tmp/riglyph-native.tar.gz -C /tools/riglyph-native \
     && rm /tmp/riglyph-native.tar.gz
