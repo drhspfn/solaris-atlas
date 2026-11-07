@@ -57,7 +57,7 @@ def test_selects_authored_gender_state_with_verified_ids(tmp_path, rover):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("renditions", [0, 1, 2])
-@pytest.mark.parametrize("initial_state", [False, True])
+@pytest.mark.parametrize("initial_state", [False, True, "external"])
 async def test_render_requires_one_authored_rendition_and_preserves_source_evidence(tmp_path, monkeypatch, renditions, initial_state):
     bank = tmp_path / "play_scene.bnk"
     bank.write_bytes(b"bank")
@@ -74,9 +74,11 @@ async def test_render_requires_one_authored_rendition_and_preserves_source_evide
     from wuwa_story_worker import cutscene_import
     monkeypatch.setattr(cutscene_import, "soundtrack_wem", lambda *_: wem)
     if initial_state:
-        monkeypatch.setattr(wwise_banks, 'event_timeline', lambda *_: {
-            'actions': [{'kind': 'SetState', 'time_ms': 0, 'state_group_id': 30, 'state_id': 31},
-                        {'kind': 'Play', 'time_ms': 0, 'target_id': 10}]})
+        actions = [{'kind': 'SetState', 'time_ms': 0, 'state_group_id': 30, 'state_id': 31},
+                   {'kind': 'Play', 'time_ms': 0, 'target_id': 10}]
+        if initial_state == 'external':
+            actions.reverse()  # Native C0030 resets persistent map music after its local Play actions.
+        monkeypatch.setattr(wwise_banks, 'event_timeline', lambda *_: {'actions': actions})
     commands = []
 
     async def run(args, timeout):
@@ -96,14 +98,14 @@ async def test_render_requires_one_authored_rendition_and_preserves_source_evide
             Path(args[args.index("-o") + 1]).write_bytes(b"RIFF" + b"x" * 48)
         return SimpleNamespace(stderr=b"")
 
-    if initial_state:
+    if initial_state is True:
         with pytest.raises(ValueError, match='requires external music context'):
             await wwise_banks.render_bank(bank, tmp_path, tmp_path / 'work', tmp_path / 'decoder', 'female', run)
     elif renditions != 1:
         with pytest.raises(ValueError, match="explicit non-gender selection"):
-            await wwise_banks.render_bank(bank, tmp_path, tmp_path / "work", tmp_path / "decoder", "female", run)
+            await wwise_banks.render_bank(bank, tmp_path, tmp_path / "work", tmp_path / "decoder", "female", run, external_states={30: 31} if initial_state == "external" else None)
     else:
-        output, evidence = await wwise_banks.render_bank(bank, tmp_path, tmp_path / "work", tmp_path / "decoder", "female", run)
+        output, evidence = await wwise_banks.render_bank(bank, tmp_path, tmp_path / "work", tmp_path / "decoder", "female", run, external_states={30: 31} if initial_state == "external" else None)
         assert output.is_file() and bank in evidence and init in evidence and wem in evidence
         assert any(path.suffix == ".txtp" for path in evidence)
         command = next(command for command in commands if "-gf" in command)

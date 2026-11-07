@@ -405,6 +405,10 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
                     "--", str(source)], 120)
     timeline = event_timeline(xml, event_id(bank.stem))
     if startup_states:
+        timeline['source_actions'] = list(timeline['actions'])
+        timeline['actions'] = [action for action in timeline['actions'] if not (
+            action['kind'] == 'SetState' and action['time_ms'] == 0
+            and startup_states.get(action['state_group_id']) == action['state_id'])]
         timeline['actions'][:0] = [{'kind': 'SetState', 'time_ms': 0, 'state_group_id': int(group),
                                   'state_id': int(value), 'source': 'fixed-start reconstruction'}
                                  for group, value in startup_states.items()]
@@ -418,7 +422,12 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
         init_xml = root / 'init.xml'
         await run_tool([sys.executable, str(renderer), '-d', 'xml', '-dn',
                         str(root / 'init'), '--', str(root / 'Init.bnk')], 120)
-        state_params = initial_parameters(timeline, xml, init_xml)
+        validation_timeline = timeline
+        if external_states:
+            states = [action for action in timeline['actions'] if action['kind'] == 'SetState']
+            if states and all(action['time_ms'] == 0 and external_states.get(action['state_group_id']) == action['state_id'] for action in states):
+                validation_timeline = {**timeline, 'actions': [*states, *[action for action in timeline['actions'] if action['kind'] != 'SetState']]}
+        state_params = initial_parameters(validation_timeline, xml, init_xml)
         if not state_params or not set(state_params).issubset(
                 {f'({group}={value})' for group, value in (external_states or {}).items()}):
             raise ValueError('Wwise startup State requires external music context: '
