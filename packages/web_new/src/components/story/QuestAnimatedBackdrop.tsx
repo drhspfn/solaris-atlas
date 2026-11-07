@@ -1,10 +1,10 @@
-"use client";
-import { Skeleton, SkeletonGroup, TextSkeleton } from "../ui/Skeleton";
-import { useEffect, useRef, useState } from "react";
-import { Pause, Play } from "lucide-react";
-import type { createSceneRenderer, OpenScene } from "./openSceneWebGL";
+'use client';
+import { Skeleton, SkeletonGroup } from '../ui/Skeleton';
+import { useEffect, useRef, useState } from 'react';
+import { Pause, Play } from 'lucide-react';
+import type { createSceneRenderer, OpenScene } from './openSceneWebGL';
 export type OpenPlaybackVariant = {
-  rover: "male" | "female" | null;
+  rover: 'male' | 'female' | null;
   animation: string;
   scene_url: string;
   textures: Record<string, string>;
@@ -16,16 +16,13 @@ export type OpenPlayback = {
 };
 
 async function fetchPart(url: string, signal: AbortSignal, limit: number) {
-  if (!/^https?:\/\//.test(url))
-    throw new Error("Invalid scene resource address");
-  const response = await fetch(url, { signal, credentials: "omit" });
-  if (!response.ok)
-    throw new Error(`Scene resource request failed (${response.status})`);
-  if (Number(response.headers.get("Content-Length") || 0) > limit)
-    throw new Error("Scene resource exceeds its size limit");
+  if (!/^https?:\/\//.test(url)) throw new Error('Invalid scene resource address');
+  const response = await fetch(url, { signal, credentials: 'omit' });
+  if (!response.ok) throw new Error(`Scene resource request failed (${response.status})`);
+  if (Number(response.headers.get('Content-Length') || 0) > limit)
+    throw new Error('Scene resource exceeds its size limit');
   const blob = await response.blob();
-  if (blob.size > limit)
-    throw new Error("Scene resource exceeds its size limit");
+  if (blob.size > limit) throw new Error('Scene resource exceeds its size limit');
   return blob;
 }
 export function QuestAnimatedBackdrop({
@@ -42,13 +39,13 @@ export function QuestAnimatedBackdrop({
   const [visible, setVisible] = useState(false),
     [playing, setPlaying] = useState(false),
     [ready, setReady] = useState(false),
-    [error, setError] = useState(""),
+    [error, setError] = useState(''),
     [retry, setRetry] = useState(0);
   useEffect(() => {
-    const motion = matchMedia("(prefers-reduced-motion: reduce)");
+    const motion = matchMedia('(prefers-reduced-motion: reduce)');
     setPlaying(!motion.matches);
     const change = () => setPlaying(!motion.matches);
-    motion.addEventListener("change", change);
+    motion.addEventListener('change', change);
     const observer = new IntersectionObserver(
       (entries) => setVisible(entries.some((entry) => entry.isIntersecting)),
       { threshold: 0.01 },
@@ -56,7 +53,7 @@ export function QuestAnimatedBackdrop({
     if (root.current) observer.observe(root.current);
     return () => {
       observer.disconnect();
-      motion.removeEventListener("change", change);
+      motion.removeEventListener('change', change);
     };
   }, []);
   const textureKey = JSON.stringify(variant.textures);
@@ -70,38 +67,36 @@ export function QuestAnimatedBackdrop({
     const lost = (event: Event) => {
       event.preventDefault();
       engine.current?.setPlaying(false);
-      setError("The graphics context was lost. Retry the animated scene.");
+      setError('The graphics context was lost. Retry the animated scene.');
       setReady(false);
     };
-    element.addEventListener("webglcontextlost", lost);
+    element.addEventListener('webglcontextlost', lost);
     setReady(false);
-    setError("");
+    setError('');
     void (async () => {
       try {
         const [module, blob] = await Promise.all([
-          import("./openSceneWebGL"),
+          import('./openSceneWebGL'),
           fetchPart(variant.scene_url, controller.signal, 16 * 1024 * 1024),
         ]);
         const data: OpenScene = JSON.parse(await blob.text());
-        if (data.format !== "solaris.skeletal-scene.v1")
-          throw new Error("Unsupported animated scene format");
+        if (data.format !== 'solaris.skeletal-scene.v1')
+          throw new Error('Unsupported animated scene format');
         let pixels = 0;
         const entries = await Promise.all(
           Object.entries(variant.textures).map(async ([name, url]) => {
             const bitmap = await createImageBitmap(
               await fetchPart(url, controller.signal, 64 * 1024 * 1024),
-              { premultiplyAlpha: "none", colorSpaceConversion: "none" },
+              { premultiplyAlpha: 'none', colorSpaceConversion: 'none' },
             );
             if (cancelled || controller.signal.aborted) {
               bitmap.close();
-              throw new DOMException("Scene closed", "AbortError");
+              throw new DOMException('Scene closed', 'AbortError');
             }
             bitmaps.push(bitmap);
             pixels += bitmap.width * bitmap.height;
             if (pixels > 48 * 1024 * 1024)
-              throw new Error(
-                "Animated scene textures exceed the decoded size limit",
-              );
+              throw new Error('Animated scene textures exceed the decoded size limit');
             return [name, bitmap] as const;
           }),
         );
@@ -114,11 +109,7 @@ export function QuestAnimatedBackdrop({
           loop,
           () => setPlaying(false),
           (reason) => {
-            setError(
-              reason instanceof Error
-                ? reason.message
-                : "Animation evaluation failed",
-            );
+            setError(reason instanceof Error ? reason.message : 'Animation evaluation failed');
             setReady(false);
           },
         );
@@ -131,18 +122,14 @@ export function QuestAnimatedBackdrop({
         localEngine?.dispose();
         if (engine.current === localEngine) engine.current = null;
         if (!cancelled) {
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : "Animated scene could not load",
-          );
+          setError(reason instanceof Error ? reason.message : 'Animated scene could not load');
           setReady(false);
         }
       }
     })();
     return () => {
       cancelled = true;
-      element.removeEventListener("webglcontextlost", lost);
+      element.removeEventListener('webglcontextlost', lost);
       controller.abort();
       if (localEngine) {
         cursor.current = localEngine.getTime();
@@ -153,11 +140,10 @@ export function QuestAnimatedBackdrop({
     };
   }, [visible, variant.scene_url, variant.animation, textureKey, loop, retry]);
   useEffect(() => {
-    const update = () =>
-      engine.current?.setPlaying(ready && playing && !document.hidden);
+    const update = () => engine.current?.setPlaying(ready && playing && !document.hidden);
     update();
-    document.addEventListener("visibilitychange", update);
-    return () => document.removeEventListener("visibilitychange", update);
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
   }, [playing, ready]);
   return (
     <div className="quest-animated-backdrop" ref={root}>
@@ -167,7 +153,9 @@ export function QuestAnimatedBackdrop({
         role="img"
         aria-label="Animated story illustration"
       />
-      {!ready && !error && <AnimatedBackdropSkeleton />}
+      {!ready && !error && (
+        <AnimatedBackdropSkeleton />
+      )}
       {error && (
         <div className="quest-animation-message" role="alert">
           <p>Animated scene could not load.</p>
@@ -187,8 +175,8 @@ export function QuestAnimatedBackdrop({
           aria-pressed={!playing}
           onClick={() => setPlaying(!playing)}
         >
-          {playing ? <Pause size={14} /> : <Play size={14} />}{" "}
-          {playing ? "Pause animation" : "Play animation"}
+          {playing ? <Pause size={14} /> : <Play size={14} />}{' '}
+          {playing ? 'Pause animation' : 'Play animation'}
         </button>
       )}
     </div>

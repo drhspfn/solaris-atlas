@@ -1,6 +1,6 @@
 "use client";
 
-import { Skeleton, SkeletonGroup } from "../ui/Skeleton";
+import { Skeleton, SkeletonGroup } from '../ui/Skeleton';
 import {
   Component,
   lazy,
@@ -56,22 +56,12 @@ const label = (name: string, bytes?: number) =>
 const normalizeAssets = (assets: ModelAssets): ModelAssets => ({
   ...assets,
   ...Object.fromEntries(
-    (["preview", "download", "physics", "animations", "facial"] as const).map(
-      (key) => {
-        const asset = assets[key];
-        return [
-          key,
-          asset
-            ? { ...asset, url: apiUrl(asset.url.replace(/^\/api(?=\/)/, "")) }
-            : asset,
-        ];
-      },
-    ),
+    (["preview", "download", "physics", "animations", "facial"] as const).map((key) => {
+      const asset = assets[key];
+      return [key, asset ? { ...asset, url: apiUrl(asset.url.replace(/^\/api(?=\/)/, "")) } : asset];
+    }),
   ),
-  linked_models: assets.linked_models?.map((item) => ({
-    ...item,
-    ...normalizeAssets(item),
-  })),
+  linked_models: assets.linked_models?.map((item) => ({ ...item, ...normalizeAssets(item) })),
 });
 
 class CanvasBoundary extends Component<
@@ -110,29 +100,11 @@ export function ModelViewer(props: ModelViewerProps) {
   const item = linked.find((model) => model.id === selected);
   const assets = item ?? props.assets;
   const selector = !props.preview && linked.length > 0 && (
-    <Select
-      label="Model view"
-      value={selected}
-      onChange={setSelected}
-      options={[
-        { value: "", label: "Full scene" },
-        ...linked.map(({ id, label }) => ({ value: id, label })),
-      ]}
-    />
+    <Select label="Model view" value={selected} onChange={setSelected}
+      options={[{ value: "", label: "Full scene" }, ...linked.map(({ id, label }) => ({ value: id, label }))]} />
   );
-  return (
-    <ModelViewerInstance
-      key={selected}
-      {...props}
-      assets={assets}
-      formSelector={
-        <>
-          {props.formSelector}
-          {selector}
-        </>
-      }
-    />
-  );
+  return <ModelViewerInstance key={selected} {...props} assets={assets}
+    formSelector={<>{props.formSelector}{selector}</>} />;
 }
 
 function ModelViewerInstance({
@@ -144,7 +116,10 @@ function ModelViewerInstance({
   formSelector,
   onClose,
 }: ModelViewerProps) {
-  const [assets] = useState<ModelAssets>(() => normalizeAssets(source));
+  const [assets] = useState<ModelAssets>(
+    () =>
+      normalizeAssets(source),
+  );
   const [settings, setSettings] = useState<ViewerSettings>(defaultSettings);
   const [state, setState] = useState<ViewerState>(initialViewerState);
   const [attempt, setAttempt] = useState(0);
@@ -302,9 +277,7 @@ function ModelViewerInstance({
           </CanvasBoundary>
         )}
         {!state.ready && !state.error && (
-          <ModelViewerSkeleton
-            label={active ? state.status : "Preview loads when visible"}
-          />
+          <ModelViewerSkeleton label={active ? state.status : "Preview loads when visible"} />
         )}
         {state.error && (
           <div className="model-stage-status" role="alert">
@@ -556,80 +529,24 @@ function ModelViewerInstance({
                   {checkbox("Show floor and world axes", "floor")}
                   {checkbox("Turntable", "turntable")}
                   {checkbox("Lock root position", "lock", !state.rootAvailable)}
-                  {state.components.length > 0 && (
-                    <fieldset>
-                      <legend>Linked components</legend>
-                      {state.components.map((component) => (
-                        <div key={component.id}>
-                          <Checkbox
-                            label={component.name}
-                            checked={component.visible}
-                            disabled={disabled}
-                            onChange={(event) =>
-                              controller.current?.component(
-                                component.id,
-                                event.target.checked,
-                              )
-                            }
-                          />
-                          {component.override !== null && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() =>
-                                controller.current?.component(
-                                  component.id,
-                                  null,
-                                )
-                              }
-                            >
-                              Follow animation
-                            </Button>
-                          )}
-                          {component.loading && (
-                            <SkeletonGroup label="Loading linked model">
-                              <Skeleton style={{ width: "5rem" }} />
-                            </SkeletonGroup>
-                          )}
-                          {component.error && (
-                            <div role="alert">
-                              {component.error}{" "}
-                              <Button
-                                size="sm"
-                                onClick={() =>
-                                  controller.current?.component(
-                                    component.id,
-                                    true,
-                                  )
-                                }
-                              >
-                                Retry
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </fieldset>
-                  )}
-                  {state.accessories.length > 0 && (
-                    <fieldset>
-                      <legend>Accessories</legend>
-                      {state.accessories.map((accessory) => (
-                        <Checkbox
-                          key={accessory.name}
-                          label={accessory.name}
-                          checked={accessory.visible}
-                          disabled={disabled}
-                          onChange={(event) =>
-                            controller.current?.accessory(
-                              accessory.name,
-                              event.target.checked,
-                            )
-                          }
-                        />
-                      ))}
-                    </fieldset>
-                  )}
+                  {state.components.length > 0 && <fieldset>
+                    <legend>Linked components</legend>
+                    {state.components.map((component) => <div key={component.id}>
+                      <Checkbox label={component.name} checked={component.visible}
+                        disabled={disabled} onChange={(event) => controller.current?.component(component.id, event.target.checked)} />
+                      {component.override !== null && <Button size="sm" variant="ghost" onClick={() => controller.current?.component(component.id, null)}>Follow animation</Button>}
+                      {component.loading && <SkeletonGroup label="Loading linked model"><Skeleton style={{width:"5rem"}} /></SkeletonGroup>}
+                      {component.error && <div role="alert">{component.error}{" "}
+                        <Button size="sm" onClick={() => controller.current?.component(component.id, true)}>Retry</Button>
+                      </div>}
+                    </div>)}
+                  </fieldset>}
+                  {state.accessories.length > 0 && <fieldset>
+                    <legend>Accessories</legend>
+                    {state.accessories.map((accessory) => <Checkbox key={accessory.name}
+                      label={accessory.name} checked={accessory.visible} disabled={disabled}
+                      onChange={(event) => controller.current?.accessory(accessory.name, event.target.checked)} />)}
+                  </fieldset>}
                   <fieldset disabled={disabled || !settings.lock}>
                     <legend>
                       <HelpLabel

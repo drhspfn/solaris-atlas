@@ -1,7 +1,7 @@
-import { Skeleton, SkeletonGroup, TextSkeleton } from "../ui/Skeleton";
-import { useState } from "react";
+import { SkeletonGroup, TextSkeleton } from '../ui/Skeleton';
+import { useState } from 'react';
 
-import { api } from "../../api/client";
+import { api } from '../../api/client';
 
 type Trace = {
   recorded: boolean;
@@ -19,27 +19,17 @@ type Trace = {
   }[];
 };
 
-export function AgentStepTrace({
-  runId,
-  callId,
-}: {
-  runId: number;
-  callId: number;
-}) {
+export function AgentStepTrace({ runId, callId }: { runId: number; callId: number }) {
   const [trace, setTrace] = useState<Trace | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   async function load() {
-    setError("");
+    setError('');
     setLoading(true);
     try {
-      setTrace(
-        await api<Trace>(`/admin/story-agent/jobs/${runId}/calls/${callId}`),
-      );
+      setTrace(await api<Trace>(`/admin/story-agent/jobs/${runId}/calls/${callId}`));
     } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Could not load this step.",
-      );
+      setError(reason instanceof Error ? reason.message : 'Could not load this step.');
     } finally {
       setLoading(false);
     }
@@ -63,8 +53,8 @@ export function AgentStepTrace({
           <small>{new Date(trace.created_at).toLocaleString()}</small>
           {!trace.recorded && (
             <p>
-              Execution results were not recorded for this request. Only
-              available model output is shown.
+              Execution results were not recorded for this request. Only available model output is
+              shown.
             </p>
           )}
           {trace.text && (
@@ -80,15 +70,11 @@ export function AgentStepTrace({
               </strong>
               {tool.repeat_count !== undefined && (
                 <small>
-                  {tool.duration_ms} ms · {tool.new_evidence} new evidence
-                  entries
-                  {tool.repeat_count > 0 &&
-                    ` · repeated request (${tool.repeat_count} previous)`}
+                  {tool.duration_ms} ms · {tool.new_evidence} new evidence entries
+                  {tool.repeat_count > 0 && ` · repeated request (${tool.repeat_count} previous)`}
                 </small>
               )}
-              {tool.validation && (
-                <p role="status">Validation: {tool.validation}</p>
-              )}
+              {tool.validation && <p role="status">Validation: {tool.validation}</p>}
               <details>
                 <summary>Arguments</summary>
                 <pre>{tool.arguments}</pre>
