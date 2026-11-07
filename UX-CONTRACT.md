@@ -627,3 +627,14 @@ Shared Pagination owns previous/next geometry, disabled boundaries and a polite
 range summary for page or cursor navigation. Cursor navigation never invents a
 total or page number. Shared search clear actions retain a named keyboard target
 but display only an unframed icon.
+
+## Network loading
+
+A card's module exports its skeleton beside its loaded representation. Consumers
+compose those skeletons in the same responsive container as results. Shared
+Skeleton/SkeletonGroup/TextSkeleton provide paint and one screen-reader status,
+not a competing generic card layout. No skeleton contains links or form controls;
+reduced-motion users receive a static placeholder. Success removes placeholders,
+empty results show the existing empty state, failures show retry rather than
+indefinite skeletons. Changing selection must not briefly claim zero results
+before the new request starts. Keep existing data for append-only pagination.

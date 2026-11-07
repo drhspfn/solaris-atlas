@@ -1,5 +1,6 @@
 "use client";
 
+import { Skeleton, SkeletonGroup, TextSkeleton } from "../ui/Skeleton";
 import {
   BookOpen,
   ChevronDown,
@@ -721,12 +722,10 @@ export function CharacterArchive({
           </p>
           {textError && <p className="character-error">{textError}</p>}
           {textLoading && (
-            <p className="character-muted" role="status">
-              Loading selected text language…
-            </p>
+            <CharacterVoiceSkeleton />
           )}
           <div className="character-voice-list" aria-busy={textLoading}>
-            {voiceLines.map((line) => (
+            {!textLoading && voiceLines.map((line) => (
               <article className="character-voice-line" key={line.id}>
                 <div>
                   <small>{String(line.order).padStart(2, "0")}</small>
@@ -768,4 +767,19 @@ export function CharacterArchive({
       </details>}
     </div>
   );
+}
+
+
+export function CharacterVoiceSkeleton() {
+  return <SkeletonGroup label="Loading voice lines" className="character-voice-list">
+    {[0,1,2].map(index => <article className="character-voice-line" key={index}>
+      <div className="skeleton-card-body"><Skeleton style={{width:'40%',height:'1.2rem'}} /><TextSkeleton lines={3} /><Skeleton style={{height:'2.5rem'}} /></div>
+    </article>)}
+  </SkeletonGroup>;
+}
+export function CharacterArchiveSkeleton() {
+  return <SkeletonGroup label="Loading character details" className="page-skeleton">
+    <Skeleton style={{width:'35%',height:'1.5rem'}} />
+    <div className="page-skeleton-panels">{[0,1,2].map(index => <article className="page-skeleton-panel" key={index}><Skeleton style={{height:'5rem'}} /><TextSkeleton lines={3} /></article>)}</div>
+  </SkeletonGroup>;
 }

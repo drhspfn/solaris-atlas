@@ -1,10 +1,11 @@
-'use client';
+"use client";
 
-import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from '@/lib/router';
+import { Skeleton, SkeletonGroup, TextSkeleton } from "../ui/Skeleton";
+import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "@/lib/router";
 
-import { api } from '../../api/client';
-import { statusLabel } from '../../data/storyAgent';
+import { api } from "../../api/client";
+import { statusLabel } from "../../data/storyAgent";
 
 type RevisitPage = {
   revisits: {
@@ -21,20 +22,20 @@ type RevisitPage = {
 
 export function AgentRevisits({ refresh }: { refresh: number }) {
   const [params, setParams] = useSearchParams();
-  const before = params.get('review_before');
+  const before = params.get("review_before");
   const [data, setData] = useState<RevisitPage | null>(null);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     void api<RevisitPage>(
-      `/admin/story-agent/revisits${before ? `?before=${encodeURIComponent(before)}` : ''}`,
+      `/admin/story-agent/revisits${before ? `?before=${encodeURIComponent(before)}` : ""}`,
       { signal: controller.signal },
     )
       .then((value) => {
         if (!controller.signal.aborted) {
           setData(value);
-          setError('');
+          setError("");
         }
       })
       .catch((reason: Error) => {
@@ -46,8 +47,8 @@ export function AgentRevisits({ refresh }: { refresh: number }) {
     setData(null);
     setParams((previous) => {
       const next = new URLSearchParams(previous);
-      if (cursor) next.set('review_before', String(cursor));
-      else next.delete('review_before');
+      if (cursor) next.set("review_before", String(cursor));
+      else next.delete("review_before");
       return next;
     });
   }
@@ -55,20 +56,27 @@ export function AgentRevisits({ refresh }: { refresh: number }) {
     <details className="content-panel agent-ledger">
       <summary>Reviews after new imports</summary>
       <p>
-        Candidate searches are free. Matched threads use the same daily allowance. Failed queue
-        deliveries retry automatically; paused runs keep their saved research.
+        Candidate searches are free. Matched threads use the same daily
+        allowance. Failed queue deliveries retry automatically; paused runs keep
+        their saved research.
       </p>
       {error && (
         <div className="agent-feedback error" role="alert">
           {error}
-          <button className="agent-button" onClick={() => setRetry((value) => value + 1)}>
+          <button
+            className="agent-button"
+            onClick={() => setRetry((value) => value + 1)}
+          >
             Retry
           </button>
         </div>
       )}
-      {!data && !error && <p role="status">Loading reviews…</p>}
+      {!data && !error && <AgentReviewSkeleton />}
       {data?.revisits.length === 0 && (
-        <p>No reviews on this page. New imports schedule flagged threads automatically.</p>
+        <p>
+          No reviews on this page. New imports schedule flagged threads
+          automatically.
+        </p>
       )}
       {data?.revisits.map((task) => (
         <article className="admin-alert" key={task.id}>
@@ -77,15 +85,21 @@ export function AgentRevisits({ refresh }: { refresh: number }) {
             <span className="agent-status">{statusLabel(task.status)}</span>
           </header>
           <p>
-            Explanation #{task.document_id} · snapshot #{task.release_id} · {task.candidate_count}{' '}
-            candidates
+            Explanation #{task.document_id} · snapshot #{task.release_id} ·{" "}
+            {task.candidate_count} candidates
           </p>
-          {task.status === 'no_candidates' && (
-            <p>No matching source candidates found. The thread remains unresolved.</p>
+          {task.status === "no_candidates" && (
+            <p>
+              No matching source candidates found. The thread remains
+              unresolved.
+            </p>
           )}
           {task.error && <p>{task.error}</p>}
           {task.run_id && (
-            <Link className="agent-button" to={`/admin/story-agent?job=${task.run_id}`}>
+            <Link
+              className="agent-button"
+              to={`/admin/story-agent?job=${task.run_id}`}
+            >
               Inspect run #{task.run_id}
             </Link>
           )}
@@ -98,11 +112,26 @@ export function AgentRevisits({ refresh }: { refresh: number }) {
           </button>
         )}
         {data?.next_before && (
-          <button className="agent-button" onClick={() => page(data.next_before)}>
+          <button
+            className="agent-button"
+            onClick={() => page(data.next_before)}
+          >
             Older reviews
           </button>
         )}
       </div>
     </details>
+  );
+}
+
+export function AgentReviewSkeleton() {
+  return (
+    <SkeletonGroup label="Loading reviews">
+      {[0, 1].map((index) => (
+        <article className="admin-alert" key={index}>
+          <TextSkeleton lines={3} />
+        </article>
+      ))}
+    </SkeletonGroup>
   );
 }

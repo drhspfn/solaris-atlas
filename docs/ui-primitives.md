@@ -98,3 +98,10 @@ remain the talent component's responsibility before passing text to PlayerText.
 
 Missing localized text may fall back to authored inline text. If both are absent,
 show an unavailable-text indication; do not infer dialogue from speaker names.
+
+## Skeletons
+
+Use `SkeletonGroup` for one accessible pending region, `Skeleton` for individual
+noninteractive bars and `TextSkeleton` for a paragraph. Named card skeletons are
+exported by their feature module and reuse its card/grid classes. Loading labels
+are visually hidden, while errors and empty-state copy remain visible.

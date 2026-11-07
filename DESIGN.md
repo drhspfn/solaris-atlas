@@ -273,3 +273,13 @@ The profile's artwork and trial animation use small, consistently sized gallery
 cards. Trial cards show a paused video frame, with playback reserved for the
 shared site-level media viewer. The gallery uses the existing surface, border,
 font and mint action tokens without introducing a second visual theme.
+
+## Pending content
+
+Network-backed cards export a named skeleton from the same module, using the
+same grid/row geometry as the loaded card. `components/ui/Skeleton.tsx` owns only
+decorative bars, reduced-motion behavior and an accessible grouped status.
+Visible loading sentences are replaced with these placeholders; a visually
+hidden status label remains available to assistive technology. Request errors,
+empty results and mutation progress remain distinct states. Pagination appends
+placeholders without discarding already loaded rows.

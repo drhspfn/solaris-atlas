@@ -391,6 +391,6 @@ for (const [path, name, props, field, next, loading, stale] of [
     h.render(); props[field] = next; h.render();
     assert.equal(h.calls[0].options.signal.aborted, true);
     h.calls[0].resolve(stale); await tick();
-    assert.ok(nodes(h.render()).some((node) => node.props?.children === loading));
+    assert.ok(nodes(h.render()).some((node) => node.type?.name?.endsWith('Skeleton')), 'the current selection stays in its pending skeleton after a stale response');
   });
 }
