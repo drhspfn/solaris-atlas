@@ -1,6 +1,7 @@
 """Register ORM models with the admin library; no resource API or UI templates."""
 
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -14,6 +15,8 @@ from starlette_admin.contrib.sqla import Admin
 
 from wuwa_story.admin.auth import ConsoleProtection, InternalAuth
 from wuwa_story.admin.views import (
+    Alerts,
+    BudgetUsage,
     Memory,
     OpenQuestions,
     Quests,
@@ -41,19 +44,23 @@ class AgentIndex(CustomView):
         return RedirectResponse(request.url_for("console:list", identity="runs"), status_code=303)
 
 
-def readonly(model: type[Any], label: str, columns: str, identity: Any, search: Sequence[str]=()) -> ReadOnly:
+def readonly(model: type[Any], label: str, columns: str, identity: Any, search: Sequence[str] = ()) -> ReadOnly:
     view = type(model.__name__ + "Admin", (ReadOnly,),
                 {"fields": columns.split(), "searchable_fields": list(search)})
     return cast(ReadOnly, view(model, label=label, identity=identity))
 
 
-def install_admin(app: Starlette, engine: AsyncEngine, settings: Settings | None=None) -> Admin:
-    admin = Admin(engine, title="Solaris Atlas · Internal console", base_url="/console", route_name="console",
+def install_admin(app: Starlette, engine: AsyncEngine, settings: Settings | None = None) -> Admin:
+    admin = Admin(engine, title="Solaris Atlas · Admin", base_url="/console", route_name="console",
+                  templates_dir=str(Path(__file__).parent / "templates"),
+                  statics_dir=str(Path(__file__).parent / "statics"),
                   auth_provider=InternalAuth(settings or get_settings()),
                   middlewares=[Middleware(ConsoleProtection)],
                   index_view=AgentIndex("Research", add_to_menu=False))
     admin.add_view(DropDown("Agent", views=[
-        OpenQuestions(AgentWorkItem, label="Open questions", identity="open-questions"),
+        Alerts(AgentNote, label="Alerts", identity="alerts"),
+        OpenQuestions(AgentWorkItem, label="Open questions",
+                      identity="open-questions"),
         Runs(ProcessingRun, label="Research runs", identity="runs"),
         readonly(AgentToolAudit, "Tool and admin audit", "id request_id role run_id step call_id tool status arguments result duration_ms created_at",
                  "tool-audit", ["request_id", "role", "tool", "status"]),
@@ -63,8 +70,8 @@ def install_admin(app: Starlette, engine: AsyncEngine, settings: Settings | None
                  "run_id release_id locale_id document_id", "jobs"),
         readonly(AgentCall, "Provider calls", "id run_id step day kind model provider status reserved_usd cost_usd reserved_tokens input_tokens output_tokens created_at",
                  "provider-calls", ["model", "status"]),
-        readonly(AgentDailyUsage, "Daily budget usage",
-                 "day spent_usd reserved_usd spent_tokens reserved_tokens", "usage"),
+        BudgetUsage(AgentDailyUsage, label="Daily budget usage",
+                    identity="usage"),
         readonly(AgentNote, "Research notes", "id run_id node_id kind status text citations created_at", "notes", [
                  "text", "kind", "status"]),
     ]))

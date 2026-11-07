@@ -1,0 +1,26 @@
+{% extends "list.html" %} {% import "components.html" as ui %} {% block content
+%} {% set budget = model.budget_info() %}
+<div class="container-fluid">
+  <section class="sa-budget" aria-labelledby="budget-overview-title">
+    <span class="sa-budget__eyebrow">Agent operations / Accounting</span>
+    <h2 class="sa-budget__title" id="budget-overview-title">
+      Daily budget overview
+    </h2>
+    <p class="sa-budget__intro">
+      Monitor the daily limit and the ledger of provider charges and outstanding
+      reservations.
+    </p>
+    <div class="sa-budget__metrics">
+      {{ ui.metric("Daily budget", "$" ~ budget.daily_budget_usd, "Maximum per
+      budget day") }} {{ ui.metric("Token limit",
+      "{:,}".format(budget.daily_token_limit) if budget.daily_token_limit else
+      "No separate cap", "Per budget day") }} {{ ui.metric("Budget day",
+      budget.today, budget.timezone) }}
+    </div>
+    <p class="sa-budget__note">
+      Costs include the safety margin. Reservations remain held until billing is
+      confirmed; they are not completed charges.
+    </p>
+  </section>
+</div>
+{{ super() }} {% endblock %}

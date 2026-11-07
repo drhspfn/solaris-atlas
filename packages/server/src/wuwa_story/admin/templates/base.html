@@ -1,0 +1,10 @@
+{% extends "@starlette-admin/base.html" %} {% block head_meta %} {{ super() }}
+<script>
+  document.documentElement.setAttribute("data-bs-theme", "dark");
+</script>
+{% endblock %} {% block head_css %} {{ super() }}
+<link
+  rel="stylesheet"
+  href="{{ url_for(__name__ ~ ':statics', path='solaris-admin.css') }}"
+/>
+{% endblock %}

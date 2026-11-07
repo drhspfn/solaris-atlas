@@ -4,9 +4,11 @@ The console is mounted by FastAPI at `/console` (direct API: `http://localhost:8
 Caddy routes `/console` and its assets to the API on the main site too.
 It uses **Starlette-admin's SQLAlchemy adapter**: the library queries the mapped
 models directly and generates tables, filters, forms, details and confirmation
-dialogs. There is no frontend application, REST data provider or project-owned
-HTML template. The Python registration lives in
-`packages/server/src/wuwa_story/admin/composition.py`.
+dialogs. The budget overview uses reusable server-rendered components; it has no
+separate frontend application or REST data provider. The Python registration lives in
+`packages/server/src/wuwa_story/admin/composition.py`. The shared dark theme is in
+`packages/server/src/wuwa_story/admin/statics/solaris-admin.css`; it adapts
+Tabler and the table and select widgets to the Solaris palette.
 
 ## Accounts and sessions
 
@@ -37,10 +39,18 @@ Revoke action, never token hashes. Sign-out revokes the same database session.
 
 ## Included ORM pages
 
-- Agent: research runs, open questions, tool/admin audit, memory, work ledger,
+- Agent: open alerts, research runs, open questions, tool/admin audit, memory, work ledger,
   jobs, provider call accounting, daily usage and research notes.
 - Accounts: users and sessions.
 - Archive: quests, characters, releases, nodes, documents, events, notices and locales.
+
+Open alerts expose their source citations and a link to the associated research run.
+The resolve action updates only open alerts and records the administrator in the audit.
+The former `/admin/alerts` page redirects to `/console/alerts/list`.
+
+The daily budget usage page shows the configured daily cost and token limits,
+budget timezone, current budget day, and the read-only spending and reservation
+ledger. The former `/admin/usage` page redirects to `/console/usage/list`.
 
 Users, memory and manual analysis tasks support creation/editing. Imported facts,
 execution history and audit records are read-only. Question answers remain on the

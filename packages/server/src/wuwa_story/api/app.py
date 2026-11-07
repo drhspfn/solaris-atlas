@@ -55,7 +55,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             _app.state.agent_query_redis = None
 
 
-app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title=settings.app_name,
+    version="0.1.0",
+    lifespan=lifespan,
+    servers=[{"url": settings.api_url.rstrip("/")}],
+    swagger_ui_parameters={"withCredentials": True},
+)
 # Cached hits bypass admission; origin work leaves capacity for health/revision reads.
 app.add_middleware(
     RequestAdmission, limit=settings.api_max_concurrent_requests)

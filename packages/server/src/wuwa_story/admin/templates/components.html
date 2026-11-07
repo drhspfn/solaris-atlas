@@ -1,0 +1,7 @@
+{% macro metric(label, value, detail) -%}
+<div class="sa-metric">
+  <span class="sa-metric__label">{{ label }}</span>
+  <strong class="sa-metric__value">{{ value }}</strong>
+  <span class="sa-metric__detail">{{ detail }}</span>
+</div>
+{%- endmacro %}

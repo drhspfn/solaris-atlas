@@ -29,6 +29,9 @@ def _dump_json(obj: Any) -> str:
 
 @mcp.list_tools()
 async def handle_list_tools() -> list[Tool]:
+    from wuwa_story.api.routes import mcp_character_tools as character_tools
+    from wuwa_story.api.routes import mcp_media_tools as media_tools
+
     return [
         Tool(
             name="search",
@@ -59,6 +62,8 @@ async def handle_list_tools() -> list[Tool]:
                         "description": "Language code for localized text (e.g. 'en', 'ru', 'zh-Hans', 'ja'). Default is 'en'.",
                         "default": "en"
                     },
+                    "game_version": {"type": "string", "description": "Optional imported snapshot."},
+                    "character_kind": {"type": "string", "enum": ["playable", "story", "npc", "technical", "all"], "default": "playable"},
                     "character": {
                         "type": "string",
                         "description": "Filter by speaker/character when searching dialogue."
@@ -229,6 +234,8 @@ async def handle_list_tools() -> list[Tool]:
                         "description": "Language locale (default 'en').",
                         "default": "en"
                     },
+                    "game_version": {"type": "string", "description": "Optional imported snapshot."},
+                    "offset": {"type": "integer", "default": 0},
                     "limit": {
                         "type": "integer",
                         "description": "Maximum number of lines to return (default 100).",
@@ -258,6 +265,24 @@ async def handle_list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="get_quest_profile",
+            description="Get quest details and story context by game quest ID or public quest identifier.",
+            inputSchema={"type": "object", "properties": {
+                "quest_id": {"type": "string", "description": "Game quest ID, canonical key, or public identifier."},
+                "locale": {"type": "string", "default": "en"},
+                "game_version": {"type": "string", "description": "Optional imported game snapshot."},
+            }, "required": ["quest_id"]},
+        ),
+        Tool(
+            name="get_quest_media",
+            description="Get quest cutscene references, playback and their authored context; availability and placement may be uncertain.",
+            inputSchema={"type": "object", "properties": {
+                "quest_id": {"type": "string", "description": "Game quest ID or public identifier."},
+                "locale": {"type": "string", "default": "en"},
+                "game_version": {"type": "string", "description": "Optional imported game snapshot."},
+            }, "required": ["quest_id"]},
+        ),
+        Tool(
             name="get_character_timeline",
             description="Chronology of events and storyline appearances for a specific character.",
             inputSchema={
@@ -268,7 +293,7 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["character"]
             }
         )
-    ]
+    ] + character_tools.TOOLS + media_tools.TOOLS
 
 
 async def _resolve_node(session: Any, id_or_key: str | int) -> Any:
@@ -289,15 +314,25 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
         arguments = {}
 
     from sqlalchemy import select
-    from wuwa_story.db.session import SessionFactory
-    from wuwa_story.db.models.graph import Node, NodeType
+
+    from wuwa_story.api.routes.nodes import node_edges, node_narrative_context, node_related
     from wuwa_story.api.routes.search import search as api_search
-    from wuwa_story.api.routes.nodes import node_related, node_edges, node_narrative_context
-    from wuwa_story.api.routes.story.transcripts import quest_transcript
     from wuwa_story.api.routes.story.shared import _node_label
+    from wuwa_story.api.routes.story.transcripts import quest_transcript
+    from wuwa_story.db.models.graph import NodeType
+    from wuwa_story.db.session import SessionFactory
 
     async with SessionFactory() as session:
         try:
+            from wuwa_story.api.routes import mcp_character_tools as character_tools
+            from wuwa_story.api.routes import mcp_media_tools as media_tools
+
+            if name in {tool.name for tool in character_tools.TOOLS}:
+                result = await character_tools.dispatch(name, arguments, session)
+                return [TextContent(type="text", text=_dump_json(result))]
+            if name in {tool.name for tool in media_tools.TOOLS}:
+                result = await media_tools.dispatch(name, arguments, session)
+                return [TextContent(type="text", text=_dump_json(result))]
             if name in ["search", "search_entities", "search_dialogue"]:
                 q_val = str(arguments.get("q") or arguments.get("query") or "").strip()
                 if not q_val:
@@ -328,10 +363,12 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
                     locale=arguments.get("locale", "en"),
                     sort_by=sort_by_val,
                     sort_order=sort_order_val,
-                    limit=min(int(arguments.get("limit", 20)), 100),
-                    offset=int(arguments.get("offset", 0)),
+                    limit=min(max(int(arguments.get("limit", 20)), 1), 100),
+                    offset=max(int(arguments.get("offset", 0)), 0),
                     character=arguments.get("character"),
                     quest_id=arguments.get("quest_id"),
+                    game_version=arguments.get("game_version"),
+                    character_kind=arguments.get("character_kind", "playable"),
                     session=session,
                 )
                 return [TextContent(type="text", text=_dump_json(res))]
@@ -412,6 +449,18 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
                 )
                 return [TextContent(type="text", text=_dump_json(res))]
 
+            elif name in ("get_quest_profile", "get_quest_media"):
+                quest_id = str(arguments.get("quest_id") or "").strip()
+                if not quest_id:
+                    raise ValueError("Missing 'quest_id' argument")
+                if name == "get_quest_profile":
+                    from wuwa_story.api.routes.story.profiles import quest_profile
+                    res = await quest_profile(game_quest_id=quest_id, locale=arguments.get("locale", "en"), game_version=arguments.get("game_version"), session=session)
+                else:
+                    from wuwa_story.api.routes.story.media import quest_media
+                    res = await quest_media(game_quest_id=quest_id, locale=arguments.get("locale", "en"), game_version=arguments.get("game_version"), session=session)
+                return [TextContent(type="text", text=_dump_json(res))]
+
             elif name in ["get_quest_transcript", "get_quest"]:
                 quest_id = arguments.get("quest_id") or arguments.get("id_or_key")
                 if not quest_id:
@@ -432,8 +481,11 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
                     character=arguments.get("character"),
                     q=arguments.get("query"),
                     locale=arguments.get("locale", "en"),
-                    limit=min(int(arguments.get("limit", 100)), 500),
-                    offset=int(arguments.get("offset", 0)),
+                    game_version=arguments.get("game_version"),
+                    limit=min(max(int(arguments.get("limit", 100)), 1), 500),
+                    offset=max(int(arguments.get("offset", 0)), 0),
+                    focus_line=None,
+                    include_raw=False,
                     session=session,
                 )
                 return [TextContent(type="text", text=_dump_json(res))]

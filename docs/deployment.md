@@ -101,6 +101,10 @@ GitHub Variables have defaults in the renderer where appropriate; set the entrie
 
 `DOMAIN` is the only URL source of truth. Each deployment derives `API_URL=https://api.<DOMAIN>`, `FRONTEND_URL=https://<DOMAIN>`, `MEDIA_PUBLIC_BASE_URL=https://cdn.<DOMAIN>`, `CORS_ALLOWED_ORIGINS=https://<DOMAIN>`, `AUTH_COOKIE_DOMAIN=.<DOMAIN>`, and `GOOGLE_REDIRECT_URI=https://api.<DOMAIN>/auth/google/callback`. Point the root and `api` DNS names at this server; attach `cdn.<DOMAIN>` to the R2 bucket as its custom domain. Register the derived Google callback URI in Google Cloud Console. R2's S3 API endpoint and credentials remain separate storage settings.
 
+OpenAPI advertises `API_URL` as its server, including when Swagger is opened on
+the frontend domain. Set it to the browser-accessible backend URL in other
+deployments; the local default is `http://localhost:8000`.
+
 ### AdSense publisher ID
 
 `NEXT_PUBLIC_GOOGLE_ADSENSE_CLIENT` is a public **build-time** GitHub repository
