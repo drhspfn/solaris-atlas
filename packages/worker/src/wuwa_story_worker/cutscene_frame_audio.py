@@ -25,41 +25,11 @@ from wuwa_story_worker.sequence_audio_prepare import _banks, _voice_root
 from wuwa_story_worker.tooling import tool_path
 from wuwa_story_worker.wwise_banks import (
     event_id,
+    initial_parameters as _initial_parameters,
     event_timeline,
     rover_parameters,
     validate_event_timeline,
 )
-
-
-def _initial_parameters(timeline, bank_xml, init_xml):
-    """Retain startup side effects even when this closed audio graph does not consume them."""
-    actions = timeline['actions']
-    if any(a['kind'] not in {'SetState', 'Play', 'PlayEvent'} for a in actions):
-        raise ValueError('Frame event requires a shared running control timeline')
-    try:
-        return validate_event_timeline(timeline, bank_xml)
-    except ValueError:
-        states = [a for a in actions if a['kind'] == 'SetState']
-        plays = [i for i, a in enumerate(actions) if a['kind'] == 'Play']
-        if (not states or not plays or any(a['time_ms'] != 0 for a in states)
-                or any(i >= min(plays) for i, a in enumerate(actions) if a['kind'] == 'SetState')):
-            raise
-        bindings = {}
-        for state in states:
-            group, value = state['state_group_id'], state['state_id']
-            if group in bindings and bindings[group] != value:
-                raise ValueError('Conflicting initial frame audio states') from None
-            # STMG defines global state identities; only HIRC audio/bus nodes
-            # consume them. An unconsumed state may still affect other events.
-            for path in (bank_xml, init_xml):
-                for node in ET.parse(path).iter('object'):
-                    if (node.find("field[@name='ulID']") is not None
-                            and node.get('name', '').startswith('CAk')
-                            and not node.get('name', '').startswith(('CAkAction', 'CAkEvent'))
-                            and node.find(f".//field[@value='{group}']") is not None):
-                        raise ValueError('Initial frame State has an unsupported native audio consumer') from None
-            bindings[group] = value
-        return sorted(f'({group}={value})' for group, value in bindings.items())
 
 
 async def render_role_stems(bank, audio, work, decoder, *, language=None, rover=None):
