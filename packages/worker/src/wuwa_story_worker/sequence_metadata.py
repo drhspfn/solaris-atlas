@@ -7,7 +7,7 @@ from pathlib import PurePosixPath
 
 from sqlalchemy import select
 from wuwa_story.db.models.storage import FileLocation, FileReference
-from wuwa_story.ingestion.media_provenance import matches_source
+from wuwa_story.ingestion.media_provenance import composition_retryable, matches_source
 from wuwa_story.ingestion.spine_presentation import presentation_hash
 
 from wuwa_story_worker.sequence_controls import sequence_control_score
@@ -109,12 +109,15 @@ def recompile_bundle(bundle, output, target):
             info.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(info, data)
     temporary.replace(output)
+    if target.get('sequence_metadata_revision', 0) >= 5:
+        from wuwa_story_worker.sequence_composition import annotate_bundle
+        annotate_bundle(output)
     return output, sorted(originals)
 
 
 async def retained_bundle(session, storage, root, target, source):
     """An exact-source prior bundle is input to the normal publisher, never reused as new proof."""
-    if not target['path'].startswith('story_sequence:') or not target.get('sequence_metadata_revision'):
+    if not target.get('sequence_metadata_revision'):
         return None
     rows = await session.execute(select(FileReference.metadata_json, FileLocation.object_key).join(
         FileLocation, FileLocation.file_id == FileReference.file_id).where(
@@ -145,7 +148,8 @@ async def retained_bundle(session, storage, root, target, source):
             **source, 'tools': extraction_tools(source.get('tools', {}))}
         if not matches_source(identity, extraction_source, {**target, 'sequence_metadata_revision': None}):
             continue
-        if (proof.get('sequence_metadata_revision') or 0) >= target['sequence_metadata_revision']:
+        if ((proof.get('sequence_metadata_revision') or 0) >= target['sequence_metadata_revision']
+                and not composition_retryable(metadata or {})):
             return None
         path = root / 'sequence-metadata' / \
             str(target['owner']) / 'retained.zip'

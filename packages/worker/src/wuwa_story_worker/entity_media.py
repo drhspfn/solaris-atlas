@@ -186,7 +186,7 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
                                                          **({'direct_resources': target['direct_resources']}
                                                             if target.get('direct_resources') else {}),
                                                          **({'sequence_metadata_revision': target['sequence_metadata_revision']}
-                                                            if target['path'].startswith('story_sequence:') and 'sequence_metadata_revision' in target else {}))
+                                                            if 'sequence_metadata_revision' in target else {}))
         except BlockingIOError:
             raise
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
@@ -196,7 +196,7 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
                            target['resource_id'], str(error)[:500])
             missing.append(target['path'])
             continue
-        if target['path'].startswith('story_sequence:') and target.get('sequence_metadata_revision', 0) >= 3:
+        if target.get('sequence_metadata_revision', 0) >= 3:
             from wuwa_story_worker.sequence_audio_prepare import prepare_sequence_audio
             bundle, audio_sources = await prepare_sequence_audio(root, bundle, fmodel, converter,
                                                                  voice_root=voice_root)
@@ -530,7 +530,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                                         'sequence_media_schema': target.get('sequence_media_schema'),
                                         'presentation_sha256': target.get('presentation_sha256'),
                                         'control_sources_complete': not controls.get('missing')}
-                        if target['path'].startswith('story_sequence:') and 'sequence_metadata_revision' in target:
+                        if 'sequence_metadata_revision' in target:
                             spine_source['sequence_metadata_revision'] = target['sequence_metadata_revision']
                     provenance = await asyncio.to_thread(
                         source_provenance, request, target, originals, tools,
@@ -602,6 +602,10 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         from wuwa_story_worker.sequence_fragments import publish_sequence_fragments
                         sequence_media = await publish_sequence_fragments(
                             session, path, target, published, service, run.id, provenance)
+                        from wuwa_story.ingestion.media_provenance import composition_retryable
+                        if composition_retryable({'sequence_media': sequence_media}):
+                            riglyph_failures.append({'path': target['path'],
+                                                     'reasons': sequence_media['composition']['reasons']})
                     playback = None
                     if target['kind'] == 'spine' and not rendered_metadata and get_settings().story_spine_playback_enabled and (animation or {}).get('display') == 'animated':
                         from wuwa_story_worker.story_spine import publish_open_playback

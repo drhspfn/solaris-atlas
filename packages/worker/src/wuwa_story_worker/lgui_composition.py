@@ -234,6 +234,7 @@ def visible_layers(layout, actors=None):
                 raise ValueError('Visible UI overlay is not a settled story frame')
             if result or opacity != 1:
                 raise ValueError('Foreground UI masks require a sprite compositor')
+            result.append({'kind': 'solid', 'color': [0, 0, 0], 'opacity': 1, 'actor': identity})
         elif a['kind'] != "Class'UIItem'":
             raise ValueError('Unsupported UI render component')
         elif color[:3] != [255, 255, 255]:

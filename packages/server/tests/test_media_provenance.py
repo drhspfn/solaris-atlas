@@ -53,6 +53,8 @@ def test_scoped_sequence_metadata_revision_requires_recompile_but_not_global_spi
     value['path'] = 'spine_background:7'
     reference.metadata_json['game_source']['package_path'] = value['path']
     assert matches_source(reference.metadata_json, source, value)
+    value['sequence_metadata_revision'] = 5
+    assert not matches_source(reference.metadata_json, source, value)
 
 
 @pytest.mark.asyncio
@@ -84,6 +86,29 @@ async def test_archive_only_spine_reuse_needs_no_browser_components():
     storage = SimpleNamespace(backend='s3', bucket='media', stat=AsyncMock(return_value=SimpleNamespace(size_bytes=12)))
     assert await missing_media_targets(session, [value], source={'asset_version': '3.7.0'}, storage=storage) == []
     storage.stat.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('state,reasons,missing', [
+    ('ready', [], False),
+    ('unsupported', [{'code': 'plan_unsupported'}], False),
+    ('failed', [{'code': 'render_failed'}], True),
+    ('unsupported', [{'code': 'renderer_disabled'}], True),
+])
+async def test_sequence_stills_are_reusable_but_render_failures_remain_retryable(state, reasons, missing):
+    value = {**target('story_sequence:flow_state:Story'), 'kind': 'spine',
+             'reference_type': 'story_presentation', 'spine_recipe': 1}
+    reference, file, location = row(value, spine_recipe=1)
+    reference.reference_type = 'story_presentation'
+    reference.metadata_json['sequence_media'] = {
+        'composition': {'state': state, 'reasons': reasons}, 'components': [],
+    }
+    session = AsyncMock()
+    session.execute.return_value = [(reference, file, location)]
+    storage = SimpleNamespace(backend='s3', bucket='media', stat=AsyncMock(return_value=SimpleNamespace(size_bytes=12)))
+    result = await missing_media_targets(session, [value], source={'asset_version': '3.7.0'},
+                                         storage=storage, require_spine_playback=True)
+    assert result == ([value] if missing else [])
 
 
 @pytest.mark.asyncio

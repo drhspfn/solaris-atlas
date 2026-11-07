@@ -191,12 +191,15 @@ def portable_bundle(output, resource, assets, icons, identity, *, presentation=N
             info = zipfile.ZipInfo(name, date_time=(2000, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(info, data)
+    if resource.get('control_score') is not None:
+        from wuwa_story_worker.sequence_composition import annotate_bundle
+        annotate_bundle(partial)
     partial.replace(output)
     return output, sorted(originals)
 
 
 async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentation=None, direct_resources=None,
-                            sequence_metadata_revision=None):
+                             sequence_metadata_revision=None):
     configs = []
     if not direct_resources or presentation:
         receipt = await export_assets(root, fmodel, 'ConfigDB')
@@ -250,7 +253,7 @@ async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentati
                             export, control_sources_only=True) if kind == 'dependency')
         if pending := sorted(prefab_sequences - assets.keys()):
             _, missing_sequences = await prefab_images(root, pending, assets=assets, include_sequences=True,
-                                                        control_sources_only=True)
+                                                       control_sources_only=True)
             missing_controls.extend(missing_sequences)
         resource['variants'].extend(
             v for v in variants if v not in resource['variants'])

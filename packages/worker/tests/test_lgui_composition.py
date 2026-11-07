@@ -2,7 +2,7 @@ import copy
 
 import pytest
 
-from wuwa_story_worker.lgui_composition import apply_settled_tracks, visible_layers
+from wuwa_story_worker.lgui_composition import apply_settled_tracks, sequence_tracks, visible_layers
 from wuwa_story_worker.lgui_properties import property_prefix
 
 
@@ -10,6 +10,7 @@ def layout():
     def actor(identity, parent, index, kind, props=None, components=None):
         return {'id': identity, 'parent': parent, 'index': index, 'kind': f"Class'{kind}'",
                 'active': True, 'props': props or {}, 'components': components or []}
+
     def rig(identity, index, source):
         return actor(identity, 2, index, 'UISpineRenderable',
                      {'CurrSkeletonData': {'ObjectPath': source}},
@@ -25,7 +26,8 @@ def layout():
 def test_native_hierarchy_orders_layers_and_keeps_authored_canvas_scale():
     source = layout()
     result = visible_layers(source)
-    assert [layer['source'] for layer in result] == ['/Game/Background', '/Game/Foreground']
+    assert [layer['source'] for layer in result] == [
+        '/Game/Background', '/Game/Foreground']
     assert [layer['scale'] for layer in result] == [.8, .8]
     assert source == layout()
 
@@ -72,3 +74,39 @@ def test_black_foreground_mask_is_not_silently_dropped():
 def test_tagged_struct_prefix_does_not_consume_next_native_map_entry():
     result, consumed = property_prefix(b'\x00\x00next', ['None'], [])
     assert result == {} and consumed == 2
+
+
+def sequence():
+    return [
+        {'Type': 'MovieScene', 'Properties': {
+            'TickResolution': {'Numerator': 30, 'Denominator': 1},
+            'PlaybackRange': {'Value': {'UpperBound': {'Value': {'Value': 30}}}},
+            'Possessables': [{'Guid': 'component', 'ParentGuid': 'actor'}],
+            'ObjectBindings': [{'ObjectGuid': 'component', 'Tracks': [{'ObjectPath': '/Game/UI.1'}]}],
+        }},
+        {'Type': 'MovieSceneFloatTrack', 'Properties': {
+            'PropertyBinding': {'PropertyName': 'Alpha'}, 'Sections': [{'ObjectPath': '/Game/UI.2'}],
+        }},
+        {'Type': 'MovieSceneFloatSection', 'Properties': {'FloatCurve': {
+            'Times': [{'Value': 0}, {'Value': 30}], 'Values': [{'Value': 1}, {'Value': 0}],
+        }}},
+    ]
+
+
+def test_ui_track_resolves_component_parent_guid_to_exact_prefab_actor():
+    duration, tracks = sequence_tracks(sequence(), {'actor': 4})
+    assert duration == 1
+    assert tracks == [
+        {'actor': 4, 'field': 'Alpha', 'points': [(0, 1), (1, 0)]}]
+
+
+def test_missing_binding_is_not_guessed_from_actor_or_track_names():
+    with pytest.raises(ValueError, match='unresolved prefab binding'):
+        sequence_tracks(sequence(), {'different_actor': 4})
+
+
+def test_unordered_ui_keys_are_rejected_before_rendering():
+    source = sequence()
+    source[2]['Properties']['FloatCurve']['Times'].reverse()
+    with pytest.raises(ValueError, match='Invalid UI channel'):
+        sequence_tracks(source, {'actor': 4})

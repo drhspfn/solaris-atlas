@@ -21,7 +21,10 @@ def preserve_story_reference(reference_type, metadata, incoming):
             return False
     versions = []
     keys = ['spine_recipe', 'sequence_media_schema']
-    if incoming['package_path'].startswith('story_sequence:'):
+    sequence = incoming['package_path'].startswith('story_sequence:') or any(
+        type(proof.get('sequence_metadata_revision')) is int and proof['sequence_metadata_revision'] >= 5
+        for proof in (previous, incoming))
+    if sequence:
         keys.append('sequence_metadata_revision')
     for key in keys:
         old, new = previous.get(key), incoming.get(key)
@@ -31,7 +34,7 @@ def preserve_story_reference(reference_type, metadata, incoming):
             return False
         versions.append((old, new))
     return (any(old > new for old, new in versions)
-            or (incoming['package_path'].startswith('story_sequence:')
+            or (sequence
                 and all(old == new for old, new in versions)
                 and previous.get('control_sources_complete') is True
                 and incoming.get('control_sources_complete') is False))

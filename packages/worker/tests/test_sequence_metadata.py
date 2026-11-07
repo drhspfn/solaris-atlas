@@ -105,10 +105,23 @@ def test_retained_entry_checksum_mismatch_refuses_recompile(tmp_path):
         recompile_bundle(path, tmp_path / 'new.zip', target)
 
 
+def test_revision_five_rebuilds_composition_from_retained_verified_bundle(tmp_path, monkeypatch):
+    from wuwa_story_worker import sequence_composition
+
+    path, target, _, _ = retained(tmp_path)
+    target['sequence_metadata_revision'] = 5
+    calls = []
+    monkeypatch.setattr(sequence_composition, 'annotate_bundle', lambda output: calls.append(output))
+    output, _ = recompile_bundle(path, tmp_path / 'new.zip', target)
+    assert calls == [output]
+    with zipfile.ZipFile(output) as archive:
+        assert json.loads(archive.read('manifest.json'))['sequence_metadata_revision'] == 5
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize('revision', [None, 2, 3])
+@pytest.mark.parametrize('revision', [None, 2, 3, 4, 5])
 @pytest.mark.parametrize('extractor_changed', [False, True])
-@pytest.mark.parametrize('target_revision', [2, 4])
+@pytest.mark.parametrize('target_revision', [2, 4, 5])
 async def test_retained_lookup_downloads_only_stale_exact_source_revision(tmp_path, revision, extractor_changed, target_revision):
     from wuwa_story_worker.sequence_metadata import retained_bundle
 
@@ -132,7 +145,8 @@ async def test_retained_lookup_downloads_only_stale_exact_source_revision(tmp_pa
                                    {'asset_version': '3.7.1', 'download_id': 'a' * 64,
                                     'tools': {'WUWA_FMODEL_PATH': ('b' if extractor_changed else 'a') * 64,
                                               'WUWA_VGMSTREAM_PATH': 'c' * 64, 'WUWA_WWISER_PATH': 'd' * 64}})
-    expected = target_revision == 2 and revision is None and not extractor_changed
+    expected = (not extractor_changed and (revision or 0) < target_revision
+                and (target_revision < 4 or (revision or 0) >= 4))
     assert bool(result) is expected
     assert calls == (['retained-object'] if expected else [])
 

@@ -146,6 +146,13 @@ def test_equal_metadata_revision_preserves_complete_controls_against_partial_rep
                                         proof(sequence_metadata_revision=2, control_sources_complete=True))
 
 
+def test_sequence_backdrop_revision_five_cannot_be_downgraded_by_legacy_worker():
+    current = proof(package_path='spine_background:850009', sequence_metadata_revision=5)
+    legacy = proof(package_path='spine_background:850009')
+    assert preserve_story_reference('story_spine', {'game_source': current}, legacy)
+    assert not preserve_story_reference('story_spine', {'game_source': legacy}, current)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(('incoming_schema', 'preserve'), [(None, True), (1, False), (2, False)])
 async def test_worker_refreshes_locked_reference_before_any_publication(tmp_path, monkeypatch, incoming_schema, preserve):

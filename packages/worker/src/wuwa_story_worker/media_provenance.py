@@ -59,7 +59,7 @@ def source_provenance(request, target, originals, tools, voice=None):
     identity = request if isinstance(request, dict) else request.model_dump()
     revision = target.get('sequence_metadata_revision')
     sequence_audio = (target.get('path', '').startswith('story_sequence:')
-                      and type(revision) is int and revision >= 3)
+                      or (type(revision) is int and revision >= 5)) and type(revision) is int and revision >= 3
     return {
         "schema_version": 1, "asset_version": identity["asset_version"],
         "download_id": identity["download_id"], "tier": identity["tier"],
