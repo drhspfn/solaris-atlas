@@ -34,4 +34,9 @@ def group_cutscene_occurrences(manifest):
         primary['transcript_states'] = sorted({state for e in ordered
                                                for state in e.get('transcript_states', [])})
         result['events'].append(primary)
+    # Query order is a technical state-key order. Grouping invocations must not
+    # leak that order into the scene navigation once authored positions exist.
+    # Unmapped events retain their stable discovery order, after mapped events.
+    result['events'].sort(key=lambda event: (
+        not bool(event.get('story_position')), event.get('story_position') or []))
     return result

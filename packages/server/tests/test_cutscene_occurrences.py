@@ -34,8 +34,8 @@ def test_single_movie_and_non_movie_events_remain_available():
         dict(kind='sequence', reference='asset:sequence'), event('one', [1])]}
     result = group_cutscene_occurrences(source)
     assert len(result['events']) == 2
-    assert result['events'][0] == source['events'][0]
-    assert 'entry_points' not in result['events'][1]
+    assert result['events'][1] == source['events'][0]
+    assert 'entry_points' not in result['events'][0]
 
 
 def test_separate_calls_retain_positions_conditions_and_sources():
@@ -46,3 +46,14 @@ def test_separate_calls_retain_positions_conditions_and_sources():
     assert result['entry_points'][1]['story_position'] == [9]
     assert result['entry_points'][1]['branches'] == second['branches']
     assert result['entry_points'][1]['source'] == second['source']
+
+
+def test_navigation_uses_positions_not_state_keys_or_scene_numbers():
+    source = {'events': [event('a_end', [9], 'cutscene:M0385'),
+                         event('z_start', [1], 'cutscene:M0390'),
+                         event('unmapped', None, 'cutscene:M0001'),
+                         dict(kind='sequence', reference='asset:story', story_position=[2])]}
+    result = group_cutscene_occurrences(source)
+    assert [entry['reference'] for entry in result['events']] == [
+        'cutscene:M0390', 'asset:story', 'cutscene:M0385', 'cutscene:M0001']
+    assert group_cutscene_occurrences(result) == result
