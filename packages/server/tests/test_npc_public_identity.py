@@ -22,6 +22,31 @@ def mesh(path):
     return {"ModelType": {"Type": "Npc", "NpcModel": {"Type": "Mesh", "Mesh": path}}}
 
 
+def test_mixed_instance_names_classify_only_unscoped_templates():
+    mixed = character("character:npc:17164", None, None)
+    mixed["npc"]["name_variants"] = [{"name": {"key": "abby"}}, {"name": {"key": "namipon"}}]
+    single = character("character:npc:2", None, None)
+    single["npc"]["name_variants"] = [{"name": {"key": "abby"}}, {"name": {"key": "abby"}}]
+    result = identities([mixed, single], [], [])
+    assert set(result) == {"character:npc:17164"}
+    assert result["character:npc:17164"] == {
+        "family": "character:npc:17164",
+        "canonical_key": "character:npc:17164",
+        "variant_key": "character:npc:17164",
+        "selectable": False,
+        "has_npc": False,
+        "has_story": False,
+        "identity_source": "npc_public_identity",
+        "identity_schema": 1,
+        "classification": "mixed_instances",
+        "resolution": "mixed_instance_name_scope",
+    }
+    mixed["identity"] = result["character:npc:17164"]
+    assert identities([mixed, single], [], []) == result
+    mixed["npc"]["name_variants"] = single["npc"]["name_variants"]
+    assert identities([mixed, single], [], []) == {}
+
+
 def test_npc_group_requires_same_source_name_and_unambiguous_personal_mesh():
     chars = [
         character("character:npc:2", "Ada", "npc_ada", mesh("/Game/A")),

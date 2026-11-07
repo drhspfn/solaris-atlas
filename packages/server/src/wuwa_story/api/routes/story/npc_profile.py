@@ -129,11 +129,17 @@ async def npc_profile(session, node, character, npc, release_id, locale):
             text = (localized or {}).get("content")
             if text and text not in variants:
                 variants.append(text)
+    mixed = ((getattr(character, "metadata_json", None) or {}).get("public_identity") or {}).get("classification") == "mixed_instances"
+    if mixed:
+        names = sorted(set(variants))
+        suffix = " / ".join(names[:3]) + (" / …" if len(names) > 3 else "")
+        name = {"content": "Shared NPC template" + (f" · {suffix}" if suffix else "")}
     return {"character": {"canonical_key": node.canonical_key, **node_address(node, "character"),
                           "canonical_name": character.canonical_name,
                           "name": name,
                           "aliases": [],
-                          "description": character.description, "playable": False},
+                          "description": "This game configuration is shared by differently named world actors. Locations and conversations below retain their source context."
+                          if mixed else character.description, "playable": False},
             "npc": {"blueprint_id": npc.get("blueprint_id"), "blueprint_type": npc.get("blueprint_type"),
                     "speakers": [],
                     "name_scope": "instance" if scoped_name else "blueprint",
