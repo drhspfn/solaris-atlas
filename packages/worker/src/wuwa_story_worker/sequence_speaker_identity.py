@@ -51,4 +51,5 @@ async def repair_sequence_bundle_speakers(session, path, target):
     if len(source_ids) != 1:
         raise ValueError('Sequence owner has missing or ambiguous source record in selected release')
     return await repair_sequence_speakers(session, target['release_id'], source_ids.pop(), assets, apply=True,
-                                          asset_source=manifest)
+                                          asset_source={key: manifest.get(key)
+                                                        for key in ('asset_version', 'download_id')})

@@ -29,7 +29,8 @@ async def test_bundle_validates_json_hash_before_repair(tmp_path, monkeypatch):
     service.assert_not_awaited()
     assert await run(hashlib.sha256(data).hexdigest()) == {'written': 1}
     assert service.await_args.args[1:] == (21, 42, {'/Game/Foo': [{'Type': 'Blueprint', 'Name': 'Default__Actor', 'Properties': {'TalkID': 123}}]})
-    assert service.await_args.kwargs == {'apply': True}
+    assert service.await_args.kwargs == {
+        'apply': True, 'asset_source': {'asset_version': None, 'download_id': None}}
 
 
 @pytest.mark.asyncio
