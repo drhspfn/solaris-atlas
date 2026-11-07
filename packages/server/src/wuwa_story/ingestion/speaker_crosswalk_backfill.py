@@ -2,7 +2,8 @@
 
 Select --release-id and optionally --role-id for a report. --apply requires an
 explicit role selection and adds missing source evidence/convenience links only.
-No sources/media are reimported and no projections are automatically refreshed.
+--refresh also queues the selected characters, even when source repair is already
+complete. No sources/media are reimported.
 """
 
 import argparse
@@ -36,15 +37,18 @@ from wuwa_story.ingestion.speaker_crosswalk import (
     plot_guest_role_links,
     speaker_character_links,
 )
+from wuwa_story.read_models.refresh import mark_dirty
 
 
-async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=500):
+async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=500, refresh=False):
     if type(release_id) is not int or release_id <= 0:
         raise ValueError('A positive release ID is required')
     if any(type(identity) is not int or identity <= 0 for identity in role_ids):
         raise ValueError('Role IDs must be positive integers')
     if apply and not role_ids:
         raise ValueError('--apply requires explicit role IDs from a reviewed dry-run')
+    if refresh and not apply:
+        raise ValueError('--refresh requires --apply')
     if type(max_links) is not int or not 1 <= max_links <= 10000:
         raise ValueError('max_links must be between 1 and 10000')
     await session.execute(text("SET LOCAL lock_timeout = '2s'"))
@@ -137,6 +141,13 @@ async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=5
         # an already evidenced edge also repairs its missing convenience link.
         await import_canonical_edges(SimpleNamespace(iter_edges=lambda: iter(missing)), session, release_id)
         await session.commit()
+    refresh_ids = sorted({known[link['to']] for link in records}) if refresh else []
+    if refresh_ids:
+        for snapshot in ('current', release.game_version):
+            for offset in range(0, len(refresh_ids), 1000):
+                await mark_dirty(session, 'character', refresh_ids[offset:offset + 1000],
+                                 snapshot, debounce_seconds=0)
+        await session.commit()
     return {
         'release_id': release_id, 'game_version': release.game_version, 'applied': apply,
         'candidate_links': len(candidates), 'unresolved_links': len(unresolved),
@@ -145,13 +156,14 @@ async def backfill(session, release_id, role_ids=(), *, apply=False, max_links=5
         'role_ids': sorted({int(link['to'].split(':')[1]) for link in missing}),
         'speaker_ids': sorted({int(link['from'].split(':')[1]) for link in missing
                                if link['from'].startswith('speaker:')}),
+        'refresh_characters': refresh_ids,
     }
 
 
 async def main(args):
     async with SessionFactory() as session:
         print(json.dumps(await backfill(session, args.release_id, args.role_id,
-                                        apply=args.apply, max_links=args.max_links)))
+                                        apply=args.apply, max_links=args.max_links, refresh=args.refresh)))
 
 
 if __name__ == '__main__':
@@ -160,4 +172,5 @@ if __name__ == '__main__':
     parser.add_argument('--role-id', type=int, action='append', default=[])
     parser.add_argument('--max-links', type=int, default=500)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--refresh', action='store_true')
     asyncio.run(main(parser.parse_args()))

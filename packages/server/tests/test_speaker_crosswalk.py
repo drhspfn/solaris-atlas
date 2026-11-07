@@ -68,6 +68,23 @@ def test_duplicate_speaker_id_never_emits_ambiguous_import_edges():
     assert not links(roles, [{'Id': 2, 'HeadIconAsset': '/head'}] * 2)
 
 
+def test_iuno_explicit_trial_parent_does_not_block_personal_head_identity():
+    parent = {'Id': 1410, 'Name': 'RoleInfo_1410_Name', 'RoleType': 1,
+              'RoleHeadIconBig': '/iuno-head'}
+    trial = {**parent, 'Id': 5036, 'RoleType': 2, 'ParentId': 1410}
+    speakers = [{'Id': 250024, 'HeadRoundIconAsset': '/iuno-head'},
+                {'Id': 800342, 'HeadIconAsset': '/iuno-head'}]
+    result = links([parent, trial], speakers)
+    assert [(row['from'], row['to']) for row in result] == [
+        ('speaker:250024', 'character:1410'), ('speaker:800342', 'character:1410')]
+    assert all('ParentId=1410' in row['basis'] for row in result)
+    assert any(m.get('parent_role_id') == 1410 for m in result[0]['crosswalk']['matches'])
+    # Shared art and a copied name alone still cannot collapse unrelated roles.
+    assert not links([parent, {k: v for k, v in trial.items() if k != 'ParentId'}], speakers)
+    assert not links([parent, {**trial, 'Name': 'another_person'}], speakers)
+    assert not links([parent, dict(parent), trial], speakers)
+
+
 def test_duplicate_role_id_cannot_be_ignored_to_make_an_asset_appear_unique():
     roles = [{'Id': 1, 'RoleHeadIconLarge': '/head'},
              {'Id': 2, 'RoleHeadIconLarge': '/head'}, {'Id': 2}]
