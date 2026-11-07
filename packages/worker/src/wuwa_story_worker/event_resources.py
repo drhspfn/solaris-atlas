@@ -85,7 +85,10 @@ def ui_references(value, *, include_sequences=False):
         if path:
             if kind in IMAGE_TYPES or (not kind and any(p in path for p in ("/Image/", "/Atlas/"))):
                 yield "image", path
-            elif kind in DEPENDENCY_TYPES or (include_sequences and kind in SEQUENCE_TYPES) or (not kind and "/Prefabs/" in path):
+            elif (kind in DEPENDENCY_TYPES or (include_sequences and kind in SEQUENCE_TYPES)
+                  or (include_sequences and kind == 'BlueprintGeneratedClass'
+                      and path.startswith('/Game/Aki/Character/Role/') and '/Seq/' in path)
+                  or (not kind and "/Prefabs/" in path)):
                 yield "dependency", path
         for child in value.values():
             yield from ui_references(child, include_sequences=include_sequences)
@@ -141,7 +144,7 @@ async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = N
                 receipt = await export_assets(root, fmodel, package.rsplit(".", 1)[0])
             raw = receipt.parent / "files"
             output = receipt.parent / \
-                (("ui-json-sequences-v2-" if include_sequences else "ui-json-references-v2-") +
+                (("ui-json-sequences-v3-" if include_sequences else "ui-json-references-v2-") +
                  _sha256(converter)[:16] + ('-' + hashlib.sha256(source.encode()).hexdigest()[:16] if batched else ''))
             output.mkdir(exist_ok=True)
             complete = output / "references.json"

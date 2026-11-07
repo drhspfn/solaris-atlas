@@ -61,3 +61,31 @@ lines to Jianxin. Missing or ambiguous role keys remain in raw guest records.
 The extended production dry-run found 182 missing evidence records across the
 same 13 snapshots: 76 speaker proofs plus 106 contextual role references. All
 endpoints exist. Updated targeted suite: 49 passed, one private-input test skipped.
+
+
+## Follow-up: stale profiles and sequence actors
+
+Source repair and public projection refresh are separate stages. A zero-missing
+source dry-run does not prove that character pages are current. The bounded repair
+CLI now accepts `--apply --refresh` to queue the selected character pages even
+when no additional source edge needs writing. Refreshes retain published pages
+while replacements build.
+
+Iuno has a temporary RoleInfo 5036 with explicit ParentId 1410, the same name key
+and personal head assets. These source-backed copies resolve to the playable
+parent instead of making its portrait ownership ambiguous. Exact big-head assets
+also occur in Speaker.HeadIconAsset, not only HeadRoundIconAsset.
+
+Hsin exposes another identity path: the flow state
+`剧情_3_6_玄方城_4_1` references `DA_M3_12_02`, whose generated BindingBP contains
+`BP_Xinyuehu_Seq_V2`. Its default TalkID is 450001 and its SkeletalMesh exactly
+matches RoleInfo 1311 -> model preload 100071. This proves the default talker
+without a portrait. Speaker 400002 is independently corroborated by the same
+scene cast plus its uniquely resolved RoleInfo name. A name without this resource
+chain never establishes the identity. The exported actor chain, hashes and raw
+Blueprint properties are retained with graph evidence.
+
+Sequence media imports retain these typed actor Blueprint dependencies and
+upsert the resulting speaker links. The focused sequence identity CLI can repair
+existing retained flow records without reimporting audio/video. Replays add no
+duplicate graph edges; conflicting existing identity proofs are not overwritten.

@@ -173,6 +173,20 @@ def test_guest_role_context_is_not_speaker_identity_proof(graph):
     assert graph.rows(select(crosswalk.c.speaker_id)) == []
 
 
+def test_sequence_actor_proof_requires_the_same_flowstate_source_and_release(graph):
+    from wuwa_story.ingestion.sequence_speaker_crosswalk import FLOW_PATH, SEQUENCE_ACTOR_BASIS
+
+    graph.db.execute('INSERT INTO raw.source_file VALUES (4,?,1),(5,?,2)', (FLOW_PATH, FLOW_PATH))
+    graph.db.execute('INSERT INTO raw.source_record VALUES (4,1,0,4),(5,2,0,5)')
+    condition = 'edge_id IN (SELECT id FROM graph.edge WHERE from_node_id=4 AND to_node_id=10)'
+    graph.db.execute(f'UPDATE graph.edge_evidence SET explanation=?,source_file_path=?,source_record_id=4 WHERE {condition}',
+                     (SEQUENCE_ACTOR_BASIS + 'actor mesh and default TalkID', FLOW_PATH))
+    crosswalk = speaker_crosswalk(1, [10])
+    assert graph.rows(select(crosswalk.c.speaker_id)) == [(4,)]
+    graph.db.execute(f'UPDATE graph.edge_evidence SET source_record_id=5 WHERE {condition}')
+    assert graph.rows(select(crosswalk.c.speaker_id)) == []
+
+
 @pytest.mark.asyncio
 async def test_relation_index_has_caption_dungeon_refs_and_excludes_every_own_family_role(graph, monkeypatch):
     async def execute(statement):
