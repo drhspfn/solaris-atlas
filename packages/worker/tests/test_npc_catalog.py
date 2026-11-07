@@ -61,6 +61,7 @@ async def test_full_native_roster_dirties_projections_in_bounded_batches(tmp_pat
     dirty = AsyncMock()
     monkeypatch.setattr(npc_catalog, 'mark_dirty', dirty)
     monkeypatch.setattr(npc_catalog, 'repair_npc_identity', AsyncMock(return_value={}))
+    monkeypatch.setattr(npc_catalog, 'backfill_public_identity', AsyncMock(return_value={}))
     await npc_catalog.import_npc_dataset(session, tmp_path, 1)
     batches = [call.args[2] for call in dirty.await_args_list]
     assert max(map(len, batches)) == 1000
@@ -114,6 +115,7 @@ async def test_repair_runs_after_edge_import_and_before_search_on_cached_replay(
     monkeypatch.setattr(npc_catalog, 'import_canonical_entities', import_entities)
     monkeypatch.setattr(npc_catalog, 'import_canonical_edges', import_edges)
     monkeypatch.setattr(npc_catalog, 'repair_npc_identity', repair)
+    monkeypatch.setattr(npc_catalog, 'backfill_public_identity', AsyncMock(return_value={}))
     monkeypatch.setattr(npc_catalog, 'build_lexical_index', index)
     first = await npc_catalog.import_npc_dataset(session, tmp_path, 1)
     second = await npc_catalog.import_npc_dataset(session, tmp_path, 1)
