@@ -280,7 +280,7 @@ async def _build_entity(session, kind, entity_id, locale, snapshot_key):
         title = sections._label(
             entity.get("name"), sections._label(entity.get("canonical_name"), label["label"] or key)
         )
-        if kind == "character" and profile.get("family"):
+        if kind == "character" and (profile.get("family") or {}).get("name") == "Rover":
             title = "Rover"
         artwork = [] if kind == "character" and key.startswith("character:npc:") else await sections._artwork(session, node, kind)
         primary_url = profile.get("media", {}).get("image_url")

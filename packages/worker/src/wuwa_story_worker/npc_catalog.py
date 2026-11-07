@@ -17,6 +17,7 @@ from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.ingestion.canonical import CanonicalRecordAdapter
 from wuwa_story.ingestion.canonical_import import import_canonical_edges, import_canonical_entities
 from wuwa_story.ingestion.npc_identity_repair import NAME_BASIS, repair_npc_identity
+from wuwa_story.ingestion.npc_public_identity import backfill as backfill_public_identity
 from wuwa_story.ingestion.npc_scenario import import_npc_scenario_edges
 from wuwa_story.ingestion.raw import import_raw_snapshot
 from wuwa_story.read_models.refresh import mark_dirty
@@ -143,6 +144,10 @@ async def import_npc_dataset(session, output: Path, release_id: int):
     edges = await import_canonical_edges(edge_adapter, session, release_id, batch_size=250,
                                          skip_missing_endpoints=True)
     identity_repair = await repair_npc_identity(session)
+    model_source = (f"ClientData/{manifest['asset_version']}/{manifest['download_id']}/"
+                    "BinData/model_config_preload/modelconfigpreload.json")
+    public_identity = await backfill_public_identity(session, release_id, apply=True, commit=False,
+                                                     model_source=model_source)
     entity_source = (f"ClientData/{manifest['asset_version']}/{manifest['download_id']}/"
                      "BinData/level_entity/levelentityconfig.json")
     scenario_edges = await import_npc_scenario_edges(session, release_id, manifest['game_version'], entity_source)
@@ -157,7 +162,7 @@ async def import_npc_dataset(session, output: Path, release_id: int):
                                       categories={'character'}, release_id=release_id)
     return {'characters': entities, 'edges': edges, 'scenario_edges': scenario_edges,
             'raw': raw, 'indexed': indexed, 'asset_version': manifest['asset_version'],
-            'identity_repair': identity_repair}
+            'identity_repair': identity_repair, 'public_identity': public_identity}
 
 
 async def npc_catalog(payload, parent, session):

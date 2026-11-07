@@ -56,7 +56,9 @@ async def backfill(*, apply=False, refresh=False, refresh_all=False):
                 role, roles.get(role.get("SkillId"), {}))
             excluded = sorted({role[field] for field in fields})
             proposed = dict(metadata)
-            if identity or "public_identity" in metadata:
+            # This repair owns Rover identities only. Other source-backed
+            # person families must survive an artwork or Rover refresh.
+            if identity or (metadata.get("public_identity") or {}).get("family") == "rover":
                 proposed["public_identity"] = identity
             if excluded or "shared_artwork_paths" in metadata:
                 proposed["shared_artwork_paths"] = excluded

@@ -21,7 +21,7 @@ function load(path, mocks = {}) {
 const preview = load('../src/components/ui/animationPreview.ts');
 const playback = load('../src/components/ui/RenderedAnimation.tsx', { './animationPreview': preview });
 const mediaHelpers = load('../src/components/characters/characterMediaItems.ts');
-const { CharacterMediaProvider, CharacterMediaGallery } = load('../src/components/characters/CharacterMedia.tsx', {
+const { CharacterMediaProvider, CharacterMediaGallery, useCharacterMedia } = load('../src/components/characters/CharacterMedia.tsx', {
   '@/api/client': { apiUrl: (url) => url },
   '@/components/ui/Button': { Button: ({ children, icon, ...props }) => React.createElement('button', props, icon, children) },
   '@/components/ui/MediaViewer': { MediaViewer: () => null },
@@ -37,14 +37,14 @@ const { CharacterArchive } = load('../src/components/characters/CharacterArchive
   '@/components/ui/Select': { Select: () => null },
   '@/components/ui/TrackPlayer': { TrackPlayer: () => null },
   '@/components/ui/RenderedAnimation': playback,
-  '@/components/characters/CharacterMedia': { CharacterMediaGallery },
+  '@/components/characters/CharacterMedia': { CharacterMediaGallery, useCharacterMedia },
   '@/components/ui/animationPreview': preview,
 });
 const clip = { animation: 'idle', url: 'https://cdn.test/idle.webm', mime_type: 'video/webm',
   file_id: 2, width: 786, height: 2048 };
 const ready = { recipe: 'riglyph-native-v1', status: 'ready', variants: [clip] };
 function render(animation_preview, hasArchive = true) {
-  const archive = { profile: { voice_actors: {} }, skills: [], skill_tree: [], resonance_chain: [],
+  const archive = { profile: { voice_actors: {}, max_level: 90 }, skills: [], skill_tree: [], resonance_chain: [],
     voice_lines: [], other_voice_events: [],
     artwork: [{ kind: 'RoleHeadIconLarge', url: 'https://cdn.test/portrait.png' }],
     trial_spine: hasArchive ? { url: 'https://cdn.test/source.zip', file_id: 1, animation_preview } : null };
@@ -64,6 +64,8 @@ for (const value of [undefined, { status: 'static' }, { status: 'failed' },
 
 test('a character without an archived trial has no trial block', () => {
   assert.doesNotMatch(render(null, false), /Character trial animation|Download trial scene/);
+  assert.doesNotMatch(render(null, false), /Max level 90/);
+  assert.match(render(null, false), /Artwork and animation/);
 });
 
 test('a playable trial joins the shared gallery with a paused first-frame thumbnail and no raw scene download', () => {

@@ -6,6 +6,7 @@ import { api } from "@/api/client";
 import { CharacterModelImport } from "@/components/characters/CharacterModelImport";
 import { CharacterProfileVisual } from "@/components/characters/CharacterProfileVisual";
 import { NpcFlowParticipants } from "@/components/profile/NpcFlowParticipants";
+import { NpcInstances } from "@/components/profile/NpcInstances";
 import { NpcShops } from "@/components/profile/NpcShops";
 import type { CharacterModelData } from "@/components/models/types";
 import { ErrorPanel } from "@/components/ui/Feedback";
@@ -113,23 +114,11 @@ function NpcQuests({
   );
 }
 
-export function NpcProfile({
-  data,
-  initialModel,
-  gameVersion,
-}: {
-  data: { character: any; npc: Npc };
-  initialModel?: CharacterModelData | null;
-  gameVersion?: string;
+export function NpcInteractions({ characterKey, npc, gameVersion }: {
+  characterKey: string; npc: Npc; gameVersion?: string;
 }) {
   const locale = useLocale();
-  const { character, npc } = data;
   const searchInput = useRef<HTMLInputElement>(null);
-  const name = localizedText(
-    character.name,
-    character.canonical_name || `NPC ${npc.blueprint_id}`,
-  );
-  const [revision, setRevision] = useState(0);
   const [input, setInput] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -151,7 +140,7 @@ export function NpcProfile({
     });
     if (gameVersion) params.set("game_version", gameVersion);
     api<{ results: Line[]; total: number }>(
-      `/npcs/${encodeURIComponent(character.canonical_key)}/dialogue?${params}`,
+      `/npcs/${encodeURIComponent(characterKey)}/dialogue?${params}`,
       { signal: controller.signal },
     )
       .then((value) => {
@@ -161,50 +150,8 @@ export function NpcProfile({
         if (!controller.signal.aborted) setError(cause.message);
       });
     return () => controller.abort();
-  }, [character.canonical_key, locale, query, page, retry, gameVersion]);
-  return (
-    <div className="page-container character-profile-page">
-      <div className="breadcrumbs">
-        <Link to="/">Archive</Link>
-        <span> / </span>
-        <Link to="/catalog/character">Characters</Link>
-        <span> / </span>
-        <span>{name}</span>
-      </div>
-      <div className="profile-hero character-profile-hero">
-        <CharacterProfileVisual
-          characterKey={character.canonical_key}
-          name={name}
-          portraitUrl={null}
-          initialModel={initialModel}
-          refreshKey={revision}
-        />
-        <div className="profile-main">
-          <span className="eyebrow left">NPC PROFILE</span>
-          <div className="character-profile-title-row">
-            <h1>
-              {name}
-              <span className="heading-period">.</span>
-            </h1>
-            <CharacterModelImport
-              characterKey={character.canonical_key}
-              variant="actions"
-              onComplete={() => setRevision((value) => value + 1)}
-            />
-          </div>
-          <p>
-            {localizedText(
-              character.description,
-              "An NPC recorded in the Solaris Atlas archive.",
-            )}
-          </p>
-          {npc.name_scope === 'instance' && <p>This name is recorded for an instance of this blueprint.{npc.name_variants.length > 1 ? ` Other recorded names: ${npc.name_variants.filter((variant) => variant !== name).join(', ')}.` : ''}</p>}
-          <div className="profile-tags">
-            <span>{character.canonical_key}</span>
-            <span>NPC</span>
-          </div>
-        </div>
-      </div>
+  }, [characterKey, locale, query, page, retry, gameVersion]);
+  return <>
       <section className="content-panel full-panel">
         <PanelTitle number="01" title="Dialogue and quest appearances" />
         <p>
@@ -276,19 +223,82 @@ export function NpcProfile({
           </>
         )}
       </section>
+      <NpcInstances key={characterKey} characterKey={characterKey} gameVersion={gameVersion} />
       <NpcQuests
-        characterKey={character.canonical_key}
+        characterKey={characterKey}
         gameVersion={gameVersion}
       />
-      {npc.shop_count > 0 && <NpcShops characterKey={character.canonical_key} gameVersion={gameVersion} />}
+      {npc.shop_count > 0 && <NpcShops characterKey={characterKey} gameVersion={gameVersion} />}
       <section className="content-panel full-panel">
           <PanelTitle number="04" title="Referenced story states" />
           <p>
             These authored flow references do not establish who speaks in a
             scene.
           </p>
-          <NpcFlowParticipants characterKey={character.canonical_key} gameVersion={gameVersion} />
+          <NpcFlowParticipants characterKey={characterKey} gameVersion={gameVersion} />
       </section>
+  </>;
+}
+
+export function NpcProfile({
+  data,
+  initialModel,
+  gameVersion,
+}: {
+  data: { character: any; npc: Npc };
+  initialModel?: CharacterModelData | null;
+  gameVersion?: string;
+}) {
+  const { character, npc } = data;
+  const name = localizedText(
+    character.name,
+    character.canonical_name || `NPC ${npc.blueprint_id}`,
+  );
+  const [revision, setRevision] = useState(0);
+  return (
+    <div className="page-container character-profile-page">
+      <div className="breadcrumbs">
+        <Link to="/">Archive</Link>
+        <span> / </span>
+        <Link to="/catalog/character">Characters</Link>
+        <span> / </span>
+        <span>{name}</span>
+      </div>
+      <div className="profile-hero character-profile-hero">
+        <CharacterProfileVisual
+          characterKey={character.canonical_key}
+          name={name}
+          portraitUrl={null}
+          initialModel={initialModel}
+          refreshKey={revision}
+        />
+        <div className="profile-main">
+          <span className="eyebrow left">NPC PROFILE</span>
+          <div className="character-profile-title-row">
+            <h1>
+              {name}
+              <span className="heading-period">.</span>
+            </h1>
+            <CharacterModelImport
+              characterKey={character.canonical_key}
+              variant="actions"
+              onComplete={() => setRevision((value) => value + 1)}
+            />
+          </div>
+          <p>
+            {localizedText(
+              character.description,
+              "An NPC recorded in the Solaris Atlas archive.",
+            )}
+          </p>
+          {npc.name_scope === 'instance' && <p>This name is recorded for an instance of this blueprint.{npc.name_variants.length > 1 ? ` Other recorded names: ${npc.name_variants.filter((variant) => variant !== name).join(', ')}.` : ''}</p>}
+          <div className="profile-tags">
+            <span>{character.canonical_key}</span>
+            <span>NPC</span>
+          </div>
+        </div>
+      </div>
+      <NpcInteractions key={character.canonical_key} characterKey={character.canonical_key} npc={npc} gameVersion={gameVersion} />
     </div>
   );
 }
