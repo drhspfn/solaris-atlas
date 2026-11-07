@@ -30,3 +30,14 @@
 .mcp-return { display:inline-flex; align-items:center; gap:10px; font-size:14px; font-weight:600; }
 .mcp-return:hover,.mcp-breadcrumb a:hover { text-decoration:underline; }
 @media(max-width:700px) { .mcp-page { padding-top:24px; padding-bottom:64px; } .mcp-breadcrumb { margin-bottom:32px; } .mcp-hero-mark { display:none; } .mcp-panel { padding:20px; } .mcp-tool-grid { grid-template-columns:1fr; } .mcp-tools,.mcp-clients { margin-top:48px; } }
+.mcp-legacy { margin-top:20px; color:var(--text-secondary); }
+.mcp-legacy summary,.mcp-setup summary { cursor:pointer; color:var(--text-primary); font-weight:600; padding:12px 0; }
+.mcp-legacy .ui-copyable { margin-top:8px; }
+.mcp-setup { display:grid; gap:10px; margin:24px 0; }
+.mcp-setup details { padding:4px 18px 16px; border:1px solid var(--border-default); border-radius:var(--radius-md); background:var(--bg-page); }
+.mcp-setup details:not([open]) { padding-bottom:4px; }
+.mcp-setup p,.mcp-setup li { color:var(--text-secondary); line-height:1.7; font-size:14px; }
+.mcp-setup ol { padding-left:22px; }
+.mcp-setup li + li { margin-top:8px; }
+.mcp-setup a { color:var(--accent-mint); }
+.mcp-setup pre { overflow:auto; padding:16px; border:1px solid var(--border-default); border-radius:var(--radius-sm); color:var(--text-primary); }

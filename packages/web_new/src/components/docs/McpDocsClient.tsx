@@ -44,7 +44,9 @@ export function McpDocsClient() {
   useEffect(() => {
     setOrigin(window.location.origin);
   }, []);
-  const sseUrl = origin ? `${origin}/api/mcp/sse` : "/api/mcp/sse";
+  const base = origin || "https://solarisatlas.fun";
+  const mcpUrl = `${base}/api/mcp/`;
+  const sseUrl = `${base}/api/mcp/sse`;
   return (
     <main className="mcp-page page-container">
       <nav className="mcp-breadcrumb" aria-label="Breadcrumb">
@@ -72,7 +74,7 @@ export function McpDocsClient() {
           <span>
             <span className="mcp-dot" /> Public endpoint
           </span>
-          <span>SSE transport</span>
+          <span>Streamable HTTP</span>
           <span>Model Context Protocol</span>
         </div>
       </header>
@@ -94,19 +96,30 @@ export function McpDocsClient() {
           Solaris Atlas archive.
         </p>
         <label htmlFor="mcp-endpoint">
-          Server endpoint <span>· SSE</span>
+          Server endpoint <span>· Streamable HTTP</span>
         </label>
         <Input
           id="mcp-endpoint"
-          value={sseUrl}
+          value={mcpUrl}
           readOnly
           copyable
           copyLabel="Copy URL"
           spellCheck={false}
         />
         <p className="mcp-note">
-          The endpoint uses Server-Sent Events (SSE) over HTTP.
+          Streamable HTTP is recommended. For older clients, the legacy SSE
+          endpoint is available below.
         </p>
+        <details className="mcp-legacy">
+          <summary>Legacy SSE endpoint</summary>
+          <Input
+            aria-label="Legacy SSE endpoint"
+            value={sseUrl}
+            readOnly
+            copyable
+            copyLabel="Copy URL"
+          />
+        </details>
       </section>
       <section className="mcp-tools" aria-labelledby="tools-title">
         <div className="mcp-section-heading">
@@ -144,9 +157,118 @@ export function McpDocsClient() {
           </div>
         </div>
         <p>
-          Configure your MCP client to use the SSE endpoint above. If your
-          client only supports stdio, use a compatible SSE-to-stdio bridge.
+          Choose a client and use the Streamable HTTP endpoint above. No
+          authentication is required.
         </p>
+        <div className="mcp-setup">
+          <details open>
+            <summary>Claude web &amp; desktop</summary>
+            <ol>
+              <li>
+                Open <strong>Customize → Connectors</strong>, then choose{" "}
+                <strong>+ Add → Add custom connector</strong>.
+              </li>
+              <li>
+                Name it Solaris Atlas and enter the server endpoint above.
+              </li>
+              <li>
+                Choose <strong>No sign in</strong>, add the connector, and
+                enable it in the conversation’s connector menu.
+              </li>
+            </ol>
+            <p>
+              Team and Enterprise workspaces may require an owner to add the
+              connector first.
+            </p>
+            <a
+              href="https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Claude setup guide ↗
+            </a>
+          </details>
+          <details>
+            <summary>Codex locally · CLI, IDE and desktop</summary>
+            <p>
+              Run this command in your terminal, then verify with{" "}
+              <code>codex mcp list</code>. Local Codex clients on the same host
+              share MCP configuration.
+            </p>
+            <Input
+              aria-label="Codex setup command"
+              value={`codex mcp add solaris-atlas --url ${mcpUrl}`}
+              readOnly
+              copyable
+              copyLabel="Copy"
+            />
+            <p>
+              Alternatively, add the following to{" "}
+              <code>~/.codex/config.toml</code>:
+            </p>
+            <pre>
+              <code>{`[mcp_servers.solaris-atlas]\nurl = "${mcpUrl}"`}</code>
+            </pre>
+            <a
+              href="https://developers.openai.com/learn/docs-mcp"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Codex MCP documentation ↗
+            </a>
+          </details>
+          <details>
+            <summary>ChatGPT web &amp; Codex plugin</summary>
+            <ol>
+              <li>
+                Open{" "}
+                <a
+                  href="https://chatgpt.com/plugins"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  ChatGPT Plugins
+                </a>
+                , select the plus button and{" "}
+                <strong>Add custom MCP server</strong>.
+              </li>
+              <li>
+                Name it Solaris Atlas, enter the endpoint above, and choose{" "}
+                <strong>No authentication</strong>.
+              </li>
+              <li>
+                Review the prompt and create the plugin. Install it, then select
+                it in the conversation using <strong>@</strong>.
+              </li>
+            </ol>
+            <p>
+              Availability depends on your account and workspace permissions. An
+              administrator may need to allow custom MCP connectors. Local Codex
+              configuration is separate from web plugins.
+            </p>
+            <a
+              href="https://developers.openai.com/api/docs/guides/custom-mcp-server"
+              target="_blank"
+              rel="noreferrer"
+            >
+              OpenAI setup guide ↗
+            </a>
+          </details>
+          <details>
+            <summary>Claude Code</summary>
+            <p>
+              Run this command in your project, then check the connection with{" "}
+              <code>claude mcp list</code> or <code>/mcp</code>.
+            </p>
+            <Input
+              aria-label="Claude Code setup command"
+              value={`claude mcp add --transport http solaris-atlas ${mcpUrl}`}
+              readOnly
+              copyable
+              copyLabel="Copy"
+            />
+          </details>
+        </div>
         <Link className="mcp-return" to="/">
           <Search size={16} /> Explore the archive <ArrowRight size={16} />
         </Link>
@@ -154,3 +276,4 @@ export function McpDocsClient() {
     </main>
   );
 }
+
