@@ -15,6 +15,7 @@ from starlette_admin.contrib.sqla import Admin
 
 from wuwa_story.admin.auth import ConsoleProtection, InternalAuth
 from wuwa_story.admin.views import (
+    Alerts,
     BudgetUsage,
     Memory,
     OpenQuestions,
@@ -57,6 +58,7 @@ def install_admin(app: Starlette, engine: AsyncEngine, settings: Settings | None
                   middlewares=[Middleware(ConsoleProtection)],
                   index_view=AgentIndex("Research", add_to_menu=False))
     admin.add_view(DropDown("Agent", views=[
+        Alerts(AgentNote, label="Alerts", identity="alerts"),
         OpenQuestions(AgentWorkItem, label="Open questions",
                       identity="open-questions"),
         Runs(ProcessingRun, label="Research runs", identity="runs"),

@@ -66,10 +66,10 @@ export function AdminLayoutShell({ children }: { children: React.ReactNode }) {
               Game data
             </NavLink>
             <span>Operations</span>
-            <NavLink to="/admin/alerts">
+            <a href="/console/alerts/list">
               <Bell size={16} />
               Alerts
-            </NavLink>
+            </a>
             <a href="/console/usage/list">
               <Coins size={16} />
               Usage

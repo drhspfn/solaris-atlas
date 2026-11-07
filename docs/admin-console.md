@@ -39,10 +39,14 @@ Revoke action, never token hashes. Sign-out revokes the same database session.
 
 ## Included ORM pages
 
-- Agent: research runs, open questions, tool/admin audit, memory, work ledger,
+- Agent: open alerts, research runs, open questions, tool/admin audit, memory, work ledger,
   jobs, provider call accounting, daily usage and research notes.
 - Accounts: users and sessions.
 - Archive: quests, characters, releases, nodes, documents, events, notices and locales.
+
+Open alerts expose their source citations and a link to the associated research run.
+The resolve action updates only open alerts and records the administrator in the audit.
+The former `/admin/alerts` page redirects to `/console/alerts/list`.
 
 The daily budget usage page shows the configured daily cost and token limits,
 budget timezone, current budget day, and the read-only spending and reservation

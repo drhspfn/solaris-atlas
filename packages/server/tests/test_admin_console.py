@@ -272,3 +272,54 @@ async def test_console_forms_work_behind_https_reverse_proxy(console):
             headers={"Origin": "https://console.test", "X-Forwarded-Proto": "https"})
         assert response.status_code == 303, response.text
         assert response.headers["location"].startswith("https://console.test/console/")
+
+async def test_alerts_filter_details_and_resolve_are_protected(console):
+    from wuwa_story.db.models.agents import AgentNote
+    from wuwa_story.db.models.graph import Node, NodeType
+    from wuwa_story.db.models.i18n import Locale
+    from wuwa_story.db.models.ops import GameRelease, ProcessingRun, Processor
+
+    client, factory, settings, admin, _, _, member_token, suffix, _ = console
+    async with factory() as db:
+        node = Node(type_id=await db.scalar(select(NodeType.id).where(NodeType.key == "quest")),
+                    canonical_key="console-alert:" + suffix)
+        release = GameRelease(sequence=1900000000, game_version="console-" + suffix, upstream_name="test")
+        processor = Processor(key="console-alert-" + suffix, version="1")
+        locale = Locale(id=30000, code="test-" + suffix[:8], name="Test")
+        db.add_all([node, release, processor, locale])
+        await db.flush()
+        run = ProcessingRun(processor_id=processor.id)
+        db.add(run)
+        await db.flush()
+        values = dict(run_id=run.id, node_id=node.id, release_id=release.id, locale_id=locale.id,
+                      citations=[{"node_id": node.id, "quote": "A source citation", "locale": "en"}])
+        alert = AgentNote(kind="missing_source", status="open", text="Open alert text", **values)
+        ordinary = AgentNote(kind="note", status="open", text="Ordinary research note", **values)
+        closed = AgentNote(kind="missing_source", status="resolved", text="Already resolved alert", **values)
+        db.add_all([alert, ordinary, closed])
+        await db.commit()
+        alert_id, note_id, run_id = alert.id, ordinary.id, run.id
+    assert (await client.get('/console/api/alerts')).status_code == 303
+    client.cookies.set(settings.auth_cookie_name, member_token)
+    assert (await client.get('/console/api/alerts')).status_code == 403
+    authorize(console)
+    listing = await client.get('/console/api/alerts')
+    assert listing.status_code == 200, listing.text
+    assert 'Open alert text' in listing.text
+    assert 'Ordinary research note' not in listing.text and 'Already resolved alert' not in listing.text
+    detail = await client.get(f'/console/alerts/detail/{alert_id}')
+    assert detail.status_code == 200, detail.text
+    assert 'A source citation' in detail.text
+    assert f'/console/runs/detail/{run_id}' in detail.text
+    url = f'/console/api/alerts/row-action?name=resolve&pk={alert_id}'
+    assert (await client.get(url)).status_code == 403
+    assert (await client.get(url, headers={'Referer': 'http://console.test/console/alerts/list'})).status_code == 200
+    assert (await client.get(url, headers={'Referer': 'http://console.test/console/alerts/list'})).status_code == 400
+    assert (await client.get(f'/console/api/alerts/row-action?name=resolve&pk={note_id}',
+                             headers={'Referer': 'http://console.test/console/alerts/list'})).status_code == 400
+    async with factory() as db:
+        assert (await db.get(AgentNote, alert_id)).status == 'resolved'
+        assert (await db.get(AgentNote, note_id)).status == 'open'
+        receipts = list(await db.scalars(select(AgentToolAudit).where(AgentToolAudit.tool == 'console.alert.resolve',
+                       AgentToolAudit.arguments['actor_user_id'].as_integer() == admin.id)))
+        assert len(receipts) == 1 and receipts[0].arguments['object_id'] == alert_id

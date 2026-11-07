@@ -30,7 +30,7 @@ from wuwa_story.agents.settings import get_agent_settings
 from wuwa_story.agents.workspace import MemoryWrite, save_memory
 from wuwa_story.auth.services import now_utc
 from wuwa_story.db.models.agent_workspace import AgentMemory, AgentWorkItem
-from wuwa_story.db.models.agents import AgentJob
+from wuwa_story.db.models.agents import AgentJob, AgentNote
 from wuwa_story.db.models.auth import AuthSession
 from wuwa_story.db.models.content import DocumentHead
 from wuwa_story.db.models.core import Quest
@@ -284,6 +284,39 @@ class OpenQuestions(ReadOnly):
 
     def get_count_query(self, request: Request) -> Select[Any]:
         return super().get_count_query(request).where(*self._conditions())
+
+
+class Alerts(ReadOnly):
+    fields: Sequence[Any] = ["id", "kind", "text", "node_id",
+                             IntegerField("run_id", display_template="displays/alert_run.html"),
+                             "citations", "created_at"]
+    exclude_fields_from_list = ["citations"]
+    searchable_fields = ["kind", "text"]
+    fields_default_sort = [("id", True)]
+    row_actions = ["view", "resolve"]
+
+    def get_list_query(self, request: Request) -> Select[Any]:
+        return super().get_list_query(request).where(AgentNote.kind != "note", AgentNote.status == "open")
+
+    def get_count_query(self, request: Request) -> Select[Any]:
+        return super().get_count_query(request).where(AgentNote.kind != "note", AgentNote.status == "open")
+
+    @row_action(name="resolve", text="Mark resolved", icon_class="fa fa-check",
+                confirmation="Mark this alert as resolved?")
+    async def resolve(self, request: Request, pk: Any) -> str:
+        try:
+            alert_id = int(pk)
+        except (TypeError, ValueError):
+            raise ActionFailed("Invalid alert ID.") from None
+        db = request.state.session
+        result = await db.execute(update(AgentNote).where(
+            AgentNote.id == alert_id, AgentNote.kind != "note", AgentNote.status == "open"
+        ).values(status="resolved").returning(AgentNote.id))
+        if result.scalar_one_or_none() is None:
+            raise ActionFailed("This alert is no longer open. Refresh the list.")
+        record(db, request, "alert.resolve", alert_id)
+        await db.commit()
+        return f"Alert {pk} resolved."
 
 
 class Runs(ReadOnly):
