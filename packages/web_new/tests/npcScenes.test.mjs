@@ -14,14 +14,16 @@ function nodes(node) {
 }
 const colors = {};
 vm.runInNewContext(compile('../src/data/gameTextColors.ts'), { exports: colors });
+const localized = {};
+vm.runInNewContext(compile('../src/data/localized.ts'), { exports: localized });
 const gameText = {};
-vm.runInNewContext(compile('../src/data/gameText.ts'), { exports: gameText, require: () => colors });
+vm.runInNewContext(compile('../src/data/gameText.ts'), { exports: gameText, require: id => id === './localized' ? localized : colors });
 const helpers = {};
 vm.runInNewContext(compile('../src/data/npcContext.ts'), { exports: helpers });
 const code = compile('../src/components/profile/NpcFlowParticipants.tsx', true);
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-function harness() {
+function harness(options = {}) {
   const requests = [];
   const scenes = Array.from({ length: 105 }, (_, i) => ({
     state_id: i + 1, flow_state: `TECHNICAL_FLOW_${i + 1}`, title: `Conversation <color=Highlight>${i + 1}</color>`,
@@ -30,6 +32,8 @@ function harness() {
   }));
   const lines = Array.from({ length: 25 }, (_, i) => ({ canonical_key: `line:${i}`, text: `Line <color=Highlight>${i + 1}</color>`,
     speaker: { label: i === 0 ? '{message} Abby' : i === 1 ? '{PlayerName}' : 'speaker:123' } }));
+  if (options.preview) scenes[0].preview = options.preview;
+  if (options.lines) lines.splice(0, lines.length, ...options.lines);
   let active;
   const exports = {};
   vm.runInNewContext(code, { exports, URLSearchParams, AbortController, require: id => {
@@ -125,4 +129,39 @@ test('inline conversation fetches state-scoped dialogue in pages of 20 with norm
   assert.equal(tree.filter(node => node.props.className === 'npc-scene-line').length, 5);
   assert(tree.some(node => node.type === 'PlayerText' && node.props.value === 'Line <color=Highlight>25</color>' && node.props.display.name === 'Astra'));
   assert(!JSON.stringify(tree).includes('TECHNICAL_FLOW_'));
+});
+
+test('unavailable preview and conversation text render a single explanation with pagination', async () => {
+  const empty = i => ({ canonical_key: `line:${i}`, text: i % 2 ? null : { content: '   ' }, speaker: { label: 'Cristoforo' } });
+  const h = harness({ preview: [empty(1), empty(2)], lines: Array.from({ length: 25 }, (_, i) => empty(i)) });
+  h.render(); await tick();
+  const scene = h.render().find(node => typeof node.type === 'function' && node.type.name === 'Conversation');
+  const renderScene = h.component(scene.type, scene.props);
+  let tree = renderScene();
+  const preview = tree.find(node => node.props.className === 'npc-scene-preview');
+  assert.equal(nodes(preview).filter(node => node.type === 'p' && node.props.children === 'Dialogue text is unavailable in this language.').length, 1);
+  tree.find(node => node.type === 'details').props.onToggle({ currentTarget: { open: true } });
+  renderScene(); await tick(); tree = renderScene();
+  const lines = tree.find(node => node.props.className === 'npc-scene-lines');
+  assert.equal(nodes(lines).filter(node => node.type === 'p' && node.props.children === 'Dialogue text is unavailable in this language.').length, 1);
+  assert.equal(nodes(lines).filter(node => node.type === 'strong').length, 0);
+  assert.equal(tree.find(node => node.type === 'Pagination').props.total, 25);
+});
+
+test('mixed conversation text keeps speakers and supplies a fallback only for missing lines', async () => {
+  const lines = [{ canonical_key: 'line:1', text: '<i></i>', speaker: { label: 'Cristoforo' } },
+    { canonical_key: 'line:2', text: { inline_text: 'Hello' }, speaker: { label: 'Visitor' } }];
+  const h = harness({ preview: lines, lines });
+  h.render(); await tick();
+  const scene = h.render().find(node => typeof node.type === 'function' && node.type.name === 'Conversation');
+  const renderScene = h.component(scene.type, scene.props);
+  let tree = renderScene();
+  tree.find(node => node.type === 'details').props.onToggle({ currentTarget: { open: true } });
+  renderScene(); await tick(); tree = renderScene();
+  const items = tree.filter(node => node.props.className === 'npc-scene-line');
+  assert.equal(items.length, 2);
+  const first = nodes(items[0]).find(node => node.type === 'PlayerText' && node.props.fallback);
+  assert.equal(first.props.value, null);
+  assert.equal(first.props.fallback, 'Dialogue text is unavailable in this language.');
+  assert.equal(nodes(items[1]).find(node => node.type === 'PlayerText' && node.props.fallback).props.value.inline_text, 'Hello');
 });

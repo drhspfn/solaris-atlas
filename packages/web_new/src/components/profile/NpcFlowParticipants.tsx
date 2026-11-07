@@ -11,6 +11,7 @@ import {
   type PlayerDisplay,
 } from "@/components/dialogue/PlayerText";
 import { conversationSpeakerName } from "@/data/npcContext";
+import { gameTextPlainText } from "@/data/gameText";
 import { useLocale } from "@/hooks/useLocale";
 import { Link } from "@/lib/router";
 import { questPath } from "@/lib/routeKey";
@@ -35,6 +36,7 @@ type Scene = {
 type Page<T> = { results: T[]; total: number };
 const PAGE_SIZE = 8;
 const LINES_PER_PAGE = 20;
+const UNAVAILABLE_TEXT = "Dialogue text is unavailable in this language.";
 
 function speakerName(label?: string) {
   const normalized = conversationSpeakerName(label);
@@ -87,6 +89,8 @@ function Conversation({
   const speakers = [
     ...new Set(scene.speakers.map((speaker) => speakerName(speaker.label))),
   ];
+  const hasText = (line: Line) => !!gameTextPlainText(line.text, display).trim();
+  const preview = scene.preview.slice(0, 2);
   const questHref = (quest: Quest) => {
     const params = new URLSearchParams({ locale });
     if (gameVersion) params.set("game_version", gameVersion);
@@ -117,9 +121,9 @@ function Conversation({
         </p>
       )}
       <div className="npc-scene-preview">
-        {scene.preview.slice(0, 2).map((line, index) => (
+        {!preview.some(hasText) ? <p>{UNAVAILABLE_TEXT}</p> : preview.map((line, index) => (
           <p key={line.canonical_key || index}>
-            <PlayerText value={line.text} display={display} />
+            <PlayerText value={hasText(line) ? line.text : null} fallback={UNAVAILABLE_TEXT} display={display} />
           </p>
         ))}
       </div>
@@ -162,7 +166,7 @@ function Conversation({
           ) : (
             <>
               <div className="npc-scene-lines">
-                {data.results.map((line, index) => (
+                {!data.results.some(hasText) ? <p>{UNAVAILABLE_TEXT}</p> : data.results.map((line, index) => (
                   <div
                     className="npc-scene-line"
                     key={line.canonical_key || index}
@@ -174,7 +178,7 @@ function Conversation({
                       />
                     </strong>
                     <p>
-                      <PlayerText value={line.text} display={display} />
+                      <PlayerText value={hasText(line) ? line.text : null} fallback={UNAVAILABLE_TEXT} display={display} />
                     </p>
                   </div>
                 ))}
