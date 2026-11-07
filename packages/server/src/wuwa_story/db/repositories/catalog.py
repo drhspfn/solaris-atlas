@@ -26,9 +26,15 @@ async def read_catalog(session, category, locale_id, release_id, limit, offset, 
     )
     if category == "character":
         role_type = Character.metadata_json["role_type"].as_integer()
+        npc_title = (select(SearchDocument.title).where(
+            SearchDocument.target_node_id == Node.id,
+            SearchDocument.locale_id == locale_id,
+            SearchDocument.category == "character",
+        ).correlate(Node).limit(1).scalar_subquery())
         # Preserve primary roles and rows without a role type.
         scope = scope.outerjoin(Character, Character.node_id == Node.id).where(
-            public_character_filter(role_type, Character.metadata_json["public_identity"], Node.canonical_key, character_kind)
+            public_character_filter(role_type, Character.metadata_json["public_identity"], Node.canonical_key, character_kind,
+                                    title=func.coalesce(npc_title, Character.canonical_name))
         )
     elif quest_type_id is not None:
         scope = scope.join(Quest, Quest.node_id == Node.id).where(

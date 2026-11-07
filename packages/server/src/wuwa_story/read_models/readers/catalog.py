@@ -102,7 +102,7 @@ async def catalog_page(
         filters.append(model.card["status"].as_string() == "active")
     if category == "character":
         role_type = model.role_type
-        filters.append(public_character_filter(role_type, model.card["public_identity"], model.canonical_key, character_kind))
+        filters.append(public_character_filter(role_type, model.card["public_identity"], model.canonical_key, character_kind, title=model.title))
     if quest_type_id is not None:
         filters.append(model.quest_type == str(quest_type_id))
     total = await session.scalar(select(func.count()).select_from(model).where(*filters)) or 0
