@@ -16,3 +16,21 @@
 .vm-resize { position: absolute; right: -2px; bottom: -2px; width: 20px; height: 20px; background: var(--tblr-primary); cursor: nwse-resize; border: 3px solid var(--tblr-tertiary-bg); }
 
 .vm-model-status { border-left: 2px solid var(--tblr-primary); padding: .55rem .8rem; background: var(--tblr-secondary-bg); overflow-wrap: anywhere; }
+.vm-video-player { margin: 1rem 0; max-width: 900px; background: #000; }
+.vm-video-player video { display: block; width: 100%; max-height: 60vh; }
+.vm-video-frame { display: grid; grid-template-columns: minmax(10rem, 18rem) minmax(0, 1fr); gap: 1rem; }
+.vm-video-frame h3 { font-size: 1rem; }
+.vm-video-thumb { display: grid; gap: .4rem; padding: 0; border: 0; background: transparent; color: var(--tblr-primary); text-align: left; }
+.vm-video-thumb img { display: block; width: 100%; border-radius: 8px; }
+@media (max-width: 600px) { .vm-video-frame { grid-template-columns: 1fr; } }
+.vm .vm-picker-row { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; padding: .75rem 0; border-top: 1px solid var(--tblr-border-color, #293738); }
+.vm .vm-picker-row > div:first-of-type { flex: 1 1 10rem; }
+.vm .vm-picker-row img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; background: var(--tblr-body-bg, #090e0f); }
+.vm .vm-dialog-panel h3 { font-size: 1rem; margin: 1rem 0 .5rem; }
+.vm .vm-dialog-panel summary { cursor: pointer; color: var(--tblr-primary, #9bd9c0); margin-top: 1rem; }
+.vm .vm-dialog-panel .btn { border: 1px solid var(--tblr-border-color, #293738); border-radius: 8px; padding: .45rem .7rem; background: var(--tblr-tertiary-bg, #162021); color: var(--tblr-body-color, #e8eceb); }
+.vm .vm-dialog-panel .btn-primary { background: var(--tblr-primary, #9bd9c0); color: #09110e; }
+.vm .vm-dialog-panel .form-control { width: 100%; border: 1px solid var(--tblr-border-color, #293738); border-radius: 8px; padding: .5rem .65rem; background: var(--tblr-body-bg, #090e0f); color: var(--tblr-body-color, #e8eceb); }
+.vm .vm-dialog-panel :focus-visible { outline: 2px solid var(--tblr-primary, #9bd9c0); outline-offset: 2px; }
+.vm .vm-dialog-panel .btn:disabled { opacity: .5; cursor: not-allowed; }
+.vm .vm-video-crop { display: block; max-width: 100%; margin: .5rem 0; }

@@ -18,7 +18,13 @@
     <button class="btn btn-primary" data-tab="library" aria-pressed="true">
       Library</button
     ><button class="btn btn-secondary" data-tab="lab" aria-pressed="false">
-      Laboratory
+      Laboratory</button
+    ><button
+      class="btn btn-secondary"
+      data-tab="cutscenes"
+      aria-pressed="false"
+    >
+      Cutscenes
     </button>
   </nav>
   <div id="vm-message" role="status" aria-live="polite"></div>
@@ -61,7 +67,14 @@
         </select></label
       >
       <label
-        >Minimum quality<input class="form-control" name="quality_min" type="number" min="0" max="1" step="0.01" placeholder="0–1"
+        >Minimum quality<input
+          class="form-control"
+          name="quality_min"
+          type="number"
+          min="0"
+          max="1"
+          step="0.01"
+          placeholder="0–1"
       /></label>
       <label
         >Model<input
@@ -88,7 +101,14 @@
         </p>
       </div>
     </div>
-    <p id="vm-model-status" class="vm-model-status" role="status" aria-live="polite">Model status will be checked when the laboratory opens.</p>
+    <p
+      id="vm-model-status"
+      class="vm-model-status"
+      role="status"
+      aria-live="polite"
+    >
+      Model status will be checked when the laboratory opens.
+    </p>
     <label class="vm-upload"
       >Image or frame
       <input
@@ -115,11 +135,112 @@
       <div id="vm-overlay"></div>
     </div>
     <p class="vm-hint">
-      Drag across the image to add a box; drag its lower-right handle to resize. Edit pixel coordinates below for
-      precise or keyboard-only adjustments. Changes require identification
-      again.
+      Drag across the image to add a box; drag its lower-right handle to resize.
+      Edit pixel coordinates below for precise or keyboard-only adjustments.
+      Changes require identification again.
     </p>
     <div id="vm-boxes"></div>
+  </section>
+  <section id="vm-cutscenes" hidden aria-labelledby="vm-cutscenes-title">
+    <div class="vm-heading">
+      <div>
+        <h2 id="vm-cutscenes-title">Cutscene review</h2>
+        <p>
+          Sample frames from a published video and review the detected objects.
+          Sampling does not inspect every frame.
+        </p>
+      </div>
+    </div>
+    <form id="vm-video-search" class="vm-filters">
+      <label
+        >Search cutscenes<input
+          class="form-control"
+          name="q"
+          type="search"
+          placeholder="Cutscene name" /></label
+      ><button class="btn btn-secondary">Search</button>
+    </form>
+    <div id="vm-video-catalog" class="vm-cards" aria-live="polite"></div>
+    <div class="vm-pagination">
+      <button
+        class="btn btn-secondary"
+        id="vm-video-prev"
+        type="button"
+        disabled
+      >
+        Previous</button
+      ><span id="vm-video-page"></span
+      ><button
+        class="btn btn-secondary"
+        id="vm-video-next"
+        type="button"
+        disabled
+      >
+        Next
+      </button>
+    </div>
+    <div id="vm-video-review" hidden>
+      <div class="vm-heading">
+        <div>
+          <h2 id="vm-video-title"></h2>
+          <p id="vm-video-source"></p>
+        </div>
+      </div>
+      <label
+        >Published variant<select
+          class="form-select"
+          id="vm-video-variant"
+        ></select
+      ></label>
+      <div class="vm-video-player">{% include 'video_element.html' %}</div>
+      <p
+        id="vm-video-status"
+        class="vm-model-status"
+        role="status"
+        aria-live="polite"
+      ></p>
+      <form id="vm-video-scan" class="vm-filters">
+        <label
+          >Sample interval (seconds)<input
+            class="form-control"
+            name="interval_seconds"
+            type="number"
+            min="0.25"
+            max="60"
+            step="any"
+            value="3"
+            required /></label
+        >
+        <button class="btn btn-primary" type="submit">Start scan</button>
+      </form>
+      <p>
+        Scanning proposes candidates only. Review links and decisions
+        explicitly; it does not automatically train the library.
+      </p>
+      <div id="vm-video-frames"></div>
+      <div class="vm-pagination" aria-label="Sampled frame pages">
+        <button class="btn btn-secondary" type="button" id="vm-frame-prev" disabled>Previous frames</button>
+        <span id="vm-frame-page"></span>
+        <button class="btn btn-secondary" type="button" id="vm-frame-next" disabled>Next frames</button>
+      </div>
+      <div class="vm-actions">
+        <button
+          class="btn btn-secondary"
+          type="button"
+          id="vm-video-reject-all"
+          disabled
+        >
+          Reject remaining detections</button
+        ><button
+          class="btn btn-primary"
+          type="button"
+          id="vm-video-reviewed"
+          disabled
+        >
+          Mark source reviewed
+        </button>
+      </div>
+    </div>
   </section>
   <div id="vm-dialog" class="vm-dialog" hidden>
     <div class="vm-dialog-backdrop" data-close></div>
@@ -130,7 +251,8 @@
       aria-labelledby="vm-dialog-title"
     >
       <h2 id="vm-dialog-title"></h2>
-      <div id="vm-dialog-message" role="alert"></div><div id="vm-dialog-body"></div>
+      <div id="vm-dialog-message" role="alert"></div>
+      <div id="vm-dialog-body"></div>
       <div class="vm-actions">
         <button class="btn btn-secondary" data-close>Cancel</button
         ><button class="btn btn-primary" id="vm-dialog-submit">Save</button>
@@ -138,6 +260,10 @@
     </section>
   </div>
 </div>
+<script
+  defer
+  src="{{ url_for(__name__ ~ ':statics', path='video-review.js') }}"
+></script>
 <script
   defer
   src="{{ url_for(__name__ ~ ':statics', path='visual-memory.js') }}"

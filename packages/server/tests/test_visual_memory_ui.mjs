@@ -159,3 +159,42 @@ test('pointer gestures cannot change boxes while inference is pending', async ()
   finish(); await new Promise(resolve=>setImmediate(resolve));
   assert.equal(root.querySelector('#vm-boxes').innerHTML,'');
 });
+
+test('identity picker searches game catalog, ignores stale results and explicitly adds a game identity', async () => {
+  class Element {
+    constructor() { this.events={}; this.dataset={}; this.value=''; this.hidden=true; this.disabled=false; this.style={}; }
+    addEventListener(type, fn) { this.events[type]=fn; } setAttribute() {} removeAttribute() {} focus() {}
+    querySelector(s) { if (!this.children) this.children=new Map(); if (!this.children.has(s)) this.children.set(s,new Element()); return this.children.get(s); }
+  }
+  const root=new Element(), document={querySelector:()=>root,body:{style:{}},activeElement:new Element()}, requests=[];
+  root.querySelectorAll=()=>[];
+  class FormData {constructor(){return new URLSearchParams();}}
+  const fetch=(url,opts={})=>new Promise(resolve=>requests.push({url,opts,resolve}));
+  let videoOptions;
+  const context={document,fetch,URL,URLSearchParams,FormData,location:{href:'http://test/'},setTimeout,clearTimeout,createVisualMemoryVideoReview:opts=>{videoOptions=opts;return {open(){}};}};
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),context);
+  const tick=()=>new Promise(resolve=>setImmediate(resolve));
+  const response=data=>({ok:true,json:async()=>data});
+  const box={links:[],names:{}};
+  videoOptions.chooseLinks(box,()=>{});
+  const body=root.querySelector('#vm-dialog-body'), query=body.querySelector('[name=query]');
+  query.value='Hsin'; query.events.keydown({key:'Enter',preventDefault(){}});
+  const oldVisual=requests.find(r=>r.url.includes('/identities?') && !r.url.includes('q=Hsin'));
+  const oldGame=requests.find(r=>r.url.includes('/game-entities?') && !r.url.includes('q=Hsin'));
+  const newVisual=requests.find(r=>r.url.includes('/identities?') && r.url.includes('q=Hsin'));
+  const newGame=requests.find(r=>r.url.includes('/game-entities?') && r.url.includes('q=Hsin'));
+  newVisual.resolve(response({items:[],total:0})); newGame.resolve(response({items:[{node_id:77,name:'Hsin',kind:'character'}],total:null,has_more:true})); await tick();
+  oldVisual.resolve(response({items:[{id:9,name:'Old'}],total:1})); oldGame.resolve(response({items:[],total:0})); await tick();
+  assert.match(root.querySelector('#vm-identity-results').innerHTML,/Add Hsin/);
+  assert.doesNotMatch(root.querySelector('#vm-identity-results').innerHTML,/Old/);
+  assert.doesNotMatch(root.querySelector('#vm-identity-page').textContent,/NaN|undefined/);
+  assert.equal(body.querySelector('[data-identity-next]').disabled,false);
+  const gameButton={dataset:{addGame:'77',name:'Hsin'},disabled:false,setAttribute(){},removeAttribute(){}};
+  body.onclick({target:{closest:()=>gameButton}}); await tick();
+  const csrf=requests.find(r=>r.url==='/auth/csrf'); csrf.resolve(response({csrf_token:'token'})); await tick();
+  const create=requests.find(r=>r.url.endsWith('/identities/from-game'));
+  assert.deepEqual(JSON.parse(create.opts.body),{node_id:77});
+  create.resolve(response({id:15,name:'Hsin',kind:'character'})); await tick();
+  assert.equal(body.querySelector('[name=links]').value,'15');
+  assert.match(root.querySelector('#vm-selected-identities').innerHTML,/Hsin/);
+});

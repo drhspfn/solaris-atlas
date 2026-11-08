@@ -8,6 +8,11 @@
   >
     <div class="card-body">
       <h2 class="card-title">Cutscene playback</h2>
+      <a
+        class="btn btn-secondary"
+        href="/console/visual-memory?tab=cutscenes&amp;cutscene={{ (obj.cg_name or '') | urlencode }}"
+        >Review in Visual Memory</a
+      >
       <form class="sa-cutscene-filters">
         <label
           >Game version
@@ -30,12 +35,7 @@
       </form>
       <p role="status" class="sa-cutscene-status">Loading cutscene…</p>
       <div class="sa-cutscene-stage" hidden>
-        <video
-          controls
-          playsinline
-          preload="metadata"
-          aria-label="Cutscene video"
-        ></video>
+        {% include 'video_element.html' %}
         <div class="sa-cutscene-caption" aria-live="off"></div>
         <div class="sa-cutscene-choice" hidden>
           <p></p>

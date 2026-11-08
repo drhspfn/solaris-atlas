@@ -39,9 +39,10 @@
     }
   }
   const field = (name, label, value = '', type = 'text') => `<label>${esc(label)}<input class="form-control" name="${name}" type="${type}" value="${esc(value)}"></label>`;
-  let previousFocus, submitAction;
-  function closeDialog() { $('#vm-dialog').hidden = true; document.body.style.overflow = ''; previousFocus?.focus(); }
+  let previousFocus, submitAction, dialogGeneration = 0;
+  function closeDialog() { ++dialogGeneration; $('#vm-dialog').hidden = true; document.body.style.overflow = ''; previousFocus?.focus(); }
   function dialog(title, html, action, label = 'Save') {
+    ++dialogGeneration;
     if ($('#vm-dialog').hidden) previousFocus = document.activeElement; submitAction = action; $('#vm-dialog-message').textContent = '';
     $('#vm-dialog-title').textContent = title; $('#vm-dialog-body').innerHTML = html;
     $('#vm-dialog-body').onclick = null; $('#vm-dialog-submit').textContent = label; $('#vm-dialog').hidden = false; document.body.style.overflow = 'hidden';
@@ -63,7 +64,7 @@
   }
   root.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => {
     for (const b of root.querySelectorAll('[data-tab]')) { const active = b === button; b.setAttribute('aria-pressed', active); b.className = active ? 'btn btn-primary' : 'btn btn-secondary'; }
-    $('#vm-library').hidden = button.dataset.tab !== 'library'; $('#vm-lab').hidden = button.dataset.tab !== 'lab'; message(''); if (button.dataset.tab === 'lab') modelStatus();
+    $('#vm-library').hidden = button.dataset.tab !== 'library'; $('#vm-lab').hidden = button.dataset.tab !== 'lab'; $('#vm-cutscenes').hidden = button.dataset.tab !== 'cutscenes'; message(''); if (button.dataset.tab === 'lab') modelStatus(); if (button.dataset.tab === 'cutscenes') videoReview?.open();
   }));
   function linksText(links) { return (links || []).map(l => `${l.identity_id}${l.appearance_id ? ':' + l.appearance_id : ''}`).join(', '); }
   function parseLinks(text) {
@@ -193,27 +194,47 @@
   });
   async function chooseLinks(index, suppliedBox = null, onSave = null) {
     const box = suppliedBox || state.boxes[index];
-    dialog('Choose identities and appearances', `<p>${esc(linksHelp)}</p><p id="vm-selected-identities"></p>${field('links','Selected links (IDs; optional manual entry)',linksText(box.links))}${field('query','Find identity by name')}<div class="vm-actions"><button class="btn btn-secondary" data-find>Find identities</button><button class="btn btn-secondary" data-new>Create identity</button></div><div id="vm-identity-results"></div><div class="vm-actions"><button class="btn btn-secondary" data-identity-prev disabled>Previous identities</button><span id="vm-identity-page"></span><button class="btn btn-secondary" data-identity-next disabled>Next identities</button></div><p>To create an appearance, enter its name and identity ID.</p>${field('appearance_identity','Identity ID', '', 'number')}${field('appearance_name','Appearance name')}<button class="btn btn-secondary" data-appearance-create>Create appearance</button><p id="vm-appearance-result"></p>`, async body => { box.links = parseLinks($('[name=links]',body).value); if (onSave) await onSave(box.links); else renderBoxes(); });
-    const body = $('#vm-dialog-body');
-    function selectedNames() { $('#vm-selected-identities').textContent = 'Selected: ' + (parseLinks($('[name=links]',body).value).map(l => box.names[l.identity_id] || `Identity ${l.identity_id}`).join(', ') || 'None'); }
-    selectedNames();
-    let offset = 0, searchSequence = 0, query = '';
-    async function findIdentities() {
-      const sequence = ++searchSequence;
-      $('#vm-identity-results').innerHTML = '<div class="vm-skeleton" role="status" aria-label="Loading identities"></div>';
-      const result = await api('/identities?' + new URLSearchParams({q:query,limit:'20',offset:String(offset)}));
-      if (sequence !== searchSequence || body !== $('#vm-dialog-body')) return;
-      $('#vm-identity-results').innerHTML = (result.items || []).map(x => `<div class="vm-candidate"><strong>${esc(x.name)}</strong> · ${esc(x.kind)} · ID ${esc(x.id)} · game nodes ${(x.node_ids || []).filter(id => Number.isSafeInteger(id) && id > 0).map(id => `<a href="/console/nodes/detail/${id}" target="_blank" rel="noopener noreferrer">${id}</a>`).join(', ') || 'none'} ${x.lore_id ? '· lore group ' + esc(x.lore_id) : ''} <button class="btn btn-secondary" data-add-identity="${esc(x.id)}" data-name="${esc(x.name)}" data-kind="${esc(x.kind)}">Add</button>${(x.appearances || []).map(a => ` <button class="btn btn-secondary" data-add-identity="${esc(x.id)}" data-add-appearance="${esc(a.id)}" data-name="${esc(x.name)}" data-kind="${esc(x.kind)}">${esc(a.name)}</button>`).join('')}</div>`).join('') || '<p>No identities found.</p>';
-      $('#vm-identity-page').textContent = `${result.total ? offset + 1 : 0}–${Math.min(offset + 20, result.total)} of ${result.total}`;
-      $('[data-identity-prev]',body).dataset.pageDisabled = String(offset === 0); $('[data-identity-next]',body).dataset.pageDisabled = String(offset + 20 >= result.total); $('[data-identity-prev]',body).disabled = offset === 0; $('[data-identity-next]',body).disabled = offset + 20 >= result.total;
+    dialog('Choose identities and appearances', `<p>Search your visual identities and the game catalog. Adding a game character creates or reuses its visual identity.</p><p id="vm-selected-identities"></p>${field('query','Search identities and game characters')}<div id="vm-identity-results" aria-live="polite"></div><div class="vm-actions"><button type="button" class="btn btn-secondary" data-identity-prev disabled>Previous</button><span id="vm-identity-page"></span><button type="button" class="btn btn-secondary" data-identity-next disabled>Next</button></div><details><summary>Technical details</summary><p>${esc(linksHelp)}</p>${field('links','Selected identity IDs',linksText(box.links))}<button type="button" class="btn btn-secondary" data-new>Create custom identity</button><p>To create an appearance, enter its identity ID and name.</p>${field('appearance_identity','Identity ID', '', 'number')}${field('appearance_name','Appearance name')}<button type="button" class="btn btn-secondary" data-appearance-create>Create appearance</button><p id="vm-appearance-result"></p></details>`, async body => { box.links = parseLinks($('[name=links]',body).value); if (onSave) await onSave(box.links); else renderBoxes(); });
+    const body = $('#vm-dialog-body'), generation = dialogGeneration;
+    let offset = 0, searchSequence = 0, timer;
+    const queryInput = $('[name=query]', body), linksInput = $('[name=links]', body);
+    function selectedNames() { const links = parseLinks(linksInput.value); $('#vm-selected-identities').innerHTML = 'Selected: ' + (links.map(l => `<button type="button" class="btn btn-secondary" data-remove-identity="${esc(l.identity_id)}" aria-label="Remove ${esc(box.names[l.identity_id] || `Identity ${l.identity_id}`)}">${esc(box.names[l.identity_id] || `Identity ${l.identity_id}`)} ×</button>`).join(' ') || 'None'); }
+    function addLink(id, appearance, name) {
+      const links = parseLinks(linksInput.value), selected = {identity_id:id, appearance_id:appearance || null};
+      const existing = links.findIndex(l => l.identity_id === id);
+      if (existing < 0) links.push(selected); else links[existing] = selected;
+      box.names[id] = name || `Identity ${id}`; linksInput.value = linksText(links); selectedNames();
     }
-    $('[data-find]',body).addEventListener('click', e => busy(e.currentTarget, async () => { query = $('[name=query]',body).value; offset = 0; await findIdentities(); }));
-    $('[data-identity-prev]',body).addEventListener('click', e => busy(e.currentTarget, async () => { offset = Math.max(0,offset-20); await findIdentities(); }));
-    $('[data-identity-next]',body).addEventListener('click', e => busy(e.currentTarget, async () => { offset += 20; await findIdentities(); }));
-    findIdentities().catch(e => message(e.message, true));
-    body.onclick = e => { const b=e.target.closest('[data-add-identity]'); if (!b) return; const input=$('[name=links]',body); const links=parseLinks(input.value); const id=+b.dataset.addIdentity; box.names[id] = [b.dataset.name,b.dataset.kind].filter(Boolean).join(' · '); const selected = {identity_id:id,appearance_id:b.dataset.addAppearance ? +b.dataset.addAppearance : null}; const existing = links.findIndex(l=>l.identity_id===id); if (existing < 0) links.push(selected); else links[existing] = selected; input.value=linksText(links); $('[name=appearance_identity]',body).value = id; selectedNames(); };
-    $('[data-new]',body).addEventListener('click', () => { box.links = parseLinks($('[name=links]',body).value); createIdentity(result => { box.links.push({identity_id:result.id,appearance_id:null}); box.names[result.id] = [result.name,result.kind].filter(Boolean).join(' · '); setTimeout(() => chooseLinks(index, suppliedBox, onSave), 0); }); });
+    selectedNames();
+    async function findIdentities() {
+      const sequence = ++searchSequence, query = queryInput.value.trim();
+      const results = $('#vm-identity-results');
+      results.innerHTML = '<div class="vm-skeleton" role="status" aria-label="Searching identities"></div>';
+      const params = new URLSearchParams({q:query,limit:'20',offset:String(offset)});
+      const [visual, game] = await Promise.allSettled([api('/identities?' + params), api('/game-entities?' + params)]);
+      if (generation !== dialogGeneration || sequence !== searchSequence) return;
+      const visualItems = visual.status === 'fulfilled' ? visual.value.items || [] : [];
+      const gameItems = game.status === 'fulfilled' ? game.value.items || [] : [];
+      const hasMore = [visual, game].some(result => result.status === 'fulfilled' && (result.value.has_more === true || (Number.isFinite(result.value.total) && offset + 20 < result.value.total)));
+      const visualRows = visualItems.map(x => `<div class="vm-picker-row"><div><strong>${esc(x.name)}</strong><span class="vm-meta"> ${esc(x.kind || '')}</span></div><div class="vm-actions"><button type="button" class="btn btn-secondary" data-add-identity="${esc(x.id)}" data-name="${esc(x.name)}" data-kind="${esc(x.kind || '')}">Add ${esc(x.name)}</button>${(x.appearances || []).map(a => `<button type="button" class="btn btn-secondary" data-add-identity="${esc(x.id)}" data-add-appearance="${esc(a.id)}" data-appearance-name="${esc(a.name)}" data-name="${esc(x.name)}" data-kind="${esc(x.kind || '')}">${esc(a.name)}</button>`).join('')}</div></div>`).join('');
+      const gameRows = gameItems.map(x => { const name=x.name || x.display_name || 'Unnamed', image=safeURL(x.thumbnail_url || x.image_url || x.thumbnail); return `<div class="vm-picker-row">${image ? `<img src="${esc(image)}" alt="" loading="lazy">` : ''}<div><strong>${esc(name)}</strong><span class="vm-meta"> ${esc(x.kind || '')}</span></div><button type="button" class="btn btn-secondary" data-add-game="${esc(x.node_id)}" data-name="${esc(name)}">Add ${esc(name)}</button></div>`; }).join('');
+      results.innerHTML = '<h3>Visual identities</h3>' + (visual.status === 'rejected' ? '<p class="vm-error">Visual identities could not be loaded. Search again to retry.</p>' : visualRows || '<p class="vm-meta">No visual identities found. You can add a character from the game catalog below.</p>') + '<h3>Game catalog</h3>' + (game.status === 'rejected' ? '<p class="vm-error">Game catalog could not be loaded. Search again to retry.</p>' : gameRows || '<p class="vm-meta">No game characters match this search.</p>');
+      $('#vm-identity-page').textContent = `Page ${Math.floor(offset / 20) + 1}${hasMore ? ' · More results available' : ''}`;
+      for (const [selector, disabled] of [['[data-identity-prev]',offset === 0],['[data-identity-next]',!hasMore]]) { const button=$(selector,body); button.dataset.pageDisabled=String(disabled); button.disabled=disabled; }
+    }
+    queryInput.addEventListener('input', () => { clearTimeout(timer); ++searchSequence; offset = 0; timer = setTimeout(() => findIdentities(), 250); });
+    queryInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(timer); offset = 0; findIdentities(); } });
+    $('[data-identity-prev]',body).addEventListener('click', () => { offset = Math.max(0,offset-20); findIdentities(); });
+    $('[data-identity-next]',body).addEventListener('click', () => { offset += 20; findIdentities(); });
+    body.onclick = e => {
+      const b=e.target.closest('[data-add-identity], [data-add-game], [data-remove-identity]'); if (!b) return;
+      if (b.dataset.removeIdentity !== undefined) { linksInput.value = linksText(parseLinks(linksInput.value).filter(l => l.identity_id !== +b.dataset.removeIdentity)); selectedNames(); return; }
+      if (b.dataset.addGame !== undefined) { busy(b, async () => { const result=await api('/identities/from-game',{node_id:+b.dataset.addGame}); if (generation !== dialogGeneration) return; addLink(+result.id, null, result.name || b.dataset.name); }); return; }
+      addLink(+b.dataset.addIdentity, b.dataset.addAppearance ? +b.dataset.addAppearance : null, [b.dataset.name,b.dataset.kind,b.dataset.appearanceName].filter(Boolean).join(' · '));
+    };
+    $('[data-new]',body).addEventListener('click', () => { box.links = parseLinks(linksInput.value); createIdentity(result => { box.links.push({identity_id:result.id,appearance_id:null}); box.names[result.id] = [result.name,result.kind].filter(Boolean).join(' · '); setTimeout(() => chooseLinks(index, suppliedBox, onSave), 0); }); });
     $('[data-appearance-create]',body).addEventListener('click', e => busy(e.currentTarget, async () => { const id=+$('[name=appearance_identity]',body).value, name=$('[name=appearance_name]',body).value.trim(); if (!id || !name) throw new Error('Enter an identity ID and appearance name.'); const result=await api(`/identities/${id}/appearances`,{name}); $('#vm-appearance-result').textContent=`Created appearance #${result.id}. Add ${id}:${result.id} to selected links.`; }));
+    findIdentities();
   }
   function saveCrop(index) {
     const box = state.boxes[index];
@@ -225,5 +246,7 @@
       message(result.duplicate ? 'This crop already exists; its existing links and moderation were preserved.' : 'Crop saved.'); load();
     }, 'Save crop');
   }
+  const videoReview = globalThis.createVisualMemoryVideoReview?.({root: $('#vm-cutscenes'), api, escape: esc, message, chooseLinks: (box, onSave) => chooseLinks(null, box, onSave)});
   load();
+  if (new URL(location.href).searchParams.get('tab') === 'cutscenes') root.querySelector('[data-tab="cutscenes"]')?.click();
 })();

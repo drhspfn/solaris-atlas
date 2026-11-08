@@ -52,6 +52,8 @@ const tools = [
   ["visual_identify", "Detect objects in an image and inspect candidate identities."],
   ["visual_list_identities", "Browse visual identities, game forms and their entity links."],
   ["visual_get_reference", "Inspect an approved visual reference and its source."],
+  ["visual_inspect_cutscene", "Inspect published video sources and visual review status."],
+  ["visual_get_video_scan", "View sampled frames from a reviewed cutscene."],
 ];
 
 export function McpDocsClient() {
