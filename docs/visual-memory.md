@@ -152,3 +152,52 @@ the exact same crop matched at similarity 1.0. This does not measure recognition
 The first slice does not implement video tracking, visual quest analysis, fine-tuning,
 automatic scraping or an end-user photo-search screen. Their code can reuse the service
 and curated references without defining another identity or embedding store.
+
+## Cutscene review and video tools
+
+The Cutscenes tab in `/console/visual-memory` uses published media sources only.
+Choose the cutscene and its variant, then scan at a fixed interval (default three
+seconds). Sampling covers the entire duration, including the final frame: there
+is no global frame-count or video-byte cap. Batch size bounds each review page,
+not coverage. Before downloading, the worker checks registered size and temporary
+disk space. Downloads are streamed and verified against the registered SHA-256.
+
+`ops.visual_video_frame` checkpoints each frame and its detection proposals.
+A stopped worker resumes the same scan from persisted frames. Source hash, model
+fingerprints and sampling interval identify a scan; repeated requests reuse it.
+Each proposal can be approved, retained pending, or rejected by an administrator.
+A source can be marked reviewed only after every proposal has a decision.
+Frames from one video count as one independent retrieval source.
+
+The identity picker searches existing visual identities and the game character/NPC
+catalog by name. Selecting a game record explicitly creates or reuses its visual
+identity. Manual IDs remain optional. Appearances and lore groupings remain separate.
+
+`VideoReviewService` is reusable by application code. Admin endpoints under
+`/admin/visual-memory/videos` provide source selection, scan creation/status,
+paginated frames and moderation. Public tools `visual_inspect_cutscene` and
+`visual_get_video_scan` inspect published sources and human-reviewed frames;
+MCP supplies native JPEG image content alongside the structured response.
+Internal agents may enqueue through `visual_scan_cutscene` and inspect pending
+proposals through `visual_read_video_scan`; they cannot approve their own labels.
+
+## Production video worker
+
+The API image installs the `visual-memory` extra with CPU-only PyTorch on Linux,
+plus FFmpeg. Place model files beneath `models/visual-memory` beside production
+Compose: DINOv2 config/preprocessor/model.safetensors in `dinov2-small`, and
+`anime-character-detector/character.onnx`. This directory is mounted read-only.
+The model identity includes the actual weight/configuration/library fingerprints.
+
+Apply database migrations through 0033 using a direct PostgreSQL connection.
+Start only the `visual-memory-worker` service with the `visual-memory` Compose
+profile. Pin `VISUAL_MEMORY_IMAGE_TAG` to the deployed immutable image SHA and
+persist it in production configuration. The single CPU scanner uses a direct
+PostgreSQL connection for its advisory lease, 2 GiB RAM and two DB connections.
+Existing audio/video/import workers need no restart. App-only deployments preserve
+this scanner's captured container identity, like the other media workers.
+
+Validation additionally covers real FFmpeg extraction, full-duration sampling,
+checkpoint recovery, paginated review, publication/variant fencing and game-name
+lookup. Recognition proposals remain untrusted until human review; these tests
+establish pipeline correctness rather than recognition accuracy.
