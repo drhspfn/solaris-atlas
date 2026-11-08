@@ -1,8 +1,10 @@
-"""Offline DINOv2 embeddings and upstream YOLOX character detection.
+"""Offline DINOv2 or CCIP embeddings and upstream YOLOX character detection.
 
 Set VISUAL_MEMORY_DINO_PATH to a local Hugging Face DINOv2-small directory and
 VISUAL_MEMORY_DETECTOR_PATH to the upstream character.onnx file. Install the
 server's visual-memory extra. Models are loaded lazily, on CPU, without downloads.
+Set VISUAL_MEMORY_EMBEDDER=ccip and VISUAL_MEMORY_CCIP_PATH to a local directory
+containing model_feat.onnx to use CCIP instead of DINOv2.
 """
 
 import hashlib
@@ -37,14 +39,27 @@ def _digest(path: Path) -> str:
 
 
 class VisualMemoryEngine:
-    def __init__(self) -> None:
+    def __init__(self, backend: str | None = None) -> None:
         self._lock = threading.Lock()
+        self._embedder = backend if backend is not None else os.environ.get(
+            "VISUAL_MEMORY_EMBEDDER", "dinov2")
+        self._ccip_path = os.environ.get("VISUAL_MEMORY_CCIP_PATH", "")
         self._model = self._processor = self._session = None
         self._config: dict[str, Any] = {}
+
+    @property
+    def backend(self) -> str:
+        return self._embedder
 
     def _load_embedder(self) -> None:
         if self._model is not None:
             return
+        if self._embedder == "ccip":
+            self._load_ccip()
+            return
+        if self._embedder != "dinov2":
+            raise VisualMemoryUnavailable(
+                "VISUAL_MEMORY_EMBEDDER must be dinov2 or ccip")
         path = Path(os.environ.get("VISUAL_MEMORY_DINO_PATH", ""))
         if not os.environ.get("VISUAL_MEMORY_DINO_PATH"):
             raise VisualMemoryUnavailable(
@@ -100,10 +115,88 @@ class VisualMemoryEngine:
             raise VisualMemoryUnavailable(
                 f"Could not load DINOv2 model: {exc}") from exc
 
+    def _load_ccip(self) -> None:
+        if not self._ccip_path:
+            raise VisualMemoryUnavailable(
+                "Set VISUAL_MEMORY_CCIP_PATH to a local CCIP model directory")
+        weights = Path(self._ccip_path) / "model_feat.onnx"
+        if not weights.is_file():
+            raise VisualMemoryUnavailable("CCIP model_feat.onnx is missing")
+        try:
+            import numpy as np
+            import onnxruntime as ort
+            import PIL
+
+            options = ort.SessionOptions()
+            options.intra_op_num_threads = 1
+            options.inter_op_num_threads = 1
+            model = ort.InferenceSession(
+                str(weights), sess_options=options, providers=["CPUExecutionProvider"]
+            )
+            inputs, outputs = model.get_inputs(), model.get_outputs()
+
+            def valid_batch(value):
+                return value is None or isinstance(value, str) or value == 1
+            if (len(inputs) != 1 or len(outputs) != 1
+                    or len(inputs[0].shape) != 4 or not valid_batch(inputs[0].shape[0])
+                    or inputs[0].shape[1:] != [3, 384, 384]
+                    or len(outputs[0].shape) != 2 or not valid_batch(outputs[0].shape[0])
+                    or outputs[0].shape[1] != 768
+                    or inputs[0].type != "tensor(float)" or outputs[0].type != "tensor(float)"):
+                raise ValueError(
+                    "Expected float32 CCIP input [batch,3,384,384] and output [batch,768]")
+            config = {
+                "backend": "ccip-onnx",
+                "model": "deepghs/ccip-caformer-24-randaug-pruned",
+                "dimensions": 768,
+                "normalization": "l2",
+                "preprocessing": {"color": "RGB", "resize": [384, 384], "resampling": "bilinear",
+                                  "scale": 255, "mean": [0.48145466, 0.4578275, 0.40821073],
+                                  "std": [0.26862954, 0.26130258, 0.27577711], "layout": "NCHW"},
+                "retrieval_min_similarity": 0.85,
+                "retrieval_min_margin": 0.04,
+                "weights_sha256": _digest(weights),
+                "onnxruntime_version": ort.__version__,
+                "numpy_version": np.__version__,
+                "pillow_version": PIL.__version__,
+            }
+            config["fingerprint"] = hashlib.sha256(
+                json.dumps(config, sort_keys=True).encode()).hexdigest()
+            self._config, self._model = config, model
+        except Exception as exc:
+            raise VisualMemoryUnavailable(
+                f"Could not load CCIP model: {exc}") from exc
+
+    def _model_key(self) -> str:
+        prefix = "ccip-caformer-24:onnx:" if self._embedder == "ccip" else "dinov2-small:cls:"
+        return prefix + self._config["fingerprint"]
+
     def embed(self, image: Image.Image) -> EmbeddingResult:
         with self._lock:
             self._load_embedder()
             try:
+                if self._embedder == "ccip":
+                    import numpy as np
+
+                    resized = image.convert("RGB").resize(
+                        (384, 384), Image.Resampling.BILINEAR)
+                    pixels = np.asarray(
+                        resized, dtype=np.float32) / np.float32(255.0)
+                    preprocessing = self._config["preprocessing"]
+                    pixels = (pixels - np.asarray(preprocessing["mean"], dtype=np.float32)) / np.asarray(
+                        preprocessing["std"], dtype=np.float32)
+                    blob = np.ascontiguousarray(
+                        pixels.transpose(2, 0, 1)[None])
+                    output = np.asarray(self._model.run(
+                        None, {self._model.get_inputs()[0].name: blob})[0])
+                    if output.shape != (1, 768) or not np.isfinite(output).all():
+                        raise ValueError("Invalid embedding")
+                    vector = output[0].astype(np.float64)
+                    norm = np.linalg.norm(vector)
+                    if not np.isfinite(norm) or norm <= 0:
+                        raise ValueError("Invalid embedding")
+                    return EmbeddingResult(self._model_key(), (vector / norm).tolist(), dict(self._config))
+
                 import torch
 
                 inputs = self._processor(
@@ -116,13 +209,13 @@ class VisualMemoryEngine:
                         raise ValueError("Invalid embedding")
                     vector = vector / norm
                 return EmbeddingResult(
-                    "dinov2-small:cls:" + self._config["fingerprint"],
+                    self._model_key(),
                     vector.tolist(),
                     dict(self._config),
                 )
             except Exception as exc:
                 raise VisualMemoryUnavailable(
-                    f"DINOv2 inference failed: {exc}") from exc
+                    f"{'CCIP' if self._embedder == 'ccip' else 'DINOv2'} inference failed: {exc}") from exc
 
     def model_identity(self) -> dict[str, str]:
         """Fingerprint both local models without inventing a reference embedding."""
@@ -132,7 +225,7 @@ class VisualMemoryEngine:
             if not hasattr(self, "_detector_sha256"):
                 self._detector_sha256 = _digest(
                     Path(os.environ["VISUAL_MEMORY_DETECTOR_PATH"]))
-            return {"embedding": "dinov2-small:cls:" + self._config["fingerprint"],
+            return {"embedding": self._model_key(),
                     "detector": self._detector_sha256}
 
     def _load_detector(self) -> None:

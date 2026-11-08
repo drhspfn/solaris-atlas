@@ -47,8 +47,11 @@ def normalized_vector(values):
 
 def rank_candidates(rows, limit=10):
     """At most five independent source images per identity; never sum sample counts."""
+    def score(row):
+        return row["similarity"] * (0.5 + 0.5 * row.get("quality", 1.0))
+
     groups = {}
-    for row in sorted(rows, key=lambda item: (-item["similarity"], item["reference_id"])):
+    for row in sorted(rows, key=lambda item: (-score(item), item["reference_id"])):
         group = groups.setdefault(row["identity_id"], [])
         if not any(
             item["source_sha256"] == row["source_sha256"]
@@ -61,15 +64,9 @@ def rank_candidates(rows, limit=10):
             group.append(row)
     candidates = []
     for identity_id, evidence in groups.items():
-        evidence = sorted(
-            evidence, key=lambda x: (-x["similarity"], x["reference_id"]))[:5]
+        evidence = evidence[:5]
         best = evidence[0]
-        scores = [x["similarity"] for x in evidence]
-        mean = sum(scores) / len(scores)
-        consistency = max(0.0, 1.0 - (max(scores) - min(scores)))
         # Heuristic similarity, deliberately not a calibrated identity probability.
-        score = 0.65 * scores[0] + 0.25 * mean + 0.1 * consistency
-        score *= 0.5 + 0.5 * max(item.get("quality", 1.0) for item in evidence)
         candidates.append(
             {
                 "identity_id": identity_id,
@@ -77,8 +74,8 @@ def rank_candidates(rows, limit=10):
                 "kind": best["kind"],
                 "lore_id": best.get("lore_id"),
                 "appearance_id": best.get("appearance_id"),
-                "score": score,
-                "best_similarity": scores[0],
+                "score": score(best),
+                "best_similarity": best["similarity"],
                 "independent_references": len(evidence),
                 "evidence": evidence,
             }
@@ -86,11 +83,11 @@ def rank_candidates(rows, limit=10):
     return sorted(candidates, key=lambda x: (-x["score"], x["identity_id"]))[:limit]
 
 
-def identification_status(candidates):
+def identification_status(candidates, min_similarity=0.5, min_margin=0.04):
     # Conservative, explicitly uncalibrated thresholds; never used to approve a label.
-    if not candidates or candidates[0]["best_similarity"] < 0.5:
+    if not candidates or candidates[0]["best_similarity"] < min_similarity:
         return "unknown"
-    if len(candidates) > 1 and candidates[0]["score"] - candidates[1]["score"] < 0.04:
+    if len(candidates) > 1 and candidates[0]["score"] - candidates[1]["score"] < min_margin:
         return "unresolved"
     return "candidate"
 
@@ -340,6 +337,7 @@ class VisualMemoryService:
         # identity must not evict a rare NPC before entity aggregation. pgvector does
         # the distance calculation; SQL caps each independent source per identity.
         distance = VisualEmbedding.embedding.cosine_distance(vector)
+        weighted_similarity = (1 - distance) * (0.5 + 0.5 * VisualReference.quality)
         ranked = (
             select(
                 VisualReference.id.label("reference_id"),
@@ -358,7 +356,7 @@ class VisualMemoryService:
                 .over(
                     partition_by=(VisualIdentity.id, func.coalesce(
                         VisualReference.source_group, VisualReference.source_sha256)),
-                    order_by=(distance, VisualReference.id),
+                    order_by=(weighted_similarity.desc(), VisualReference.id),
                 )
                 .label("source_rank"),
             )
@@ -386,7 +384,7 @@ class VisualMemoryService:
                 func.row_number()
                 .over(
                     partition_by=sources.c.identity_id,
-                    order_by=(sources.c.similarity.desc(),
+                    order_by=((sources.c.similarity * (0.5 + 0.5 * sources.c.quality)).desc(),
                               sources.c.reference_id),
                 )
                 .label("entity_rank"),
@@ -404,7 +402,13 @@ class VisualMemoryService:
                 )
             ).mappings()
         ]
-        candidates = rank_candidates(rows, limit)
+        ranked_candidates = rank_candidates(rows, max(limit, 2))
+        status = identification_status(
+            ranked_candidates,
+            min_similarity=model.config.get("retrieval_min_similarity", 0.5),
+            min_margin=model.config.get("retrieval_min_margin", 0.04),
+        )
+        candidates = ranked_candidates[:limit]
         for candidate in candidates:
             for item in candidate["evidence"]:
                 reference = await self._reference(item["reference_id"])
@@ -413,7 +417,7 @@ class VisualMemoryService:
                     item.pop(internal, None)
         return {
             "model_key": model.key,
-            "status": identification_status(candidates),
+            "status": status,
             "candidates": candidates,
             "score_type": "uncalibrated_similarity",
             "retrieval": "balanced_exact_cosine",

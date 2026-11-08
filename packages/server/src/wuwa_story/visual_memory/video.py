@@ -774,6 +774,17 @@ class VideoReviewService:
         if run.status not in ("pending", "running"):
             return await self.get_scan(scan_id)
         spec = copy.deepcopy(run.metadata_json)
+        # A backend rollout must not invalidate queued scans using the previous
+        # model. Keep its exact fingerprint check and persisted frame checkpoints.
+        from wuwa_story.visual_memory.inference import VisualMemoryEngine
+
+        engine = self.memory._engine()
+        if isinstance(engine, VisualMemoryEngine):
+            embedding = spec["models"]["embedding"]
+            backend = ("dinov2" if embedding.startswith("dinov2-small:cls:") else
+                       "ccip" if embedding.startswith("ccip-caformer-24:onnx:") else None)
+            if backend is not None and backend != engine.backend:
+                self.memory.engine = VisualMemoryEngine(backend=backend)
         if await asyncio.to_thread(self.memory._engine().model_identity) != spec["models"]:
             raise ValueError("Configured inference models changed; explicitly start a new scan")
         run = await self._run(scan_id, lock=True)
