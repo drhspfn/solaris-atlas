@@ -153,6 +153,7 @@ test("unavailable and package-linked scenes have actual in-page targets", () => 
   vm.runInNewContext(componentCode, {
     exports: components,
     require: (id) => {
+      if (id === "../../data/gameText") return { gameTextPlainText: (value) => value?.content || value || '' };
       if (id === "./cutsceneAnchor") return mocks[id];
       if (id === "@/lib/router") return { Link: ({ to, children }) => React.createElement('a', { href: to }, children) };
       if (id === "../dialogue/PlayerText") return { PlayerText: ({ value, fallback }) => value?.content || value || fallback };
@@ -223,6 +224,13 @@ test("unavailable and package-linked scenes have actual in-page targets", () => 
   }));
   assert.match(continuation, /Continue the story/);
   assert.match(continuation, /\/quests\/200-next/);
+  const repeatedStage = renderToStaticMarkup(React.createElement(components.RelatedQuestCutscenes, {
+    currentQuestIds: [886000002, 6616725], currentQuestTitle: { content: 'Simulacrum of the Heart' },
+    manifest: { events: [], related_cutscenes: [{ name: 'M0391', playable: false,
+      continuations: [{ game_quest_id: 168000003, title: { content: 'Simulacrum of the Heart' } }] }] },
+  }));
+  assert.doesNotMatch(repeatedStage, /href="\/quests\//);
+  assert.match(repeatedStage, /M0391/);
   const self = { game_quest_id: 168000003, quest_href: '/quests/6616725-simulacrum-of-the-heart', title: 'Simulacrum of the Heart' };
   for (const currentQuestIds of [[168000003], ['6616725']]) {
     const html = renderToStaticMarkup(React.createElement(components.RelatedQuestCutscenes, {

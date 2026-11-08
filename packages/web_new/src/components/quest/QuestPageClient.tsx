@@ -564,7 +564,7 @@ export function QuestPageClient({
             searchText: scene.name,
             href: `#${packageCutsceneAnchor(scene.name)}`,
             inView: true,
-            note: externalSceneContinuations(scene.continuations, currentQuestIds).length
+            note: externalSceneContinuations(scene.continuations, currentQuestIds, quest.name).length
               ? "Continues in a later quest"
               : "Related · position unknown",
           })),
@@ -1272,7 +1272,7 @@ export function QuestPageClient({
             manifest={displayMedia}
             stateAnchors={new Map()}
           />
-          <RelatedQuestCutscenes display={playerDisplay} manifest={media} currentQuestIds={currentQuestIds} />
+          <RelatedQuestCutscenes display={playerDisplay} manifest={media} currentQuestIds={currentQuestIds} currentQuestTitle={quest.name} />
         </section>
       ) : (
         <>
@@ -1400,7 +1400,7 @@ export function QuestPageClient({
                   ))}
                 </section>
               )}
-              <RelatedQuestCutscenes display={playerDisplay} manifest={media} currentQuestIds={currentQuestIds} />
+              <RelatedQuestCutscenes display={playerDisplay} manifest={media} currentQuestIds={currentQuestIds} currentQuestTitle={quest.name} />
             </div>
           </div>
         </>

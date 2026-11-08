@@ -731,10 +731,12 @@ export function RelatedQuestCutscenes({
   manifest,
   display,
   currentQuestIds = [],
+  currentQuestTitle,
 }: {
   display?: PlayerDisplay;
   manifest: QuestMediaManifest | null;
   currentQuestIds?: Array<string | number>;
+  currentQuestTitle?: unknown;
 }) {
   if (!manifest) return null;
   const eventScenes = new Set(
@@ -763,7 +765,7 @@ export function RelatedQuestCutscenes({
           className="quest-cutscene-anchor"
           key={scene.name}
         >
-          {externalSceneContinuations(scene.continuations, currentQuestIds).map(
+          {externalSceneContinuations(scene.continuations, currentQuestIds, currentQuestTitle).map(
             (quest) => (
               <p className={styles.continuation} key={quest.game_quest_id}>
                 <span>Continue the story</span>
@@ -812,14 +814,17 @@ export function externalSceneContinuations(
       >
     | undefined,
   currentQuestIds: Array<string | number>,
+  currentQuestTitle?: unknown,
 ) {
   const ids = new Set(currentQuestIds.map(String));
+  const title = gameTextPlainText(currentQuestTitle).trim().toLocaleLowerCase();
   return (continuations || []).filter((quest) => {
     const hrefId = quest.quest_href
       ?.match(/^\/quests\/([^/?#]+)/)?.[1]
       ?.split("-")[0];
     return (
-      !ids.has(String(quest.game_quest_id)) && (!hrefId || !ids.has(hrefId))
+      !ids.has(String(quest.game_quest_id)) &&
+      (!title || gameTextPlainText(quest.title).trim().toLocaleLowerCase() !== title) && (!hrefId || !ids.has(hrefId))
     );
   });
 }
