@@ -13,6 +13,7 @@ from wuwa_story.auth.dependencies import require_admin, require_csrf
 from wuwa_story.db.models.auth import User
 from wuwa_story.db.session import get_session
 from wuwa_story.visual_memory.tools import Input, Link
+from wuwa_story.visual_memory.video import MAX_FRAME_PAGE_SIZE, sampling_spec
 
 router = APIRouter(
     prefix="/admin/visual-memory/videos", tags=["visual memory video"],
@@ -30,8 +31,19 @@ class ScanInput(Input):
     source_reference_id: int | None = Field(default=None, gt=0, strict=True)
     source_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     interval_seconds: float = Field(default=3, ge=0.25, le=60, allow_inf_nan=False)
-    frame_batch_size: int = Field(default=12, ge=1, le=48, strict=True)
+    frame_batch_size: int = Field(default=12, ge=1, le=MAX_FRAME_PAGE_SIZE, strict=True)
     force: bool = Field(default=False, strict=True)
+    sampling_mode: Literal["full", "segment", "frame"] = "full"
+    start_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False, strict=True)
+    end_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False, strict=True)
+    timestamp_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False, strict=True)
+    frame_offset: int | None = Field(default=None, ge=0, strict=True)
+
+    @model_validator(mode="after")
+    def validate_sampling(self):
+        sampling_spec(self.sampling_mode, self.start_seconds, self.end_seconds,
+                      self.timestamp_seconds, self.frame_offset)
+        return self
 
 
 class ResolveInput(Input):
@@ -140,7 +152,7 @@ async def enqueue(body: ScanInput, session: AsyncSession = Depends(get_session))
 
 @router.get("/scans/{scan_id}")
 async def get_scan(scan_id: int = Path(gt=0), frame_offset: int = Query(0, ge=0),
-                   frame_limit: int = Query(12, ge=1, le=48),
+                   frame_limit: int = Query(12, ge=1, le=MAX_FRAME_PAGE_SIZE),
                    session: AsyncSession = Depends(get_session)):
     return await call(session, "get_scan", scan_id, frame_offset=frame_offset, frame_limit=frame_limit)
 
@@ -170,7 +182,7 @@ async def resolve(body: ResolveInput, scan_id: int = Path(gt=0),
 async def add_observation(body: BboxInput, scan_id: int = Path(gt=0),
                           frame_index: int = Path(ge=0),
                           frame_offset: int | None = Query(None, ge=0),
-                          frame_limit: int = Query(12, ge=1, le=48),
+                          frame_limit: int = Query(12, ge=1, le=MAX_FRAME_PAGE_SIZE),
                           session: AsyncSession = Depends(get_session)):
     return await call(session, "edit_bbox", scan_id, frame_index, body.bbox,
                       frame_offset=frame_offset, frame_limit=frame_limit, mutate=True)
@@ -180,7 +192,7 @@ async def add_observation(body: BboxInput, scan_id: int = Path(gt=0),
 async def edit_observation_bbox(body: BboxInput, scan_id: int = Path(gt=0),
                                 frame_index: int = Path(ge=0), detection_index: int = Path(ge=0),
                                 frame_offset: int | None = Query(None, ge=0),
-                                frame_limit: int = Query(12, ge=1, le=48),
+                                frame_limit: int = Query(12, ge=1, le=MAX_FRAME_PAGE_SIZE),
                                 session: AsyncSession = Depends(get_session)):
     return await call(session, "edit_bbox", scan_id, frame_index, body.bbox,
                       detection_index=detection_index, frame_offset=frame_offset,

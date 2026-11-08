@@ -9,6 +9,7 @@ import copy
 import hashlib
 import json
 import math
+import re
 import shutil
 import subprocess
 import tempfile
@@ -34,6 +35,26 @@ from wuwa_story.visual_memory.service import VisualMemoryService
 
 PROCESSOR = "visual_memory_video"
 PROTOCOL = "visual-video-v1"
+# Limits a response page, not the number of frames sampled from a video.
+MAX_FRAME_PAGE_SIZE = 48
+
+
+def sampling_spec(mode="full", start=None, end=None, timestamp=None, frame_offset=None):
+    def valid_number(value):
+        return (not isinstance(value, bool) and isinstance(value, (int, float))
+                and math.isfinite(value))
+
+    if mode == "full" and all(value is None for value in (start, end, timestamp, frame_offset)):
+        return {"sampling_mode": "full"}
+    if (mode == "segment" and valid_number(start) and valid_number(end)
+            and 0 <= start < end and timestamp is None and frame_offset is None):
+        return {"sampling_mode": mode, "start_seconds": float(start), "end_seconds": float(end)}
+    if (mode == "frame" and start is None and end is None and valid_number(timestamp)
+            and timestamp >= 0 and (frame_offset is None or
+            (isinstance(frame_offset, int) and not isinstance(frame_offset, bool) and frame_offset >= 0))):
+        return {"sampling_mode": mode, "timestamp_seconds": float(timestamp),
+                "frame_offset": frame_offset if frame_offset is not None else 0}
+    raise ValueError("Invalid sampling mode or sampling parameters")
 
 
 def sample_times(duration: float, interval: float = 3) -> list[float]:
@@ -122,6 +143,26 @@ def extract_frame(video: Path, timestamp: float) -> bytes:
     if not result.stdout or len(result.stdout) > 5 * 1024 * 1024:
         raise ValueError("Frame extraction failed or exceeded the image limit")
     return result.stdout
+
+
+def extract_selected_frame(video: Path, timestamp: float, frame_offset: int) -> tuple[bytes, float]:
+    """Select the zero-based decoded frame at/after the seek and return its source PTS."""
+    sampling_spec("frame", timestamp=timestamp, frame_offset=frame_offset)
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "info", "-threads", "1", "-filter_threads", "1",
+         "-protocol_whitelist", "file,pipe", "-ss", str(timestamp), "-copyts", "-f", "mov",
+         "-i", str(video.resolve()), "-map", "0:v:0", "-frames:v", "1", "-vf",
+         f"select=eq(n\\,{frame_offset}),showinfo,scale=1280:720:force_original_aspect_ratio=decrease,format=yuvj420p",
+         "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"],
+        capture_output=True, check=True, timeout=60,
+    )
+    match = re.search(rb"\bn:\s*0\s+pts:\s*-?\d+\s+pts_time:([-+\d.eE]+)", result.stderr)
+    if not result.stdout or len(result.stdout) > 5 * 1024 * 1024 or not match:
+        raise ValueError("Requested frame is unavailable or exceeds the image limit")
+    actual = float(match.group(1))
+    if not math.isfinite(actual):
+        raise ValueError("Selected frame timestamp is unavailable")
+    return result.stdout, actual
 
 
 class VideoReviewService:
@@ -315,10 +356,16 @@ class VideoReviewService:
         interval_seconds=3,
         frame_batch_size=12,
         force=False,
+        sampling_mode="full",
+        start_seconds=None,
+        end_seconds=None,
+        timestamp_seconds=None,
+        frame_offset=None,
     ):
+        sampling = sampling_spec(sampling_mode, start_seconds, end_seconds, timestamp_seconds, frame_offset)
         sample_times(1, interval_seconds)
-        if not 1 <= frame_batch_size <= 48:
-            raise ValueError("Frame page size must be between 1 and 48")
+        if not 1 <= frame_batch_size <= MAX_FRAME_PAGE_SIZE:
+            raise ValueError(f"Frame page size must be between 1 and {MAX_FRAME_PAGE_SIZE}")
         if cutscene_key is not None:
             await self._validate_context(asset_node_id, cutscene_key, game_version)
         source = await self._published(
@@ -332,17 +379,11 @@ class VideoReviewService:
         if source_sha256 is not None and source["source_sha256"] != source_sha256:
             raise ValueError("Selected video bytes changed; reload before starting a scan")
         models = await asyncio.to_thread(self.memory._engine().model_identity)
-        fingerprint = hashlib.sha256(
-            json.dumps(
-                {
-                    "sha256": source["source_sha256"],
-                    "models": models,
-                    "interval": interval_seconds,
-                    "protocol": PROTOCOL,
-                },
-                sort_keys=True,
-            ).encode()
-        ).digest()
+        fingerprint_data = {"sha256": source["source_sha256"], "models": models,
+                            "interval": interval_seconds, "protocol": PROTOCOL}
+        if sampling_mode != "full":
+            fingerprint_data["sampling"] = sampling
+        fingerprint = hashlib.sha256(json.dumps(fingerprint_data, sort_keys=True).encode()).digest()
         await self.session.execute(
             select(func.pg_advisory_xact_lock(814, int.from_bytes(fingerprint[:3], "big")))
         )
@@ -384,6 +425,7 @@ class VideoReviewService:
                 "models": models,
                 "interval_seconds": interval_seconds,
                 "frame_batch_size": frame_batch_size,
+                **sampling,
                 "reviewed": False,
             },
             raw_output={
@@ -435,7 +477,7 @@ class VideoReviewService:
     async def get_scan(self, scan_id, frame_offset=0, frame_limit=12):
         from wuwa_story.db.models import VisualVideoFrame
 
-        if frame_offset < 0 or not 1 <= frame_limit <= 48:
+        if frame_offset < 0 or not 1 <= frame_limit <= MAX_FRAME_PAGE_SIZE:
             raise ValueError("Invalid frame page")
         run = await self._run(scan_id)
         source = {
@@ -490,6 +532,14 @@ class VideoReviewService:
             "unresolved_count": progress.get("unresolved_count", 0),
             "interval_seconds": run.metadata_json.get("interval_seconds"),
             "frame_batch_size": run.metadata_json.get("frame_batch_size", 12),
+            "sampling_mode": run.metadata_json.get("sampling_mode", "full"),
+            "start_seconds": run.metadata_json.get("start_seconds"),
+            "end_seconds": run.metadata_json.get("end_seconds"),
+            "timestamp_seconds": run.metadata_json.get("timestamp_seconds"),
+            "sampling_frame_offset": run.metadata_json.get("frame_offset"),
+            "sampling": {key: run.metadata_json[key] for key in
+                         ("sampling_mode", "start_seconds", "end_seconds", "timestamp_seconds", "frame_offset")
+                         if key in run.metadata_json} or {"sampling_mode": "full"},
             "progress": {"completed": count, "total": progress.get("total_frames")},
             "error": run.error,
             "sampling_only": True,
@@ -599,7 +649,7 @@ class VideoReviewService:
                 VisualVideoFrame.scan_id == scan_id, VisualVideoFrame.frame_index < frame_index
             )
         )
-        if not 1 <= frame_limit <= 48:
+        if not 1 <= frame_limit <= MAX_FRAME_PAGE_SIZE:
             raise ValueError("Invalid frame page")
         if frame_offset is None:
             frame_offset = position // frame_limit * frame_limit
@@ -735,7 +785,21 @@ class VideoReviewService:
             if digest.hexdigest() != source["source_sha256"] or size != source["size_bytes"]:
                 raise ValueError("Stored video failed source hash or length verification")
             duration = await asyncio.to_thread(probe_duration, video)
-            times = sample_times(duration, spec["interval_seconds"])
+            mode = spec.get("sampling_mode", "full")
+            sampling = sampling_spec(mode, spec.get("start_seconds"), spec.get("end_seconds"),
+                                     spec.get("timestamp_seconds"), spec.get("frame_offset"))
+            if mode == "segment":
+                start, end = sampling["start_seconds"], sampling["end_seconds"]
+                if end > duration:
+                    raise ValueError("Sampling segment exceeds video duration")
+                times = [start + t for t in sample_times(end - start, spec["interval_seconds"])]
+                times = [t for t in times if t < end]
+            elif mode == "frame":
+                if sampling["timestamp_seconds"] >= duration:
+                    raise ValueError("Frame timestamp exceeds video duration")
+                times = [sampling["timestamp_seconds"]]
+            else:
+                times = sample_times(duration, spec["interval_seconds"])
             run = await self._run(scan_id)
             data = dict(run.raw_output or {})
             data.update(total_frames=len(times), duration=duration)
@@ -752,7 +816,15 @@ class VideoReviewService:
                     is not None
                 ):
                     continue
-                jpeg = await asyncio.to_thread(extract_frame, video, timestamp)
+                if mode in ("frame", "segment"):
+                    jpeg, timestamp = await asyncio.to_thread(
+                        extract_selected_frame, video, timestamp,
+                        sampling["frame_offset"] if mode == "frame" else 0,
+                    )
+                    if mode == "segment" and not start <= timestamp < end:
+                        break
+                else:
+                    jpeg = await asyncio.to_thread(extract_frame, video, timestamp)
                 result = await self.memory.identify(jpeg, detect=True)
                 path = Path(directory) / "frame.jpg"
                 await asyncio.to_thread(path.write_bytes, jpeg)
@@ -796,6 +868,8 @@ class VideoReviewService:
                 run.raw_output = data
                 await self.session.commit()
             run = await self._run(scan_id)
+            if mode == "segment":
+                run.raw_output = {**run.raw_output, "total_frames": run.raw_output["completed_frames"]}
             run.status, run.finished_at, run.error = "succeeded", datetime.now(UTC), None
             await self.session.commit()
         return await self.get_scan(scan_id)
