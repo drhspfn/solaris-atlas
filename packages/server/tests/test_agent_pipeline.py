@@ -129,6 +129,41 @@ async def test_visual_variant_pages_are_required_and_published_with_story(world)
             assert run.status == 'completed', run.error
             doc = await db.get(Document, job.document_id)
             assert doc.metadata_json['cutscene_descriptions'][0]['visual_reference_id'] == report_id
+            from wuwa_story.agents.contracts import CutsceneDescription
+            from wuwa_story.story.cutscene_descriptions import (
+                clear_manual_description,
+                edit_public_description,
+                public_descriptions,
+                publish_descriptions,
+            )
+
+            independent = await public_descriptions(db, [asset_id], release.id, locale.code)
+            assert independent[asset_id]['text'] == final['cutscene_descriptions'][0]['text']
+            manual = await edit_public_description(db, asset_id=asset_id, release_id=release.id,
+                                                   locale_id=locale.id, title='Edited scene', text='A reviewed public summary.',
+                                                   expected_revision=0)
+            await publish_descriptions(db, [CutsceneDescription.model_validate(item) for item in final['cutscene_descriptions']],
+                                       release_id=release.id, locale_id=locale.id, source_document_id=doc.id, processor_run_id=run.id)
+            assert (await public_descriptions(db, [asset_id], release.id, locale.code))[asset_id]['origin'] == 'manual'
+            assert await public_descriptions(db, [asset_id], release.id, 'ja') == {}
+            assert await public_descriptions(db, [asset_id], release.id + 100000, locale.code) == {}
+            await clear_manual_description(db, asset_id=asset_id, release_id=release.id,
+                                           locale_id=locale.id, expected_revision=manual.revision)
+            assert (await public_descriptions(db, [asset_id], release.id, locale.code))[asset_id]['origin'] == 'analysis'
+            assert await db.get(Document, manual.id) is not None
+            from wuwa_story.db.models.content import DocumentHead
+            from wuwa_story.story.cutscene_description_backfill import backfill
+
+            await db.execute(delete(DocumentHead).where(
+                DocumentHead.node_id == asset_id, DocumentHead.document_type == f'cutscene-public:{release.id}'))
+            preview = await backfill(db, [release.id])
+            assert preview['results'][0]['status'] == 'candidate'
+            assert await public_descriptions(db, [asset_id], release.id, locale.code) == {}
+            copied = await backfill(db, [release.id], apply=True)
+            assert copied['results'][0]['status'] == 'copied'
+            rebuilt = (await public_descriptions(db, [asset_id], release.id, locale.code))[asset_id]
+            await backfill(db, [release.id], apply=True)
+            assert (await public_descriptions(db, [asset_id], release.id, locale.code))[asset_id]['document_id'] == rebuilt['document_id']
             receipt = job.checkpoint['visual_evidence'][str(report_id)]
             assert receipt['indices'] == [0, 1]
             intake = await db.scalar(select(AgentCall).where(AgentCall.run_id == run_id, AgentCall.step == 2))
