@@ -11,12 +11,19 @@ import json
 import os
 from pathlib import Path
 
-from sqlalchemy import String, or_, select, text
-from wuwa_story.db.models.graph import Node
+from sqlalchemy import String, cast, or_, select, text
+from sqlalchemy.orm import aliased
+from wuwa_story.db.models.graph import Node, NodeRevision
 from wuwa_story.db.models.ops import GameRelease, ProcessingRun, Processor
+from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.storage import FileReference
 from wuwa_story.db.session import SessionFactory, engine
-from wuwa_story.ingestion.entity_media import MediaRequest, entity_media_targets
+from wuwa_story.ingestion.entity_media import (
+    MediaRequest,
+    entity_media_targets,
+    flow_background_paths,
+    flow_spine_ids,
+)
 from wuwa_story.ingestion.media_jobs import enqueue_entity_media
 from wuwa_story.ingestion.media_workspaces import workspace_expired
 from wuwa_story.ingestion.spine_presentation import SPINE_RECIPE
@@ -34,6 +41,31 @@ def save(path, report):
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(temporary, path)
+
+
+async def authored_background_candidates(session, owners):
+    """Find current source-backed backgrounds without requiring a published file."""
+    newer = aliased(NodeRevision)
+    latest = (select(newer.id).join(SourceRecord, SourceRecord.id == newer.source_record_id)
+              .where(newer.node_id == NodeRevision.node_id, newer.release_id == NodeRevision.release_id)
+              .order_by(newer.revision.desc()).limit(1).correlate(NodeRevision).scalar_subquery())
+    query = (select(Node.canonical_key, NodeRevision.release_id, SourceRecord.data)
+             .join(NodeRevision, NodeRevision.node_id == Node.id)
+             .join(SourceRecord, SourceRecord.id == NodeRevision.source_record_id)
+             .join(SourceFile, SourceFile.id == SourceRecord.source_file_id)
+             .where(Node.canonical_key.like("flow_state:%"), NodeRevision.release_id.is_not(None),
+                    NodeRevision.id == latest, SourceRecord.release_id == NodeRevision.release_id,
+                    SourceFile.release_id == NodeRevision.release_id,
+                    SourceFile.logical_source_path == "BinData/flowState/flowstate.json",
+                    cast(SourceRecord.data, String).contains("BackgroundConfig")))
+    if owners:
+        query = query.where(Node.canonical_key.in_(owners))
+    rows = await session.stream(query.execution_options(yield_per=500))
+    selected = set()
+    async for owner, release_id, raw in rows:
+        if isinstance(raw, dict) and (flow_background_paths(raw) or flow_spine_ids(raw)):
+            selected.add((owner, release_id))
+    return selected
 
 
 async def run(args):
@@ -72,6 +104,7 @@ async def run(args):
                                    FileReference.metadata_json["sequence_media"]["composition"]["state"].astext == "ready"))
                         .distinct())).all()
                     priority = {owner: i for i, owner in enumerate(args.priority)}
+                    rows = set(rows) | await authored_background_candidates(session, args.owner)
                     rows = sorted(rows, key=lambda row: (row[0] not in priority, -row[1], priority.get(row[0], len(priority)), row[0]))
                     if args.owner:
                         rows = [row for row in rows if row[0] in args.owner]
