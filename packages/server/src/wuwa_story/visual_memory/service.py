@@ -6,7 +6,6 @@ The caller owns the transaction. Query images remain temporary; no remote URL is
 import asyncio
 import hashlib
 import math
-import re
 import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -32,6 +31,7 @@ from wuwa_story.db.models import (
 )
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
+from wuwa_story.visual_memory.kinds import VisualKind
 
 
 def normalized_vector(values):
@@ -185,10 +185,7 @@ class VisualMemoryService:
         )
 
     async def create_identity(self, name, kind, node_ids=None, lore_id=None, description=""):
-        kind = _name(kind, "kind", 64)
-        if not re.fullmatch(r"[a-z][a-z0-9_-]*", kind):
-            raise ValueError(
-                "kind must be a lowercase key, e.g. npc or custom_location")
+        kind = VisualKind(kind).value
         if lore_id is not None and await self.session.get(VisualLoreIdentity, lore_id) is None:
             raise ValueError("Lore identity not found")
         row = VisualIdentity(
@@ -205,9 +202,7 @@ class VisualMemoryService:
         if "name" in changes:
             row.name = _name(changes["name"])
         if "kind" in changes:
-            if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", changes["kind"]):
-                raise ValueError("Invalid kind")
-            row.kind = changes["kind"]
+            row.kind = VisualKind(changes["kind"]).value
         if "lore_id" in changes:
             lore_id = changes["lore_id"]
             if lore_id is not None and await self.session.get(VisualLoreIdentity, lore_id) is None:

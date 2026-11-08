@@ -153,7 +153,7 @@ async def test_reference_review_search_retention_and_model_isolation(memory):
 async def test_relink_revokes_approval_and_appearance_validation(memory):
     service, session, actor = memory
     a = await service.create_identity("Abby", "npc")
-    b = await service.create_identity("Custom", "custom_kind")
+    b = await service.create_identity("Custom", "other")
     appearance = await service.create_appearance(a["id"], "World")
     image = encode_png(Image.new("RGB", (20, 12), "blue"))
     ref = await service.add_reference(

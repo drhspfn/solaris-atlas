@@ -3,6 +3,40 @@ import {readFileSync} from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 
+test('identity creation selects a server-provided type and rejects a forged typo', async () => {
+  class Element {
+    constructor() { this.events={}; this.dataset={}; this.disabled=false; this.value=''; this.children=new Map(); }
+    querySelector(s) { if (!this.children.has(s)) this.children.set(s,new Element()); return this.children.get(s); }
+    querySelectorAll() { return []; }
+    addEventListener(type, fn) { this.events[type]=fn; }
+    setAttribute() {} removeAttribute() {} focus() {}
+  }
+  const root=new Element();
+  root.dataset.identityKinds=JSON.stringify([{value:'npc',label:'NPC'},{value:'other',label:'Other'}]);
+  const requests=[];
+  const fetch=async (url,opts={})=>{ requests.push({url,opts}); return {ok:true,json:async()=>url==='/auth/csrf'?{csrf_token:'token'}:url.endsWith('/identities')?{id:10,name:'Mysterious Woman',kind:'npc'}:{items:[],total:0}}; };
+  const document={querySelector:()=>root,body:{style:{}},activeElement:new Element()};
+  class FormData { constructor() { return new URLSearchParams(); } }
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js',import.meta.url),'utf8')+' '+readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),
+    {document,fetch,URL,URLSearchParams,FormData,location:{href:'http://test/'},setTimeout});
+  root.querySelector('#vm-create-identity').events.click();
+  const body=root.querySelector('#vm-dialog-body');
+  assert.match(body.innerHTML,/<select[^>]+name="kind"/);
+  assert.match(body.innerHTML,/<option value="npc">NPC<\/option>/);
+  assert.doesNotMatch(body.innerHTML,/<input[^>]+name="kind"/);
+  await new Promise(resolve=>setImmediate(resolve));
+  body.querySelector('[name=name]').value='Mysterious Woman';
+  body.querySelector('[name=kind]').value='npm';
+  const submit=root.querySelector('#vm-dialog-submit');
+  await submit.events.click({currentTarget:submit});
+  assert.match(root.querySelector('#vm-message').textContent,/Choose a type/);
+  assert.equal(requests.filter(r=>r.url.endsWith('/identities')&&r.opts.method==='POST').length,0);
+  body.querySelector('[name=kind]').value='npc';
+  await submit.events.click({currentTarget:submit});
+  const saved=requests.find(r=>r.url.endsWith('/identities')&&r.opts.method==='POST');
+  assert.equal(JSON.parse(saved.opts.body).kind,'npc');
+});
+
 test('library paginates and ignores stale filter results', async () => {
   class Element {
     constructor() { this.events = {}; this.dataset = {}; this.disabled = false; this.value = ''; }

@@ -26,6 +26,11 @@ async def test_visual_memory_page_is_registered_and_renders_in_admin_shell(monke
         assert "vm-model-status" in response.text
         assert "/console/statics/visual-memory.js" in response.text
         assert response.headers["cache-control"] == "private, no-store"
+        assert 'data-identity-kinds=' in response.text
+        assert '<select class="form-select" name="kind">' in response.text
+        assert '<option value="npc">NPC</option>' in response.text
+        assert '<option value="other">Other</option>' in response.text
+        assert 'including custom kinds' not in response.text
     await engine.dispose()
 
 

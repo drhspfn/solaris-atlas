@@ -41,8 +41,8 @@ No production deployment or model download is performed by this feature itself.
 
 ## Working with the library
 
-1. Create a visual identity and optionally link existing game node IDs. A custom kind
-   such as `landmark` needs no game character record.
+1. Create a visual identity and optionally link existing game node IDs. A selected kind
+   such as `location` needs no game character record.
 2. Create another identity for a genuinely different visual/game form. Yangyang and
    Yangyang: Xuanling remain separate identities; an explicit lore group can relate them.
    An outfit is an appearance belonging to one identity, not an automatic lore merge.
@@ -188,6 +188,12 @@ The internal agent advertises `visual_create_identity` and `visual_add_reference
 explicit new identities and pending observations; these are not public MCP tools.
 
 ## Small bootstrap
+
+Identity kinds are a shared server enum: `playable`, `story`, `npc`, `technical`,
+`character`, `location`, `item`, `creature`, `object`, `other`. Admin creation and
+filter controls use the same choices. Creation/update APIs, agent tools and direct
+service calls reject arbitrary kind strings; use `other` for unclassified subjects.
+The existing text database column is retained; no database migration is required.
 
 After explicitly linking game nodes to visual identities:
 
