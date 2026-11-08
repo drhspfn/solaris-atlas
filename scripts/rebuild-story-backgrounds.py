@@ -96,7 +96,7 @@ async def run(args):
                             .where(Processor.key == "entity_media", ProcessingRun.input_hash == identity)
                             .order_by(ProcessingRun.id.desc()).limit(1))
                         result = {"owner": owner, "release_id": release_id, "input_hash": identity.hex()}
-                        if previous and previous.status in {"running", "queued", "waiting_dependency", "completed"}:
+                        if previous and previous.status in {"running", "queued", "waiting_dependency", "completed", "partial", "failed"}:
                             result.update(action="existing", run_id=previous.id, status=previous.status)
                         elif args.apply:
                             # Persist the planned identity before contacting RabbitMQ. On uncertain
