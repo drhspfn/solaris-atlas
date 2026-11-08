@@ -101,7 +101,8 @@ async def call(session: AsyncSession, method: str, *args: Any, mutate: bool = Fa
         raise HTTPException(422, str(exc)) from exc
     except IntegrityError as exc:
         if method == "create_appearance" and getattr(exc.orig, "sqlstate", None) == "23505":
-            raise HTTPException(409, "Appearance already exists for this identity") from exc
+            raise HTTPException(
+                409, "Appearance already exists for this identity") from exc
         raise
 
 
@@ -122,7 +123,7 @@ async def tool_call(session: AsyncSession, user: User, name: str, data: dict, *,
 
 @router.get("/models")
 async def models():
-    def check(variable: str, modules: list[str], files: list[str]) -> dict:
+    def check(variable: str, modules: list[str], files: list[str], weights=("model.safetensors", "pytorch_model.bin")) -> dict:
         path = os.environ.get(variable)
         missing = [
             name for name in modules if importlib.util.find_spec(name) is None]
@@ -131,12 +132,22 @@ async def models():
         if not path:
             return {"available": False, "reason": f"{variable} is not configured"}
         root = Path(path)
-        if files and (not all((root / name).is_file() for name in files) or not any((root / name).is_file() for name in ("model.safetensors", "pytorch_model.bin"))):
+        if files and (not all((root / name).is_file() for name in files) or (weights and not any((root / name).is_file() for name in weights))):
             return {"available": False, "reason": "Local model files are missing"}
         if not files and not root.is_file():
             return {"available": False, "reason": "Local detector file is missing"}
         return {"available": None, "reason": "Configured; model loading has not been verified"}
-    return {"embedding": check("VISUAL_MEMORY_DINO_PATH", ["torch", "transformers", "PIL"], ["config.json", "preprocessor_config.json"]),
+    backend = os.environ.get("VISUAL_MEMORY_EMBEDDER", "dinov2")
+    if backend == "ccip":
+        embedding = check("VISUAL_MEMORY_CCIP_PATH", ["onnxruntime", "numpy", "PIL"], [
+                          "model_feat.onnx"], weights=())
+    elif backend == "dinov2":
+        embedding = check("VISUAL_MEMORY_DINO_PATH", ["torch", "transformers", "PIL"], [
+                          "config.json", "preprocessor_config.json"])
+    else:
+        embedding = {"available": False,
+                     "reason": "VISUAL_MEMORY_EMBEDDER must be dinov2 or ccip"}
+    return {"embedding": {**embedding, "backend": backend},
             "detection": check("VISUAL_MEMORY_DETECTOR_PATH", ["onnxruntime", "cv2", "numpy", "PIL"], [])}
 
 
@@ -163,7 +174,8 @@ async def game_entities(q: str = Query("", max_length=128),
         has_more = len(rows) > limit
         rows = rows[:limit]
         # Search has no count query; never invent a total for a partial page.
-        total = offset + len(rows) if not has_more and (rows or offset == 0) else None
+        total = offset + \
+            len(rows) if not has_more and (rows or offset == 0) else None
     else:
         result = await browse_catalog(category="character", quest_type_id=None, locale=locale,
                                       character_kind="all", limit=limit, offset=offset, session=session)
@@ -175,15 +187,17 @@ async def game_entities(q: str = Query("", max_length=128),
     rover_ids = set(await session.scalars(
         select(Character.node_id).where(
             Character.node_id.in_([row["id"] for row in rows]),
-            Character.metadata_json["public_identity"]["family"].as_string() == "rover",
+            Character.metadata_json["public_identity"]["family"].as_string(
+            ) == "rover",
         )
     )) if rows else set()
     items = [{"node_id": row["id"], "name": row.get("title") or row.get("alias"),
-                       "kind": row.get("character_kind") or "character", "image_url": row.get("image_url"),
-                       "canonical_key": row.get("canonical_key")} for row in rows]
+              "kind": row.get("character_kind") or "character", "image_url": row.get("image_url"),
+              "canonical_key": row.get("canonical_key")} for row in rows]
     for item in items:
         if item["node_id"] in rover_ids:
-            item.update(name="Rover", kind="playable", appearance_choices=list(ROVER_APPEARANCES))
+            item.update(name="Rover", kind="playable",
+                        appearance_choices=list(ROVER_APPEARANCES))
     return {"items": items,
             "total": total, "has_more": has_more, "limit": limit, "offset": offset}
 
@@ -217,7 +231,8 @@ async def identity_from_game(body: GameEntityInput, locale: str = Query("en", mi
     ids = list(await session.scalars(select(VisualIdentityNode.identity_id)
                                      .where(VisualIdentityNode.node_id == body.node_id).order_by(VisualIdentityNode.identity_id)))
     if len(ids) > 1:
-        raise HTTPException(422, "Several visual identities link this entity; choose an existing identity")
+        raise HTTPException(
+            422, "Several visual identities link this entity; choose an existing identity")
     service = service_for(session)
     if ids:
         return await service._identity_dict(await service._identity(ids[0]))
