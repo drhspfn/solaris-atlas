@@ -18,8 +18,9 @@ async def test_mcp_file_params_match_openai_contract():
         descriptor = descriptors[name]
         assert descriptor["_meta"]["openai/fileParams"] == ["file"]
         schema = descriptor["inputSchema"]
-        assert schema["properties"]["file"]["$ref"] == "#/$defs/OpenAIFile"
-        file = schema["$defs"]["OpenAIFile"]
+        file = schema["properties"]["file"]
+        assert "$ref" not in file and "anyOf" not in file
+        assert "OpenAIFile" not in schema.get("$defs", {})
         assert file["type"] == "object"
         assert set(file["required"]) == {"download_url", "file_id"}
         for field in ("download_url", "file_id", "mime_type", "file_name"):
@@ -28,6 +29,8 @@ async def test_mcp_file_params_match_openai_contract():
         assert "file" not in schema.get("required", [])
         assert descriptor["annotations"]["readOnlyHint"] is True
         assert descriptor["annotations"]["destructiveHint"] is False
+    # The MCP presentation change does not alter Pydantic's input model.
+    assert tools.SearchInput.model_json_schema()["$defs"]["OpenAIFile"]["type"] == "object"
 
 
 @pytest.mark.parametrize("payload", [
