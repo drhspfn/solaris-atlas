@@ -8,7 +8,7 @@ from typing import Any
 def preview(value: Any, limit: int = 4000) -> str:
     def clean(item):
         if isinstance(item, dict):
-            return {key: ("[redacted]" if key.lower() in ("image", "base64") or any(part in key.lower() for part in
+            return {key: ("[redacted]" if key.lower() in ("image", "base64", "file", "download_url") or any(part in key.lower() for part in
                     ("api_key", "authorization", "password", "secret", "encrypted_content", "image_base64"))
                 else clean(val)) for key, val in item.items()}
         if isinstance(item, list):
