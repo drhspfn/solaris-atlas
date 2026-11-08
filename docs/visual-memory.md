@@ -283,7 +283,7 @@ source game records, not separate visual identities. Existing approved reference
 labels are preserved and new elements join through the imported family metadata.
 The picker never merges unrelated people merely because their names match.
 
-Each completed, unreviewed video frame has an Edit boxes action using the same
+Each persisted frame in an unreviewed scan has an Edit boxes action using the same
 annotation component as the image laboratory. Draw a new box, resize an unresolved
 box or change its coordinates. Removing an automatic proposal rejects it; saved
 or approved references remain unchanged. Manual boxes get similarity suggestions
@@ -300,3 +300,22 @@ Segment jobs process only their selected time window. Full jobs retain their pre
 fingerprint and cover the whole recording. These modes have distinct persisted scan
 identities, so a short segment never marks the entire source as reviewed.
 `MAX_FRAME_PAGE_SIZE` bounds one response page only and does not limit scan length.
+
+Ready frames remain editable while the scanner processes subsequent frames, and
+after a partial failure. Finishing review and rejecting every remaining proposal
+still require a completed scan. Short run-row locks serialize progress updates
+with moderation so newly persisted frames cannot overwrite review counters.
+
+The review screen saves each object independently. Identity selections are drafts
+until Save pending or Approve; they survive polling, paging and reloads in the same
+browser tab using session storage. Failed saves retain the selection. Concurrent
+server changes require explicit reselection rather than overwriting newer labels.
+Closing an edited identity or box dialog asks before discarding changes, and leaving
+the page warns about unsaved drafts. Private browsing may disable session storage;
+in that case drafts survive polling but cannot be restored after a reload.
+
+Identical scans reuse database checkpoints and R2 frame images, keyed by source
+SHA-256, inference model fingerprints and sampling parameters. A changed source,
+model or segment starts a separate scan. A failed scan can resume saved frames;
+it does not erase previous human decisions. No temporary-directory TTL cache is
+needed for this persisted reuse.

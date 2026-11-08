@@ -29,6 +29,66 @@
       opened: false,
     };
     const video = $("video");
+    const drafts = new Map();
+    const saving = new Set();
+    const errors = new Map();
+    const renderedFrames = new Map();
+    let editorDirty = () => false;
+    const storageKey = "solaris.visual-video-drafts.v1";
+    try {
+      for (const [key, value] of JSON.parse(
+        sessionStorage.getItem(storageKey) || "[]",
+      ))
+        if (Array.isArray(value.links)) drafts.set(key, value);
+    } catch {
+      /* Storage can be disabled in private browsing. */
+    }
+    function persistDrafts() {
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify([...drafts]));
+      } catch {
+        /* In-memory drafts still survive polling. */
+      }
+    }
+    const reviewable = (scan) =>
+      scan &&
+      !scan.reviewed &&
+      (scan.can_review_frames ??
+        [
+          "pending",
+          "running",
+          "failed",
+          "succeeded",
+          "completed",
+          "success",
+        ].includes(scan.status));
+    const observationKey = (scan, frame, index) =>
+      `${scan.source?.source_sha256 || scan.source?.sha256 || state.source?.source_sha256}:${scan.id}:${frame}:${index}`;
+    const baseline = (d) =>
+      JSON.stringify([d.bbox, d.decision, d.reference_id, d.links]);
+    const linkKey = (links) =>
+      JSON.stringify(
+        (links || [])
+          .map((link) => [link.identity_id, link.appearance_id || null])
+          .sort((a, b) => a[0] - b[0] || (a[1] || 0) - (b[1] || 0)),
+      );
+    function displayedDetection(scan, frame, d, index) {
+      const key = observationKey(scan, frame, index),
+        draft = drafts.get(key);
+      return {
+        ...d,
+        links: draft?.links || d.links || [],
+        dirty: !!draft,
+        conflict: !!draft && draft.baseline !== baseline(d),
+        saving: saving.has(key),
+        error: errors.get(key),
+      };
+    }
+    globalThis.addEventListener?.("beforeunload", (event) => {
+      if (!drafts.size && !saving.size && !editorDirty()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
     const status = (text) => {
       $("#vm-video-status").textContent = text;
     };
@@ -38,7 +98,8 @@
       ["completed", "succeeded", "success"].includes(scan?.status);
     const time = (value) => {
       const milliseconds = Math.round(Math.max(0, Number(value) || 0) * 1000);
-      const seconds = Math.floor(milliseconds / 1000), fraction = milliseconds % 1000;
+      const seconds = Math.floor(milliseconds / 1000),
+        fraction = milliseconds % 1000;
       return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}${fraction ? "." + String(fraction).padStart(3, "0") : ""}`;
     };
     function parseTime(value) {
@@ -75,6 +136,9 @@
     function controls() {
       const scan = state.scan;
       const pending = scan?.unresolved_count;
+      const prefix = scan ? observationKey(scan, "", "").slice(0, -1) : "";
+      const hasDrafts =
+        scan && [...drafts.keys()].some((key) => key.startsWith(prefix));
       $("#vm-video-start").disabled =
         state.busy ||
         !state.source ||
@@ -82,14 +146,22 @@
         !state.source.source_sha256 ||
         !state.source.game_version ||
         !state.source.asset_version ||
-        !state.source.cutscene_key ||
-        active(scan);
-      $("#vm-video-start").textContent =
-        "Start / open scan";
+        !state.source.cutscene_key;
+      $("#vm-video-start").textContent = "Start / open scan";
       $("#vm-video-reviewed").disabled =
-        state.busy || !completed(scan) || !!scan.reviewed || pending !== 0;
+        state.busy ||
+        saving.size > 0 ||
+        hasDrafts ||
+        !completed(scan) ||
+        !!scan.reviewed ||
+        pending !== 0;
       $("#vm-video-reject-all").disabled =
-        state.busy || !completed(scan) || !(pending > 0) || !!scan.reviewed;
+        state.busy ||
+        saving.size > 0 ||
+        hasDrafts ||
+        !completed(scan) ||
+        !(pending > 0) ||
+        !!scan.reviewed;
       $("#vm-video-variant").disabled = state.busy || !state.sources.length;
       $("#vm-frame-prev").disabled =
         state.busy || !scan || state.frameOffset === 0;
@@ -159,6 +231,7 @@
       video.removeAttribute("src");
       video.load();
       $("#vm-video-frames").replaceChildren();
+      renderedFrames.clear();
       controls();
     }
     async function selectItem(item) {
@@ -235,6 +308,9 @@
     }
     function render(scan) {
       state.scan = scan;
+      $("#vm-video-drafts").textContent = drafts.size
+        ? `${drafts.size} unsaved selection(s), kept in this browser tab. Save pending or approve each object. Ready frames can be reviewed while scanning continues.`
+        : "Ready frames can be reviewed while scanning continues. Matching scans reuse saved frames and decisions.";
       const frameCount = scan.frame_count ?? 0;
       $("#vm-frame-page").textContent =
         `${frameCount ? state.frameOffset + 1 : 0}–${Math.min(state.frameOffset + (scan.frames || []).length, frameCount)} of ${frameCount} frames · ${scan.unresolved_count ?? "Unknown"} unresolved`;
@@ -250,16 +326,47 @@
       status(
         `${scan.reviewed ? "Reviewed scan" : "Scan " + (scan.status || "unknown")}${progress} · ${sampling}${scan.error ? " · " + scan.error : ""} · SHA-256 ${scan.source?.source_sha256 || scan.source?.sha256 || "not available"}`,
       );
-      $("#vm-video-frames").innerHTML =
-        (scan.frames || [])
-          .map(
-            (frame) =>
-              `<article class="vm-box vm-video-frame"><div><button type="button" class="vm-video-thumb" data-seek="${esc(frame.time)}"><img src="${esc(safeURL(frame.image_url))}" alt="Sample at ${esc(time(frame.time))}" loading="lazy"><span>Seek to ${esc(time(frame.time))}</span></button></div><div><h3>Sample at ${esc(time(frame.time))}</h3><button type="button" class="btn btn-secondary" data-edit-frame="${esc(frame.index)}" ${scan.status !== "succeeded" || scan.reviewed ? "disabled" : ""}>Edit frame boxes</button>${(frame.detections || []).map((d, i) => `<div class="vm-candidate"><strong>Object ${i + 1} · ${esc(d.decision || "unresolved")}</strong><canvas class="vm-video-crop" data-frame-crop="${esc(frame.index)}" data-crop-index="${i}" aria-label="Crop for object ${i + 1}"></canvas><p class="vm-meta">${esc(d.status || "Unknown")} · ${esc((d.candidates || []).map((c) => c.name || "Unnamed").join(", ") || "No candidate evidence")}</p><p>Selected: ${esc((d.links || []).map((l) => [l.name || l.identity_name || `Identity ${l.identity_id}`, l.appearance_name || (l.appearance_id ? `appearance ${l.appearance_id}` : "")].filter(Boolean).join(" · ")).join(", ") || "None — unresolved")}</p><div class="vm-actions"><button class="btn btn-secondary" type="button" data-choose-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${scan.reviewed || !completed(scan) ? "disabled" : ""}>Choose identities / appearances</button><button class="btn btn-secondary" type="button" data-decision="reject" data-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${scan.reviewed || !completed(scan) ? "disabled" : ""}>Reject</button><button class="btn btn-secondary" type="button" data-decision="pending" data-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${scan.reviewed || !completed(scan) || !(d.links || []).length ? "disabled" : ""}>Save pending</button><button class="btn btn-primary" type="button" data-decision="approve" data-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${scan.reviewed || !completed(scan) || !(d.links || []).length ? "disabled" : ""}>Approve</button></div></div>`).join("") || '<p class="vm-meta">No objects detected in this sample.</p>'}</div></article>`,
-          )
-          .join("") ||
-        (completed(scan)
-          ? '<p class="vm-empty">No frames were sampled.</p>'
-          : "");
+      const frameHTML = (scan.frames || []).map(
+        (frame) =>
+          `<article class="vm-box vm-video-frame" data-frame-index="${esc(frame.index)}"><div><button type="button" class="vm-video-thumb" data-seek="${esc(frame.time)}"><img src="${esc(safeURL(frame.image_url))}" alt="Sample at ${esc(time(frame.time))}" loading="lazy"><span>Seek to ${esc(time(frame.time))}</span></button></div><div><h3>Sample at ${esc(time(frame.time))}</h3><button type="button" class="btn btn-secondary" data-edit-frame="${esc(frame.index)}" ${!reviewable(scan) ? "disabled" : ""}>Edit frame boxes</button>${
+            (frame.detections || [])
+              .map((raw, i) => {
+                const d = displayedDetection(
+                  scan,
+                  frame.index,
+                  raw,
+                  raw.index ?? i,
+                );
+                return `<div class="vm-candidate"><strong>Object ${i + 1} · ${esc(d.decision || "unresolved")}</strong><canvas class="vm-video-crop" data-frame-crop="${esc(frame.index)}" data-crop-index="${i}" aria-label="Crop for object ${i + 1}"></canvas><p class="vm-meta">${esc(d.status || "Unknown")} · ${esc((d.candidates || []).map((c) => c.name || "Unnamed").join(", ") || "No candidate evidence")}</p><p>Selected: ${esc((d.links || []).map((l) => [l.name || l.identity_name || `Identity ${l.identity_id}`, l.appearance_name || (l.appearance_id ? `appearance ${l.appearance_id}` : "")].filter(Boolean).join(" · ")).join(", ") || "None — unresolved")}</p>${d.dirty ? '<p class="vm-meta">Unsaved selection</p>' : ""}${d.conflict ? '<p class="vm-error">Object changed on the server. Choose its identity again.</p>' : ""}${d.error ? `<p class="vm-error">${esc(d.error)}</p>` : ""}${d.saving ? '<p role="status">Saving this object…</p>' : ""}<div class="vm-actions"><button class="btn btn-secondary" type="button" data-choose-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${!reviewable(scan) || d.saving ? "disabled" : ""}>Choose identities / appearances</button><button class="btn btn-secondary" type="button" data-decision="reject" data-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${!reviewable(scan) || d.saving ? "disabled" : ""}>Reject</button><button class="btn btn-secondary" type="button" data-decision="pending" data-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${!reviewable(scan) || d.saving || d.conflict || !(d.links || []).length ? "disabled" : ""}>Save pending</button><button class="btn btn-primary" type="button" data-decision="approve" data-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${!reviewable(scan) || d.saving || d.conflict || !(d.links || []).length ? "disabled" : ""}>Approve</button></div></div>`;
+              })
+              .join("") ||
+            '<p class="vm-meta">No objects detected in this sample.</p>'
+          }</div></article>`,
+      );
+      const container = $("#vm-video-frames");
+      const visible = new Set(
+        (scan.frames || []).map((frame) => String(frame.index)),
+      );
+      for (const index of renderedFrames.keys()) {
+        if (!visible.has(index)) {
+          container.querySelector(`[data-frame-index="${index}"]`)?.remove();
+          renderedFrames.delete(index);
+        }
+      }
+      if (!renderedFrames.size) container.replaceChildren();
+      (scan.frames || []).forEach((frame, i) => {
+        const index = String(frame.index),
+          html = frameHTML[i];
+        if (renderedFrames.get(index) === html) return;
+        const existing = container.querySelector(
+          `[data-frame-index="${index}"]`,
+        );
+        if (existing) existing.outerHTML = html;
+        else container.insertAdjacentHTML("beforeend", html);
+        renderedFrames.set(index, html);
+      });
+      if (!visible.size && completed(scan))
+        container.innerHTML = '<p class="vm-empty">No frames were sampled.</p>';
       for (const canvas of root.querySelectorAll("[data-frame-crop]")) {
         const frame = scan.frames.find(
           (f) => String(f.index) === canvas.dataset.frameCrop,
@@ -273,9 +380,11 @@
           bbox[3] <= bbox[1]
         )
           continue;
+        if (canvas.dataset.loaded) continue;
+        canvas.dataset.loaded = "true";
         const image = new Image();
         image.onload = () => {
-          if (state.scan !== scan) return;
+          if (!canvas.isConnected) return;
           const scale = Math.min(
             1,
             180 / (bbox[2] - bbox[0]),
@@ -343,7 +452,7 @@
     function editFrame(frame) {
       const scan = state.scan,
         generation = state.generation;
-      if (!scan || scan.status !== "succeeded" || scan.reviewed) return;
+      if (!scan || !reviewable(scan)) return;
       const boxes = (frame.detections || [])
         .map((d, i) => ({
           bbox: [...(d.bbox || [])],
@@ -358,15 +467,18 @@
           visualMemoryBbox.valid(b.bbox, frame.width, frame.height),
         );
       const removed = [];
+      const originalBoxes = JSON.stringify(boxes);
+      const dirtyBoxes = () =>
+        removed.length > 0 || JSON.stringify(boxes) !== originalBoxes;
+      editorDirty = dirtyBoxes;
       dialog(
         "Edit frame boxes",
         `<p>Detector boxes are proposals. Reject non-character false positives and add missed boxes manually. Drag on the image to add a box; drag a lower-right handle to resize. Saved or approved crops are read-only: add a new box to correct them.</p><div class="vm-stage"><img id="vm-frame-edit-image" src="${esc(safeURL(frame.image_url))}" alt="Frame at ${esc(time(frame.time))}"><div id="vm-frame-edit-overlay" class="vm-annotation-overlay"></div></div><div id="vm-frame-edit-boxes"></div>`,
         async () => {
           if (
             generation !== state.generation ||
-            state.scan !== scan ||
-            scan.status !== "succeeded" ||
-            scan.reviewed
+            state.scan?.id !== scan.id ||
+            !reviewable(state.scan)
           )
             throw new Error(
               "The scan changed. Reopen the frame before saving.",
@@ -392,6 +504,7 @@
                 );
             }
             await refresh(scan.id, generation);
+            editorDirty = () => false;
           } catch (error) {
             let reloaded = true;
             try {
@@ -407,6 +520,13 @@
               `Could not save all boxes: ${error.message}. ${reloaded ? "Reopen the frame to review saved changes." : "Reload the source to review saved changes."}`,
             );
           }
+        },
+        "Save",
+        {
+          isDirty: dirtyBoxes,
+          onClose: () => {
+            editorDirty = () => false;
+          },
         },
       );
       const body = document.querySelector("#vm-dialog-body"),
@@ -545,11 +665,18 @@
           sampling.frame_offset = Number(offset);
         } else if (mode !== "full") throw new Error("Choose a sampling mode.");
         const previous = state.scan;
-        const interval = mode === "frame" ? 3 : Number(form.elements.interval_seconds.value);
-        const samePlan = (previous?.sampling_mode || "full") === mode &&
-          (mode === "frame" || (previous?.interval_seconds ?? 3) === interval) &&
-          (mode !== "segment" || (previous.start_seconds === sampling.start_seconds && previous.end_seconds === sampling.end_seconds)) &&
-          (mode !== "frame" || (previous.timestamp_seconds === sampling.timestamp_seconds && (previous.sampling_frame_offset ?? 0) === sampling.frame_offset));
+        const interval =
+          mode === "frame" ? 3 : Number(form.elements.interval_seconds.value);
+        const samePlan =
+          (previous?.sampling_mode || "full") === mode &&
+          (mode === "frame" ||
+            (previous?.interval_seconds ?? 3) === interval) &&
+          (mode !== "segment" ||
+            (previous.start_seconds === sampling.start_seconds &&
+              previous.end_seconds === sampling.end_seconds)) &&
+          (mode !== "frame" ||
+            (previous.timestamp_seconds === sampling.timestamp_seconds &&
+              (previous.sampling_frame_offset ?? 0) === sampling.frame_offset));
         const scan = await api("/videos/scans", {
           asset_node_id: source.asset_node_id,
           asset_version: source.asset_version,
@@ -565,13 +692,22 @@
                 interval_seconds: interval,
               }),
           frame_batch_size: state.frameLimit,
-          force: previous?.status === "failed" && !previous.reviewed && samePlan,
+          force:
+            previous?.status === "failed" && !previous.reviewed && samePlan,
         });
         if (generation === state.generation) {
           const previousOffset = state.frameOffset;
           state.frameOffset = 0;
-          try { await refresh(scan.id, generation); }
-          catch (error) { state.frameOffset = previousOffset; throw error; }
+          if (scan.duplicate)
+            message(
+              "Opened cached scan: saved frames and decisions are reused.",
+            );
+          try {
+            await refresh(scan.id, generation);
+          } catch (error) {
+            state.frameOffset = previousOffset;
+            throw error;
+          }
         }
       });
     });
@@ -621,44 +757,90 @@
       const detection = state.scan?.frames
         ?.find((f) => Number(f.index) === frameIndex)
         ?.detections?.find((d, i) => Number(d.index ?? i) === detectionIndex);
-      if (!detection) return;
+      if (!detection || !reviewable(state.scan)) return;
+      const scan = state.scan,
+        generation = state.generation;
+      const key = observationKey(scan, frameIndex, detectionIndex);
+      if (saving.has(key)) return;
+      const displayed = displayedDetection(
+        scan,
+        frameIndex,
+        detection,
+        detectionIndex,
+      );
       if (button.dataset.chooseFrame !== undefined) {
         const box = {
-          links: (detection.links || []).map((l) => ({
-            identity_id: l.identity_id,
-            appearance_id: l.appearance_id || null,
+          links: displayed.links.map(({ identity_id, appearance_id }) => ({
+            identity_id,
+            appearance_id: appearance_id || null,
           })),
           names: {},
         };
-        for (const link of detection.links || [])
+        for (const link of displayed.links)
           box.names[link.identity_id] =
             link.name || link.identity_name || `Identity ${link.identity_id}`;
         chooseLinks(box, async (links) => {
-          detection.links = links.map((l) => ({
-            ...l,
-            name: box.names[l.identity_id],
-          }));
-          render(state.scan);
+          if (linkKey(links) === linkKey(detection.links)) drafts.delete(key);
+          else
+            drafts.set(key, {
+              baseline: baseline(detection),
+              revision: (drafts.get(key)?.revision || 0) + 1,
+              links: links.map((link) => ({
+                ...link,
+                name: box.names[link.identity_id],
+              })),
+            });
+          persistDrafts();
+          if (generation === state.generation && state.scan?.id === scan.id)
+            render(state.scan);
         });
-      } else if (button.dataset.decision)
-        run(button, async () => {
-          const generation = state.generation,
-            id = state.scan.id;
-          await api(
-            `/videos/scans/${encodeURIComponent(id)}/observations/${frameIndex}/${detectionIndex}/resolve`,
-            {
-              decision: button.dataset.decision,
-              links:
-                button.dataset.decision === "reject"
-                  ? []
-                  : detection.links.map(({ identity_id, appearance_id }) => ({
-                      identity_id,
-                      appearance_id,
-                    })),
-            },
+      } else if (button.dataset.decision) {
+        if (displayed.conflict && button.dataset.decision !== "reject") {
+          message(
+            "Object changed on the server. Choose its identity again before saving.",
+            true,
           );
-          if (generation === state.generation) await refresh(id, generation);
-        });
+          return;
+        }
+        const revision = drafts.get(key)?.revision;
+        saving.add(key);
+        errors.delete(key);
+        render(state.scan);
+        (async () => {
+          try {
+            await api(
+              `/videos/scans/${encodeURIComponent(scan.id)}/observations/${frameIndex}/${detectionIndex}/resolve`,
+              {
+                decision: button.dataset.decision,
+                links:
+                  button.dataset.decision === "reject"
+                    ? []
+                    : displayed.links.map(({ identity_id, appearance_id }) => ({
+                        identity_id,
+                        appearance_id,
+                      })),
+              },
+            );
+            if (drafts.get(key)?.revision === revision) {
+              drafts.delete(key);
+              persistDrafts();
+            }
+            if (generation === state.generation && state.scan?.id === scan.id)
+              await refresh(scan.id, generation);
+          } catch (error) {
+            errors.set(
+              key,
+              error.message ||
+                "Could not save. Your selection is retained; retry.",
+            );
+            message(errors.get(key), true);
+          } finally {
+            saving.delete(key);
+            if (generation === state.generation && state.scan?.id === scan.id)
+              render(state.scan);
+          }
+        })();
+      }
     });
     $("#vm-video-reviewed").addEventListener("click", (e) =>
       run(e.currentTarget, async () => {

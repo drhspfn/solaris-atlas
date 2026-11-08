@@ -41,21 +41,37 @@
     }
   }
   const field = (name, label, value = '', type = 'text') => `<label>${esc(label)}<input class="form-control" name="${name}" type="${type}" value="${esc(value)}"></label>`;
-  let previousFocus, submitAction, dialogGeneration = 0;
-  function closeDialog() { ++dialogGeneration; $('#vm-dialog').hidden = true; document.body.style.overflow = ''; previousFocus?.focus(); }
-  function dialog(title, html, action, label = 'Save') {
+  let previousFocus, submitAction, dialogOptions, discardFocus, confirmingDiscard = false, dialogGeneration = 0;
+  function closeDialog() {
+    if ($('#vm-dialog').hidden) return;
+    const onClose = dialogOptions?.onClose; dialogOptions = null;
+    ++dialogGeneration; confirmingDiscard = false; $('#vm-dialog').hidden = true; document.body.style.overflow = ''; previousFocus?.focus();
+    onClose?.();
+  }
+  function dialog(title, html, action, label = 'Save', options = {}) {
     ++dialogGeneration;
-    if ($('#vm-dialog').hidden) previousFocus = document.activeElement; submitAction = action; $('#vm-dialog-message').textContent = '';
+    if ($('#vm-dialog').hidden) previousFocus = document.activeElement; submitAction = action; dialogOptions = options; confirmingDiscard = false; $('#vm-dialog-message').textContent = '';
     $('#vm-dialog-title').textContent = title; $('#vm-dialog-body').innerHTML = html;
     $('#vm-dialog-body').onclick = null; $('#vm-dialog-submit').textContent = label; $('#vm-dialog').hidden = false; document.body.style.overflow = 'hidden';
     $('button[data-close]', $('#vm-dialog')).focus();
   }
-  $('#vm-dialog').addEventListener('click', e => { if (!working && e.target.hasAttribute('data-close')) closeDialog(); });
+  function keepEditing() { confirmingDiscard = false; $('#vm-dialog-message').textContent = ''; discardFocus?.focus(); }
+  function requestClose() {
+    if (confirmingDiscard) return;
+    if (!dialogOptions?.isDirty?.()) { closeDialog(); return; }
+    confirmingDiscard = true; discardFocus = document.activeElement;
+    $('#vm-dialog-message').innerHTML = '<p>Discard unsaved changes?</p><div class="vm-actions"><button type="button" class="btn btn-secondary" data-keep-editing>Keep editing</button><button type="button" class="btn btn-secondary" data-discard-changes>Discard changes</button></div>';
+    $('[data-keep-editing]', $('#vm-dialog-message')).focus();
+  }
+  globalThis.addEventListener?.('beforeunload', e => {
+    if (!$('#vm-dialog').hidden && dialogOptions?.isDirty?.()) { e.preventDefault(); e.returnValue = ''; }
+  });
+  $('#vm-dialog').addEventListener('click', e => { if (working) return; if (e.target.hasAttribute('data-keep-editing')) keepEditing(); else if (e.target.hasAttribute('data-discard-changes') && confirmingDiscard) closeDialog(); else if (e.target.hasAttribute('data-close')) requestClose(); });
   $('#vm-dialog').addEventListener('keydown', e => {
-    if (e.key === 'Escape' && !working) { e.preventDefault(); closeDialog(); }
+    if (e.key === 'Escape' && !working) { e.preventDefault(); if (confirmingDiscard) keepEditing(); else requestClose(); }
     if (e.key === 'Tab') { const els = [...$('#vm-dialog-panel, .vm-dialog-panel').querySelectorAll('input, select, textarea, button')].filter(x => !x.disabled); const first = els[0], last = els.at(-1); if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); } }
   });
-  $('#vm-dialog-submit').addEventListener('click', e => busy(e.currentTarget, async () => { await submitAction($('#vm-dialog-body')); closeDialog(); }));
+  $('#vm-dialog-submit').addEventListener('click', e => busy(e.currentTarget, async () => { const generation = dialogGeneration; await submitAction($('#vm-dialog-body')); if (generation === dialogGeneration) closeDialog(); }));
   async function modelStatus() {
     const el = $('#vm-model-status'); el.textContent = 'Checking model status…';
     try {
@@ -192,9 +208,12 @@
     if (button.dataset.choose !== undefined) chooseLinks(+button.dataset.choose);
     if (button.dataset.save !== undefined) saveCrop(+button.dataset.save);
   });
-  async function chooseLinks(index, suppliedBox = null, onSave = null) {
-    const box = suppliedBox || state.boxes[index];
-    dialog('Choose identities and appearances', `<p>Search your visual identities and the game catalog. Adding a game character creates or reuses its visual identity.</p><p id="vm-selected-identities"></p>${field('query','Search identities and game characters')}<div id="vm-identity-results" aria-live="polite"></div><div class="vm-actions"><button type="button" class="btn btn-secondary" data-identity-prev disabled>Previous</button><span id="vm-identity-page"></span><button type="button" class="btn btn-secondary" data-identity-next disabled>Next</button></div><details><summary>Technical details</summary><p>${esc(linksHelp)}</p>${field('links','Selected identity IDs',linksText(box.links))}<button type="button" class="btn btn-secondary" data-new>Create custom identity</button><p>To create an appearance, enter its identity ID and name.</p>${field('appearance_identity','Identity ID', '', 'number')}${field('appearance_name','Appearance name')}<button type="button" class="btn btn-secondary" data-appearance-create>Create appearance</button><p id="vm-appearance-result"></p></details>`, async body => { box.links = parseLinks($('[name=links]',body).value); if (onSave) await onSave(box.links); else renderBoxes(); });
+  async function chooseLinks(index, suppliedBox = null, onSave = null, draft = null, baseline = null) {
+    const target = suppliedBox || state.boxes[index];
+    const box = draft || {links: [...target.links], names: {...target.names}};
+    const normalizedLinks = links => JSON.stringify(links.map(link => `${link.identity_id}:${link.appearance_id || ''}`).sort());
+    baseline ??= normalizedLinks(box.links);
+    dialog('Choose identities and appearances', `<p>Search your visual identities and the game catalog. Adding a game character creates or reuses its visual identity.</p><p id="vm-selected-identities"></p>${field('query','Search identities and game characters')}<div id="vm-identity-results" aria-live="polite"></div><div class="vm-actions"><button type="button" class="btn btn-secondary" data-identity-prev disabled>Previous</button><span id="vm-identity-page"></span><button type="button" class="btn btn-secondary" data-identity-next disabled>Next</button></div><details><summary>Technical details</summary><p>${esc(linksHelp)}</p>${field('links','Selected identity IDs',linksText(box.links))}<button type="button" class="btn btn-secondary" data-new>Create custom identity</button><p>To create an appearance, enter its identity ID and name.</p>${field('appearance_identity','Identity ID', '', 'number')}${field('appearance_name','Appearance name')}<button type="button" class="btn btn-secondary" data-appearance-create>Create appearance</button><p id="vm-appearance-result"></p></details>`, async body => { const links = parseLinks($('[name=links]',body).value); target.names = box.names; if (onSave) await onSave(links); target.links = links; if (!onSave) renderBoxes(); }, 'Save', {isDirty: () => { try { return normalizedLinks(parseLinks($('[name=links]', $('#vm-dialog-body')).value)) !== baseline; } catch { return true; } }});
     const body = $('#vm-dialog-body'), generation = dialogGeneration;
     let offset = 0, searchSequence = 0, timer;
     const queryInput = $('[name=query]', body), linksInput = $('[name=links]', body);
@@ -232,7 +251,7 @@
       if (b.dataset.addGame !== undefined) { busy(b, async () => { const result=await api('/identities/from-game',{node_id:+b.dataset.addGame}); if (generation !== dialogGeneration) return; const appearance=b.dataset.appearanceName ? (result.appearances || []).find(a => a.name === b.dataset.appearanceName && +a.identity_id === +result.id) : null; if (b.dataset.appearanceName && !appearance) throw new Error('The selected appearance is unavailable. Retry or choose another appearance.'); addLink(+result.id, appearance ? +appearance.id : null, [result.name || b.dataset.name, appearance?.name].filter(Boolean).join(' · ')); }); return; }
       addLink(+b.dataset.addIdentity, b.dataset.addAppearance ? +b.dataset.addAppearance : null, [b.dataset.name,b.dataset.kind,b.dataset.appearanceName].filter(Boolean).join(' · '));
     };
-    $('[data-new]',body).addEventListener('click', () => { box.links = parseLinks(linksInput.value); createIdentity(result => { box.links.push({identity_id:result.id,appearance_id:null}); box.names[result.id] = [result.name,result.kind].filter(Boolean).join(' · '); setTimeout(() => chooseLinks(index, suppliedBox, onSave), 0); }); });
+    $('[data-new]',body).addEventListener('click', () => { box.links = parseLinks(linksInput.value); createIdentity(result => { box.links.push({identity_id:result.id,appearance_id:null}); box.names[result.id] = [result.name,result.kind].filter(Boolean).join(' · '); setTimeout(() => chooseLinks(index, suppliedBox, onSave, box, baseline), 0); }); });
     $('[data-appearance-create]',body).addEventListener('click', e => busy(e.currentTarget, async () => { const id=+$('[name=appearance_identity]',body).value, name=$('[name=appearance_name]',body).value.trim(); if (!id || !name) throw new Error('Enter an identity ID and appearance name.'); const result=await api(`/identities/${id}/appearances`,{name}); $('#vm-appearance-result').textContent=`Created appearance #${result.id}. Add ${id}:${result.id} to selected links.`; }));
     findIdentities();
   }

@@ -271,3 +271,322 @@ test('Rover game choices link appearances to the same identity', async () => {
   root.querySelector('#vm-dialog-submit').events.click({currentTarget:root.querySelector('#vm-dialog-submit')}); await tick();
   assert.equal(JSON.stringify(saved),JSON.stringify([{identity_id:15,appearance_id:102}]));
 });
+
+function modalHarness() {
+  let document;
+  class Element {
+    constructor() {
+      this.events = {};
+      this.dataset = {};
+      this.value = "";
+      this.hidden = true;
+      this.disabled = false;
+      this.style = {};
+      this.children = new Map();
+    }
+    addEventListener(type, fn) {
+      this.events[type] = fn;
+    }
+    setAttribute() {}
+    removeAttribute() {}
+    focus() {
+      document.activeElement = this;
+    }
+    querySelector(s) {
+      if (!this.children.has(s)) this.children.set(s, new Element());
+      return this.children.get(s);
+    }
+    querySelectorAll() {
+      return [];
+    }
+    set innerHTML(value) {
+      this.html = value;
+      for (const match of value.matchAll(
+        /<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/g,
+      ))
+        this.querySelector(`[name=${match[1]}]`).value = match[2];
+    }
+    get innerHTML() {
+      return this.html || "";
+    }
+    set textContent(value) {
+      this.text = value;
+      this.html = "";
+    }
+    get textContent() {
+      return this.text || "";
+    }
+    insertAdjacentHTML() {}
+  }
+  const root = new Element();
+  root.dataset.identityKinds = JSON.stringify([{ value: "npc", label: "NPC" }]);
+  document = {
+    querySelector: () => root,
+    body: { style: {} },
+    activeElement: new Element(),
+  };
+  class FormData {
+    constructor() {
+      return new URLSearchParams();
+    }
+  }
+  const fetch = async (url) => ({
+    ok: true,
+    json: async () =>
+      url === "/auth/csrf"
+        ? { csrf_token: "token" }
+        : url.endsWith("/identities")
+          ? { id: 44, name: "New", kind: "npc" }
+          : { items: [], total: 0 },
+  });
+  let videoOptions;
+  const windowEvents = {};
+  vm.runInNewContext(
+    readFileSync(
+      new URL(
+        "../src/wuwa_story/admin/statics/bbox-annotation.js",
+        import.meta.url,
+      ),
+      "utf8",
+    ) +
+      " " +
+      readFileSync(
+        new URL(
+          "../src/wuwa_story/admin/statics/visual-memory.js",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    {
+      document,
+      fetch,
+      URL,
+      URLSearchParams,
+      FormData,
+      location: { href: "http://test/" },
+      setTimeout,
+      clearTimeout,
+      addEventListener: (type, fn) => {
+        windowEvents[type] = fn;
+      },
+      createVisualMemoryVideoReview: (opts) => {
+        videoOptions = opts;
+        return { open() {} };
+      },
+    },
+  );
+  const modal = root.querySelector("#vm-dialog"),
+    body = root.querySelector("#vm-dialog-body"),
+    submit = root.querySelector("#vm-dialog-submit");
+  const clickAttr = (attr) =>
+    modal.events.click({ target: { hasAttribute: (name) => name === attr } });
+  const escape = () =>
+    modal.events.keydown({ key: "Escape", preventDefault() {} });
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+  return {
+    root,
+    body,
+    modal,
+    submit,
+    videoOptions,
+    clickAttr,
+    escape,
+    tick,
+    windowEvents,
+  };
+}
+
+test("close callbacks run once on save or discard, and unload warns only for the current dirty dialog", async () => {
+  const h = modalHarness();
+  let dirty = false,
+    closed = 0;
+  const unload = () => {
+    const event = {
+      prevented: false,
+      preventDefault() {
+        this.prevented = true;
+      },
+    };
+    h.windowEvents.beforeunload(event);
+    return event;
+  };
+  h.videoOptions.dialog("Edit", "", async () => {}, "Save", {
+    isDirty: () => dirty,
+    onClose: () => closed++,
+  });
+  assert.equal(unload().prevented, false);
+  dirty = true;
+  const warned = unload();
+  assert.equal(warned.prevented, true);
+  assert.equal(warned.returnValue, "");
+  h.clickAttr("data-close");
+  h.clickAttr("data-keep-editing");
+  assert.equal(closed, 0);
+  h.clickAttr("data-close");
+  h.clickAttr("data-discard-changes");
+  assert.equal(closed, 1);
+  assert.equal(unload().prevented, false);
+  h.videoOptions.closeDialog();
+  assert.equal(closed, 1);
+  h.videoOptions.dialog("Save", "", async () => {}, "Save", {
+    isDirty: () => true,
+    onClose: () => closed++,
+  });
+  await h.submit.events.click({ currentTarget: h.submit });
+  assert.equal(closed, 2);
+  assert.equal(unload().prevented, false);
+  h.videoOptions.dialog("Dirty", "", async () => {}, "Save", {
+    isDirty: () => true,
+  });
+  h.videoOptions.dialog("Clean", "", async () => {});
+  assert.equal(unload().prevented, false);
+});
+
+test("shared modal guards dirty cancel and Escape, and successful save bypasses the guard", async () => {
+  const h = modalHarness(),
+    { dialog } = h.videoOptions;
+  let dirty = false,
+    saves = 0;
+  dialog(
+    "Edit",
+    "",
+    async () => {
+      saves++;
+    },
+    "Save",
+    { isDirty: () => dirty },
+  );
+  h.clickAttr("data-close");
+  assert.equal(h.modal.hidden, true);
+  dialog(
+    "Edit",
+    "",
+    async () => {
+      saves++;
+    },
+    "Save",
+    { isDirty: () => dirty },
+  );
+  dirty = true;
+  h.escape();
+  assert.equal(h.modal.hidden, false);
+  assert.match(
+    h.root.querySelector("#vm-dialog-message").innerHTML,
+    /Discard unsaved changes/,
+  );
+  h.escape();
+  assert.equal(h.modal.hidden, false);
+  assert.equal(h.root.querySelector("#vm-dialog-message").innerHTML, "");
+  h.clickAttr("data-close");
+  h.clickAttr("data-keep-editing");
+  assert.equal(h.modal.hidden, false);
+  await h.submit.events.click({ currentTarget: h.submit });
+  assert.equal(saves, 1);
+  assert.equal(h.modal.hidden, true);
+  dialog("Edit", "", async () => {}, "Save", { isDirty: () => true });
+  h.clickAttr("data-close");
+  h.clickAttr("data-discard-changes");
+  assert.equal(h.modal.hidden, true);
+});
+
+test("a late submit does not close the newer dialog", async () => {
+  const h = modalHarness();
+  let finish;
+  h.videoOptions.dialog(
+    "First",
+    "",
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const pending = h.submit.events.click({ currentTarget: h.submit });
+  h.videoOptions.dialog("Second", "", async () => {});
+  finish();
+  await pending;
+  assert.equal(h.modal.hidden, false);
+  assert.equal(h.root.querySelector("#vm-dialog-title").textContent, "Second");
+});
+
+test("picker compares parsed links, protects invalid edits, additions and removals", async () => {
+  const h = modalHarness(),
+    box = {
+      links: [{ identity_id: 3, appearance_id: null }],
+      names: { 3: "Three" },
+    };
+  h.videoOptions.chooseLinks(box, () => {});
+  await h.tick();
+  const links = h.body.querySelector("[name=links]");
+  links.value = " 3  ";
+  h.clickAttr("data-close");
+  assert.equal(h.modal.hidden, true);
+  h.videoOptions.chooseLinks(box, () => {});
+  await h.tick();
+  links.value = "invalid";
+  h.escape();
+  assert.match(h.root.querySelector("#vm-dialog-message").innerHTML, /Discard/);
+  h.clickAttr("data-keep-editing");
+  links.value = "3";
+  const add = {
+    dataset: { addIdentity: "4", name: "Four" },
+    closest() {
+      return this;
+    },
+  };
+  h.body.onclick({ target: add });
+  h.clickAttr("data-close");
+  assert.match(h.root.querySelector("#vm-dialog-message").innerHTML, /Discard/);
+  h.clickAttr("data-discard-changes");
+  assert.equal(
+    JSON.stringify(box.links),
+    JSON.stringify([{ identity_id: 3, appearance_id: null }]),
+  );
+  h.videoOptions.chooseLinks(box, () => {});
+  await h.tick();
+  const remove = {
+    dataset: { removeIdentity: "3" },
+    closest() {
+      return this;
+    },
+  };
+  h.body.onclick({ target: remove });
+  h.escape();
+  assert.match(h.root.querySelector("#vm-dialog-message").innerHTML, /Discard/);
+});
+
+test("picker exposes selected names to its save callback before updating links", async () => {
+  const h = modalHarness(), box = { links: [], names: {} };
+  let observedName, linksAtCallback;
+  h.videoOptions.chooseLinks(box, () => {
+    observedName = box.names[4];
+    linksAtCallback = box.links.length;
+  });
+  await h.tick();
+  const add = { dataset: { addIdentity: "4", name: "Four" }, closest() { return this; } };
+  h.body.onclick({ target: add });
+  await h.submit.events.click({ currentTarget: h.submit });
+  assert.equal(observedName, "Four");
+  assert.equal(linksAtCallback, 0);
+  assert.equal(box.links[0].identity_id, 4);
+});
+
+test("creating an identity returns to the picker with its original dirty baseline", async () => {
+  const h = modalHarness(),
+    box = { links: [], names: {} };
+  h.videoOptions.chooseLinks(box, () => {});
+  await h.tick();
+  h.body.querySelector("[name=links]").value = "3";
+  h.body.querySelector("[data-new]").events.click();
+  h.body.querySelector("[name=name]").value = "New";
+  h.body.querySelector("[name=kind]").value = "npc";
+  await h.submit.events.click({ currentTarget: h.submit });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(
+    h.root.querySelector("#vm-dialog-title").textContent,
+    "Choose identities and appearances",
+  );
+  assert.equal(h.body.querySelector("[name=links]").value, "3, 44");
+  h.escape();
+  assert.match(h.root.querySelector("#vm-dialog-message").innerHTML, /Discard/);
+  assert.equal(box.links.length, 0);
+});
