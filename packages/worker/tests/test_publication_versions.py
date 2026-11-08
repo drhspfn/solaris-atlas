@@ -156,8 +156,9 @@ def test_sequence_backdrop_revision_five_cannot_be_downgraded_by_legacy_worker()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(('incoming_schema', 'preserve'), [(None, True), (1, False), (2, False)])
-async def test_worker_refreshes_locked_reference_before_any_publication(tmp_path, monkeypatch, incoming_schema, preserve):
+@pytest.mark.parametrize(('incoming_schema', 'preserve', 'legacy'),
+                         [(None, True, False), (1, False, False), (2, False, False), (None, False, True)])
+async def test_worker_refreshes_locked_reference_before_any_publication(tmp_path, monkeypatch, incoming_schema, preserve, legacy):
     request = MediaRequest(download_id='a' * 64, asset_version='3.7.1', game_version='3.7.0',
                            release_id=21, entities=['flow_state:Story_28_1'], kinds=['image'])
     (tmp_path / 'plan.json').write_text(json.dumps({'id': request.download_id, 'version': '3.7.1', 'tier': 'hd'}))
@@ -166,6 +167,8 @@ async def test_worker_refreshes_locked_reference_before_any_publication(tmp_path
               'kind': 'spine', 'language': None, 'reference_type': 'story_presentation',
               'spine_recipe': 4, 'presentation_sha256': 'c' * 64,
               'sequence_media_schema': incoming_schema}
+    if legacy:
+        target.update(path='spine_background:850007', reference_type='story_spine')
     payload = {'request': request.model_dump(), 'run_id': 26922, 'targets': [target]}
     run = SimpleNamespace(id=26922, status='queued', metadata_json={'payload': payload})
     metadata = {'asset_version': '3.7.1', 'game_source': proof(control_sources_complete=False),
@@ -210,7 +213,7 @@ async def test_worker_refreshes_locked_reference_before_any_publication(tmp_path
         archive.writestr('manifest.json', json.dumps({'control_sources': {}}))
     monkeypatch.setattr(entity_media, 'build_entity_files', AsyncMock(
         return_value=([(target, bundle, 'story_presentation', 'application/zip', [raw])], [])))
-    fragments = AsyncMock(return_value={'schema_version': 1, 'sections': []})
+    fragments = AsyncMock(return_value=None if legacy else {'schema_version': 1, 'sections': []})
     invalidate = AsyncMock()
     monkeypatch.setattr(sequence_fragments, 'publish_sequence_fragments', fragments)
     monkeypatch.setattr(sequence_fragments, 'invalidate_sequence_quests', invalidate)

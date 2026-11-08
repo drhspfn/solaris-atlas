@@ -94,3 +94,29 @@ html[data-bs-theme="dark"] div.dt-button-collection .dt-button-collection-close 
 /* The library applies negative brand margins at desktop widths. */
 html[data-bs-theme="dark"] .navbar-vertical .navbar-brand { margin-inline: 0; padding-inline: 1rem; }
 html[data-bs-theme="dark"] .navbar-vertical .brand-link { padding-inline: .125rem; }
+
+.sa-cutscene { margin-bottom: 1rem; }
+.sa-cutscene-filters, .sa-cutscene-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin: 1rem 0; }
+.sa-cutscene-filters label { min-width: 10rem; }
+.sa-cutscene-controls label { display: flex; align-items: center; gap: .5rem; }
+.sa-cutscene-timeline { flex: 1 1 100%; }
+.sa-cutscene-timeline input { flex: 1; }
+.sa-cutscene-decisions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.sa-cutscene-stage { position: relative; max-width: 960px; background: #000; }
+.sa-cutscene-stage video { display: block; width: 100%; max-height: 70vh; }
+.sa-cutscene-caption { position: absolute; bottom: 3.5rem; left: 10%; right: 10%; color: white; text-align: center; text-shadow: 0 2px 4px black; white-space: pre-line; pointer-events: none; }
+.sa-cutscene-choice { position: absolute; inset: 0; display: grid; place-content: center; gap: .75rem; text-align: center; background: #000b; }
+.sa-cutscene-choice[hidden], .sa-cutscene-stage[hidden], .sa-cutscene-controls[hidden] { display: none; }
+.sa-cutscene-choice div { display: flex; flex-wrap: wrap; justify-content: center; gap: .5rem; }
+.sa-cutscene-stage:fullscreen { display: grid; place-items: center; max-width: none; }
+.sa-cutscene-stage:fullscreen video { max-height: 100vh; }
+.sa-cutscene-previews { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr)); gap: .75rem; margin-block: .75rem 1.5rem; }
+.sa-cutscene-previews a { display: block; border: 1px solid #354645; border-radius: .5rem; overflow: hidden; }
+.sa-cutscene-previews img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: contain; background: #090e0f; }
+.sa-cutscene-description { padding: 1rem; margin-block: .75rem; border: 1px solid #354645; border-radius: .5rem; }
+.sa-cutscene-description summary { cursor: pointer; line-height: 1.6; }
+.sa-cutscene-description h4 { margin: 0 0 .75rem; font-size: 1rem; }
+.sa-cutscene-description p { line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 0; }
+.sa-cutscene-observations { list-style: none; padding: 0; margin: 1rem 0 0; }
+.sa-cutscene-observations li { display: grid; grid-template-columns: 3.5rem minmax(0, 1fr); gap: .75rem; padding-block: .75rem; border-top: 1px solid #293738; }
+.sa-cutscene-observations li > span { color: #9bd9c0; font-variant-numeric: tabular-nums; }

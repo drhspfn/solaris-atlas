@@ -110,8 +110,11 @@ services:
       # API has no published port; Caddy is the public ingress and sets forwarded headers.
       FORWARDED_ALLOW_IPS: "*"
       WUWA_ASSET_WORKSPACE: /var/lib/wuwa-worker/client-assets
+      VISUAL_MEMORY_DINO_PATH: /models/dinov2-small
+      VISUAL_MEMORY_DETECTOR_PATH: /models/anime-character-detector/character.onnx
     volumes:
       - worker_data:/var/lib/wuwa-worker:ro
+      - ./models/visual-memory:/models:ro
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -138,6 +141,34 @@ services:
       PORT: "3000"
     depends_on:
       api:
+        condition: service_healthy
+
+  # Durable visual-memory scans have their own single CPU consumer. Existing
+  # import workers keep their images, models and in-flight tasks unchanged.
+  visual-memory-worker:
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-api:${VISUAL_MEMORY_IMAGE_TAG:-${IMAGE_TAG:-latest}}
+    restart: unless-stopped
+    profiles: [visual-memory]
+    command: ["python", "-m", "wuwa_story.visual_memory.video_worker"]
+    env_file:
+      - path: ./env/runtime.env
+        format: raw
+      - path: ./env/shared.env
+        format: raw
+      - path: ./env/api.env
+        format: raw
+    environment:
+      VISUAL_MEMORY_DINO_PATH: /models/dinov2-small
+      VISUAL_MEMORY_DETECTOR_PATH: /models/anime-character-detector/character.onnx
+      WUWA_WORKER_DB_POOL_SIZE: "2"
+      WUWA_WORKER_DB_MAX_OVERFLOW: "0"
+    volumes:
+      - ./models/visual-memory:/models:ro
+    cpus: 1
+    mem_limit: 2g
+    stop_grace_period: 120s
+    depends_on:
+      postgres:
         condition: service_healthy
 
 

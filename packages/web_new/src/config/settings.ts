@@ -15,6 +15,7 @@ export const APP_SETTINGS = {
     customColor: '#9BD9C0',
     voiceLanguage: 'en',
     preferredRover: 'ask',
+    dialogueStyle: 'game',
   },
   limits: {
     catalogPage: 24,

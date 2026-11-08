@@ -1,0 +1,20 @@
+{% extends "detail.html" %} {% block content %}
+<div class="container-fluid mb-3">
+  <a
+    class="btn btn-secondary"
+    id="node-edges"
+    href="{{ url_for(__name__ ~ ':list', identity='edges') }}"
+    >View incoming and outgoing edges</a
+  >
+</div>
+{{ super() }}
+<script>
+  (() => {
+    const link = document.getElementById('node-edges');
+    const value = {{ obj.id | tojson }};
+    const criterion = (name, label) => ({condition: '=', data: label, origData: name, type: 'num', value: [String(value)], value1: String(value)});
+    const filter = {logic: 'OR', criteria: [criterion('from_node_id', 'From node id'), criterion('to_node_id', 'To node id')]};
+    link.href += '?searchBuilder=' + encodeURIComponent(JSON.stringify(filter));
+  })();
+</script>
+{% endblock %}

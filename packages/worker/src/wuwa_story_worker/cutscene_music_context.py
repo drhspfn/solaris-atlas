@@ -123,13 +123,14 @@ def music_recipe(body, roles):
                      ([f'group = -L{len(selected)} #@layer-v'] if len(selected) > 1 else []))
 
 
-async def render_music_context(context, assets, work, decoder):
-    from wuwa_story_worker.cutscene_import import confined
+async def render_music_context(context, assets, work, decoder, *, override_startup_states=False):
     from wuwa_story_worker.cutscene_frame_audio import audio_bus_roles
+    from wuwa_story_worker.cutscene_import import confined
     bank, audio = confined(assets, context.bank), confined(
         assets, context.audio_directory)
     output, sources = await render_bank(bank, audio, work, decoder, None,
-                                        run_tool, startup_states={context.state_group: context.state})
+                                        run_tool, startup_states={context.state_group: context.state},
+                                        **({'override_startup_states': True} if override_startup_states else {}))
     xml = next(path for path in sources if path.name == 'bank.xml')
     import sys
     init_xml = xml.parent / 'init.xml'

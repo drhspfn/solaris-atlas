@@ -69,6 +69,7 @@ function loadStory(name) {
 }
 const { QuestEncounter, EncounterCinematicBoundary } = loadStory('QuestEncounter');
 const { QuestSequenceFragments, playableEncounterFragments } = loadStory('QuestSequenceFragments');
+const { QuestSceneDetails } = loadStory('QuestSceneDetails');
 const { QuestRuntimeBlock, runtimeBlockAnchor, runtimeBlockSlots } = loadStory('QuestRuntimeBlock');
 
 test('unplaced activities retain their identities outside chronological slots', () => {
@@ -237,7 +238,8 @@ test('component availability never claims full cinematic playback', () => {
 test('missing recorded video is not mislabeled as unsupported engine rendering', () => {
   const markup = renderToStaticMarkup(React.createElement(EncounterCinematicBoundary,
     { media: [cinematic({ kind: 'cutscene' })] }));
-  assert.match(markup, /Video not available yet/);
+  assert.match(markup, /class="marker">Cutscene<\/div>/);
+  assert.match(markup, /No video export has been published/);
   assert.doesNotMatch(markup, /rendered by the game engine|cannot currently be reconstructed/);
 });
 
@@ -330,11 +332,12 @@ test('cinematic grouping uses exact action index, not flow name or translated te
 test('authored boundaries never claim a whole sequence is an MP4 or completed playback', () => {
   const markup = renderToStaticMarkup(React.createElement(EncounterCinematicBoundary, { media: [cinematic({ async: true })] },
     React.createElement('p', { id: 'line-SHUTUP' }, 'SHUT UP!')));
-  assert.match(markup, /class="marker">Scene<\/div>/); assert.match(markup, /End scene/);
+  assert.match(markup, /class="marker">Scripted scene<\/div>/);
   const visible = markup.split('<details class="source">')[0];
-  assert.match(visible, /Scene · full playback unavailable/);
+  assert.match(visible, /No playable scene recording is available/);
   assert.doesNotMatch(visible, /rendered by the game engine/);
-  assert.doesNotMatch(visible, /Playback pending/);
+  assert.doesNotMatch(visible, /Playback pending|queued|End scene/i);
+  assert.doesNotMatch(visible, /Full scene playback is not available here/);
   assert.doesNotMatch(visible, /Action boundaries|cinematic action|In-game cinematic sequence/);
   assert.match(markup, /do not establish playback duration or completion/);
   assert.doesNotMatch(markup, /<video|MP4|M0334_1Z|DA_M0334|Playback completed/);
@@ -370,6 +373,94 @@ test('published fragments deduplicate display files but retain original metadata
   assert.match(renderToStaticMarkup(React.createElement(QuestSequenceFragments, { media: { ...media, sections: [] } })), /illustrations have not been rendered/);
 });
 
+test('scene cards describe actual available media for placeholder and illustrated sequences', () => {
+  const scene = (sequence_media, title) => renderToStaticMarkup(React.createElement(QuestSceneDetails, {
+    event: { kind: 'sequence', title, sequence_media, source, reference: 'asset:scene' }, display,
+  }));
+  const placeholder = { schema_version: 1, complete_video: false, sections: [],
+    composition: { schema_version: 1, state: 'unsupported', reasons: [{ code: 'flow_owner_unavailable' }] } };
+  for (const media of [undefined, placeholder, { ...placeholder, composition: undefined }]) {
+    const markup = scene(media);
+    assert.match(markup, /Scripted scene/);
+    assert.match(markup, /No standalone media available/);
+    assert.match(markup, /visual format is unknown/);
+    assert.doesNotMatch(markup, /Story scene|rendering failed|queued|Explore the artwork/);
+  }
+  const illustrated = { ...placeholder, sections: [{ kind: 'illustration', status: 'published',
+    file_id: 1, url: 'https://cdn.test/scene.png' }] };
+  assert.match(scene(illustrated), /Illustrated scene/);
+  assert.match(scene(illustrated), /Scene illustrations available/);
+  assert.doesNotMatch(scene(illustrated), /No standalone media available/);
+  assert.match(scene({ ...illustrated, sections: [{ ...illustrated.sections[0], url: 'javascript:alert(1)' }] }), /No standalone media available/);
+  assert.match(scene(placeholder, 'A named scene'), /A named scene/);
+  const fragment = { ...placeholder, sections: [{ kind: 'movie_fragment', status: 'published',
+    file_id: 2, url: 'https://cdn.test/fragment.webm' }] };
+  assert.match(scene(fragment), /Cinematic scene/);
+  assert.doesNotMatch(scene(fragment), /No standalone media available/);
+  assert.match(scene(soundtrackMedia()), /Scripted scene/);
+  assert.doesNotMatch(scene(soundtrackMedia()), /No standalone media available/);
+  for (const kind of ['skeletal_animation', 'skeletal_animation_asset']) {
+    const engine = { ...placeholder, sections: [{ kind: 'camera' }, { kind }] };
+    assert.match(scene(engine), /In-game cinematic/);
+    assert.match(scene(engine), /Rendered by the game engine\. No standalone recording is available/);
+    for (const section of engine.sections) {
+      assert.match(scene({ ...engine, sections: [section] }), /Scripted scene/);
+      assert.doesNotMatch(scene({ ...engine, sections: [section] }), /Rendered by the game engine/);
+    }
+    const mixed = { ...engine, sections: [...engine.sections, ...illustrated.sections] };
+    assert.match(scene(mixed), /Illustrated scene/);
+    assert.doesNotMatch(scene(mixed), /Rendered by the game engine/);
+    assert.match(scene({ ...engine, sections: [...engine.sections, ...fragment.sections] }), /Cinematic scene/);
+  }
+});
+
+test('open scene information describes available media and retains source details', () => {
+  const code = ts.transpileModule(readFileSync(new URL('../src/components/story/QuestSceneDetails.tsx', import.meta.url), 'utf8'),
+    { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
+      jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
+  const exports = {};
+  vm.runInNewContext(code, { exports, require: id => {
+    if (id === 'react') return { ...React, useState: () => [true, () => {}] };
+    if (id === 'lucide-react') return new Proxy({}, { get: () => () => null });
+    if (id.endsWith('.module.css')) return { __esModule: true, default: new Proxy({}, { get: (_, key) => String(key) }) };
+    if (id === '../dialogue/PlayerText') return { PlayerText: ({ value, fallback }) => value || fallback };
+    if (id === '../ui/Button') return { Button: ({ children }) => React.createElement('button', null, children) };
+    if (id === '../ui/mediaViewerUtils') return { mediaViewerUrl };
+    if (id.startsWith('./')) return loadStory(id.slice(2));
+    return require(id);
+  } });
+  const renderScene = sequence_media => renderToStaticMarkup(React.createElement(exports.QuestSceneDetails, {
+    event: { kind: 'sequence', sequence_media, source, reference: 'asset:scene' }, display,
+  }));
+  const placeholder = { schema_version: 1, complete_video: false, sections: [],
+    composition: { schema_version: 1, state: 'unsupported', reasons: [{ code: 'flow_owner_unavailable' }] } };
+  const empty = renderScene(placeholder);
+  assert.match(empty, /No standalone media available. Source details are shown below/);
+  assert.match(empty, /Scene illustrations are unavailable/);
+  assert.doesNotMatch(empty, /required assets are missing|rendering failed/);
+  assert.match(empty, /<details class="source" open=""><summary>Technical details/);
+  assert.match(empty, /asset:scene/);
+  assert.match(empty, /private-source\.json/);
+  assert.match(empty, /\$\.Data/);
+  assert.doesNotMatch(empty, /Explore the artwork|Select an image/);
+  const unbound = renderScene({ ...placeholder, composition: { ...placeholder.composition,
+    reasons: [{ code: 'scene_binding_unavailable' }] } });
+  assert.match(unbound, /Scene illustrations are unavailable/);
+  assert.doesNotMatch(unbound, /required assets are missing|rendering failed/);
+  const failed = renderScene({ ...placeholder, composition: { schema_version: 1, state: 'failed', reasons: [] } });
+  assert.match(failed, /Illustration rendering failed/);
+  const unknown = renderScene({ ...placeholder, composition: undefined });
+  assert.doesNotMatch(unknown, /rendering failed|queued/);
+  const engine = renderScene({ ...placeholder, sections: [{ kind: 'camera' }, { kind: 'skeletal_animation' }] });
+  assert.match(engine, /<p class="dialogIntro">Rendered by the game engine\. No standalone recording is available\.<\/p>/);
+  assert.match(engine, /<details class="source" open=""><summary>Technical details/);
+  const visual = renderScene({ ...placeholder, sections: [{ kind: 'illustration', status: 'published',
+    file_id: 1, url: 'https://cdn.test/scene.png' }] });
+  assert.match(visual, /Available scene media and source details/);
+  assert.match(visual, /Open Scene illustration 1/);
+  assert.match(visual, /<details class="source"><summary>Technical details/);
+});
+
 
 test('component display order uses earliest occurrence before deduplicating files', () => {
   const part = (file_id, start) => ({ kind: 'movie_fragment', status: 'published', file_id,
@@ -393,7 +484,7 @@ const soundtrackMedia = (tracks = [soundtrackTrack()]) => ({ schema_version: 1, 
     range: { Value: { LowerBound: { Type: 1, Value: { Value: 120 } }, UpperBound: { Type: 0, Value: { Value: 900 } } } }, tracks },
 ] });
 
-test('audio-only M0334 renders a whole scene soundtrack with exact source and no autoplay', () => {
+test('audio-only M0334 renders the scene soundtrack without exposing technical metadata or autoplay', () => {
   const media = soundtrackMedia();
   const before = JSON.stringify(media);
   const markup = renderToStaticMarkup(React.createElement(QuestSequenceFragments, { media }));
@@ -401,8 +492,8 @@ test('audio-only M0334 renders a whole scene soundtrack with exact source and no
   assert.match(markup, /aria-label="Play Scene soundtrack"/);
   assert.match(markup, /src="https:\/\/cdn.test\/M0334-en-male.ogg" preload="none"/);
   assert.doesNotMatch(markup, /autoplay|<select|Soundtrack language|Soundtrack Rover|Video components|#t=/i);
-  for (const value of ['audio/M0334-en-male.ogg', '/Game/M0334.AudioSection', 'LowerBound', 'numerator']) assert(markup.includes(value));
-  assert.match(markup, /Whole Wwise event · mixed scene soundtrack/);
+  assert.match(markup, /Scene soundtrack/);
+  assert.doesNotMatch(markup, /audio\/M0334-en-male\.ogg|\/Game\/M0334\.AudioSection|LowerBound|numerator|Whole Wwise event/);
   assert.equal(JSON.stringify(media), before);
   const combined = renderToStaticMarkup(React.createElement(QuestSequenceFragments, { media: {
     ...media, sections: [...media.sections, { kind: 'movie_fragment', status: 'published', file_id: 33,
@@ -521,6 +612,7 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
         .map(point => React.createElement('span', { key: loadStory('cutsceneAnchor').cutsceneAnchor(point),
           id: loadStory('cutsceneAnchor').cutsceneAnchor(point) }))),
       QuestCutscenes: () => null, RelatedQuestCutscenes: () => null,
+      externalSceneContinuations: (continuations = []) => continuations,
     },
     '@/components/story/encounterTransitions': { encounterFlows },
     '@/components/story/cutsceneAnchor': loadStory('cutsceneAnchor'),
@@ -573,7 +665,7 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
   assert.deepEqual(publicActivities.map((entry) => entry.id).sort(), ['conversation', 'gate']);
   assert.equal(publicActivities.find((entry) => entry.id === 'conversation').title, 'Conversation');
   assert(markup.includes(`id="${runtimeBlockAnchor('technical')}"`), 'source-only direct-link anchor remains mounted');
-  const start = markup.indexOf('class="marker">Scene</div>'), end = markup.indexOf('End scene');
+  const start = markup.indexOf('class="marker">Scripted scene</div>'), end = markup.indexOf('<details class="source">', start);
   assert(start >= 0 && start < markup.indexOf('SHUT UP!') && markup.indexOf('THAT IS NOT HOME!') < end, JSON.stringify({start,end,shutup:markup.indexOf('SHUT UP!'),notHome:markup.indexOf('THAT IS NOT HOME!'),excerpt:markup.slice(Math.max(0,start),Math.max(0,start)+1800)}));
   const components = '<summary>Video components · 1</summary>';
   assert.equal(markup.split(components).length - 1, 1, 'canonical flow renders one component block');
@@ -582,21 +674,15 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     'video components belong inside Scene before its dialogue');
   const scene = markup.slice(start, end);
   assert.match(scene, /Scene · 1 video components available/);
-  assert.doesNotMatch(scene, /Playback pending|Playback available|full playback/i);
+  assert.doesNotMatch(scene, /Playback pending|Playback available/i);
+  assert.match(scene, /Full scene playback is not available here/);
   assert.match(markup, /Read the dialogue shared by this branch/);
   assert.match(markup, /cited-passage/);
   const articles = [...markup.matchAll(/<article\b[^>]*data-dialogue-key="[^"]+"[^>]*>([\s\S]*?)<\/article>/g)];
   assert.equal(articles.length, lines.length);
   for (const article of articles) {
-    const disclosure = article[1].match(/<details class="quest-line-source"[^>]*>[\s\S]*?<\/details>/);
-    assert(disclosure, 'every transcript line retains a source disclosure');
-    assert.doesNotMatch(disclosure[0].split('>')[0], /\bopen\b/);
-    assert.doesNotMatch(article[1].replace(disclosure[0], ''), /line-state|action-tag|line-foot/);
+    assert.doesNotMatch(article[1], /quest-line-source|line-state|action-tag|line-foot|flowstate\.json|Talk 77|row 21/);
   }
-  const regularSource = articles[0][1].match(/<details class="quest-line-source"[^>]*>[\s\S]*?<\/details>/)[0];
-  for (const value of ['Before', 'ShowTalk', 'Talk 77', 'flowstate.json', 'row 21']) assert(regularSource.includes(value));
-  assert.match(articles[1][1], /Talk 0/);
-  assert.match(articles[1][1], /row 0/);
   const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
   assert.equal(new Set(ids).size, ids.length, 'deep link targets must remain unique');
   const primary = { kind: 'cutscene', reference: 'cutscene:shared', flow_state: 'absent',
@@ -633,8 +719,10 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     for (const text of ['SHUT UP!', 'THAT IS NOT HOME!']) assert(audioMarkup.includes(text));
     assert.doesNotMatch(audioMarkup, /autoplay|Video components/);
     if (withBoundary) {
-      assert(audioMarkup.indexOf('class="marker">Scene</div>') < audioPosition);
-      assert(audioMarkup.indexOf('THAT IS NOT HOME!') < audioMarkup.indexOf('End scene'));
+      const marker = audioMarkup.indexOf('class="marker">Scripted scene</div>');
+      assert(marker >= 0 && marker < audioPosition);
+      assert(audioMarkup.indexOf('THAT IS NOT HOME!') < audioMarkup.indexOf('<details class="source">', marker));
+      assert.doesNotMatch(audioMarkup, /End scene/);
     }
   }
   const fallbackMarkup = renderMedia([
@@ -649,7 +737,7 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
     'published components remain reachable when no cinematic part exists');
   assert.equal(fallbackMarkup.split('>View video component 1<').length - 1, 1);
   assert(fallbackMarkup.indexOf(components) < fallbackMarkup.indexOf('Dialogue without cinematic parts'));
-  assert.doesNotMatch(fallbackMarkup, /class="marker">Scene<\/div>/);
+  assert.doesNotMatch(fallbackMarkup, /class="marker">Scripted scene<\/div>/);
   const assertPlayer = (html) => {
     assert.equal((html.match(/data-player="cutscene:shared"/g) || []).length, 1);
     const targets = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);

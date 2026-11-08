@@ -97,6 +97,7 @@ function questHarness({
     "@/components/story/sequenceReader": {
       enrichSequenceLines: (lines) => lines,
       sequenceBackgroundMusic: () => undefined,
+      flowBackgroundMusic: () => undefined,
       sequenceFrameForLine: () => undefined,
     },
     "@/components/story/QuestRuntimeBlock": {

@@ -28,6 +28,7 @@ def redacted(value: Any, limit: int = 48000) -> dict[str, Any]:
                         "access_token",
                         "refresh_token",
                         "encrypted_content",
+                        "image_base64",
                     )
                 )
                 else clean(value)

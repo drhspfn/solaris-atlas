@@ -28,6 +28,8 @@ from wuwa_story.api.routes import (
     seo,
     story,
     story_agent,
+    visual_memory,
+    visual_memory_video,
 )
 from wuwa_story.auth.routes import router as auth_router
 from wuwa_story.auth.services import AuthError
@@ -117,6 +119,8 @@ app.include_router(seo.router)
 app.include_router(story.router)
 app.include_router(story_agent.router)
 app.include_router(story_agent.admin)
+app.include_router(visual_memory.router)
+app.include_router(visual_memory_video.router)
 app.include_router(auth_router)
 
 app.include_router(mcp.router)

@@ -1,5 +1,6 @@
 """Exact game-resource references for quest media extraction."""
 
+import re
 from collections import defaultdict
 from typing import Any
 
@@ -29,6 +30,7 @@ from wuwa_story.ingestion.spine_presentation import flow_presentation
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.story import media as story_media
 from wuwa_story.story import runtime_service
+from wuwa_story.story.cutscene_descriptions import attach_public_descriptions
 from wuwa_story.story.cutscene_occurrences import group_cutscene_occurrences
 from wuwa_story.story.cutscene_publications import publication_order, publication_types
 from wuwa_story.story.scene_continuations import scene_continuations
@@ -36,6 +38,60 @@ from wuwa_story.story.service import _quest_page_state_ids
 from wuwa_story.story.tree_order import authored_order
 
 router = APIRouter(tags=["story browsing"])
+
+
+def verified_flow_music(media, presentation, owner, release_id):
+    """Expose only published music bound to this exact authored ShowTalk."""
+    client = media.get('game_source') or {}
+    actions = (presentation.get('source') or {}).get('Actions') or []
+    matches = []
+    for section in media.get('sections', []):
+        proof = section.get('source_proof') if isinstance(section, dict) else None
+        if (not isinstance(proof, dict) or section.get('kind') != 'audio_event'
+                or section.get('scope') != 'flow' or section.get('reconstruction_kind') not in {'flow_authored_music', 'state_consumer_fixed_start'}
+                or proof.get('flow_owner') != owner or proof.get('release_id') != release_id
+                or proof.get('presentation_sha256') != presentation.get('sha256')
+                or proof.get('flow_state') != (presentation.get('source') or {}).get('StateKey')
+                or any(not isinstance(client.get(k), str) or not client[k] or proof.get(k) != client[k]
+                       for k in ('asset_version', 'download_id'))):
+            continue
+        if section.get('reconstruction_kind') == 'state_consumer_fixed_start' and (
+                section.get('confidence') != 'reconstructed' or proof.get('confidence') != 'reconstructed'
+                or proof.get('runtime_start_confirmed') is not False
+                or proof.get('state_event') != section.get('reference')
+                or not isinstance(proof.get('consumer_event'), str)):
+            continue
+        paths = [re.fullmatch(r'\$\.Actions\[(\d+)\]', str(proof.get(key, '')))
+                 for key in ('play_path', 'talk_path', 'stop_path')]
+        if not all(paths):
+            continue
+        start, talk, stop = [int(path[1]) for path in paths]
+        if not 0 <= start < talk < stop < len(actions):
+            continue
+        if ([i for i, action in enumerate(actions) if isinstance(action, dict) and action.get('Name') == 'PostAkEvent']
+                != [start, stop] or not any(cue.get('kind') == 'background'
+                    and cue.get('background', {}).get('kind') in {'spine', 'image'}
+                    and cue.get('source_path', '').startswith(f'$.Actions[{talk}].Params.TalkItems[')
+                    for cue in presentation.get('cues', []))):
+            continue
+        play_action, talk_action, stop_action = (actions[i] for i in (start, talk, stop))
+        if any(not isinstance(action, dict) for action in (play_action, talk_action, stop_action)):
+            continue
+        def event(action):
+            config = (action.get('Params') or {}).get('EventConfig') or {}
+            return config.get('AkEvent') if action.get('Name') == 'PostAkEvent' and config.get('Type') == 'Global' else None
+        items = (talk_action.get('Params') or {}).get('TalkItems') or []
+        keys = [item.get('TidTalk') for item in items if isinstance(item, dict)]
+        if (talk_action.get('Name') != 'ShowTalk' or event(play_action) != section.get('reference')
+                or not event(stop_action) or not keys or keys != proof.get('talk_text_keys')
+                or any(not isinstance(key, str) or not key for key in keys) or len(set(keys)) != len(keys)):
+            continue
+        tracks = [track for track in section.get('tracks', []) if isinstance(track, dict)
+                  and track.get('role') == 'music' and track.get('status') == 'published'
+                  and isinstance(track.get('url'), str) and track['url']]
+        if tracks:
+            matches.append(({**section, 'tracks': tracks}, keys))
+    return matches[0] if len(matches) == 1 else None
 
 
 async def _links(
@@ -217,8 +273,15 @@ async def quest_media(
 ) -> dict[str, Any]:
     """Authored media references with published playable files when available."""
     if read_projections.should_route_to_projection("quest", game_version, locale=locale):
-        return group_cutscene_occurrences(await read_projections.quest_section(
-            session, game_quest_id, locale, game_version, "media"))
+        from copy import deepcopy
+
+        manifest = deepcopy(group_cutscene_occurrences(await read_projections.quest_section(
+            session, game_quest_id, locale, game_version, "media")))
+        release_id = await _release_id(session, manifest.get('game_version') or game_version)
+        flows = {i: event.get('playback') for i, event in enumerate(manifest.get('events', []))}
+        flows.update({f'related-{i}': item.get('playback') for i, item in enumerate(manifest.get('related_cutscenes', []))})
+        await attach_public_descriptions(session, flows, release_id, locale)
+        return manifest
     quest = await get_quest(session, game_quest_id)
     if quest is None:
         raise HTTPException(status_code=404, detail="quest not found")
@@ -293,6 +356,7 @@ async def quest_media(
                         )
                         if report and report.id == description["visual_reference_id"]:
                             media["description"] = description
+    await attach_public_descriptions(session, flows, release_id, locale)
     variants = await _links(session, cutscene_ids, ("has_variant", "uses_audio_event", "uses_audio_event_normalized", "uses_caption"), release_id)
     child_ids = [link["node_id"] for entries in variants.values()
                  for link in entries]
@@ -375,7 +439,7 @@ async def quest_media(
             entry['_sequence_cue_path'] = ref['raw_path']
         sources.append((entry, runtime_nodes.get(ref['reference'])))
     sequence_owners = {entry['_sequence_owner'] for entry, _ in sources
-                       if entry['kind'] == 'sequence' and '_sequence_owner' in entry}
+                       if entry['kind'] in {'sequence', 'audio_event'} and '_sequence_owner' in entry}
     presentations = {}
     if sequence_owners:
         rows = await session.execute(
@@ -475,6 +539,16 @@ async def quest_media(
                 for child in variants.get(target_id, [])
             ]
         events.append(entry)
+        if entry.get('kind') == 'audio_event' and owner in sequence_media:
+            media = sequence_media[owner]
+            verified = verified_flow_music(media, presentations[owner], owner, release_id)
+            if verified:
+                section, keys = verified
+                if (section['source_proof']['play_path'] == f"$.Actions[{entry['action_index']}]"
+                        and section.get('reference') == entry.get('engine_path')):
+                    events.append({'kind': 'flow_music', 'flow_state': entry['flow_state'],
+                                   'covered_text_keys': keys,
+                                   'sequence_media': {**media, 'sections': [section]}})
     package_links = await _links(
         session, [quest.node_id], ("references_video_package",), release_id
     )
@@ -499,7 +573,7 @@ async def quest_media(
                                "continuations": continuations.get(node_id, []),
                                "context_inferred": True}
                               for node_id, link in related.items()
-                              if not any(event['reference'] == link['canonical_key'] for event in events)],
+                              if not any(event.get('reference') == link['canonical_key'] for event in events)],
         "video_packages": [
             {"reference": link["canonical_key"], "basis": link["basis"],
              "source": link["source"],

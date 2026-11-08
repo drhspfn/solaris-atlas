@@ -119,6 +119,40 @@ export function sequenceBackgroundMusic(media?: SequenceMedia) {
   return tracks.size === 1 ? [...tracks.values()][0] : undefined;
 }
 
+// Flow music is separate from scene cues; every displayed line must be covered.
+export function flowBackgroundMusic(lines: Line[], events: unknown[]) {
+  if (!lines.length || !lines[0].flow_state || lines.some(line =>
+    line.flow_state !== lines[0].flow_state || typeof line.text?.key !== "string" || !line.text.key)) return undefined;
+  const matches = events.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const event = value as { kind?: string; flow_state?: string; covered_text_keys?: unknown; sequence_media?: SequenceMedia };
+    if (event.kind !== "flow_music" || event.flow_state !== lines[0].flow_state ||
+        !Array.isArray(event.covered_text_keys) || event.covered_text_keys.some(key => typeof key !== "string" || !key)) return [];
+    const keys: string[] = event.covered_text_keys;
+    if (!lines.every(line => keys.includes(line.text!.key!))) return [];
+    const media = event.sequence_media;
+    if (!media || media.schema_version !== 1 || media.complete_video !== false || !Array.isArray(media.sections)) return [];
+    const sections = media.sections.filter(section => {
+      if (section.kind !== "audio_event" || section.scope !== "flow" || !["flow_authored_music", "state_consumer_fixed_start"].includes(String(section.reconstruction_kind))) return false;
+      const proof = section.source_proof as Record<string, unknown> | undefined;
+      if (!proof || proof.flow_state !== event.flow_state || !Array.isArray(proof.talk_text_keys) ||
+          proof.talk_text_keys.some(key => typeof key !== "string" || !key) ||
+          !["presentation_sha256", "asset_version", "download_id", "play_path", "talk_path", "stop_path"].every(key => typeof proof[key] === "string" && !!proof[key]) ||
+          !Number.isSafeInteger(proof.flow_owner) || !Number.isSafeInteger(proof.release_id)) return false;
+      if (section.reconstruction_kind === "state_consumer_fixed_start" &&
+          (proof.confidence !== "reconstructed" || proof.runtime_start_confirmed !== false ||
+           typeof proof.state_event !== "string" || typeof proof.consumer_event !== "string")) return false;
+      const covered = new Set(event.covered_text_keys as string[]);
+      const proven = new Set(proof.talk_text_keys as string[]);
+      return covered.size === proven.size && [...covered].every(key => proven.has(key));
+    });
+    if (sections.length !== 1) return [];
+    const music = sequenceBackgroundMusic({ ...media, sections });
+    return music ? [music] : [];
+  });
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 // A reading aid, not an authored scene clock.
 export function readingDelay(text: string, millisecondsPerCharacter = 55) {
   const rate =

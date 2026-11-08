@@ -10,7 +10,9 @@ from wuwa_story.agents.workspace import MemoryWrite, QuestionResolution
 
 Role = Literal["public", "internal", "worker"]
 PUBLIC_READ_TOOLS = frozenset(
-    {"search_dialogue", "search_entities", "search_lore", "get_quest_lore"}
+    {"search_dialogue", "search_entities", "search_lore", "get_quest_lore",
+     "visual_search", "visual_identify", "visual_list_identities", "visual_get_reference",
+     "visual_inspect_cutscene", "visual_get_video_scan"}
 )
 INTERNAL_TOOLS = frozenset(
     {
@@ -21,6 +23,10 @@ INTERNAL_TOOLS = frozenset(
         "write_memory",
         "find_work",
         "queue_analysis",
+        "visual_create_identity",
+        "visual_add_reference",
+        "visual_scan_cutscene",
+        "visual_read_video_scan",
     }
 )
 WORKER_TOOLS = frozenset({"resolve_question", "update_relationship"})
@@ -76,8 +82,22 @@ def tool(
 
 
 def internal_definitions(*, worker: bool = False) -> list[dict[str, Any]]:
+    from wuwa_story.api.routes.mcp_video_tools import InternalScanInput
+    from wuwa_story.api.routes.visual_memory_video import ScanInput
+    from wuwa_story.visual_memory.tools import IdentityCreateInput, ReferenceInput
+
     string, integer = {"type": "string"}, {"type": "integer"}
+    reference_schema = ReferenceInput.model_json_schema()
+    reference_schema["properties"].pop("status")
+    reference_schema["properties"].pop("source_type")
     tools = [
+        {"type": "function", "name": "visual_read_video_scan", "description": "Read a bounded page of video frames and unresolved proposals for internal research and human review.", "parameters": InternalScanInput.model_json_schema(), "strict": False},
+        {"type": "function", "name": "visual_scan_cutscene", "description": "Queue a bounded local visual scan of a registered published cutscene source for human review; it never approves labels.",
+            "parameters": ScanInput.model_json_schema(), "strict": False},
+        {"type": "function", "name": "visual_create_identity", "description": "Create an explicit visual identity when the subject is unknown; use a suitable custom kind. Do not claim an uncertain match.",
+            "parameters": IdentityCreateInput.model_json_schema(), "strict": False},
+        {"type": "function", "name": "visual_add_reference",
+            "description": "Submit one image and explicit identity links for human review; it remains pending and cannot approve itself.", "parameters": reference_schema, "strict": False},
         tool(
             "read_schema",
             "Discover mapped database tables, columns, keys and foreign keys; filter and paginate.",
@@ -157,6 +177,17 @@ async def execute_internal(
     run_id: int | None = None,
 ) -> dict[str, Any]:
     from wuwa_story.agents import database, workspace
+
+    if name in {"visual_scan_cutscene", "visual_read_video_scan"}:
+        from wuwa_story.api.routes.mcp_video_tools import enqueue_internal, read_internal
+
+        return await (enqueue_internal(arguments, session) if name == "visual_scan_cutscene"
+                      else read_internal(arguments, session))
+
+    if name in {"visual_create_identity", "visual_add_reference"}:
+        from wuwa_story.visual_memory.tools import VisualMemoryTools, service_for
+
+        return await VisualMemoryTools(service_for(session), allow_write=True, agent_source=True).execute(name, arguments)
 
     if name == "read_schema":
         return database.read_schema(settings, **arguments)

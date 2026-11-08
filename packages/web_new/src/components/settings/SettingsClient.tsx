@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronRight, Palette, Sparkles, UserRound } from 'lucide-react';
+import { BookOpen, ChevronRight, Palette, Sparkles, UserRound } from 'lucide-react';
 
 import { useAuth } from '@/auth/AuthProvider';
 import { PlayerText } from '@/components/dialogue/PlayerText';
@@ -14,6 +14,8 @@ export function SettingsClient() {
   const playerDisplay = usePlayerDisplay();
   const {
     nameMode,
+    dialogueStyle,
+    setDialogueStyle,
     colorMode,
     customColor,
     preferredRover,
@@ -75,6 +77,19 @@ export function SettingsClient() {
                   <strong>{label}</strong>
                   <small>{description}</small>
                 </span>
+              </label>
+            ))}
+          </div>
+          <p className="settings-help">Saved automatically in this browser.</p>
+        </section>
+        <section className="content-panel settings-panel" aria-labelledby="dialogue-style-title">
+          <div className="panel-title"><span><BookOpen size={15} /></span><h2 id="dialogue-style-title">Illustrated dialogue</h2></div>
+          <p className="settings-help">Choose how dialogue appears over story illustrations.</p>
+          <div className="settings-options" role="radiogroup" aria-labelledby="dialogue-style-title">
+            {([['game', 'Game inspired', 'Dialogue and controls over the scene'], ['atlas', 'Solaris Atlas', 'A framed reading panel with Atlas colors']] as const).map(([value, label, description]) => (
+              <label key={value} className={`settings-option ${dialogueStyle === value ? 'selected' : ''}`}>
+                <input type="radio" name="dialogue-style" value={value} checked={dialogueStyle === value} onChange={() => setDialogueStyle(value)} />
+                <span><strong>{label}</strong><small>{description}</small></span>
               </label>
             ))}
           </div>

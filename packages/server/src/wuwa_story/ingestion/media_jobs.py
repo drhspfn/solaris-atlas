@@ -51,7 +51,11 @@ async def publish_media_job(payload: dict, job_id: str, queue_name: str = MEDIA_
 
 
 async def enqueue_entity_media(session, request: MediaRequest, *, retry_partial: bool = False,
-                               republish_queued: bool = False) -> ProcessingRun:
+                               republish_queued: bool = False, execution_queue: str | None = None) -> ProcessingRun:
+    if execution_queue not in (None, "wuwa.illustrated-backgrounds.v1"):
+        raise ValueError("Unknown isolated media execution queue")
+    if execution_queue and request.kinds != ["image"]:
+        raise ValueError("Illustrated execution queue accepts image requests only")
     if request.workspace_id is not None:
         await retain_workspace(session, request.workspace_id)
     targets = await entity_media_targets(session, request)
@@ -61,6 +65,8 @@ async def enqueue_entity_media(session, request: MediaRequest, *, retry_partial:
         "request": request.model_dump(),
         "targets": targets,
     }
+    if execution_queue:
+        payload["execution_queue"] = execution_queue
     digest = hashlib.sha256(json.dumps(
         payload, sort_keys=True).encode()).digest()
     await session.execute(
@@ -97,6 +103,7 @@ async def enqueue_entity_media(session, request: MediaRequest, *, retry_partial:
     payload["run_id"] = run.id
     queue_name = "wuwa.entity-images.v1" if all(
         t['kind'] in {'image', 'spine'} for t in targets) else MEDIA_QUEUE
+    queue_name = execution_queue or queue_name
     run.metadata_json = {"payload": payload,
                          "request": request.model_dump(), "queue": queue_name}
     await session.commit()

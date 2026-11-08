@@ -39,8 +39,8 @@ def matches_source(metadata: dict, source: dict, target: dict) -> bool:
     revision = target.get('sequence_metadata_revision')
     sequence_target = target.get('path', '').startswith(
         'story_sequence:') or (type(revision) is int and revision >= 5)
-    sequence_audio = sequence_target and type(
-        revision) is int and revision >= 3
+    sequence_audio = (sequence_target and type(revision) is int and revision >= 3
+                      or bool(target.get('soundtrack_context')))
     tools = {key: value for key, value in source.get("tools", {}).items()
              if (key != "WUWA_VGMSTREAM_PATH" or target.get("kind") != "image" or sequence_audio)
              and (key != 'WUWA_WWISER_PATH' or provenance.get('voice_variant') or sequence_audio)}
@@ -152,6 +152,16 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
                 target = {**base, 'source_name': reference.source_name}
                 expected[target_identity(target, reference_type)] = target
         metadata = reference.metadata_json or {}
+        if target is not None:
+            scoped_audio = [section for section in (metadata.get('sequence_media') or {}).get('sections', [])
+                            if isinstance(section, dict) and section.get('kind') == 'audio_event'
+                            and section.get('scope') == 'flow']
+            if scoped_audio and (reference.release_id != target.get('release_id') or any(
+                   not isinstance(section.get('source_proof'), dict)
+                   or section['source_proof'].get('release_id') != target.get('release_id')
+                   or section['source_proof'].get('flow_owner') != target.get('owner')
+                   for section in scoped_audio)):
+                continue
         composition = (metadata.get('sequence_media') or {}).get('composition') or {}
         sequence = target is not None and (target.get('path', '').startswith('story_sequence:')
                                            or target.get('sequence_metadata_revision') is not None)
@@ -159,7 +169,7 @@ async def missing_media_targets(session, targets: list[dict], *, source: dict, s
             continue
         illustrated = sequence and composition.get('state') in {'ready', 'unsupported'}
         preview = metadata.get('animation_preview') or {}
-        native_ready = preview.get('recipe') == 'riglyph-native-v1' and preview.get('status') == 'ready' and preview.get('variants')
+        native_ready = preview.get('recipe') in {'riglyph-native-v1', 'riglyph-native-v2'} and preview.get('status') == 'ready' and preview.get('variants')
         playable = not require_spine_playback or target is None or target.get('kind') != 'spine' or native_ready or illustrated or ((metadata.get('playback') or {}).get('variants') and (metadata.get('playback') or {}).get('components') and not (metadata.get('playback') or {}).get('unsupported'))
         if target is not None and playable and matches_source(metadata, source, target):
             candidates.append((target_identity(target, reference_type), file.size_bytes,

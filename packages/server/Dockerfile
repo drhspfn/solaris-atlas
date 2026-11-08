@@ -1,6 +1,6 @@
 FROM ghcr.io/astral-sh/uv:0.11.6 AS uv
 FROM python:3.12-slim AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=uv /uv /uvx /bin/
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv PATH="/opt/venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
@@ -10,7 +10,7 @@ COPY packages/server/alembic.ini ./
 COPY packages/server/migrations ./migrations
 COPY packages/server/src ./src
 COPY packages/server/scripts ./scripts
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra visual-memory
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
 USER appuser
 EXPOSE 8000

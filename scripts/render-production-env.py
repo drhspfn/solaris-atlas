@@ -11,6 +11,7 @@ KEY_RE = re.compile(r"[A-Z][A-Z0-9_]*")
 
 GROUPS = {
     "compose.env": {
+        "VISUAL_MEMORY_IMAGE_TAG": "main",
         "DOMAIN": "example.invalid",
         "USE_MINIO": "true",
         "POSTGRES_USER": "wuwa",

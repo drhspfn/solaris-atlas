@@ -14,6 +14,7 @@ import { ErrorPanel, PageLoader } from "@/components/ui/Feedback";
 import { InfiniteScroll } from "@/components/ui/InfiniteScroll";
 import { Cutscene } from "./QuestCutscenes";
 import { cutsceneAnchor, packageCutsceneAnchor } from "./cutsceneAnchor";
+import { clipRover } from "./cutsceneAudioSelection";
 import type { QuestMediaEvent } from "./QuestMediaReferences";
 
 type Quest = {
@@ -45,6 +46,18 @@ export type CutscenePage = {
 export type CutsceneDetail = Scene & {
   game_version: string;
   event: QuestMediaEvent;
+  public_descriptions?: {
+    asset_node_id: number;
+    visual_reference_id: number | null;
+    title: string;
+    text: string;
+    chapters: { start: number; end: number; title: string; text: string }[];
+    observation_indices: number[];
+    origin?: "analysis" | "manual";
+    locale?: string;
+    document_id?: number;
+    revision?: number;
+  }[];
   passages: (Quest & {
     focus_line?: string | null;
     package_related?: boolean;
@@ -438,6 +451,36 @@ export function CutsceneRecord({
           This scene is recorded in the game data, but a playable export is not
           available yet.
         </div>
+      )}
+      {!!data.public_descriptions?.length && (
+        <section className="cutscene-context" aria-label="Scene descriptions">
+          <h2>Scene descriptions</h2>
+          {data.public_descriptions.map((description, index) => {
+            const flow = data.event.playback;
+            const clips = flow?.nodes.filter((node) =>
+              node.kind === "clip" &&
+              flow.media[node.segment || node.asset]?.asset_node_id === description.asset_node_id,
+            ) || [];
+            const rovers = new Set(clips.map((clip) => clipRover(flow!, clip.id, "ask")));
+            const rover = rovers.size === 1 ? [...rovers][0] : "ask";
+            const variant = rover === "female" ? "Female Rover" : rover === "male" ? "Male Rover" : `Version ${index + 1}`;
+            return <section key={description.asset_node_id}>
+              <h3>
+                <PlayerText value={description.title} display={display} />
+              </h3>
+              {(data.public_descriptions!.length > 1 || description.origin === "analysis") && (
+                <small>
+                  {data.public_descriptions!.length > 1 && variant}
+                  {data.public_descriptions!.length > 1 && description.origin === "analysis" && " · "}
+                  {description.origin === "analysis" && "AI description"}
+                </small>
+              )}
+              <p>
+                <PlayerText value={description.text} display={display} />
+              </p>
+            </section>;
+          })}
+        </section>
       )}
       <section className="cutscene-context">
         <h2>Where this scene appears</h2>

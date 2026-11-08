@@ -1,0 +1,99 @@
+{% extends "detail.html" %} {% block content %}
+<div class="container-fluid">
+  <section
+    class="sa-cutscene card"
+    id="cutscene-player"
+    data-name="{{ obj.cg_name or '' }}"
+    data-url="{{ url_for(__name__ ~ ':cutscene-data', node_id=obj.node_id) }}"
+  >
+    <div class="card-body">
+      <h2 class="card-title">Cutscene playback</h2>
+      <a
+        class="btn btn-secondary"
+        href="/console/visual-memory?tab=cutscenes&amp;cutscene={{ (obj.cg_name or '') | urlencode }}"
+        >Review in Visual Memory</a
+      >
+      <form class="sa-cutscene-filters">
+        <label
+          >Game version
+          <input
+            class="form-control"
+            name="version"
+            placeholder="Latest imported"
+            maxlength="32"
+        /></label>
+        <label
+          >Language
+          <select class="form-select" name="language">
+            <option value="en">English</option>
+            <option value="ja">Japanese</option>
+            <option value="ko">Korean</option>
+            <option value="zh">Chinese</option>
+          </select></label
+        >
+        <button class="btn btn-primary" type="submit">Load</button>
+      </form>
+      <p role="status" class="sa-cutscene-status">Loading cutscene…</p>
+      <div class="sa-cutscene-stage" hidden>
+        {% include 'video_element.html' %}
+        <div class="sa-cutscene-caption" aria-live="off"></div>
+        <div class="sa-cutscene-choice" hidden>
+          <p></p>
+          <div></div>
+        </div>
+      </div>
+      <div class="sa-cutscene-controls" hidden>
+        <label class="sa-cutscene-timeline"
+          >Scene timeline
+          <input
+            type="range"
+            name="timeline"
+            min="0"
+            max="1"
+            step="0.1"
+            value="0"
+            disabled
+        /></label>
+        <div class="sa-cutscene-decisions" aria-label="Scene branches"></div>
+        <button class="btn btn-secondary" type="button" data-action="restart">
+          Restart
+        </button>
+        <label
+          ><input type="checkbox" name="captions" checked /> Subtitles</label
+        >
+        <label
+          >Music
+          <input
+            type="range"
+            name="music"
+            min="0"
+            max="1"
+            step="0.05"
+            value="1"
+        /></label>
+        <button
+          class="btn btn-secondary"
+          type="button"
+          data-action="fullscreen"
+        >
+          Fullscreen
+        </button>
+      </div>
+      <div class="sa-cutscene-context"></div>
+      <section class="sa-cutscene-details">
+        <h3>Preview images</h3>
+        <div class="sa-cutscene-previews"></div>
+        <h3>Public descriptions</h3>
+        <div class="sa-cutscene-public"></div>
+        <h3>System observations</h3>
+        <div class="sa-cutscene-system"></div>
+      </section>
+    </div>
+  </section>
+</div>
+{{ super() }}
+<script
+  src="{{ url_for(__name__ ~ ':statics', path='cutscene-player.js') }}"
+  defer
+></script>
+{% endblock %}

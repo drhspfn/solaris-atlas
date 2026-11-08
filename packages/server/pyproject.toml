@@ -14,6 +14,7 @@ dependencies = [
   "ijson>=3.3,<4",
   "joserfc>=1.4,<2",
   "pgvector>=0.3,<1",
+  "Pillow>=10,<13",
   "pwdlib[argon2]>=0.2,<1",
   "redis>=5.2,<7",
   "pydantic>=2.10,<3",
@@ -25,6 +26,23 @@ dependencies = [
   "sqlglot>=27,<30",
   "starlette-admin>=0.17.1,<0.18",
 ]
+
+[project.optional-dependencies]
+visual-memory = [
+  "numpy>=1.26,<3",
+  "opencv-python-headless>=4.8,<5",
+  "onnxruntime>=1.18,<2",
+  "torch>=2.2,<3",
+  "transformers>=4.44,<5",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
 
 [dependency-groups]
 dev = [
@@ -38,6 +56,7 @@ dev = [
 
 [project.scripts]
 wuwa-story-admin = "wuwa_story.auth.cli:main"
+visual-memory = "wuwa_story.visual_memory.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.26,<2"]

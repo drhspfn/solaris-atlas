@@ -101,3 +101,32 @@ async def test_explicit_recovery_redelivers_same_job_without_resetting_state(mon
         publish.assert_awaited_once()
         assert publish.await_args.args[0] is payload
         assert publish.await_args.args[2] == 'wuwa.entity-images.v1'
+
+
+@pytest.mark.asyncio
+async def test_illustrated_rebuild_has_isolated_durable_routing_and_identity(monkeypatch):
+    from unittest.mock import Mock
+    from wuwa_story.ingestion import media_jobs
+    value = request().model_copy(update={"kinds": ["image"]})
+    monkeypatch.setattr(media_jobs, "entity_media_targets", AsyncMock(return_value=[{"kind": "spine"}]))
+    publish = AsyncMock()
+    monkeypatch.setattr(media_jobs, "publish_media_job", publish)
+    hashes = []
+    for queue in (None, "wuwa.illustrated-backgrounds.v1"):
+        db = AsyncMock()
+        db.scalar.side_effect = [1, None]
+        db.add = Mock(side_effect=lambda run: setattr(run, "id", 100))
+        run = await media_jobs.enqueue_entity_media(db, value, execution_queue=queue)
+        hashes.append(run.input_hash)
+        assert run.metadata_json["queue"] == (queue or "wuwa.entity-images.v1")
+        assert publish.await_args.args[2] == run.metadata_json["queue"]
+    assert hashes[0] != hashes[1]
+
+
+@pytest.mark.asyncio
+async def test_isolated_image_queue_rejects_voice_requests_before_db_access():
+    from wuwa_story.ingestion import media_jobs
+    db = AsyncMock()
+    with pytest.raises(ValueError, match="image requests only"):
+        await media_jobs.enqueue_entity_media(db, request(), execution_queue="wuwa.illustrated-backgrounds.v1")
+    db.execute.assert_not_awaited()

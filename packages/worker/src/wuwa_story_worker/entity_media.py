@@ -196,7 +196,7 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
                            target['resource_id'], str(error)[:500])
             missing.append(target['path'])
             continue
-        if target.get('sequence_metadata_revision', 0) >= 3:
+        if target.get('sequence_metadata_revision', 0) >= 3 or target.get('soundtrack_context'):
             from wuwa_story_worker.sequence_audio_prepare import prepare_sequence_audio
             bundle, audio_sources = await prepare_sequence_audio(
                 root, bundle, fmodel, converter, voice_root=voice_root,
@@ -404,9 +404,12 @@ async def resolve_soundtrack_targets(root, targets, fmodel, source):
     result = []
     for original in targets:
         target = dict(original)
-        if (target.get('kind') == 'spine' and target.get('sequence_metadata_revision', 0) >= 5
-                and target.get('presentation')):
-            context = await resolve_levelplay_context(root, target, fmodel, provenance=source)
+        if target.get('kind') == 'spine' and target.get('presentation'):
+            from wuwa_story_worker.sequence_music_context import authored_flow_music_context
+
+            context = authored_flow_music_context(target, source)
+            if context is None:
+                context = await resolve_levelplay_context(root, target, fmodel, provenance=source)
             if context is not None:
                 proof = context.get('source_proof') or {}
                 if (proof.get('asset_version') != source['asset_version']
@@ -453,7 +456,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 storage = S3Storage(get_settings())
                 tool_names = ["WUWA_FMODEL_PATH",
                               "WUWA_TEXTURE_CONVERTER_PATH"]
-                if any(t["kind"] == "voice" or (t.get('path', '').startswith('story_sequence:')
+                if any(t["kind"] == "voice" or (t.get('kind') == 'spine' and t.get('presentation'))
+                       or (t.get('path', '').startswith('story_sequence:')
                        and t.get('sequence_metadata_revision', 0) >= 3)
                        or (t.get('kind') == 'spine' and t.get('sequence_metadata_revision', 0) >= 5)
                        for t in payload["targets"]):
@@ -484,6 +488,11 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                     from wuwa_story_worker.sequence_metadata import retained_bundle
                     retained_sequences = {}
                     for target in targets:
+                        if (target.get('reference_type') == 'story_presentation'
+                                and not any(cue.get('kind') == 'sequence'
+                                            for cue in (target.get('presentation') or {}).get('cues', []))):
+                            # Audio-only bundles have no decoded sequence assets to recompile.
+                            continue
                         retained = await retained_bundle(session, storage, root, target, source)
                         if retained is not None:
                             retained_sequences[target['path']] = retained
@@ -667,7 +676,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         "language": target["language"],
                         "game_source": provenance,
                     }
-                    if sequence_media is not None and reference_type in {'story_presentation', 'story_spine'}:
+                    if (reference_type == 'story_spine'
+                            or (sequence_media is not None and reference_type == 'story_presentation')):
                         from wuwa_story_worker.sequence_fragments import invalidate_sequence_quests
                         await invalidate_sequence_quests(session, target)
                     if reference_type == 'character_voice' and provenance.get('voice_variant'):
