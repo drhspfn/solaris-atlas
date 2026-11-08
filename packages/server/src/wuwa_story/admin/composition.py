@@ -15,6 +15,7 @@ from starlette_admin.contrib.sqla import Admin
 
 from wuwa_story.admin.auth import ConsoleProtection, InternalAuth
 from wuwa_story.admin.cutscenes import CutsceneData
+from wuwa_story.admin.visual_memory import VisualMemory
 from wuwa_story.admin.views import (
     Alerts,
     BudgetUsage,
@@ -68,6 +69,7 @@ def install_admin(app: Starlette, engine: AsyncEngine, settings: Settings | None
                   index_view=AgentIndex("Research", add_to_menu=False))
     admin.setup_view(CutsceneData("Cutscene data", path="/cutscene-data/{node_id:int}",
                                   name="cutscene-data", add_to_menu=False))
+    admin.add_view(VisualMemory())
     admin.add_view(DropDown("Agent", views=[
         Alerts(AgentNote, label="Alerts", identity="alerts"),
         OpenQuestions(AgentWorkItem, label="Open questions",
