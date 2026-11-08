@@ -75,6 +75,7 @@ class VisualReference(Base):
         CheckConstraint("status IN ('pending','approved','rejected')", name="status_valid"),
         CheckConstraint("retention_mode IN ('image','vector_only')", name="retention_valid"),
         CheckConstraint("width > 0 AND height > 0", name="dimensions_positive"),
+        CheckConstraint("quality >= 0 AND quality <= 1", name="quality_valid"),
         {"schema": "core"},
     )
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
@@ -91,6 +92,7 @@ class VisualReference(Base):
     source_url: Mapped[str | None] = mapped_column(Text)
     source_page: Mapped[str | None] = mapped_column(Text)
     rights: Mapped[str | None] = mapped_column(Text)
+    author: Mapped[str | None] = mapped_column(String(512))
     quality: Mapped[float] = mapped_column(Float, default=1.0, server_default="1")
     status: Mapped[str] = mapped_column(
         String(16), default="pending", server_default="pending", index=True
@@ -124,7 +126,10 @@ class VisualReferenceLink(Base):
 
 class VisualEmbedding(Base):
     __tablename__ = "visual_embedding"
-    __table_args__ = ({"schema": "search"},)
+    __table_args__ = (
+        CheckConstraint("vector_dims(embedding) = dimensions", name="dimensions_match"),
+        {"schema": "search"},
+    )
     reference_id: Mapped[int] = mapped_column(
         ForeignKey("core.visual_reference.id", ondelete="CASCADE"),
         primary_key=True,
