@@ -48,4 +48,4 @@ jobs:
           tests/test_agent_chat_roles.py tests/test_mcp_media_tools.py tests/test_mcp_character_tools.py
           -q
       - name: Validate admin interaction and tool documentation
-        run: node --test packages/server/tests/test_visual_memory_*.mjs packages/web_new/tests/mcpDocs.test.mjs
+        run: node --test packages/server/tests/test_visual_memory_*.mjs packages/server/tests/test_bbox_annotation_ui.mjs packages/web_new/tests/mcpDocs.test.mjs
