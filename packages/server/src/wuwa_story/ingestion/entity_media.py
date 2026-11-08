@@ -188,7 +188,11 @@ async def entity_media_targets(session, request: MediaRequest) -> list[dict]:
                                 'spine_recipe': SPINE_RECIPE, 'presentation': presentation, **sequence_version,
                                 'presentation_sha256': presentation['sha256']}
                                for identity in presentation['resource_ids'])
-                if not presentation['resource_ids'] and any(cue['kind'] == 'sequence' for cue in presentation['cues']):
+                has_sequence = any(cue['kind'] == 'sequence' for cue in presentation['cues'])
+                has_image_audio = (any(cue['kind'] == 'background' and cue['background']['kind'] == 'image'
+                                       for cue in presentation['cues'])
+                                   and any(cue['kind'] == 'audio_action' for cue in presentation['cues']))
+                if not presentation['resource_ids'] and (has_sequence or has_image_audio):
                     targets.append({'owner': node.id, 'release_id': release_id,
                                     'path': f'story_sequence:{node.canonical_key}', 'resource_id': None,
                                     'kind': 'spine', 'language': None, 'reference_type': 'story_presentation',

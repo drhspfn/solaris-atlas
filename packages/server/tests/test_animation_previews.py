@@ -189,3 +189,9 @@ async def test_projection_preserves_preview_and_obeys_current_flag_without_sourc
     session.execute.assert_awaited_once()
     calendar = source_sections._calendar_payload({'event': {'spine': [{'animation_preview': preview}]}, 'occurrences': []})
     assert calendar['event']['spine'][0]['animation_preview'] == preview
+
+
+@pytest.mark.parametrize("recipe", ["riglyph-native-v1", "riglyph-native-v2"])
+def test_both_published_renderer_generations_are_playable(preview, recipe):
+    preview = {**preview, "recipe": recipe}
+    assert animation_preview({"animation_preview": preview}, True) == preview

@@ -1,5 +1,11 @@
 import type { SequenceMedia } from "./encounterTransitions";
 
+export function hasEngineCinematicTracks(media?: SequenceMedia) {
+  if (media?.schema_version !== 1 || !Array.isArray(media.sections)) return false;
+  return media.sections.some((section) => section.kind === "camera") &&
+    media.sections.some((section) => ["skeletal_animation", "skeletal_animation_asset"].includes(section.kind));
+}
+
 export function illustrationSections(media?: SequenceMedia) {
   if (media?.schema_version !== 1 || !Array.isArray(media.sections)) return [];
   return media.sections.filter(

@@ -376,7 +376,25 @@ def initial_parameters(timeline, bank_xml, init_xml):
 
 
 
-async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover, run_tool, *, language: str | None = None, startup_states=None, external_states=None):
+def reconstructed_startup_timeline(timeline, startup_states):
+    """Reconstruct zero-time state at startup, retaining the original action order."""
+    actions = timeline['actions']
+    plays = [i for i, action in enumerate(actions) if action['kind'] == 'Play']
+    if not plays:
+        raise ValueError('Fixed-start reconstruction requires a Play')
+    for action in actions:
+        if action['kind'] == 'SetState' and action['state_group_id'] in startup_states:
+            if action['time_ms'] != 0:
+                raise ValueError('Cannot override a state after zero time')
+    retained = [action for action in actions if not (
+        action['kind'] == 'SetState' and action['state_group_id'] in startup_states)]
+    return {**timeline, 'source_actions': list(actions), 'actions': [
+        *[{'kind': 'SetState', 'time_ms': 0, 'state_group_id': int(group),
+           'state_id': int(value), 'source': 'fixed-start reconstruction'}
+          for group, value in startup_states.items()], *retained]}
+
+
+async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover, run_tool, *, language: str | None = None, startup_states=None, external_states=None, override_startup_states=False):
     """Return (decoded WAV, durable evidence) for exactly one authored event."""
     from wuwa_story_worker.cutscene_import import soundtrack_wem
 
@@ -391,7 +409,7 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
         initializers = initializers[:1]
     selection = str(rover).encode() + (b'\0language:' + language.encode('ascii') if language is not None else b'')
     if startup_states or external_states:
-        selection += json.dumps([startup_states, external_states], sort_keys=True).encode()
+        selection += json.dumps([startup_states, external_states, override_startup_states], sort_keys=True).encode()
     fingerprint = hashlib.sha256(bank.read_bytes() + selection + renderer.read_bytes())
     fingerprint.update(Path(__file__).read_bytes())
     for initializer in initializers:
@@ -412,7 +430,9 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
     await run_tool([sys.executable, str(renderer), "-d", "xml", "-dn", str(root / "bank"),
                     "--", str(source)], 120)
     timeline = event_timeline(xml, event_id(bank.stem))
-    if startup_states:
+    if startup_states and override_startup_states:
+        timeline = reconstructed_startup_timeline(timeline, startup_states)
+    elif startup_states:
         timeline['source_actions'] = list(timeline['actions'])
         timeline['actions'] = [action for action in timeline['actions'] if not (
             action['kind'] == 'SetState' and action['time_ms'] == 0
@@ -439,7 +459,7 @@ async def render_bank(bank: Path, audio: Path, work: Path, decoder: Path, rover,
         if not state_params or not set(state_params).issubset(
                 {f'({group}={value})' for group, value in (external_states or {}).items()}):
             raise ValueError('Wwise startup State requires external music context: '
-                             + ', '.join(state_params))
+                             + ', '.join(state_params)) from None
     params = await asyncio.to_thread(rover_parameters, xml, rover, language=language)
     for param in state_params:
         if any(other.split('=')[0] == param.split('=')[0] and other != param for other in params):

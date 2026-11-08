@@ -19,8 +19,8 @@ import {
   timelineTarget,
 } from "./cutsceneTimeline";
 import { preferredRoverTarget } from "./preferredRover";
-import { QuestSequenceFragments } from "./QuestSequenceFragments";
-import { QuestSequenceIllustrations } from "./QuestSequenceIllustrations";
+import { QuestSceneDetails } from "./QuestSceneDetails";
+import styles from "./QuestCutscenes.module.css";
 import {
   type CutsceneFlow,
   type CutsceneNode,
@@ -674,33 +674,7 @@ export function Cutscene({
   if (event.kind === "sequence")
     return (
       <section id={cutsceneAnchor(event)} className="quest-runtime-block">
-        <span className="eyebrow left">SCENE</span>
-        <h3>
-          <PlayerText
-            value={event.title}
-            fallback="Scripted scene"
-            display={display}
-          />
-        </h3>
-        {!event.story_position && (
-          <p>
-            {event.review_position
-              ? "Shown in archive review order."
-              : "Position in the story is not mapped."}
-          </p>
-        )}
-        {event.sequence_media ? (
-          <QuestSequenceFragments media={event.sequence_media} />
-        ) : (
-          <QuestSequenceIllustrations />
-        )}
-        <details>
-          <summary>Source reference</summary>
-          <small>{event.engine_path || event.reference}</small>
-          <small>
-            {event.source.file} · {event.source.raw_path}
-          </small>
-        </details>
+        <QuestSceneDetails event={event} display={display} />
       </section>
     );
   return (
@@ -715,7 +689,7 @@ export function Cutscene({
           />
         ))}
       {event.context_inferred && (
-        <p>
+        <p className={styles.placement}>
           {event.story_order_mapped
             ? "Related scenario from the authored tree; branches can vary in play."
             : "Possible quest connection; occurrence and position in the story are unconfirmed."}
@@ -723,7 +697,7 @@ export function Cutscene({
       )}
       {!event.story_position &&
         (!event.context_inferred || event.story_order_mapped) && (
-          <p>
+          <p className={styles.placement}>
             {event.review_position
               ? "Shown in archive review order."
               : "Position in the story is not mapped."}
@@ -756,9 +730,13 @@ export function Cutscene({
 export function RelatedQuestCutscenes({
   manifest,
   display,
+  currentQuestIds = [],
+  currentQuestTitle,
 }: {
   display?: PlayerDisplay;
   manifest: QuestMediaManifest | null;
+  currentQuestIds?: Array<string | number>;
+  currentQuestTitle?: unknown;
 }) {
   if (!manifest) return null;
   const eventScenes = new Set(
@@ -771,33 +749,39 @@ export function RelatedQuestCutscenes({
   );
   if (!scenes.length) return null;
   return (
-    <section className="quest-cutscene-anchor" aria-label="Related scenes">
-      <h3>Related scenes</h3>
-      <p>
-        These scenes are associated with this quest, but their position in the
-        transcript is not yet mapped.
-      </p>
+    <section
+      className={`quest-cutscene-anchor ${styles.related}`}
+      aria-label="Related scenes"
+    >
+      <header className={styles.relatedHeader}>
+        <h3>
+          <Film size={18} aria-hidden="true" /> Related scenes
+        </h3>
+        <p>Linked to this quest · exact position unknown</p>
+      </header>
       {scenes.map((scene) => (
         <div
           id={packageCutsceneAnchor(scene.name)}
           className="quest-cutscene-anchor"
           key={scene.name}
         >
-          {scene.continuations?.map((quest) => (
-            <p key={quest.game_quest_id}>
-              Continues in a later quest:{" "}
-              <Link
-                to={`${quest.quest_href || `/quests/${quest.game_quest_id}`}${manifest.game_version ? `?game_version=${encodeURIComponent(manifest.game_version)}` : ""}`}
-              >
-                <PlayerText
-                  value={quest.title}
-                  fallback="Continue the story"
-                  display={display}
-                />{" "}
-                ↗
-              </Link>
-            </p>
-          ))}
+          {externalSceneContinuations(scene.continuations, currentQuestIds, currentQuestTitle).map(
+            (quest) => (
+              <p className={styles.continuation} key={quest.game_quest_id}>
+                <span>Continue the story</span>
+                <Link
+                  to={`${quest.quest_href || `/quests/${quest.game_quest_id}`}${manifest.game_version ? `?game_version=${encodeURIComponent(manifest.game_version)}` : ""}`}
+                >
+                  <PlayerText
+                    value={quest.title}
+                    fallback="Continue the story"
+                    display={display}
+                  />{" "}
+                  ↗
+                </Link>
+              </p>
+            ),
+          )}
           {scene.playback ? (
             <FlowPlayer
               flow={scene.playback}
@@ -819,6 +803,30 @@ export function RelatedQuestCutscenes({
       ))}
     </section>
   );
+}
+
+export function externalSceneContinuations(
+  continuations:
+    | NonNullable<
+        NonNullable<
+          QuestMediaManifest["related_cutscenes"]
+        >[number]["continuations"]
+      >
+    | undefined,
+  currentQuestIds: Array<string | number>,
+  currentQuestTitle?: unknown,
+) {
+  const ids = new Set(currentQuestIds.map(String));
+  const title = gameTextPlainText(currentQuestTitle).trim().toLocaleLowerCase();
+  return (continuations || []).filter((quest) => {
+    const hrefId = quest.quest_href
+      ?.match(/^\/quests\/([^/?#]+)/)?.[1]
+      ?.split("-")[0];
+    return (
+      !ids.has(String(quest.game_quest_id)) &&
+      (!title || gameTextPlainText(quest.title).trim().toLocaleLowerCase() !== title) && (!hrefId || !ids.has(hrefId))
+    );
+  });
 }
 
 export function QuestCutscenes({

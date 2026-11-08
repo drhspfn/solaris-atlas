@@ -1,16 +1,22 @@
-'use client';
+"use client";
 
-import { useEffect, useRef, useState } from 'react';
-import { Archive, Download, ImageOff } from 'lucide-react';
-import { useNarrativePreferences } from '../../preferences/NarrativePreferences';
-import { Select } from '../ui/Select';
-import { QuestAnimatedBackdrop, type OpenPlayback } from './QuestAnimatedBackdrop';
-import { RenderedAnimation } from '../ui/RenderedAnimation';
-import { selectAnimationClip, type AnimationPreview } from '../ui/animationPreview';
+import { useEffect, useRef, useState } from "react";
+import { Download, ImageOff } from "lucide-react";
+import { useNarrativePreferences } from "../../preferences/NarrativePreferences";
+import { Select } from "../ui/Select";
+import {
+  QuestAnimatedBackdrop,
+  type OpenPlayback,
+} from "./QuestAnimatedBackdrop";
+import { RenderedAnimation } from "../ui/RenderedAnimation";
+import {
+  selectAnimationClip,
+  type AnimationPreview,
+} from "../ui/animationPreview";
 
 export type Illustration = {
   id: string;
-  kind: 'image' | 'clear' | 'spine';
+  kind: "image" | "clear" | "spine";
   resource_id?: number;
   loop?: boolean;
   animation?: string | null;
@@ -23,7 +29,7 @@ export type Illustration = {
     animation_preview?: AnimationPreview | null;
   } | null;
   images: Array<{
-    rover: 'male' | 'female' | null;
+    rover: "male" | "female" | null;
     engine_path: string;
     url: string | null;
   }>;
@@ -31,13 +37,15 @@ export type Illustration = {
 
 export function QuestIllustration({
   illustration,
-  presentation = 'inline',
+  presentation = "inline",
 }: {
   illustration: Illustration;
-  presentation?: 'inline' | 'background';
+  presentation?: "inline" | "background";
 }) {
   const { preferredRover } = useNarrativePreferences();
-  const [choice, setChoice] = useState(preferredRover === 'ask' ? '' : preferredRover);
+  const [choice, setChoice] = useState(
+    preferredRover === "ask" ? "" : preferredRover,
+  );
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const image = useRef<HTMLImageElement>(null);
@@ -45,9 +53,17 @@ export function QuestIllustration({
     illustration.images.find((image) => image.rover === choice) ||
     illustration.images.find((image) => !image.rover);
   const playback = illustration.bundle?.playback;
-  const animation = illustration.animation ?? illustration.bundle?.animation_preview?.default_animation;
-  const preview = selectAnimationClip(illustration.bundle?.animation_preview, animation, choice);
-  const authoredVariants = playback?.variants?.filter((variant) => variant.animation === animation);
+  const animation =
+    illustration.animation ??
+    illustration.bundle?.animation_preview?.default_animation;
+  const preview = selectAnimationClip(
+    illustration.bundle?.animation_preview,
+    animation,
+    choice,
+  );
+  const authoredVariants = playback?.variants?.filter(
+    (variant) => variant.animation === animation,
+  );
   const animated =
     authoredVariants?.find((variant) => variant.rover === choice) ||
     authoredVariants?.find((variant) => !variant.rover);
@@ -56,7 +72,9 @@ export function QuestIllustration({
       [
         ...illustration.images.map((image) => image.rover),
         ...(playback?.variants || []).map((variant) => variant.rover),
-        ...(illustration.bundle?.animation_preview?.variants || []).map((variant) => variant.rover),
+        ...(illustration.bundle?.animation_preview?.variants || []).map(
+          (variant) => variant.rover,
+        ),
       ].filter(Boolean),
     ),
   ];
@@ -66,16 +84,17 @@ export function QuestIllustration({
     if (selected?.url && image.current?.complete && !image.current.naturalWidth)
       setFailedUrl(selected.url);
   }, [selected?.url, retry]);
-  if (illustration.kind === 'clear') return null;
+  if (illustration.kind === "clear") return null;
   return (
     <figure
-      className={`quest-illustration${presentation === 'background' ? ' is-background' : ''}${animated ? ' has-animation' : ''}`}
+      className={`quest-illustration${presentation === "background" ? " is-background" : ""}${animated ? " has-animation" : ""}`}
     >
       <RenderedAnimation
-        key={`${illustration.id}:${choice}:${animation || ''}`}
+        key={`${illustration.id}:${choice}:${animation || ""}`}
         preview={preview}
         label="Animated story illustration"
-        compact={presentation === 'background'}
+        compact={false}
+        loop={presentation === "background" ? true : (illustration.loop ?? true)}
         fallback={
           animated && !preview ? (
             <QuestAnimatedBackdrop
@@ -98,16 +117,16 @@ export function QuestIllustration({
               <ImageOff size={24} aria-hidden="true" />
               <p>
                 {failedUrl && failedUrl === selected?.url
-                  ? 'Illustration could not load.'
-                  : illustration.kind === 'spine'
+                  ? "Illustration could not load."
+                  : illustration.kind === "spine"
                     ? illustration.bundle
                       ? variants && !choice
-                        ? 'Choose Rover to view this scene.'
-                        : 'Animated scene archived · playback unavailable'
-                      : 'Animated scene · awaiting export'
+                        ? "Choose Rover to view this scene."
+                        : "Animated scene archived · playback unavailable"
+                      : "Animated scene · awaiting export"
                     : variants && !choice
-                      ? 'Choose Rover to view this illustration.'
-                      : 'Illustration · awaiting image export.'}
+                      ? "Choose Rover to view this illustration."
+                      : "Illustration · awaiting image export."}
               </p>
               {failedUrl === selected?.url && selected?.url && (
                 <button
@@ -132,41 +151,29 @@ export function QuestIllustration({
             value={choice}
             onChange={setChoice}
             options={[
-              { value: '', label: 'Choose Rover' },
+              { value: "", label: "Choose Rover" },
               ...rovers.map((rover) => ({
                 value: rover!,
-                label: rover === 'male' ? 'Male Rover' : 'Female Rover',
+                label: rover === "male" ? "Male Rover" : "Female Rover",
               })),
             ]}
           />
         )}
         {illustration.bundle && (
-          <a className="quest-spine-download" href={illustration.bundle.url} download>
+          <a
+            className="quest-spine-download"
+            href={illustration.bundle.url}
+            download
+          >
             <Download size={14} />
             Download animated scene
             {!!illustration.bundle.size_bytes && (
-              <small>{(illustration.bundle.size_bytes / 1024 / 1024).toFixed(1)} MiB</small>
+              <small>
+                {(illustration.bundle.size_bytes / 1024 / 1024).toFixed(1)} MiB
+              </small>
             )}
           </a>
         )}
-        <details>
-          <summary>Image source</summary>
-          {illustration.resource_id && (
-            <small>Animated background #{illustration.resource_id}</small>
-          )}
-          {illustration.bundle && (
-            <small>
-              <Archive size={12} /> Skeleton, atlas, textures and original game packages · client{' '}
-              {illustration.bundle.asset_version}
-            </small>
-          )}
-          {playback?.unsupported?.map((item) => (
-            <small key={item.prefab}>{item.reason}</small>
-          ))}
-          {illustration.images.map((image) => (
-            <small key={image.engine_path}>{image.engine_path}</small>
-          ))}
-        </details>
       </figcaption>
     </figure>
   );

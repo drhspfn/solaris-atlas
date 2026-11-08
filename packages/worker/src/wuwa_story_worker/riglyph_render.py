@@ -17,7 +17,7 @@ from wuwa_story.storage.hashing import content_object_key
 from wuwa_story_worker.riglyph_convert import convert_archive
 from wuwa_story_worker.tooling import asset_workspace
 
-RECIPE = "riglyph-native-v1"
+RECIPE = "riglyph-native-v2"
 VERSION = "0.16.2"
 
 
@@ -92,6 +92,74 @@ def frame_geometry(bounds: list, max_edge: int) -> dict:
                        "worldWidth": world_width}}
 
 
+def _compose_black(video: Path, width: int, height: int, fps: int, count: int, log: Path, timeout: int):
+    """Composite a verified opaque prefab background and keep a VP9 alpha stream."""
+    ffmpeg = os.getenv('FFMPEG_PATH', 'ffmpeg')
+    ffprobe = os.getenv('FFPROBE_PATH', 'ffprobe')
+    output = video.with_name(video.stem + '-background.webm')
+    args = [ffmpeg, '-y', '-loglevel', 'error', '-f', 'lavfi', '-i',
+            f'color=c=black:s={width}x{height}:r={fps}', '-c:v', 'libvpx-vp9', '-i', str(video),
+            '-filter_complex', '[0:v]format=rgba[bg];[1:v]format=rgba[fg];'
+                               '[bg][fg]overlay=shortest=1:format=auto,format=yuva420p[out]',
+            '-map', '[out]', '-frames:v', str(count), '-c:v', 'libvpx-vp9', '-pix_fmt', 'yuva420p',
+            '-auto-alt-ref', '0', '-deadline', 'realtime', '-cpu-used', '4', str(output)]
+    try:
+        with log.open('w', encoding='utf-8') as stream:
+            subprocess.run(args, check=True, timeout=timeout, stdout=stream, stderr=stream)
+        probe = subprocess.run([ffprobe, '-v', 'error', '-select_streams', 'v:0', '-count_frames',
+                                '-show_entries', 'stream=codec_name,width,height,nb_read_frames:stream_tags=alpha_mode',
+                                '-of', 'json', str(output)], check=True, timeout=timeout,
+                               capture_output=True, text=True)
+        streams = json.loads(probe.stdout).get('streams', [])
+        if (len(streams) != 1 or streams[0].get('codec_name') != 'vp9'
+                or streams[0].get('width') != width or streams[0].get('height') != height
+                or int(streams[0].get('nb_read_frames', 0)) != count
+                or streams[0].get('tags', {}).get('alpha_mode') != '1'):
+            raise ValueError('Composited background video failed validation')
+        with log.open('a', encoding='utf-8') as stream:
+            subprocess.run([ffmpeg, '-v', 'error', '-c:v', 'libvpx-vp9', '-i', str(output),
+                            '-vf', 'alphaextract', '-frames:v', '1', '-f', 'null', '-'],
+                           check=True, timeout=timeout, stdout=stream, stderr=stream)
+        output.replace(video)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        with log.open('a', encoding='utf-8') as stream:
+            stream.write(str(getattr(error, 'stderr', '') or error))
+        raise ValueError(f'Background composition failed; log: {log}') from error
+    finally:
+        output.unlink(missing_ok=True)
+
+
+def _alpha_matches_reference(original, encoded, size):
+    """Compare decoded VP9 alpha with the same native frame, allowing lossy quantization."""
+    from PIL import ImageChops, ImageStat
+
+    if original.size != size or encoded.size != size:
+        return False
+    difference = ImageChops.difference(original.convert('RGBA').getchannel('A'), encoded.convert('L'))
+    # VP9's alpha plane is lossy. Require small average and bounded per-pixel
+    # differences; a missing/flattened alpha plane must still fail validation.
+    return difference.getextrema()[1] <= 32 and ImageStat.Stat(difference).mean[0] <= 1
+
+
+def _verify_alpha_first_frame(cli, native, converted, clip, config, width, height, video, logs, timeout):
+    """Verify actual alpha pixels rather than rejecting a valid non-opaque frame."""
+    from PIL import Image
+
+    reference = video.with_name(video.stem + '-alpha-reference')
+    _run([*cli, 'render', str(converted / 'skeleton.ir.json'), '--images', str(converted / 'textures'),
+          '--clip', clip, '--start', '0', '--end', '0.01', '--fps', '1', '--width', str(width),
+          '--height', str(height), '--format', 'png-sequence', '--alpha', '--backend', 'native-cpu',
+          '--native-path', native, '--config', str(config), '--sampling', 'linear', '--max-frames', '1', '--overwrite',
+          '--progress', 'none', '--out-dir', str(reference)], logs / f'{video.stem}-alpha-reference.log', timeout)
+    decoded = video.with_name(video.stem + '-decoded-alpha.png')
+    with (logs / f'{video.stem}-alpha-decode.log').open('w', encoding='utf-8') as stream:
+        subprocess.run([os.getenv('FFMPEG_PATH', 'ffmpeg'), '-y', '-v', 'error', '-c:v', 'libvpx-vp9',
+                        '-i', str(video), '-vf', 'alphaextract', '-frames:v', '1', str(decoded)],
+                       check=True, timeout=timeout, stdout=stream, stderr=stream)
+    with Image.open(reference / 'frame_000000.png') as original, Image.open(decoded) as encoded:
+        return _alpha_matches_reference(original, encoded, (width, height))
+
+
 def archive_policy(bundle: Path) -> dict:
     """Re-evaluate legacy archives without exporting the game a second time."""
     # Only decoded asset JSON is needed by the existing source eligibility policy.
@@ -143,9 +211,18 @@ def build_animation(bundle: Path, *, cli: list[str] | None = None) -> AnimationA
     with zipfile.ZipFile(bundle) as source:
         manifest = json.loads(source.read("manifest.json"))
     decision = archive_policy(bundle)
+    legacy = None
     if not decision.get("conversion_allowed"):
-        return AnimationArtifacts(None, [], {**decision, "display": "static", "state": "static_only"})
-    if len(manifest.get("skeletons", [])) != 1:
+        try:
+            from wuwa_story_worker.legacy_spine_composition import legacy_plan
+            legacy = legacy_plan(bundle)
+        except (OSError, ValueError, KeyError, TypeError, IndexError, zipfile.BadZipFile) as error:
+            return AnimationArtifacts(None, [], {**decision, "display": "static", "state": "static_only",
+                                                "reasons": [*decision.get("reasons", []),
+                                                            {"code": "legacy_composition_unsupported", "error": str(error)[:500]}]})
+        decision = {"schema_version": 1, "conversion_allowed": True, "display": "static",
+                    "state": "awaiting_render_validation", "reasons": [{"code": "render_validation_required"}]}
+    if not legacy and len(manifest.get("skeletons", [])) != 1:
         raise ValueError("Native preview requires a verified single-rig composition")
     max_edge = _integer("WUWA_RIGLYPH_MAX_EDGE", 2048, 2048)
     fps = _integer("WUWA_RIGLYPH_FPS", 30, 60)
@@ -161,13 +238,26 @@ def build_animation(bundle: Path, *, cli: list[str] | None = None) -> AnimationA
     logs.mkdir(parents=True, exist_ok=True)
     converted = output / "converted"
     try:
-        convert_archive(bundle, converted, cli)
+        if legacy:
+            convert_archive(bundle, converted, cli, skeleton_file=legacy['skeleton'], atlas_file=legacy['atlas'])
+        else:
+            convert_archive(bundle, converted, cli)
     except subprocess.SubprocessError as error:
         log = logs / "conversion.log"
         log.write_text(str(getattr(error, "stderr", "") or error), encoding="utf-8")
         raise ValueError(f"Riglyph conversion failed; log: {log}") from error
     ir = json.loads((converted / "skeleton.ir.json").read_text(encoding="utf-8"))
     clips = _clips(ir)
+    if legacy:
+        clips = [clip for clip in clips if clip['id'] in legacy['clips']]
+        if {clip['id'] for clip in clips} != set(legacy['clips']):
+            raise ValueError('Authored prefab or dialogue animation is absent from the converted skeleton')
+        for slot in ir.get('skeleton', {}).get('slots', []):
+            mode = slot.get('blend', 'normal')
+            if mode not in legacy['blend']:
+                raise ValueError('Unrecognized Spine slot blend mode')
+            slot['blend'] = legacy['blend'][mode]
+        (converted / 'skeleton.ir.json').write_text(json.dumps(ir), encoding='utf-8')
     if sum(max(1, math.ceil(clip["durationSec"] * fps)) for clip in clips) > max_frames:
         raise ValueError("Animation package exceeds the configured frame budget")
     archive = output / "riglyph.zip"
@@ -192,7 +282,13 @@ def build_animation(bundle: Path, *, cli: list[str] | None = None) -> AnimationA
     try:
         bounds = ir.get("skeleton", {}).get("bounds")
         framing_basis = "skeleton_bounds"
-        if not isinstance(bounds, list) or len(bounds) != 4 or bounds[2] <= 0 or bounds[3] <= 0:
+        if legacy:
+            width, height = legacy['size']
+            scale, origin = legacy['layer']['scale'], legacy['layer']['origin']
+            bounds = [(-width / 2 - origin[0]) / scale, (-height / 2 - origin[1]) / scale,
+                      width / scale, height / scale]
+            framing_basis = 'prefab_canvas'
+        elif not isinstance(bounds, list) or len(bounds) != 4 or bounds[2] <= 0 or bounds[3] <= 0:
             # Some source rigs export [0,0,0,0]. Measure all clips with Riglyph itself,
             # using one envelope so transitions cannot change zoom or aspect ratio.
             geometry = _run([cli[0], str(Path(__file__).with_name("riglyph_frame.mjs")), cli[-1],
@@ -230,6 +326,13 @@ def build_animation(bundle: Path, *, cli: list[str] | None = None) -> AnimationA
                     or probe.get("width") != width or probe.get("height") != height
                     or report.get("frameCount") != max(1, math.ceil(clip["durationSec"] * fps))):
                 raise ValueError(f"Riglyph did not validate a complete alpha WebM; log: {logs / f'{index:03d}.log'}")
+            if legacy and probe.get('decodedAlphaVerified') is not True:
+                if not _verify_alpha_first_frame(cli, native, converted, clip['id'], config,
+                                                  width, height, video, logs, timeout):
+                    raise ValueError('Could not validate alpha against the rendered first frame')
+            if legacy and legacy.get('background'):
+                _compose_black(video, width, height, fps, report['frameCount'],
+                               logs / f'{index:03d}-background.log', timeout)
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             return AnimationArtifacts(archive, [], {
                 **decision, "display": "static", "state": "render_failed",
@@ -238,7 +341,9 @@ def build_animation(bundle: Path, *, cli: list[str] | None = None) -> AnimationA
         variants.append({"animation": clip["id"], "duration_seconds": clip["durationSec"],
                          "width": width, "height": height, "fps": fps, "alpha": True,
                          "source_bounds": bounds, "framing_basis": framing_basis,
-                         "loop": False, "path": video, "mime_type": "video/webm"})
+                         **({'background': 'black'} if legacy and legacy.get('background') else {}),
+                         "loop": legacy['clips'][clip['id']] if legacy else False,
+                         "path": video, "mime_type": "video/webm"})
     authored = manifest.get("variants", [])
     if len(authored) == 1:
         for variant in variants:

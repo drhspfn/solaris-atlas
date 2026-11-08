@@ -173,7 +173,7 @@ def apply_settled_tracks(actors, tracks, elapsed):
         actors[track['actor']]['props'][track['field']] = points[-1][1]
 
 
-def visible_layers(layout, actors=None):
+def visible_layers(layout, actors=None, *, verified_materials=()):
     actors = copy.deepcopy(actors or layout['actors'])
     result, visited = [], set()
     def visit(identity, scale, origin, opacity):
@@ -183,7 +183,7 @@ def visible_layers(layout, actors=None):
         a, p = actors[identity], actors[identity]['props']
         if not a['active'] or p.get('bIsUIActive') is False:
             return
-        color = p.get('Color', [255, 255, 255, 255])
+        color = p.get('Color', p.get('widget', {}).get('Color', [255, 255, 255, 255]))
         alpha = p.get('Alpha', 1)
         if (not isinstance(color, list) or len(color) != 4
                 or any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 255 for v in color)
@@ -220,7 +220,7 @@ def visible_layers(layout, actors=None):
                     if index >= len(layout['assets']) or layout['assets'][index]['ObjectPath'] not in {
                         '/LGUI/LGUI_Standard', '/LGUI/LGUI_Standard_RectClip', '/LGUI/LGUI_Standard_TextureClip',
                         '/Game/Aki/UI/UIResources/UiCG/Materials/MI_LGUI_Standard_ADD',
-                    }:
+                    } | set(verified_materials):
                         raise ValueError('Custom UI material requires a compositor adapter')
                 if at != len(raw):
                     raise ValueError('Invalid UI material map trailer')

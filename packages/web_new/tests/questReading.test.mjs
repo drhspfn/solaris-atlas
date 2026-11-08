@@ -64,10 +64,10 @@ test('illustrated scenes respect state boundaries, choices, clearing and inserte
   ];
   assert.deepEqual(
     illustratedRuns(entries).map((run) => run.map((line) => line.id)),
-    [['1', '2', '3'], ['5']],
+    [['1', '2', '3'], ['5', '6']],
   );
   assert.deepEqual(
     illustratedRuns(entries, new Set(['2'])).map((run) => run.map((line) => line.id)),
-    [['1'], ['2', '3'], ['5']],
+    [['1'], ['2', '3'], ['5', '6']],
   );
 });

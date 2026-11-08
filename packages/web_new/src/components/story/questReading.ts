@@ -74,7 +74,7 @@ export function illustratedRuns(lines: ReaderLine[], breakBefore = new Set<strin
   const runs: ReaderLine[][] = [];
   let last = -2;
   for (const [index, line] of lines.entries()) {
-    if (!line.illustration || line.illustration.kind === 'clear' || line.player_choices?.length)
+    if (!line.illustration || line.illustration.kind === 'clear')
       continue;
     const previous = runs.at(-1);
     if (

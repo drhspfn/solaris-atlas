@@ -34,7 +34,7 @@
 .quest-runtime-block > h3 { font-weight: 500; line-height: 1.6; }
 .quest-illustrated-scene { position: relative; isolation: isolate; min-width: 0; margin: 24px 0; padding-top: 1px; border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--bg-root); overflow: clip; }
 .quest-illustrated-scene .quest-illustration.is-background { position: absolute; inset: 0; z-index: 0; margin: 0; border: 0; border-radius: 0; }
-.quest-illustrated-scene:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
+
 .quest-illustration.is-background > img { width: 100%; height: 100%; max-height: none; object-fit: contain; object-position: center top; }
 .quest-illustration-placeholder { display: grid; justify-items: center; align-content: center; min-height: 180px; padding: 24px; color: var(--text-secondary); gap: 10px; }
 .quest-illustration-placeholder p { margin: 0; text-align: center; }
@@ -55,7 +55,7 @@
 .quest-scene-dialogue .dialogue-spoken-text p { font-size: 16px; line-height: 1.9; }
 .quest-scene-transport { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 12px 18px; background: var(--bg-root); }
 .quest-scene-transport > div { display: flex; align-items: center; gap: 12px; }
-.quest-scene-transport button { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 8px 12px; font: inherit; font-size: 12px; }
+.quest-scene-transport button, .quest-scene-audio-settings > summary { box-sizing: border-box; height: 44px; min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 7px 12px; font: inherit; font-size: 12px; }
 .quest-scene-transport button:hover:not(:disabled) { border-color: var(--accent-mint); }
 .quest-scene-transport button:disabled { opacity: .4; cursor: default; }
 .quest-scene-transport span { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -84,3 +84,80 @@
 .quest-animation-message { position: absolute; top: 80px; left: 20px; right: 20px; text-align: center; font-size: 13px; color: var(--text-secondary); }
 .quest-animation-toggle { position: absolute; z-index: 1; top: 52px; left: 12px; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); background: var(--surface-1); font: inherit; font-size: 12px; }
 .quest-illustration.is-background > figcaption { z-index: 2; }
+
+/* Illustrated dialogue: the game presentation and the quieter Atlas alternative. */
+.quest-illustrated-scene { display: flex; flex-direction: column; min-height: clamp(24rem, 48vw, 42rem); }
+.quest-illustrated-scene .quest-illustration.is-background { position: absolute; inset: 0; }
+.quest-illustrated-scene .quest-illustration.is-background > img { object-fit: cover; object-position: center; }
+.quest-illustrated-scene .quest-illustration.is-background::after { content: ""; position: absolute; inset: 35% 0 0; pointer-events: none; background: linear-gradient(transparent, rgba(5,10,10,.82)); }
+.quest-illustrated-scene .quest-illustration.is-background > figcaption { background: linear-gradient(rgba(5,10,10,.8), transparent); }
+.quest-illustrated-scene .quest-scene-dialogue { margin: auto clamp(14px, 4%, 48px) 0; padding: 20px 24px; border: 0; border-radius: 0; background: transparent; }
+.illustrated-dialogue-line { max-width: 58rem; margin: 0 auto; text-align: center; color: #ece5d8; text-shadow: 0 2px 4px #000, 0 0 12px #000; }
+.illustrated-dialogue-speaker { color: #f7eba6; font-size: clamp(15px, 1.25vw, 18px); font-weight: 600; }
+.illustrated-dialogue-divider { display: flex; align-items: center; justify-content: center; width: min(100%, 27rem); margin: 3px auto 7px; opacity: .6; }
+.illustrated-dialogue-divider > span { flex: 1; height: 14px; border-style: solid; border-width: 0 10px; border-image-source: url('/game-ui/dialogue/SP_ComLineA.png'); border-image-slice: 0 80 fill; border-image-width: 0 10px; }
+.illustrated-dialogue-divider > span:last-child { transform: scaleX(-1); }
+.illustrated-dialogue-divider img { width: 29px; height: 14px; object-fit: contain; }
+.illustrated-dialogue-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: #ece5d8; font-size: clamp(13px, 1.05vw, 15px); line-height: 1.55; font-weight: 500; }
+.illustrated-dialogue-character { animation: illustrated-character-reveal both cubic-bezier(.85, 0, .15, 1); }
+@keyframes illustrated-character-reveal { from { opacity: 0; } to { opacity: 1; } }
+.illustrated-dialogue-continue { display: block; position: relative; width: clamp(12px, 2.1875vw, 56px); aspect-ratio: 1; margin: 12px auto 0; }
+.illustrated-dialogue-continue[data-visible="false"] { visibility: hidden; }
+.illustrated-dialogue-continue img { position: absolute; inset: 20%; width: 60%; height: 60%; object-fit: contain; }
+/* A 10-unit anchor displacement is 10/56 of the sprite size. CSS Y points down. */
+.illustrated-dialogue-continue-main { animation: dialogue-next-main 2s linear infinite; }
+.illustrated-dialogue-continue-accent { animation: dialogue-next-accent 2s linear infinite; }
+.illustrated-dialogue-continue img[hidden] { display: none; }
+/* Zero tangents use cubic Hermite interpolation; weighted incoming tangents from the export set the second control point. */
+@keyframes dialogue-next-main {
+  0%, 50% { transform: translateY(0); animation-timing-function: cubic-bezier(.333333, 0, .666667, 1); }
+  20.833333%, 70.833333% { transform: translateY(-17.857143%); animation-timing-function: cubic-bezier(.333333, 0, .144094, 1); }
+  100% { transform: translateY(0); }
+}
+@keyframes dialogue-next-accent {
+  0% { transform: translateY(17.857143%); animation-timing-function: cubic-bezier(.333333, 0, .666667, 1); }
+  58.333333% { transform: translateY(0); animation-timing-function: cubic-bezier(.333333, 0, .199423, 1); }
+  100% { transform: translateY(17.857143%); }
+}
+.quest-illustrated-scene .quest-scene-transport { background: linear-gradient(transparent, rgba(5,10,10,.92)); padding: 12px 18px 16px; }
+.quest-scene-navigation, .quest-scene-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.quest-illustrated-scene .quest-scene-transport button { background: rgba(12,18,19,.8); }
+.quest-scene-auto img { width: 28px; height: 28px; object-fit: contain; }
+.quest-scene-feedback { position: relative; z-index: 1; margin: 0; padding: 8px 20px; background: #101718; color: #e8eceb; }
+.quest-illustrated-scene.scene-atlas .quest-scene-dialogue { background: var(--surface-1); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
+.scene-atlas .illustrated-dialogue-line { text-align: left; text-shadow: none; }
+.scene-atlas .illustrated-dialogue-speaker { color: var(--accent-mint); font-size: 14px; }
+.scene-atlas .illustrated-dialogue-divider { margin-left: 0; opacity: .35; }
+.scene-atlas .illustrated-dialogue-text { color: var(--text-primary); font-size: 14px; font-weight: 400; line-height: 1.7; }
+.scene-atlas .illustrated-dialogue-continue { margin-left: 0; }
+.quest-illustrated-scene.is-transcript .quest-scene-dialogue { background: var(--surface-1); border: 1px solid var(--border-default); border-radius: var(--radius-md); overflow-y: auto; max-height: min(50vh, 30rem); }
+.quest-illustrated-scene:fullscreen { width: 100%; height: 100%; margin: 0; border: 0; border-radius: 0; }
+.quest-illustrated-scene:fullscreen .quest-scene-dialogue { margin-bottom: 2vh; }
+.quest-illustrated-scene:fullscreen .quest-scene-transport { padding: 16px clamp(16px, 4vw, 64px) 28px; }
+@media (max-width: 760px) {
+  .quest-illustrated-scene { min-height: 26rem; }
+  .quest-illustrated-scene .quest-scene-dialogue { margin-inline: 10px; padding: 16px; }
+  .quest-scene-transport { justify-content: center; }
+  .quest-scene-actions { justify-content: center; }
+}
+@media (prefers-reduced-motion: reduce) { .illustrated-dialogue-character, .illustrated-dialogue-continue img { animation: none; } }
+
+.quest-scene-audio-settings { position: relative; }
+.quest-scene-audio-settings > summary { background: rgba(12,18,19,.8); cursor: pointer; list-style: none; }
+.quest-scene-audio-settings > summary::-webkit-details-marker { display: none; }
+.quest-scene-audio-settings > summary:hover, .quest-scene-audio-settings[open] > summary { color: var(--accent-mint); border-color: var(--accent-mint); }
+
+.quest-scene-audio-panel { position: absolute; z-index: 5; bottom: calc(100% + 12px); right: 0; width: min(280px, calc(100vw - 56px)); padding: 20px; display: grid; gap: 20px; background: var(--surface-1, #0f1617); border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: 0 12px 36px #0008; color: var(--text-primary); }
+.quest-scene-audio-panel > strong { font-size: 14px; }
+.quest-scene-audio-panel label { display: grid; gap: 12px; font-size: 13px; }
+.quest-scene-audio-panel label > span { display: flex; align-items: center; gap: 8px; }
+.quest-scene-audio-panel output { margin-left: auto; color: var(--accent-mint); font-variant-numeric: tabular-nums; }
+.quest-scene-audio-panel input { width: 100%; min-height: 24px; margin: 0; accent-color: var(--accent-mint); cursor: pointer; }
+@media (max-width: 760px) { .quest-scene-audio-panel { right: auto; left: 0; } }
+
+/* Scene clicks advance dialogue; selection and copying belong to the transcript. */
+.quest-illustrated-scene:not(.is-transcript) { user-select: none; -webkit-user-select: none; }
+.quest-illustrated-scene:not(.is-transcript) .quest-illustration img { -webkit-user-drag: none; }
+
+.quest-illustrated-scene:is(:focus, :focus-visible),
+.quest-illustrated-scene :is(:focus, :focus-visible) { outline: none !important; box-shadow: none !important; }

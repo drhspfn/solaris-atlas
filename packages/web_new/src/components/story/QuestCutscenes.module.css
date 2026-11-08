@@ -1,0 +1,54 @@
+.placement {
+  margin: 16px clamp(16px, 2.5vw, 26px) 0;
+  padding: 9px 12px;
+  border-inline-start: 2px solid var(--mint);
+  border-radius: 0 6px 6px 0;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.related {
+  margin-block: 24px;
+}
+.relatedHeader {
+  padding: 20px clamp(16px, 2.5vw, 26px) 4px;
+  border-top: 1px solid var(--border-default);
+}
+.relatedHeader h3 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 16px;
+}
+.relatedHeader h3 svg {
+  color: var(--mint);
+  flex-shrink: 0;
+}
+.relatedHeader p {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.continuation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  margin: 14px clamp(16px, 2.5vw, 26px) 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.continuation > span {
+  color: var(--text-secondary);
+}
+.continuation a {
+  color: var(--mint);
+  overflow-wrap: anywhere;
+}

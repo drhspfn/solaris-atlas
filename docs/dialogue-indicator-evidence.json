@@ -1,0 +1,191 @@
+{
+  "source_prefab": "/Game/Aki/UI/UIResources/UiPlot/Prefabs/UiView_Plot",
+  "source_script": "Client/Content/Aki/JavaScript/Game/Module/Plot/PlotView/PlotView.js",
+  "registry": {
+    "19": {
+      "actor_id": 100010,
+      "name": "SprNext"
+    },
+    "20": {
+      "actor_id": 100265,
+      "name": "PnlPoint"
+    },
+    "53": {
+      "actor_id": 100717,
+      "name": "SprNextB"
+    }
+  },
+  "actors": [
+    {
+      "actor_id": 100006,
+      "parent_actor_id": 0,
+      "component_id": 100007,
+      "properties": {
+        "widget": {
+          "depth": 4,
+          "anchorHAlign": "UIAnchorHorizontalAlign::Stretch",
+          "anchorVAlign": "UIAnchorVerticalAlign::Stretch",
+          "width": 2560.0,
+          "height": 1440.0
+        },
+        "color": {
+          "type": "StructProperty",
+          "extra": "color",
+          "raw": "ffffffff"
+        },
+        "width": 2560.0,
+        "height": 1440.0,
+        "displayName": "UiView_Plot"
+      }
+    },
+    {
+      "actor_id": 100025,
+      "parent_actor_id": 100006,
+      "component_id": 100026,
+      "properties": {
+        "widget": {
+          "depth": 14,
+          "anchorHAlign": "UIAnchorHorizontalAlign::Stretch",
+          "anchorVAlign": "UIAnchorVerticalAlign::Stretch",
+          "width": 2560.0,
+          "height": 1440.0
+        },
+        "color": {
+          "type": "StructProperty",
+          "extra": "color",
+          "raw": "ffffffff"
+        },
+        "width": 2560.0,
+        "height": 1440.0,
+        "displayName": "PnlBg"
+      }
+    },
+    {
+      "actor_id": 100723,
+      "parent_actor_id": 100025,
+      "component_id": 100724,
+      "properties": {
+        "widget": {
+          "anchorHAlign": "UIAnchorHorizontalAlign::Stretch",
+          "anchorVAlign": "UIAnchorVerticalAlign::Stretch",
+          "width": 2560.0,
+          "height": 1440.0
+        },
+        "color": {
+          "type": "StructProperty",
+          "extra": "color",
+          "raw": "ffffffff"
+        },
+        "width": 2560.0,
+        "height": 1440.0,
+        "displayName": "PnlNextAph"
+      }
+    },
+    {
+      "actor_id": 100010,
+      "parent_actor_id": 100723,
+      "component_id": 100030,
+      "properties": {
+        "sprite": {
+          "ObjectName": "LGUITexturePackerSpriteData'SP_PlotSubtitleNext'",
+          "ObjectPath": "Client/Content/Aki/UI/UIResources/UiPlot/Atlas/SP_PlotSubtitleNext.0"
+        },
+        "widget": {
+          "depth": 17,
+          "pivot": [
+            0.5,
+            0.0
+          ],
+          "anchorVAlign": "UIAnchorVerticalAlign::Bottom",
+          "anchorOffsetY": 12.00537109375,
+          "width": 56.0,
+          "height": 56.0,
+          "stretchTop": 1371.99462890625,
+          "stretchBottom": 12.00537109375
+        },
+        "color": {
+          "type": "StructProperty",
+          "extra": "color",
+          "raw": "ffffffff"
+        },
+        "width": 56.0,
+        "height": 56.0,
+        "bIsUIActive": false,
+        "displayName": "SprNext"
+      }
+    },
+    {
+      "actor_id": 100717,
+      "parent_actor_id": 100025,
+      "component_id": 100718,
+      "properties": {
+        "sprite": {
+          "ObjectName": "LGUITexturePackerSpriteData'SP_PlotSubtitleNextB'",
+          "ObjectPath": "Client/Content/Aki/UI/UIResources/UiPlot/Atlas/SP_PlotSubtitleNextB.0"
+        },
+        "widget": {
+          "depth": 17,
+          "pivot": [
+            0.5,
+            0.0
+          ],
+          "anchorVAlign": "UIAnchorVerticalAlign::Bottom",
+          "anchorOffsetY": -10.0,
+          "width": 56.0,
+          "height": 56.0,
+          "stretchTop": 1394.0,
+          "stretchBottom": -10.0
+        },
+        "color": {
+          "type": "StructProperty",
+          "extra": "color",
+          "raw": "ffffffff"
+        },
+        "width": 56.0,
+        "height": 56.0,
+        "bIsUIActive": false,
+        "displayName": "SprNextB"
+      }
+    },
+    {
+      "actor_id": 100265,
+      "parent_actor_id": 100025,
+      "component_id": 100266,
+      "properties": {
+        "widget": {
+          "depth": 33,
+          "pivot": [
+            0.5,
+            0.0
+          ],
+          "anchorVAlign": "UIAnchorVerticalAlign::Bottom",
+          "anchorOffsetY": 33.03680419921875,
+          "width": -38.0,
+          "height": 14.0,
+          "stretchLeft": 1299.0,
+          "stretchRight": 1299.0,
+          "stretchTop": 1392.963134765625,
+          "stretchBottom": 33.03680419921875
+        },
+        "color": {
+          "type": "StructProperty",
+          "extra": "color",
+          "raw": "ffffffff"
+        },
+        "width": -38.0,
+        "height": 14.0,
+        "displayName": "PnlPoint"
+      }
+    }
+  ],
+  "source_methods": {
+    "visibility": "Yeo(t){ModelManager_1.ModelManager.PlotModel.CanClick=t;var i=ModelManager_1.ModelManager.PlotModel.IsNewSubtitleStyleActive();this._eo?.SetUIActive(t&&!i),this.rKy?.SetUIActive(t&&i),EventSystem_1.EventSystem.Emit(EventDefine_1.EEventName.NavigationRefreshPlotNextPage,t)}Cto(t){t=t&&!ModelManager_1.ModelManager.PlotModel.IsNewSubtitleStyleActive();this.GetItem(20).SetUIActive(t)}",
+    "line_wait": "Veo(i){this.ito();var t=ModelManager_1.ModelManager.PlotModel.PlotConfig.SubtitleLevel,s=this.GetItem(45),e=this.GetScrollView(27)?.GetRootComponent()?.GetOwner()?.GetComponentByClass(UE.UISizeControlByOther.StaticClass());if(\"LevelC\"===t&&ModelManager_1.ModelManager.PlotModel.IsUsingNewLevelBStyle()?(this.gto(!1,!1),this.GetItem(3).SetAlpha(1),e&&(e.MinHeight=NEW_LEVEL_B_STYLE_TEXT_SCROLL_MIN_HEIGHT,e.MaxHeight=NEW_LEVEL_B_STYLE_TEXT_SCROLL_MAX_HEIGHT),s&&s.SetAnchorOffsetY(this.I$p(Info_1.Info.InputControllerMainType))):(this.gto(!0),e&&(e.MinHeight=LEGACY_TEXT_SCROLL_MIN_HEIGHT,e.MaxHeight=LEGACY_TEXT_SCROLL_MAX_HEIGHT),s&&s.SetAnchorOffsetY(0)),this.nKy(),this.geo.IsInteraction||!ModelManager_1.ModelManager.PlotModel.PlotConfig.CanInteractive)this.Yeo(!0),this.Cto(!1),this.leo=!0;else{let t=i.WaitTime;void 0===t&&(t=ModelManager_1.ModelManager.PlotModel.PlotGlobalConfig.JumpWaitTime,i.WaitTime=t),t<ModelManager_1.ModelManager.PlotModel.PlotTemplate.MinWaitingTime&&(t=ModelManager_1.ModelManager.PlotModel.PlotTemplate.MinWaitingTime,i.WaitTime=t),(t=TimeUtil_1.TimeUtil.SetTimeMillisecond(t))<TimerSystem_1.MIN_TIME?(this.Yeo(!0),this.Cto(!1),this.leo=!0):(this.Yeo(!1),this.Cto(!0),this.qZi=TimerSystem_1.TimerSystem.Delay(t=>{if(this.Cto(!1),this.qZi=void 0,this.leo=!0,!this.geo.IsTextAnimPlaying){if(this.HasOptions)return void this.Jeo();this.$eo()}this.Yeo(!0)},t))}}",
+    "submit": "Jeo(){this.leo=!1,this.h9v=!1,this.lvM=!1,this.Feo(),this.uvM(),this.geo.IsInteraction?this.Qeo():ControllerHolder_1.ControllerHolder.FlowController.FlowShowTalk.SubmitSubtitle(this.geo.CurrentContent)}"
+  },
+  "client_config_values": {
+    "Talk.JumpWaitTime": 0.3,
+    "Talk.GuardTime": 0.3
+  },
+  "client_config_source": "db_global_config.db / GlobalConfigFromCsv.Value; read-only extraction; these values are not proof that the website API exposes the fields"
+}
