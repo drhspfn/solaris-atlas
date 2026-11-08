@@ -6,7 +6,7 @@ from fastapi import APIRouter, Request
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.types import TextContent, Tool
+from mcp.types import ImageContent, TextContent, Tool
 
 from wuwa_story.search.embedding import generate_query_embedding
 from wuwa_story.search.lore import LoreSearchService
@@ -31,6 +31,7 @@ def _dump_json(obj: Any) -> str:
 async def handle_list_tools() -> list[Tool]:
     from wuwa_story.api.routes import mcp_character_tools as character_tools
     from wuwa_story.api.routes import mcp_media_tools as media_tools
+    from wuwa_story.api.routes import mcp_video_tools as video_tools
     from wuwa_story.visual_memory import tools as visual_tools
 
     return [
@@ -294,7 +295,7 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["character"]
             }
         )
-    ] + character_tools.TOOLS + media_tools.TOOLS + visual_tools.TOOLS
+    ] + character_tools.TOOLS + media_tools.TOOLS + visual_tools.TOOLS + video_tools.TOOLS
 
 
 async def _resolve_node(session: Any, id_or_key: str | int) -> Any:
@@ -310,7 +311,7 @@ async def _resolve_node(session: Any, id_or_key: str | int) -> Any:
 
 
 @mcp.call_tool()
-async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent]:
+async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent | ImageContent]:
     if not arguments:
         arguments = {}
 
@@ -327,8 +328,13 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
         try:
             from wuwa_story.api.routes import mcp_character_tools as character_tools
             from wuwa_story.api.routes import mcp_media_tools as media_tools
+            from wuwa_story.api.routes import mcp_video_tools as video_tools
             from wuwa_story.visual_memory import tools as visual_tools
 
+            if name in {tool.name for tool in video_tools.TOOLS}:
+                result = await video_tools.dispatch(name, arguments, session)
+                images = [] if "error" in result else await video_tools.frame_contents(name, arguments, session)
+                return [TextContent(type="text", text=_dump_json(result)), *images]
             if name in {tool.name for tool in visual_tools.TOOLS}:
                 result = await visual_tools.dispatch(name, arguments, session)
                 return [TextContent(type="text", text=_dump_json(result))]
@@ -339,7 +345,8 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
                 result = await media_tools.dispatch(name, arguments, session)
                 return [TextContent(type="text", text=_dump_json(result))]
             if name in ["search", "search_entities", "search_dialogue"]:
-                q_val = str(arguments.get("q") or arguments.get("query") or "").strip()
+                q_val = str(arguments.get("q") or arguments.get(
+                    "query") or "").strip()
                 if not q_val:
                     raise ValueError("Missing 'q' or 'query' argument")
 
@@ -354,10 +361,12 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
                 else:
                     category_list = None
 
-                sort_by_val = str(arguments.get("sort_by") or "relevance").strip()
+                sort_by_val = str(arguments.get("sort_by")
+                                  or "relevance").strip()
                 if sort_by_val not in {"relevance", "name"}:
                     sort_by_val = "relevance"
-                sort_order_val = str(arguments.get("sort_order") or "desc").strip()
+                sort_order_val = str(arguments.get(
+                    "sort_order") or "desc").strip()
                 if sort_order_val not in {"asc", "desc"}:
                     sort_order_val = "desc"
 
@@ -467,7 +476,8 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
                 return [TextContent(type="text", text=_dump_json(res))]
 
             elif name in ["get_quest_transcript", "get_quest"]:
-                quest_id = arguments.get("quest_id") or arguments.get("id_or_key")
+                quest_id = arguments.get(
+                    "quest_id") or arguments.get("id_or_key")
                 if not quest_id:
                     raise ValueError("Missing 'quest_id' argument")
 
@@ -496,7 +506,8 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
                 return [TextContent(type="text", text=_dump_json(res))]
 
             elif name == "search_lore":
-                query = str(arguments.get("query", arguments.get("q", ""))).strip()
+                query = str(arguments.get(
+                    "query", arguments.get("q", ""))).strip()
                 if not query:
                     raise ValueError("Missing 'query' argument")
                 limit = int(arguments.get("limit", 10))
@@ -526,7 +537,8 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
                     raise ValueError("Missing 'character' argument")
 
                 from wuwa_story.db.models.lore import LoreChunk
-                stmt = select(LoreChunk).where(LoreChunk.characters.contains([character])).order_by(LoreChunk.id)
+                stmt = select(LoreChunk).where(
+                    LoreChunk.characters.contains([character])).order_by(LoreChunk.id)
                 chunks = list(await session.scalars(stmt))
 
                 if not chunks:
@@ -557,6 +569,7 @@ router = APIRouter(prefix="/mcp", tags=["mcp"])
 
 sse_transport: SseServerTransport | None = None
 
+
 @router.get("/sse")
 async def sse(request: Request):
     """
@@ -566,7 +579,7 @@ async def sse(request: Request):
     from sse_starlette.sse import EventSourceResponse
 
     sse_transport = SseServerTransport("/mcp/messages")
-    
+
     async def run_server():
         # Initialization options
         from mcp.server import InitializationOptions
@@ -582,6 +595,7 @@ async def sse(request: Request):
 
     return EventSourceResponse(sse_transport.handle_sse(request))
 
+
 @router.post("/messages")
 async def messages(request: Request):
     """
@@ -590,8 +604,9 @@ async def messages(request: Request):
     global sse_transport
     if sse_transport is None:
         from fastapi import HTTPException
-        raise HTTPException(status_code=400, detail="SSE connection not established")
-        
+        raise HTTPException(
+            status_code=400, detail="SSE connection not established")
+
     await sse_transport.handle_post_message(request.scope, request.receive, request._send)
     from fastapi.responses import JSONResponse
     return JSONResponse(status_code=202, content={"status": "accepted"})

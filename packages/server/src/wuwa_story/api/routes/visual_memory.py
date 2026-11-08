@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from fastapi.routing import APIRoute
 from pydantic import Field, model_validator
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,6 +61,10 @@ class IdentityInput(Input):
     node_ids: list[int] = Field(default_factory=list, max_length=100)
     lore_id: int | None = Field(default=None, gt=0)
     description: str = Field(default="", max_length=4000)
+
+
+class GameEntityInput(Input):
+    node_id: int = Field(gt=0, strict=True)
 
 
 class NameInput(Input):
@@ -137,6 +142,73 @@ async def models():
 @router.get("/identities")
 async def identities(q: str = Query("", max_length=200), kind: str | None = Query(None, max_length=100), limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0, le=10000), session: AsyncSession = Depends(get_session)):
     return await call(session, "list_identities", q=q, kind=kind, limit=limit, offset=offset)
+
+
+@router.get("/game-entities")
+async def game_entities(q: str = Query("", max_length=128),
+                        locale: str = Query("en", min_length=1, max_length=32),
+                        limit: int = Query(20, ge=1, le=48),
+                        offset: int = Query(0, ge=0, le=10000),
+                        session: AsyncSession = Depends(get_session)):
+    from wuwa_story.api.routes.search import search
+    from wuwa_story.api.routes.story.catalog import browse_catalog
+
+    if q.strip():
+        result = await search(q=q.strip(), category=["character"], scope="entities", locale=locale,
+                              game_version=None, locale_id=None, sort_by="relevance", sort_order="desc",
+                              limit=limit + 1, offset=offset, character=None, character_kind="all",
+                              quest_id=None, session=session)
+        rows = result["results"]
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        # Search has no count query; never invent a total for a partial page.
+        total = offset + len(rows) if not has_more and (rows or offset == 0) else None
+    else:
+        result = await browse_catalog(category="character", quest_type_id=None, locale=locale,
+                                      character_kind="all", limit=limit, offset=offset, session=session)
+        rows, total = result["results"], result["total"]
+        has_more = offset + len(rows) < total
+    return {"items": [{"node_id": row["id"], "name": row.get("title") or row.get("alias"),
+                       "kind": row.get("character_kind") or "character", "image_url": row.get("image_url"),
+                       "canonical_key": row.get("canonical_key")} for row in rows],
+            "total": total, "has_more": has_more, "limit": limit, "offset": offset}
+
+
+@router.post("/identities/from-game", dependencies=write)
+async def identity_from_game(body: GameEntityInput, locale: str = Query("en", min_length=1, max_length=32),
+                             session: AsyncSession = Depends(get_session)):
+    from wuwa_story.db.models.core import Character
+    from wuwa_story.db.models.graph import Node, NodeType
+    from wuwa_story.db.models.visual_memory import VisualIdentityNode
+    from wuwa_story.ingestion.character_identity import character_kind
+    from wuwa_story.story.service import _node_label
+
+    character = await session.scalar(select(Character).join(Node, Node.id == Character.node_id)
+                                     .join(NodeType, NodeType.id == Node.type_id)
+                                     .where(Character.node_id == body.node_id, NodeType.key == "character"))
+    if character is None:
+        raise HTTPException(404, "Game character not found")
+    # Two administrators selecting the same node must not create duplicate links.
+    await session.execute(select(func.pg_advisory_xact_lock(
+        func.hashtextextended(f"visual-identity-node:{body.node_id}", 0))))
+    ids = list(await session.scalars(select(VisualIdentityNode.identity_id)
+                                     .where(VisualIdentityNode.node_id == body.node_id).order_by(VisualIdentityNode.identity_id)))
+    if len(ids) > 1:
+        raise HTTPException(422, "Several visual identities link this entity; choose an existing identity")
+    service = service_for(session)
+    if ids:
+        return await service._identity_dict(await service._identity(ids[0]))
+    label = await _node_label(session, body.node_id, locale)
+    name = label.get("label") or character.canonical_name
+    if not name:
+        raise HTTPException(422, "Game entity has no localized display name")
+    kind = character_kind((character.metadata_json or {}).get("role_type"))
+    try:
+        identity = await service.create_identity(name=name, kind=kind, node_ids=[body.node_id])
+        await session.commit()
+        return identity
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.post("/identities", dependencies=write)

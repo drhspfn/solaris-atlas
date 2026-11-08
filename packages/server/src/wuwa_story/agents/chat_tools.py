@@ -10,6 +10,7 @@ from wuwa_story.api import read_projections
 
 
 def read_definitions() -> list[dict[str, Any]]:
+    from wuwa_story.api.routes.mcp_video_tools import TOOLS as VIDEO_TOOLS
     from wuwa_story.visual_memory.tools import TOOLS
 
     return [
@@ -62,12 +63,15 @@ def read_definitions() -> list[dict[str, Any]]:
                 "additionalProperties": False,
             },
         },
-    ] + [{"name": item.name, "description": item.description, "parameters": item.inputSchema} for item in TOOLS]
+    ] + [{"name": item.name, "description": item.description, "parameters": item.inputSchema} for item in TOOLS + VIDEO_TOOLS]
 
 
 async def execute_read(session: AsyncSession, call: ToolCall) -> dict[str, Any]:
+    from wuwa_story.api.routes import mcp_video_tools
     from wuwa_story.visual_memory import tools as visual_tools
 
+    if call.name in {item.name for item in mcp_video_tools.TOOLS}:
+        return await mcp_video_tools.dispatch(call.name, call.arguments, session)
     if call.name in {item.name for item in visual_tools.TOOLS}:
         return await visual_tools.dispatch(call.name, call.arguments, session)
     if call.name == "get_quest_lore":
@@ -115,8 +119,10 @@ async def execute_read(session: AsyncSession, call: ToolCall) -> dict[str, Any]:
                 source = r.get("canonical_key") or r.get("id") or "unknown"
                 quest = r.get("quest_id")
                 context = f" in Quest {quest}" if quest is not None else ""
-                lines.append(f'[{speaker}{context}; source: {source}]: "{text}"')
-            result_data = {"results": "\n".join(lines) if lines else "No dialogue lines found"}
+                lines.append(
+                    f'[{speaker}{context}; source: {source}]: "{text}"')
+            result_data = {"results": "\n".join(
+                lines) if lines else "No dialogue lines found"}
         except HTTPException as error:
             if error.status_code != 404:
                 raise
@@ -169,8 +175,10 @@ async def execute_read(session: AsyncSession, call: ToolCall) -> dict[str, Any]:
                     else (await cast(Any, _node_label)(session, r["id"], "en")).get("label")
                     or r.get("alias")
                 )
-                items.append(f"[{r.get('node_type')}] {label} (key: {r.get('canonical_key')})")
-            result_data = {"results": "\n".join(items) if items else "No entities found"}
+                items.append(
+                    f"[{r.get('node_type')}] {label} (key: {r.get('canonical_key')})")
+            result_data = {"results": "\n".join(
+                items) if items else "No entities found"}
         except Exception as e:
             if projected_search and isinstance(e, HTTPException):
                 raise
