@@ -200,8 +200,12 @@
         aria-live="polite"
       ></p>
       <form id="vm-video-scan" class="vm-filters">
-        <label
-          >Sample interval (seconds)<input
+        <label>Sampling mode<select class="form-select" name="sampling_mode">
+          <option value="full">Full video</option>
+          <option value="segment">Video segment</option>
+          <option value="frame">Exact frame</option>
+        </select></label>
+        <label id="vm-sampling-interval">Sample interval (seconds)<input
             class="form-control"
             name="interval_seconds"
             type="number"
@@ -211,8 +215,14 @@
             value="3"
             required
         /></label>
-        <button class="btn btn-primary" type="submit">Start scan</button>
+        <label id="vm-sampling-start" hidden>Start time<input class="form-control" name="start_seconds" type="text" inputmode="decimal" placeholder="0:00"></label>
+        <label id="vm-sampling-end" hidden>End time<input class="form-control" name="end_seconds" type="text" inputmode="decimal" placeholder="1:31.10"></label>
+        <label id="vm-sampling-timestamp" hidden>Time<input class="form-control" name="timestamp_seconds" type="text" inputmode="decimal" placeholder="1:31.10"></label>
+        <label id="vm-sampling-frame-offset" hidden>Frame offset after time<input class="form-control" name="frame_offset" type="number" min="0" step="1" value="0"></label>
+        <button class="btn btn-secondary" type="button" id="vm-use-video-position" hidden>Use current position</button>
+        <button class="btn btn-primary" type="submit" id="vm-video-start">Start scan</button>
       </form>
+      <p class="vm-meta">Enter times in seconds or minutes:seconds (for example, 1:31.10). Frame offset counts frames after the chosen time, starting at 0.</p>
       <p>
         Scanning proposes candidates only. Review links and decisions
         explicitly; it does not automatically train the library.

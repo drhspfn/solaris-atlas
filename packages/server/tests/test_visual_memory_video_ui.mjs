@@ -14,7 +14,10 @@ function setup() {
       this.innerHTML = "";
       this.textContent = "";
       this.elements = {
-        interval_seconds: { value: "3" },
+        interval_seconds: { value: "3", disabled:false },
+        sampling_mode: {value:"full", addEventListener(type,fn){this[type]=fn;}},
+        start_seconds: {value:""}, end_seconds: {value:""},
+        timestamp_seconds: {value:""}, frame_offset: {value:"0"},
       };
     }
     addEventListener(type, fn) {
@@ -45,7 +48,7 @@ function setup() {
       return [];
     },
   };
-  const requests = [],
+  const requests = [], messages = [],
     timers = [];
   const api = (path, body, method) =>
     new Promise((resolve, reject) =>
@@ -81,14 +84,14 @@ function setup() {
     root,
     api,
     escape: String,
-    message() {},
+    message(text, error) { messages.push({text,error}); },
     chooseLinks() {},
     dialog(title, html, save) { dialogHtml=html; saveDialog=save; closed=false; },
     closeDialog() { closed=true; },
   });
   const element = (s) => root.querySelector(s);
   const tick = () => new Promise((resolve) => setImmediate(resolve));
-  return { review, element, requests, timers, tick, body, save:()=>saveDialog(), get html(){return dialogHtml;}, get closed(){return closed;} };
+  return { review, element, requests, timers, tick, body, messages, save:()=>saveDialog(), get html(){return dialogHtml;}, get closed(){return closed;} };
 }
 
 test("catalog ignores stale searches", async () => {
@@ -235,7 +238,7 @@ test('failed scans retry explicitly while reviewed sources cannot rescan', async
   assert.equal(t.requests[3].body.source_sha256,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
   t.requests[3].resolve({id:9}); await t.tick();
   t.requests[4].resolve({id:9,status:'succeeded',unresolved_count:0,frame_count:0,next_frame_offset:null,reviewed:true,source:{source_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'},frames:[]}); await t.tick();
-  assert.equal(t.element('#vm-video-scan button').disabled,true);
+  assert.equal(t.element('#vm-video-start').disabled,true);
 });
 
 test('frame paging uses absolute indexes and scan-wide unresolved count', async () => {
@@ -281,7 +284,7 @@ test('a scan from a different source hash is never shown as reviewed', async () 
   t.requests[2].resolve({id:8,status:'succeeded',reviewed:true,source:{source_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},frames:[],frame_count:0,unresolved_count:0,next_frame_offset:null}); await t.tick();
   assert.match(t.element('#vm-video-status').textContent,/source has changed/);
   assert.equal(t.element('#vm-video-reviewed').disabled,true);
-  assert.equal(t.element('#vm-video-scan button').disabled,false);
+  assert.equal(t.element('#vm-video-start').disabled,false);
 });
 
 test('requires complete cutscene context before preview or scanning', async () => {
@@ -293,7 +296,7 @@ test('requires complete cutscene context before preview or scanning', async () =
   t.requests[1].resolve({sources:[{asset_node_id:42,asset_version:'3.7.1',game_version:'3.7.0',source_reference_id:7,source_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}]}); await t.tick();
   assert.match(t.element('#vm-video-status').textContent,/missing its cutscene or version context/);
   assert.equal(t.element('video').src,undefined);
-  assert.equal(t.element('#vm-video-scan button').disabled,true);
+  assert.equal(t.element('#vm-video-start').disabled,true);
 });
 
 test('frame editor shares box gestures and persists absolute indexes with locked crops', async () => {
@@ -361,4 +364,56 @@ test('partial frame save reloads before reopening and does not repeat a successf
   assert.match(t.requests[6].path,/scans\/8\?frame_offset=0/);
   t.requests[6].resolve(scan); await retry;
   assert.equal(t.requests.filter(r=>r.path.endsWith('/frames/12/observations')).length,2);
+});
+
+async function samplingSetup() {
+  const t=setup(); t.review.open();
+  t.requests[0].resolve({items:[{name:'Scene',cutscene_key:'CG'}],total:1}); await t.tick();
+  t.element('#vm-video-catalog').events.click({target:{closest:()=>({dataset:{videoItem:'0'},setAttribute(){},removeAttribute(){}})}});
+  t.requests[1].resolve({sources:[{asset_node_id:1,asset_version:'1',game_version:'1',source_reference_id:2,cutscene_key:'CG',source_sha256:'abc'}]}); await t.tick();
+  return t;
+}
+
+test('full video sampling stays the default at three seconds', async () => {
+  const t=await samplingSetup(), form=t.element('#vm-video-scan');
+  form.events.submit({preventDefault(){},currentTarget:form}); await t.tick();
+  const body=t.requests[2].body;
+  assert.equal(body.sampling_mode,'full'); assert.equal(body.interval_seconds,3);
+  for (const field of ['start_seconds','end_seconds','timestamp_seconds','frame_offset']) assert.equal(field in body,false);
+});
+
+test('segment sampling converts minute timestamps and validates its range', async () => {
+  const t=await samplingSetup(), form=t.element('#vm-video-scan'), fields=form.elements;
+  fields.sampling_mode.value='segment'; fields.sampling_mode.change();
+  assert.equal(t.element('#vm-sampling-start').hidden,false);
+  assert.equal(t.element('#vm-sampling-timestamp').hidden,true);
+  fields.start_seconds.value='1:31.10'; fields.end_seconds.value='90';
+  form.events.submit({preventDefault(){},currentTarget:form}); await t.tick();
+  assert.equal(t.requests.length,2); assert.match(t.messages.at(-1).text,/End time must be after/);
+  fields.end_seconds.value='1:60';
+  form.events.submit({preventDefault(){},currentTarget:form}); await t.tick();
+  assert.equal(t.requests.length,2); assert.match(t.messages.at(-1).text,/valid non-negative time/);
+  fields.end_seconds.value='92.5';
+  form.events.submit({preventDefault(){},currentTarget:form}); await t.tick();
+  const body=t.requests[2].body;
+  assert.equal(body.sampling_mode,'segment'); assert.equal(body.start_seconds,91.1); assert.equal(body.end_seconds,92.5); assert.equal(body.interval_seconds,3);
+  assert.equal('timestamp_seconds' in body,false); assert.equal('frame_offset' in body,false);
+});
+
+test('exact frame uses current player position and a separate frame offset', async () => {
+  const t=await samplingSetup(), form=t.element('#vm-video-scan'), fields=form.elements;
+  fields.sampling_mode.value='frame'; fields.sampling_mode.change();
+  assert.equal(t.element('#vm-sampling-interval').hidden,true); assert.equal(fields.interval_seconds.disabled,true);
+  assert.equal(t.element('#vm-sampling-timestamp').hidden,false);
+  t.element('video').currentTime=91.1; t.element('#vm-use-video-position').events.click();
+  assert.equal(fields.timestamp_seconds.value,'91.1');
+  fields.frame_offset.value='-1'; form.events.submit({preventDefault(){},currentTarget:form}); await t.tick();
+  assert.equal(t.requests.length,2); assert.match(t.messages.at(-1).text,/non-negative whole number/);
+  fields.frame_offset.value='4'; form.events.submit({preventDefault(){},currentTarget:form}); await t.tick();
+  const body=t.requests[2].body;
+  assert.equal(body.sampling_mode,'frame'); assert.equal(body.timestamp_seconds,91.1); assert.equal(body.frame_offset,4);
+  for (const field of ['start_seconds','end_seconds','interval_seconds']) assert.equal(field in body,false);
+  t.requests[2].resolve({id:8}); await t.tick();
+  t.requests[3].resolve({id:8,status:'succeeded',sampling_mode:'frame',timestamp_seconds:91.1,sampling_frame_offset:4,source:{source_sha256:'abc'},frames:[],frame_count:0,unresolved_count:0,next_frame_offset:null}); await t.tick();
+  assert.match(t.element('#vm-video-status').textContent,/Frame at 91.1s · offset 4/);
 });
