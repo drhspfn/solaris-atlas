@@ -19,7 +19,7 @@ def setup(monkeypatch):
     session = SimpleNamespace(commit=AsyncMock())
     service = SimpleNamespace(**{name: AsyncMock(return_value={"id": 7}) for name in (
         "catalog", "sources", "enqueue", "get_scan", "resolve", "mark_reviewed", "reject_all",
-        "source_by_reference", "frame_bytes",
+        "source_by_reference", "frame_bytes", "edit_bbox",
     )})
     api.dependency_overrides[get_session] = lambda: session
     monkeypatch.setattr(video, "service_for", lambda _: service)
@@ -44,6 +44,7 @@ async def test_authorization_bounds_and_forwarding(setup):
                    "cutscene_key": "cutscene:CG_1", "source_reference_id": 8,
                    "source_sha256": "ab" * 32}
         assert (await client.post(base + "/scans", json=payload)).status_code == 403
+        assert (await client.post(base + "/scans/7/frames/48/observations", json={"bbox": [1, 1, 2, 2]})).status_code == 403
         api.dependency_overrides[require_csrf] = lambda: None
         assert (await client.post(base + "/scans", json={**payload, "frame_batch_size": 49})).status_code == 422
         assert (await client.post(base + "/scans", json={**payload, "max_frames": 48})).status_code == 422
@@ -51,14 +52,33 @@ async def test_authorization_bounds_and_forwarding(setup):
         assert (await client.post(base + "/scans", json={**payload, "source_sha256": "bad"})).status_code == 422
         assert (await client.post(base + "/scans", json={**payload, "cutscene_key": "x" * 513})).status_code == 422
         assert (await client.post(base + "/scans", json={**payload, "url": "https://evil.invalid/"})).status_code == 422
+        for invalid in ({"sampling_mode": "full", "start_seconds": 1},
+                        {"sampling_mode": "segment", "start_seconds": 2, "end_seconds": 1},
+                        {"sampling_mode": "segment", "start_seconds": 0},
+                        {"sampling_mode": "frame", "timestamp_seconds": 0, "frame_offset": -1},
+                        {"sampling_mode": "frame", "timestamp_seconds": True},
+                        {"sampling_mode": "frame", "timestamp_seconds": 0, "end_seconds": 1}):
+            assert (await client.post(base + "/scans", json={**payload, **invalid})).status_code == 422
         assert (await client.post(base + "/scans", json=payload)).status_code == 200
         service.enqueue.assert_awaited_once_with(asset_node_id=12, game_version="3.7", asset_version="4.0",
                                                  cutscene_key="cutscene:CG_1",
                                                  source_reference_id=8, source_sha256="ab" * 32,
-                                                 interval_seconds=3, frame_batch_size=12, force=False)
+                                                 interval_seconds=3, frame_batch_size=12, force=False,
+                                                 sampling_mode="full", start_seconds=None, end_seconds=None,
+                                                 timestamp_seconds=None, frame_offset=None)
+        service.enqueue.reset_mock()
+        assert (await client.post(base + "/scans", json={**payload, "sampling_mode": "frame",
+                                                          "timestamp_seconds": 2.5, "frame_offset": 10})).status_code == 200
+        assert service.enqueue.await_args.kwargs["timestamp_seconds"] == 2.5
+        assert service.enqueue.await_args.kwargs["frame_offset"] == 10
         assert (await client.get(base + "/scans/7?frame_offset=48&frame_limit=12")).status_code == 200
         service.get_scan.assert_awaited_once_with(7, frame_offset=48, frame_limit=12)
         assert (await client.get(base + "/scans/7?frame_limit=49")).status_code == 422
+        assert (await client.post(base + "/scans/7/frames/48/observations?frame_offset=48", json={"bbox": [1, 1, 2, 2]})).status_code == 200
+        service.edit_bbox.assert_awaited_once_with(7, 48, (1., 1., 2., 2.), frame_offset=48, frame_limit=12)
+        service.edit_bbox.reset_mock()
+        assert (await client.patch(base + "/scans/7/observations/48/23/bbox", json={"bbox": [1, 1, 2, 2]})).status_code == 200
+        service.edit_bbox.assert_awaited_once_with(7, 48, (1., 1., 2., 2.), detection_index=23, frame_offset=None, frame_limit=12)
         url = base + "/scans/7/observations/48/0/resolve"
         assert (await client.post(url, json={"decision": "approve"})).status_code == 422
         assert (await client.post(url, json={"decision": "reject", "links": [{"identity_id": 1}]})).status_code == 422
@@ -69,7 +89,7 @@ async def test_authorization_bounds_and_forwarding(setup):
         assert (await client.post(base + "/scans/7/reviewed")).status_code == 200
         service.reject_all.assert_awaited_once_with(7, actor_id=42)
         service.mark_reviewed.assert_awaited_once_with(7, actor_id=42)
-        assert session.commit.await_count == 4
+        assert session.commit.await_count == 7
 
 
 def test_redirect_cannot_leave_configured_storage(monkeypatch):
@@ -239,6 +259,7 @@ async def test_mcp_images_and_internal_video_role(setup, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_real_service_paging_and_review_on_disposable_postgres(tmp_path, monkeypatch):
+    from PIL import Image
     from sqlalchemy import select
     from sqlalchemy.dialects.postgresql import insert
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -252,6 +273,7 @@ async def test_real_service_paging_and_review_on_disposable_postgres(tmp_path, m
         VisualVideoFrame,
     )
     from wuwa_story.storage.local import LocalStorage
+    from wuwa_story.visual_memory.service import VisualMemoryService
     from wuwa_story.visual_memory.video import PROCESSOR, VideoReviewService
 
     url = os.getenv("WUWA_VISUAL_TEST_DATABASE_URL")
@@ -278,6 +300,7 @@ async def test_real_service_paging_and_review_on_disposable_postgres(tmp_path, m
             session.add(frame_file)
             await session.flush()
             storage = LocalStorage(tmp_path)
+            Image.new("RGB", (10, 10), "red").save(tmp_path / "sample", format="JPEG")
             session.add(FileLocation(file_id=frame_file.id, backend=storage.backend,
                                      bucket=storage.bucket, object_key="sample", available=True, is_primary=True))
             session.add_all(VisualVideoFrame(scan_id=run.id, frame_index=i, time=i * 3,
@@ -287,6 +310,8 @@ async def test_real_service_paging_and_review_on_disposable_postgres(tmp_path, m
             await session.flush()
             api = FastAPI()
             api.include_router(video.router)
+            search = AsyncMock(return_value={"candidates": [{"identity_id": 7, "evidence": [1, 2, 3]}]})
+            monkeypatch.setattr(VisualMemoryService, "search", search)
             monkeypatch.setattr(video, "service_for", lambda db: VideoReviewService(db, storage=storage))
             api.dependency_overrides[get_session] = lambda: session
             api.dependency_overrides[require_admin] = lambda: SimpleNamespace(id=42)
@@ -296,10 +321,54 @@ async def test_real_service_paging_and_review_on_disposable_postgres(tmp_path, m
                 page = (await client.get(base, params={"frame_offset": 48, "frame_limit": 12})).json()
                 assert [frame["index"] for frame in page["frames"]] == list(range(48, 60))
                 assert page["frame_count"] == 60 and page["unresolved_count"] == 2
+                add = base + "/frames/52/observations?frame_offset=48&frame_limit=12"
+                assert (await client.post(add, json={"bbox": [-1, 0, 2, 2]})).status_code == 422
+                assert (await client.post(add, json={"bbox": [0, 0, 11, 2]})).status_code == 422
+                assert (await client.post(add, json={"bbox": [True, 0, 2, 2]})).status_code == 422
+                assert (await client.post(add, json={"bbox": [1, 1, 2]})).status_code == 422
+                response = await client.post(add, json={"bbox": [1.2, 2.1, 6.1, 8.1]})
+                assert response.status_code == 200, response.text
+                page = response.json()
+                assert page["frame_offset"] == 48 and page["unresolved_count"] == 3
+                assert page["total_detections"] == 3
+                observation = page["frames"][4]["detections"][1]
+                assert observation["index"] == 1 and observation["bbox"] == [1, 2, 7, 9]
+                assert observation["normalized_bbox"] == [0.1, 0.2, 0.7, 0.9]
+                assert observation["detection"]["status"] == "manual"
+                assert observation["candidates"][0]["evidence"] == [1, 2]
+                retry = await client.post(add, json={"bbox": [1, 2, 7, 9]})
+                assert retry.status_code == 200 and retry.json()["unresolved_count"] == 3
+                assert search.await_count == 1
+                patch_url = base + "/observations/52/1/bbox?frame_offset=48&frame_limit=12"
+                frame = await session.scalar(select(VisualVideoFrame).where(
+                    VisualVideoFrame.scan_id == run.id, VisualVideoFrame.frame_index == 52))
+                detections = list(frame.detections)
+                detections[1] = {**detections[1], "links": [{"identity_id": 7}]}
+                frame.detections = detections
+                await session.flush()
+                edited = await client.patch(patch_url, json={"bbox": [2, 3, 8, 9]})
+                assert edited.status_code == 200 and edited.json()["unresolved_count"] == 3
+                assert edited.json()["frames"][4]["detections"][1]["bbox"] == [2, 3, 8, 9]
+                assert edited.json()["frames"][4]["detections"][1]["links"] == []
+                assert edited.json()["total_detections"] == 3
+                assert search.await_count == 2
+                assert (await client.patch(patch_url, json={"bbox": [2, 3, 10.1, 9]})).status_code == 422
+                frame = await session.scalar(select(VisualVideoFrame).where(
+                    VisualVideoFrame.scan_id == run.id, VisualVideoFrame.frame_index == 52))
+                detections = list(frame.detections)
+                detections[1] = {**detections[1], "reference_id": 999, "links": [{"identity_id": 7}]}
+                frame.detections = detections
+                await session.flush()
+                assert (await client.patch(patch_url, json={"bbox": [1, 1, 4, 4]})).status_code == 422
+                detections[1] = {**detections[1], "reference_id": None}
+                frame.detections = detections
+                await session.flush()
                 assert (await client.post(base + "/reviewed")).status_code == 422
                 assert (await client.post(base + "/observations/52/0/resolve", json={"decision": "reject"})).status_code == 200
                 assert (await client.post(base + "/reject-all")).status_code == 200
                 response = await client.post(base + "/reviewed")
                 assert response.status_code == 200 and response.json()["reviewed"] is True
+                assert (await client.post(add, json={"bbox": [1, 1, 4, 4]})).status_code == 422
+                assert (await client.patch(patch_url, json={"bbox": [1, 1, 4, 4]})).status_code == 422
         await transaction.rollback()
     await engine.dispose()

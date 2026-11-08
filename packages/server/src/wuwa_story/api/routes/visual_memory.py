@@ -168,9 +168,22 @@ async def game_entities(q: str = Query("", max_length=128),
                                       character_kind="all", limit=limit, offset=offset, session=session)
         rows, total = result["results"], result["total"]
         has_more = offset + len(rows) < total
-    return {"items": [{"node_id": row["id"], "name": row.get("title") or row.get("alias"),
+    from wuwa_story.db.models.core import Character
+    from wuwa_story.visual_memory.game_identity import ROVER_APPEARANCES
+
+    rover_ids = set(await session.scalars(
+        select(Character.node_id).where(
+            Character.node_id.in_([row["id"] for row in rows]),
+            Character.metadata_json["public_identity"]["family"].as_string() == "rover",
+        )
+    )) if rows else set()
+    items = [{"node_id": row["id"], "name": row.get("title") or row.get("alias"),
                        "kind": row.get("character_kind") or "character", "image_url": row.get("image_url"),
-                       "canonical_key": row.get("canonical_key")} for row in rows],
+                       "canonical_key": row.get("canonical_key")} for row in rows]
+    for item in items:
+        if item["node_id"] in rover_ids:
+            item.update(name="Rover", kind="playable", appearance_choices=list(ROVER_APPEARANCES))
+    return {"items": items,
             "total": total, "has_more": has_more, "limit": limit, "offset": offset}
 
 
@@ -188,6 +201,15 @@ async def identity_from_game(body: GameEntityInput, locale: str = Query("en", mi
                                      .where(Character.node_id == body.node_id, NodeType.key == "character"))
     if character is None:
         raise HTTPException(404, "Game character not found")
+    from wuwa_story.visual_memory.game_identity import is_rover, rover_identity
+
+    if is_rover(character):
+        try:
+            result = await rover_identity(session, character, service_for(session))
+            await session.commit()
+            return result
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     # Two administrators selecting the same node must not create duplicate links.
     await session.execute(select(func.pg_advisory_xact_lock(
         func.hashtextextended(f"visual-identity-node:{body.node_id}", 0))))

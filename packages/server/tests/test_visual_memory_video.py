@@ -9,7 +9,13 @@ import pytest
 from PIL import Image
 
 from test_visual_memory_service import memory  # noqa: F401
-from wuwa_story.visual_memory.video import extract_frame, probe_duration, sample_times
+from wuwa_story.visual_memory.video import (
+    extract_frame,
+    extract_selected_frame,
+    probe_duration,
+    sample_times,
+    sampling_spec,
+)
 
 
 class VideoEngine:
@@ -36,6 +42,36 @@ def test_sampling_covers_full_duration_without_global_frame_cap():
     for args in [(0, 5), (1, math.nan), (1, 0), (1, 61)]:
         with pytest.raises(ValueError):
             sample_times(*args)
+
+
+def test_sampling_spec_rejects_invalid_combinations():
+    assert sampling_spec("frame", timestamp=0)["frame_offset"] == 0
+    for args in [dict(mode="full", start=0), dict(mode="segment", start=1, end=1),
+                 dict(mode="segment", start=0, end=math.inf), dict(mode="frame", timestamp=-1),
+                 dict(mode="frame", timestamp=0, frame_offset=-1),
+                 dict(mode="frame", timestamp=0, frame_offset=True),
+                 dict(mode="frame", timestamp=0, end=2), dict(mode="unknown")]:
+        with pytest.raises(ValueError):
+            sampling_spec(**args)
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="FFmpeg unavailable")
+def test_selected_frame_uses_decoded_frames_for_cfr_and_vfr(tmp_path):
+    for name, video_filter, expected in [
+        ("cfr", "null", 25 / 30),
+        ("vfr", "select=not(eq(mod(n\\,3)\\,2))", 30 / 30),
+    ]:
+        video = tmp_path / f"{name}.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                        "testsrc=size=64x48:rate=30:duration=2", "-vf", video_filter,
+                        "-fps_mode", "vfr", "-c:v", "mpeg4", "-y", str(video)],
+                       check=True, timeout=30)
+        jpeg, pts = extract_selected_frame(video, 0.5, 10)
+        assert pts == pytest.approx(expected, abs=0.0001)
+        with Image.open(io.BytesIO(jpeg)) as image:
+            assert image.format == "JPEG"
+        with pytest.raises(ValueError, match="unavailable"):
+            extract_selected_frame(video, 1.9, 100)
 
 
 @pytest.mark.skipif(
@@ -181,7 +217,54 @@ async def test_durable_video_sampling_review_resume_and_dedup(memory, tmp_path, 
     reference.metadata_json = {"asset_version": "3.7.0", "duration": 6}
     await session.flush()
     service = VideoReviewService(session, base.storage, VideoEngine())
+    with pytest.raises(ValueError, match="sampling"):
+        await service.enqueue(node.id, sampling_mode="full", timestamp_seconds=0)
     scan = await service.enqueue(node.id, asset_version="3.7.0", interval_seconds=1)
+    import hashlib
+    import json
+
+    legacy_hash = hashlib.sha256(json.dumps({"sha256": file.sha256.hex(),
+        "models": VideoEngine().model_identity(), "interval": 1,
+        "protocol": module.PROTOCOL}, sort_keys=True).encode()).digest()
+    assert (await session.get(ProcessingRun, scan["id"])).input_hash == legacy_hash
+    assert scan["sampling_mode"] == "full" and scan["sampling"] == {"sampling_mode": "full"}
+    segment = await service.enqueue(node.id, asset_version="3.7.0", interval_seconds=1,
+                                    sampling_mode="segment", start_seconds=1, end_seconds=3.1)
+    assert segment["id"] != scan["id"] and segment["sampling"]["start_seconds"] == 1
+    assert (await service.enqueue(node.id, asset_version="3.7.0", interval_seconds=1,
+            sampling_mode="segment", start_seconds=1, end_seconds=3.1))["id"] == segment["id"]
+    segment_result = await service.process(segment["id"])
+    assert segment_result["frame_count"] == 3
+    assert [f["time"] for f in segment_result["frames"]] == pytest.approx([1, 2, 2.9])
+    assert all(1 <= f["time"] < 3.1 for f in segment_result["frames"])
+    narrow = await service.enqueue(node.id, asset_version="3.7.0", interval_seconds=1,
+                                   sampling_mode="segment", start_seconds=1, end_seconds=1.1)
+    narrow_result = await service.process(narrow["id"])
+    assert narrow_result["status"] == "succeeded"
+    assert narrow_result["frame_count"] == 1
+    assert narrow_result["progress"] == {"completed": 1, "total": 1}
+    assert narrow_result["frames"][0]["time"] == pytest.approx(1)
+    point = await service.enqueue(node.id, asset_version="3.7.0", interval_seconds=3,
+                                  sampling_mode="frame", timestamp_seconds=0.5, frame_offset=10)
+    assert point["id"] not in (scan["id"], segment["id"])
+    point_retry = await service.enqueue(node.id, asset_version="3.7.0", interval_seconds=5,
+                                        sampling_mode="frame", timestamp_seconds=0.5, frame_offset=10)
+    assert point_retry["id"] == point["id"] and point_retry["duplicate"]
+    point_result = await service.process(point["id"])
+    assert point_result["frame_count"] == 1
+    assert point_result["sampling"]["frame_offset"] == 10
+    assert point_result["frames"][0]["time"] == pytest.approx(1.5)
+    other_point = await service.enqueue(node.id, asset_version="3.7.0", interval_seconds=1,
+                                        sampling_mode="frame", timestamp_seconds=0.5, frame_offset=11)
+    assert other_point["id"] != point["id"]
+    invalid = await service.enqueue(node.id, asset_version="3.7.0", sampling_mode="segment",
+                                    start_seconds=5, end_seconds=7)
+    with pytest.raises(ValueError, match="exceeds video duration"):
+        await service.process(invalid["id"])
+    invalid_point = await service.enqueue(node.id, asset_version="3.7.0", sampling_mode="frame",
+                                          timestamp_seconds=6)
+    with pytest.raises(ValueError, match="exceeds video duration"):
+        await service.process(invalid_point["id"])
     again = await service.enqueue(
         node.id, asset_version="3.7.0", interval_seconds=1, frame_batch_size=1
     )

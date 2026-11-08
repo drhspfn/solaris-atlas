@@ -201,3 +201,29 @@ Validation additionally covers real FFmpeg extraction, full-duration sampling,
 checkpoint recovery, paginated review, publication/variant fencing and game-name
 lookup. Recognition proposals remain untrusted until human review; these tests
 establish pipeline correctness rather than recognition accuracy.
+
+## Rover and manual video annotation
+
+The visual picker resolves the source-backed Rover family as one `Rover` identity.
+Male and female appearances have separate reference labels; elements are linked
+source game records, not separate visual identities. Existing approved reference
+labels are preserved and new elements join through the imported family metadata.
+The picker never merges unrelated people merely because their names match.
+
+Each completed, unreviewed video frame has an Edit boxes action using the same
+annotation component as the image laboratory. Draw a new box, resize an unresolved
+box or change its coordinates. Removing an automatic proposal rejects it; saved
+or approved references remain unchanged. Manual boxes get similarity suggestions
+without another detector pass, then require explicit identity selection and review.
+A detector proposal is not proof that the object is a character: non-character
+false positives should be rejected rather than labelled as the nearest candidate.
+
+Video scans support `sampling_mode=full` (default), `segment` with
+`start_seconds`/`end_seconds`, or `frame` with `timestamp_seconds` and an optional
+zero-based `frame_offset`. For example, frame time 91 seconds plus offset 10 selects
+the eleventh decoded frame at or after 1:31. The exported frame records its actual
+source presentation timestamp; the offset is not converted using an assumed FPS.
+Segment jobs process only their selected time window. Full jobs retain their previous
+fingerprint and cover the whole recording. These modes have distinct persisted scan
+identities, so a short segment never marks the entire source as reviewed.
+`MAX_FRAME_PAGE_SIZE` bounds one response page only and does not limit scan length.
