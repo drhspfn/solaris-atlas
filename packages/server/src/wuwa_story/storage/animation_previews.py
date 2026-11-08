@@ -18,7 +18,7 @@ class AnimationPreviewVariant(BaseModel):
 
 
 class AnimationPreview(BaseModel):
-    recipe: Literal['riglyph-native-v1']
+    recipe: Literal['riglyph-native-v1', 'riglyph-native-v2']
     status: Literal['ready']
     variants: list[AnimationPreviewVariant] = Field(min_length=1)
     default_animation: str | None = None

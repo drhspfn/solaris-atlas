@@ -58,3 +58,10 @@ test('only HTTP WebM previews are playable; archive URLs are never treated as vi
   assert.equal(animationPreviewUrl(clip('idle')), 'https://cdn.test/idle.webm');
   assert.equal(selectAnimationClip(preview(clip('idle', { url: '/bad' })), 'idle'), null);
 });
+
+
+test('version-two published previews select the same exact authored clip', () => {
+  const idle = clip('idle');
+  assert.equal(selectAnimationClip({ ...preview(idle), recipe: 'riglyph-native-v2' }, 'idle'), idle);
+  assert.equal(selectAnimationClip({ ...preview(idle), recipe: 'riglyph-native-v2' }, 'missing'), null);
+});

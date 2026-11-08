@@ -11,7 +11,7 @@ export type AnimationClip = {
 };
 
 export type AnimationPreview = {
-  recipe: "riglyph-native-v1";
+  recipe: "riglyph-native-v1" | "riglyph-native-v2";
   status: "ready";
   default_animation?: string | null;
   variants: AnimationClip[];
@@ -35,7 +35,7 @@ export function selectAnimationClip(
   animation: string | null | undefined,
   rover = "",
 ): AnimationClip | null {
-  if (preview?.recipe !== "riglyph-native-v1" || preview.status !== "ready")
+  if ((preview?.recipe !== "riglyph-native-v1" && preview?.recipe !== "riglyph-native-v2") || preview.status !== "ready")
     return null;
   animation ??= preview.default_animation;
   if (!animation) return null;
