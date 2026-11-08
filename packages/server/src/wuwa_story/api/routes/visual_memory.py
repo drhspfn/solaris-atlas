@@ -169,17 +169,19 @@ async def game_entities(q: str = Query("", max_length=128),
         rows, total = result["results"], result["total"]
         has_more = offset + len(rows) < total
     from wuwa_story.db.models.core import Character
-    from wuwa_story.visual_memory.game_identity import ROVER_APPEARANCES, is_rover
+    from wuwa_story.visual_memory.game_identity import ROVER_APPEARANCES
 
-    characters = {character.node_id: character for character in await session.scalars(
-        select(Character).where(Character.node_id.in_([row["id"] for row in rows]))
-    )} if rows else {}
+    rover_ids = set(await session.scalars(
+        select(Character.node_id).where(
+            Character.node_id.in_([row["id"] for row in rows]),
+            Character.metadata_json["public_identity"]["family"].as_string() == "rover",
+        )
+    )) if rows else set()
     items = [{"node_id": row["id"], "name": row.get("title") or row.get("alias"),
                        "kind": row.get("character_kind") or "character", "image_url": row.get("image_url"),
                        "canonical_key": row.get("canonical_key")} for row in rows]
     for item in items:
-        character = characters.get(item["node_id"])
-        if character is not None and is_rover(character):
+        if item["node_id"] in rover_ids:
             item.update(name="Rover", kind="playable", appearance_choices=list(ROVER_APPEARANCES))
     return {"items": items,
             "total": total, "has_more": has_more, "limit": limit, "offset": offset}
