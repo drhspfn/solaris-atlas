@@ -129,3 +129,17 @@ and protects newer recipes against older publishers. No queues were cleared.
 Receipts are retained in the shared volume at
 `/var/lib/wuwa-worker/recovery/illustrated-20261108/`, and worker image/deployment
 identities are recorded under `/root/solaris-atlas/.deployments/illustrated-0ac3269/`.
+
+### Publication confirmation (01:32 UTC)
+
+Run **32027 completed**, with empty `riglyph_failures` and
+`incomplete_spine_controls`. Production API returns the ready native preview and
+one published looping music track (file 605353, 168.67 seconds), scoped to all 37
+authored text keys of the Denia flow. The temporary `ca64d21` image consumer
+drained and exited successfully; the `89c7e81` consumer continues the queue.
+
+Cantarella runs 32028 and 32029 retained their full source bundle but returned
+partial: resource 750001 requests animation names absent from the converted
+skeleton. This is a remaining playback limitation, not a successful render.
+Run 32030 (resource 750004) is processing. No blanket retry was scheduled for
+those deterministic missing-clip results.
