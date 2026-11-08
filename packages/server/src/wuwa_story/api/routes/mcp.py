@@ -31,6 +31,7 @@ def _dump_json(obj: Any) -> str:
 async def handle_list_tools() -> list[Tool]:
     from wuwa_story.api.routes import mcp_character_tools as character_tools
     from wuwa_story.api.routes import mcp_media_tools as media_tools
+    from wuwa_story.visual_memory import tools as visual_tools
 
     return [
         Tool(
@@ -293,7 +294,7 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["character"]
             }
         )
-    ] + character_tools.TOOLS + media_tools.TOOLS
+    ] + character_tools.TOOLS + media_tools.TOOLS + visual_tools.TOOLS
 
 
 async def _resolve_node(session: Any, id_or_key: str | int) -> Any:
@@ -326,7 +327,11 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
         try:
             from wuwa_story.api.routes import mcp_character_tools as character_tools
             from wuwa_story.api.routes import mcp_media_tools as media_tools
+            from wuwa_story.visual_memory import tools as visual_tools
 
+            if name in {tool.name for tool in visual_tools.TOOLS}:
+                result = await visual_tools.dispatch(name, arguments, session)
+                return [TextContent(type="text", text=_dump_json(result))]
             if name in {tool.name for tool in character_tools.TOOLS}:
                 result = await character_tools.dispatch(name, arguments, session)
                 return [TextContent(type="text", text=_dump_json(result))]
@@ -543,6 +548,8 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
 
         except Exception as e:
             logger.exception("Error executing tool %s", name)
+            if name.startswith("visual_"):
+                return [TextContent(type="text", text="Visual memory request failed.")]
             return [TextContent(type="text", text=f"Tool execution failed: {e}")]
 
 

@@ -10,6 +10,8 @@ from wuwa_story.api import read_projections
 
 
 def read_definitions() -> list[dict[str, Any]]:
+    from wuwa_story.visual_memory.tools import TOOLS
+
     return [
         {
             "name": "search_dialogue",
@@ -60,10 +62,14 @@ def read_definitions() -> list[dict[str, Any]]:
                 "additionalProperties": False,
             },
         },
-    ]
+    ] + [{"name": item.name, "description": item.description, "parameters": item.inputSchema} for item in TOOLS]
 
 
 async def execute_read(session: AsyncSession, call: ToolCall) -> dict[str, Any]:
+    from wuwa_story.visual_memory import tools as visual_tools
+
+    if call.name in {item.name for item in visual_tools.TOOLS}:
+        return await visual_tools.dispatch(call.name, call.arguments, session)
     if call.name == "get_quest_lore":
         from wuwa_story.api.routes.story.transcripts import quest_transcript
 

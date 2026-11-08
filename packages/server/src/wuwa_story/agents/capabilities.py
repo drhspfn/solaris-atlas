@@ -10,7 +10,8 @@ from wuwa_story.agents.workspace import MemoryWrite, QuestionResolution
 
 Role = Literal["public", "internal", "worker"]
 PUBLIC_READ_TOOLS = frozenset(
-    {"search_dialogue", "search_entities", "search_lore", "get_quest_lore"}
+    {"search_dialogue", "search_entities", "search_lore", "get_quest_lore",
+     "visual_search", "visual_identify", "visual_list_identities", "visual_get_reference"}
 )
 INTERNAL_TOOLS = frozenset(
     {
@@ -21,6 +22,8 @@ INTERNAL_TOOLS = frozenset(
         "write_memory",
         "find_work",
         "queue_analysis",
+        "visual_create_identity",
+        "visual_add_reference",
     }
 )
 WORKER_TOOLS = frozenset({"resolve_question", "update_relationship"})
@@ -76,8 +79,15 @@ def tool(
 
 
 def internal_definitions(*, worker: bool = False) -> list[dict[str, Any]]:
+    from wuwa_story.visual_memory.tools import IdentityCreateInput, ReferenceInput
+
     string, integer = {"type": "string"}, {"type": "integer"}
+    reference_schema = ReferenceInput.model_json_schema()
+    reference_schema["properties"].pop("status")
+    reference_schema["properties"].pop("source_type")
     tools = [
+        {"type": "function", "name": "visual_create_identity", "description": "Create an explicit visual identity when the subject is unknown; use a suitable custom kind. Do not claim an uncertain match.", "parameters": IdentityCreateInput.model_json_schema(), "strict": False},
+        {"type": "function", "name": "visual_add_reference", "description": "Submit one image and explicit identity links for human review; it remains pending and cannot approve itself.", "parameters": reference_schema, "strict": False},
         tool(
             "read_schema",
             "Discover mapped database tables, columns, keys and foreign keys; filter and paginate.",
@@ -157,6 +167,11 @@ async def execute_internal(
     run_id: int | None = None,
 ) -> dict[str, Any]:
     from wuwa_story.agents import database, workspace
+
+    if name in {"visual_create_identity", "visual_add_reference"}:
+        from wuwa_story.visual_memory.tools import VisualMemoryTools, service_for
+
+        return await VisualMemoryTools(service_for(session), allow_write=True, agent_source=True).execute(name, arguments)
 
     if name == "read_schema":
         return database.read_schema(settings, **arguments)
