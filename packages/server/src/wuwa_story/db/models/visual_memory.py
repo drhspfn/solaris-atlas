@@ -82,6 +82,7 @@ class VisualReference(Base):
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     # Hash of the original upload and of the exact crop are different identities.
     source_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    source_group: Mapped[str | None] = mapped_column(String(128), index=True)
     sha256: Mapped[str] = mapped_column(String(64), unique=True)
     perceptual_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     original_file_id: Mapped[int | None] = mapped_column(ForeignKey("storage.file_object.id"))
@@ -158,3 +159,16 @@ class VisualReview(Base):
     reason: Mapped[str | None] = mapped_column(Text)
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class VisualVideoFrame(Base):
+    __tablename__ = "visual_video_frame"
+    __table_args__ = (UniqueConstraint("scan_id", "frame_index"), {"schema": "ops"})
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    scan_id: Mapped[int] = mapped_column(ForeignKey("ops.processing_run.id", ondelete="CASCADE"))
+    frame_index: Mapped[int] = mapped_column(Integer)
+    time: Mapped[float] = mapped_column(Float)
+    file_id: Mapped[int] = mapped_column(ForeignKey("storage.file_object.id", ondelete="RESTRICT"))
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
+    detections: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)

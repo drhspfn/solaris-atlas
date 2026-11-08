@@ -1,0 +1,175 @@
+import io
+import math
+import shutil
+import subprocess
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+from PIL import Image
+
+from test_visual_memory_service import memory  # noqa: F401
+from wuwa_story.visual_memory.video import extract_frame, probe_duration, sample_times
+
+
+class VideoEngine:
+    def model_identity(self):
+        return {"embedding": "video-test-model", "detector": "video-test-detector"}
+
+    def embed(self, image):
+        return SimpleNamespace(
+            model_key="video-test-model",
+            vector=[1.0] + [0.0] * 383,
+            config={"weights_sha256": "video-test"},
+        )
+
+    def detect(self, image):
+        return [{"bbox": [0, 0, image.width, image.height], "score": 0.9}]
+
+
+def test_sampling_covers_full_duration_without_global_frame_cap():
+    short = sample_times(10, 3)
+    long = sample_times(360, 3)
+    assert short == [0, 3, 6, 9, 9.8]
+    assert len(long) == 121 and long[-1] == 359.8
+    assert all(b - a <= 3 for a, b in zip(long, long[1:], strict=False))
+    for args in [(0, 5), (1, math.nan), (1, 0), (1, 61)]:
+        with pytest.raises(ValueError):
+            sample_times(*args)
+
+
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="FFmpeg unavailable"
+)
+def test_extract_synthetic_video(tmp_path):
+    video = tmp_path / "sample.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=red:s=64x48:r=10:d=2",
+            "-c:v",
+            "mpeg4",
+            "-y",
+            str(video),
+        ],
+        check=True,
+        timeout=30,
+    )
+    duration = probe_duration(video)
+    assert duration == pytest.approx(2, abs=0.2)
+    for timestamp in sample_times(duration, interval=1):
+        with Image.open(io.BytesIO(extract_frame(video, timestamp))) as image:
+            assert image.format == "JPEG"
+            assert image.width <= 1280 and image.height <= 720
+    with pytest.raises(ValueError):
+        extract_frame(video, math.inf)
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="FFmpeg unavailable"
+)
+async def test_durable_video_sampling_review_resume_and_dedup(memory, tmp_path, monkeypatch):  # noqa: F811
+    from sqlalchemy import func, select
+
+    from wuwa_story.db.models import (
+        MediaAsset,
+        Node,
+        NodeType,
+        ProcessingRun,
+        VisualReference,
+        VisualVideoFrame,
+    )
+    from wuwa_story.storage.service import FileRegistrationService
+    from wuwa_story.visual_memory import video as module
+    from wuwa_story.visual_memory.video import VideoReviewService
+
+    base, session, actor = memory
+    path = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=red:s=64x48:r=10:d=6",
+            "-c:v",
+            "mpeg4",
+            "-y",
+            str(path),
+        ],
+        check=True,
+        timeout=30,
+    )
+    registration = FileRegistrationService(base.storage)
+    file = await registration.register_file(session, path, "video_mp4", mime_type="video/mp4")
+    node_type = await session.scalar(select(NodeType.id).where(NodeType.key == "media_asset"))
+    node = Node(type_id=node_type, canonical_key="visual-video-test:" + uuid4().hex)
+    session.add(node)
+    await session.flush()
+    session.add(
+        MediaAsset(
+            node_id=node.id, media_kind="video", original_file_id=file.id, preferred_file_id=file.id
+        )
+    )
+    reference = await registration.register_reference(
+        session, file_id=file.id, reference_type="cutscene_video_v2", owner_node_id=node.id
+    )
+    reference.metadata_json = {"asset_version": "3.7.0", "duration": 6}
+    await session.flush()
+    service = VideoReviewService(session, base.storage, VideoEngine())
+    scan = await service.enqueue(node.id, asset_version="3.7.0", interval_seconds=1)
+    again = await service.enqueue(
+        node.id, asset_version="3.7.0", interval_seconds=1, frame_batch_size=1
+    )
+    assert again["id"] == scan["id"] and again["duplicate"]
+    original = module.extract_frame
+    calls = []
+
+    def fail_after_checkpoint(video, timestamp):
+        calls.append(timestamp)
+        if len(calls) == 3:
+            raise ValueError("Simulated extraction interruption")
+        return original(video, timestamp)
+
+    monkeypatch.setattr(module, "extract_frame", fail_after_checkpoint)
+    with pytest.raises(ValueError, match="interruption"):
+        await service.process(scan["id"])
+    partial = await service.get_scan(scan["id"])
+    assert partial["status"] == "running" and partial["progress"]["completed"] == 2
+    monkeypatch.setattr(module, "extract_frame", original)
+    done = await service.process(scan["id"])
+    assert done["status"] == "succeeded" and done["frame_count"] == 7
+    assert done["unresolved_count"] == 7
+    assert (
+        await session.scalar(
+            select(func.count())
+            .select_from(VisualVideoFrame)
+            .where(VisualVideoFrame.scan_id == scan["id"])
+        )
+        == 7
+    )
+    page = await service.get_scan(scan["id"], frame_offset=3, frame_limit=2)
+    assert [x["index"] for x in page["frames"]] == [3, 4] and page["next_frame_offset"] == 5
+    identity = await base.create_identity("Video NPC", "npc")
+    with pytest.raises(ValueError, match="every proposal"):
+        await service.mark_reviewed(scan["id"], actor_id=actor)
+    approved = await service.resolve(
+        scan["id"], 0, 0, "approved", links=[{"identity_id": identity["id"]}], actor_id=actor
+    )
+    visual = await session.get(
+        VisualReference, approved["frames"][0]["detections"][0]["reference_id"]
+    )
+    assert visual.status == "approved" and visual.source_group == "video:" + file.sha256.hex()
+    await service.reject_all(scan["id"], actor_id=actor)
+    reviewed = await service.mark_reviewed(scan["id"], actor_id=actor)
+    assert reviewed["reviewed"] and reviewed["unresolved_count"] == 0
+    assert (await service.enqueue(node.id, asset_version="3.7.0", interval_seconds=1))["reviewed"]
+    assert (await session.get(ProcessingRun, scan["id"])).raw_output.get("frames") is None

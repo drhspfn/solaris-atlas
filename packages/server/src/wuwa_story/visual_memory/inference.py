@@ -74,9 +74,11 @@ class VisualMemoryEngine:
             processor = AutoImageProcessor.from_pretrained(
                 str(path), local_files_only=True, use_fast=False
             )
-            model = AutoModel.from_pretrained(str(path), local_files_only=True).to("cpu").eval()
+            model = AutoModel.from_pretrained(
+                str(path), local_files_only=True).to("cpu").eval()
             if model.config.model_type != "dinov2" or model.config.hidden_size != 384:
-                raise ValueError("Expected a 384-dimensional DINOv2-small model")
+                raise ValueError(
+                    "Expected a 384-dimensional DINOv2-small model")
             config = {
                 "dimensions": 384,
                 "model": "facebook/dinov2-small",
@@ -89,12 +91,14 @@ class VisualMemoryEngine:
                 "torch_version": str(torch.__version__),
                 "pillow_version": PIL.__version__,
             }
-            fingerprint = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
+            fingerprint = hashlib.sha256(json.dumps(
+                config, sort_keys=True).encode()).hexdigest()
             config["fingerprint"] = fingerprint
             self._config = config
             self._processor, self._model = processor, model
         except Exception as exc:
-            raise VisualMemoryUnavailable(f"Could not load DINOv2 model: {exc}") from exc
+            raise VisualMemoryUnavailable(
+                f"Could not load DINOv2 model: {exc}") from exc
 
     def embed(self, image: Image.Image) -> EmbeddingResult:
         with self._lock:
@@ -102,9 +106,11 @@ class VisualMemoryEngine:
             try:
                 import torch
 
-                inputs = self._processor(images=image.convert("RGB"), return_tensors="pt")
+                inputs = self._processor(
+                    images=image.convert("RGB"), return_tensors="pt")
                 with torch.inference_mode():
-                    vector = self._model(**inputs).last_hidden_state[0, 0].float()
+                    vector = self._model(
+                        **inputs).last_hidden_state[0, 0].float()
                     norm = torch.linalg.vector_norm(vector)
                     if not torch.isfinite(vector).all() or not torch.isfinite(norm) or norm <= 0:
                         raise ValueError("Invalid embedding")
@@ -115,7 +121,19 @@ class VisualMemoryEngine:
                     dict(self._config),
                 )
             except Exception as exc:
-                raise VisualMemoryUnavailable(f"DINOv2 inference failed: {exc}") from exc
+                raise VisualMemoryUnavailable(
+                    f"DINOv2 inference failed: {exc}") from exc
+
+    def model_identity(self) -> dict[str, str]:
+        """Fingerprint both local models without inventing a reference embedding."""
+        with self._lock:
+            self._load_embedder()
+            self._load_detector()
+            if not hasattr(self, "_detector_sha256"):
+                self._detector_sha256 = _digest(
+                    Path(os.environ["VISUAL_MEMORY_DETECTOR_PATH"]))
+            return {"embedding": "dinov2-small:cls:" + self._config["fingerprint"],
+                    "detector": self._detector_sha256}
 
     def _load_detector(self) -> None:
         if self._session is not None:
@@ -140,7 +158,8 @@ class VisualMemoryEngine:
                 raise ValueError("Unexpected detector input or output shape")
             self._session = session
         except Exception as exc:
-            raise VisualMemoryUnavailable(f"Could not load YOLOX detector: {exc}") from exc
+            raise VisualMemoryUnavailable(
+                f"Could not load YOLOX detector: {exc}") from exc
 
     def detect(self, image: Image.Image) -> list[dict[str, Any]]:
         # Upstream: ksasao/anime-character-detector python/onnx_predictor.py.
@@ -160,13 +179,16 @@ class VisualMemoryEngine:
                 )
                 padded = np.full((640, 640, 3), 114, dtype=np.uint8)
                 padded[: resized.shape[0], : resized.shape[1]] = resized
-                blob = np.ascontiguousarray(padded.transpose(2, 0, 1), dtype=np.float32)[None]
-                output = self._session.run(None, {self._session.get_inputs()[0].name: blob})[0][0]
+                blob = np.ascontiguousarray(
+                    padded.transpose(2, 0, 1), dtype=np.float32)[None]
+                output = self._session.run(
+                    None, {self._session.get_inputs()[0].name: blob})[0][0]
                 if output.shape != (8400, 6):
                     raise ValueError("Unexpected detector output")
                 grids, strides = [], []
                 for stride in (8, 16, 32):
-                    x, y = np.meshgrid(np.arange(640 // stride), np.arange(640 // stride))
+                    x, y = np.meshgrid(
+                        np.arange(640 // stride), np.arange(640 // stride))
                     grids.append(np.stack((x, y), axis=-1).reshape(-1, 2))
                     strides.append(np.full((x.size, 1), stride))
                 grid, stride = np.concatenate(grids), np.concatenate(strides)
@@ -180,7 +202,8 @@ class VisualMemoryEngine:
                     & (scores > 0.3)
                 )
                 boxes = (
-                    np.concatenate((centers - sizes / 2, centers + sizes / 2), axis=1)[mask] / ratio
+                    np.concatenate(
+                        (centers - sizes / 2, centers + sizes / 2), axis=1)[mask] / ratio
                 )
                 scores = scores[mask]
                 # Upstream NMS uses inclusive-coordinate areas before clipping.
@@ -197,7 +220,8 @@ class VisualMemoryEngine:
                     ]
                     if clipped[0] < clipped[2] and clipped[1] < clipped[3]:
                         result.append(
-                            {"bbox": clipped, "score": float(scores[i]), "label": "character"}
+                            {"bbox": clipped, "score": float(
+                                scores[i]), "label": "character"}
                         )
                     rest = order[1:]
                     intersection = np.maximum(
@@ -207,11 +231,14 @@ class VisualMemoryEngine:
                         + 1,
                     ).prod(axis=1)
                     area = np.maximum(0, box[2:] - box[:2] + 1).prod()
-                    other_area = np.maximum(0, boxes[rest, 2:] - boxes[rest, :2] + 1).prod(axis=1)
-                    order = rest[intersection / (area + other_area - intersection) <= 0.45]
+                    other_area = np.maximum(
+                        0, boxes[rest, 2:] - boxes[rest, :2] + 1).prod(axis=1)
+                    order = rest[intersection /
+                                 (area + other_area - intersection) <= 0.45]
                 return result
             except Exception as exc:
-                raise VisualMemoryUnavailable(f"YOLOX inference failed: {exc}") from exc
+                raise VisualMemoryUnavailable(
+                    f"YOLOX inference failed: {exc}") from exc
 
 
 @lru_cache(maxsize=1)

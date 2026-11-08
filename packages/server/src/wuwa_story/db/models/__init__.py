@@ -194,11 +194,13 @@ __all__ = [
 from wuwa_story.db.models.visual_memory import (  # noqa: E402
     VisualAppearance, VisualEmbedding, VisualIdentity, VisualIdentityNode,
     VisualLoreIdentity, VisualReference, VisualReferenceLink, VisualReview,
+    VisualVideoFrame,
 )
 
 __all__ += [
     "VisualAppearance", "VisualEmbedding", "VisualIdentity", "VisualIdentityNode",
     "VisualLoreIdentity", "VisualReference", "VisualReferenceLink", "VisualReview",
+    "VisualVideoFrame",
 ]
 
 from wuwa_story.db.models.browse import (  # noqa: E402

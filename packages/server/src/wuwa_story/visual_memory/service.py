@@ -35,7 +35,8 @@ from wuwa_story.storage.service import FileRegistrationService
 def normalized_vector(values):
     vector = [float(value) for value in values]
     if not vector or len(vector) > 4096 or not all(math.isfinite(x) for x in vector):
-        raise ValueError("Embedding must contain finite values and at most 4096 dimensions")
+        raise ValueError(
+            "Embedding must contain finite values and at most 4096 dimensions")
     norm = math.sqrt(sum(x * x for x in vector))
     if not math.isfinite(norm) or norm < 1e-12:
         raise ValueError("Embedding must have a non-zero finite norm")
@@ -50,14 +51,16 @@ def rank_candidates(rows, limit=10):
         if not any(
             item["source_sha256"] == row["source_sha256"]
             or (
-                row.get("perceptual_hash") and item.get("perceptual_hash") == row["perceptual_hash"]
+                row.get("perceptual_hash") and item.get(
+                    "perceptual_hash") == row["perceptual_hash"]
             )
             for item in group
         ):
             group.append(row)
     candidates = []
     for identity_id, evidence in groups.items():
-        evidence = sorted(evidence, key=lambda x: (-x["similarity"], x["reference_id"]))[:5]
+        evidence = sorted(
+            evidence, key=lambda x: (-x["similarity"], x["reference_id"]))[:5]
         best = evidence[0]
         scores = [x["similarity"] for x in evidence]
         mean = sum(scores) / len(scores)
@@ -112,7 +115,8 @@ def _url(value):
 class VisualMemoryService:
     def __init__(self, session, storage=None, engine=None):
         self.session = session
-        self.storage = storage if storage is not None else S3Storage(get_settings())
+        self.storage = storage if storage is not None else S3Storage(
+            get_settings())
         self.engine = engine
 
     def _engine(self):
@@ -171,7 +175,8 @@ class VisualMemoryService:
         if found != set(node_ids):
             raise ValueError("A linked game entity does not exist")
         await self.session.execute(
-            delete(VisualIdentityNode).where(VisualIdentityNode.identity_id == identity_id)
+            delete(VisualIdentityNode).where(
+                VisualIdentityNode.identity_id == identity_id)
         )
         self.session.add_all(
             VisualIdentityNode(identity_id=identity_id, node_id=x) for x in node_ids
@@ -180,7 +185,8 @@ class VisualMemoryService:
     async def create_identity(self, name, kind, node_ids=None, lore_id=None, description=""):
         kind = _name(kind, "kind", 64)
         if not re.fullmatch(r"[a-z][a-z0-9_-]*", kind):
-            raise ValueError("kind must be a lowercase key, e.g. npc or custom_location")
+            raise ValueError(
+                "kind must be a lowercase key, e.g. npc or custom_location")
         if lore_id is not None and await self.session.get(VisualLoreIdentity, lore_id) is None:
             raise ValueError("Lore identity not found")
         row = VisualIdentity(
@@ -215,7 +221,8 @@ class VisualMemoryService:
     async def _identity_dict(self, row):
         nodes = (
             await self.session.scalars(
-                select(VisualIdentityNode.node_id).where(VisualIdentityNode.identity_id == row.id)
+                select(VisualIdentityNode.node_id).where(
+                    VisualIdentityNode.identity_id == row.id)
             )
         ).all()
         appearances = await self.list_appearances(row.id)
@@ -233,7 +240,8 @@ class VisualMemoryService:
         limit, offset = self._page(limit, offset)
         statement = select(VisualIdentity)
         if q:
-            statement = statement.where(VisualIdentity.name.ilike(f"%{q[:256]}%"))
+            statement = statement.where(
+                VisualIdentity.name.ilike(f"%{q[:256]}%"))
         if kind:
             statement = statement.where(VisualIdentity.kind == kind)
         total = await self.session.scalar(select(func.count()).select_from(statement.subquery()))
@@ -351,7 +359,8 @@ class VisualMemoryService:
                 (1 - distance).label("similarity"),
                 func.row_number()
                 .over(
-                    partition_by=(VisualIdentity.id, VisualReference.source_sha256),
+                    partition_by=(VisualIdentity.id, func.coalesce(
+                        VisualReference.source_group, VisualReference.source_sha256)),
                     order_by=(distance, VisualReference.id),
                 )
                 .label("source_rank"),
@@ -380,7 +389,8 @@ class VisualMemoryService:
                 func.row_number()
                 .over(
                     partition_by=sources.c.identity_id,
-                    order_by=(sources.c.similarity.desc(), sources.c.reference_id),
+                    order_by=(sources.c.similarity.desc(),
+                              sources.c.reference_id),
                 )
                 .label("entity_rank"),
             )
@@ -420,12 +430,14 @@ class VisualMemoryService:
             raise ValueError("At most 20 boxes per image")
         detections = []
         if boxes is not None:
-            detections = [{"bbox": box, "score": None, "status": "manual"} for box in boxes]
+            detections = [{"bbox": box, "score": None,
+                           "status": "manual"} for box in boxes]
         elif detect:
             detections = await asyncio.to_thread(self._engine().detect, image)
         else:
             detections = [
-                {"bbox": [0, 0, image.width, image.height], "score": None, "status": "whole_image"}
+                {"bbox": [0, 0, image.width, image.height],
+                    "score": None, "status": "whole_image"}
             ]
         result = []
         model_key = None
@@ -453,7 +465,8 @@ class VisualMemoryService:
 
     async def _links(self, reference_id, links):
         if not links or len(links) > 20:
-            raise ValueError("A reference requires 1–20 explicit visual identity links")
+            raise ValueError(
+                "A reference requires 1–20 explicit visual identity links")
         seen = set()
         for link in links:
             identity_id = int(link["identity_id"])
@@ -465,9 +478,11 @@ class VisualMemoryService:
             if appearance_id is not None:
                 appearance = await self.session.get(VisualAppearance, appearance_id)
                 if appearance is None or appearance.identity_id != identity_id:
-                    raise ValueError("Appearance does not belong to the selected visual identity")
+                    raise ValueError(
+                        "Appearance does not belong to the selected visual identity")
         await self.session.execute(
-            delete(VisualReferenceLink).where(VisualReferenceLink.reference_id == reference_id)
+            delete(VisualReferenceLink).where(
+                VisualReferenceLink.reference_id == reference_id)
         )
         self.session.add_all(
             VisualReferenceLink(
@@ -509,13 +524,15 @@ class VisualMemoryService:
         status="pending",
         retention_mode="image",
         actor_id=None,
+        source_group=None,
     ):
         from wuwa_story.visual_memory.images import crop_image, encode_png, load_image, phash
 
         if status not in ("pending", "approved") or retention_mode not in ("image", "vector_only"):
             raise ValueError("Invalid initial moderation or retention mode")
         if status == "approved" and actor_id is None:
-            raise ValueError("Approval requires an authenticated human administrator")
+            raise ValueError(
+                "Approval requires an authenticated human administrator")
         if not math.isfinite(quality) or not 0 <= quality <= 1:
             raise ValueError("Quality must be a finite number between 0 and 1")
         if author is not None and len(author) > 512:
@@ -538,6 +555,7 @@ class VisualMemoryService:
         model, vector = await self._embed(crop, register=True)
         reference = VisualReference(
             source_sha256=hashlib.sha256(image_bytes).hexdigest(),
+            source_group=source_group,
             sha256=digest,
             perceptual_hash=await asyncio.to_thread(phash, crop),
             width=image.width,
@@ -609,19 +627,22 @@ class VisualMemoryService:
             else None
         )
         if location is None:
-            raise ValueError("Reference image is not retained or is unavailable")
+            raise ValueError(
+                "Reference image is not retained or is unavailable")
         result = bytearray()
         async for chunk in self.storage.get(location.object_key):
             result.extend(chunk)
             if len(result) > 80 * 1024 * 1024:
-                raise ValueError("Stored image exceeds the decoded image limit")
+                raise ValueError(
+                    "Stored image exceeds the decoded image limit")
         return bytes(result)
 
     async def get_reference(self, reference_id):
         row = await self._reference(reference_id)
         links = (
             await self.session.execute(
-                select(VisualReferenceLink, VisualIdentity.name, VisualIdentity.kind)
+                select(VisualReferenceLink,
+                       VisualIdentity.name, VisualIdentity.kind)
                 .join(
                     VisualIdentity,
                     VisualIdentity.id == VisualReferenceLink.identity_id,
@@ -650,6 +671,7 @@ class VisualMemoryService:
             "original_url": await self._image_url(row, True),
             "sha256": row.sha256,
             "source_sha256": row.source_sha256,
+            "source_group": row.source_group,
             "perceptual_hash": row.perceptual_hash,
             "width": row.width,
             "height": row.height,
@@ -723,7 +745,8 @@ class VisualMemoryService:
         if status:
             statement = statement.where(VisualReference.status == status)
         if source_type:
-            statement = statement.where(VisualReference.source_type == source_type)
+            statement = statement.where(
+                VisualReference.source_type == source_type)
         if model_key:
             statement = statement.where(
                 VisualReference.id.in_(
@@ -735,7 +758,8 @@ class VisualMemoryService:
         total = await self.session.scalar(select(func.count()).select_from(statement.subquery()))
         ids = (
             await self.session.scalars(
-                statement.order_by(VisualReference.id.desc()).limit(limit).offset(offset)
+                statement.order_by(VisualReference.id.desc()
+                                   ).limit(limit).offset(offset)
             )
         ).all()
         return {"items": [await self.get_reference(x) for x in ids], "total": total}
@@ -754,7 +778,8 @@ class VisualMemoryService:
         if status not in ("pending", "approved", "rejected"):
             raise ValueError("Invalid moderation status")
         if actor_id is None:
-            raise ValueError("Moderation requires an authenticated human administrator")
+            raise ValueError(
+                "Moderation requires an authenticated human administrator")
         row = await self._reference(reference_id, lock=True)
         row.status, row.enabled_for_search = status, status == "approved" and enabled_for_search
         await self._audit(
@@ -827,7 +852,8 @@ class VisualMemoryService:
             )
             await self.session.execute(
                 statement.on_conflict_do_update(
-                    index_elements=[VisualEmbedding.reference_id, VisualEmbedding.model_id],
+                    index_elements=[VisualEmbedding.reference_id,
+                                    VisualEmbedding.model_id],
                     set_={
                         "embedding": vector,
                         "dimensions": model.dimensions,
@@ -836,5 +862,6 @@ class VisualMemoryService:
                 )
             )
             await self._audit(row.id, "reindex", actor_id, model_key=model.key)
-            results.append({"id": row.id, "status": "indexed", "model_key": model.key})
+            results.append(
+                {"id": row.id, "status": "indexed", "model_key": model.key})
         return {"items": results}
