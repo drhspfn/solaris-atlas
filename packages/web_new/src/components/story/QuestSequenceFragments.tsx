@@ -16,7 +16,7 @@ import {
   playableSequenceAudio,
 } from "./QuestSequenceAudio";
 import { QuestSequenceIllustrations } from "./QuestSequenceIllustrations";
-import { illustrationSections } from "./sequenceIllustrations";
+import { hasEngineCinematicTracks, illustrationSections } from "./sequenceIllustrations";
 
 export function hasSequenceComponents(media?: SequenceMedia) {
   return (
@@ -123,6 +123,8 @@ function FragmentList({
 export function QuestSequenceFragments({ media }: { media?: SequenceMedia }) {
   const sections = playableEncounterFragments(media);
   if (!media) return null;
+  const engineWithoutIllustrations = hasEngineCinematicTracks(media) &&
+    !media.sections.some((section) => section.kind === "illustration");
   const unboundScene =
     media.composition?.state === "unsupported" &&
     media.composition.reasons?.some((reason) =>
@@ -138,7 +140,7 @@ export function QuestSequenceFragments({ media }: { media?: SequenceMedia }) {
   }));
   return (
     <>
-      {unboundScene ? (
+      {engineWithoutIllustrations ? null : unboundScene ? (
         <p className={styles.status}>Scene illustrations are unavailable.</p>
       ) : (
         <QuestSequenceIllustrations media={media} />

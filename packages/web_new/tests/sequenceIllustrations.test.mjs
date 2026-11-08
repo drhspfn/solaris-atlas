@@ -29,6 +29,12 @@ const media = (composition, sections = []) => ({
   composition,
   sections,
 });
+
+test('engine classification requires both actual camera and skeletal tracks', () => {
+  assert.equal(exports.hasEngineCinematicTracks(undefined), false);
+  assert.equal(exports.hasEngineCinematicTracks(media(null, [{ kind: 'camera' }])), false);
+  assert.equal(exports.hasEngineCinematicTracks(media(null, [{ kind: 'camera' }, { kind: 'skeletal_animation' }])), true);
+});
 const composition = (state, reasons = []) => ({
   schema_version: 1,
   state,

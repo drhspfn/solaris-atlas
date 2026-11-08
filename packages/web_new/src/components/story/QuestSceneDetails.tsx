@@ -10,7 +10,7 @@ import {
   playableEncounterFragments,
 } from "./QuestSequenceFragments";
 import { playableSequenceAudio } from "./QuestSequenceAudio";
-import { illustrationSections } from "./sequenceIllustrations";
+import { hasEngineCinematicTracks, illustrationSections } from "./sequenceIllustrations";
 import { mediaViewerUrl } from "../ui/mediaViewerUtils";
 import styles from "./SequenceComponents.module.css";
 
@@ -27,14 +27,10 @@ export function QuestSceneDetails({
     mediaViewerUrl(section.url!),
   );
   const hasVideo = playableEncounterFragments(media).length > 0;
-  const sections = media?.schema_version === 1 ? media.sections : [];
   const isEngineCinematic =
     !hasIllustrations &&
     !hasVideo &&
-    sections.some((section) => section.kind === "camera") &&
-    sections.some((section) =>
-      ["skeletal_animation", "skeletal_animation_asset"].includes(section.kind),
-    );
+    hasEngineCinematicTracks(media);
   const hasMedia =
     hasIllustrations ||
     hasVideo ||

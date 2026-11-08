@@ -1,6 +1,7 @@
 "use client";
 
 import { dialogueSpeakerName } from "../dialogue/speakerName";
+import { hasEngineCinematicTracks } from "../story/sequenceIllustrations";
 
 import { ArrowUp, BookOpen, ChevronRight, Users } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
@@ -794,8 +795,7 @@ export function QuestPageClient({
           componentCount={index === componentPart ? componentCount : 0}
           engineRendered={componentCount === 0 &&
             !flow.sequence_media?.sections.some((section) => section.kind === "illustration") &&
-            ["camera", "skeletal_animation"].every((kind) =>
-              flow.sequence_media?.sections.some((section) => section.kind === kind))}
+            hasEngineCinematicTracks(flow.sequence_media)}
         >
           {index === componentPart && (
             <QuestSequenceFragments media={flow.sequence_media} />
