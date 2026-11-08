@@ -288,7 +288,8 @@ class OpenQuestions(ReadOnly):
 
 class Alerts(ReadOnly):
     fields: Sequence[Any] = ["id", "kind", "text", "node_id",
-                             IntegerField("run_id", display_template="displays/alert_run.html"),
+                             IntegerField(
+                                 "run_id", display_template="displays/alert_run.html"),
                              "citations", "created_at"]
     exclude_fields_from_list = ["citations"]
     searchable_fields = ["kind", "text"]
@@ -313,7 +314,8 @@ class Alerts(ReadOnly):
             AgentNote.id == alert_id, AgentNote.kind != "note", AgentNote.status == "open"
         ).values(status="resolved").returning(AgentNote.id))
         if result.scalar_one_or_none() is None:
-            raise ActionFailed("This alert is no longer open. Refresh the list.")
+            raise ActionFailed(
+                "This alert is no longer open. Refresh the list.")
         record(db, request, "alert.resolve", alert_id)
         await db.commit()
         return f"Alert {pk} resolved."
@@ -364,8 +366,10 @@ class Quests(ReadOnly):
 
 class GraphEdges(ReadOnly):
     fields: Sequence[Any] = [
-        "id", IntegerField("from_node_id", display_template="displays/graph_node.html"),
-        "relation_type_id", IntegerField("to_node_id", display_template="displays/graph_node.html"),
+        "id", IntegerField(
+            "from_node_id", display_template="displays/graph_node.html"),
+        "relation_type_id", IntegerField(
+            "to_node_id", display_template="displays/graph_node.html"),
         "layer", "basis", "confidence", "created_release_id", "valid_from_release_id",
         "valid_to_release_id", "processor_run_id",
     ]
@@ -373,6 +377,14 @@ class GraphEdges(ReadOnly):
 
 
 class Cutscenes(ReadOnly):
-    fields: Sequence[Any] = ["node_id", "cg_name", "cg_file", "media_asset_node_id"]
+    fields: Sequence[Any] = [IntegerField("node_id", display_template="displays/graph_node.html"),
+                             "cg_name", "cg_file", "media_asset_node_id"]
     searchable_fields = ["cg_name", "cg_file"]
     detail_template = "cutscene_detail.html"
+
+
+class Nodes(ReadOnly):
+    fields = ["id", "canonical_key", "type_id", "slug", "status",
+              "created_release_id", "created_at", "updated_at"]
+    searchable_fields = ["canonical_key", "slug", "status"]
+    detail_template = "node_detail.html"

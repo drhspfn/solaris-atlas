@@ -10,15 +10,17 @@ from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 from starlette.templating import Jinja2Templates
-from starlette_admin import CustomView, DropDown
+from starlette_admin import CustomView, DropDown, IntegerField
 from starlette_admin.contrib.sqla import Admin
 
 from wuwa_story.admin.auth import ConsoleProtection, InternalAuth
+from wuwa_story.admin.cutscenes import CutsceneData
 from wuwa_story.admin.views import (
     Alerts,
     BudgetUsage,
     Cutscenes,
     GraphEdges,
+    Nodes,
     Memory,
     OpenQuestions,
     Quests,
@@ -48,8 +50,12 @@ class AgentIndex(CustomView):
 
 
 def readonly(model: type[Any], label: str, columns: str, identity: Any, search: Sequence[str] = ()) -> ReadOnly:
+    node_fields = {"node_id", "speaker_node_id",
+                   "entity_node_id", "evidence_node_id", "media_asset_node_id"}
+    fields = [IntegerField(name, display_template="displays/graph_node.html") if name in node_fields else name
+              for name in columns.split()]
     view = type(model.__name__ + "Admin", (ReadOnly,),
-                {"fields": columns.split(), "searchable_fields": list(search)})
+                {"fields": fields, "searchable_fields": list(search)})
     return cast(ReadOnly, view(model, label=label, identity=identity))
 
 
@@ -60,6 +66,8 @@ def install_admin(app: Starlette, engine: AsyncEngine, settings: Settings | None
                   auth_provider=InternalAuth(settings or get_settings()),
                   middlewares=[Middleware(ConsoleProtection)],
                   index_view=AgentIndex("Research", add_to_menu=False))
+    admin.setup_view(CutsceneData("Cutscene data", path="/cutscene-data/{node_id:int}",
+                                  name="cutscene-data", add_to_menu=False))
     admin.add_view(DropDown("Agent", views=[
         Alerts(AgentNote, label="Alerts", identity="alerts"),
         OpenQuestions(AgentWorkItem, label="Open questions",
@@ -96,8 +104,7 @@ def install_admin(app: Starlette, engine: AsyncEngine, settings: Settings | None
                  "speaker-links", ["resolution_type"]),
         readonly(GameRelease, "Releases",
                  "id game_version sequence released_at", "releases", ["game_version"]),
-        readonly(Node, "Nodes", "id canonical_key type_id slug",
-                 "nodes", ["canonical_key", "slug"]),
+        Nodes(Node, label="Nodes", identity="nodes"),
         GraphEdges(Edge, label="Graph edges", identity="edges"),
         readonly(EdgeEvidence, "Edge evidence", "id edge_id release_id evidence_node_id source_record_id source_file_path source_raw_path explanation created_at",
                  "edge-evidence", ["source_file_path", "explanation"]),

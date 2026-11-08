@@ -19,7 +19,7 @@ from wuwa_story.story.cutscene_publications import publication_order, publicatio
 from wuwa_story.story.service import _localized, prefetch_localizations
 
 
-async def previews(session, scene_ids, release_id):
+async def previews(session, scene_ids, release_id, limit=5):
     """Resolve only previews tied to the currently published video and snapshot edges."""
     if not scene_ids:
         return {}
@@ -56,7 +56,7 @@ async def previews(session, scene_ids, release_id):
     for scene_id, file_id, key in rows:
         entry = result.setdefault(scene_id, {"preview_file_id": file_id, "preview_url": storage.public_url(key),
                                              "previews": []})
-        if len(entry["previews"]) < 5 and not any(item["file_id"] == file_id for item in entry["previews"]):
+        if (limit is None or len(entry["previews"]) < limit) and not any(item["file_id"] == file_id for item in entry["previews"]):
             entry["previews"].append(
                 {"file_id": file_id, "url": storage.public_url(key)})
     return result
@@ -109,7 +109,8 @@ async def visual_titles(session, scene_ids, release_id, locale):
         report.file_id == latest_video, report.metadata_json["complete"].as_boolean().is_(True))
         .order_by(report.id.desc()).limit(1).correlate(assets).scalar_subquery())
     rows = await session.execute(
-        select(variants.from_node_id, FileReference.metadata_json["title"].as_string())
+        select(variants.from_node_id,
+               FileReference.metadata_json["title"].as_string())
         .join(variant_type, variant_type.id == variants.relation_type_id)
         .join(assets, assets.from_node_id == variants.to_node_id)
         .join(asset_type, asset_type.id == assets.relation_type_id)
