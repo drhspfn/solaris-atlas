@@ -200,7 +200,9 @@ async def test_controller_exports_and_flow_scores_survive_as_separate_archive_ou
     (decoded / 'incomplete.json').write_text('{broken')
 
     async def extract(root, paths, *, assets, **kwargs):
-        if not kwargs:
+        if not kwargs or paths == ['/Game/Story']:
+            if paths == ['/Game/Story']:
+                assert kwargs == {'include_sequences': True}
             assets.update(fixture_assets)
             return [], []
         assert paths == ['/Game/Controller'] and kwargs == {'include_sequences': True, 'control_sources_only': True}

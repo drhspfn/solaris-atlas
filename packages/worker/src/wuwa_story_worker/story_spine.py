@@ -218,7 +218,7 @@ async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentati
     assets = {}
     movie_fragments = {}
     textures, missing = await prefab_images(root, direct_resources or [variant['prefab'] for variant in resource['variants']], assets=assets,
-                                            **({'include_sequences': True} if direct_resources else {}))
+                                            include_sequences=True)
     if direct_resources:
         resource.update(controller_archive=False,
                         source_resources=direct_resources)
