@@ -1,7 +1,8 @@
 # Build against the same Debian/FFmpeg ABI as the worker runtime.
 FROM python:3.12-slim AS vgmstream-builder
+# CELT's Git fallback needs Autotools to generate configure.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git cmake build-essential pkg-config ca-certificates \
+    git cmake build-essential pkg-config ca-certificates autoconf automake libtool \
     libavcodec-dev libavformat-dev libavutil-dev libswresample-dev \
     libmpg123-dev libvorbis-dev libspeex-dev libopus-dev \
     && rm -rf /var/lib/apt/lists/*
