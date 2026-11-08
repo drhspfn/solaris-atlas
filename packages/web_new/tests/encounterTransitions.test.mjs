@@ -612,6 +612,7 @@ test('quest reader nests cinematic dialogue once and preserves cited line addres
         .map(point => React.createElement('span', { key: loadStory('cutsceneAnchor').cutsceneAnchor(point),
           id: loadStory('cutsceneAnchor').cutsceneAnchor(point) }))),
       QuestCutscenes: () => null, RelatedQuestCutscenes: () => null,
+      externalSceneContinuations: (continuations = []) => continuations,
     },
     '@/components/story/encounterTransitions': { encounterFlows },
     '@/components/story/cutsceneAnchor': loadStory('cutsceneAnchor'),

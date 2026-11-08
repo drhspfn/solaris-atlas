@@ -221,6 +221,18 @@ test("unavailable and package-linked scenes have actual in-page targets", () => 
     manifest: { events: [], related_cutscenes: [{ name: 'M0391', playable: false,
       continuations: [{ game_quest_id: 200, quest_href: '/quests/200-next', title: { content: 'After the battle' } }] }] },
   }));
-  assert.match(continuation, /Continues in a later quest/);
+  assert.match(continuation, /Continue the story/);
   assert.match(continuation, /\/quests\/200-next/);
+  const self = { game_quest_id: 168000003, quest_href: '/quests/6616725-simulacrum-of-the-heart', title: 'Simulacrum of the Heart' };
+  for (const currentQuestIds of [[168000003], ['6616725']]) {
+    const html = renderToStaticMarkup(React.createElement(components.RelatedQuestCutscenes, {
+      currentQuestIds,
+      manifest: { events: [], related_cutscenes: [{ name: 'M0391', playable: false,
+        continuations: [self, { game_quest_id: 200, quest_href: '/quests/200-next', title: 'Next quest' }] }] },
+    }));
+    assert.doesNotMatch(html, /href="\/quests\/6616725/);
+    assert.match(html, /href="\/quests\/200-next/);
+    assert.match(html, /M0391/); // Removing a self-link must not remove the scene.
+    assert.match(html, /Linked to this quest/);
+  }
 });

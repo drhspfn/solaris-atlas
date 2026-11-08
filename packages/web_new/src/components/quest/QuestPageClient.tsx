@@ -51,6 +51,7 @@ import {
   Cutscene,
   QuestCutscenes,
   RelatedQuestCutscenes,
+  externalSceneContinuations,
 } from "@/components/story/QuestCutscenes";
 import {
   QuestSequenceFragments,
@@ -292,6 +293,7 @@ export function QuestPageClient({
     );
 
   const quest = profile?.quest || {};
+  const currentQuestIds = [quest.game_quest_id, quest.node_id, questKey.split("-")[0]].filter(Boolean);
   const lines = transcript?.lines || [];
   const scenes = transcript?.scenes || profile?.scenes || [];
   const classification = quest.classification;
@@ -562,7 +564,7 @@ export function QuestPageClient({
             searchText: scene.name,
             href: `#${packageCutsceneAnchor(scene.name)}`,
             inView: true,
-            note: scene.continuations?.length
+            note: externalSceneContinuations(scene.continuations, currentQuestIds).length
               ? "Continues in a later quest"
               : "Related · position unknown",
           })),
@@ -1270,7 +1272,7 @@ export function QuestPageClient({
             manifest={displayMedia}
             stateAnchors={new Map()}
           />
-          <RelatedQuestCutscenes display={playerDisplay} manifest={media} />
+          <RelatedQuestCutscenes display={playerDisplay} manifest={media} currentQuestIds={currentQuestIds} />
         </section>
       ) : (
         <>
@@ -1398,7 +1400,7 @@ export function QuestPageClient({
                   ))}
                 </section>
               )}
-              <RelatedQuestCutscenes display={playerDisplay} manifest={media} />
+              <RelatedQuestCutscenes display={playerDisplay} manifest={media} currentQuestIds={currentQuestIds} />
             </div>
           </div>
         </>
