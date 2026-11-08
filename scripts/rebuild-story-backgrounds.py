@@ -108,6 +108,8 @@ async def run(args):
                     rows = sorted(rows, key=lambda row: (row[0] not in priority, -row[1], priority.get(row[0], len(priority)), row[0]))
                     if args.owner:
                         rows = [row for row in rows if row[0] in args.owner]
+                    report['candidate_pairs'] = len(rows)
+                    save(args.report, report)
                     submitted = 0
                     for owner, release_id in rows:
                         if submitted >= args.limit:

@@ -439,3 +439,24 @@ async def test_reconstructed_flow_prepares_music_with_authored_state_reference(p
     assert section['reference'] == state and section['confidence'] == 'reconstructed'
     assert section['source_proof']['runtime_start_confirmed'] is False
     assert section['tracks'][0]['role'] == 'music' and section['status'] == 'rendered'
+
+
+@pytest.mark.asyncio
+async def test_different_source_proofs_do_not_overwrite_an_archive_in_use(prepared):
+    root, voice, bundle, tools, _, _ = prepared
+    first, _ = await audio.prepare_sequence_audio(root, bundle, tools['fmodel'], tools['converter'], voice_root=voice)
+    retained = first.read_bytes()
+    with zipfile.ZipFile(bundle) as archive:
+        entries = {name: archive.read(name) for name in archive.namelist()}
+    manifest = json.loads(entries['manifest.json'])
+    manifest['source_revision'] = 2
+    entries['manifest.json'] = json.dumps(manifest).encode()
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        for name, data in entries.items():
+            archive.writestr(name, data)
+    second, _ = await audio.prepare_sequence_audio(root, bundle, tools['fmodel'], tools['converter'], voice_root=voice)
+    assert second != first
+    assert first.read_bytes() == retained
+    with zipfile.ZipFile(first) as old, zipfile.ZipFile(second) as new:
+        assert 'source_revision' not in json.loads(old.read('manifest.json'))
+        assert json.loads(new.read('manifest.json'))['source_revision'] == 2

@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import uuid
 import wave
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -390,12 +391,18 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
                          for name, data in entries.items()}
     entries['manifest.json'] = json.dumps(
         manifest, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()
-    output = bundle.with_name(bundle.stem + '-audio.zip')
-    temporary = output.with_suffix('.partial')
-    with zipfile.ZipFile(temporary, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
-        for name, data in sorted(entries.items()):
-            info = zipfile.ZipInfo(name, date_time=(2000, 1, 1, 0, 0, 0))
-            info.compress_type = zipfile.ZIP_DEFLATED
-            archive.writestr(info, data)
-    temporary.replace(output)
+    # Different flow/release music proofs can share the same visual source ZIP.
+    # Never overwrite an archive another worker may still be rendering/uploading.
+    identity = hashlib.sha256(entries['manifest.json']).hexdigest()
+    output = bundle.with_name(bundle.stem + '-audio-' + identity + '.zip')
+    temporary = output.with_name(output.name + '.' + uuid.uuid4().hex + '.partial')
+    try:
+        with zipfile.ZipFile(temporary, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+            for name, data in sorted(entries.items()):
+                info = zipfile.ZipInfo(name, date_time=(2000, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                archive.writestr(info, data)
+        temporary.replace(output)
+    finally:
+        temporary.unlink(missing_ok=True)
     return output, sorted(originals)
