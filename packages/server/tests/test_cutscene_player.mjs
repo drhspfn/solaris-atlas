@@ -64,7 +64,10 @@ test("cutscene player follows branches and respects clip boundaries", async () =
   const form = new Element();
   form.elements = { language, version: { value: "" } };
   const root = new Element();
-  root.dataset = { apiRoot: "", name: "Scene" };
+  root.dataset = {
+    url: "https://api.solarisatlas.fun/console/cutscene-data/15536",
+    name: "Start",
+  };
   const elements = {
     form,
     ".sa-cutscene-status": status,
@@ -99,10 +102,14 @@ test("cutscene player follows branches and respects clip boundaries", async () =
     getElementById: () => root,
     createElement: () => new Element(),
   };
-  const fetch = async () => ({
+  const requests = [];
+  const fetch = async (url) => {
+    requests.push(url);
+    return {
     ok: true,
     json: async () => ({ game_version: "1.0", event: { playback: flow } }),
-  });
+    };
+  };
   vm.runInNewContext(
     readFileSync(
       new URL(
@@ -114,6 +121,7 @@ test("cutscene player follows branches and respects clip boundaries", async () =
     { document, fetch, URLSearchParams, AbortController, Audio: Element },
   );
   await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests[0], "https://api.solarisatlas.fun/console/cutscene-data/15536?locale=en");
   assert.equal(buttons.children.length, 2);
   buttons.children[0].dispatch("click");
   assert.equal(video.src, "/a");
@@ -127,4 +135,9 @@ test("cutscene player follows branches and respects clip boundaries", async () =
   buttons.children[1].dispatch("click");
   assert.equal(video.src, "/b");
   assert.equal(Number(timeline.max), 3);
+  form.elements.version.value = "1.0.0";
+  language.value = "ja";
+  form.dispatch("submit");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.at(-1), "https://api.solarisatlas.fun/console/cutscene-data/15536?locale=ja&game_version=1.0.0");
 });

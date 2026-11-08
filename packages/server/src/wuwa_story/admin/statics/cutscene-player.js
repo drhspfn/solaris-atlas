@@ -308,7 +308,7 @@
       params.set("game_version", form.elements.version.value.trim());
     try {
       const response = await fetch(
-        `${root.dataset.apiRoot}/cutscenes/${encodeURIComponent(root.dataset.name)}?${params}`,
+        `${root.dataset.url}?${params}`,
         { signal: controller.signal },
       );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
