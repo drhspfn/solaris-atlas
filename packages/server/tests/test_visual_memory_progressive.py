@@ -34,9 +34,9 @@ class VideoEngine(ControlledEngine):
 
 @pytest_asyncio.fixture
 async def setup_scan(tmp_path, monkeypatch):
-    url = os.getenv("WUWA_TEST_DATABASE_URL")
+    url = os.getenv("WUWA_VISUAL_TEST_DATABASE_URL") or os.getenv("WUWA_TEST_DATABASE_URL")
     if not url:
-        pytest.skip("Set WUWA_TEST_DATABASE_URL to a PostgreSQL server with CREATEDB")
+        pytest.skip("Set WUWA_VISUAL_TEST_DATABASE_URL to PostgreSQL with CREATEDB")
     name = "progressive_test_" + uuid4().hex
     owner = create_async_engine(url, isolation_level="AUTOCOMMIT", poolclass=NullPool)
     test_url = make_url(url).set(database=name).render_as_string(hide_password=False)
