@@ -399,3 +399,43 @@ async def test_legacy_levelplay_context_requires_and_preserves_fresh_presentatio
     assert section['reconstruction_kind'] == 'levelplay_fixed_start'
     assert section['source_proof']['presentation_sha256'] == presentation['sha256']
     assert section['tracks'][0]['role'] == 'music'
+
+
+@pytest.mark.asyncio
+async def test_reconstructed_flow_prepares_music_with_authored_state_reference(prepared, monkeypatch):
+    from wuwa_story.ingestion.spine_presentation import flow_presentation
+
+    from wuwa_story_worker import sequence_music_context
+
+    root, voice, bundle, tools, _, _ = prepared
+    prefix = '/Game/Aki/WwiseAudio/Events/'
+    state = prefix + 'play_story_music_daniya_jinzhen_play.play_story_music_daniya_jinzhen_play'
+    presentation = flow_presentation({'StateKey': 'Story', 'Actions': [
+        {'Name': 'PostAkEvent', 'Params': {'EventConfig': {'Type': 'Global', 'AkEvent': state}}},
+        {'Name': 'ShowTalk', 'Params': {'TalkItems': [{'TidTalk': 'line', 'BackgroundConfig': {
+            'Type': 'SpineImage', 'Id': 7}}]}},
+        {'Name': 'PostAkEvent', 'Params': {'EventConfig': {'Type': 'Global', 'AkEvent': prefix + 'stop.stop'}}},
+    ]})
+    with zipfile.ZipFile(bundle) as archive:
+        entries = {name: archive.read(name) for name in archive.namelist() if name != 'controls.json'}
+    manifest = json.loads(entries['manifest.json'])
+    manifest['files'].pop('controls.json')
+    entries['presentation.json'] = json.dumps(presentation).encode()
+    manifest['files']['presentation.json'] = {'size_bytes': len(entries['presentation.json']),
+                                               'sha256': hashlib.sha256(entries['presentation.json']).hexdigest()}
+    entries['manifest.json'] = json.dumps(manifest).encode()
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        for name, data in entries.items():
+            archive.writestr(name, data)
+    context = sequence_music_context.authored_flow_music_context(
+        {'owner': 7, 'release_id': 21, 'presentation': presentation, 'presentation_sha256': presentation['sha256']},
+        {'asset_version': '3.7.1', 'download_id': 'base-plan'})
+    monkeypatch.setattr(sequence_music_context, 'prepare_levelplay_music', AsyncMock(return_value=(
+        {'status': 'rendered', 'loop': True}, b'OggS', {'timeline.json': b'{}'}, [], {'play_target': 30})))
+    output, _ = await audio.prepare_sequence_audio(root, bundle, tools['fmodel'], tools['converter'],
+                                                   voice_root=voice, soundtrack_context=context)
+    with zipfile.ZipFile(output) as archive:
+        section, = json.loads(archive.read('controls.json'))['media']['sections']
+    assert section['reference'] == state and section['confidence'] == 'reconstructed'
+    assert section['source_proof']['runtime_start_confirmed'] is False
+    assert section['tracks'][0]['role'] == 'music' and section['status'] == 'rendered'
