@@ -449,6 +449,7 @@ test("frame paging uses absolute indexes and scan-wide unresolved count", async 
   });
   await t.tick();
   assert.match(t.element("#vm-frame-page").textContent, /1–12 of 121/);
+  assert.match(t.element("#vm-video-frames").innerHTML, /Sample at 0:03/);
   assert.equal(t.element("#vm-video-reviewed").disabled, true);
   t.element("#vm-frame-next").events.click({
     currentTarget: t.element("#vm-frame-next"),
@@ -465,7 +466,7 @@ test("frame paging uses absolute indexes and scan-wide unresolved count", async 
     frames: [
       {
         index: 12,
-        time: 36,
+        time: 91.333,
         detections: [
           { index: 0, decision: "unresolved", links: [], candidates: [] },
         ],
@@ -477,6 +478,9 @@ test("frame paging uses absolute indexes and scan-wide unresolved count", async 
   });
   await t.tick();
   assert.match(t.element("#vm-frame-page").textContent, /13–13 of 121/);
+  assert.match(t.element("#vm-video-frames").innerHTML, /Sample at 1:31\.333/);
+  assert.match(t.element("#vm-video-frames").innerHTML, /Seek to 1:31\.333/);
+  assert.match(t.element("#vm-video-frames").innerHTML, /data-seek="91\.333"/);
   const reject = {
     dataset: { frame: "12", detection: "0", decision: "reject" },
     setAttribute() {},

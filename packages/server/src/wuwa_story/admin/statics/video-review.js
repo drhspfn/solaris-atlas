@@ -37,8 +37,9 @@
     const completed = (scan) =>
       ["completed", "succeeded", "success"].includes(scan?.status);
     const time = (value) => {
-      const n = Math.max(0, Math.floor(Number(value) || 0));
-      return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, "0")}`;
+      const milliseconds = Math.round(Math.max(0, Number(value) || 0) * 1000);
+      const seconds = Math.floor(milliseconds / 1000), fraction = milliseconds % 1000;
+      return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}${fraction ? "." + String(fraction).padStart(3, "0") : ""}`;
     };
     function parseTime(value) {
       const text = value.trim();
