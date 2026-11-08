@@ -118,6 +118,20 @@ pixels. Bounding boxes are `[left, top, right, bottom]` in EXIF-oriented image p
 continue sending `{"image_base64":"..."}`. New clients can use:
 
 ```json
+{"file":{"download_url":"https://example.org/temporary-image.png","file_id":"file_...","mime_type":"image/png","file_name":"attachment.png"},"include_images":true}
+```
+
+Both MCP descriptors declare `_meta["openai/fileParams"]: ["file"]` following
+the [OpenAI File APIs contract](https://developers.openai.com/plugins/reference#file-apis).
+ChatGPT can supply this top-level file object for an authorized attachment.
+`download_url` and `file_id` are required; `mime_type` and `file_name` are optional
+strings. All four fields are declared in the file schema. The top-level `file`
+is optional to keep the other source forms available, but cannot be combined
+with `image` or `image_base64` in one request. Metadata does not bypass actual
+image decoding. Temporary URLs use the same guarded HTTPS downloader below and
+are redacted from audits/traces; no file is persisted or approved by searching.
+
+```json
 {"image":{"url":"https://example.org/character.png"},"include_images":true}
 ```
 
@@ -154,8 +168,12 @@ MCP callers may set `include_images: true` on either query tool or
 reference thumbnails (maximum 512×512), rechecking their approval and visibility.
 Administrator JSON endpoints still return ordinary JSON and existing preview URLs.
 
-This does not make chat attachments automatically accessible to MCP: the client
-must supply accessible image bytes, a public HTTPS image URL, or an archive ID.
+File forwarding depends on the host: reconnect/rescan the MCP tools after a schema
+update and test an attached PNG through `visual_identify`. A local path or bare
+`file_id` is insufficient; the server needs the temporary `download_url` delivered
+by the client. An expired URL needs a fresh file parameter from ChatGPT. The server
+cannot obtain an arbitrary user's attachment from a file ID alone. For clients
+without file-param support, use image bytes, an HTTPS image URL, or an archive ID.
 There is no anonymous upload/ingest tool and no external image-search scraper.
 
 Public MCP tools: `visual_search`, `visual_identify`, `visual_list_identities`,

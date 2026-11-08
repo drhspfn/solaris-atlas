@@ -5,7 +5,7 @@ import base64
 import binascii
 from typing import Any, Literal
 
-from mcp.types import Tool
+from mcp.types import Tool, ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -33,7 +33,8 @@ class ImageSource(Input):
     base64: str | None = Field(
         default=None, min_length=1, max_length=MAX_ENCODED)
     url: str | None = Field(default=None, min_length=1, max_length=4096)
-    mime_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"] | None = None
+    mime_type: Literal["image/png", "image/jpeg",
+                       "image/webp", "image/gif", "image/bmp"] | None = None
     asset_id: int | None = Field(default=None, gt=0, strict=True,
                                  description="Graph node ID of a published entity image; not a private storage file ID")
     reference_id: int | None = Field(
@@ -50,10 +51,21 @@ class ImageSource(Input):
         return self
 
 
+class OpenAIFile(Input):
+    """ChatGPT file parameter contract; optional metadata is never trusted as bytes."""
+
+    download_url: str = Field(min_length=1, max_length=4096)
+    file_id: str = Field(min_length=1, max_length=512)
+    mime_type: str = Field(default="", max_length=255)
+    file_name: str = Field(default="", max_length=1024)
+
+
 class ImageInput(Input):
     image_base64: str | None = Field(
         default=None, min_length=1, max_length=MAX_ENCODED)
     image: ImageSource | None = None
+    file: OpenAIFile | None = Field(
+        default=None, description="ChatGPT-provided image attachment with a temporary download_url and file_id. Prefer this for chat attachments; never pass a local file path.")
     include_images: bool = Field(
         default=False, description="MCP: include up to three approved reference thumbnails as native image content")
     kind: str | None = Field(default=None, max_length=100)
@@ -68,8 +80,9 @@ class ImageInput(Input):
 
     @model_validator(mode="after")
     def one_source(self):
-        if (self.image_base64 is None) == (self.image is None):
-            raise ValueError("Provide image or image_base64, not both")
+        if sum(value is not None for value in (self.image_base64, self.image, self.file)) != 1:
+            raise ValueError(
+                "Provide exactly one of file, image or image_base64")
         return self
 
 
@@ -161,11 +174,27 @@ def service_for(session: Any):
     return VisualMemoryService(session, storage=S3Storage(get_settings()))
 
 
+def query_input_schema(model):
+    schema = model.model_json_schema()
+    # File params must resolve directly to a file object, not anyOf(object, null).
+    # The top-level field stays optional because non-ChatGPT clients use image.
+    schema["properties"]["file"] = {
+        "$ref": "#/$defs/OpenAIFile", "description": model.model_fields["file"].description,
+    }
+    return schema
+
+
 TOOLS = [
-    Tool(name="visual_search", description="Search visual identities. Provide image: {url: public HTTPS URL}, {asset_id: published entity node ID}, {reference_id: approved visual reference ID}, or {base64: encoded image}; legacy image_base64 is supported. Maximum 5 MiB. Similarity is not probability.",
-         inputSchema=SearchInput.model_json_schema()),
-    Tool(name="visual_identify", description="Detect and identify characters in an image. Provide image: {url: public HTTPS URL}, {asset_id: published entity node ID}, {reference_id: approved visual reference ID}, or {base64: encoded image}; legacy image_base64 is supported. Maximum 5 MiB. Results may be unknown.",
-         inputSchema=IdentifyInput.model_json_schema()),
+    Tool(name="visual_search", description="Search visual identities. For a ChatGPT image attachment, pass file with its provided download_url and file_id. Otherwise provide image: {url: public HTTPS URL}, {asset_id: published entity node ID}, {reference_id: approved visual reference ID}, or {base64: encoded image}; legacy image_base64 is supported. Choose one source. Maximum 5 MiB. Similarity is not probability.",
+         inputSchema=query_input_schema(SearchInput),
+         annotations=ToolAnnotations(
+             readOnlyHint=True, destructiveHint=False, openWorldHint=True),
+         _meta={"openai/fileParams": ["file"]}),
+    Tool(name="visual_identify", description="Detect and identify characters in an image. For a ChatGPT image attachment, pass file with its provided download_url and file_id. Otherwise provide image: {url: public HTTPS URL}, {asset_id: published entity node ID}, {reference_id: approved visual reference ID}, or {base64: encoded image}; legacy image_base64 is supported. Choose one source. Maximum 5 MiB. Results may be unknown.",
+         inputSchema=query_input_schema(IdentifyInput),
+         annotations=ToolAnnotations(
+             readOnlyHint=True, destructiveHint=False, openWorldHint=True),
+         _meta={"openai/fileParams": ["file"]}),
     Tool(name="visual_list_identities", description="List visual identities with optional name and kind filters.",
          inputSchema=IdentitiesInput.model_json_schema()),
     Tool(name="visual_get_reference", description="Get an approved, search-enabled visual reference by ID.",
@@ -200,8 +229,12 @@ class VisualMemoryTools:
             data = model.model_validate(arguments).model_dump()
             legacy = data.pop("image_base64")
             source = data.pop("image")
+            file = data.pop("file")
             data.pop("include_images")
-            if legacy is not None:
+            if file is not None:
+                from wuwa_story.visual_memory.image_source import download_image
+                image = await download_image(file["download_url"])
+            elif legacy is not None:
                 image = decode_image(legacy)
             elif source["base64"] is not None:
                 image = decode_image(source["base64"])
