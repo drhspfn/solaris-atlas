@@ -28,7 +28,12 @@
     render,
   }) {
     let dragStart = null,
-      resizing = null;
+      resizing = null,
+      draft = null;
+    function clearDraft() {
+      draft?.remove();
+      draft = null;
+    }
     function point(e) {
       const { width, height } = dimensions(),
         rect = image.getBoundingClientRect();
@@ -63,7 +68,28 @@
       e.currentTarget.setPointerCapture(e.pointerId);
     });
     overlay.addEventListener("pointermove", (e) => {
-      if (disabled() || !resizing) return;
+      if (disabled()) {
+        clearDraft();
+        return;
+      }
+      if (dragStart) {
+        const end = point(e),
+          { width, height } = dimensions();
+        if (!draft) {
+          draft = overlay.ownerDocument.createElement("div");
+          draft.className = "vm-bound vm-bound-draft";
+          draft.setAttribute("aria-hidden", "true");
+          overlay.appendChild(draft);
+        }
+        draft.style.left = (100 * Math.min(dragStart[0], end[0])) / width + "%";
+        draft.style.top = (100 * Math.min(dragStart[1], end[1])) / height + "%";
+        draft.style.width =
+          (100 * Math.abs(end[0] - dragStart[0])) / width + "%";
+        draft.style.height =
+          (100 * Math.abs(end[1] - dragStart[1])) / height + "%";
+        return;
+      }
+      if (!resizing) return;
       const end = point(e),
         box = resizing.original,
         bound = overlay.querySelector(
@@ -76,6 +102,7 @@
       }
     });
     overlay.addEventListener("pointerup", (e) => {
+      clearDraft();
       if (disabled()) {
         dragStart = null;
         resizing = null;
@@ -111,6 +138,7 @@
       }
     });
     overlay.addEventListener("pointercancel", () => {
+      clearDraft();
       dragStart = null;
       resizing = null;
       if (!disabled()) render();

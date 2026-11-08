@@ -51,7 +51,9 @@
         const seconds = Number(match[1]) * 60 + Number(match[2]);
         if (Number.isFinite(seconds)) return seconds;
       }
-      throw new Error("Enter a valid non-negative time in seconds or minutes:seconds.");
+      throw new Error(
+        "Enter a valid non-negative time in seconds or minutes:seconds.",
+      );
     }
     const safeURL = (value) => {
       if (!value) return "";
@@ -80,10 +82,9 @@
         !state.source.game_version ||
         !state.source.asset_version ||
         !state.source.cutscene_key ||
-        active(scan) ||
-        !!scan?.reviewed;
+        active(scan);
       $("#vm-video-start").textContent =
-        scan?.status === "failed" ? "Retry scan" : "Start scan";
+        "Start / open scan";
       $("#vm-video-reviewed").disabled =
         state.busy || !completed(scan) || !!scan.reviewed || pending !== 0;
       $("#vm-video-reject-all").disabled =
@@ -227,7 +228,7 @@
       controls();
       if (source.scan?.id) await refresh(source.scan.id, generation);
       else {
-        status("This published source has not been reviewed.");
+        status("No scan has been selected for this source.");
         controls();
       }
     }
@@ -239,13 +240,14 @@
       const progress = scan.progress
         ? ` · ${typeof scan.progress === "string" ? scan.progress : scan.progress.total == null ? `${scan.progress.completed ?? 0} frames sampled` : `${scan.progress.completed ?? 0} / ${scan.progress.total} frames`}`
         : "";
-      const sampling = scan.sampling_mode === "segment"
-        ? `Segment ${scan.start_seconds}–${scan.end_seconds}s`
-        : scan.sampling_mode === "frame"
-          ? `Frame at ${scan.timestamp_seconds}s · offset ${scan.sampling_frame_offset ?? 0}`
-          : "Full video";
+      const sampling =
+        scan.sampling_mode === "segment"
+          ? `Segment ${scan.start_seconds}–${scan.end_seconds}s`
+          : scan.sampling_mode === "frame"
+            ? `Frame at ${scan.timestamp_seconds}s · offset ${scan.sampling_frame_offset ?? 0}`
+            : "Full video";
       status(
-        `${scan.reviewed ? "Reviewed source" : "Scan " + (scan.status || "unknown")}${progress} · ${sampling}${scan.error ? " · " + scan.error : ""} · SHA-256 ${scan.source?.source_sha256 || scan.source?.sha256 || "not available"}`,
+        `${scan.reviewed ? "Reviewed scan" : "Scan " + (scan.status || "unknown")}${progress} · ${sampling}${scan.error ? " · " + scan.error : ""} · SHA-256 ${scan.source?.source_sha256 || scan.source?.sha256 || "not available"}`,
       );
       $("#vm-video-frames").innerHTML =
         (scan.frames || [])
@@ -437,6 +439,7 @@
         render: renderBoxes,
       });
       list.addEventListener("click", (e) => {
+        if (state.busy || isBusy()) return;
         const button = e.target.closest("[data-remove-box]");
         if (!button) return;
         const [box] = boxes.splice(+button.dataset.removeBox, 1);
@@ -448,6 +451,10 @@
         if (!input) return;
         const box = boxes[+input.dataset.boxIndex],
           next = box.bbox.slice();
+        if (state.busy || isBusy()) {
+          input.value = box.bbox[+input.dataset.boxCoordinate];
+          return;
+        }
         next[+input.dataset.boxCoordinate] = Number(input.value);
         if (
           !input.value ||
@@ -493,11 +500,16 @@
       const mode = scanForm.elements.sampling_mode.value;
       $("#vm-sampling-interval").hidden = mode === "frame";
       scanForm.elements.interval_seconds.disabled = mode === "frame";
-      for (const name of ["start", "end"]) $("#vm-sampling-" + name).hidden = mode !== "segment";
-      for (const name of ["timestamp", "frame-offset"]) $("#vm-sampling-" + name).hidden = mode !== "frame";
+      for (const name of ["start", "end"])
+        $("#vm-sampling-" + name).hidden = mode !== "segment";
+      for (const name of ["timestamp", "frame-offset"])
+        $("#vm-sampling-" + name).hidden = mode !== "frame";
       $("#vm-use-video-position").hidden = mode !== "frame";
     }
-    scanForm.elements.sampling_mode.addEventListener("change", samplingControls);
+    scanForm.elements.sampling_mode.addEventListener(
+      "change",
+      samplingControls,
+    );
     samplingControls();
     $("#vm-use-video-position").addEventListener("click", () => {
       if (!Number.isFinite(video.currentTime) || video.currentTime < 0) {
@@ -513,17 +525,30 @@
       run($("#vm-video-start"), async () => {
         const source = state.source,
           generation = state.generation;
-        const mode = form.elements.sampling_mode.value, sampling = {sampling_mode: mode};
+        const mode = form.elements.sampling_mode.value,
+          sampling = { sampling_mode: mode };
         if (mode === "segment") {
           sampling.start_seconds = parseTime(form.elements.start_seconds.value);
           sampling.end_seconds = parseTime(form.elements.end_seconds.value);
-          if (sampling.end_seconds <= sampling.start_seconds) throw new Error("End time must be after start time.");
+          if (sampling.end_seconds <= sampling.start_seconds)
+            throw new Error("End time must be after start time.");
         } else if (mode === "frame") {
-          sampling.timestamp_seconds = parseTime(form.elements.timestamp_seconds.value);
+          sampling.timestamp_seconds = parseTime(
+            form.elements.timestamp_seconds.value,
+          );
           const offset = form.elements.frame_offset.value.trim();
-          if (!/^\d+$/.test(offset) || !Number.isSafeInteger(Number(offset))) throw new Error("Frame offset must be a non-negative whole number.");
+          if (!/^\d+$/.test(offset) || !Number.isSafeInteger(Number(offset)))
+            throw new Error(
+              "Frame offset must be a non-negative whole number.",
+            );
           sampling.frame_offset = Number(offset);
         } else if (mode !== "full") throw new Error("Choose a sampling mode.");
+        const previous = state.scan;
+        const interval = mode === "frame" ? 3 : Number(form.elements.interval_seconds.value);
+        const samePlan = (previous?.sampling_mode || "full") === mode &&
+          (mode === "frame" || (previous?.interval_seconds ?? 3) === interval) &&
+          (mode !== "segment" || (previous.start_seconds === sampling.start_seconds && previous.end_seconds === sampling.end_seconds)) &&
+          (mode !== "frame" || (previous.timestamp_seconds === sampling.timestamp_seconds && (previous.sampling_frame_offset ?? 0) === sampling.frame_offset));
         const scan = await api("/videos/scans", {
           asset_node_id: source.asset_node_id,
           asset_version: source.asset_version,
@@ -533,11 +558,20 @@
             source.source_reference_id ?? source.file_reference_id,
           source_sha256: source.source_sha256,
           ...sampling,
-          ...(mode === "frame" ? {} : {interval_seconds: Number(form.elements.interval_seconds.value)}),
+          ...(mode === "frame"
+            ? {}
+            : {
+                interval_seconds: interval,
+              }),
           frame_batch_size: state.frameLimit,
-          force: state.scan?.status === "failed",
+          force: previous?.status === "failed" && !previous.reviewed && samePlan,
         });
-        if (generation === state.generation) await refresh(scan.id, generation);
+        if (generation === state.generation) {
+          const previousOffset = state.frameOffset;
+          state.frameOffset = 0;
+          try { await refresh(scan.id, generation); }
+          catch (error) { state.frameOffset = previousOffset; throw error; }
+        }
       });
     });
     $("#vm-frame-prev").addEventListener("click", (e) =>

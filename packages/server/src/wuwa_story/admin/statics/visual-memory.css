@@ -36,3 +36,4 @@
 .vm .vm-video-crop { display: block; max-width: 100%; margin: .5rem 0; }
 .vm-stage .vm-annotation-overlay { position: absolute; inset: 0; }
 .vm-bound-readonly { border-style: dashed; opacity: .7; }
+.vm-bound-draft { pointer-events: none; }
