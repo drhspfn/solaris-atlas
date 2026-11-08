@@ -6,13 +6,13 @@
   const safeURL = value => { if (!value) return ''; try { const u = new URL(value, location.href); return ['http:', 'https:'].includes(u.protocol) ? u.href : ''; } catch { return ''; } };
   const state = { page: 0, size: 20, total: 0, image: null, width: 0, height: 0, boxes: [], sequence: 0 };
   const message = (text, error = false) => { const el = $('#vm-message'); el.textContent = text; el.className = error ? 'vm-error' : ''; el.setAttribute('role', error ? 'alert' : 'status'); const dialogMessage = $('#vm-dialog-message'); if (dialogMessage) { dialogMessage.textContent = !$('#vm-dialog').hidden && error ? text : ''; dialogMessage.className = error ? 'vm-error' : ''; } };
-  async function api(path, body) {
+  async function api(path, body, method = 'POST') {
     const options = { credentials: 'same-origin' };
     if (body !== undefined) {
       const tokenResponse = await fetch('/auth/csrf', {credentials: 'same-origin'});
       if (!tokenResponse.ok) throw new Error('Could not obtain request verification. Sign in and retry.');
       const token = (await tokenResponse.json()).csrf_token;
-      Object.assign(options, {method: 'POST', headers: {'Content-Type':'application/json', 'X-CSRF-Token': token}, body: JSON.stringify(body)});
+      Object.assign(options, {method, headers: {'Content-Type':'application/json', 'X-CSRF-Token': token}, body: JSON.stringify(body)});
     }
     const response = await fetch('/admin/visual-memory' + path, options);
     if (!response.ok) { let detail = ''; try { detail = (await response.json()).detail; } catch {} throw new Error(typeof detail === 'string' ? detail : `Request failed (${response.status}).`); }
@@ -137,11 +137,11 @@
     }));
   }
   $('#vm-create-identity').addEventListener('click', () => createIdentity());
-  function validBox(box) { return box.length === 4 && box.every(Number.isFinite) && box[0] >= 0 && box[1] >= 0 && box[2] <= state.width && box[3] <= state.height && box[0] < box[2] && box[1] < box[3]; }
+  function validBox(box) { return visualMemoryBbox.valid(box, state.width, state.height); }
   function addBox(bbox, data = {}) { if (state.boxes.length >= 20) throw new Error('A maximum of 20 boxes can be identified at once.'); state.boxes.push({bbox, data, links: [], names: {}}); }
   function renderBoxes() {
     $('#vm-identify').disabled = !state.boxes.length;
-    $('#vm-overlay').innerHTML = state.boxes.map((b, i) => `<button type="button" class="vm-bound" data-index="${i}" aria-label="Object ${i+1}" style="left:${100*b.bbox[0]/state.width}%;top:${100*b.bbox[1]/state.height}%;width:${100*(b.bbox[2]-b.bbox[0])/state.width}%;height:${100*(b.bbox[3]-b.bbox[1])/state.height}%"><span>${i+1}</span><span class="vm-resize" data-resize="${i}" aria-hidden="true"></span></button>`).join('');
+    $('#vm-overlay').innerHTML = visualMemoryBbox.bounds(state.boxes, state.width, state.height);
     $('#vm-boxes').innerHTML = state.boxes.map((b, i) => {
       const d = b.data.detection || {}, identity = b.data.identification || {}, candidates = identity.candidates || [];
       return `<article class="vm-box" id="vm-box-${i}"><div class="vm-box-head"><h3>Object ${i+1}</h3><button class="btn btn-secondary" data-delete="${i}">Delete box</button></div><div class="vm-meta">Detection: ${esc(d.status || 'manual')} ${d.score == null ? '' : '· score ' + esc(d.score)} · Identification: ${esc(identity.status || 'unresolved')}</div><div class="vm-coordinates">${['Left x','Top y','Right x','Bottom y'].map((label, n) => `<label>${label}<input class="form-control" type="number" min="0" step="1" data-coordinate="${n}" data-index="${i}" value="${esc(b.bbox[n])}"></label>`).join('')}</div><canvas data-crop="${i}" aria-label="Crop preview for object ${i+1}"></canvas><div class="vm-candidates">${candidates.slice(0,10).map(c => `<div class="vm-candidate"><strong>${esc(c.name || 'Unnamed')} · ${esc(c.kind || '')}</strong> <span>Similarity score ${esc(c.score)}</span> <button class="btn btn-secondary" data-candidate="${i}" data-identity="${esc(c.identity_id)}" data-appearance="${esc(c.appearance_id || '')}" data-name="${esc(c.name || '')}" data-kind="${esc(c.kind || '')}">Add link</button><div class="vm-evidence">${(c.evidence || []).map(ev => { const url = safeURL(ev.image_url); return url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer"><img src="${esc(url)}" alt="Evidence ${esc(ev.reference_id)}, similarity ${esc(ev.similarity)}" loading="lazy"></a>` : `<span class="vm-meta">Reference #${esc(ev.reference_id)} · ${esc(ev.similarity)} (no preview)</span>`; }).join('')}</div></div>`).join('') || '<p class="vm-meta">No candidate evidence. The object may remain unresolved.</p>'}</div><p>Selected links: ${esc(b.links.map(l => (b.names[l.identity_id] || `Identity ${l.identity_id}`) + (l.appearance_id ? ` · appearance ${l.appearance_id}` : '')).join(', ') || 'None — unresolved')}</p><div class="vm-actions"><button class="btn btn-secondary" data-choose="${i}">Choose identities / appearances</button><button class="btn btn-secondary" data-clear="${i}">Clear links</button><button class="btn btn-primary" data-save="${i}">Save crop</button></div></article>`;
@@ -172,12 +172,9 @@
   $('#vm-detect').addEventListener('click', e => busy(e.currentTarget, () => identify(true)));
   $('#vm-identify').addEventListener('click', e => busy(e.currentTarget, () => identify(false)));
   $('#vm-add-box').addEventListener('click', () => { try { addBox([0,0,state.width,state.height]); renderBoxes(); } catch(e) { message(e.message, true); } });
-  let dragStart = null, resizing = null;
-  function point(e) { const rect = $('#vm-image').getBoundingClientRect(); return [Math.round(Math.max(0, Math.min(state.width, (e.clientX-rect.left)*state.width/rect.width))), Math.round(Math.max(0, Math.min(state.height, (e.clientY-rect.top)*state.height/rect.height)))]; }
-  $('#vm-overlay').addEventListener('pointerdown', e => { if (working) return; const handle = e.target.closest('[data-resize]'); if (handle) { resizing = {index:+handle.dataset.resize, original:state.boxes[+handle.dataset.resize].bbox.slice()}; e.currentTarget.setPointerCapture(e.pointerId); return; } if (e.target.closest('button')) return; dragStart = point(e); e.currentTarget.setPointerCapture(e.pointerId); });
-  $('#vm-overlay').addEventListener('pointermove', e => { if (working || !resizing) return; const end = point(e), box = resizing.original, bound = root.querySelector(`.vm-bound[data-index="${resizing.index}"]`); if (end[0] > box[0] && end[1] > box[1]) { bound.style.width = (100*(end[0]-box[0])/state.width)+'%'; bound.style.height = (100*(end[1]-box[1])/state.height)+'%'; } });
-  $('#vm-overlay').addEventListener('pointerup', e => { if (working) { dragStart = null; resizing = null; return; } if (resizing) { const end = point(e), b = state.boxes[resizing.index], next = [resizing.original[0],resizing.original[1],end[0],end[1]]; if (validBox(next) && (next[2] !== resizing.original[2] || next[3] !== resizing.original[3])) { b.bbox = next; b.data = {}; b.links = []; b.names = {}; message('Box updated. Identify again to refresh candidates.'); } resizing = null; renderBoxes(); return; } if (!dragStart) return; const end = point(e), box = [Math.min(dragStart[0],end[0]),Math.min(dragStart[1],end[1]),Math.max(dragStart[0],end[0]),Math.max(dragStart[1],end[1])]; dragStart = null; if (validBox(box)) { try { addBox(box); renderBoxes(); } catch(err) { message(err.message, true); } } });
-  $('#vm-overlay').addEventListener('pointercancel', () => { dragStart = null; resizing = null; if (!working) renderBoxes(); });
+  visualMemoryBbox.bind({overlay:$('#vm-overlay'), image:$('#vm-image'), dimensions:()=>({width:state.width,height:state.height}), boxes:()=>state.boxes, disabled:()=>working, render:renderBoxes,
+    onAdd:box=>{ try { addBox(box); } catch(err) { message(err.message, true); } },
+    onResize:(index,next)=>{ const b=state.boxes[index]; b.bbox=next; b.data={}; b.links=[]; b.names={}; message('Box updated. Identify again to refresh candidates.'); }});
   $('#vm-overlay').addEventListener('click', e => { const b = e.target.closest('[data-index]'); if (b) $(`#vm-box-${b.dataset.index}`)?.scrollIntoView({block:'nearest'}); });
   $('#vm-boxes').addEventListener('change', e => {
     const input = e.target.closest('[data-coordinate]'); if (!input) return; const box = state.boxes[+input.dataset.index]; const next = box.bbox.slice(); next[+input.dataset.coordinate] = Number(input.value);
@@ -217,7 +214,7 @@
       const gameItems = game.status === 'fulfilled' ? game.value.items || [] : [];
       const hasMore = [visual, game].some(result => result.status === 'fulfilled' && (result.value.has_more === true || (Number.isFinite(result.value.total) && offset + 20 < result.value.total)));
       const visualRows = visualItems.map(x => `<div class="vm-picker-row"><div><strong>${esc(x.name)}</strong><span class="vm-meta"> ${esc(x.kind || '')}</span></div><div class="vm-actions"><button type="button" class="btn btn-secondary" data-add-identity="${esc(x.id)}" data-name="${esc(x.name)}" data-kind="${esc(x.kind || '')}">Add ${esc(x.name)}</button>${(x.appearances || []).map(a => `<button type="button" class="btn btn-secondary" data-add-identity="${esc(x.id)}" data-add-appearance="${esc(a.id)}" data-appearance-name="${esc(a.name)}" data-name="${esc(x.name)}" data-kind="${esc(x.kind || '')}">${esc(a.name)}</button>`).join('')}</div></div>`).join('');
-      const gameRows = gameItems.map(x => { const name=x.name || x.display_name || 'Unnamed', image=safeURL(x.thumbnail_url || x.image_url || x.thumbnail); return `<div class="vm-picker-row">${image ? `<img src="${esc(image)}" alt="" loading="lazy">` : ''}<div><strong>${esc(name)}</strong><span class="vm-meta"> ${esc(x.kind || '')}</span></div><button type="button" class="btn btn-secondary" data-add-game="${esc(x.node_id)}" data-name="${esc(name)}">Add ${esc(name)}</button></div>`; }).join('');
+      const gameRows = gameItems.map(x => { const name=x.name || x.display_name || 'Unnamed', image=safeURL(x.thumbnail_url || x.image_url || x.thumbnail), choices=(x.appearance_choices || []).filter(a => a.key === 'male' || a.key === 'female'); return `<div class="vm-picker-row">${image ? `<img src="${esc(image)}" alt="" loading="lazy">` : ''}<div><strong>${esc(name)}</strong><span class="vm-meta"> ${esc(x.kind || '')}</span>${choices.length ? '<p class="vm-meta">Rover is one identity with two appearances; elements are not appearances.</p>' : ''}</div><div class="vm-actions"><button type="button" class="btn btn-secondary" data-add-game="${esc(x.node_id)}" data-name="${esc(name)}">Add ${esc(name)}</button>${choices.map(a => `<button type="button" class="btn btn-secondary" data-add-game="${esc(x.node_id)}" data-name="${esc(name)}" data-appearance-name="${esc(a.name)}">${esc(a.name)}</button>`).join('')}</div></div>`; }).join('');
       results.innerHTML = '<h3>Visual identities</h3>' + (visual.status === 'rejected' ? '<p class="vm-error">Visual identities could not be loaded. Search again to retry.</p>' : visualRows || '<p class="vm-meta">No visual identities found. You can add a character from the game catalog below.</p>') + '<h3>Game catalog</h3>' + (game.status === 'rejected' ? '<p class="vm-error">Game catalog could not be loaded. Search again to retry.</p>' : gameRows || '<p class="vm-meta">No game characters match this search.</p>');
       $('#vm-identity-page').textContent = `Page ${Math.floor(offset / 20) + 1}${hasMore ? ' · More results available' : ''}`;
       for (const [selector, disabled] of [['[data-identity-prev]',offset === 0],['[data-identity-next]',!hasMore]]) { const button=$(selector,body); button.dataset.pageDisabled=String(disabled); button.disabled=disabled; }
@@ -229,7 +226,7 @@
     body.onclick = e => {
       const b=e.target.closest('[data-add-identity], [data-add-game], [data-remove-identity]'); if (!b) return;
       if (b.dataset.removeIdentity !== undefined) { linksInput.value = linksText(parseLinks(linksInput.value).filter(l => l.identity_id !== +b.dataset.removeIdentity)); selectedNames(); return; }
-      if (b.dataset.addGame !== undefined) { busy(b, async () => { const result=await api('/identities/from-game',{node_id:+b.dataset.addGame}); if (generation !== dialogGeneration) return; addLink(+result.id, null, result.name || b.dataset.name); }); return; }
+      if (b.dataset.addGame !== undefined) { busy(b, async () => { const result=await api('/identities/from-game',{node_id:+b.dataset.addGame}); if (generation !== dialogGeneration) return; const appearance=b.dataset.appearanceName ? (result.appearances || []).find(a => a.name === b.dataset.appearanceName && +a.identity_id === +result.id) : null; if (b.dataset.appearanceName && !appearance) throw new Error('The selected appearance is unavailable. Retry or choose another appearance.'); addLink(+result.id, appearance ? +appearance.id : null, [result.name || b.dataset.name, appearance?.name].filter(Boolean).join(' · ')); }); return; }
       addLink(+b.dataset.addIdentity, b.dataset.addAppearance ? +b.dataset.addAppearance : null, [b.dataset.name,b.dataset.kind,b.dataset.appearanceName].filter(Boolean).join(' · '));
     };
     $('[data-new]',body).addEventListener('click', () => { box.links = parseLinks(linksInput.value); createIdentity(result => { box.links.push({identity_id:result.id,appearance_id:null}); box.names[result.id] = [result.name,result.kind].filter(Boolean).join(' · '); setTimeout(() => chooseLinks(index, suppliedBox, onSave), 0); }); });
@@ -246,7 +243,7 @@
       message(result.duplicate ? 'This crop already exists; its existing links and moderation were preserved.' : 'Crop saved.'); load();
     }, 'Save crop');
   }
-  const videoReview = globalThis.createVisualMemoryVideoReview?.({root: $('#vm-cutscenes'), api, escape: esc, message, chooseLinks: (box, onSave) => chooseLinks(null, box, onSave)});
+  const videoReview = globalThis.createVisualMemoryVideoReview?.({root: $('#vm-cutscenes'), api, escape: esc, message, dialog, closeDialog, isBusy:()=>working, chooseLinks: (box, onSave) => chooseLinks(null, box, onSave)});
   load();
   if (new URL(location.href).searchParams.get('tab') === 'cutscenes') root.querySelector('[data-tab="cutscenes"]')?.click();
 })();

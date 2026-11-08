@@ -6,6 +6,9 @@
     escape: esc,
     message,
     chooseLinks,
+    dialog,
+    closeDialog,
+    isBusy = () => false,
   }) => {
     const $ = (selector) => root.querySelector(selector);
     const state = {
@@ -58,17 +61,25 @@
       const pending = scan?.unresolved_count;
       $("#vm-video-scan button").disabled =
         state.busy ||
-        !state.source || !sourceKey(state.source) || !state.source.source_sha256 || !state.source.game_version || !state.source.asset_version || !state.source.cutscene_key ||
+        !state.source ||
+        !sourceKey(state.source) ||
+        !state.source.source_sha256 ||
+        !state.source.game_version ||
+        !state.source.asset_version ||
+        !state.source.cutscene_key ||
         active(scan) ||
         !!scan?.reviewed;
-      $("#vm-video-scan button").textContent = scan?.status === "failed" ? "Retry scan" : "Start scan";
+      $("#vm-video-scan button").textContent =
+        scan?.status === "failed" ? "Retry scan" : "Start scan";
       $("#vm-video-reviewed").disabled =
         state.busy || !completed(scan) || !!scan.reviewed || pending !== 0;
       $("#vm-video-reject-all").disabled =
         state.busy || !completed(scan) || !(pending > 0) || !!scan.reviewed;
       $("#vm-video-variant").disabled = state.busy || !state.sources.length;
-      $("#vm-frame-prev").disabled = state.busy || !scan || state.frameOffset === 0;
-      $("#vm-frame-next").disabled = state.busy || !scan || scan.next_frame_offset == null;
+      $("#vm-frame-prev").disabled =
+        state.busy || !scan || state.frameOffset === 0;
+      $("#vm-frame-next").disabled =
+        state.busy || !scan || scan.next_frame_offset == null;
     }
     async function run(button, action) {
       if (state.busy) return;
@@ -178,15 +189,24 @@
       const source = state.source;
       $("#vm-video-source").textContent =
         `Published source ${sourceKey(source)}${source.source_sha256 ? " · SHA-256 " + source.source_sha256 : ""}`;
-      if (sourceKey(source) && source.game_version && source.asset_version && source.cutscene_key)
+      if (
+        sourceKey(source) &&
+        source.game_version &&
+        source.asset_version &&
+        source.cutscene_key
+      )
         video.src = `/admin/visual-memory/videos/sources/${encodeURIComponent(sourceKey(source))}/video?${new URLSearchParams({ game_version: source.game_version, asset_version: source.asset_version, cutscene_key: source.cutscene_key })}`;
       else {
-        status("This source is missing its cutscene or version context. Reload the source list before scanning.");
+        status(
+          "This source is missing its cutscene or version context. Reload the source list before scanning.",
+        );
         controls();
         return;
       }
       if (!source.source_sha256) {
-        status("This source has no recorded hash. Reload the source list before scanning.");
+        status(
+          "This source has no recorded hash. Reload the source list before scanning.",
+        );
         controls();
         return;
       }
@@ -201,7 +221,8 @@
     function render(scan) {
       state.scan = scan;
       const frameCount = scan.frame_count ?? 0;
-      $("#vm-frame-page").textContent = `${frameCount ? state.frameOffset + 1 : 0}–${Math.min(state.frameOffset + (scan.frames || []).length, frameCount)} of ${frameCount} frames · ${scan.unresolved_count ?? "Unknown"} unresolved`;
+      $("#vm-frame-page").textContent =
+        `${frameCount ? state.frameOffset + 1 : 0}–${Math.min(state.frameOffset + (scan.frames || []).length, frameCount)} of ${frameCount} frames · ${scan.unresolved_count ?? "Unknown"} unresolved`;
       const progress = scan.progress
         ? ` · ${typeof scan.progress === "string" ? scan.progress : scan.progress.total == null ? `${scan.progress.completed ?? 0} frames sampled` : `${scan.progress.completed ?? 0} / ${scan.progress.total} frames`}`
         : "";
@@ -212,7 +233,7 @@
         (scan.frames || [])
           .map(
             (frame) =>
-              `<article class="vm-box vm-video-frame"><div><button type="button" class="vm-video-thumb" data-seek="${esc(frame.time)}"><img src="${esc(safeURL(frame.image_url))}" alt="Sample at ${esc(time(frame.time))}" loading="lazy"><span>Seek to ${esc(time(frame.time))}</span></button></div><div><h3>Sample at ${esc(time(frame.time))}</h3>${(frame.detections || []).map((d, i) => `<div class="vm-candidate"><strong>Object ${i + 1} · ${esc(d.decision || "unresolved")}</strong><canvas class="vm-video-crop" data-frame-crop="${esc(frame.index)}" data-crop-index="${i}" aria-label="Crop for object ${i + 1}"></canvas><p class="vm-meta">${esc(d.status || "Unknown")} · ${esc((d.candidates || []).map((c) => c.name || "Unnamed").join(", ") || "No candidate evidence")}</p><p>Selected: ${esc((d.links || []).map((l) => [l.name || l.identity_name || `Identity ${l.identity_id}`, l.appearance_name || (l.appearance_id ? `appearance ${l.appearance_id}` : "")].filter(Boolean).join(" · ")).join(", ") || "None — unresolved")}</p><div class="vm-actions"><button class="btn btn-secondary" type="button" data-choose-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${scan.reviewed || !completed(scan) ? "disabled" : ""}>Choose identities / appearances</button><button class="btn btn-secondary" type="button" data-decision="reject" data-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${scan.reviewed || !completed(scan) ? "disabled" : ""}>Reject</button><button class="btn btn-secondary" type="button" data-decision="pending" data-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${scan.reviewed || !completed(scan) || !(d.links || []).length ? "disabled" : ""}>Save pending</button><button class="btn btn-primary" type="button" data-decision="approve" data-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${scan.reviewed || !completed(scan) || !(d.links || []).length ? "disabled" : ""}>Approve</button></div></div>`).join("") || '<p class="vm-meta">No objects detected in this sample.</p>'}</div></article>`,
+              `<article class="vm-box vm-video-frame"><div><button type="button" class="vm-video-thumb" data-seek="${esc(frame.time)}"><img src="${esc(safeURL(frame.image_url))}" alt="Sample at ${esc(time(frame.time))}" loading="lazy"><span>Seek to ${esc(time(frame.time))}</span></button></div><div><h3>Sample at ${esc(time(frame.time))}</h3><button type="button" class="btn btn-secondary" data-edit-frame="${esc(frame.index)}" ${scan.status !== "succeeded" || scan.reviewed ? "disabled" : ""}>Edit frame boxes</button>${(frame.detections || []).map((d, i) => `<div class="vm-candidate"><strong>Object ${i + 1} · ${esc(d.decision || "unresolved")}</strong><canvas class="vm-video-crop" data-frame-crop="${esc(frame.index)}" data-crop-index="${i}" aria-label="Crop for object ${i + 1}"></canvas><p class="vm-meta">${esc(d.status || "Unknown")} · ${esc((d.candidates || []).map((c) => c.name || "Unnamed").join(", ") || "No candidate evidence")}</p><p>Selected: ${esc((d.links || []).map((l) => [l.name || l.identity_name || `Identity ${l.identity_id}`, l.appearance_name || (l.appearance_id ? `appearance ${l.appearance_id}` : "")].filter(Boolean).join(" · ")).join(", ") || "None — unresolved")}</p><div class="vm-actions"><button class="btn btn-secondary" type="button" data-choose-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${scan.reviewed || !completed(scan) ? "disabled" : ""}>Choose identities / appearances</button><button class="btn btn-secondary" type="button" data-decision="reject" data-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${scan.reviewed || !completed(scan) ? "disabled" : ""}>Reject</button><button class="btn btn-secondary" type="button" data-decision="pending" data-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${scan.reviewed || !completed(scan) || !(d.links || []).length ? "disabled" : ""}>Save pending</button><button class="btn btn-primary" type="button" data-decision="approve" data-frame="${esc(frame.index)}" data-detection="${esc(d.index ?? i)}" ${scan.reviewed || !completed(scan) || !(d.links || []).length ? "disabled" : ""}>Approve</button></div></div>`).join("") || '<p class="vm-meta">No objects detected in this sample.</p>'}</div></article>`,
           )
           .join("") ||
         (completed(scan)
@@ -274,9 +295,15 @@
     }
     async function refresh(id, generation = state.generation) {
       const sequence = ++state.requestSequence;
-      const params = new URLSearchParams({frame_offset: String(state.frameOffset), frame_limit: String(state.frameLimit)});
-      const scan = await api("/videos/scans/" + encodeURIComponent(id) + "?" + params);
-      if (generation !== state.generation || sequence !== state.requestSequence) return;
+      const params = new URLSearchParams({
+        frame_offset: String(state.frameOffset),
+        frame_limit: String(state.frameLimit),
+      });
+      const scan = await api(
+        "/videos/scans/" + encodeURIComponent(id) + "?" + params,
+      );
+      if (generation !== state.generation || sequence !== state.requestSequence)
+        return;
       const currentHash = state.source?.source_sha256 || state.source?.sha256;
       const scanHash =
         scan.source?.source_sha256 || scan.source?.sha256 || scan.source_sha256;
@@ -291,6 +318,134 @@
       render(scan);
       clearTimeout(state.timer);
       if (active(scan)) scheduleRefresh(id, generation);
+    }
+    function editFrame(frame) {
+      const scan = state.scan,
+        generation = state.generation;
+      if (!scan || scan.status !== "succeeded" || scan.reviewed) return;
+      const boxes = (frame.detections || [])
+        .map((d, i) => ({
+          bbox: [...(d.bbox || [])],
+          original: [...(d.bbox || [])],
+          index: d.index ?? i,
+          readonly:
+            !!d.reference_id ||
+            (!!d.decision && d.decision !== "unresolved") ||
+            ["approved", "saved"].includes(d.status),
+        }))
+        .filter((b) =>
+          visualMemoryBbox.valid(b.bbox, frame.width, frame.height),
+        );
+      const removed = [];
+      dialog(
+        "Edit frame boxes",
+        `<p>Detector boxes are proposals. Reject non-character false positives and add missed boxes manually. Drag on the image to add a box; drag a lower-right handle to resize. Saved or approved crops are read-only: add a new box to correct them.</p><div class="vm-stage"><img id="vm-frame-edit-image" src="${esc(safeURL(frame.image_url))}" alt="Frame at ${esc(time(frame.time))}"><div id="vm-frame-edit-overlay" class="vm-annotation-overlay"></div></div><div id="vm-frame-edit-boxes"></div>`,
+        async () => {
+          if (
+            generation !== state.generation ||
+            state.scan !== scan ||
+            scan.status !== "succeeded" ||
+            scan.reviewed
+          )
+            throw new Error(
+              "The scan changed. Reopen the frame before saving.",
+            );
+          try {
+            for (const b of removed)
+              await api(
+                `/videos/scans/${encodeURIComponent(scan.id)}/observations/${frame.index}/${b.index}/resolve`,
+                { decision: "reject", links: [] },
+              );
+            for (const b of boxes) {
+              if (b.readonly) continue;
+              if (b.index == null)
+                await api(
+                  `/videos/scans/${encodeURIComponent(scan.id)}/frames/${frame.index}/observations`,
+                  { bbox: b.bbox },
+                );
+              else if (b.bbox.some((value, i) => value !== b.original[i]))
+                await api(
+                  `/videos/scans/${encodeURIComponent(scan.id)}/observations/${frame.index}/${b.index}/bbox`,
+                  { bbox: b.bbox },
+                  "PATCH",
+                );
+            }
+            await refresh(scan.id, generation);
+          } catch (error) {
+            let reloaded = true;
+            try {
+              await refresh(scan.id, generation);
+            } catch {
+              reloaded = false;
+              state.scan = null;
+              $("#vm-video-frames").replaceChildren();
+              controls();
+            }
+            closeDialog();
+            throw new Error(
+              `Could not save all boxes: ${error.message}. ${reloaded ? "Reopen the frame to review saved changes." : "Reload the source to review saved changes."}`,
+            );
+          }
+        },
+      );
+      const body = document.querySelector("#vm-dialog-body"),
+        overlay = body.querySelector("#vm-frame-edit-overlay"),
+        image = body.querySelector("#vm-frame-edit-image"),
+        list = body.querySelector("#vm-frame-edit-boxes");
+      function renderBoxes() {
+        overlay.innerHTML = visualMemoryBbox.bounds(
+          boxes,
+          frame.width,
+          frame.height,
+        );
+        list.innerHTML = boxes
+          .map(
+            (b, i) =>
+              `<div class="vm-box"><strong>Object ${i + 1}${b.readonly ? " · read-only" : ""}</strong>${b.readonly ? "" : `<button type="button" class="btn btn-secondary" data-remove-box="${i}">Delete box</button><div class="vm-coordinates">${["Left x", "Top y", "Right x", "Bottom y"].map((label, n) => `<label>${label}<input class="form-control" type="number" min="0" step="1" data-box-coordinate="${n}" data-box-index="${i}" value="${b.bbox[n]}"></label>`).join("")}</div>`}</div>`,
+          )
+          .join("");
+      }
+      visualMemoryBbox.bind({
+        overlay,
+        image,
+        dimensions: () => ({ width: frame.width, height: frame.height }),
+        boxes: () => boxes,
+        disabled: () => state.busy || isBusy(),
+        onAdd: (bbox) =>
+          boxes.push({ bbox, original: null, index: null, readonly: false }),
+        onResize: (i, bbox) => {
+          boxes[i].bbox = bbox;
+        },
+        render: renderBoxes,
+      });
+      list.addEventListener("click", (e) => {
+        const button = e.target.closest("[data-remove-box]");
+        if (!button) return;
+        const [box] = boxes.splice(+button.dataset.removeBox, 1);
+        if (box.index != null) removed.push(box);
+        renderBoxes();
+      });
+      list.addEventListener("change", (e) => {
+        const input = e.target.closest("[data-box-coordinate]");
+        if (!input) return;
+        const box = boxes[+input.dataset.boxIndex],
+          next = box.bbox.slice();
+        next[+input.dataset.boxCoordinate] = Number(input.value);
+        if (
+          !input.value ||
+          !visualMemoryBbox.valid(next, frame.width, frame.height)
+        ) {
+          input.value = box.bbox[+input.dataset.boxCoordinate];
+          message(
+            "Box coordinates must fit the image and have positive width and height.",
+            true,
+          );
+          return;
+        }
+        box.bbox = next;
+        renderBoxes();
+      });
+      renderBoxes();
     }
     $("#vm-video-search").addEventListener("submit", (e) => {
       e.preventDefault();
@@ -337,22 +492,43 @@
         if (generation === state.generation) await refresh(scan.id, generation);
       });
     });
-    $("#vm-frame-prev").addEventListener("click", e => run(e.currentTarget, async () => {
-      const previous = state.frameOffset;
-      state.frameOffset = Math.max(0, previous - state.frameLimit);
-      try { await refresh(state.scan.id); } catch (e) { state.frameOffset = previous; throw e; }
-    }));
-    $("#vm-frame-next").addEventListener("click", e => run(e.currentTarget, async () => {
-      const previous = state.frameOffset;
-      state.frameOffset = state.scan.next_frame_offset;
-      try { await refresh(state.scan.id); } catch (e) { state.frameOffset = previous; throw e; }
-    }));
+    $("#vm-frame-prev").addEventListener("click", (e) =>
+      run(e.currentTarget, async () => {
+        const previous = state.frameOffset;
+        state.frameOffset = Math.max(0, previous - state.frameLimit);
+        try {
+          await refresh(state.scan.id);
+        } catch (e) {
+          state.frameOffset = previous;
+          throw e;
+        }
+      }),
+    );
+    $("#vm-frame-next").addEventListener("click", (e) =>
+      run(e.currentTarget, async () => {
+        const previous = state.frameOffset;
+        state.frameOffset = state.scan.next_frame_offset;
+        try {
+          await refresh(state.scan.id);
+        } catch (e) {
+          state.frameOffset = previous;
+          throw e;
+        }
+      }),
+    );
     $("#vm-video-frames").addEventListener("click", (e) => {
       const button = e.target.closest("button");
       if (!button) return;
       if (button.dataset.seek !== undefined) {
         video.currentTime = Number(button.dataset.seek);
         video.focus();
+        return;
+      }
+      if (button.dataset.editFrame !== undefined) {
+        const frame = state.scan?.frames?.find(
+          (f) => Number(f.index) === Number(button.dataset.editFrame),
+        );
+        if (frame && !state.busy) editFrame(frame);
         return;
       }
       const frameIndex = Number(

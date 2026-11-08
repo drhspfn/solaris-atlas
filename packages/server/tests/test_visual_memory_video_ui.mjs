@@ -32,6 +32,8 @@ function setup() {
     querySelector() {
       return new Element();
     }
+    getBoundingClientRect() { return {left:0,top:0,width:100,height:100}; }
+    setPointerCapture() {}
   }
   const elements = new Map();
   const root = {
@@ -45,10 +47,13 @@ function setup() {
   };
   const requests = [],
     timers = [];
-  const api = (path, body) =>
+  const api = (path, body, method) =>
     new Promise((resolve, reject) =>
-      requests.push({ path, body, resolve, reject }),
+      requests.push({ path, body, method, resolve, reject }),
     );
+  const body = new Element(), children = new Map();
+  body.querySelector = s => { if (!children.has(s)) children.set(s,new Element()); return children.get(s); };
+  let saveDialog, dialogHtml, closed = false;
   const context = {
     URL,
     URLSearchParams,
@@ -59,7 +64,9 @@ function setup() {
     },
     clearTimeout() {},
     Image: class {},
+    document: {querySelector: () => body},
   };
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8'), context);
   vm.runInNewContext(
     readFileSync(
       new URL(
@@ -76,10 +83,12 @@ function setup() {
     escape: String,
     message() {},
     chooseLinks() {},
+    dialog(title, html, save) { dialogHtml=html; saveDialog=save; closed=false; },
+    closeDialog() { closed=true; },
   });
   const element = (s) => root.querySelector(s);
   const tick = () => new Promise((resolve) => setImmediate(resolve));
-  return { review, element, requests, timers, tick };
+  return { review, element, requests, timers, tick, body, save:()=>saveDialog(), get html(){return dialogHtml;}, get closed(){return closed;} };
 }
 
 test("catalog ignores stale searches", async () => {
@@ -285,4 +294,71 @@ test('requires complete cutscene context before preview or scanning', async () =
   assert.match(t.element('#vm-video-status').textContent,/missing its cutscene or version context/);
   assert.equal(t.element('video').src,undefined);
   assert.equal(t.element('#vm-video-scan button').disabled,true);
+});
+
+test('frame editor shares box gestures and persists absolute indexes with locked crops', async () => {
+  const t=setup(); t.review.open();
+  t.requests[0].resolve({items:[{name:'Scene',cutscene_key:'CG'}],total:1}); await t.tick();
+  t.element('#vm-video-catalog').events.click({target:{closest:()=>({dataset:{videoItem:'0'},setAttribute(){},removeAttribute(){}})}});
+  t.requests[1].resolve({sources:[{asset_node_id:1,asset_version:'1',game_version:'1',source_reference_id:2,cutscene_key:'CG',source_sha256:'abc',scan:{id:8}}]}); await t.tick();
+  const frame={index:12,time:36,image_url:'/frame',width:100,height:100,detections:[
+    {index:3,bbox:[1,2,20,30],decision:'unresolved'},
+    {index:4,bbox:[30,30,50,50],decision:'unresolved'},
+    {index:5,bbox:[60,60,80,80],decision:'approved',reference_id:99},
+  ]};
+  t.requests[2].resolve({id:8,status:'succeeded',source:{source_sha256:'abc'},frames:[frame],frame_count:13,unresolved_count:2,next_frame_offset:null}); await t.tick();
+  assert.match(t.element('#vm-video-frames').innerHTML,/data-edit-frame="12"/);
+  t.element('#vm-video-frames').events.click({target:{closest:()=>({dataset:{editFrame:'12'}})}});
+  assert.match(t.html,/Detector boxes are proposals/);
+  const overlay=t.body.querySelector('#vm-frame-edit-overlay'), list=t.body.querySelector('#vm-frame-edit-boxes');
+  assert.match(list.innerHTML,/Object 3 · read-only/);
+  assert.doesNotMatch(overlay.innerHTML,/data-resize="2"/);
+  const handle={dataset:{resize:'0'},closest:s=>s==='[data-resize]'?handle:null};
+  overlay.events.pointerdown({target:handle,currentTarget:overlay,pointerId:1});
+  overlay.events.pointerup({clientX:25,clientY:35});
+  const remove={dataset:{removeBox:'1'},closest:()=>remove}; list.events.click({target:remove});
+  overlay.events.pointerdown({target:{closest:()=>null},currentTarget:overlay,pointerId:2,clientX:10,clientY:40});
+  overlay.events.pointerup({clientX:25,clientY:55});
+  const saving=t.save(); await t.tick();
+  assert.match(t.requests[3].path,/observations\/12\/4\/resolve$/);
+  assert.deepEqual(JSON.parse(JSON.stringify(t.requests[3].body)),{decision:'reject',links:[]});
+  t.requests[3].resolve({}); await t.tick();
+  assert.match(t.requests[4].path,/observations\/12\/3\/bbox$/);
+  assert.equal(t.requests[4].method,'PATCH');
+  assert.deepEqual(JSON.parse(JSON.stringify(t.requests[4].body)),{bbox:[1,2,25,35]});
+  t.requests[4].resolve({}); await t.tick();
+  assert.match(t.requests[5].path,/frames\/12\/observations$/);
+  assert.deepEqual(JSON.parse(JSON.stringify(t.requests[5].body)),{bbox:[10,40,25,55]});
+  t.requests[5].resolve({}); await t.tick();
+  assert.match(t.requests[6].path,/frame_offset=0&frame_limit=12/);
+  t.requests[6].resolve({id:8,status:'succeeded',source:{source_sha256:'abc'},frames:[frame],frame_count:13,unresolved_count:2,next_frame_offset:null});
+  await saving;
+});
+
+test('partial frame save reloads before reopening and does not repeat a successful add', async () => {
+  const t=setup(); t.review.open();
+  t.requests[0].resolve({items:[{name:'Scene',cutscene_key:'CG'}],total:1}); await t.tick();
+  t.element('#vm-video-catalog').events.click({target:{closest:()=>({dataset:{videoItem:'0'},setAttribute(){},removeAttribute(){}})}});
+  t.requests[1].resolve({sources:[{asset_node_id:1,asset_version:'1',game_version:'1',source_reference_id:2,cutscene_key:'CG',source_sha256:'abc',scan:{id:8}}]}); await t.tick();
+  const frame={index:12,time:36,image_url:'/frame',width:100,height:100,detections:[]};
+  const scan={id:8,status:'succeeded',source:{source_sha256:'abc'},frames:[frame],frame_count:13,unresolved_count:0,next_frame_offset:null};
+  t.requests[2].resolve(scan); await t.tick();
+  const edit=()=>t.element('#vm-video-frames').events.click({target:{closest:()=>({dataset:{editFrame:'12'}})}});
+  edit();
+  const overlay=t.body.querySelector('#vm-frame-edit-overlay');
+  const draw=(x,y)=>{overlay.events.pointerdown({target:{closest:()=>null},currentTarget:overlay,pointerId:1,clientX:x,clientY:y}); overlay.events.pointerup({clientX:x+10,clientY:y+10});};
+  draw(10,10); draw(30,30);
+  const saving=t.save(); const failed=assert.rejects(saving,/Reopen the frame/); await t.tick();
+  t.requests[3].resolve({}); await t.tick();
+  t.requests[4].reject(new Error('network error')); await t.tick();
+  assert.match(t.requests[5].path,/frame_offset=0/);
+  t.requests[5].resolve({...scan,frames:[{...frame,detections:[{index:0,bbox:[10,10,20,20],decision:'unresolved'}]}]});
+  await failed;
+  assert.equal(t.closed,true);
+  edit();
+  assert.match(t.body.querySelector('#vm-frame-edit-boxes').innerHTML,/Object 1/);
+  const retry=t.save(); await t.tick();
+  assert.match(t.requests[6].path,/scans\/8\?frame_offset=0/);
+  t.requests[6].resolve(scan); await retry;
+  assert.equal(t.requests.filter(r=>r.path.endsWith('/frames/12/observations')).length,2);
 });

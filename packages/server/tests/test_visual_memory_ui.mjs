@@ -18,7 +18,7 @@ test('library paginates and ignores stale filter results', async () => {
   const fetch = (url) => new Promise(resolve => requests.push({url, resolve}));
   const document = {querySelector: () => root, body: {style: {}}, activeElement: new Element()};
   class FormData { constructor() { return new URLSearchParams(); } }
-  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js', import.meta.url), 'utf8'),
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js', import.meta.url), 'utf8'),
     {document, fetch, URL, URLSearchParams, FormData, location: {href:'http://test/'}, setTimeout});
   assert.match(requests[0].url, /offset=0/);
   root.querySelector('#vm-filters').events.submit({preventDefault(){}});
@@ -54,7 +54,7 @@ test('editing detected bounds clears candidates and selected identities', async 
     detections:[{bbox:[0,0,40,40], detection:{status:'detected'}, identification:{status:'identified',candidates:[{identity_id:12,name:'Yangyang',kind:'character',score:0.8,evidence:[]}]}}],
   } : {items:[], total:0}});
   const document = {querySelector:()=>root, body:{style:{}}, activeElement:new Element()};
-  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js', import.meta.url),'utf8'),
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js', import.meta.url),'utf8'),
     {document, fetch, URL, URLSearchParams, FormData, FileReader, location:{href:'http://test/'}, setTimeout});
   await root.querySelector('#vm-file').events.change({target:{files:[{type:'image/png',size:1}]}});
   await root.querySelector('#vm-detect').events.click({currentTarget:root.querySelector('#vm-detect')});
@@ -93,7 +93,7 @@ test('reference approval and rejection send explicit moderation decisions', asyn
   class FormData {constructor(){return new URLSearchParams();}}
   const fetch=async (url,opts={})=>{ requests.push({url,opts}); return {ok:true,json:async()=>url==='/auth/csrf'?{csrf_token:'t'}:url.endsWith('/history')?{items:[]}:url.endsWith('/references/7')?{id:7,status:'pending',enabled_for_search:false,links:[],source_page:'https://example.test/page',source_url:'javascript:evil()'}:{items:[],total:0}}; };
   const document={querySelector:()=>root,body:{style:{}},activeElement:new Element()};
-  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,location:{href:'http://test/'},setTimeout});
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,location:{href:'http://test/'},setTimeout});
   const review={dataset:{action:'details',id:'7'},disabled:false,setAttribute(){},removeAttribute(){}};
   root.querySelector('#vm-cards').events.click({target:{closest:()=>review}});
   await new Promise(resolve=>setImmediate(resolve));
@@ -127,7 +127,7 @@ test('late image reads cannot replace a newer upload', async () => {
   class FormData {constructor(){return new URLSearchParams();}}
   const fetch=async()=>({ok:true,json:async()=>({items:[],total:0})});
   const document={querySelector:()=>root,body:{style:{}},activeElement:new Element()};
-  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,FileReader,location:{href:'http://test/'},setTimeout});
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,FileReader,location:{href:'http://test/'},setTimeout});
   const change=root.querySelector('#vm-file').events.change;
   const first=change({target:{files:[{type:'image/png',size:1}]}}), second=change({target:{files:[{type:'image/png',size:1}]}});
   readers[1].result='data:image/png;base64,bmV3'; readers[1].onload(); await second;
@@ -148,7 +148,7 @@ test('pointer gestures cannot change boxes while inference is pending', async ()
   let finish;
   const fetch=async url=>url.endsWith('/identify') ? new Promise(resolve=>{finish=()=>resolve({ok:true,json:async()=>({detections:[]})});}) : {ok:true,json:async()=>url==='/auth/csrf'?{csrf_token:'token'}:{items:[],total:0}};
   const document={querySelector:()=>root,body:{style:{}},activeElement:new Element()};
-  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,FileReader,location:{href:'http://test/'},setTimeout});
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,FileReader,location:{href:'http://test/'},setTimeout});
   await root.querySelector('#vm-file').events.change({target:{files:[{type:'image/png',size:1}]}});
   root.querySelector('#vm-detect').events.click({currentTarget:root.querySelector('#vm-detect')});
   await new Promise(resolve=>setImmediate(resolve));
@@ -172,7 +172,7 @@ test('identity picker searches game catalog, ignores stale results and explicitl
   const fetch=(url,opts={})=>new Promise(resolve=>requests.push({url,opts,resolve}));
   let videoOptions;
   const context={document,fetch,URL,URLSearchParams,FormData,location:{href:'http://test/'},setTimeout,clearTimeout,createVisualMemoryVideoReview:opts=>{videoOptions=opts;return {open(){}};}};
-  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),context);
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),context);
   const tick=()=>new Promise(resolve=>setImmediate(resolve));
   const response=data=>({ok:true,json:async()=>data});
   const box={links:[],names:{}};
@@ -197,4 +197,43 @@ test('identity picker searches game catalog, ignores stale results and explicitl
   create.resolve(response({id:15,name:'Hsin',kind:'character'})); await tick();
   assert.equal(body.querySelector('[name=links]').value,'15');
   assert.match(root.querySelector('#vm-selected-identities').innerHTML,/Hsin/);
+});
+
+test('Rover game choices link appearances to the same identity', async () => {
+  class Element {
+    constructor() { this.events={}; this.dataset={}; this.value=''; this.hidden=true; this.disabled=false; this.style={}; }
+    addEventListener(type, fn) { this.events[type]=fn; } setAttribute() {} removeAttribute() {} focus() {}
+    querySelector(s) { if (!this.children) this.children=new Map(); if (!this.children.has(s)) this.children.set(s,new Element()); return this.children.get(s); }
+  }
+  const root=new Element(), requests=[];
+  root.querySelectorAll=()=>[];
+  const document={querySelector:()=>root,body:{style:{}},activeElement:new Element()};
+  class FormData {constructor(){return new URLSearchParams();}}
+  const identity={id:15,name:'Rover',appearances:[{id:101,identity_id:15,name:'Male Rover'},{id:102,identity_id:15,name:'Female Rover'}]};
+  const fetch=async (url,opts={})=>{ requests.push({url,opts}); return {ok:true,json:async()=>url==='/auth/csrf'?{csrf_token:'token'}:url.endsWith('/identities/from-game')?identity:url.includes('/game-entities?')?{items:[{node_id:77,name:'Rover',kind:'playable',appearance_choices:[{key:'male',name:'Male Rover'},{key:'female',name:'Female Rover'},{key:'spectro',name:'Spectro Rover'}]}],total:1}:{items:[],total:0}}; };
+  let videoOptions;
+  vm.runInNewContext(readFileSync(new URL('../src/wuwa_story/admin/statics/bbox-annotation.js', import.meta.url), 'utf8') + ' ' + readFileSync(new URL('../src/wuwa_story/admin/statics/visual-memory.js',import.meta.url),'utf8'),{document,fetch,URL,URLSearchParams,FormData,location:{href:'http://test/'},setTimeout,clearTimeout,createVisualMemoryVideoReview:opts=>{videoOptions=opts;return {open(){}};}});
+  const tick=()=>new Promise(resolve=>setImmediate(resolve));
+  let saved;
+  videoOptions.chooseLinks({links:[],names:{}},links=>{saved=links;});
+  await tick();
+  const body=root.querySelector('#vm-dialog-body'), html=root.querySelector('#vm-identity-results').innerHTML;
+  assert.match(html,/one identity with two appearances/);
+  assert.doesNotMatch(html,/Spectro Rover/);
+  for (const [name,id] of [['Male Rover',101],['Female Rover',102]]) {
+    const match=html.match(new RegExp(`<button[^>]*data-add-game="(\\d+)"[^>]*data-name="([^"]+)"[^>]*data-appearance-name="${name}"[^>]*>${name}</button>`));
+    assert.ok(match, `${name} button is rendered`);
+    const button={dataset:{addGame:match[1],name:match[2],appearanceName:name},disabled:false,setAttribute(){},removeAttribute(){}};
+    body.onclick({target:{closest:()=>button}}); await tick();
+    assert.equal(body.querySelector('[name=links]').value,`15:${id}`);
+    assert.match(root.querySelector('#vm-selected-identities').innerHTML,new RegExp(`Rover · ${name}`));
+  }
+  assert.deepEqual(requests.filter(r=>r.url.endsWith('/identities/from-game')).map(r=>JSON.parse(r.opts.body)),[{node_id:77},{node_id:77}]);
+  identity.appearances=[];
+  const missing={dataset:{addGame:'77',name:'Rover',appearanceName:'Male Rover'},disabled:false,setAttribute(){},removeAttribute(){}};
+  body.onclick({target:{closest:()=>missing}}); await tick();
+  assert.match(root.querySelector('#vm-dialog-message').textContent,/appearance is unavailable/);
+  assert.equal(body.querySelector('[name=links]').value,'15:102');
+  root.querySelector('#vm-dialog-submit').events.click({currentTarget:root.querySelector('#vm-dialog-submit')}); await tick();
+  assert.equal(JSON.stringify(saved),JSON.stringify([{identity_id:15,appearance_id:102}]));
 });

@@ -209,8 +209,8 @@
             max="60"
             step="any"
             value="3"
-            required /></label
-        >
+            required
+        /></label>
         <button class="btn btn-primary" type="submit">Start scan</button>
       </form>
       <p>
@@ -219,9 +219,23 @@
       </p>
       <div id="vm-video-frames"></div>
       <div class="vm-pagination" aria-label="Sampled frame pages">
-        <button class="btn btn-secondary" type="button" id="vm-frame-prev" disabled>Previous frames</button>
+        <button
+          class="btn btn-secondary"
+          type="button"
+          id="vm-frame-prev"
+          disabled
+        >
+          Previous frames
+        </button>
         <span id="vm-frame-page"></span>
-        <button class="btn btn-secondary" type="button" id="vm-frame-next" disabled>Next frames</button>
+        <button
+          class="btn btn-secondary"
+          type="button"
+          id="vm-frame-next"
+          disabled
+        >
+          Next frames
+        </button>
       </div>
       <div class="vm-actions">
         <button
@@ -260,6 +274,10 @@
     </section>
   </div>
 </div>
+<script
+  defer
+  src="{{ url_for(__name__ ~ ':statics', path='bbox-annotation.js') }}"
+></script>
 <script
   defer
   src="{{ url_for(__name__ ~ ':statics', path='video-review.js') }}"
