@@ -85,36 +85,22 @@ export function QuestSequenceIllustrations({
                 Number.isFinite(sections[index].time_seconds)
                   ? ` · ${sections[index].time_seconds}s`
                   : ""}
+                <a
+                  href={item.src}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={styles.imageLink}
+                >
+                  Open image file ↗
+                </a>
               </figcaption>
             </figure>
           ))}
         </div>
       )}
-      {(!items.length || (media?.composition && media.composition.state !== "ready")) && (
+      {(!items.length ||
+        (media?.composition && media.composition.state !== "ready")) && (
         <p className={styles.status}>{status}</p>
-      )}
-      {media?.composition && (
-        <details className={styles.source}>
-          <summary>Illustration source</summary>
-          <pre>
-            {JSON.stringify(
-              {
-                composition: media.composition,
-                sections: sections.map(
-                  ({ source, scene_source, time_seconds, sample_time_seconds, file_id }) => ({
-                    source,
-                    scene_source,
-                    time_seconds,
-                    sample_time_seconds,
-                    file_id,
-                  }),
-                ),
-              },
-              null,
-              2,
-            )}
-          </pre>
-        </details>
       )}
     </div>
   );

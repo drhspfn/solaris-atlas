@@ -21,7 +21,7 @@ Its `ReferenceAssets`, component hierarchy and compact tagged properties identif
 | `skip` | `BtnSkip/.../SprSkipArrow`, `SP_PlotSkipBgIcon2` | Skip |
 | `hide` | `BtnHide/HideCtrl/SprHideIcon`, `SP_PlotSkipBgIcon4` | Hide interface |
 | `continue` | `SprNext`, `SP_PlotSubtitleNext` | White continuation ornament |
-| `continueTriangle` | `SprNextB`, `SP_PlotSubtitleNextB` | Alternate triangle |
+| `continueTriangle` | `SprNextB`, `SP_PlotSubtitleNextB` | New subtitle style continuation indicator |
 | `separatorLine` | `SprLineLeft` / `SprLineRight`, `SP_ComLineA` | Sliced line, alpha 0.6 |
 | `separatorOrnament` | `SprLineIcon`, `SP_ComLineAIcon` | Central ornament, alpha 0.6 |
 
@@ -62,3 +62,48 @@ the client's `_SpriteTextures` exports.
 `manifest.json` records source-package hashes, atlas image hash, crop rectangles,
 sprite metadata, output hashes and dimensions. No game keys or machine credentials
 are included. The raw client scripts and cooked assets remain outside Git.
+
+## Indicator visibility: verified handoff
+
+See `dialogue-indicator-evidence.json` beside this document for the decoded
+prefab hierarchy, registry bindings and original game method excerpts. This
+file is checked into the project; the scratch extraction is not required.
+
+The two sprites are ALTERNATIVES, not two layers of one indicator:
+
+- registry item 19 = actor 100010 `SprNext`; parent `PnlNextAph` (100723).
+- registry item 53 = actor 100717 `SprNextB`; parent `PnlBg` (100025).
+- `Yeo(allowed)` sets `CanClick = allowed`, then shows item 19 only when
+  `allowed && !IsNewSubtitleStyleActive()`, and item 53 only when
+  `allowed && IsNewSubtitleStyleActive()`.
+- Both sprites are initially inactive in the prefab. The animation contains
+  tracks for both, but visibility selects one. Do not compose them together.
+- Registry item 20 is `PnlPoint`, a separate waiting indicator. `Cto(waiting)`
+  shows it only for the old subtitle style. It is not `SprNextB`.
+
+For each new subtitle, `Veo` enables continuation immediately for
+`IsInteraction || !PlotConfig.CanInteractive`. Otherwise it waits for
+`max(line.WaitTime ?? JumpWaitTime, PlotTemplate.MinWaitingTime)` seconds.
+The installed client has `Talk.JumpWaitTime = 0.3` seconds. `MinWaitingTime`
+is template dependent; no universal numeric value has been established here.
+The timer starts at subtitle presentation, not after typewriter completion.
+
+The continuation indicator can therefore be visible during text reveal.
+A click during reveal completes the current text; the next permitted click
+submits it. Submitting calls `Yeo(false)` in the click/auto paths. Choice
+handling transfers control to options after reveal and the mandatory wait.
+The game also checks control permissions before accepting the click.
+
+Website adaptation: these game fields may not exist in the website API.
+That does NOT invalidate the recovered game behavior. If absent, use an
+explicitly documented website fallback of 0.3 seconds from line presentation
+and template minimum 0, rather than claiming those are per-line imported
+values. Select one website subtitle style explicitly. Keep optional authored
+wait/minimum values in the UI interface if available, without pretending the
+backend already supplies them. Respect reader visibility and choices.
+
+Animation curves are in
+`packages/web_new/public/game-ui/dialogue/continue-motion.json`:
+2 seconds, 24000 ticks/second; preserve curve interpolation and tangents.
+Both native sprites are 56x56 on a 2560x1440 reference canvas; invert vertical
+axis when translating game anchor offsets into CSS transforms.

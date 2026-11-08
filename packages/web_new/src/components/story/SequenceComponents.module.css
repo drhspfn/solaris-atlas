@@ -18,3 +18,24 @@
 .source { margin-top: 12px; color: var(--text-secondary); font-size: 13px; }
 .source summary { cursor: pointer; }
 .source pre { max-height: 16rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+
+.sceneHeader { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.sceneHeader h3 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 16px; }
+.infoButton { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex: 0 0 auto; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-1); color: var(--text-secondary); cursor: pointer; }
+.infoButton:hover { color: var(--accent-mint); border-color: var(--accent-mint); }
+.sceneDialog { box-sizing: border-box; width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: clamp(20px, 4vw, 32px); margin: auto; overflow: auto; scrollbar-gutter: stable; background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-lg); box-shadow: 0 24px 80px #0009; }
+.sceneDialog::backdrop { background: #000b; backdrop-filter: blur(5px); }
+.dialogHeader { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.dialogHeader h2 { margin: 8px 0 0; font-size: 24px; }
+.dialogIntro { margin: 20px 0 24px; color: var(--text-secondary); font-size: 14px; line-height: 1.7; }
+.sceneDialog .imageList { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.sceneDialog .imageButton img { height: 160px; object-fit: cover; }
+.sceneDialog .components { padding-block: 16px; border-top: 1px solid var(--border-default); }
+.sourceFields { display: grid; gap: 8px; margin-top: 16px; }
+.sourceFields dt { font-size: 12px; color: var(--text-secondary); }
+.sourceFields dd { margin: 0 0 12px; font-size: 12px; overflow-wrap: anywhere; }
+
+.imageLink { display: block; margin-top: 6px; color: var(--accent-mint); font-size: 12px; }
+
+@media (max-width: 600px) { .sceneDialog .imageList { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 400px) { .sceneDialog .imageList { grid-template-columns: minmax(0, 1fr); } }

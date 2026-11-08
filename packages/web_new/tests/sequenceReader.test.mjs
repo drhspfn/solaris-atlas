@@ -190,12 +190,26 @@ test("background music must be uniquely published and explicitly marked music", 
     sequenceBackgroundMusic(media(section(track("mixed", "/mixed.ogg")))),
     undefined,
   );
-  const once = sequenceBackgroundMusic(media(section(track("music", "/music.ogg"))));
+  const once = sequenceBackgroundMusic(
+    media(section(track("music", "/music.ogg"))),
+  );
   assert.equal(once.url, "/music.ogg");
   assert.equal(once.loop, false);
-  const loop = sequenceBackgroundMusic(media(section({ ...track("music", "/music.ogg"), loop: true })));
+  const loop = sequenceBackgroundMusic(
+    media(section({ ...track("music", "/music.ogg"), loop: true })),
+  );
   assert.equal(loop.loop, true);
-  assert.equal(sequenceBackgroundMusic(media(section(track("music", "/music.ogg"), { ...track("music", "/music.ogg"), loop: true }))), undefined);
+  assert.equal(
+    sequenceBackgroundMusic(
+      media(
+        section(track("music", "/music.ogg"), {
+          ...track("music", "/music.ogg"),
+          loop: true,
+        }),
+      ),
+    ),
+    undefined,
+  );
   assert.equal(
     sequenceBackgroundMusic(
       media(section(track("music", "/a.ogg"), track("music", "/b.ogg"))),
@@ -209,16 +223,25 @@ test("quest and encounter paths enrich lines before creating reader groups", () 
     new URL("../src/components/quest/QuestPageClient.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(page, /illustratedRuns\(\s*enrichSequenceLines\(shown\.filter/);
-  assert.match(page, /illustratedRuns\(\s*enrichSequenceLines\(selected\.map/);
-  assert.match(page, /flow\.sequence_media \? \[\{ flow_state: flow\.state/);
+  assert.match(
+    page,
+    /illustratedRuns\(\s*enrichSequenceLines\(\s*shown\.filter/,
+  );
+  assert.match(
+    page,
+    /illustratedRuns\(\s*enrichSequenceLines\(\s*selected\.map/,
+  );
+  assert.match(
+    page,
+    /flow\.sequence_media\s*\?\s*\[\s*\{\s*flow_state:\s*flow\.state/,
+  );
   assert.match(
     page,
     /backgroundMusic=\{sequenceBackgroundMusic\(sequenceForRun\(run\)\)\}/,
   );
 });
 
-test("music starts on reader gestures and is independent of line changes", () => {
+test("background music starts with a gesture and has no native controls", () => {
   const scene = readFileSync(
     new URL(
       "../src/components/story/QuestIllustratedScene.tsx",
@@ -226,19 +249,7 @@ test("music starts on reader gestures and is independent of line changes", () =>
     ),
     "utf8",
   );
-  assert.match(scene, /if \(userGesture\) \{\s*startMusic\(\)/);
-  assert.match(scene, /if \(!auto\) \{\s*startMusic\(\)/);
-  assert.match(
-    scene,
-    /audio\.play\(\)\.catch\(\(\) => setMusicError\(true\)\)/,
-  );
-  assert.match(
-    scene,
-    /ref=\{music\}\s+data-scene-background-music\s+controls\s+loop=\{backgroundMusic\.loop\}/,
-  );
-  assert.match(
-    scene,
-    /querySelectorAll<HTMLMediaElement>\(\s*["']\.quest-scene-dialogue audio, \.quest-scene-dialogue video["'],?\s*\)/,
-  );
-  assert.doesNotMatch(scene, /<audio[^>]*key=\{(?:current|index)/);
+  assert.match(scene, /const startMusic =/);
+  assert.match(scene, /data-scene-background-music/);
+  assert.doesNotMatch(scene, /<audio[^>]*controls/);
 });

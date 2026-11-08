@@ -19,8 +19,7 @@ import {
   timelineTarget,
 } from "./cutsceneTimeline";
 import { preferredRoverTarget } from "./preferredRover";
-import { QuestSequenceFragments } from "./QuestSequenceFragments";
-import { QuestSequenceIllustrations } from "./QuestSequenceIllustrations";
+import { QuestSceneDetails } from "./QuestSceneDetails";
 import {
   type CutsceneFlow,
   type CutsceneNode,
@@ -674,33 +673,7 @@ export function Cutscene({
   if (event.kind === "sequence")
     return (
       <section id={cutsceneAnchor(event)} className="quest-runtime-block">
-        <span className="eyebrow left">SCENE</span>
-        <h3>
-          <PlayerText
-            value={event.title}
-            fallback="Scripted scene"
-            display={display}
-          />
-        </h3>
-        {!event.story_position && (
-          <p>
-            {event.review_position
-              ? "Shown in archive review order."
-              : "Position in the story is not mapped."}
-          </p>
-        )}
-        {event.sequence_media ? (
-          <QuestSequenceFragments media={event.sequence_media} />
-        ) : (
-          <QuestSequenceIllustrations />
-        )}
-        <details>
-          <summary>Source reference</summary>
-          <small>{event.engine_path || event.reference}</small>
-          <small>
-            {event.source.file} · {event.source.raw_path}
-          </small>
-        </details>
+        <QuestSceneDetails event={event} display={display} />
       </section>
     );
   return (

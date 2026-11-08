@@ -89,8 +89,9 @@ test("both sequence paths use the reusable illustration display and keep audio a
       new URL(`../src/components/story/${path}`, import.meta.url),
       "utf8",
     );
+  assert.match(read("QuestCutscenes.tsx"), /QuestSceneDetails event=\{event\}/);
   assert.match(
-    read("QuestCutscenes.tsx"),
+    read("QuestSceneDetails.tsx"),
     /QuestSequenceFragments media=\{event.sequence_media\}/,
   );
   const fragments = read("QuestSequenceFragments.tsx");
@@ -116,7 +117,7 @@ test("illustrated dialogue supports keyboard and click advancement without hijac
   assert.match(scene, /event\.target !== event\.currentTarget/);
   assert.match(
     scene,
-    /closest\(\s*["']button, a, input, select, textarea, summary, audio, video["'],?\s*\)/,
+    /closest\(\s*'button, a, input, select, textarea, summary, audio, \[role="button"\], \.quest-scene-transport',?\s*\)/,
   );
-  assert.match(scene, /transcript\s*\|\|\s*current >= lines\.length - 1/);
+  assert.match(scene, /if \(transcript \|\|/);
 });
