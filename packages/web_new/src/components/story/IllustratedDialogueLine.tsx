@@ -8,10 +8,11 @@ import {
 } from "@/data/gameText";
 import { localizedText } from "@/data/localized";
 import { PlayerText } from "@/components/dialogue/PlayerText";
+import { dialogueSpeakerName, type DialogueSpeaker } from "../dialogue/speakerName";
 import { GAME_DIALOGUE_UI } from "@/data/dialogueUiAssets";
 
 type SceneLine = {
-  speaker?: { label?: unknown } | null;
+  speaker?: DialogueSpeaker | null;
   text?: { content?: string | null; inline_text?: string | null } | null;
 };
 
@@ -32,6 +33,7 @@ export function IllustratedDialogueLine({
   showContinue?: boolean;
 }) {
   const source = localizedText(line.text, "Text unavailable in this locale");
+  const speaker = dialogueSpeakerName(line.speaker);
   const runs = gameTextRuns(source, display.gender);
   const parts = runs.flatMap((run) =>
     run.text.split(/(\{PlayerName\})/gi).map((part) => ({
@@ -51,14 +53,16 @@ export function IllustratedDialogueLine({
   let offset = 0;
   return (
     <div className="illustrated-dialogue-line">
-      <div className="illustrated-dialogue-speaker">
+      <div className="illustrated-dialogue-speaker" aria-hidden={speaker === null || undefined}>
+        {speaker !== null && (
         <PlayerText
           display={display}
-          value={line.speaker?.label}
+          value={speaker}
           fallback="Narration / Unknown speaker"
         />
+        )}
       </div>
-      {!hideSeparator && (
+      {!hideSeparator && speaker !== null && (
         <div className="illustrated-dialogue-divider" aria-hidden="true">
           <span />
           <img src={GAME_DIALOGUE_UI.separatorOrnament} alt="" />

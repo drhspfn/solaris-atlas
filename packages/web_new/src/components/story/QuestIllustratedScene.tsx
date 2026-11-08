@@ -25,7 +25,7 @@ type SceneLine = {
   id: string;
   player_choices?: unknown[];
   illustration: Illustration;
-  speaker?: { label?: unknown } | null;
+  speaker?: { label?: unknown; name_hidden?: boolean } | null;
   text?: {
     key?: string | null;
     content?: string | null;

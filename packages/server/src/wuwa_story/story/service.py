@@ -110,12 +110,15 @@ async def prefetch_node_labels(session, node_ids, locale_code):
         texts = session.info.get("wuwa_localized_cache", {})
         for node, kind, key, canonical in rows:
             localized = texts.get((key, locale_code, latest.id if latest else None)) or {}
+            hidden_name = (kind == "speaker" and localized.get("requested_resolution", localized.get("resolution")) == "resolved_empty"
+                           and not display(aliases.get(node.id)))
             cache[(node.id, locale_code)] = {
                 "id": node.id,
                 "canonical_key": node.canonical_key,
                 **node_address(node, kind),
                 "type": kind,
-                "label": display(aliases.get(node.id))
+                **({"name_hidden": True} if hidden_name else {}),
+                "label": "" if hidden_name else display(aliases.get(node.id))
                 or display(localized.get("content"))
                 or display(canonical)
                 or (

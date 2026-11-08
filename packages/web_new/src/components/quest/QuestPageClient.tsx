@@ -1,5 +1,7 @@
 "use client";
 
+import { dialogueSpeakerName } from "../dialogue/speakerName";
+
 import { ArrowUp, BookOpen, ChevronRight, Users } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
 import { api } from "@/api/client";
@@ -965,16 +967,16 @@ export function QuestPageClient({
                 )}
               </div>
             )}
-            <div className="speaker-row">
+            {dialogueSpeakerName(line.speaker) !== null && <div className="speaker-row">
               <span className="speaker-dot" />
               <strong>
                 <PlayerText
                   display={playerDisplay}
-                  value={line.speaker?.label}
+                  value={dialogueSpeakerName(line.speaker)}
                   fallback="Narration / Unknown speaker"
                 />
               </strong>
-            </div>
+            </div>}
             <DialogueAudioReference media={line.media}>
               <p>
                 {line.text?.content || line.text?.inline_text ? (
