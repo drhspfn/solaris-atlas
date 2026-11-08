@@ -36,6 +36,14 @@ TOOLS = [
 ]
 
 
+def sampling_scope(scan):
+    """A reviewed point or segment is not evidence that the full video was reviewed."""
+    data = scan.get("sampling") or {}
+    return {"sampling_mode": data.get("sampling_mode", "full"),
+            **{key: data[key] for key in ("start_seconds", "end_seconds", "timestamp_seconds", "frame_offset")
+               if key in data}, "interval_seconds": scan.get("interval_seconds")}
+
+
 async def dispatch(name: str, arguments: dict[str, Any], session: Any) -> dict[str, Any]:
     """Public output is explicitly projected, never the administrator scan manifest."""
     try:
@@ -54,6 +62,7 @@ async def dispatch(name: str, arguments: dict[str, Any], session: Any) -> dict[s
                     "duration": source.get("duration"),
                     "reviewed": scan.get("reviewed") is True,
                     "reviewed_scan_id": scan.get("id") if scan.get("reviewed") is True else None,
+                    "sampling": sampling_scope(scan) if scan else None,
                 })
             return {"name": result.get("name"), "game_version": result.get("game_version"),
                     "sources": sources}
@@ -66,6 +75,7 @@ async def dispatch(name: str, arguments: dict[str, Any], session: Any) -> dict[s
             # Do not expose unvalidated historical source URLs, crops, labels or decisions.
             progress = scan.get("progress") or {}
             return {"id": scan["id"], "status": scan["status"], "reviewed": True,
+                    "sampling": sampling_scope(scan),
                     "progress": {"completed": progress.get("completed"), "total": progress.get("total")},
                     "frames": [{"index": frame["index"], "time": frame["time"],
                                 "image_url": frame.get("image_url")} for frame in scan.get("frames", [])[:data.frame_limit]],
