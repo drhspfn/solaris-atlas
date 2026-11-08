@@ -5,7 +5,13 @@ import { CircleHelp, Film, X } from "lucide-react";
 import { Button } from "../ui/Button";
 import { PlayerText, type PlayerDisplay } from "../dialogue/PlayerText";
 import type { QuestMediaEvent } from "./QuestMediaReferences";
-import { QuestSequenceFragments } from "./QuestSequenceFragments";
+import {
+  QuestSequenceFragments,
+  playableEncounterFragments,
+} from "./QuestSequenceFragments";
+import { playableSequenceAudio } from "./QuestSequenceAudio";
+import { illustrationSections } from "./sequenceIllustrations";
+import { mediaViewerUrl } from "../ui/mediaViewerUtils";
 import styles from "./SequenceComponents.module.css";
 
 export function QuestSceneDetails({
@@ -16,6 +22,30 @@ export function QuestSceneDetails({
   display?: PlayerDisplay;
 }) {
   const [open, setOpen] = useState(false);
+  const media = event.sequence_media;
+  const hasIllustrations = illustrationSections(media).some((section) =>
+    mediaViewerUrl(section.url!),
+  );
+  const hasVideo = playableEncounterFragments(media).length > 0;
+  const sections = media?.schema_version === 1 ? media.sections : [];
+  const isEngineCinematic =
+    !hasIllustrations &&
+    !hasVideo &&
+    sections.some((section) => section.kind === "camera") &&
+    sections.some((section) =>
+      ["skeletal_animation", "skeletal_animation_asset"].includes(section.kind),
+    );
+  const hasMedia =
+    hasIllustrations ||
+    hasVideo ||
+    playableSequenceAudio(media).length > 0;
+  const sceneLabel = hasIllustrations
+    ? "Illustrated scene"
+    : hasVideo
+      ? "Cinematic scene"
+      : isEngineCinematic
+        ? "In-game cinematic"
+        : "Scripted scene";
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -37,7 +67,7 @@ export function QuestSceneDetails({
           <Film size={18} aria-hidden="true" />
           <PlayerText
             value={event.title}
-            fallback="Story scene"
+            fallback={sceneLabel}
             display={display}
           />
         </h3>
@@ -51,6 +81,17 @@ export function QuestSceneDetails({
           <CircleHelp size={20} />
         </button>
       </header>
+      <p className={styles.status}>
+        {hasIllustrations
+          ? "Scene illustrations available."
+          : hasVideo
+            ? "Video components available; full scene playback is unavailable."
+            : isEngineCinematic
+              ? "In-game cinematic · Rendered by the game engine. No standalone recording is available."
+              : hasMedia
+                ? "Scene audio available; full scene playback is unavailable."
+                : "No standalone media available. The scene's visual format is unknown."}
+      </p>
       {open && (
         <dialog
           ref={dialog}
@@ -87,11 +128,14 @@ export function QuestSceneDetails({
             </Button>
           </header>
           <p className={styles.dialogIntro}>
-            Explore the artwork and audio used in this scene. Select an image to
-            open the viewer.
+            {isEngineCinematic
+              ? "Rendered by the game engine. No standalone recording is available."
+              : hasMedia
+                ? "Available scene media and source details are shown below."
+                : "No standalone media available. Source details are shown below."}
           </p>
           <QuestSequenceFragments media={event.sequence_media} />
-          <details className={styles.source}>
+          <details className={styles.source} open={!hasMedia}>
             <summary>Technical details</summary>
             <dl className={styles.sourceFields}>
               <dt>Scene resource</dt>

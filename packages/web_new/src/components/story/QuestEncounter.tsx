@@ -19,7 +19,9 @@ export function EncounterCinematicBoundary({
   unplaced = false,
   playbackResolved = false,
   componentCount = 0,
+  engineRendered = false,
 }: {
+  engineRendered?: boolean;
   componentCount?: number;
   unplaced?: boolean;
   playbackResolved?: boolean;
@@ -30,7 +32,7 @@ export function EncounterCinematicBoundary({
     <section className={styles.cinematic} aria-label="Scene">
       <div className={styles.marker}>
         <Film size={15} aria-hidden="true" />
-        Scene
+        {engineRendered ? "In-game cinematic" : media.every((item) => item.kind === "cutscene") ? "Cutscene" : "Scripted scene"}
       </div>
       <p className={styles.note}>
         {componentCount > 0
@@ -38,18 +40,18 @@ export function EncounterCinematicBoundary({
           : playbackResolved
             ? "Playback available"
             : media.some((item) => item.kind === "sequence")
-              ? "Scene · full playback unavailable"
-              : "Video not available yet"}
+              ? engineRendered
+                ? "Rendered by the game engine. No standalone recording is available."
+                : "No playable scene recording is available."
+              : "No video export has been published."}
         {unplaced ? " · placement unknown" : ""}
       </p>
-      {media.some((item) => item.kind === "sequence") &&
-        (!playbackResolved || componentCount > 0) && (
+      {componentCount > 0 && (
           <p className={styles.note}>
             Full scene playback is not available here.
           </p>
         )}
       {children}
-      <div className={styles.marker}>End scene</div>
       <details className={styles.source}>
         <summary>Source</summary>
         <p>

@@ -792,6 +792,10 @@ export function QuestPageClient({
           unplaced={!part.lines.length}
           playbackResolved={events.some((event) => !!event.playback)}
           componentCount={index === componentPart ? componentCount : 0}
+          engineRendered={componentCount === 0 &&
+            !flow.sequence_media?.sections.some((section) => section.kind === "illustration") &&
+            ["camera", "skeletal_animation"].every((kind) =>
+              flow.sequence_media?.sections.some((section) => section.kind === kind))}
         >
           {index === componentPart && (
             <QuestSequenceFragments media={flow.sequence_media} />

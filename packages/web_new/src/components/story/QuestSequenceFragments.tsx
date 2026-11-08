@@ -123,6 +123,12 @@ function FragmentList({
 export function QuestSequenceFragments({ media }: { media?: SequenceMedia }) {
   const sections = playableEncounterFragments(media);
   if (!media) return null;
+  const unboundScene =
+    media.composition?.state === "unsupported" &&
+    media.composition.reasons?.some((reason) =>
+      ["flow_owner_unavailable", "scene_binding_unavailable"].includes(reason.code),
+    ) &&
+    !illustrationSections(media).some((section) => mediaViewerUrl(section.url!));
   // Use complete published files. Source ranges and clocks are not playback crop commands.
   const items: MediaItem[] = sections.map((section, index) => ({
     id: `sequence-fragment-${section.file_id}`,
@@ -132,7 +138,11 @@ export function QuestSequenceFragments({ media }: { media?: SequenceMedia }) {
   }));
   return (
     <>
-      <QuestSequenceIllustrations media={media} />
+      {unboundScene ? (
+        <p className={styles.status}>Scene illustrations are unavailable.</p>
+      ) : (
+        <QuestSequenceIllustrations media={media} />
+      )}
       {items.length ? (
         <FragmentList items={items} media={media} />
       ) : (
