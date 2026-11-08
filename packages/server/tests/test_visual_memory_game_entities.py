@@ -17,7 +17,7 @@ async def test_hsin_search_uses_character_and_npc_catalog(monkeypatch):
 
     api = FastAPI()
     api.include_router(visual_memory.router)
-    api.dependency_overrides[get_session] = lambda: None
+    api.dependency_overrides[get_session] = lambda: SimpleNamespace(scalars=AsyncMock(return_value=[]))
     api.dependency_overrides[require_admin] = lambda: SimpleNamespace(id=7)
     search_mock = AsyncMock(return_value={"results": [{"id": 123, "title": "Hsin",
         "node_type": "character", "character_kind": "npc", "canonical_key": "character:npc:123",
