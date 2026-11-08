@@ -176,10 +176,11 @@ def service_for(session: Any):
 
 def query_input_schema(model):
     schema = model.model_json_schema()
-    # File params must resolve directly to a file object, not anyOf(object, null).
-    # The top-level field stays optional because non-ChatGPT clients use image.
+    # Inline the file object so clients do not need to resolve a $ref to discover
+    # file parameters. Keep it optional for clients using the other image inputs.
     schema["properties"]["file"] = {
-        "$ref": "#/$defs/OpenAIFile", "description": model.model_fields["file"].description,
+        **schema["$defs"].pop("OpenAIFile"),
+        "description": model.model_fields["file"].description,
     }
     return schema
 

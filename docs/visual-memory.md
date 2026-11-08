@@ -126,6 +126,8 @@ the [OpenAI File APIs contract](https://developers.openai.com/plugins/reference#
 ChatGPT can supply this top-level file object for an authorized attachment.
 `download_url` and `file_id` are required; `mime_type` and `file_name` are optional
 strings. All four fields are declared in the file schema. The top-level `file`
+is an inline `type: object` in MCP `tools/list`, without `$ref` or a nullable union,
+to avoid requiring clients to resolve definitions when discovering file params. It
 is optional to keep the other source forms available, but cannot be combined
 with `image` or `image_base64` in one request. Metadata does not bypass actual
 image decoding. Temporary URLs use the same guarded HTTPS downloader below and
