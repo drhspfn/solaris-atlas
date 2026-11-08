@@ -19,7 +19,7 @@ from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 from wuwa_story.storage.service import FileRegistrationService
 
 REFERENCE_TYPES = ("story_spine", "character_trial_spine", "event_spine")
-RECIPE = "riglyph-native-v1"
+RECIPE = "riglyph-native-v2"
 logger = logging.getLogger(__name__)
 
 

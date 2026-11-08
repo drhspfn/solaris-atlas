@@ -204,3 +204,81 @@ async def test_publication_links_derivatives_without_replacing_source(tmp_path):
     assert result["animation_preview"]["variants"][0]["file_id"] == 3
     assert "path" not in result["animation_preview"]["variants"][0]
     assert [call.args[3] for call in service.register_variant.await_args_list] == ["riglyph_bundle", "riglyph_preview"]
+
+
+def test_legacy_prefab_uses_authored_clip_canvas_and_blend_mapping(tmp_path, monkeypatch):
+    from wuwa_story_worker import legacy_spine_composition
+
+    bundle = source(tmp_path, monkeypatch)
+    monkeypatch.setattr(render, 'archive_policy', lambda _: {'conversion_allowed': False, 'reasons': []})
+    plan = {'clip': 'idle', 'clips': {'idle': True}, 'skeleton': 'rig.skel', 'atlas': 'rig.atlas',
+            'size': [2560, 1440], 'layer': {'scale': .8, 'origin': [0, 0]},
+            'background': True,
+            'blend': {'normal': 'normal', 'additive': 'additive', 'multiply': 'normal', 'screen': 'normal'}}
+    monkeypatch.setattr(legacy_spine_composition, 'legacy_plan', lambda _: plan)
+    monkeypatch.setenv('WUWA_RIGLYPH_MAX_EDGE', '640')
+    original = bundle.read_bytes()
+    def convert(_source, output, _cli, **kwargs):
+        assert kwargs == {'skeleton_file': 'rig.skel', 'atlas_file': 'rig.atlas'}
+        output.mkdir()
+        (output / 'manifest.json').write_text('{}')
+        (output / 'skeleton.ir.json').write_text(json.dumps({'skeleton': {
+            'bounds': [0, 0, 1, 1], 'slots': [{'blend': 'multiply'}],
+            'animations': [{'id': 'idle', 'durationSec': 2}, {'id': 'unrequested', 'durationSec': 1}]}}))
+    def run(args, log, timeout):
+        ir = json.loads(Path(args[2]).read_text())
+        assert ir['skeleton']['slots'][0]['blend'] == 'normal'
+        result = valid_render(args, log, timeout)
+        result['probe']['decodedAlphaVerified'] = True
+        return result
+    monkeypatch.setattr(render, 'convert_archive', convert)
+    monkeypatch.setattr(render, '_run', run)
+    backgrounds = []
+    monkeypatch.setattr(render, '_compose_black', lambda *args: backgrounds.append(args))
+    result = render.build_animation(bundle, cli=['riglyph'])
+    assert result.decision['state'] == 'rendered'
+    assert [(v['animation'], v['loop'], v['framing_basis']) for v in result.variants] == [('idle', True, 'prefab_canvas')]
+    assert (result.variants[0]['width'], result.variants[0]['height']) == (640, 360)
+    assert len(backgrounds) == 1 and result.variants[0]['background'] == 'black'
+    assert bundle.read_bytes() == original
+
+
+def test_legacy_missing_authored_transition_never_renders_partial_selection(tmp_path, monkeypatch):
+    from wuwa_story_worker import legacy_spine_composition
+
+    bundle = source(tmp_path, monkeypatch)
+    monkeypatch.setattr(render, 'archive_policy', lambda _: {'conversion_allowed': False, 'reasons': []})
+    monkeypatch.setattr(legacy_spine_composition, 'legacy_plan', lambda _: {
+        'clip': 'idle', 'clips': {'idle': True, 'missing': False},
+        'skeleton': 'rig.skel', 'atlas': 'rig.atlas',
+    })
+    convert = render.convert_archive
+    monkeypatch.setattr(render, 'convert_archive', lambda source, output, cli, **_: convert(source, output, cli))
+    monkeypatch.setattr(render, '_run', lambda *_: pytest.fail('missing transition must fail before rendering'))
+    with pytest.raises(ValueError, match='dialogue animation is absent'):
+        render.build_animation(bundle, cli=['riglyph'])
+
+
+def test_legacy_background_failure_keeps_static_fallback(tmp_path, monkeypatch):
+    from wuwa_story_worker import legacy_spine_composition
+
+    bundle = source(tmp_path, monkeypatch)
+    monkeypatch.setattr(render, 'archive_policy', lambda _: {'conversion_allowed': False, 'reasons': []})
+    monkeypatch.setattr(legacy_spine_composition, 'legacy_plan', lambda _: {
+        'clip': 'idle', 'clips': {'idle': True}, 'skeleton': 'rig.skel', 'atlas': 'rig.atlas',
+        'size': [2560, 1440], 'layer': {'scale': .8, 'origin': [0, 0]}, 'background': True,
+        'blend': {'normal': 'normal', 'additive': 'additive', 'multiply': 'normal', 'screen': 'normal'},
+    })
+    convert = render.convert_archive
+    monkeypatch.setattr(render, 'convert_archive', lambda source, output, cli, **_: convert(source, output, cli))
+    def run(args, log, timeout):
+        result = valid_render(args, log, timeout)
+        result['probe']['decodedAlphaVerified'] = True
+        return result
+    monkeypatch.setattr(render, '_run', run)
+    def fail(*_):
+        raise ValueError('background failure')
+    monkeypatch.setattr(render, '_compose_black', fail)
+    result = render.build_animation(bundle, cli=['riglyph'])
+    assert result.decision['state'] == 'render_failed'
+    assert result.variants == [] and bundle.exists()

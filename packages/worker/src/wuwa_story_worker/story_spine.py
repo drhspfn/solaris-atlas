@@ -191,6 +191,9 @@ def portable_bundle(output, resource, assets, icons, identity, *, presentation=N
             info = zipfile.ZipInfo(name, date_time=(2000, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             archive.writestr(info, data)
+    if manifest.get('animation_import') and not manifest['animation_import']['conversion_allowed']:
+        from wuwa_story_worker.legacy_spine_composition import mark_legacy_eligible
+        mark_legacy_eligible(partial)
     if resource.get('control_score') is not None:
         from wuwa_story_worker.sequence_composition import annotate_bundle
         annotate_bundle(partial)
@@ -201,7 +204,9 @@ def portable_bundle(output, resource, assets, icons, identity, *, presentation=N
 async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentation=None, direct_resources=None,
                              sequence_metadata_revision=None):
     configs = []
-    if not direct_resources or presentation:
+    sequence_paths = sorted({cue['asset'].split('.')[0] for cue in (presentation or {}).get('cues', [])
+                             if cue['kind'] == 'sequence'})
+    if resource_id is not None or sequence_paths:
         receipt = await export_assets(root, fmodel, 'ConfigDB')
         configs = list(
             (receipt.parent / 'files').rglob('db_SpineBackground.db'))
@@ -222,8 +227,6 @@ async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentati
             f'Spine dependency is incomplete: {missing[0]["expected"]}')
     # Keep the authored controller packages as well as the rig. Missing control
     # sources must be visible in the archive, without losing a valid composition.
-    sequence_paths = sorted({cue['asset'].split('.')[0] for cue in (presentation or {}).get('cues', [])
-                             if cue['kind'] == 'sequence'})
     if sequence_paths:
         _, missing_controls = await prefab_images(root, sequence_paths, assets=assets, include_sequences=True,
                                                   control_sources_only=True)
