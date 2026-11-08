@@ -103,6 +103,59 @@ async def test_archive_only_spine_reuse_needs_no_browser_components():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(('reference_release', 'proof', 'expected_missing'), [
+    (21, {'release_id': 21, 'flow_owner': 7}, False),
+    (20, {'release_id': 21, 'flow_owner': 7}, True),
+    (20, {'release_id': 20, 'flow_owner': 7}, True),
+    (21, {'release_id': 21, 'flow_owner': 8}, True),
+    (21, None, True),
+])
+async def test_reuse_never_clones_foreign_flow_music_proof(reference_release, proof, expected_missing):
+    value = {**target('spine_background:7'), 'owner': 7, 'release_id': 21,
+             'kind': 'spine', 'reference_type': 'story_spine', 'spine_recipe': 1}
+    reference, file, location = row(value, spine_recipe=1)
+    reference.reference_type = 'story_spine'
+    reference.release_id = reference_release
+    reference.metadata_json['sequence_media'] = {'sections': [
+        {'kind': 'audio_event', 'scope': 'flow', 'source_proof': proof}], 'components': []}
+    session = AsyncMock()
+    session.execute.return_value = [(reference, file, location)]
+    storage = SimpleNamespace(backend='s3', bucket='media', stat=AsyncMock(return_value=SimpleNamespace(size_bytes=12)))
+    result = await missing_media_targets(session, [value], source={'asset_version': '3.7.0'}, storage=storage)
+    assert result == ([value] if expected_missing else [])
+
+
+@pytest.mark.asyncio
+async def test_visual_only_cross_release_reuse_remains_available():
+    value = {**target('spine_background:7'), 'owner': 7, 'release_id': 21,
+             'kind': 'spine', 'reference_type': 'story_spine', 'spine_recipe': 1}
+    reference, file, location = row(value, spine_recipe=1)
+    reference.reference_type, reference.release_id = 'story_spine', 20
+    reference.metadata_json['animation_preview'] = {'recipe': 'riglyph-native-v2', 'status': 'ready',
+                                                     'variants': [{'object_key': 'video', 'size_bytes': 12}]}
+    session = AsyncMock()
+    session.add = Mock()
+    session.execute.return_value = [(reference, file, location)]
+    storage = SimpleNamespace(backend='s3', bucket='media', stat=AsyncMock(return_value=SimpleNamespace(size_bytes=12)))
+    assert await missing_media_targets(session, [value], source={'asset_version': '3.7.0'},
+                                       storage=storage, require_spine_playback=True) == []
+
+
+@pytest.mark.asyncio
+async def test_native_v2_does_not_hide_stale_source_recipe():
+    value = {**target('spine_background:7'), 'kind': 'spine', 'reference_type': 'story_spine', 'spine_recipe': 5}
+    reference, file, location = row(value, spine_recipe=4)
+    reference.reference_type = 'story_spine'
+    reference.metadata_json['animation_preview'] = {'recipe': 'riglyph-native-v2', 'status': 'ready',
+                                                     'variants': [{'object_key': 'video', 'size_bytes': 12}]}
+    session = AsyncMock()
+    session.execute.return_value = [(reference, file, location)]
+    storage = SimpleNamespace(backend='s3', bucket='media', stat=AsyncMock(return_value=SimpleNamespace(size_bytes=12)))
+    assert await missing_media_targets(session, [value], source={'asset_version': '3.7.0'},
+                                       storage=storage, require_spine_playback=True) == [value]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('state,reasons,missing', [
     ('ready', [], False),
     ('unsupported', [{'code': 'plan_unsupported'}], False),
@@ -156,11 +209,12 @@ async def test_sequence_fragments_are_verified_even_without_open_playback(requir
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('missing_part', [False, True])
-async def test_native_preview_reuse_verifies_every_rendered_video(missing_part):
+@pytest.mark.parametrize('recipe', ['riglyph-native-v1', 'riglyph-native-v2', 'unknown'])
+async def test_native_preview_reuse_verifies_every_rendered_video(missing_part, recipe):
     value = {**target('spine_background:7'), 'kind': 'spine', 'reference_type': 'story_spine', 'spine_recipe': 1}
     reference, file, location = row(value, spine_recipe=1)
     reference.reference_type = 'story_spine'
-    reference.metadata_json['animation_preview'] = {'recipe': 'riglyph-native-v1', 'status': 'ready',
+    reference.metadata_json['animation_preview'] = {'recipe': recipe, 'status': 'ready',
         'variants': [{'object_key': 'objects/video', 'size_bytes': 3}]}
 
     async def stat(key):
@@ -173,7 +227,7 @@ async def test_native_preview_reuse_verifies_every_rendered_video(missing_part):
     storage = SimpleNamespace(backend='s3', bucket='media', stat=AsyncMock(side_effect=stat))
     result = await missing_media_targets(session, [value], source={'asset_version': '3.7.0'},
                                           storage=storage, require_spine_playback=True)
-    assert result == ([value] if missing_part else [])
+    assert result == ([value] if missing_part or recipe == 'unknown' else [])
 
 
 @pytest.mark.asyncio

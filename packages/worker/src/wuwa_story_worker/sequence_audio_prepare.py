@@ -109,12 +109,25 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
                 raise ValueError(
                     'Sequence audio input checksum differs from manifest')
             entries[name] = data
-    if 'controls.json' not in entries:
-        return bundle, []
-    controls = json.loads(entries['controls.json'])
+    legacy_controls = 'controls.json' not in entries
+    if legacy_controls:
+        if not soundtrack_context or soundtrack_context.get('kind') not in {'flow_authored_music', 'levelplay_fixed_start'}:
+            return bundle, []
+        controls = {'format': 'solaris.sequence-controls.v1', 'media': {'complete_video': False, 'sections': []}}
+        manifest['controls'] = {'file': 'controls.json'}
+    else:
+        controls = json.loads(entries['controls.json'])
     media_sections = controls.get('media', {}).get('sections', [])
     media_sections[:] = [section for section in media_sections
-                         if section.get('reconstruction_kind') != 'levelplay_fixed_start']
+                         if section.get('reconstruction_kind') not in {'levelplay_fixed_start', 'flow_authored_music'}]
+    flow_context = soundtrack_context if isinstance(soundtrack_context, dict) and soundtrack_context.get('kind') == 'flow_authored_music' else None
+    if flow_context:
+        identity = hashlib.sha256(json.dumps(flow_context, ensure_ascii=False, sort_keys=True,
+                                              separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+        media_sections.append({'kind': 'audio_event', 'source': 'flow:' + identity, 'scope': 'flow',
+                               'reference': flow_context.get('play_event'), 'reconstruction_kind': 'flow_authored_music',
+                               'source_proof': flow_context.get('source_proof'), 'clock': None, 'range': None,
+                               'timing_basis': 'authored_action_extent'})
     sections = [section for section in controls.get('media', {}).get('sections', [])
                 if section.get('kind') == 'audio_event']
     if not sections and soundtrack_context is None:
@@ -123,13 +136,33 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
     if manifest.get('asset_version') != plan['version'] or manifest.get('download_id') != plan['id']:
         raise ValueError(
             'Sequence audio bundle differs from the pinned base client')
+    if flow_context or (legacy_controls and soundtrack_context):
+        from wuwa_story.ingestion.spine_presentation import presentation_hash
+
+        if 'presentation.json' not in entries:
+            raise ValueError('Flow soundtrack requires the exact retained presentation')
+        presentation = json.loads(entries['presentation.json'])
+        proof = soundtrack_context.get('source_proof') or {}
+        if (presentation.get('sha256') != proof.get('presentation_sha256')
+                or presentation_hash({k: v for k, v in presentation.items() if k != 'sha256'}) != presentation.get('sha256')
+                or proof.get('asset_version') != plan['version'] or proof.get('download_id') != plan['id']):
+            raise ValueError('Flow soundtrack differs from the retained presentation or client')
+        if flow_context:
+            from wuwa_story_worker.sequence_music_context import authored_flow_music_context
+
+            expected = authored_flow_music_context(
+                {'owner': proof.get('flow_owner'), 'release_id': proof.get('release_id'),
+                 'presentation': presentation, 'presentation_sha256': presentation['sha256']},
+                {'asset_version': plan['version'], 'download_id': plan['id']})
+            if expected != flow_context:
+                raise ValueError('Flow soundtrack does not match its authored action extent')
     work = root / 'sequence-audio' / sha256(bundle)[:20]
     work.mkdir(parents=True, exist_ok=True)
     context_identity = (hashlib.sha256(json.dumps(soundtrack_context, ensure_ascii=False, sort_keys=True,
                                                   separators=(',', ':'), allow_nan=False).encode()).hexdigest()
                         if soundtrack_context is not None else None)
     retried_sources = {section.get('source') for section in sections}
-    if context_identity:
+    if context_identity and not flow_context:
         retried_sources.add('levelplay:' + context_identity)
     missing = manifest.setdefault(
         'control_sources', {}).setdefault('missing', [])
@@ -150,7 +183,8 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
             if not isinstance(reference, str) or not re.fullmatch(r'/Game/Aki/WwiseAudio/Events/[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)?', reference):
                 raise ValueError(
                     'Missing or unsupported authored audio event reference')
-            if reference not in prepared:
+            cache_key = (reference, section.get('reconstruction_kind') == 'flow_authored_music')
+            if cache_key not in prepared:
                 decoder, renderer = tool_path(
                     'WUWA_VGMSTREAM_PATH'), tool_path('WUWA_WWISER_PATH')
                 tools = {'WUWA_VGMSTREAM_PATH': sha256(decoder), 'WUWA_WWISER_PATH': sha256(renderer),
@@ -244,6 +278,16 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
                             xml, 'female', language=language)
                         for rover in ('male', 'female') if male != female else (None,):
                             wav, evidence = await render_bank(bank, audio, branch, decoder, rover, run_tool, language=language)
+                            flow_loop = None
+                            if section.get('reconstruction_kind') == 'flow_authored_music':
+                                from wuwa_story_worker.sequence_music_context import (
+                                    verify_authored_music,
+                                )
+                                flow_loop, flow_originals, flow_evidence = await verify_authored_music(
+                                    root, fmodel, converter, audio, branch, evidence, flow_context.get('stop_event'))
+                                originals.update(flow_originals)
+                                for proof_name, content in flow_evidence.items():
+                                    entries['audio-evidence/' + hashlib.sha256(reference.encode()).hexdigest()[:16] + '/' + proof_name] = content
                             with wave.open(str(wav)) as stream:
                                 duration = stream.getnframes() / stream.getframerate()
                             if duration <= 0:
@@ -260,6 +304,9 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
                                      {'package_path': 'Client/Content/Aki/WwiseAudio_Generated/Init.bnk', 'download_id': init[1], 'sha256': sha256(init[0])}]
                             proof.extend({'package_path': package_path(source), 'download_id': plan['id'], 'sha256': sha256(source)}
                                          for source in event_originals)
+                            if flow_loop is not None:
+                                proof.extend({'package_path': package_path(source), 'download_id': plan['id'], 'sha256': sha256(source)}
+                                             for source in flow_originals)
                             originals.update([*event_originals, bank, init[0]])
                             for source in evidence:
                                 if source.suffix == '.wem':
@@ -274,14 +321,15 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
                             tracks.append({'file': entry, 'language': language, 'rover': rover, 'status': 'rendered',
                                            'duration_seconds': duration, 'source_media': proof, 'tools': tools,
                                            'voice_plan_id': voice_plan['id'] if voice != root else None,
-                                           'timing_basis': 'standalone_authored_event; section clock/range/fade remain source values'})
+                                           'timing_basis': 'standalone_authored_event; section clock/range/fade remain source values',
+                                           **({'role': 'music', 'loop': flow_loop} if flow_loop is not None else {})})
                     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                         if isinstance(error, BlockingIOError) or transient_job_error(error):
                             raise
                         errors.append({'code': 'sequence_audio_unavailable',
                                       'language': language, 'message': str(error)[:500]})
-                prepared[reference] = (tracks, errors)
-            tracks, errors = prepared[reference]
+                prepared[cache_key] = (tracks, errors)
+            tracks, errors = prepared[cache_key]
             section['tracks'] = tracks
             diagnostics.extend(
                 error for error in errors if error not in diagnostics)
@@ -292,7 +340,7 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
             section['status'] = 'unresolved_audio_event'
             diagnostics.append(
                 {'code': 'sequence_audio_unavailable', 'message': str(error)[:500]})
-    if soundtrack_context is not None:
+    if soundtrack_context is not None and not flow_context:
         from wuwa_story_worker.sequence_music_context import prepare_levelplay_music
 
         identity = context_identity

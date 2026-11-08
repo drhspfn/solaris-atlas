@@ -14,6 +14,61 @@ from pathlib import Path
 from wuwa_story_worker.wwise_banks import event_id, event_timeline, validate_event_timeline
 
 
+def authored_flow_music_context(target, client):
+    """Select only a unique top-level event enclosing one illustrated ShowTalk.
+
+    This is a candidate, not evidence that the event renders music; the Wwise
+    bank and its audio bus must still be verified before publishing a track.
+    """
+    from wuwa_story.ingestion.dungeon_context import walk
+    from wuwa_story.ingestion.spine_presentation import presentation_hash
+
+    presentation = target.get('presentation') or {}
+    digest = presentation.get('sha256')
+    if (not isinstance(digest, str) or digest != target.get('presentation_sha256')
+            or presentation_hash({k: v for k, v in presentation.items() if k != 'sha256'}) != digest):
+        raise ValueError('Flow soundtrack presentation proof mismatch')
+    source = presentation.get('source') or {}
+    actions = source.get('Actions')
+    if not isinstance(actions, list) or not isinstance(source.get('StateKey'), str):
+        return None
+    events = [(i, action) for i, action in enumerate(actions)
+              if isinstance(action, dict) and action.get('Name') == 'PostAkEvent']
+    talks = [(i, action) for i, action in enumerate(actions)
+             if isinstance(action, dict) and action.get('Name') == 'ShowTalk'
+             and any(cue.get('kind') == 'background' and cue.get('background', {}).get('kind') in {'spine', 'image'}
+                     and cue.get('source_path', '').startswith(f'$.Actions[{i}].Params.TalkItems[')
+                     for cue in presentation.get('cues', []))]
+    if len(events) != 2 or len(talks) != 1:
+        return None
+    (start, start_action), (end, end_action) = events
+    talk, talk_action = talks[0]
+    if not start < talk < end:
+        return None
+    if any(value.get('Name') in {'PostAkEvent', 'SetAudioState'}
+           for _, value in walk(talk_action)):
+        return None
+
+    def event(action):
+        config = (action.get('Params') or {}).get('EventConfig') or {}
+        return config.get('AkEvent') if config.get('Type') == 'Global' else None
+
+    play, stop = event(start_action), event(end_action)
+    if not isinstance(play, str) or not isinstance(stop, str):
+        return None
+    items = (talk_action.get('Params') or {}).get('TalkItems') or []
+    keys = [item.get('TidTalk') for item in items if isinstance(item, dict)]
+    if not keys or any(not isinstance(key, str) or not key for key in keys) or len(set(keys)) != len(keys):
+        return None
+    return {'schema_version': 1, 'kind': 'flow_authored_music', 'play_event': play, 'stop_event': stop,
+            'source_proof': {'asset_version': client['asset_version'], 'download_id': client['download_id'],
+                             'release_id': target['release_id'], 'flow_owner': target['owner'],
+                             'presentation_sha256': digest, 'flow_state': source['StateKey'],
+                             'play_path': f'$.Actions[{start}]', 'talk_path': f'$.Actions[{talk}]',
+                             'stop_path': f'$.Actions[{end}]', 'talk_text_keys': keys,
+                             'timing_basis': 'authored_action_extent', 'global_clock': None}}
+
+
 def levelplay_music_binding(state_xml: Path, play_xml: Path, stop_xml: Path,
                             state_event: str, play_event: str, stop_event: str) -> dict:
     """Require one startup state, a consuming Play, and its matching Stop."""
@@ -54,6 +109,51 @@ def whole_file_loop(recipe: str) -> bool:
         raise ValueError(
             'Native music loop cannot be represented by whole-file playback')
     return True
+
+
+async def verify_authored_music(root, fmodel, converter, audio, work, evidence, stop_reference):
+    """Reject mixed/unknown buses and require the authored closing event to stop audio."""
+    from wuwa_story_worker.character_voice_assets import prefetch_banks, prefetch_events
+    from wuwa_story_worker.cutscene_frame_audio import audio_bus_roles
+    from wuwa_story_worker.cutscene_import import run_tool
+    from wuwa_story_worker.entity_media import client_voice_exports, tool, verified_voice_export
+    from wuwa_story_worker.media_provenance import sha256
+    from wuwa_story_worker.tooling import tool_path
+
+    match = re.fullmatch(r'/Game/Aki/WwiseAudio/Events/([A-Za-z0-9_]+)(?:\.([A-Za-z0-9_]+))?', stop_reference or '')
+    if not match or (match[2] and match[1] != match[2]):
+        raise ValueError('Invalid authored flow stop event')
+    cached = client_voice_exports(root, sha256(fmodel))
+    events = await prefetch_events(root, [stop_reference], cached, fmodel, converter, tool, verified_voice_export)
+    banks = await prefetch_banks(root, [stop_reference], fmodel, verified_voice_export)
+    path = 'Client/Content/Aki/WwiseAudio_Generated/Event/' + match[1] + '.bnk'
+    if stop_reference not in events or path not in banks:
+        raise ValueError('Authored flow stop event is unavailable')
+    stop_xml = work / 'flow-stop.xml'
+    await run_tool([sys.executable, str(tool_path('WUWA_WWISER_PATH')), '-d', 'xml', '-dn',
+                    str(stop_xml.with_suffix('')), '--', str(banks[path])], 120)
+    timeline = event_timeline(stop_xml, event_id(match[1]))
+    if not timeline['actions'] or any(action['kind'] != 'Stop' or action['time_ms'] != 0 for action in timeline['actions']):
+        raise ValueError('Authored flow closing event is not an immediate Wwise Stop')
+    bank_xml = next((Path(item) for item in evidence if Path(item).name == 'bank.xml'), None)
+    recipes = [Path(item) for item in evidence if Path(item).suffix == '.txtp']
+    media = {int(Path(item).stem) for item in evidence if Path(item).suffix == '.wem'}
+    if bank_xml is None or len(recipes) != 1 or not media:
+        raise ValueError('Authored flow music lacks unique bank or media evidence')
+    init_xml = work / 'flow-init.xml'
+    await run_tool([sys.executable, str(tool_path('WUWA_WWISER_PATH')), '-d', 'xml', '-dn',
+                    str(init_xml.with_suffix('')), '--', str(audio / 'Init.bnk')], 120)
+    roles = audio_bus_roles(bank_xml, init_xml, media)
+    if set(roles) != media or any(value['role'] != 'music' for value in roles.values()):
+        raise ValueError('Authored flow event is not exclusively verified music')
+    loop = whole_file_loop(recipes[0].read_text(encoding='utf-8-sig'))
+    cooked, event_sources = events[stop_reference]
+    return loop, [banks[path], *event_sources], {
+        'flow-stop.xml': stop_xml.read_bytes(), 'flow-init.xml': init_xml.read_bytes(),
+        'flow-stop-event.json': Path(cooked).read_bytes(),
+        'flow-stop-timeline.json': json.dumps(timeline, sort_keys=True).encode(),
+        'flow-music-bus.json': json.dumps(roles, sort_keys=True).encode(),
+    }
 
 
 async def prepare_levelplay_music(root, fmodel, converter, work, context):

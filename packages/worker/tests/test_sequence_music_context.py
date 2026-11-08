@@ -26,6 +26,36 @@ def binding():
     return music.levelplay_music_binding('state', 'play', 'stop', 'stage4', 'start', 'finish')
 
 
+def flow_target():
+    from wuwa_story.ingestion.spine_presentation import flow_presentation
+
+    presentation = flow_presentation({'StateKey': 'Story_1_29', 'Actions': [
+        {'Name': 'PostAkEvent', 'Params': {'EventConfig': {'Type': 'Global', 'AkEvent': '/Game/Aki/WwiseAudio/Events/start.start'}}},
+        {'Name': 'ShowTalk', 'Params': {'TalkItems': [
+            {'TidTalk': 'first', 'BackgroundConfig': {'Type': 'SpineImage', 'Id': 850007}},
+            {'TidTalk': 'second'}]}},
+        {'Name': 'PostAkEvent', 'Params': {'EventConfig': {'Type': 'Global', 'AkEvent': '/Game/Aki/WwiseAudio/Events/stop.stop'}}},
+    ]})
+    return {'owner': 7, 'release_id': 21, 'presentation': presentation, 'presentation_sha256': presentation['sha256']}
+
+
+def test_flow_music_candidate_is_bound_to_exact_talk_extent():
+    target = flow_target()
+    result = music.authored_flow_music_context(target, {'asset_version': '3.7.1', 'download_id': 'client'})
+    assert result['kind'] == 'flow_authored_music'
+    assert result['source_proof']['talk_text_keys'] == ['first', 'second']
+    assert (result['source_proof']['play_path'], result['source_proof']['talk_path'], result['source_proof']['stop_path']) == (
+        '$.Actions[0]', '$.Actions[1]', '$.Actions[2]')
+    assert result['source_proof']['global_clock'] is None
+
+
+def test_flow_candidate_rejects_tampered_presentation():
+    target = flow_target()
+    target['presentation']['source']['StateKey'] = 'other'
+    with pytest.raises(ValueError, match='presentation proof'):
+        music.authored_flow_music_context(target, {'asset_version': '3.7.1', 'download_id': 'client'})
+
+
 def test_only_whole_file_native_loops_are_exposed():
     assert music.whole_file_loop(
         'wem/303.wem #i #b 30.0\ngroup = -S1 #p 0.01 #@loop')
@@ -70,6 +100,7 @@ async def test_native_context_is_resolved_before_reuse_without_mutating_payload(
     resolver = AsyncMock(return_value=context)
     monkeypatch.setattr(sequence_levelplay_context,
                         'resolve_levelplay_context', resolver)
+    monkeypatch.setattr(music, 'authored_flow_music_context', lambda *_: None)
     original = {'kind': 'spine', 'sequence_metadata_revision': 5, 'presentation': {'source': {}},
                 'owner': 7, 'release_id': 21, 'presentation_sha256': 'hash'}
     targets = await entity_media.resolve_soundtrack_targets('root', [original, {'kind': 'image'}], 'fmodel',
@@ -86,6 +117,7 @@ async def test_native_context_is_resolved_before_reuse_without_mutating_payload(
 async def test_native_resolver_error_does_not_become_a_missing_context(monkeypatch):
     from wuwa_story_worker import entity_media, sequence_levelplay_context
 
+    monkeypatch.setattr(music, 'authored_flow_music_context', lambda *_: None)
     monkeypatch.setattr(sequence_levelplay_context, 'resolve_levelplay_context', AsyncMock(
         side_effect=RuntimeError('unavailable')))
     with pytest.raises(RuntimeError, match='unavailable'):

@@ -89,3 +89,29 @@ async def test_sequence_only_flow_is_not_dropped_when_it_has_no_spine_background
     assert target['resource_id'] is None and target['spine_recipe'] == SPINE_RECIPE
     assert target['sequence_metadata_revision'] == 5
     assert target['presentation']['cues'][0]['kind'] == 'sequence'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('with_audio', [True, False])
+async def test_image_dialogue_gets_audio_presentation_only_when_authored(with_audio):
+    from wuwa_story.ingestion.entity_media import MediaRequest, entity_media_targets
+
+    actions = [{'Name': 'ShowTalk', 'Params': {'TalkItems': [
+        {'TidTalk': 'line', 'BackgroundConfig': {'Type': 'Image', 'ImageAsset': '/Game/Scene.Scene'}}]}}]
+    if with_audio:
+        actions.insert(0, {'Name': 'PostAkEvent', 'Params': {'EventConfig': {
+            'Type': 'Global', 'AkEvent': '/Game/Play.Play'}}})
+    raw = {'StateKey': 'Story_1_2', 'Actions': actions}
+    node = SimpleNamespace(id=5, canonical_key='flow_state:Story_1_2')
+    session = SimpleNamespace(scalar=AsyncMock(side_effect=[7, node, raw]))
+    request = MediaRequest(download_id='a' * 64, asset_version='3.7.0', game_version='3.7.0',
+                           entities=[node.canonical_key], kinds=['image'])
+    targets = await entity_media_targets(session, request)
+    assert any(target['kind'] == 'image' for target in targets)
+    presentations = [target for target in targets if target.get('reference_type') == 'story_presentation']
+    assert len(presentations) == int(with_audio)
+    if with_audio:
+        target = presentations[0]
+        assert target['path'] == 'story_sequence:flow_state:Story_1_2'
+        assert target['resource_id'] is None and target['sequence_metadata_revision'] == 5
+        assert target['presentation_sha256'] == target['presentation']['sha256']

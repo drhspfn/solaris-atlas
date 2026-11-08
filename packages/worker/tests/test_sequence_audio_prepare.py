@@ -317,3 +317,85 @@ async def test_authored_event_retry_clears_recovered_audio_errors_only(prepared)
     assert section['status'] == 'rendered'
     assert section['diagnostics'] == [{'code': 'native_control_missing'}]
     assert stale not in missing and other in missing and native in missing
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('state_only', [True, False])
+@pytest.mark.parametrize('background', ['spine', 'image'])
+async def test_legacy_flow_soundtrack_requires_verified_music_bus(prepared, monkeypatch, state_only, background):
+    from wuwa_story.ingestion.spine_presentation import flow_presentation
+
+    from wuwa_story_worker import sequence_music_context
+
+    root, voice, bundle, tools, _, _ = prepared
+    with zipfile.ZipFile(bundle) as archive:
+        entries = {name: archive.read(name) for name in archive.namelist() if name != 'controls.json'}
+    manifest = json.loads(entries['manifest.json'])
+    manifest['files'].pop('controls.json')
+    presentation = flow_presentation({'StateKey': 'Story_1_29', 'Actions': [
+        {'Name': 'PostAkEvent', 'Params': {'EventConfig': {'Type': 'Global', 'AkEvent': '/Game/Aki/WwiseAudio/Events/play_all_sound_m0334'}}},
+        {'Name': 'ShowTalk', 'Params': {'TalkItems': [{'TidTalk': 'first', 'BackgroundConfig': (
+            {'Type': 'SpineImage', 'Id': 7} if background == 'spine'
+            else {'Type': 'Image', 'ImageAsset': '/Game/Scene.Scene'})}]}},
+        {'Name': 'PostAkEvent', 'Params': {'EventConfig': {'Type': 'Global', 'AkEvent': '/Game/Aki/WwiseAudio/Events/stop'}}},
+    ]})
+    entries['presentation.json'] = json.dumps(presentation).encode()
+    manifest['files']['presentation.json'] = {'size_bytes': len(entries['presentation.json']),
+                                               'sha256': hashlib.sha256(entries['presentation.json']).hexdigest()}
+    entries['manifest.json'] = json.dumps(manifest).encode()
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        for name, data in entries.items():
+            archive.writestr(name, data)
+    if state_only:
+        monkeypatch.setattr(audio, 'render_bank', AsyncMock(side_effect=ValueError('Wwise control-only event')))
+    else:
+        monkeypatch.setattr(sequence_music_context, 'verify_authored_music', AsyncMock(return_value=(True, [], {})))
+    context = sequence_music_context.authored_flow_music_context(
+        {'owner': 7, 'release_id': 21, 'presentation': presentation, 'presentation_sha256': presentation['sha256']},
+        {'asset_version': '3.7.1', 'download_id': 'base-plan'})
+    output, _ = await audio.prepare_sequence_audio(root, bundle, tools['fmodel'], tools['converter'],
+                                                   voice_root=voice, soundtrack_context=context)
+    with zipfile.ZipFile(output) as archive:
+        controls = json.loads(archive.read('controls.json'))
+        section, = controls['media']['sections']
+        assert section['scope'] == 'flow' and section['source_proof'] == context['source_proof']
+        if state_only:
+            assert not section['tracks'] and section['status'] == 'unresolved_audio_event'
+            assert any(item.get('status') == 'unresolved_audio' for item in json.loads(archive.read('manifest.json'))['control_sources']['missing'])
+        else:
+            assert section['status'] == 'rendered'
+            assert all(track['role'] == 'music' and track['loop'] is True for track in section['tracks'])
+
+
+@pytest.mark.asyncio
+async def test_legacy_levelplay_context_requires_and_preserves_fresh_presentation(prepared, monkeypatch):
+    from wuwa_story.ingestion.spine_presentation import flow_presentation
+
+    from wuwa_story_worker import sequence_music_context
+
+    root, voice, bundle, tools, _, _ = prepared
+    presentation = flow_presentation({'StateKey': 'Story_1_1', 'Actions': []})
+    with zipfile.ZipFile(bundle) as archive:
+        entries = {name: archive.read(name) for name in archive.namelist() if name != 'controls.json'}
+    manifest = json.loads(entries['manifest.json'])
+    manifest['files'].pop('controls.json')
+    entries['presentation.json'] = json.dumps(presentation).encode()
+    manifest['files']['presentation.json'] = {'size_bytes': len(entries['presentation.json']),
+                                               'sha256': hashlib.sha256(entries['presentation.json']).hexdigest()}
+    entries['manifest.json'] = json.dumps(manifest).encode()
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        for name, data in entries.items():
+            archive.writestr(name, data)
+    context = {'kind': 'levelplay_fixed_start', 'play_event': 'play', 'state_event': 'state', 'stop_event': 'stop',
+               'source_proof': {'asset_version': '3.7.1', 'download_id': 'base-plan',
+                                'presentation_sha256': presentation['sha256']}}
+    monkeypatch.setattr(sequence_music_context, 'prepare_levelplay_music', AsyncMock(return_value=(
+        {'language': None, 'rover': None, 'role': 'music', 'status': 'rendered', 'loop': True},
+        b'OggS', {}, [], {'play_target': 30})))
+    output, _ = await audio.prepare_sequence_audio(root, bundle, tools['fmodel'], tools['converter'],
+                                                   voice_root=voice, soundtrack_context=context)
+    with zipfile.ZipFile(output) as archive:
+        section, = json.loads(archive.read('controls.json'))['media']['sections']
+    assert section['reconstruction_kind'] == 'levelplay_fixed_start'
+    assert section['source_proof']['presentation_sha256'] == presentation['sha256']
+    assert section['tracks'][0]['role'] == 'music'

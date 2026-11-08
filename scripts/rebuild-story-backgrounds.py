@@ -72,7 +72,7 @@ async def run(args):
                                    FileReference.metadata_json["sequence_media"]["composition"]["state"].astext == "ready"))
                         .distinct())).all()
                     priority = {owner: i for i, owner in enumerate(args.priority)}
-                    rows = sorted(rows, key=lambda row: (priority.get(row[0], len(priority)), row[0], -row[1]))
+                    rows = sorted(rows, key=lambda row: (row[0] not in priority, -row[1], priority.get(row[0], len(priority)), row[0]))
                     if args.owner:
                         rows = [row for row in rows if row[0] in args.owner]
                     submitted = 0
@@ -96,7 +96,8 @@ async def run(args):
                             .where(Processor.key == "entity_media", ProcessingRun.input_hash == identity)
                             .order_by(ProcessingRun.id.desc()).limit(1))
                         result = {"owner": owner, "release_id": release_id, "input_hash": identity.hex()}
-                        if previous and previous.status in {"running", "queued", "waiting_dependency", "completed", "partial", "failed"}:
+                        if previous and (previous.status in {"running", "queued", "waiting_dependency", "completed"}
+                                         or (previous.status in {"partial", "failed"} and not args.retry_failed)):
                             result.update(action="existing", run_id=previous.id, status=previous.status)
                         elif args.apply:
                             # Persist the planned identity before contacting RabbitMQ. On uncertain
@@ -105,7 +106,7 @@ async def run(args):
                             report["results"].append(result)
                             save(args.report, report)
                             job = await enqueue_entity_media(session, request, retry_partial=True, execution_queue="wuwa.illustrated-backgrounds.v1")
-                            result.update(action="submitted", run_id=job.id, status=job.status)
+                            result.update(action="submitted", run_id=job.id, status=job.status, input_hash=job.input_hash.hex())
                             submitted += 1
                             save(args.report, report)
                             continue
@@ -131,7 +132,10 @@ if __name__ == "__main__":
     parser.add_argument("--priority", action="append", default=[])
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--retry-failed", action="store_true", help="Retry a reviewed failed/partial job; requires an explicit --owner")
     args = parser.parse_args()
     if not 1 <= args.limit <= 500 or args.workspace_id < 1:
         parser.error("limit must be 1..500 and workspace-id positive")
+    if args.retry_failed and not args.owner:
+        parser.error("--retry-failed requires an explicit reviewed --owner")
     asyncio.run(run(args))
