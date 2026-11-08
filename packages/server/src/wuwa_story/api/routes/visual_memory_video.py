@@ -1,6 +1,6 @@
 """Administrator endpoints for reviewing registered cutscene video sources."""
 
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import unquote, urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
@@ -46,6 +46,13 @@ class ResolveInput(Input):
             raise ValueError(
                 "Accepted observations require at least one identity link")
         return self
+
+
+class BboxInput(Input):
+    bbox: tuple[Annotated[float, Field(strict=True, allow_inf_nan=False)],
+                Annotated[float, Field(strict=True, allow_inf_nan=False)],
+                Annotated[float, Field(strict=True, allow_inf_nan=False)],
+                Annotated[float, Field(strict=True, allow_inf_nan=False)]]
 
 
 def service_for(session: AsyncSession):
@@ -150,13 +157,34 @@ async def frame_image(scan_id: int = Path(gt=0), frame_index: int = Path(ge=0),
 
 @router.post("/scans/{scan_id}/observations/{frame_index}/{detection_index}/resolve", dependencies=write)
 async def resolve(body: ResolveInput, scan_id: int = Path(gt=0),
-                  frame_index: int = Path(ge=0), detection_index: int = Path(ge=0, le=19),
+                  frame_index: int = Path(ge=0), detection_index: int = Path(ge=0),
                   user: User = Depends(require_admin), session: AsyncSession = Depends(get_session)):
     data = body.model_dump()
     if data["decision"] == "approved":
         data["decision"] = "approve"
     return await call(session, "resolve", scan_id, frame_index, detection_index,
                       **data, actor_id=user.id, mutate=True)
+
+
+@router.post("/scans/{scan_id}/frames/{frame_index}/observations", dependencies=write)
+async def add_observation(body: BboxInput, scan_id: int = Path(gt=0),
+                          frame_index: int = Path(ge=0),
+                          frame_offset: int | None = Query(None, ge=0),
+                          frame_limit: int = Query(12, ge=1, le=48),
+                          session: AsyncSession = Depends(get_session)):
+    return await call(session, "edit_bbox", scan_id, frame_index, body.bbox,
+                      frame_offset=frame_offset, frame_limit=frame_limit, mutate=True)
+
+
+@router.patch("/scans/{scan_id}/observations/{frame_index}/{detection_index}/bbox", dependencies=write)
+async def edit_observation_bbox(body: BboxInput, scan_id: int = Path(gt=0),
+                                frame_index: int = Path(ge=0), detection_index: int = Path(ge=0),
+                                frame_offset: int | None = Query(None, ge=0),
+                                frame_limit: int = Query(12, ge=1, le=48),
+                                session: AsyncSession = Depends(get_session)):
+    return await call(session, "edit_bbox", scan_id, frame_index, body.bbox,
+                      detection_index=detection_index, frame_offset=frame_offset,
+                      frame_limit=frame_limit, mutate=True)
 
 
 @router.post("/scans/{scan_id}/reject-all", dependencies=write)

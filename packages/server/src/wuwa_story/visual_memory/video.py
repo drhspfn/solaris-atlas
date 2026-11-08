@@ -508,9 +508,9 @@ class VideoReviewService:
             raise ValueError("Only completed, unreviewed scans can be labelled")
         frame = await self._frame(scan_id, frame_index, lock=True)
         detections = copy.deepcopy(frame.detections)
-        if not 0 <= detection_index < len(detections):
+        detection = next((d for d in detections if d["index"] == detection_index), None)
+        if detection is None:
             raise ValueError("Detection does not exist")
-        detection = detections[detection_index]
         previous = detection.get("decision", "unresolved")
         if decision != "reject":
             image = await self.frame_bytes(scan_id, frame_index)
@@ -566,6 +566,71 @@ class VideoReviewService:
         }
         await self.session.flush()
         return await self.get_scan(scan_id)
+
+    async def edit_bbox(
+        self, scan_id, frame_index, bbox, detection_index=None, frame_offset=None, frame_limit=12
+    ):
+        from wuwa_story.db.models import VisualVideoFrame
+        from wuwa_story.visual_memory.images import crop_image, encode_png, load_image
+
+        run = await self._run(scan_id, lock=True)
+        if run.status != "succeeded" or run.metadata_json.get("reviewed"):
+            raise ValueError("Only completed, unreviewed scans can be labelled")
+        frame = await self._frame(scan_id, frame_index, lock=True)
+        detections = copy.deepcopy(frame.detections)
+        detection = None
+        if detection_index is not None:
+            detection = next((d for d in detections if d["index"] == detection_index), None)
+            if detection is None:
+                raise ValueError("Detection does not exist")
+            if detection.get("decision", "unresolved") != "unresolved" or detection.get("reference_id"):
+                raise ValueError("Only unresolved observations without a saved reference can be edited")
+
+        file = await self.session.get(FileObject, frame.file_id)
+        data = await self.frame_bytes(scan_id, frame_index)
+        if not file or file.mime_type != "image/jpeg" or not data.startswith(b"\xff\xd8\xff"):
+            raise ValueError("Stored frame is not a registered JPEG image")
+        image = await asyncio.to_thread(load_image, data)
+        crop = crop_image(image, bbox)
+        box = [math.floor(bbox[0]), math.floor(bbox[1]), math.ceil(bbox[2]), math.ceil(bbox[3])]
+
+        position = await self.session.scalar(
+            select(func.count()).select_from(VisualVideoFrame).where(
+                VisualVideoFrame.scan_id == scan_id, VisualVideoFrame.frame_index < frame_index
+            )
+        )
+        if not 1 <= frame_limit <= 48:
+            raise ValueError("Invalid frame page")
+        if frame_offset is None:
+            frame_offset = position // frame_limit * frame_limit
+        if frame_offset < 0 or not frame_offset <= position < frame_offset + frame_limit:
+            raise ValueError("Frame page must contain the edited frame")
+
+        if detection is None:
+            duplicate = next((d for d in detections if d.get("decision", "unresolved") != "reject"
+                              and [math.floor(d["bbox"][0]), math.floor(d["bbox"][1]),
+                                   math.ceil(d["bbox"][2]), math.ceil(d["bbox"][3])] == box), None)
+            if duplicate is not None:
+                return await self.get_scan(scan_id, frame_offset, frame_limit)
+
+        found = await self.memory.search(await asyncio.to_thread(encode_png, crop))
+        candidates = copy.deepcopy(found["candidates"])
+        for candidate in candidates:
+            candidate["evidence"] = candidate.get("evidence", [])[:2]
+        if detection is None:
+            detection = {"index": max((d["index"] for d in detections), default=-1) + 1,
+                         "detection": {"score": None, "status": "manual"},
+                         "decision": "unresolved", "status": "unresolved"}
+            detections.append(detection)
+            run.raw_output = {**run.raw_output,
+                              "total_detections": run.raw_output.get("total_detections", 0) + 1,
+                              "unresolved_count": run.raw_output.get("unresolved_count", 0) + 1}
+        detection.update(bbox=box, normalized_bbox=[box[0] / image.width, box[1] / image.height,
+                                                    box[2] / image.width, box[3] / image.height],
+                         candidates=candidates, links=[])
+        frame.detections = detections
+        await self.session.flush()
+        return await self.get_scan(scan_id, frame_offset, frame_limit)
 
     async def reject_all(self, scan_id, actor_id=None):
         from wuwa_story.db.models import VisualVideoFrame
