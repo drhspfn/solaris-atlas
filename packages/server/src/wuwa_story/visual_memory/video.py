@@ -520,6 +520,8 @@ class VideoReviewService:
             "id": run.id,
             "status": run.status,
             "reviewed": bool(run.metadata_json.get("reviewed")),
+            "can_review_frames": run.status in ("pending", "running", "failed", "succeeded")
+            and not run.metadata_json.get("reviewed"),
             "reviewed_at": run.metadata_json.get("reviewed_at"),
             "source": source,
             "models": run.metadata_json.get("models"),
@@ -556,8 +558,8 @@ class VideoReviewService:
         if decision not in ("approved", "pending", "reject"):
             raise ValueError("Invalid observation decision")
         run = await self._run(scan_id, lock=True)
-        if run.status != "succeeded" or run.metadata_json.get("reviewed"):
-            raise ValueError("Only completed, unreviewed scans can be labelled")
+        if run.status not in ("pending", "running", "failed", "succeeded") or run.metadata_json.get("reviewed"):
+            raise ValueError("Only unreviewed scans can be labelled")
         frame = await self._frame(scan_id, frame_index, lock=True)
         detections = copy.deepcopy(frame.detections)
         detection = next((d for d in detections if d["index"] == detection_index), None)
@@ -625,10 +627,10 @@ class VideoReviewService:
         from wuwa_story.db.models import VisualVideoFrame
         from wuwa_story.visual_memory.images import crop_image, encode_png, load_image
 
-        run = await self._run(scan_id, lock=True)
-        if run.status != "succeeded" or run.metadata_json.get("reviewed"):
-            raise ValueError("Only completed, unreviewed scans can be labelled")
-        frame = await self._frame(scan_id, frame_index, lock=True)
+        run = await self._run(scan_id)
+        if run.status not in ("pending", "running", "failed", "succeeded") or run.metadata_json.get("reviewed"):
+            raise ValueError("Only unreviewed scans can be labelled")
+        frame = await self._frame(scan_id, frame_index)
         detections = copy.deepcopy(frame.detections)
         detection = None
         if detection_index is not None:
@@ -646,6 +648,26 @@ class VideoReviewService:
         crop = crop_image(image, bbox)
         box = [math.floor(bbox[0]), math.floor(bbox[1]), math.ceil(bbox[2]), math.ceil(bbox[3])]
 
+        duplicate = detection is None and any(
+            d.get("decision", "unresolved") != "reject"
+            and [math.floor(d["bbox"][0]), math.floor(d["bbox"][1]),
+                 math.ceil(d["bbox"][2]), math.ceil(d["bbox"][3])] == box
+            for d in detections
+        )
+        candidates = []
+        if not duplicate:
+            found = await self.memory.search(await asyncio.to_thread(encode_png, crop))
+            candidates = copy.deepcopy(found["candidates"])
+            for candidate in candidates:
+                candidate["evidence"] = candidate.get("evidence", [])[:2]
+
+        run = await self._run(scan_id, lock=True)
+        if run.status not in ("pending", "running", "failed", "succeeded") or run.metadata_json.get("reviewed"):
+            raise ValueError("Only unreviewed scans can be labelled")
+        frame = await self._frame(scan_id, frame_index, lock=True)
+        if frame.detections != detections:
+            raise ValueError("Frame observations changed; reload before editing")
+
         position = await self.session.scalar(
             select(func.count()).select_from(VisualVideoFrame).where(
                 VisualVideoFrame.scan_id == scan_id, VisualVideoFrame.frame_index < frame_index
@@ -658,17 +680,9 @@ class VideoReviewService:
         if frame_offset < 0 or not frame_offset <= position < frame_offset + frame_limit:
             raise ValueError("Frame page must contain the edited frame")
 
-        if detection is None:
-            duplicate = next((d for d in detections if d.get("decision", "unresolved") != "reject"
-                              and [math.floor(d["bbox"][0]), math.floor(d["bbox"][1]),
-                                   math.ceil(d["bbox"][2]), math.ceil(d["bbox"][3])] == box), None)
-            if duplicate is not None:
-                return await self.get_scan(scan_id, frame_offset, frame_limit)
+        if duplicate:
+            return await self.get_scan(scan_id, frame_offset, frame_limit)
 
-        found = await self.memory.search(await asyncio.to_thread(encode_png, crop))
-        candidates = copy.deepcopy(found["candidates"])
-        for candidate in candidates:
-            candidate["evidence"] = candidate.get("evidence", [])[:2]
         if detection is None:
             detection = {"index": max((d["index"] for d in detections), default=-1) + 1,
                          "detection": {"score": None, "status": "manual"},
@@ -762,6 +776,9 @@ class VideoReviewService:
         spec = copy.deepcopy(run.metadata_json)
         if await asyncio.to_thread(self.memory._engine().model_identity) != spec["models"]:
             raise ValueError("Configured inference models changed; explicitly start a new scan")
+        run = await self._run(scan_id, lock=True)
+        if run.status not in ("pending", "running"):
+            return await self.get_scan(scan_id)
         run.status, run.error = "running", None
         await self.session.commit()
         source = spec["source"]
@@ -802,7 +819,7 @@ class VideoReviewService:
                 times = [sampling["timestamp_seconds"]]
             else:
                 times = sample_times(duration, spec["interval_seconds"])
-            run = await self._run(scan_id)
+            run = await self._run(scan_id, lock=True)
             data = dict(run.raw_output or {})
             data.update(total_frames=len(times), duration=duration)
             run.raw_output = data
@@ -849,6 +866,7 @@ class VideoReviewService:
                             "links": [],
                         }
                     )
+                run = await self._run(scan_id, lock=True)
                 self.session.add(
                     VisualVideoFrame(
                         scan_id=scan_id,
@@ -860,7 +878,6 @@ class VideoReviewService:
                         detections=detections,
                     )
                 )
-                run = await self._run(scan_id)
                 data = {
                     **run.raw_output,
                     "completed_frames": run.raw_output.get("completed_frames", 0) + 1,
@@ -869,7 +886,7 @@ class VideoReviewService:
                 }
                 run.raw_output = data
                 await self.session.commit()
-            run = await self._run(scan_id)
+            run = await self._run(scan_id, lock=True)
             if mode == "segment":
                 run.raw_output = {**run.raw_output, "total_frames": run.raw_output["completed_frames"]}
             run.status, run.finished_at, run.error = "succeeded", datetime.now(UTC), None

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 
-function setup() {
+function setup(storage = new Map()) {
   class Element {
     constructor() {
       this.events = {};
@@ -12,6 +12,8 @@ function setup() {
       this.disabled = false;
       this.checked = false;
       this.innerHTML = "";
+      this.frames = new Map();
+      this.updates = 0;
       this.textContent = "";
       this.elements = {
         interval_seconds: { value: "3", disabled: false },
@@ -32,15 +34,43 @@ function setup() {
     }
     setAttribute() {}
     removeAttribute() {}
-    replaceChildren() {}
+    replaceChildren() {
+      this.frames.clear();
+      this.innerHTML = "";
+    }
+    insertAdjacentHTML(position, html) {
+      const key = /data-frame-index="(\d+)"/.exec(html)?.[1];
+      const parent = this;
+      const frame = {
+        html,
+        remove() {
+          parent.frames.delete(key);
+          parent.sync();
+        },
+        set outerHTML(value) {
+          this.html = value;
+          parent.updates++;
+          parent.sync();
+        },
+      };
+      this.frames.set(key, frame);
+      this.updates++;
+      this.sync();
+    }
+    sync() {
+      this.innerHTML = [...this.frames.values()]
+        .map((frame) => frame.html)
+        .join("");
+    }
     pause() {}
     load() {}
     focus() {}
     getAttribute() {
       return this.src || null;
     }
-    querySelector() {
-      return new Element();
+    querySelector(selector) {
+      const key = /data-frame-index="(\d+)"/.exec(selector)?.[1];
+      return key == null ? new Element() : this.frames.get(key) || null;
     }
     getBoundingClientRect() {
       return { left: 0, top: 0, width: 100, height: 100 };
@@ -73,10 +103,15 @@ function setup() {
   let saveDialog,
     dialogHtml,
     closed = false,
-    outerBusy = false;
+    outerBusy = false,
+    picker;
   const context = {
     URL,
     URLSearchParams,
+    sessionStorage: {
+      getItem: (key) => storage.get(key),
+      setItem: (key, value) => storage.set(key, value),
+    },
     location: { href: "http://test/" },
     setTimeout: (fn) => {
       timers.push(fn);
@@ -113,7 +148,9 @@ function setup() {
     message(text, error) {
       messages.push({ text, error });
     },
-    chooseLinks() {},
+    chooseLinks(box, save) {
+      picker = { box, save };
+    },
     dialog(title, html, save) {
       dialogHtml = html;
       saveDialog = save;
@@ -130,6 +167,9 @@ function setup() {
   const tick = () => new Promise((resolve) => setImmediate(resolve));
   return {
     review,
+    get picker() {
+      return picker;
+    },
     element,
     requests,
     timers,
@@ -294,7 +334,10 @@ test("a late poll cannot replace a newly selected source", async () => {
   });
   await t.tick();
   assert.match(t.element("#vm-video-source").textContent, /9/);
-  assert.match(t.element("#vm-video-status").textContent, /No scan has been selected/);
+  assert.match(
+    t.element("#vm-video-status").textContent,
+    /No scan has been selected/,
+  );
   assert.equal(t.element("#vm-video-reviewed").disabled, true);
 });
 
@@ -380,22 +423,63 @@ test("failed scans retry and reviewed plans can be opened without force", async 
   assert.equal(t.element("#vm-video-start").disabled, false);
   assert.match(t.element("#vm-video-status").textContent, /Reviewed scan/);
   const fields = form.elements;
-  fields.sampling_mode.value = "frame"; fields.sampling_mode.change();
+  fields.sampling_mode.value = "frame";
+  fields.sampling_mode.change();
   fields.timestamp_seconds.value = "91.1";
-  form.events.submit({ preventDefault() {}, currentTarget: form }); await t.tick();
+  form.events.submit({ preventDefault() {}, currentTarget: form });
+  await t.tick();
   assert.equal(t.requests[5].body.force, false);
   assert.equal(t.requests[5].body.sampling_mode, "frame");
-  t.requests[5].resolve({id:9}); await t.tick();
-  t.requests[6].resolve({id:9,status:"succeeded",reviewed:true,sampling_mode:"frame",timestamp_seconds:91.1,sampling_frame_offset:0,source:{source_sha256:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},frames:[],frame_count:0,unresolved_count:0,next_frame_offset:null}); await t.tick();
-  fields.sampling_mode.value = "segment"; fields.sampling_mode.change();
-  fields.start_seconds.value = "10"; fields.end_seconds.value = "20";
-  form.events.submit({ preventDefault() {}, currentTarget: form }); await t.tick();
+  t.requests[5].resolve({ id: 9 });
+  await t.tick();
+  t.requests[6].resolve({
+    id: 9,
+    status: "succeeded",
+    reviewed: true,
+    sampling_mode: "frame",
+    timestamp_seconds: 91.1,
+    sampling_frame_offset: 0,
+    source: {
+      source_sha256:
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    },
+    frames: [],
+    frame_count: 0,
+    unresolved_count: 0,
+    next_frame_offset: null,
+  });
+  await t.tick();
+  fields.sampling_mode.value = "segment";
+  fields.sampling_mode.change();
+  fields.start_seconds.value = "10";
+  fields.end_seconds.value = "20";
+  form.events.submit({ preventDefault() {}, currentTarget: form });
+  await t.tick();
   assert.equal(t.requests[7].body.force, false);
   assert.equal(t.requests[7].body.sampling_mode, "segment");
-  t.requests[7].resolve({id:10}); await t.tick();
-  t.requests[8].resolve({id:10,status:"succeeded",reviewed:true,sampling_mode:"segment",start_seconds:10,end_seconds:20,source:{source_sha256:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},frames:[],frame_count:0,unresolved_count:0,next_frame_offset:null}); await t.tick();
-  fields.sampling_mode.value = "full"; fields.sampling_mode.change();
-  form.events.submit({ preventDefault() {}, currentTarget: form }); await t.tick();
+  t.requests[7].resolve({ id: 10 });
+  await t.tick();
+  t.requests[8].resolve({
+    id: 10,
+    status: "succeeded",
+    reviewed: true,
+    sampling_mode: "segment",
+    start_seconds: 10,
+    end_seconds: 20,
+    source: {
+      source_sha256:
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    },
+    frames: [],
+    frame_count: 0,
+    unresolved_count: 0,
+    next_frame_offset: null,
+  });
+  await t.tick();
+  fields.sampling_mode.value = "full";
+  fields.sampling_mode.change();
+  form.events.submit({ preventDefault() {}, currentTarget: form });
+  await t.tick();
   assert.equal(t.requests[9].body.force, false);
   assert.equal(t.requests[9].body.sampling_mode, "full");
 });
@@ -509,8 +593,10 @@ test("frame paging uses absolute indexes and scan-wide unresolved count", async 
   await t.tick();
   assert.equal(t.element("#vm-video-reviewed").disabled, false);
   const form = t.element("#vm-video-scan");
-  form.events.submit({preventDefault(){},currentTarget:form}); await t.tick();
-  t.requests[6].resolve({id:9}); await t.tick();
+  form.events.submit({ preventDefault() {}, currentTarget: form });
+  await t.tick();
+  t.requests[6].resolve({ id: 9 });
+  await t.tick();
   assert.match(t.requests[7].path, /scans\/9\?frame_offset=0&frame_limit=12/);
 });
 
@@ -881,11 +967,9 @@ test("partial frame save reloads before reopening and does not repeat a successf
   t.requests[2].resolve(scan);
   await t.tick();
   const edit = () =>
-    t
-      .element("#vm-video-frames")
-      .events.click({
-        target: { closest: () => ({ dataset: { editFrame: "12" } }) },
-      });
+    t.element("#vm-video-frames").events.click({
+      target: { closest: () => ({ dataset: { editFrame: "12" } }) },
+    });
   edit();
   const overlay = t.body.querySelector("#vm-frame-edit-overlay");
   const draw = (x, y) => {
@@ -971,15 +1055,33 @@ async function samplingSetup() {
 }
 
 test("switching from a failed plan never forces another plan", async () => {
-  const t = await samplingSetup(), form = t.element("#vm-video-scan"), fields = form.elements;
-  form.events.submit({preventDefault(){},currentTarget:form}); await t.tick();
-  t.requests[2].resolve({id:8}); await t.tick();
-  t.requests[3].resolve({id:8,status:"failed",sampling_mode:"full",interval_seconds:3,source:{source_sha256:"abc"},frames:[],frame_count:0,unresolved_count:0,next_frame_offset:null}); await t.tick();
-  fields.sampling_mode.value="segment"; fields.sampling_mode.change();
-  fields.start_seconds.value="10"; fields.end_seconds.value="20";
-  form.events.submit({preventDefault(){},currentTarget:form}); await t.tick();
-  assert.equal(t.requests[4].body.force,false);
-  assert.equal(t.requests[4].body.sampling_mode,"segment");
+  const t = await samplingSetup(),
+    form = t.element("#vm-video-scan"),
+    fields = form.elements;
+  form.events.submit({ preventDefault() {}, currentTarget: form });
+  await t.tick();
+  t.requests[2].resolve({ id: 8 });
+  await t.tick();
+  t.requests[3].resolve({
+    id: 8,
+    status: "failed",
+    sampling_mode: "full",
+    interval_seconds: 3,
+    source: { source_sha256: "abc" },
+    frames: [],
+    frame_count: 0,
+    unresolved_count: 0,
+    next_frame_offset: null,
+  });
+  await t.tick();
+  fields.sampling_mode.value = "segment";
+  fields.sampling_mode.change();
+  fields.start_seconds.value = "10";
+  fields.end_seconds.value = "20";
+  form.events.submit({ preventDefault() {}, currentTarget: form });
+  await t.tick();
+  assert.equal(t.requests[4].body.force, false);
+  assert.equal(t.requests[4].body.sampling_mode, "segment");
 });
 
 test("full video sampling stays the default at three seconds", async () => {
@@ -1075,4 +1177,159 @@ test("exact frame uses current player position and a separate frame offset", asy
     t.element("#vm-video-status").textContent,
     /Frame at 91.1s · offset 4/,
   );
+});
+
+async function openProgressiveScan(t, scan) {
+  t.review.open();
+  t.requests[0].resolve({
+    items: [{ name: "Scene", cutscene_key: "CG" }],
+    total: 1,
+  });
+  await t.tick();
+  clickVideo(t, { videoItem: "0" }, "#vm-video-catalog");
+  t.requests[1].resolve({
+    sources: [
+      {
+        asset_node_id: 1,
+        asset_version: "1",
+        game_version: "1",
+        source_reference_id: 2,
+        cutscene_key: "CG",
+        source_sha256: "a".repeat(64),
+        scan: { id: 8 },
+      },
+    ],
+  });
+  await t.tick();
+  t.requests[2].resolve(scan);
+  await t.tick();
+}
+function clickVideo(t, dataset, selector = "#vm-video-frames") {
+  t.element(selector).events.click({
+    target: {
+      closest: () => ({ dataset, setAttribute() {}, removeAttribute() {} }),
+    },
+  });
+}
+function progressiveScan() {
+  return {
+    id: 8,
+    status: "running",
+    can_review_frames: true,
+    source: { source_sha256: "a".repeat(64) },
+    frames: [0, 1].map((index) => ({
+      index,
+      time: index,
+      width: 100,
+      height: 100,
+      detections: [
+        { index: 0, bbox: [0, 0, 20, 20], decision: "unresolved", links: [] },
+      ],
+    })),
+    frame_count: 2,
+    unresolved_count: 2,
+    progress: { completed: 2, total: 89 },
+  };
+}
+test("ready frames are interactive during extraction and unchanged cards survive polling", async () => {
+  const t = setup(),
+    scan = progressiveScan();
+  await openProgressiveScan(t, scan);
+  assert.doesNotMatch(
+    t.element("#vm-video-frames").innerHTML,
+    /data-edit-frame="0" disabled/,
+  );
+  assert.equal(t.element("#vm-video-start").disabled, false);
+  assert.equal(t.element("#vm-video-reviewed").disabled, true);
+  const updates = t.element("#vm-video-frames").updates;
+  t.timers.at(-1)();
+  t.requests.at(-1).resolve({ ...scan, progress: { completed: 3, total: 89 } });
+  await t.tick();
+  assert.equal(t.element("#vm-video-frames").updates, updates);
+});
+test("approval response and polls preserve another frame's draft and open identity picker", async () => {
+  const t = setup(),
+    scan = progressiveScan();
+  await openProgressiveScan(t, scan);
+  clickVideo(t, { chooseFrame: "0", detection: "0" });
+  t.picker.box.names[1] = "Hsin";
+  await t.picker.save([{ identity_id: 1, appearance_id: null }]);
+  clickVideo(t, { frame: "0", detection: "0", decision: "approve" });
+  const approval = t.requests.at(-1);
+  assert.match(approval.path, /observations\/0\/0\/resolve/);
+  clickVideo(t, { chooseFrame: "1", detection: "0" });
+  const picker = t.picker;
+  picker.box.names[2] = "Rover";
+  approval.resolve({});
+  await t.tick();
+  t.requests
+    .at(-1)
+    .resolve({
+      ...scan,
+      frames: [
+        {
+          ...scan.frames[0],
+          detections: [
+            {
+              ...scan.frames[0].detections[0],
+              decision: "approved",
+              links: [{ identity_id: 1 }],
+            },
+          ],
+        },
+        scan.frames[1],
+      ],
+    });
+  await t.tick();
+  await picker.save([{ identity_id: 2, appearance_id: null }]);
+  assert.match(t.element("#vm-video-frames").innerHTML, /Selected: Rover/);
+  t.timers.at(-1)();
+  t.requests.at(-1).resolve(scan);
+  await t.tick();
+  assert.match(t.element("#vm-video-frames").innerHTML, /Selected: Rover/);
+  clickVideo(t, { frame: "1", detection: "0", decision: "pending" });
+  assert.equal(t.requests.at(-1).body.links[0].identity_id, 2);
+  t.requests.at(-1).reject(new Error("Retry later"));
+  await t.tick();
+  assert.match(t.element("#vm-video-frames").innerHTML, /Selected: Rover/);
+  assert.match(t.element("#vm-video-frames").innerHTML, /Retry later/);
+});
+test("tab storage restores drafts and changed server observations require reselection", async () => {
+  const storage = new Map(),
+    scan = progressiveScan(),
+    t = setup(storage);
+  await openProgressiveScan(t, scan);
+  clickVideo(t, { chooseFrame: "1", detection: "0" });
+  t.picker.box.names[3] = "Abby";
+  await t.picker.save([{ identity_id: 3, appearance_id: null }]);
+  const restored = setup(storage);
+  await openProgressiveScan(restored, scan);
+  assert.match(
+    restored.element("#vm-video-frames").innerHTML,
+    /Selected: Abby/,
+  );
+  restored.timers.at(-1)();
+  const changed = structuredClone(scan);
+  changed.frames[1].detections[0].bbox = [0, 0, 30, 30];
+  restored.requests.at(-1).resolve(changed);
+  await restored.tick();
+  const count = restored.requests.length;
+  clickVideo(restored, { frame: "1", detection: "0", decision: "approve" });
+  assert.equal(restored.requests.length, count);
+  assert.match(restored.messages.at(-1).text, /changed on the server/);
+});
+test("a background poll does not invalidate an open frame editor", async () => {
+  const t = setup(),
+    scan = progressiveScan();
+  await openProgressiveScan(t, scan);
+  clickVideo(t, { editFrame: "0" });
+  assert.match(t.html, /Edit|Detector boxes/);
+  t.timers.at(-1)();
+  t.requests.at(-1).resolve(structuredClone(scan));
+  await t.tick();
+  const saving = t.save();
+  await t.tick();
+  assert.match(t.requests.at(-1).path, /scans\/8\?/);
+  t.requests.at(-1).resolve(scan);
+  await saving;
 });
