@@ -1,0 +1,51 @@
+name: Visual memory validation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: visual_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d visual_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/visual_test
+      WUWA_VISUAL_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/visual_test
+      PYTHONPATH: src:../worker/src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.6"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CPU test prerequisites
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install server and test dependencies
+        working-directory: packages/server
+        run: uv sync --frozen --group dev
+      - name: Apply migrations
+        working-directory: packages/server
+        run: uv run alembic upgrade head
+      - name: Validate visual memory, permissions and video processing
+        working-directory: packages/server
+        run: >-
+          uv run pytest tests/test_visual_memory_*.py tests/test_admin_visual_memory.py
+          tests/test_agent_chat_roles.py tests/test_mcp_media_tools.py tests/test_mcp_character_tools.py
+          -q
+      - name: Validate admin interaction and tool documentation
+        run: node --test packages/server/tests/test_visual_memory_*.mjs packages/web_new/tests/mcpDocs.test.mjs
