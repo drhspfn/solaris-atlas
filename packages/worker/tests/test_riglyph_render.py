@@ -282,3 +282,15 @@ def test_legacy_background_failure_keeps_static_fallback(tmp_path, monkeypatch):
     result = render.build_animation(bundle, cli=['riglyph'])
     assert result.decision['state'] == 'render_failed'
     assert result.variants == [] and bundle.exists()
+
+
+def test_native_alpha_accepts_lossy_transparency_but_rejects_a_flattened_plane():
+    from PIL import Image
+
+    original = Image.new('RGBA', (10, 10), (80, 100, 120, 140))
+    encoded = Image.new('L', (10, 10), 140)
+    encoded.putpixel((0, 0), 158)
+    assert render._alpha_matches_reference(original, encoded, (10, 10))
+    assert not render._alpha_matches_reference(original, Image.new('L', (10, 10), 255), (10, 10))
+    assert not render._alpha_matches_reference(original, Image.new('L', (10, 10), 145), (10, 10))
+    assert not render._alpha_matches_reference(original, encoded, (20, 10))

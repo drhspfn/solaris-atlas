@@ -63,3 +63,32 @@ produce a completed WebM during the bounded check; only a zero-byte temporary
 WebM existed. The probe's own render process tree was stopped. Production
 workers and queues were not restarted. This does not establish a renderer
 crash or numerical/visual compatibility; runtime/performance remains unverified.
+
+## Rollout update (2026-11-08, 01:05 UTC)
+
+The findings above describe the original implementation, before this branch's fixes.
+
+- Native Riglyph 0.16.2 now renders validated legacy single-visible-rig prefabs,
+  including Denia's SpineMip materials and authored black background. Original
+  skeleton/atlas/textures, presentation, UI sequences and converted IR are retained.
+- The reader accepts native-v2 exports, includes choice-bearing illustrated lines,
+  and displays animations as looping backgrounds without video controls. Scoped
+  flow music can be published independently of 3D engine playback.
+- API and web image `0ac32692074d5eb3033674bae6820212cdc9b2f1` deployed successfully
+  in workflow 42431991980. Existing media workers were not restarted.
+- A separate durable `wuwa.illustrated-backgrounds.v1` consumer runs in
+  `solaris-legacy-illustrated-0ac3269` (3 GiB, two CPUs, concurrency one).
+- Denia pilot run 32026 found all seven requested resources and is rendering
+  its authored 2560×1440 canvas proportionally at 2048×1152, 30 fps. This is
+  still an in-progress job, not a successful publication receipt.
+- Coordinator dry-run found at least 500 missing/current-recipe jobs. Its
+  inventory now includes raw authored backgrounds without any previous media
+  reference. Denia, Cantarella and the identified 2.4 image flows have priority.
+  Durable receipts live under `/var/lib/wuwa-worker/recovery/illustrated-20261108/`.
+- Denia music is a persistent Wwise state consumer, requiring explicit fixed-start
+  reconstruction rather than treating its state-setting event as a Play event.
+  This remains separate from visual validation and must be verified before
+  describing that pilot as having background music.
+
+Publication replaces matching references only after validation, retains sources,
+and protects newer recipes against older publishers. No queues were cleared.

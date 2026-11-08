@@ -129,15 +129,27 @@ def _compose_black(video: Path, width: int, height: int, fps: int, count: int, l
         output.unlink(missing_ok=True)
 
 
-def _verify_opaque_first_frame(cli, native, converted, clip, config, width, height, video, logs, timeout):
-    """Distinguish a naturally opaque first frame from an unverified alpha stream."""
+def _alpha_matches_reference(original, encoded, size):
+    """Compare decoded VP9 alpha with the same native frame, allowing lossy quantization."""
+    from PIL import ImageChops, ImageStat
+
+    if original.size != size or encoded.size != size:
+        return False
+    difference = ImageChops.difference(original.convert('RGBA').getchannel('A'), encoded.convert('L'))
+    # VP9's alpha plane is lossy. Require small average and bounded per-pixel
+    # differences; a missing/flattened alpha plane must still fail validation.
+    return difference.getextrema()[1] <= 32 and ImageStat.Stat(difference).mean[0] <= 1
+
+
+def _verify_alpha_first_frame(cli, native, converted, clip, config, width, height, video, logs, timeout):
+    """Verify actual alpha pixels rather than rejecting a valid non-opaque frame."""
     from PIL import Image
 
     reference = video.with_name(video.stem + '-alpha-reference')
     _run([*cli, 'render', str(converted / 'skeleton.ir.json'), '--images', str(converted / 'textures'),
           '--clip', clip, '--start', '0', '--end', '0.01', '--fps', '1', '--width', str(width),
           '--height', str(height), '--format', 'png-sequence', '--alpha', '--backend', 'native-cpu',
-          '--native-path', native, '--config', str(config), '--max-frames', '1', '--overwrite',
+          '--native-path', native, '--config', str(config), '--sampling', 'linear', '--max-frames', '1', '--overwrite',
           '--progress', 'none', '--out-dir', str(reference)], logs / f'{video.stem}-alpha-reference.log', timeout)
     decoded = video.with_name(video.stem + '-decoded-alpha.png')
     with (logs / f'{video.stem}-alpha-decode.log').open('w', encoding='utf-8') as stream:
@@ -145,9 +157,7 @@ def _verify_opaque_first_frame(cli, native, converted, clip, config, width, heig
                         '-i', str(video), '-vf', 'alphaextract', '-frames:v', '1', str(decoded)],
                        check=True, timeout=timeout, stdout=stream, stderr=stream)
     with Image.open(reference / 'frame_000000.png') as original, Image.open(decoded) as encoded:
-        return (original.size == (width, height) and encoded.size == (width, height)
-                and original.convert('RGBA').getchannel('A').getextrema() == (255, 255)
-                and encoded.convert('L').getextrema() == (255, 255))
+        return _alpha_matches_reference(original, encoded, (width, height))
 
 
 def archive_policy(bundle: Path) -> dict:
@@ -317,7 +327,7 @@ def build_animation(bundle: Path, *, cli: list[str] | None = None) -> AnimationA
                     or report.get("frameCount") != max(1, math.ceil(clip["durationSec"] * fps))):
                 raise ValueError(f"Riglyph did not validate a complete alpha WebM; log: {logs / f'{index:03d}.log'}")
             if legacy and probe.get('decodedAlphaVerified') is not True:
-                if not _verify_opaque_first_frame(cli, native, converted, clip['id'], config,
+                if not _verify_alpha_first_frame(cli, native, converted, clip['id'], config,
                                                   width, height, video, logs, timeout):
                     raise ValueError('Could not validate alpha against the rendered first frame')
             if legacy and legacy.get('background'):
