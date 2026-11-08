@@ -36,6 +36,7 @@ const {
   readingDelay,
   enrichSequenceLines,
   sequenceBackgroundMusic,
+  flowBackgroundMusic,
 } = load("story/sequenceReader");
 const { illustratedRuns } = load("story/questReading");
 const line = { text: { key: "dialogue.key" } };
@@ -218,6 +219,22 @@ test("background music must be uniquely published and explicitly marked music", 
   );
 });
 
+test("flow music requires exact line coverage and a unique source-proven published track", () => {
+  const lines = [{ flow_state: "denia", text: { key: "one" } }, { flow_state: "denia", text: { key: "two" } }];
+  const proof = { flow_owner: 10, release_id: 21, flow_state: "denia", presentation_sha256: "sha", asset_version: "3.3", download_id: "id", play_path: "play", talk_path: "talk", stop_path: "stop", talk_text_keys: ["one", "two"] };
+  const section = { kind: "audio_event", scope: "flow", reconstruction_kind: "flow_authored_music", source_proof: proof, tracks: [{ url: "/denia.ogg", role: "music", status: "published", loop: true }] };
+  const event = { kind: "flow_music", flow_state: "denia", covered_text_keys: ["one", "two"], sequence_media: media(section) };
+  const result = flowBackgroundMusic(lines, [event]);
+  assert.equal(result.url, "/denia.ogg");
+  assert.equal(result.loop, true);
+  assert.equal(flowBackgroundMusic(lines, [{ ...event, covered_text_keys: ["one"] }]), undefined);
+  assert.equal(flowBackgroundMusic(lines, [{ ...event, flow_state: "other" }]), undefined);
+  assert.equal(flowBackgroundMusic(lines, [event, event]), undefined);
+  assert.equal(flowBackgroundMusic(lines, [{ ...event, sequence_media: media({ ...section, source_proof: { ...proof, talk_text_keys: ["one"] } }) }]), undefined);
+  assert.equal(flowBackgroundMusic(lines, [{ ...event, sequence_media: media({ ...section, tracks: [] }) }]), undefined);
+  assert.equal(flowBackgroundMusic(lines, [{ ...event, sequence_media: media({ ...section, tracks: [{ ...section.tracks[0], url: "javascript:alert(1)" }] }) }]), undefined);
+});
+
 test("quest and encounter paths enrich lines before creating reader groups", () => {
   const page = readFileSync(
     new URL("../src/components/quest/QuestPageClient.tsx", import.meta.url),
@@ -237,8 +254,9 @@ test("quest and encounter paths enrich lines before creating reader groups", () 
   );
   assert.match(
     page,
-    /backgroundMusic=\{sequenceBackgroundMusic\(sequenceForRun\(run\)\)\}/,
+    /backgroundMusic=\{sequenceBackgroundMusic\(sequenceForRun\(run\)\)\s*\?\?\s*flowBackgroundMusic/,
   );
+  assert.match(page, /events:\s*media\.events\.filter\(event => String\(event\.kind\) !== "flow_music"\)/);
 });
 
 test("background music starts with a gesture and has no native controls", () => {

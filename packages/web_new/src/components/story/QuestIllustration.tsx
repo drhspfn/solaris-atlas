@@ -93,7 +93,8 @@ export function QuestIllustration({
         key={`${illustration.id}:${choice}:${animation || ""}`}
         preview={preview}
         label="Animated story illustration"
-        compact={presentation === "background"}
+        compact={false}
+        loop={presentation === "background" ? true : (illustration.loop ?? true)}
         fallback={
           animated && !preview ? (
             <QuestAnimatedBackdrop

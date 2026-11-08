@@ -123,7 +123,9 @@ function harness(hasVoice = true, content = "Text", hasMusic = false) {
     anchors: new Map(),
     display: { name: "Rover", colorMode: "accent", customColor: "#fff" },
     backgroundMusic: hasMusic ? { url: "/music.ogg", loop: true } : null,
-    renderLine: () => null,
+    renderLine: (line) => line.player_choices?.length
+      ? { type: "a", props: { href: "#reply", children: "Choose reply" } }
+      : null,
   };
   const nodes = (t) =>
     t && typeof t === "object"
@@ -276,6 +278,21 @@ test("choices take over after reveal and prevent automatic advancement", () => {
   h.render();
   h.render();
   assert.equal(h.states[0], 0);
+});
+
+test("illustrated choice shows its original routed content and anchor when revealed", () => {
+  const h = harness(false, "Choice");
+  h.lines[0].player_choices = [{ id: "choice", target_line_id: "reply" }];
+  let tree = h.render();
+  h.button(tree, "Enable auto advance").props.onClick();
+  h.render();
+  [...h.timers.values()].find((t) => t.ms === 300).fn();
+  [...h.timers.values()].find((t) => t.ms === 150).fn();
+  tree = h.render();
+  const active = h.nodes(tree).find(node => node.props?.["data-scene-active"]);
+  assert.equal(active.props.hidden, false);
+  assert.ok(h.nodes(active).some(node => node.type === "a" && node.props.href === "#reply"));
+  assert.equal(h.button(tree, "Next dialogue line").props.disabled, true);
 });
 
 test("voice and music volume are independent and voice volume survives line changes", () => {

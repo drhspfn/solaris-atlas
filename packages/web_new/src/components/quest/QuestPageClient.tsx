@@ -37,6 +37,7 @@ import { QuestFork } from "@/components/story/QuestFork";
 import { illustratedRuns, questForks } from "@/components/story/questReading";
 import {
   enrichSequenceLines,
+  flowBackgroundMusic,
   sequenceBackgroundMusic,
   sequenceFrameForLine,
 } from "@/components/story/sequenceReader";
@@ -292,8 +293,10 @@ export function QuestPageClient({
   const scenes = transcript?.scenes || profile?.scenes || [];
   const classification = quest.classification;
   const storyGalleryRecord = classification?.kind === "story_gallery";
+  const flowEvents: unknown[] = media?.events || [];
+  const displayMedia = media ? { ...media, events: media.events.filter(event => String(event.kind) !== "flow_music") } : null;
   const hasMediaReferences = Boolean(
-    media?.events?.length ||
+    displayMedia?.events?.length ||
     media?.video_packages?.length ||
     media?.related_cutscenes?.length,
   );
@@ -397,7 +400,7 @@ export function QuestPageClient({
   );
   const pageMediaEvents = visibleCutsceneEntries(
     shown,
-    media?.events || [],
+    displayMedia?.events || [],
     Boolean(transcript?.offset || lines.length >= (transcript?.limit || 0)),
     interactionIds,
   );
@@ -717,9 +720,7 @@ export function QuestPageClient({
                     lines={run as any}
                     display={playerDisplay}
                     sequenceMedia={sequenceForRun(run)}
-                    backgroundMusic={sequenceBackgroundMusic(
-                      sequenceForRun(run),
-                    )}
+                    backgroundMusic={sequenceBackgroundMusic(sequenceForRun(run)) ?? flowBackgroundMusic(run as any, flowEvents)}
                     anchors={lineAnchors}
                     focusLine={citedLine}
                     renderLine={(entry) =>
@@ -890,7 +891,7 @@ export function QuestPageClient({
               lines={run as any}
               display={playerDisplay}
               sequenceMedia={sequenceForRun(run)}
-              backgroundMusic={sequenceBackgroundMusic(sequenceForRun(run))}
+              backgroundMusic={sequenceBackgroundMusic(sequenceForRun(run)) ?? flowBackgroundMusic(run as any, flowEvents)}
               anchors={lineAnchors}
               focusLine={citedLine}
               renderLine={(entry) =>
@@ -1256,11 +1257,11 @@ export function QuestPageClient({
             />
           ))}
           {hasMediaReferences && (
-            <QuestMediaReferences manifest={media} stateAnchors={new Map()} />
+            <QuestMediaReferences manifest={displayMedia} stateAnchors={new Map()} />
           )}
           <QuestCutscenes
             display={playerDisplay}
-            manifest={media}
+            manifest={displayMedia}
             stateAnchors={new Map()}
           />
           <RelatedQuestCutscenes display={playerDisplay} manifest={media} />
