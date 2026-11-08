@@ -49,8 +49,30 @@ def test_vectors_and_balanced_scores():
     assert [x["identity_id"] for x in found] == [2, 1]
     assert found[1]["independent_references"] == 1
     assert identification_status([]) == "unknown"
-    assert identification_status([{**found[0], "best_similarity": 0.1}]) == "unknown"
+    assert identification_status(
+        [{**found[0], "best_similarity": 0.1}]) == "unknown"
     assert identification_status([found[0], dict(found[0])]) == "unresolved"
+
+
+def test_ranking_uses_one_quality_adjusted_reference_without_penalizing_more_sources():
+    def row(reference, source, similarity, quality, perceptual_hash=None):
+        return {"identity_id": 1, "reference_id": reference, "source_sha256": source,
+                "perceptual_hash": perceptual_hash, "name": "Subject", "kind": "npc",
+                "similarity": similarity, "quality": quality}
+
+    best = row(1, "a", .9, .4, "same-image")
+    high_quality = row(2, "b", .7, 1)
+    duplicate = row(3, "c", .6, 1, "same-image")
+    first = rank_candidates([best])[0]
+    assert first["score"] == pytest.approx(.9 * .7)
+    with_more = rank_candidates([best, high_quality, duplicate])[0]
+    assert with_more["score"] == pytest.approx(.7)
+    assert with_more["evidence"][0]["reference_id"] == 2
+    assert with_more["independent_references"] == 2
+    assert rank_candidates([best, high_quality, duplicate, row(4, "d", .2, 1)])[
+        0]["score"] == pytest.approx(.7)
+    assert rank_candidates([best, row(5, "e", .3, 1)])[
+        0]["score"] == pytest.approx(first["score"])
 
 
 class TestEngine:
@@ -75,7 +97,8 @@ class TestEngine:
 async def memory(tmp_path):
     url = os.getenv("WUWA_VISUAL_TEST_DATABASE_URL")
     if not url:
-        pytest.skip("Set WUWA_VISUAL_TEST_DATABASE_URL to an isolated migrated PostgreSQL database")
+        pytest.skip(
+            "Set WUWA_VISUAL_TEST_DATABASE_URL to an isolated migrated PostgreSQL database")
     engine = create_async_engine(url)
     async with engine.connect() as connection:
         transaction = await connection.begin()
@@ -90,7 +113,8 @@ async def memory(tmp_path):
             )
             session.add(user)
             await session.flush()
-            service = VisualMemoryService(session, LocalStorage(tmp_path), TestEngine())
+            service = VisualMemoryService(
+                session, LocalStorage(tmp_path), TestEngine())
             yield service, session, user.id
         await transaction.rollback()
     await engine.dispose()
@@ -145,7 +169,8 @@ async def test_reference_review_search_retention_and_model_isolation(memory):
     assert (await service.search(image))["candidates"] == []
     assert len((await service.get_review_history(ref["id"]))["items"]) >= 4
     assert await session.scalar(
-        select(VisualEmbedding).where(VisualEmbedding.reference_id == ref["id"])
+        select(VisualEmbedding).where(
+            VisualEmbedding.reference_id == ref["id"])
     )
 
 
@@ -161,7 +186,8 @@ async def test_relink_revokes_approval_and_appearance_validation(memory):
     )
     with pytest.raises(ValueError, match="Appearance"):
         await service.link_reference(
-            ref["id"], [{"identity_id": b["id"], "appearance_id": appearance["id"]}]
+            ref["id"], [{"identity_id": b["id"],
+                         "appearance_id": appearance["id"]}]
         )
     changed = await service.link_reference(ref["id"], [{"identity_id": b["id"]}], actor_id=actor)
     assert changed["status"] == "pending" and not changed["enabled_for_search"]
@@ -189,13 +215,68 @@ async def test_balanced_pgvector_search_does_not_drop_rare_identity(memory):
     session.add_all(references)
     await session.flush()
     for row in references:
-        session.add(VisualReferenceLink(reference_id=row.id, identity_id=popular["id"]))
+        session.add(VisualReferenceLink(
+            reference_id=row.id, identity_id=popular["id"]))
         session.add(VisualEmbedding(reference_id=row.id, model_id=rare_embedding.model_id,
                                     dimensions=384, embedding=[.98, math.sqrt(1 - .98 ** 2)] + [0.] * 382))
     await session.flush()
     found = await service.search(image)
-    assert [item["identity_id"] for item in found["candidates"]] == [popular["id"], rare["id"]]
+    assert [item["identity_id"]
+            for item in found["candidates"]] == [popular["id"], rare["id"]]
     assert found["candidates"][0]["independent_references"] == 5
     # All 500 popular images precede the rare one by raw distance. A global
     # top-100 image retrieval would incorrectly lose the NPC completely.
     assert len(found["candidates"][1]["evidence"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_pg_quality_scoring_dedup_and_limit_independent_status(memory):
+    service, session, actor = memory
+    first = await service.create_identity("First", "npc")
+    second = await service.create_identity("Second", "npc")
+    image = encode_png(Image.new("RGB", (16, 16), "blue"))
+    reference = await service.add_reference(image, links=[{"identity_id": first["id"]}],
+                                            status="approved", actor_id=actor)
+    initial = await session.get(VisualReference, reference["id"])
+    initial.quality = .4
+    initial.source_group = "same-source"
+    embedding = await session.scalar(select(VisualEmbedding).where(
+        VisualEmbedding.reference_id == initial.id))
+
+    def vector(similarity):
+        return [similarity, math.sqrt(1 - similarity ** 2)] + [0.] * 382
+
+    embedding.embedding = vector(.9)
+    await session.flush()
+    before = await service.search(image)
+    assert before["candidates"][0]["score"] == pytest.approx(.63, abs=1e-5)
+
+    async def add(identity_id, suffix, similarity, quality, source_group):
+        row = VisualReference(source_sha256=f"{suffix:064x}", sha256=f"{suffix:064x}",
+                              source_group=source_group, width=10, height=10,
+                              bbox=[0, 0, 10, 10], source_type="gameplay", status="approved",
+                              enabled_for_search=True, retention_mode="vector_only", quality=quality)
+        session.add(row)
+        await session.flush()
+        session.add(VisualReferenceLink(
+            reference_id=row.id, identity_id=identity_id))
+        session.add(VisualEmbedding(reference_id=row.id, model_id=embedding.model_id,
+                                    dimensions=384, embedding=vector(similarity)))
+        await session.flush()
+        return row.id
+
+    # The lower-cosine crop from the same source has the better quality-adjusted score.
+    winner_id = await add(first["id"], 1, .8, 1, "same-source")
+    await add(first["id"], 2, .2, 1, "independent-source")
+    await add(second["id"], 3, .78, 1, "runner-up")
+    one = await service.search(image, limit=1)
+    many = await service.search(image, limit=10)
+    assert len(one["candidates"]) == 1 and len(many["candidates"]) == 2
+    assert one["status"] == many["status"] == "unresolved"
+    winner = one["candidates"][0]
+    assert winner["identity_id"] == first["id"]
+    assert winner["score"] == pytest.approx(.8, abs=1e-5)
+    assert winner["score"] >= before["candidates"][0]["score"]
+    assert winner["best_similarity"] == pytest.approx(.8, abs=1e-5)
+    assert winner["evidence"][0]["reference_id"] == winner_id
+    assert winner["independent_references"] == 2
