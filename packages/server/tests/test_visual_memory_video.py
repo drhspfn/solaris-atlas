@@ -244,9 +244,12 @@ async def test_durable_video_sampling_review_resume_and_dedup(memory, tmp_path, 
     assert narrow_result["frame_count"] == 1
     assert narrow_result["progress"] == {"completed": 1, "total": 1}
     assert narrow_result["frames"][0]["time"] == pytest.approx(1)
-    point = await service.enqueue(node.id, asset_version="3.7.0", interval_seconds=1,
+    point = await service.enqueue(node.id, asset_version="3.7.0", interval_seconds=3,
                                   sampling_mode="frame", timestamp_seconds=0.5, frame_offset=10)
     assert point["id"] not in (scan["id"], segment["id"])
+    point_retry = await service.enqueue(node.id, asset_version="3.7.0", interval_seconds=5,
+                                        sampling_mode="frame", timestamp_seconds=0.5, frame_offset=10)
+    assert point_retry["id"] == point["id"] and point_retry["duplicate"]
     point_result = await service.process(point["id"])
     assert point_result["frame_count"] == 1
     assert point_result["sampling"]["frame_offset"] == 10

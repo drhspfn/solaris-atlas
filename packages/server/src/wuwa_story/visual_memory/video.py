@@ -381,6 +381,8 @@ class VideoReviewService:
         models = await asyncio.to_thread(self.memory._engine().model_identity)
         fingerprint_data = {"sha256": source["source_sha256"], "models": models,
                             "interval": interval_seconds, "protocol": PROTOCOL}
+        if sampling_mode == "frame":
+            fingerprint_data.pop("interval")
         if sampling_mode != "full":
             fingerprint_data["sampling"] = sampling
         fingerprint = hashlib.sha256(json.dumps(fingerprint_data, sort_keys=True).encode()).digest()
