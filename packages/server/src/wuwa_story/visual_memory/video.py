@@ -15,7 +15,7 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 
 from wuwa_story.db.models import (
@@ -151,7 +151,7 @@ class VideoReviewService:
             ],
         }
 
-    async def _published(self, asset_node_id, version=None):
+    async def _published(self, asset_node_id, version=None, cutscene_key=None):
         if await self.session.get(MediaAsset, asset_node_id) is None:
             raise ValueError("A registered game media asset is required")
         statement = select(FileReference).where(
@@ -161,6 +161,13 @@ class VideoReviewService:
         if version:
             statement = statement.where(
                 FileReference.metadata_json["asset_version"].astext == version
+            )
+        if cutscene_key is not None:
+            statement = statement.where(
+                or_(
+                    FileReference.reference_type == "cutscene_video",
+                    FileReference.metadata_json["cutscene_key"].astext == cutscene_key,
+                )
             )
         reference = await self.session.scalar(
             statement.order_by(
@@ -185,7 +192,7 @@ class VideoReviewService:
         return {
             "asset_node_id": asset_node_id,
             "asset_version": version,
-            "game_version": version,
+            "game_version": None,
             "source_reference_id": reference.id,
             "file_reference_id": reference.id,
             "file_id": file.id,
@@ -194,7 +201,8 @@ class VideoReviewService:
             "url": url,
             "video_url": url,
             "size_bytes": file.size_bytes,
-            "duration": reference.metadata_json.get("duration"),
+            "duration": reference.metadata_json.get("duration_seconds")
+            or reference.metadata_json.get("duration"),
             "object_key": location.object_key,
         }
 
@@ -213,19 +221,41 @@ class VideoReviewService:
             raise ValueError("The registered object is not available in configured storage")
         return location
 
-    async def source_by_reference(self, reference_id, game_version=None):
+    async def source_by_reference(
+        self, reference_id, game_version=None, asset_version=None, cutscene_key=None
+    ):
         reference = await self.session.get(FileReference, reference_id)
         if reference is None or reference.reference_type not in publication_types("cutscene_video"):
             raise ValueError("Published video reference not found")
-        source = await self._published(reference.owner_node_id, game_version)
+        if cutscene_key is not None:
+            await self._validate_context(reference.owner_node_id, cutscene_key, game_version)
+        source = await self._published(
+            reference.owner_node_id,
+            asset_version or reference.metadata_json.get("asset_version"),
+            cutscene_key,
+        )
         if source["source_reference_id"] != reference_id:
             raise ValueError("Video publication changed; reload the source list")
+        source.update(game_version=game_version, cutscene_key=cutscene_key)
         return source
+
+    async def _validate_context(self, asset_node_id, cutscene_key, game_version):
+        from wuwa_story.api.routes.cutscenes import detail
+
+        result = await detail(
+            cutscene_key.removeprefix("cutscene:"), game_version, "en", self.session
+        )
+        media = ((result.get("event") or {}).get("playback") or {}).get("media") or {}
+        if asset_node_id not in {item.get("asset_node_id") for item in media.values()}:
+            raise ValueError("This published asset does not belong to the selected cutscene")
 
     async def sources(self, cg_name, game_version=None, locale="en"):
         from wuwa_story.api.routes.cutscenes import detail
+        from wuwa_story.db.models import Node
 
         result = await detail(cg_name, game_version, locale, self.session)
+        node = await self.session.get(Node, result["node_id"])
+        cutscene_key = node.canonical_key
         playback = (result.get("event") or {}).get("playback") or {}
         sources = []
         seen = set()
@@ -235,10 +265,17 @@ class VideoReviewService:
                 continue
             seen.add(asset_id)
             try:
-                source = await self._published(asset_id, playback.get("asset_version"))
+                source = await self._published(
+                    asset_id, playback.get("asset_version"), cutscene_key
+                )
             except ValueError:
                 continue
-            source.update(label=label, cutscene_key=cg_name)
+            source.update(
+                label=label,
+                cutscene_key=cutscene_key,
+                cutscene_name=cg_name,
+                game_version=result.get("game_version"),
+            )
             scan = await self.session.scalar(
                 select(ProcessingRun)
                 .join(Processor)
@@ -267,6 +304,7 @@ class VideoReviewService:
         game_version=None,
         source_reference_id=None,
         source_sha256=None,
+        cutscene_key=None,
         interval_seconds=3,
         frame_batch_size=12,
         force=False,
@@ -274,7 +312,14 @@ class VideoReviewService:
         sample_times(1, interval_seconds)
         if not 1 <= frame_batch_size <= 48:
             raise ValueError("Frame page size must be between 1 and 48")
-        source = await self._published(asset_node_id, asset_version or game_version)
+        if cutscene_key is not None:
+            await self._validate_context(asset_node_id, cutscene_key, game_version)
+        source = await self._published(
+            asset_node_id,
+            asset_version or (game_version if cutscene_key is None else None),
+            cutscene_key,
+        )
+        source.update(game_version=game_version, cutscene_key=cutscene_key)
         if source_reference_id is not None and source["source_reference_id"] != source_reference_id:
             raise ValueError("Selected source was replaced; reload before starting a scan")
         if source_sha256 is not None and source["source_sha256"] != source_sha256:

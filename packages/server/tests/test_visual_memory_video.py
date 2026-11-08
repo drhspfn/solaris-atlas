@@ -173,3 +173,52 @@ async def test_durable_video_sampling_review_resume_and_dedup(memory, tmp_path, 
     assert reviewed["reviewed"] and reviewed["unresolved_count"] == 0
     assert (await service.enqueue(node.id, asset_version="3.7.0", interval_seconds=1))["reviewed"]
     assert (await session.get(ProcessingRun, scan["id"])).raw_output.get("frames") is None
+
+    # A shared Unreal asset must not select B's newer publication for cutscene A.
+    reference.metadata_json = {**reference.metadata_json, "cutscene_key": "cutscene:B"}
+    path.write_bytes(path.read_bytes() + b"legacy-cutscene-A")
+    legacy_file = await registration.register_file(
+        session, path, "video_mp4", mime_type="video/mp4"
+    )
+    legacy = await registration.register_reference(
+        session, file_id=legacy_file.id, reference_type="cutscene_video", owner_node_id=node.id
+    )
+    legacy.metadata_json = {"asset_version": "3.7.0"}
+    scene = Node(type_id=node_type, canonical_key="cutscene:A")
+    session.add(scene)
+    await session.flush()
+
+    async def detail(name, version, locale, db):
+        return {
+            "node_id": scene.id,
+            "game_version": "3.3.0",
+            "event": {
+                "playback": {
+                    "asset_version": "3.7.0",
+                    "media": {"full": {"asset_node_id": node.id}},
+                }
+            },
+        }
+
+    from wuwa_story.api.routes import cutscenes
+
+    monkeypatch.setattr(cutscenes, "detail", detail)
+    sources = await service.sources("A", game_version="3.3.0")
+    source = sources["sources"][0]
+    assert source["source_reference_id"] == legacy.id
+    assert source["game_version"] == "3.3.0" and source["asset_version"] == "3.7.0"
+    preview = await service.source_by_reference(
+        legacy.id, game_version="3.3.0", asset_version="3.7.0", cutscene_key="cutscene:A"
+    )
+    assert preview["source_sha256"] == legacy_file.sha256.hex()
+    bound = await service.enqueue(
+        node.id,
+        game_version="3.3.0",
+        asset_version="3.7.0",
+        cutscene_key="cutscene:A",
+        source_reference_id=legacy.id,
+        source_sha256=legacy_file.sha256.hex(),
+    )
+    assert bound["source"]["source_reference_id"] == legacy.id
+    with pytest.raises(ValueError, match="bytes changed"):
+        await service.enqueue(node.id, asset_version="3.7.0", source_sha256="00" * 32)
