@@ -48,6 +48,10 @@ const tools = [
   ["get_item_sellers", "Find NPC shops and item offers."],
   ["search_cutscenes", "Search the cutscene archive."],
   ["get_cutscene", "Get a cutscene’s public page, media and available descriptions."],
+  ["visual_search", "Find visual identities using an image and confirmed references."],
+  ["visual_identify", "Detect objects in an image and inspect candidate identities."],
+  ["visual_list_identities", "Browse visual identities, game forms and their entity links."],
+  ["visual_get_reference", "Inspect an approved visual reference and its source."],
 ];
 
 export function McpDocsClient() {
