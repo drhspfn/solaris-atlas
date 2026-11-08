@@ -49,8 +49,8 @@ async def test_previews_use_current_video_and_only_edges_from_requested_snapshot
         db.executemany("INSERT INTO graph.edge_evidence VALUES (?, ?, ?)", [
                        (1, 1, 7), (2, 2, 7)])
         db.executemany("INSERT INTO storage.file_reference VALUES (?, ?, ?, ?, ?)", [
-            (1, 12, 50, "cutscene_video", "{}"), (2,
-                                                  12, 51, "cutscene_video", "{}"),
+            (1, 12, 50, "cutscene_video", '{"asset_version":"3.7.0"}'), (2,
+                                                  12, 51, "cutscene_video", '{"asset_version":"3.7.1"}'),
             (3, 12, 70, "cutscene_preview",
              '{"source_file_id":50,"score":100}'),
             (4, 12, 71, "cutscene_preview",
@@ -66,7 +66,7 @@ async def test_previews_use_current_video_and_only_edges_from_requested_snapshot
         if v2:
             # Old writer finishes later with stale bytes; previews/titles stay on v2.
             db.executemany("INSERT INTO storage.file_reference VALUES (?,12,?,?,?)", [
-                (0, 51, 'cutscene_video_v2', '{}'), (99, 50, 'cutscene_video', '{}')])
+                (0, 51, 'cutscene_video_v2', '{"asset_version":"3.7.1"}'), (99, 50, 'cutscene_video', '{"asset_version":"3.7.0"}')])
 
         class Session:
             async def execute(self, query):
@@ -77,6 +77,9 @@ async def test_previews_use_current_video_and_only_edges_from_requested_snapshot
         assert result[10]["preview_file_id"] == 72
         assert [item["file_id"] for item in result[10]["previews"]] == [72, 71]
         assert await service.previews(Session(), [10], 8) == {}
+        historical = await service.previews(Session(), [10], 7, asset_version='3.7.0')
+        assert [item['file_id'] for item in historical[10]['previews']] == [70]
+        assert await service.previews(Session(), [10], 7, asset_version='missing') == {}
         assert await service.visual_titles(Session(), [10], 7, "en") == {10: "A Last Stand"}
         db.execute("INSERT INTO storage.file_reference VALUES (9, 12, 51, 'cutscene_visual_title', ?)",
                    ('{"source_report_id":7,"title_language":"en","title":"Backfilled title"}',))

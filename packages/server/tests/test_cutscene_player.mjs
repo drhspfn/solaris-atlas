@@ -18,8 +18,8 @@ test("cutscene player follows branches and respects clip boundaries", async () =
     dispatch(name) {
       this.events[name]?.({ preventDefault() {} });
     }
-    append(child) {
-      this.children.push(child);
+    append(...children) {
+      this.children.push(...children);
     }
     replaceChildren() {
       this.children = [];
@@ -37,6 +37,7 @@ test("cutscene player follows branches and respects clip boundaries", async () =
     language = new Element(),
     music = new Element(),
     subtitles = new Element();
+  const previews = new Element(), publicDescriptions = new Element(), system = new Element();
   const timeline = new Element(),
     decisions = new Element(),
     restart = new Element(),
@@ -74,6 +75,9 @@ test("cutscene player follows branches and respects clip boundaries", async () =
     ".sa-cutscene-stage": stage,
     ".sa-cutscene-controls": controls,
     ".sa-cutscene-context": context,
+    ".sa-cutscene-previews": previews,
+    ".sa-cutscene-public": publicDescriptions,
+    ".sa-cutscene-system": system,
     "[name=music]": music,
     "[name=captions]": subtitles,
     "[name=timeline]": timeline,
@@ -103,11 +107,16 @@ test("cutscene player follows branches and respects clip boundaries", async () =
     createElement: () => new Element(),
   };
   const requests = [];
+  let payload = { game_version: "1.0", event: { playback: flow },
+    previews: [{url:"https://cdn.test/preview.jpg"},{url:"https://cdn.test/preview.jpg"},{url:"javascript:alert(1)"}],
+    public_descriptions: [{title:"Public scene",text:"A compact public description."}],
+    system_reports: [{asset_node_id:10,title:"Observed scene",events:[{time:0,observation:"The shore."},{time:65,observation:"<script>plain text</script>"}]}],
+  };
   const fetch = async (url) => {
     requests.push(url);
     return {
     ok: true,
-    json: async () => ({ game_version: "1.0", event: { playback: flow } }),
+    json: async () => payload,
     };
   };
   vm.runInNewContext(
@@ -122,6 +131,12 @@ test("cutscene player follows branches and respects clip boundaries", async () =
   );
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(requests[0], "https://api.solarisatlas.fun/console/cutscene-data/15536?locale=en");
+  assert.equal(previews.children.length, 1);
+  assert.equal(previews.children[0].children[0].src, "https://cdn.test/preview.jpg");
+  assert.equal(publicDescriptions.children[0].children[1].textContent, "A compact public description.");
+  assert.equal(system.children[0].children[1].children.length, 2);
+  assert.equal(system.children[0].children[1].children[1].children[0].textContent, "1:05");
+  assert.equal(system.children[0].children[1].children[1].children[1].textContent, "<script>plain text</script>");
   assert.equal(buttons.children.length, 2);
   buttons.children[0].dispatch("click");
   assert.equal(video.src, "/a");
@@ -140,4 +155,11 @@ test("cutscene player follows branches and respects clip boundaries", async () =
   form.dispatch("submit");
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(requests.at(-1), "https://api.solarisatlas.fun/console/cutscene-data/15536?locale=ja&game_version=1.0.0");
+  payload = { previews: [], public_descriptions: [], system_reports: [payload.system_reports[0]], event: {playback:null} };
+  form.dispatch("submit");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(publicDescriptions.children[0].textContent, /No public summary/);
+  assert.match(previews.children[0].textContent, /No preview images/);
+  assert.equal(system.children[0].children[1].children.length, 2);
+  assert.equal(stage.hidden, true);
 });

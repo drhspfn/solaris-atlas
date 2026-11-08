@@ -19,7 +19,7 @@ from wuwa_story.story.cutscene_publications import publication_order, publicatio
 from wuwa_story.story.service import _localized, prefetch_localizations
 
 
-async def previews(session, scene_ids, release_id, limit=5):
+async def previews(session, scene_ids, release_id, limit=5, asset_version=None):
     """Resolve only previews tied to the currently published video and snapshot edges."""
     if not scene_ids:
         return {}
@@ -27,7 +27,8 @@ async def previews(session, scene_ids, release_id, limit=5):
     variant_type, asset_type = aliased(RelationType), aliased(RelationType)
     video = aliased(FileReference)
     latest_video = (select(video.file_id).where(
-        video.owner_node_id == assets.to_node_id, video.reference_type.in_(publication_types("cutscene_video")))
+        video.owner_node_id == assets.to_node_id, video.reference_type.in_(publication_types("cutscene_video")),
+        *([video.metadata_json['asset_version'].as_string() == asset_version] if asset_version else []))
         .order_by(publication_order(video.reference_type), video.id.desc()).limit(1).correlate(assets).scalar_subquery())
     settings = get_settings()
     rows = await session.execute(

@@ -9,6 +9,9 @@
   const choice = stage.querySelector(".sa-cutscene-choice");
   const controls = root.querySelector(".sa-cutscene-controls");
   const context = root.querySelector(".sa-cutscene-context");
+  const previewList = root.querySelector(".sa-cutscene-previews");
+  const publicList = root.querySelector(".sa-cutscene-public");
+  const systemList = root.querySelector(".sa-cutscene-system");
   const timelineInput = root.querySelector("[name=timeline]");
   const decisions = root.querySelector(".sa-cutscene-decisions");
   const subtitles = form.elements.language;
@@ -22,6 +25,71 @@
   let selections = {},
     durations = {},
     timeline = { clips: [], decisions: [], total: 0, complete: false };
+
+  function message(container, text) {
+    container.replaceChildren();
+    const p = document.createElement("p");
+    p.className = "text-muted";
+    p.textContent = text;
+    container.append(p);
+  }
+  function renderSceneDetails(data) {
+    previewList.replaceChildren();
+    const seen = new Set();
+    for (const preview of data.previews || []) {
+      if (typeof preview.url !== "string" || !/^https:\/\//.test(preview.url) || seen.has(preview.url)) continue;
+      seen.add(preview.url);
+      const link = document.createElement("a");
+      link.href = preview.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      const image = document.createElement("img");
+      image.src = preview.url;
+      image.alt = `Preview ${seen.size} · ${data.name || root.dataset.name}`;
+      image.loading = "lazy";
+      link.append(image);
+      previewList.append(link);
+    }
+    if (!seen.size) message(previewList, "No preview images have been published for this video.");
+
+    publicList.replaceChildren();
+    for (const description of data.public_descriptions || []) {
+      const card = document.createElement("article");
+      card.className = "sa-cutscene-description";
+      const heading = document.createElement("h4");
+      heading.textContent = description.title || "Public summary";
+      const text = document.createElement("p");
+      text.textContent = description.text;
+      card.append(heading, text);
+      publicList.append(card);
+    }
+    if (!publicList.children.length) message(publicList, "No public summary has been published for this scene.");
+
+    systemList.replaceChildren();
+    for (const report of data.system_reports || []) {
+      const card = document.createElement("details");
+      card.className = "sa-cutscene-description";
+      card.open = systemList.children.length === 0;
+      const heading = document.createElement("summary");
+      heading.textContent = `${report.title || "Visual observations"} · asset ${report.asset_node_id} · ${report.events?.length || 0} observations`;
+      const list = document.createElement("ol");
+      list.className = "sa-cutscene-observations";
+      for (const event of report.events || []) {
+        const row = document.createElement("li");
+        const time = document.createElement("span");
+        const seconds = Number(event.time);
+        time.textContent = Number.isFinite(seconds) && seconds >= 0
+          ? `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}` : "—";
+        const text = document.createElement("p");
+        text.textContent = event.observation;
+        row.append(time, text);
+        list.append(row);
+      }
+      card.append(heading, list);
+      systemList.append(card);
+    }
+    if (!systemList.children.length) message(systemList, "No visual analysis is available for the selected version.");
+  }
 
   function stopTracks() {
     tracks.forEach(({ audio }) => {
@@ -302,6 +370,7 @@
     stopTracks();
     stage.hidden = controls.hidden = true;
     context.replaceChildren();
+    for (const container of [previewList, publicList, systemList]) message(container, "Loading…");
     status.textContent = "Loading cutscene…";
     const params = new URLSearchParams({ locale: subtitles.value });
     if (form.elements.version.value.trim())
@@ -314,6 +383,7 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       if (controller.signal.aborted) return;
+      renderSceneDetails(data);
       flow = data.event?.playback;
       captions = data.event?.captions;
       if (!flow?.nodes?.length) {
@@ -334,8 +404,10 @@
       updateTimeline();
       advance(flow.entry);
     } catch (error) {
-      if (error.name !== "AbortError")
+      if (error.name !== "AbortError") {
         status.textContent = `Could not load cutscene: ${error.message}`;
+        for (const container of [previewList, publicList, systemList]) message(container, "Scene details could not be loaded.");
+      }
     }
   }
   form.addEventListener("submit", (event) => {

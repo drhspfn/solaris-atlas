@@ -110,3 +110,13 @@ html[data-bs-theme="dark"] .navbar-vertical .brand-link { padding-inline: .125re
 .sa-cutscene-choice div { display: flex; flex-wrap: wrap; justify-content: center; gap: .5rem; }
 .sa-cutscene-stage:fullscreen { display: grid; place-items: center; max-width: none; }
 .sa-cutscene-stage:fullscreen video { max-height: 100vh; }
+.sa-cutscene-previews { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr)); gap: .75rem; margin-block: .75rem 1.5rem; }
+.sa-cutscene-previews a { display: block; border: 1px solid #354645; border-radius: .5rem; overflow: hidden; }
+.sa-cutscene-previews img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: contain; background: #090e0f; }
+.sa-cutscene-description { padding: 1rem; margin-block: .75rem; border: 1px solid #354645; border-radius: .5rem; }
+.sa-cutscene-description summary { cursor: pointer; line-height: 1.6; }
+.sa-cutscene-description h4 { margin: 0 0 .75rem; font-size: 1rem; }
+.sa-cutscene-description p { line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 0; }
+.sa-cutscene-observations { list-style: none; padding: 0; margin: 1rem 0 0; }
+.sa-cutscene-observations li { display: grid; grid-template-columns: 3.5rem minmax(0, 1fr); gap: .75rem; padding-block: .75rem; border-top: 1px solid #293738; }
+.sa-cutscene-observations li > span { color: #9bd9c0; font-variant-numeric: tabular-nums; }

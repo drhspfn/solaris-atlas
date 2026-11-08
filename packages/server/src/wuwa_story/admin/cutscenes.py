@@ -24,10 +24,11 @@ class CutsceneData(CustomView):
             raise HTTPException(400, "Invalid version or locale")
         snapshot = await release(db, version)
         result = await detail(scene.cg_name, snapshot.game_version, locale, db)
-        result["previews"] = (await previews(db, [scene.node_id], snapshot.id, limit=None)).get(
+        playback = (result.get("event") or {}).get("playback") or {}
+        result["previews"] = (await previews(db, [scene.node_id], snapshot.id, limit=None,
+                                             asset_version=playback.get("asset_version"))).get(
             scene.node_id, {}
         ).get("previews", [])
-        playback = (result.get("event") or {}).get("playback") or {}
         reports = []
         for asset_id in dict.fromkeys(item.get("asset_node_id") for item in playback.get("media", {}).values()
                                       if item.get("asset_node_id") is not None):
