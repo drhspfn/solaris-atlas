@@ -19,7 +19,7 @@ from pathlib import Path
 
 WORKERS = ('snapshot-worker', 'asset-worker', 'media-worker', 'projection-worker',
            'image-worker', 'audio-worker', 'video-worker', 'model-worker',
-           'story-agent', 'cutscene-vision', 'cutscene-assembly-worker')
+           'story-agent', 'cutscene-vision', 'cutscene-assembly-worker', 'visual-memory-worker')
 SCHEMA_CHECK = """
 import asyncio
 from alembic.config import Config
