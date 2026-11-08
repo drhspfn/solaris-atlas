@@ -23,6 +23,8 @@ from wuwa_story.db.models import (
     FileObject,
     FileReference,
     MediaAsset,
+    Node,
+    NodeType,
     ProcessingRun,
     Processor,
 )
@@ -152,7 +154,12 @@ class VideoReviewService:
         }
 
     async def _published(self, asset_node_id, version=None, cutscene_key=None):
-        if await self.session.get(MediaAsset, asset_node_id) is None:
+        node_type = await self.session.scalar(
+            select(NodeType.key).join(Node, Node.type_id == NodeType.id).where(Node.id == asset_node_id)
+        )
+        if node_type != "asset_reference" and not (
+            node_type == "media_asset" and await self.session.get(MediaAsset, asset_node_id) is not None
+        ):
             raise ValueError("A registered game media asset is required")
         statement = select(FileReference).where(
             FileReference.owner_node_id == asset_node_id,

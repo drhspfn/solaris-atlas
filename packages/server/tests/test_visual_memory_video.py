@@ -71,6 +71,62 @@ def test_extract_synthetic_video(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_published_graph_asset_without_media_asset_row(memory, tmp_path, monkeypatch):  # noqa: F811
+    from sqlalchemy import select
+
+    from wuwa_story.api.routes import cutscenes
+    from wuwa_story.db.models import MediaAsset, Node, NodeType
+    from wuwa_story.storage.service import FileRegistrationService
+    from wuwa_story.visual_memory.video import VideoReviewService
+
+    base, session, _ = memory
+    registration = FileRegistrationService(base.storage)
+    path = tmp_path / "published.mp4"
+    path.write_bytes(b"registered video bytes")
+    file = await registration.register_file(session, path, "video_mp4", mime_type="video/mp4")
+    asset_type = await session.scalar(select(NodeType.id).where(NodeType.key == "asset_reference"))
+    scene_type = await session.scalar(select(NodeType.id).where(NodeType.key == "cutscene"))
+    other_type = await session.scalar(select(NodeType.id).where(NodeType.key == "character"))
+    asset = Node(type_id=asset_type, canonical_key="asset:ue:/Game/visual-test-" + uuid4().hex)
+    scene = Node(type_id=scene_type, canonical_key="cutscene:visual-test-" + uuid4().hex)
+    other = Node(type_id=other_type, canonical_key="character:visual-test-" + uuid4().hex)
+    session.add_all([asset, scene, other])
+    await session.flush()
+    assert await session.get(MediaAsset, asset.id) is None
+    reference = await registration.register_reference(
+        session, file_id=file.id, reference_type="cutscene_video_v2", owner_node_id=asset.id
+    )
+    reference.metadata_json = {"asset_version": "3.7.1", "cutscene_key": scene.canonical_key}
+    foreign = await registration.register_reference(
+        session, file_id=file.id, reference_type="cutscene_video_v2", owner_node_id=other.id
+    )
+    foreign.metadata_json = {"asset_version": "3.7.1", "cutscene_key": scene.canonical_key}
+    await session.flush()
+
+    async def detail(name, version, locale, db):
+        return {"node_id": scene.id, "game_version": "3.7.0", "event": {"playback": {
+            "asset_version": "3.7.1", "media": {"full": {"asset_node_id": asset.id}},
+        }}}
+
+    monkeypatch.setattr(cutscenes, "detail", detail)
+    service = VideoReviewService(session, base.storage, VideoEngine())
+    source = (await service.sources(scene.canonical_key.removeprefix("cutscene:"), "3.7.0"))["sources"][0]
+    assert source["source_reference_id"] == reference.id
+    assert source["source_sha256"] == file.sha256.hex()
+    assert source["game_version"] == "3.7.0" and source["asset_version"] == "3.7.1"
+    preview = await service.source_by_reference(reference.id, "3.7.0", "3.7.1", scene.canonical_key)
+    assert preview["file_id"] == file.id
+    scan = await service.enqueue(asset.id, game_version="3.7.0", asset_version="3.7.1",
+                                 cutscene_key=scene.canonical_key, source_reference_id=reference.id,
+                                 source_sha256=file.sha256.hex())
+    assert scan["source"]["source_reference_id"] == reference.id
+    with pytest.raises(ValueError, match="registered game media asset"):
+        await service._published(other.id, "3.7.1", scene.canonical_key)
+    with pytest.raises(ValueError, match="bytes changed"):
+        await service.enqueue(asset.id, asset_version="3.7.1", source_sha256="00" * 32)
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif(
     not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="FFmpeg unavailable"
 )
