@@ -360,3 +360,19 @@ class Quests(ReadOnly):
         except ValueError:
             raise ActionFailed(
                 "Check imported sources, provider configuration and the daily budget.") from None
+
+
+class GraphEdges(ReadOnly):
+    fields: Sequence[Any] = [
+        "id", IntegerField("from_node_id", display_template="displays/graph_node.html"),
+        "relation_type_id", IntegerField("to_node_id", display_template="displays/graph_node.html"),
+        "layer", "basis", "confidence", "created_release_id", "valid_from_release_id",
+        "valid_to_release_id", "processor_run_id",
+    ]
+    searchable_fields = ["layer", "basis"]
+
+
+class Cutscenes(ReadOnly):
+    fields: Sequence[Any] = ["node_id", "cg_name", "cg_file", "media_asset_node_id"]
+    searchable_fields = ["cg_name", "cg_file"]
+    detail_template = "cutscene_detail.html"

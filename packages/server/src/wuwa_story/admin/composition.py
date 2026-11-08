@@ -17,6 +17,8 @@ from wuwa_story.admin.auth import ConsoleProtection, InternalAuth
 from wuwa_story.admin.views import (
     Alerts,
     BudgetUsage,
+    Cutscenes,
+    GraphEdges,
     Memory,
     OpenQuestions,
     Quests,
@@ -31,9 +33,10 @@ from wuwa_story.db.models.agent_workspace import AgentMemory, AgentToolAudit, Ag
 from wuwa_story.db.models.agents import AgentCall, AgentDailyUsage, AgentJob, AgentNote
 from wuwa_story.db.models.auth import AuthSession, User
 from wuwa_story.db.models.content import Document
-from wuwa_story.db.models.core import Character, Quest
+from wuwa_story.db.models.core import Character, Cutscene, Item, NPC, Quest, Speaker, SpeakerEntityLink
 from wuwa_story.db.models.game_events import GameEvent
-from wuwa_story.db.models.graph import Node
+from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision, NodeType
+from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.i18n import Locale
 from wuwa_story.db.models.notices import GameNotice
 from wuwa_story.db.models.ops import GameRelease, ProcessingRun
@@ -81,12 +84,29 @@ def install_admin(app: Starlette, engine: AsyncEngine, settings: Settings | None
     ]))
     admin.add_view(DropDown("Archive", views=[
         Quests(Quest, label="Quests", identity="quests"),
-        readonly(Character, "Characters", "node_id canonical_name playable",
+        Cutscenes(Cutscene, label="Cutscenes", identity="cutscenes"),
+        readonly(Character, "Characters", "node_id canonical_name name_key_id nickname_key_id description playable",
                  "characters", ["canonical_name"]),
+        readonly(NPC, "NPCs", "node_id game_npc_id source_record_id", "npcs"),
+        readonly(Item, "Items", "node_id game_item_id canonical_name name_key_id description_key_id description",
+                 "items", ["canonical_name"]),
+        readonly(Speaker, "Speakers",
+                 "node_id game_speaker_id name_key_id", "speakers"),
+        readonly(SpeakerEntityLink, "Speaker links", "speaker_node_id entity_node_id resolution_type confidence source_record_id",
+                 "speaker-links", ["resolution_type"]),
         readonly(GameRelease, "Releases",
                  "id game_version sequence released_at", "releases", ["game_version"]),
         readonly(Node, "Nodes", "id canonical_key type_id slug",
                  "nodes", ["canonical_key", "slug"]),
+        GraphEdges(Edge, label="Graph edges", identity="edges"),
+        readonly(EdgeEvidence, "Edge evidence", "id edge_id release_id evidence_node_id source_record_id source_file_path source_raw_path explanation created_at",
+                 "edge-evidence", ["source_file_path", "explanation"]),
+        readonly(NodeRevision, "Node revisions",
+                 "id node_id release_id revision source_record_id created_at", "node-revisions"),
+        readonly(NodeType, "Node types", "id key description",
+                 "node-types", ["key", "description"]),
+        readonly(RelationType, "Relation types", "id key description",
+                 "relation-types", ["key", "description"]),
         readonly(Document, "Documents",
                  "id node_id document_type title revision plain_text", "documents", ["title"]),
         readonly(GameEvent, "Events", "id title source event_kind",
