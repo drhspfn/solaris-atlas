@@ -143,8 +143,8 @@ async def test_visual_only_cross_release_reuse_remains_available():
 
 @pytest.mark.asyncio
 async def test_native_v2_does_not_hide_stale_source_recipe():
-    value = {**target('spine_background:7'), 'kind': 'spine', 'reference_type': 'story_spine', 'spine_recipe': 5}
-    reference, file, location = row(value, spine_recipe=4)
+    value = {**target('spine_background:7'), 'kind': 'spine', 'reference_type': 'story_spine', 'spine_recipe': 6}
+    reference, file, location = row(value, spine_recipe=5)
     reference.reference_type = 'story_spine'
     reference.metadata_json['animation_preview'] = {'recipe': 'riglyph-native-v2', 'status': 'ready',
                                                      'variants': [{'object_key': 'video', 'size_bytes': 12}]}

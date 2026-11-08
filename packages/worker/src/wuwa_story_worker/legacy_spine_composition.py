@@ -135,7 +135,7 @@ def legacy_plan(bundle: Path):
                     or set(controls) - {'format', 'media'} or not isinstance(sections, list)
                     or any(not isinstance(section, dict) or section.get('kind') != 'audio_event'
                            or section.get('scope') != 'flow'
-                           or section.get('reconstruction_kind') not in {'flow_authored_music', 'levelplay_fixed_start'}
+                           or section.get('reconstruction_kind') not in {'flow_authored_music', 'levelplay_fixed_start', 'state_consumer_fixed_start'}
                            for section in sections)):
                 raise ValueError('Legacy prefab playback cannot infer sequence controls')
         variants = manifest.get('variants') or []

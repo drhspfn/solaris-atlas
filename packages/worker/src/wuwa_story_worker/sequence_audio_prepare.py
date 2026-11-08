@@ -111,7 +111,7 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
             entries[name] = data
     legacy_controls = 'controls.json' not in entries
     if legacy_controls:
-        if not soundtrack_context or soundtrack_context.get('kind') not in {'flow_authored_music', 'levelplay_fixed_start'}:
+        if not soundtrack_context or soundtrack_context.get('kind') not in {'flow_authored_music', 'levelplay_fixed_start', 'state_consumer_fixed_start'}:
             return bundle, []
         controls = {'format': 'solaris.sequence-controls.v1', 'media': {'complete_video': False, 'sections': []}}
         manifest['controls'] = {'file': 'controls.json'}
@@ -119,7 +119,7 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
         controls = json.loads(entries['controls.json'])
     media_sections = controls.get('media', {}).get('sections', [])
     media_sections[:] = [section for section in media_sections
-                         if section.get('reconstruction_kind') not in {'levelplay_fixed_start', 'flow_authored_music'}]
+                         if section.get('reconstruction_kind') not in {'levelplay_fixed_start', 'flow_authored_music', 'state_consumer_fixed_start'}]
     flow_context = soundtrack_context if isinstance(soundtrack_context, dict) and soundtrack_context.get('kind') == 'flow_authored_music' else None
     if flow_context:
         identity = hashlib.sha256(json.dumps(flow_context, ensure_ascii=False, sort_keys=True,
@@ -136,7 +136,7 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
     if manifest.get('asset_version') != plan['version'] or manifest.get('download_id') != plan['id']:
         raise ValueError(
             'Sequence audio bundle differs from the pinned base client')
-    if flow_context or (legacy_controls and soundtrack_context):
+    if flow_context or (soundtrack_context and soundtrack_context.get('kind') == 'state_consumer_fixed_start') or (legacy_controls and soundtrack_context):
         from wuwa_story.ingestion.spine_presentation import presentation_hash
 
         if 'presentation.json' not in entries:
@@ -147,14 +147,14 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
                 or presentation_hash({k: v for k, v in presentation.items() if k != 'sha256'}) != presentation.get('sha256')
                 or proof.get('asset_version') != plan['version'] or proof.get('download_id') != plan['id']):
             raise ValueError('Flow soundtrack differs from the retained presentation or client')
-        if flow_context:
+        if flow_context or soundtrack_context.get('kind') == 'state_consumer_fixed_start':
             from wuwa_story_worker.sequence_music_context import authored_flow_music_context
 
             expected = authored_flow_music_context(
                 {'owner': proof.get('flow_owner'), 'release_id': proof.get('release_id'),
                  'presentation': presentation, 'presentation_sha256': presentation['sha256']},
                 {'asset_version': plan['version'], 'download_id': plan['id']})
-            if expected != flow_context:
+            if expected != soundtrack_context:
                 raise ValueError('Flow soundtrack does not match its authored action extent')
     work = root / 'sequence-audio' / sha256(bundle)[:20]
     work.mkdir(parents=True, exist_ok=True)
@@ -344,9 +344,11 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
         from wuwa_story_worker.sequence_music_context import prepare_levelplay_music
 
         identity = context_identity
+        reconstructed = soundtrack_context.get('kind') == 'state_consumer_fixed_start'
         section = {'kind': 'audio_event', 'source': 'levelplay:' + identity, 'scope': 'flow',
-                   'reference': soundtrack_context.get('play_event'), 'clock': None, 'range': None,
-                   'reconstruction_kind': 'levelplay_fixed_start', 'timing_basis': 'fixed_start_reconstruction',
+                   'reference': soundtrack_context.get('state_event' if reconstructed else 'play_event'), 'clock': None, 'range': None,
+                   'reconstruction_kind': soundtrack_context.get('kind', 'levelplay_fixed_start'), 'timing_basis': 'fixed_start_reconstruction',
+                   **({'confidence': 'reconstructed'} if reconstructed else {}),
                    'source_proof': soundtrack_context.get('source_proof'), 'status': 'unresolved_audio_event',
                    'tracks': [], 'diagnostics': []}
         media_sections.append(section)

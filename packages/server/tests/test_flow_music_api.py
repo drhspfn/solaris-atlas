@@ -40,6 +40,17 @@ def test_flow_music_accepts_authored_image_dialogue():
     assert verified_flow_music(media, presentation, 7, 21)[1] == ['one', 'two']
 
 
+def test_flow_music_requires_explicit_reconstruction_provenance():
+    presentation, media = sample()
+    section = media['sections'][0]
+    section.update(reconstruction_kind='state_consumer_fixed_start', confidence='reconstructed')
+    section['source_proof'].update(confidence='reconstructed', runtime_start_confirmed=False,
+                                   state_event=section['reference'], consumer_event='/Game/Consumer')
+    assert verified_flow_music(media, presentation, 7, 21) is not None
+    section['source_proof']['runtime_start_confirmed'] = True
+    assert verified_flow_music(media, presentation, 7, 21) is None
+
+
 @pytest.mark.parametrize('change', ['owner', 'release', 'client', 'digest', 'coverage', 'play', 'unpublished', 'ambiguous'])
 def test_flow_music_rejects_mismatched_or_unavailable_provenance(change):
     presentation, media = sample()

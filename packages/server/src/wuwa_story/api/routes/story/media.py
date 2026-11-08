@@ -47,12 +47,18 @@ def verified_flow_music(media, presentation, owner, release_id):
     for section in media.get('sections', []):
         proof = section.get('source_proof') if isinstance(section, dict) else None
         if (not isinstance(proof, dict) or section.get('kind') != 'audio_event'
-                or section.get('scope') != 'flow' or section.get('reconstruction_kind') != 'flow_authored_music'
+                or section.get('scope') != 'flow' or section.get('reconstruction_kind') not in {'flow_authored_music', 'state_consumer_fixed_start'}
                 or proof.get('flow_owner') != owner or proof.get('release_id') != release_id
                 or proof.get('presentation_sha256') != presentation.get('sha256')
                 or proof.get('flow_state') != (presentation.get('source') or {}).get('StateKey')
                 or any(not isinstance(client.get(k), str) or not client[k] or proof.get(k) != client[k]
                        for k in ('asset_version', 'download_id'))):
+            continue
+        if section.get('reconstruction_kind') == 'state_consumer_fixed_start' and (
+                section.get('confidence') != 'reconstructed' or proof.get('confidence') != 'reconstructed'
+                or proof.get('runtime_start_confirmed') is not False
+                or proof.get('state_event') != section.get('reference')
+                or not isinstance(proof.get('consumer_event'), str)):
             continue
         paths = [re.fullmatch(r'\$\.Actions\[(\d+)\]', str(proof.get(key, '')))
                  for key in ('play_path', 'talk_path', 'stop_path')]

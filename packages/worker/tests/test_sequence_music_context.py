@@ -56,6 +56,69 @@ def test_flow_candidate_rejects_tampered_presentation():
         music.authored_flow_music_context(target, {'asset_version': '3.7.1', 'download_id': 'client'})
 
 
+def test_denia_pair_is_explicitly_reconstructed_and_keeps_authored_state_path():
+    from wuwa_story.ingestion.spine_presentation import flow_presentation
+    target = flow_target()
+    source = target['presentation']['source']
+    source['Actions'][0]['Params']['EventConfig']['AkEvent'] = (
+        '/Game/Aki/WwiseAudio/Events/play_story_music_daniya_jinzhen_play.play_story_music_daniya_jinzhen_play')
+    target['presentation'] = flow_presentation(source)
+    target['presentation_sha256'] = target['presentation']['sha256']
+    context = music.authored_flow_music_context(target, {'asset_version': '3.7.1', 'download_id': 'client'})
+    assert context['kind'] == 'state_consumer_fixed_start'
+    assert context['source_proof']['runtime_start_confirmed'] is False
+    assert context['source_proof']['state_event'] == context['state_event']
+    assert context['source_proof']['consumer_event'] == context['play_event']
+
+
+@pytest.mark.parametrize('index', [0, 1])
+def test_reconstructed_startup_rejects_late_override(index):
+    from wuwa_story_worker.wwise_banks import reconstructed_startup_timeline
+    state = {'kind': 'SetState', 'time_ms': 1, 'state_group_id': 10, 'state_id': 1}
+    actions = [{'kind': 'Play', 'time_ms': 0}]
+    actions.insert(index, state)
+    with pytest.raises(ValueError, match='after zero time'):
+        reconstructed_startup_timeline({'actions': actions}, {10: 2})
+
+
+def test_reconstructed_startup_preserves_original_and_selected_state():
+    from wuwa_story_worker.wwise_banks import reconstructed_startup_timeline
+    original = [{'kind': 'SetState', 'time_ms': 0, 'state_group_id': 10, 'state_id': 1},
+                {'kind': 'Play', 'time_ms': 0}]
+    result = reconstructed_startup_timeline({'actions': original}, {10: 2})
+    assert result['source_actions'] == original
+    assert result['actions'][0]['state_id'] == 2 and result['actions'][1] == original[1]
+
+
+def test_reconstructed_startup_accepts_zero_time_state_after_play():
+    from wuwa_story_worker.wwise_banks import reconstructed_startup_timeline
+    original = [{'kind': 'Play', 'time_ms': 0},
+                {'kind': 'SetState', 'time_ms': 0, 'state_group_id': 10, 'state_id': 1}]
+    result = reconstructed_startup_timeline({'actions': original}, {10: 2})
+    assert result['source_actions'] == original
+    assert result['actions'][0]['state_id'] == 2 and result['actions'][1] == original[0]
+
+
+def test_state_consumer_binding_requires_native_selected_branch_and_matching_stop(monkeypatch):
+    timelines = {
+        'state': {'actions': [{'kind': 'SetState', 'time_ms': 0, 'state_group_id': 10, 'state_id': 20}]},
+        'play': {'actions': [{'kind': 'Stop', 'time_ms': 0, 'target_id': 3},
+                             {'kind': 'SetState', 'time_ms': 0, 'state_group_id': 10, 'state_id': 1},
+                             {'kind': 'Play', 'time_ms': 0, 'target_id': 9}]},
+        'stop': {'actions': [{'kind': 'Stop', 'time_ms': 0, 'target_id': 3}]},
+    }
+    monkeypatch.setattr(music, 'event_timeline', lambda path, _: deepcopy(timelines[path]))
+    validate = []
+    monkeypatch.setattr(music, 'validate_event_timeline', lambda timeline, path: validate.append((timeline, path)))
+    binding = music.state_consumer_binding('state', 'play', 'stop', 'state', 'play', 'stop')
+    assert binding['runtime_start_confirmed'] is False and binding['state'] == 20
+    assert validate[0][0]['actions'][0]['state_id'] == 20
+    assert binding['bank_timelines']['play']['actions'][1]['state_id'] == 1
+    timelines['stop']['actions'][0]['target_id'] = 4
+    with pytest.raises(ValueError, match='stop does not match'):
+        music.state_consumer_binding('state', 'play', 'stop', 'state', 'play', 'stop')
+
+
 def test_only_whole_file_native_loops_are_exposed():
     assert music.whole_file_loop(
         'wem/303.wem #i #b 30.0\ngroup = -S1 #p 0.01 #@loop')

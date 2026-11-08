@@ -60,13 +60,49 @@ def authored_flow_music_context(target, client):
     keys = [item.get('TidTalk') for item in items if isinstance(item, dict)]
     if not keys or any(not isinstance(key, str) or not key for key in keys) or len(set(keys)) != len(keys):
         return None
-    return {'schema_version': 1, 'kind': 'flow_authored_music', 'play_event': play, 'stop_event': stop,
+    context = {'schema_version': 1, 'kind': 'flow_authored_music', 'play_event': play, 'stop_event': stop,
             'source_proof': {'asset_version': client['asset_version'], 'download_id': client['download_id'],
                              'release_id': target['release_id'], 'flow_owner': target['owner'],
                              'presentation_sha256': digest, 'flow_state': source['StateKey'],
                              'play_path': f'$.Actions[{start}]', 'talk_path': f'$.Actions[{talk}]',
                              'stop_path': f'$.Actions[{end}]', 'talk_text_keys': keys,
                              'timing_basis': 'authored_action_extent', 'global_clock': None}}
+    # Explicit reconstruction pair: the native HIRC relationship is validated
+    # during preparation; this does not assert when the consumer was started.
+    pairs = {'/Game/Aki/WwiseAudio/Events/play_story_music_daniya_jinzhen_play.play_story_music_daniya_jinzhen_play':
+             '/Game/Aki/WwiseAudio/Events/play_story_music_daniya_jinzhen.play_story_music_daniya_jinzhen'}
+    if play in pairs:
+        context.update(kind='state_consumer_fixed_start', state_event=play, play_event=pairs[play],
+                       confidence='reconstructed')
+        context['source_proof'].update(confidence='reconstructed', runtime_start_confirmed=False,
+                                       state_event=play, consumer_event=pairs[play])
+    return context
+
+
+def state_consumer_binding(state_xml, play_xml, stop_xml, state_event, play_event, stop_event):
+    from wuwa_story_worker.wwise_banks import reconstructed_startup_timeline
+
+    state = event_timeline(state_xml, event_id(state_event))
+    play = event_timeline(play_xml, event_id(play_event))
+    stop = event_timeline(stop_xml, event_id(stop_event))
+    if len(state['actions']) != 1 or state['actions'][0]['kind'] != 'SetState' or state['actions'][0]['time_ms'] != 0:
+        raise ValueError('Reconstruction requires one immediate authored state')
+    selected = state['actions'][0]
+    plays = [action for action in play['actions'] if action['kind'] == 'Play']
+    if len(plays) != 1:
+        raise ValueError('Reconstruction requires one consuming Play')
+    adjusted = reconstructed_startup_timeline(play, {selected['state_group_id']: selected['state_id']})
+    validate_event_timeline(adjusted, play_xml)
+    initial_stops = {action['target_id'] for action in play['actions']
+                     if action['kind'] == 'Stop' and action['time_ms'] == 0
+                     and play['actions'].index(action) < play['actions'].index(plays[0])}
+    if not initial_stops or not any(action['kind'] == 'Stop' and action['time_ms'] == 0
+                                    and action['target_id'] in initial_stops for action in stop['actions']):
+        raise ValueError('Reconstruction stop does not match consumer startup stop')
+    return {'state_group': selected['state_group_id'], 'state': selected['state_id'],
+            'play_target': plays[0]['target_id'], 'state_event': state_event, 'play_event': play_event,
+            'stop_event': stop_event, 'timing_basis': 'fixed_start_reconstruction',
+            'runtime_start_confirmed': False, 'bank_timelines': {'state': state, 'play': play, 'stop': stop}}
 
 
 def levelplay_music_binding(state_xml: Path, play_xml: Path, stop_xml: Path,
@@ -174,7 +210,7 @@ async def prepare_levelplay_music(root, fmodel, converter, work, context):
 
     root, work = Path(root), Path(work)
     if (not isinstance(context, dict) or context.get('schema_version') != 1
-            or context.get('kind') != 'levelplay_fixed_start'
+            or context.get('kind') not in {'levelplay_fixed_start', 'state_consumer_fixed_start'}
             or not isinstance(context.get('source_proof'), dict) or not context['source_proof']):
         raise ValueError('Missing verified LevelPlay music context')
     references = [context.get(key) for key in (
@@ -237,7 +273,8 @@ async def prepare_levelplay_music(root, fmodel, converter, work, context):
         evidence[f'events/{name}.xml'] = (work / (name + '.xml')).read_bytes()
     shutil.copyfile(bank_files[expected[-1]], audio / 'Init.bnk')
     originals.add(bank_files[expected[-1]])
-    binding = levelplay_music_binding(
+    reconstructed = context['kind'] == 'state_consumer_fixed_start'
+    binding = (state_consumer_binding if reconstructed else levelplay_music_binding)(
         *(work / (name + '.xml') for name in names), *names)
     evidence['levelplay-binding.json'] = json.dumps(
         binding, sort_keys=True).encode()
@@ -272,7 +309,8 @@ async def prepare_levelplay_music(root, fmodel, converter, work, context):
     music = MusicContext(bank='audio/' + names[1] + '.bnk', audio_directory='audio',
                          state_group=binding['state_group'], state=binding['state'],
                          source_event=names[0], evidence='Verified LevelPlay fixed-start reconstruction')
-    stem, = await render_music_context(music, assets, work / 'render', tool_path('WUWA_VGMSTREAM_PATH'))
+    stem, = await render_music_context(music, assets, work / 'render', tool_path('WUWA_VGMSTREAM_PATH'),
+                                       **({'override_startup_states': True} if reconstructed else {}))
     wav = stem['path']
     music_only = [Path(source) for source in stem['sources']
                   if Path(source).name == 'music-only.txtp']

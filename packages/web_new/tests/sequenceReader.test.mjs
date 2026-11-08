@@ -227,6 +227,10 @@ test("flow music requires exact line coverage and a unique source-proven publish
   const result = flowBackgroundMusic(lines, [event]);
   assert.equal(result.url, "/denia.ogg");
   assert.equal(result.loop, true);
+  const reconstructed = { ...section, reconstruction_kind: "state_consumer_fixed_start", source_proof: {
+    ...proof, confidence: "reconstructed", runtime_start_confirmed: false, state_event: "state", consumer_event: "consumer" } };
+  assert.equal(flowBackgroundMusic(lines, [{ ...event, sequence_media: media(reconstructed) }]).url, "/denia.ogg");
+  assert.equal(flowBackgroundMusic(lines, [{ ...event, sequence_media: media({ ...reconstructed, source_proof: { ...reconstructed.source_proof, runtime_start_confirmed: true } }) }]), undefined);
   assert.equal(flowBackgroundMusic(lines, [{ ...event, covered_text_keys: ["one"] }]), undefined);
   assert.equal(flowBackgroundMusic(lines, [{ ...event, flow_state: "other" }]), undefined);
   assert.equal(flowBackgroundMusic(lines, [event, event]), undefined);
