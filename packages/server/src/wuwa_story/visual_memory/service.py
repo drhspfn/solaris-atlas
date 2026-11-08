@@ -18,6 +18,8 @@ from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models import (
     EmbeddingModel,
     FileLocation,
+    FileObject,
+    FileReference,
     Node,
     VisualAppearance,
     VisualEmbedding,
@@ -609,7 +611,7 @@ class VisualMemoryService:
         suffix = "?original=true" if original else ""
         return f"/admin/visual-memory/references/{reference.id}/image{suffix}"
 
-    async def get_image_bytes(self, reference_id, original=False):
+    async def get_image_bytes(self, reference_id, original=False, *, max_bytes=80 * 1024 * 1024):
         reference = await self._reference(reference_id)
         file_id = reference.original_file_id if original else reference.file_id
         location = (
@@ -632,10 +634,43 @@ class VisualMemoryService:
         result = bytearray()
         async for chunk in self.storage.get(location.object_key):
             result.extend(chunk)
-            if len(result) > 80 * 1024 * 1024:
+            if len(result) > max_bytes:
                 raise ValueError(
                     "Stored image exceeds the decoded image limit")
         return bytes(result)
+
+    async def get_asset_image_bytes(self, asset_id):
+        """Only published entity artwork, never arbitrary private storage objects."""
+        from wuwa_story.visual_memory.image_source import MAX_QUERY_BYTES
+
+        row = (await self.session.execute(
+            select(FileObject, FileLocation)
+            .join(FileReference, FileReference.file_id == FileObject.id)
+            .join(FileLocation, FileLocation.file_id == FileObject.id)
+            .where(FileReference.owner_node_id == asset_id,
+                   FileReference.reference_type == "entity_image",
+                   FileObject.mime_type.in_(
+                       ("image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp")),
+                   FileObject.size_bytes > 0, FileObject.size_bytes <= MAX_QUERY_BYTES,
+                   FileLocation.backend == self.storage.backend,
+                   FileLocation.bucket == self.storage.bucket,
+                   FileLocation.available.is_(True))
+            .order_by(FileReference.id.desc(), FileLocation.is_primary.desc(), FileLocation.id)
+            .limit(1)
+        )).first()
+        if row is None:
+            raise ValueError("Published entity image unavailable")
+        file, location = row
+        result = bytearray()
+        async for chunk in self.storage.get(location.object_key):
+            result.extend(chunk)
+            if len(result) > MAX_QUERY_BYTES:
+                raise ValueError("Query image exceeds 5 MiB")
+        data = bytes(result)
+        if len(data) != file.size_bytes or file.sha256 and hashlib.sha256(data).digest() != file.sha256:
+            raise ValueError(
+                "Published image does not match registered content")
+        return data
 
     async def get_reference(self, reference_id):
         row = await self._reference(reference_id)
