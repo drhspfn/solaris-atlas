@@ -53,6 +53,7 @@ async def dispatch(name: str, arguments: dict[str, Any], session: Any) -> dict[s
                     "url": source.get("url"),
                     "duration": source.get("duration"),
                     "reviewed": scan.get("reviewed") is True,
+                    "reviewed_scan_id": scan.get("id") if scan.get("reviewed") is True else None,
                 })
             return {"name": result.get("name"), "game_version": result.get("game_version"),
                     "sources": sources}

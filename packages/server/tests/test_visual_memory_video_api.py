@@ -160,9 +160,14 @@ async def test_public_tools_do_not_expose_pending_observations_or_offer_writes(s
 
     service.sources.return_value = {"name": "CG", "game_version": "3.7", "sources": [
         {"asset_node_id": 3, "asset_version": "3.7", "url": "https://media.example/video.mp4",
-         "duration": 10, "secret": "private", "scan": {"reviewed": False, "frames": ["private"]}}]}
+         "duration": 10, "secret": "private", "scan": {"id": 7, "reviewed": False, "frames": ["private"]}}]}
     result = await mcp_video_tools.dispatch("visual_inspect_cutscene", {"cutscene_key": "CG"}, None)
     assert result["sources"][0]["reviewed"] is False
+    assert result["sources"][0]["reviewed_scan_id"] is None
+    assert "private" not in str(result)
+    service.sources.return_value["sources"][0]["scan"]["reviewed"] = True
+    result = await mcp_video_tools.dispatch("visual_inspect_cutscene", {"cutscene_key": "CG"}, None)
+    assert result["sources"][0]["reviewed_scan_id"] == 7
     assert "private" not in str(result)
     service.get_scan.return_value = {"id": 7, "status": "completed", "reviewed": False,
         "frames": [{"index": 8, "time": 24, "image_url": "https://media.example/frame.jpg",
