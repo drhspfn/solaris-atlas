@@ -93,7 +93,8 @@ recognition accuracy or permission to auto-label.
 Reusable service: `wuwa_story.visual_memory.service.VisualMemoryService`.
 The caller supplies an async SQLAlchemy session, may inject storage/inference, and owns
 the transaction. Search is read-only, including when the current model has no library.
-No API accepts a local file path or downloads arbitrary remote image URLs.
+No API accepts a local file path. Query tools can temporarily download public HTTPS
+images through the guarded resolver described below; they never persist queries.
 
 Administrator endpoints live under `/admin/visual-memory`:
 
@@ -108,8 +109,54 @@ Administrator endpoints live under `/admin/visual-memory`:
 | Recognition | `POST /search`, `POST /identify` |
 
 Write/recognition requests require the existing CSRF token and administrator session.
-Images use `image_base64` JSON, at most 5 MiB decoded, at most 20 boxes and 20 million
+Images accept the source forms below, at most 5 MiB decoded, at most 20 boxes and 20 million
 pixels. Bounding boxes are `[left, top, right, bottom]` in EXIF-oriented image pixels.
+
+### Query image sources (MCP and administrator API)
+
+`visual_search` and `visual_identify` accept exactly one source. Existing clients may
+continue sending `{"image_base64":"..."}`. New clients can use:
+
+```json
+{"image":{"url":"https://example.org/character.png"},"include_images":true}
+```
+
+```json
+{"image":{"asset_id":15499},"limit":5}
+```
+
+```json
+{"image":{"reference_id":1},"detect":false}
+```
+
+```json
+{"image":{"base64":"..."},"boxes":[[0,0,100,100]]}
+```
+
+The last two examples are `visual_identify` inputs (`visual_search` uses singular
+`bbox`). `asset_id` is a **numeric graph node ID owning published `entity_image`
+artwork**, not a storage file ID. Its newest available published image is used;
+use a URL for a specific artwork variant. `reference_id` selects the retained crop
+of an approved, search-enabled visual reference. Pending, rejected, disabled and
+vector-only references cannot be used as query images through public MCP.
+
+URLs must return a JPEG, PNG, WebP, GIF or BMP image over HTTPS port 443, without
+credentials. HTML pages, local addresses, private/mixed DNS answers, local paths
+and arbitrary MCP resource URIs are rejected. DNS is checked at each redirect,
+and the connection is pinned to the checked IP while preserving TLS hostname
+verification. Downloads allow up to three redirects, 20 seconds total and 5 MiB
+of response bytes. HTTP content compression is rejected to prevent decompression
+bombs. Image dimensions are checked before inference.
+Query images are not ingested or approved automatically.
+
+MCP callers may set `include_images: true` on either query tool or
+`visual_get_reference`. Alongside JSON, MCP returns up to three labelled JPEG
+reference thumbnails (maximum 512×512), rechecking their approval and visibility.
+Administrator JSON endpoints still return ordinary JSON and existing preview URLs.
+
+This does not make chat attachments automatically accessible to MCP: the client
+must supply accessible image bytes, a public HTTPS image URL, or an archive ID.
+There is no anonymous upload/ingest tool and no external image-search scraper.
 
 Public MCP tools: `visual_search`, `visual_identify`, `visual_list_identities`,
 `visual_get_reference`. Reference lookup exposes approved, search-enabled references only.

@@ -6,7 +6,7 @@ import binascii
 from typing import Any, Literal
 
 from mcp.types import Tool
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_ENCODED = 4 * ((MAX_IMAGE_BYTES + 2) // 3)
@@ -29,16 +29,48 @@ class Input(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ImageSource(Input):
+    base64: str | None = Field(
+        default=None, min_length=1, max_length=MAX_ENCODED)
+    url: str | None = Field(default=None, min_length=1, max_length=4096)
+    mime_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"] | None = None
+    asset_id: int | None = Field(default=None, gt=0, strict=True,
+                                 description="Graph node ID of a published entity image; not a private storage file ID")
+    reference_id: int | None = Field(
+        default=None, gt=0, strict=True, description="Approved, search-enabled visual reference ID")
+
+    @model_validator(mode="after")
+    def one_source(self):
+        if sum(value is not None for value in (self.base64, self.url, self.asset_id, self.reference_id)) != 1:
+            raise ValueError("Choose exactly one image source")
+        if self.base64 is not None:
+            decode_image(self.base64)
+        elif self.mime_type is not None:
+            raise ValueError("mime_type is only supported with base64 images")
+        return self
+
+
 class ImageInput(Input):
-    image_base64: str = Field(min_length=1, max_length=MAX_ENCODED)
+    image_base64: str | None = Field(
+        default=None, min_length=1, max_length=MAX_ENCODED)
+    image: ImageSource | None = None
+    include_images: bool = Field(
+        default=False, description="MCP: include up to three approved reference thumbnails as native image content")
     kind: str | None = Field(default=None, max_length=100)
     limit: int = Field(default=10, ge=1, le=10)
 
     @field_validator("image_base64")
     @classmethod
-    def valid_image(cls, value: str) -> str:
-        decode_image(value)
+    def valid_image(cls, value: str | None) -> str | None:
+        if value is not None:
+            decode_image(value)
         return value
+
+    @model_validator(mode="after")
+    def one_source(self):
+        if (self.image_base64 is None) == (self.image is None):
+            raise ValueError("Provide image or image_base64, not both")
+        return self
 
 
 class SearchInput(ImageInput):
@@ -59,6 +91,7 @@ class IdentitiesInput(Input):
 
 class ReferenceIdInput(Input):
     reference_id: int = Field(gt=0)
+    include_images: bool = False
 
 
 class IdentityCreateInput(Input):
@@ -129,12 +162,14 @@ def service_for(session: Any):
 
 
 TOOLS = [
-    Tool(name="visual_search", description="Search visual identities using a base64-encoded image (maximum 5 MiB). Similarity is not probability.",
+    Tool(name="visual_search", description="Search visual identities. Provide image: {url: public HTTPS URL}, {asset_id: published entity node ID}, {reference_id: approved visual reference ID}, or {base64: encoded image}; legacy image_base64 is supported. Maximum 5 MiB. Similarity is not probability.",
          inputSchema=SearchInput.model_json_schema()),
-    Tool(name="visual_identify", description="Detect and identify visual identities from a base64-encoded image (maximum 5 MiB). Results may be unknown.",
+    Tool(name="visual_identify", description="Detect and identify characters in an image. Provide image: {url: public HTTPS URL}, {asset_id: published entity node ID}, {reference_id: approved visual reference ID}, or {base64: encoded image}; legacy image_base64 is supported. Maximum 5 MiB. Results may be unknown.",
          inputSchema=IdentifyInput.model_json_schema()),
-    Tool(name="visual_list_identities", description="List visual identities with optional name and kind filters.", inputSchema=IdentitiesInput.model_json_schema()),
-    Tool(name="visual_get_reference", description="Get an approved, search-enabled visual reference by ID.", inputSchema=ReferenceIdInput.model_json_schema()),
+    Tool(name="visual_list_identities", description="List visual identities with optional name and kind filters.",
+         inputSchema=IdentitiesInput.model_json_schema()),
+    Tool(name="visual_get_reference", description="Get an approved, search-enabled visual reference by ID.",
+         inputSchema=ReferenceIdInput.model_json_schema()),
 ]
 
 # The public MCP transport has no user identity. One inference per process, no queue.
@@ -144,7 +179,8 @@ _public_inference = asyncio.Semaphore(1)
 class VisualMemoryTools:
     def __init__(self, service: Any, *, allow_write: bool = False, allow_moderation: bool = False, actor_id: int | None = None, agent_source: bool = False):
         if agent_source and allow_moderation:
-            raise ValueError("An agent cannot be granted moderation capability")
+            raise ValueError(
+                "An agent cannot be granted moderation capability")
         self.service = service
         self.allow_write = allow_write
         self.allow_moderation = allow_moderation
@@ -162,7 +198,25 @@ class VisualMemoryTools:
         if name in {"visual_search", "visual_identify"}:
             model = SearchInput if name == "visual_search" else IdentifyInput
             data = model.model_validate(arguments).model_dump()
-            image = decode_image(data.pop("image_base64"))
+            legacy = data.pop("image_base64")
+            source = data.pop("image")
+            data.pop("include_images")
+            if legacy is not None:
+                image = decode_image(legacy)
+            elif source["base64"] is not None:
+                image = decode_image(source["base64"])
+            elif source["url"] is not None:
+                from wuwa_story.visual_memory.image_source import download_image
+                image = await download_image(source["url"])
+            elif source["reference_id"] is not None:
+                reference = await self.service.get_reference(source["reference_id"])
+                if reference.get("status") != "approved" or reference.get("enabled_for_search") is not True:
+                    raise ValueError("Reference unavailable")
+                image = await self.service.get_image_bytes(source["reference_id"], max_bytes=MAX_IMAGE_BYTES)
+            else:
+                image = await self.service.get_asset_image_bytes(source["asset_id"])
+            if len(image) > MAX_IMAGE_BYTES:
+                raise ValueError("Query image exceeds 5 MiB")
             return await getattr(self.service, name.removeprefix("visual_"))(image, **data)
         if not self.allow_write:
             raise PermissionError("Visual memory write capability required")
@@ -174,16 +228,19 @@ class VisualMemoryTools:
         if name == "visual_add_reference":
             data = ReferenceInput.model_validate(data).model_dump()
             if data["status"] == "approved" and not self.allow_moderation:
-                raise PermissionError("Visual memory moderation capability required")
+                raise PermissionError(
+                    "Visual memory moderation capability required")
             if self.agent_source:
                 if data["status"] != "pending":
-                    raise PermissionError("Agent references must remain pending")
+                    raise PermissionError(
+                        "Agent references must remain pending")
                 data["source_type"] = "agent_observation"
             image = decode_image(data.pop("image_base64"))
             return await self.service.add_reference(image, **data, actor_id=self.actor_id)
         if name in {"visual_link_reference", "visual_review_reference", "visual_remove_reference"}:
             if (name == "visual_review_reference" or name == "visual_remove_reference" and data.get("mode") == "reject") and not self.allow_moderation:
-                raise PermissionError("Visual memory moderation capability required")
+                raise PermissionError(
+                    "Visual memory moderation capability required")
             reference_id = data.pop("reference_id", None)
             if type(reference_id) is not int or reference_id <= 0:
                 raise ValueError("reference_id must be positive")
@@ -198,6 +255,7 @@ class VisualMemoryTools:
 async def dispatch(name: str, arguments: dict[str, Any], session: Any) -> dict[str, Any]:
     if name not in {tool.name for tool in TOOLS}:
         raise ValueError("Unknown visual memory tool")
+
     async def execute():
         try:
             return await VisualMemoryTools(service_for(session)).execute(name, arguments)
@@ -214,3 +272,55 @@ async def dispatch(name: str, arguments: dict[str, Any], session: Any) -> dict[s
         return {"error": {"code": "busy", "message": "Visual inference is busy; retry later."}}
     async with _public_inference:
         return await execute()
+
+
+async def image_contents(name: str, arguments: dict, result: dict, session: Any) -> list:
+    """Native MCP thumbnails; only retained and currently approved references."""
+    if arguments.get("include_images") is not True or "error" in result:
+        return []
+    if _public_inference.locked():
+        from mcp.types import TextContent
+        return [TextContent(type="text", text="Reference thumbnails are busy; retry include_images later.")]
+    async with _public_inference:
+        return await _reference_contents(name, arguments, result, session)
+
+
+async def _reference_contents(name: str, arguments: dict, result: dict, session: Any) -> list:
+    ids = []
+    if name == "visual_get_reference":
+        ids.append(arguments["reference_id"])
+    else:
+        groups = [result] if name == "visual_search" else result.get(
+            "detections", [])
+        for group in groups:
+            candidates = group.get("candidates", group.get(
+                "identification", {}).get("candidates", []))
+            for candidate in candidates:
+                for evidence in candidate.get("evidence", []):
+                    if evidence.get("reference_id") not in ids:
+                        ids.append(evidence.get("reference_id"))
+    import io
+    from mcp.types import ImageContent, TextContent
+    from wuwa_story.visual_memory.images import load_image
+
+    service = service_for(session)
+    contents = []
+    for reference_id in [value for value in ids if type(value) is int][:3]:
+        reference = await service.get_reference(reference_id)
+        if reference.get("status") != "approved" or reference.get("enabled_for_search") is not True:
+            continue
+        try:
+            data = await service.get_image_bytes(reference_id, max_bytes=MAX_IMAGE_BYTES)
+
+            def thumbnail():
+                image = load_image(data, max_bytes=MAX_IMAGE_BYTES)
+                image.thumbnail((512, 512))
+                output = io.BytesIO()
+                image.save(output, format="JPEG", quality=85)
+                return base64.b64encode(output.getvalue()).decode("ascii")
+            encoded = await asyncio.to_thread(thumbnail)
+        except ValueError:
+            continue
+        contents.extend([TextContent(type="text", text=f"Visual reference #{reference_id}"),
+                         ImageContent(type="image", data=encoded, mimeType="image/jpeg")])
+    return contents

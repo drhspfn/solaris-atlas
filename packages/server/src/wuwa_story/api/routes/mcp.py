@@ -337,7 +337,8 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
                 return [TextContent(type="text", text=_dump_json(result)), *images]
             if name in {tool.name for tool in visual_tools.TOOLS}:
                 result = await visual_tools.dispatch(name, arguments, session)
-                return [TextContent(type="text", text=_dump_json(result))]
+                images = await visual_tools.image_contents(name, arguments, result, session)
+                return [TextContent(type="text", text=_dump_json(result)), *images]
             if name in {tool.name for tool in character_tools.TOOLS}:
                 result = await character_tools.dispatch(name, arguments, session)
                 return [TextContent(type="text", text=_dump_json(result))]

@@ -130,7 +130,7 @@ async def run_chat(session: AsyncSession, messages: Sequence[Any], *, role: Role
                     role=role,
                     call_id=getattr(call, "id", f"{step}:{index}"),
                     tool=call.name,
-                    arguments={**call.arguments, "image_base64": "[redacted]"} if "image_base64" in call.arguments else call.arguments,
+                    arguments=audit.redacted(call.arguments),
                     step=step,
                 )
                 try:
