@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 
 from wuwa_story.config.settings import get_settings
@@ -45,7 +45,7 @@ def normalized_vector(values):
 def rank_candidates(rows, limit=10):
     """At most five independent source images per identity; never sum sample counts."""
     groups = {}
-    for row in rows:
+    for row in sorted(rows, key=lambda item: (-item["similarity"], item["reference_id"])):
         group = groups.setdefault(row["identity_id"], [])
         if not any(
             item["source_sha256"] == row["source_sha256"]
@@ -100,7 +100,11 @@ def _name(value, field="name", max_length=256):
 def _url(value):
     if value is None:
         return None
-    if len(value) > 4096 or urlsplit(value).scheme not in ("https", "http"):
+    if (
+        len(value) > 4096
+        or urlsplit(value).scheme not in ("https", "http")
+        or not urlsplit(value).hostname
+    ):
         raise ValueError("Source links must be HTTP(S) URLs")
     return value
 
@@ -268,15 +272,15 @@ class VisualMemoryService:
             raise ValueError("Pagination requires limit 1–100 and offset >= 0")
         return limit, offset
 
-    async def _embed(self, image):
+    async def _embed(self, image, *, register=False):
         result = await asyncio.to_thread(self._engine().embed, image)
         vector = normalized_vector(result.vector)
         key = _name(result.model_key, "model_key", 128)
         config = dict(result.config)
         config["dimensions"] = len(vector)
-        statement = (
-            insert(EmbeddingModel)
-            .values(
+        model = await self.session.scalar(select(EmbeddingModel).where(EmbeddingModel.key == key))
+        if model is None:
+            values = dict(
                 key=key,
                 provider="local_visual",
                 model_name=config.get("model_name", key),
@@ -285,10 +289,19 @@ class VisualMemoryService:
                 config=config,
                 active=True,
             )
-            .on_conflict_do_nothing(index_elements=[EmbeddingModel.key])
-        )
-        await self.session.execute(statement)
-        model = await self.session.scalar(select(EmbeddingModel).where(EmbeddingModel.key == key))
+            if not register:
+                # Public tools and read-only agents must not mutate the model registry.
+                return EmbeddingModel(**values), vector
+            await self.session.execute(
+                insert(EmbeddingModel)
+                .values(**values)
+                .on_conflict_do_nothing(
+                    index_elements=[EmbeddingModel.key],
+                )
+            )
+            model = await self.session.scalar(
+                select(EmbeddingModel).where(EmbeddingModel.key == key)
+            )
         if (
             model.dimensions != len(vector)
             or model.config != config
@@ -310,6 +323,14 @@ class VisualMemoryService:
         return await self._search_vector(model, vector, kind, limit)
 
     async def _search_vector(self, model, vector, kind=None, limit=10):
+        if model.id is None:
+            return {
+                "model_key": model.key,
+                "status": "unknown",
+                "candidates": [],
+                "score_type": "uncalibrated_similarity",
+                "retrieval": "balanced_exact_cosine",
+            }
         # Exact balanced retrieval intentionally has no global image LIMIT: a popular
         # identity must not evict a rare NPC before entity aggregation. pgvector does
         # the distance calculation; SQL caps each independent source per identity.
@@ -458,10 +479,11 @@ class VisualMemoryService:
         )
         await self.session.flush()
 
-    async def _store_image(self, image, name):
+    async def _store_image(self, image, name, encoded=None):
         from wuwa_story.visual_memory.images import encode_png
 
-        encoded = await asyncio.to_thread(encode_png, image)
+        if encoded is None:
+            encoded = await asyncio.to_thread(encode_png, image)
         with tempfile.TemporaryDirectory(prefix="visual-reference-") as directory:
             path = Path(directory) / name
             await asyncio.to_thread(path.write_bytes, encoded)
@@ -501,7 +523,8 @@ class VisualMemoryService:
         image = await asyncio.to_thread(load_image, image_bytes)
         bbox = bbox or [0, 0, image.width, image.height]
         crop = crop_image(image, bbox)
-        digest = hashlib.sha256(encode_png(crop)).hexdigest()
+        encoded_crop = await asyncio.to_thread(encode_png, crop)
+        digest = hashlib.sha256(encoded_crop).hexdigest()
         # Serialize concurrent identical uploads. Rejected images stay rejected, and
         # retrying an upload cannot silently replace labels or moderation decisions.
         await self.session.execute(select(func.pg_advisory_xact_lock(811, int(digest[:7], 16))))
@@ -512,11 +535,11 @@ class VisualMemoryService:
             return {**await self.get_reference(existing.id), "duplicate": True}
         source_type = _name(source_type, "source_type", 64)
         source_url, source_page = _url(source_url), _url(source_page)
-        model, vector = await self._embed(crop)
+        model, vector = await self._embed(crop, register=True)
         reference = VisualReference(
             source_sha256=hashlib.sha256(image_bytes).hexdigest(),
             sha256=digest,
-            perceptual_hash=phash(crop),
+            perceptual_hash=await asyncio.to_thread(phash, crop),
             width=image.width,
             height=image.height,
             bbox=bbox,
@@ -535,7 +558,7 @@ class VisualMemoryService:
         await self._links(reference.id, links or [])
         if retention_mode == "image":
             reference.original_file_id = await self._store_image(image, "visual-original.png")
-            reference.file_id = await self._store_image(crop, "visual-crop.png")
+            reference.file_id = await self._store_image(crop, "visual-crop.png", encoded_crop)
         self.session.add(
             VisualEmbedding(
                 reference_id=reference.id,
@@ -557,6 +580,7 @@ class VisualMemoryService:
                 FileLocation.file_id == file_id,
                 FileLocation.available.is_(True),
                 FileLocation.backend == self.storage.backend,
+                FileLocation.bucket == self.storage.bucket,
             )
             .order_by(FileLocation.is_primary.desc(), FileLocation.id)
         )
@@ -576,6 +600,7 @@ class VisualMemoryService:
                 .where(
                     FileLocation.file_id == file_id,
                     FileLocation.backend == self.storage.backend,
+                    FileLocation.bucket == self.storage.bucket,
                     FileLocation.available.is_(True),
                 )
                 .order_by(FileLocation.is_primary.desc(), FileLocation.id)
@@ -596,7 +621,7 @@ class VisualMemoryService:
         row = await self._reference(reference_id)
         links = (
             await self.session.execute(
-                select(VisualReferenceLink, VisualIdentity.name)
+                select(VisualReferenceLink, VisualIdentity.name, VisualIdentity.kind)
                 .join(
                     VisualIdentity,
                     VisualIdentity.id == VisualReferenceLink.identity_id,
@@ -640,8 +665,13 @@ class VisualMemoryService:
             "retention_mode": row.retention_mode,
             "model_keys": list(models),
             "links": [
-                {"identity_id": x.identity_id, "appearance_id": x.appearance_id, "name": name}
-                for x, name in links
+                {
+                    "identity_id": x.identity_id,
+                    "appearance_id": x.appearance_id,
+                    "name": name,
+                    "kind": kind,
+                }
+                for x, name, kind in links
             ],
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
@@ -649,18 +679,46 @@ class VisualMemoryService:
         }
 
     async def list_references(
-        self, q="", kind=None, status=None, model_key=None, source_type=None, limit=20, offset=0
+        self,
+        q="",
+        kind=None,
+        status=None,
+        model_key=None,
+        source_type=None,
+        limit=20,
+        offset=0,
+        quality_min=None,
     ):
         limit, offset = self._page(limit, offset)
         statement = select(VisualReference.id)
-        if q or kind:
-            identities = select(VisualReferenceLink.reference_id).join(
-                VisualIdentity, VisualIdentity.id == VisualReferenceLink.identity_id
+        if quality_min is not None:
+            if not math.isfinite(quality_min) or not 0 <= quality_min <= 1:
+                raise ValueError("Minimum quality must be between 0 and 1")
+            statement = statement.where(VisualReference.quality >= quality_min)
+        if q:
+            pattern = f"%{q[:256]}%"
+            identities = (
+                select(VisualReferenceLink.reference_id)
+                .join(VisualIdentity, VisualIdentity.id == VisualReferenceLink.identity_id)
+                .where(VisualIdentity.name.ilike(pattern))
             )
-            if q:
-                identities = identities.where(VisualIdentity.name.ilike(f"%{q[:256]}%"))
-            if kind:
-                identities = identities.where(VisualIdentity.kind == kind)
+            statement = statement.where(
+                or_(
+                    VisualReference.id.in_(identities),
+                    VisualReference.source_url.ilike(pattern),
+                    VisualReference.source_page.ilike(pattern),
+                    VisualReference.author.ilike(pattern),
+                )
+            )
+        if kind:
+            identities = (
+                select(VisualReferenceLink.reference_id)
+                .join(
+                    VisualIdentity,
+                    VisualIdentity.id == VisualReferenceLink.identity_id,
+                )
+                .where(VisualIdentity.kind == kind)
+            )
             statement = statement.where(VisualReference.id.in_(identities))
         if status:
             statement = statement.where(VisualReference.status == status)
@@ -757,8 +815,10 @@ class VisualMemoryService:
             if row.file_id is None:
                 results.append({"id": row.id, "status": "image_not_retained"})
                 continue
-            image = await asyncio.to_thread(load_image, await self.get_image_bytes(row.id))
-            model, vector = await self._embed(image)
+            image = await asyncio.to_thread(
+                load_image, await self.get_image_bytes(row.id), max_bytes=80 * 1024 * 1024
+            )
+            model, vector = await self._embed(image, register=True)
             statement = insert(VisualEmbedding).values(
                 reference_id=row.id,
                 model_id=model.id,

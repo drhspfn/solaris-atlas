@@ -11,6 +11,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Identity,
+    Index,
     Integer,
     String,
     Text,
@@ -128,6 +129,7 @@ class VisualEmbedding(Base):
     __tablename__ = "visual_embedding"
     __table_args__ = (
         CheckConstraint("vector_dims(embedding) = dimensions", name="dimensions_match"),
+        Index("ix_visual_embedding_model_dimensions", "model_id", "dimensions"),
         {"schema": "search"},
     )
     reference_id: Mapped[int] = mapped_column(

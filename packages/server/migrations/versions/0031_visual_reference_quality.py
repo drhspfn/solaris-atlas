@@ -13,13 +13,13 @@ def upgrade() -> None:
     op.execute("SET LOCAL lock_timeout='5s'")
     op.add_column("visual_reference", sa.Column("author", sa.String(512)), schema="core")
     op.create_check_constraint(
-        "ck_visual_reference_quality_valid",
+        op.f("ck_visual_reference_quality_valid"),
         "visual_reference",
         "quality >= 0 AND quality <= 1",
         schema="core",
     )
     op.create_check_constraint(
-        "ck_visual_embedding_dimensions_match",
+        op.f("ck_visual_embedding_dimensions_match"),
         "visual_embedding",
         "vector_dims(embedding) = dimensions",
         schema="search",
@@ -27,6 +27,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint("ck_visual_embedding_dimensions_match", "visual_embedding", schema="search")
-    op.drop_constraint("ck_visual_reference_quality_valid", "visual_reference", schema="core")
+    # Support the names from early local development applications as well.
+    op.execute(
+        "ALTER TABLE search.visual_embedding "
+        "DROP CONSTRAINT IF EXISTS ck_visual_embedding_dimensions_match, "
+        "DROP CONSTRAINT IF EXISTS ck_visual_embedding_ck_visual_embedding_dimensions_match"
+    )
+    op.execute(
+        "ALTER TABLE core.visual_reference "
+        "DROP CONSTRAINT IF EXISTS ck_visual_reference_quality_valid, "
+        "DROP CONSTRAINT IF EXISTS ck_visual_reference_ck_visual_reference_quality_valid"
+    )
     op.drop_column("visual_reference", "author", schema="core")

@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from wuwa_story.db.models import (
     User,
     VisualEmbedding,
+    VisualReference,
+    VisualReferenceLink,
 )
 from wuwa_story.storage.local import LocalStorage
 from wuwa_story.visual_memory.images import encode_png
@@ -111,9 +113,15 @@ async def test_reference_review_search_retention_and_model_isolation(memory):
             {"identity_id": second["id"]},
         ],
         actor_id=actor,
+        source_url="https://example.invalid/yangyang",
+        author="Visual tester",
+        quality=.8,
     )
     assert ref["status"] == "pending" and not ref["enabled_for_search"]
     assert len(ref["links"]) == 2 and ref["image_url"]
+    assert ref["links"][0]["kind"] == "character"
+    assert (await service.list_references(q="example.invalid", quality_min=.7))["total"] == 1
+    assert (await service.list_references(q="Visual tester", quality_min=.9))["total"] == 0
     assert (await service.search(image))["status"] == "unknown"
     approved = await service.review_reference(ref["id"], "approved", actor_id=actor)
     assert approved["enabled_for_search"]
@@ -159,3 +167,35 @@ async def test_relink_revokes_approval_and_appearance_validation(memory):
     assert changed["status"] == "pending" and not changed["enabled_for_search"]
     with pytest.raises(ValueError, match="administrator"):
         await service.review_reference(ref["id"], "approved")
+
+
+@pytest.mark.asyncio
+async def test_balanced_pgvector_search_does_not_drop_rare_identity(memory):
+    service, session, actor = memory
+    popular = await service.create_identity("Popular character", "character")
+    rare = await service.create_identity("Rare NPC", "npc")
+    image = encode_png(Image.new("RGB", (16, 16), "green"))
+    reference = await service.add_reference(image, links=[{"identity_id": rare["id"]}],
+                                            status="approved", actor_id=actor)
+    rare_embedding = await session.scalar(select(VisualEmbedding).where(
+        VisualEmbedding.reference_id == reference["id"],
+    ))
+    rare_embedding.embedding = [.9, math.sqrt(1 - .9 ** 2)] + [0.] * 382
+    references = [VisualReference(
+        source_sha256=f"{n:064x}", sha256=f"{n:064x}", width=10, height=10,
+        bbox=[0, 0, 10, 10], source_type="gameplay", status="approved",
+        enabled_for_search=True, retention_mode="vector_only",
+    ) for n in range(1, 501)]
+    session.add_all(references)
+    await session.flush()
+    for row in references:
+        session.add(VisualReferenceLink(reference_id=row.id, identity_id=popular["id"]))
+        session.add(VisualEmbedding(reference_id=row.id, model_id=rare_embedding.model_id,
+                                    dimensions=384, embedding=[.98, math.sqrt(1 - .98 ** 2)] + [0.] * 382))
+    await session.flush()
+    found = await service.search(image)
+    assert [item["identity_id"] for item in found["candidates"]] == [popular["id"], rare["id"]]
+    assert found["candidates"][0]["independent_references"] == 5
+    # All 500 popular images precede the rare one by raw distance. A global
+    # top-100 image retrieval would incorrectly lose the NPC completely.
+    assert len(found["candidates"][1]["evidence"]) == 1
