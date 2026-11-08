@@ -92,3 +92,40 @@ The findings above describe the original implementation, before this branch's fi
 
 Publication replaces matching references only after validation, retains sources,
 and protects newer recipes against older publishers. No queues were cleared.
+
+## Final recipe and production dispatch (01:29 UTC)
+
+- API/web deployment 42433617084 succeeded with commit `ca64d21`; the projection
+  consumer was upgraded to the same server code. Older projection code rejected
+  native-v2 previews even when their exports were present.
+- Recipe 6 includes Denia's explicit Wwise state-consumer reconstruction. The real
+  Linux pilot produced 168.67 seconds of stereo 48 kHz Opus: mean volume −26.7 dB,
+  peak −5.3 dB. Both original and reconstructed zero-time commands are retained;
+  this does not claim the original persistent music clock was recovered.
+- Production run 32026 exposed a false negative in alpha validation. The original
+  native PNG alpha was 133–255, decoded WebM alpha 137–255, mean difference 0.0176
+  on a 0–255 scale. The validator now compares actual alpha pixels, allowing
+  bounded VP9 quantization while rejecting flattened or materially changed alpha.
+  The retained render was revalidated, composed over the authored black layer and
+  published as file 605278 (reference 1043870, source 605273). Browser verification
+  confirmed 2048×1152, readyState 4, looping playback and controls disabled.
+- Run 32027 is the recipe-6 full Denia rebuild. Its real prepared archive contains
+  a rendered 168.67-second looping music track with exact flow/text-key scope.
+  Native visual rendering is still in progress at this checkpoint.
+- All **1,145** discovered owner/release pairs were submitted successfully in
+  batches of 500, 500 and 145. `queue-all-summary.json` reports
+  `all_candidates_processed`. This is successful dispatch, not 1,145 finished
+  renders. Priority starts at runs 32027 (Denia), 32028–32030 (Cantarella), and
+  32031–32032 (identified 2.4 image flows).
+- Worker `solaris-legacy-illustrated-89c7e81` uses immutable image
+  `89c7e81ad24bfb4d0c4cdde9a8e74318c02a0c6d`. Audio ZIP paths now include their
+  complete manifest digest and use attempt-unique temporary files. Two flows or
+  releases sharing a visual bundle can no longer overwrite one another's
+  prepared soundtrack archive while it is being rendered or uploaded.
+- Final targeted validation: 192 Python tests, 30 frontend tests and TypeScript
+  passed. Unsupported compositions/materials or missing authored clips retain
+  their original assets and explicit diagnostics; they are not labelled ready.
+
+Receipts are retained in the shared volume at
+`/var/lib/wuwa-worker/recovery/illustrated-20261108/`, and worker image/deployment
+identities are recorded under `/root/solaris-atlas/.deployments/illustrated-0ac3269/`.
