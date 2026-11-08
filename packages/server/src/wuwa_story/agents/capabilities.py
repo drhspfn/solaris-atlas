@@ -94,7 +94,7 @@ def internal_definitions(*, worker: bool = False) -> list[dict[str, Any]]:
         {"type": "function", "name": "visual_read_video_scan", "description": "Read a bounded page of video frames and unresolved proposals for internal research and human review.", "parameters": InternalScanInput.model_json_schema(), "strict": False},
         {"type": "function", "name": "visual_scan_cutscene", "description": "Queue a bounded local visual scan of a registered published cutscene source for human review; it never approves labels.",
             "parameters": ScanInput.model_json_schema(), "strict": False},
-        {"type": "function", "name": "visual_create_identity", "description": "Create an explicit visual identity when the subject is unknown; use a suitable custom kind. Do not claim an uncertain match.",
+        {"type": "function", "name": "visual_create_identity", "description": "Create an explicit visual identity when the subject is unknown; choose a listed kind, or other for unclassified subjects. Do not claim an uncertain match.",
             "parameters": IdentityCreateInput.model_json_schema(), "strict": False},
         {"type": "function", "name": "visual_add_reference",
             "description": "Submit one image and explicit identity links for human review; it remains pending and cannot approve itself.", "parameters": reference_schema, "strict": False},

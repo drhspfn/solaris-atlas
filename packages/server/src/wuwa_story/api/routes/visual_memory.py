@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from wuwa_story.auth.dependencies import require_admin, require_csrf
 from wuwa_story.db.models.auth import User
 from wuwa_story.db.session import get_session
+from wuwa_story.visual_memory.kinds import VisualKind
 from wuwa_story.visual_memory.tools import (
     MAX_ENCODED,
     IdentifyInput,
@@ -57,7 +58,7 @@ write = [Depends(require_csrf)]
 
 class IdentityInput(Input):
     name: str = Field(min_length=1, max_length=200)
-    kind: str = Field(min_length=1, max_length=100)
+    kind: VisualKind
     node_ids: list[int] = Field(default_factory=list, max_length=100)
     lore_id: int | None = Field(default=None, gt=0)
     description: str = Field(default="", max_length=4000)
@@ -73,7 +74,7 @@ class NameInput(Input):
 
 class IdentityUpdate(Input):
     name: str | None = Field(default=None, min_length=1, max_length=200)
-    kind: str | None = Field(default=None, min_length=1, max_length=100)
+    kind: VisualKind | None = None
     node_ids: list[int] | None = Field(default=None, max_length=100)
     lore_id: int | None = Field(default=None, gt=0)
     description: str | None = Field(default=None, max_length=4000)

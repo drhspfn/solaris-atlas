@@ -4,6 +4,8 @@
   const $ = (s, parent = root) => parent.querySelector(s);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const safeURL = value => { if (!value) return ''; try { const u = new URL(value, location.href); return ['http:', 'https:'].includes(u.protocol) ? u.href : ''; } catch { return ''; } };
+  const identityKinds = JSON.parse(root.dataset.identityKinds || '[]');
+  const kindSelect = () => `<label>Type<select class="form-select" name="kind" required><option value="">Choose a type</option>${identityKinds.map(kind => `<option value="${esc(kind.value)}">${esc(kind.label)}</option>`).join('')}</select></label>`;
   const state = { page: 0, size: 20, total: 0, image: null, width: 0, height: 0, boxes: [], sequence: 0 };
   const message = (text, error = false) => { const el = $('#vm-message'); el.textContent = text; el.className = error ? 'vm-error' : ''; el.setAttribute('role', error ? 'alert' : 'status'); const dialogMessage = $('#vm-dialog-message'); if (dialogMessage) { dialogMessage.textContent = !$('#vm-dialog').hidden && error ? text : ''; dialogMessage.className = error ? 'vm-error' : ''; } };
   async function api(path, body, method = 'POST') {
@@ -124,9 +126,10 @@
     };
   }
   function createIdentity(onCreated) {
-    dialog('Create visual identity', `<p>Each game form is a separate visual identity. Lore groups are optional and do not merge visual forms.</p>${field('name','Name')}${field('kind','Kind (including custom kinds)')}${field('nodes','Existing game node IDs (comma-separated)')}<label>Existing lore group<select class="form-select" name="lore"><option value="">None</option></select></label>${field('lore_name','New lore group name (optional)')}<div class="vm-actions"><button class="btn btn-secondary" data-create-lore>Create lore group</button></div><p id="vm-created-lore"></p>`, async body => {
+    dialog('Create visual identity', `<p>Link an existing game entry or leave game IDs empty for a standalone identity. Use Other for subjects outside the listed types.</p>${field('name','Name')}${kindSelect()}${field('nodes','Existing game node IDs (comma-separated)')}<label>Existing lore group<select class="form-select" name="lore"><option value="">None</option></select></label>${field('lore_name','New lore group name (optional)')}<div class="vm-actions"><button class="btn btn-secondary" data-create-lore>Create lore group</button></div><p id="vm-created-lore"></p>`, async body => {
       const name = $('[name=name]',body).value.trim(), kind = $('[name=kind]',body).value.trim(), nodes = $('[name=nodes]',body).value.trim(), lore = $('[name=lore]',body).value;
       if (!name || !kind || (nodes && !/^\d+(\s*,\s*\d+)*$/.test(nodes))) throw new Error('Enter a name, kind and valid comma-separated node IDs.');
+      if (!identityKinds.some(option => option.value === kind)) throw new Error('Choose a type from the list.');
       const result = await api('/identities', {name, kind, node_ids:nodes ? nodes.split(',').map(Number) : [], lore_id:lore ? Number(lore) : null, description:''});
       message(`Created identity ${result.name || result.id}.`); if (onCreated) onCreated(result);
     }, 'Create identity');

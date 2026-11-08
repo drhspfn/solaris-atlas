@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from mcp.types import Tool, ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from wuwa_story.visual_memory.kinds import VisualKind
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_ENCODED = 4 * ((MAX_IMAGE_BYTES + 2) // 3)
@@ -68,7 +69,7 @@ class ImageInput(Input):
         default=None, description="ChatGPT-provided image attachment with a temporary download_url and file_id. Prefer this for chat attachments; never pass a local file path.")
     include_images: bool = Field(
         default=False, description="MCP: include up to three approved reference thumbnails as native image content")
-    kind: str | None = Field(default=None, max_length=100)
+    kind: VisualKind | None = None
     limit: int = Field(default=10, ge=1, le=10)
 
     @field_validator("image_base64")
@@ -97,7 +98,7 @@ class IdentifyInput(ImageInput):
 
 class IdentitiesInput(Input):
     q: str = Field(default="", max_length=200)
-    kind: str | None = Field(default=None, max_length=100)
+    kind: VisualKind | None = None
     limit: int = Field(default=50, ge=1, le=100)
     offset: int = Field(default=0, ge=0, le=10000)
 
@@ -109,7 +110,7 @@ class ReferenceIdInput(Input):
 
 class IdentityCreateInput(Input):
     name: str = Field(min_length=1, max_length=200)
-    kind: str = Field(min_length=1, max_length=64)
+    kind: VisualKind
     node_ids: list[int] = Field(default_factory=list, max_length=50)
     lore_id: int | None = Field(default=None, gt=0)
     description: str = Field(default="", max_length=4000)

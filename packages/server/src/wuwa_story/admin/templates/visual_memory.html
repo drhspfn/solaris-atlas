@@ -4,7 +4,7 @@
   href="{{ url_for(__name__ ~ ':statics', path='visual-memory.css') }}"
 />
 {% endblock %} {% block content %}
-<div class="vm" id="visual-memory">
+<div class="vm" id="visual-memory" data-identity-kinds='{{ visual_kinds | tojson }}'>
   <header class="vm-header">
     <div>
       <p class="vm-kicker">Archive / Visual Memory</p>
@@ -47,11 +47,12 @@
           placeholder="Identity name"
       /></label>
       <label
-        >Kind<input
-          class="form-control"
-          name="kind"
-          placeholder="character, NPC, or custom"
-      /></label>
+        >Type<select class="form-select" name="kind">
+          <option value="">All types</option>
+          {% for kind in visual_kinds %}
+          <option value="{{ kind.value }}">{{ kind.label }}</option>
+          {% endfor %}
+      </select></label>
       <label
         >Source type<input
           class="form-control"
