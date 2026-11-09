@@ -25,15 +25,29 @@ def model_sources(role, preload):
     if role.get("MeshId") != preload.get("Id"):
         raise ValueError("Model preload does not match the character MeshId")
     meshes = preload.get("Meshes", [])
-    if len(meshes) != 1:
+    if not meshes:
         raise ValueError(
             "A single authored character mesh is required; composite rigs are unsupported"
         )
-    mesh = authored_package(meshes[0])
+    packages = [authored_package(value) for value in meshes]
+    mesh, extras = packages[0], []
+    if len(packages) > 1:
+        # Carlotta's UI preloads explicitly list Body + Hair1 for both outfits.
+        # Admit this body/hair layout only; export still verifies exact skeleton,
+        # hierarchy and rest pose before joining the components.
+        bodies = [value for value in packages if value.endswith("_Body")]
+        if len(bodies) != 1 or len(set(packages)) != len(packages):
+            raise ValueError("Unsupported composite character rig")
+        mesh = bodies[0]
+        prefix = mesh.removesuffix("_Body")
+        extras = sorted(value for value in packages if value != mesh)
+        if any(not re.fullmatch(re.escape(prefix) + r"_Hair[0-9]*", value) for value in extras):
+            raise ValueError("Unsupported composite character rig")
     if not mesh.startswith("Aki/Character/Role/") or "/Model/" not in mesh:
         raise ValueError("Authored mesh is not a character rig")
     blueprints = [authored_package(path) for path in preload.get("AnimationBlueprints", [])]
     return {"model": mesh, "blueprints": sorted(set(blueprints)),
+            **({"extra_models": extras} if extras else {}),
             **({"component_blueprint": authored_package(preload["ActorClassPath"])}
                if preload.get("ActorClassPath") else {})}
 

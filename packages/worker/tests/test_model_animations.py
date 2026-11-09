@@ -181,6 +181,8 @@ async def test_extraction_scope_includes_character_siblings_shared_moves_and_acl
     receipt = tmp_path / "exports/manifest.json"
     receipt.parent.mkdir()
     receipt.write_text('{"files": []}')
+    # Extraction now requires the pinned workspace receipt even when mocked.
+    (tmp_path / "plan.json").write_text("{}")
     exported = AsyncMock(return_value=receipt)
     monkeypatch.setattr(worker, "export_assets", exported)
     monkeypatch.setattr(worker, "tool", AsyncMock())
@@ -489,6 +491,14 @@ async def test_forms_build_in_isolated_disposable_workspaces_and_publish_togethe
     def workspace(client):
         root = tmp_path / f"scratch-{len(roots)}"
         root.mkdir()
+        # Mirror temporary_entity_workspace's pinned client metadata so child
+        # form workspaces exercise the real inheritance path.
+        import shutil
+
+        for name in ("plan.json", "status.json"):
+            shutil.copyfile(client / name, root / name)
+        (root / "keys.txt").write_text("test-only")
+        (root / "game").mkdir()
         roots.append(root)
         try:
             yield root

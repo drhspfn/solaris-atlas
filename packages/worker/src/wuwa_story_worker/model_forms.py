@@ -102,10 +102,52 @@ def resolve_npc_forms(npc):
 def resolve_recipe_forms(recipe):
     if "npc" in recipe:
         return resolve_npc_forms(recipe["npc"])
-    return resolve_model_forms(recipe["role"], recipe["preloads"], recipe["morphs"])
+    if "roles" not in recipe:
+        return resolve_model_forms(recipe["role"], recipe["preloads"], recipe["morphs"],
+                                   recipe.get("skins", ()), recipe.get("skin_labels", {}))
+    forms, seen = [], set()
+    for role in sorted(recipe["roles"], key=lambda row: (row.get("model_gender") != "male", row["Id"])):
+        gender = role.get("model_gender")
+        if gender not in ("male", "female"):
+            raise ValueError("Rover model recipe requires an authored gender")
+        for form in resolve_model_forms(role, recipe["preloads"], recipe["morphs"],
+                                        recipe.get("skins", ()), recipe.get("skin_labels", {})):
+            identity = (form["model"], tuple(form.get("extra_models", ())))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            forms.append({**form, "label": f"{gender.title()} Rover · {form['label']}", "order": len(forms)})
+    if not forms:
+        raise ValueError("Rover model recipe has no authored models")
+    return forms
 
 
-def resolve_model_forms(role, preloads, morphs):
+def resolve_model_forms(role, preloads, morphs, skins=(), skin_labels=None):
+    if skins:
+        forms = resolve_model_forms(role, preloads, morphs)
+        seen = {(form["model"], tuple(form.get("extra_models", ()))) for form in forms}
+        declared = [row for row in skins if row.get("RoleId") == role["Id"]
+                    and row.get("Id") != role.get("SkinId")]
+        if any(type(row.get("Id")) is not int or row["Id"] <= 0 for row in declared):
+            raise ValueError("Invalid declared RoleSkin identity")
+        if len({row["Id"] for row in declared}) != len(declared):
+            raise ValueError("Duplicate declared RoleSkin identity")
+        for skin in sorted(declared, key=lambda row: (row.get("SortIndex", 0), row["Id"])):
+            # SkinId binds morphs to this appearance. A base transformation must
+            # never be borrowed to stand in for a missing skin transformation.
+            appearance = {**role, **skin, "Id": role["Id"], "SkinId": skin["Id"]}
+            name = (skin_labels or {}).get(skin.get("TitleName")) or f"Skin {skin['Id']}"
+            for form in resolve_model_forms(appearance, preloads, morphs):
+                identity = (form["model"], tuple(form.get("extra_models", ())))
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                source = form["source"]
+                forms.append({**form, "label": f"{name} · {form['label']}", "order": len(forms),
+                    "source": {**source, "table": "roleskin" if source["table"] == "roleinfo"
+                               else source["table"], "id": skin["Id"] if source["table"] == "roleinfo"
+                               else source["id"], "skin_id": skin["Id"], "role_id": role["Id"]}})
+        return forms
     by_id = {}
     for row in preloads:
         mesh_id = row.get("Id")
@@ -128,9 +170,10 @@ def resolve_model_forms(role, preloads, morphs):
             raise ValueError(f"Authored form preload is missing: {mesh_id}")
         resolved = model_sources({"MeshId": mesh_id}, by_id[mesh_id])
         # Several gameplay/preload IDs may refer to exactly the same mesh.
-        if resolved["model"] in seen:
+        identity = (resolved["model"], tuple(resolved.get("extra_models", ())))
+        if identity in seen:
             return
-        seen.add(resolved["model"])
+        seen.add(identity)
         forms.append(
             {
                 "id": f"mesh-{mesh_id}",
@@ -151,16 +194,17 @@ def resolve_model_forms(role, preloads, morphs):
         # Older RoleInfo rows borrow another character's UI model. Unlike Morph,
         # UiMeshId alone does not authorize crossing the authored character root.
         if ui and ui["model"].split("/")[:5] == primary["model"].split("/")[:5]:
-            add(ui_id, "Default", {"table": "roleinfo",
+            add(ui_id, "Display" if ui["model"] == primary["model"] else "Default", {"table": "roleinfo",
                 "id": role["Id"], "field": "UiMeshId"})
     add(
         primary_id,
-        "Battle form" if forms else "Default",
+        ("Gameplay" if forms[0]["label"] == "Display" else "Battle form") if forms else "Default",
         {"table": "roleinfo", "id": role["Id"], "field": "MeshId"},
     )
 
-    declared_morphs = [
-        row for row in morphs if row.get("RoleId") == role["Id"]]
+    declared_morphs = [row for row in morphs if row.get("RoleId") == role["Id"]
+                       and (not row.get("SkinId") or not role.get("SkinId")
+                            or row["SkinId"] == role["SkinId"])]
     for row in declared_morphs:
         if any(type(row.get(key)) is not int or row[key] <= 0 for key in ("Id", "Morph")):
             raise ValueError("Invalid declared RoleMorph identity")
@@ -174,6 +218,13 @@ def resolve_model_forms(role, preloads, morphs):
             row.get("MeshId"), label, {
                 "table": "rolemorph", "id": row["Id"], "role_id": role["Id"]}
         )
+        ui_id = row.get("UiMeshId")
+        if type(ui_id) is int and ui_id > 0 and ui_id != row.get("MeshId") and ui_id in by_id:
+            ui = model_sources({"MeshId": ui_id}, by_id[ui_id])
+            transformed = model_sources({"MeshId": row["MeshId"]}, by_id[row["MeshId"]])
+            if ui["model"].split("/")[:5] == transformed["model"].split("/")[:5]:
+                add(ui_id, f"{label} · Display", {"table": "rolemorph", "id": row["Id"],
+                    "role_id": role["Id"], "field": "UiMeshId"})
     # Denia's two appearances share a gameplay preload, unlike RoleMorph forms.
     # The complete light mesh and the dark Body + Up2 composition were checked
     # against the cooked assets, Blueprint and in-game appearance.
