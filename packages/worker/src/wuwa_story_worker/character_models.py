@@ -15,7 +15,7 @@ from sqlalchemy import select
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
-from wuwa_story.db.repositories.character_models import npc_model_recipe
+from wuwa_story.db.repositories.character_models import model_recipe, npc_model_recipe
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.character_models import CharacterModelJob
 from wuwa_story.storage.hashing import content_object_key
@@ -39,7 +39,7 @@ from wuwa_story_worker.media_provenance import (
 from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.model_animation_merge import merge_animation_glbs
 from wuwa_story_worker.model_facial import validate_facial_pack
-from wuwa_story_worker.model_forms import resolve_model_forms, resolve_recipe_forms
+from wuwa_story_worker.model_forms import resolve_recipe_forms
 from wuwa_story_worker.model_publication import ensure_glb_download
 from wuwa_story_worker.model_sources import (
     exported_package,
@@ -68,31 +68,8 @@ async def source_row(session, release_id, path, identity):
 
 
 async def source_forms(session, release_id, role):
-    morphs = list(
-        await session.scalars(
-            select(SourceRecord.data)
-            .join(SourceFile)
-            .where(
-                SourceRecord.release_id == release_id,
-                SourceFile.logical_source_path == "BinData/role/rolemorph.json",
-                SourceRecord.data["RoleId"].astext == str(role["Id"]),
-            )
-        )
-    )
-    mesh_ids = {role.get("MeshId"), role.get("UiMeshId"), *(r.get("MeshId") for r in morphs)}
-    preloads = list(
-        await session.scalars(
-            select(SourceRecord.data)
-            .join(SourceFile)
-            .where(
-                SourceRecord.release_id == release_id,
-                SourceFile.logical_source_path
-                == "BinData/model_config_preload/modelconfigpreload.json",
-                SourceRecord.data["Id"].astext.in_([str(value) for value in mesh_ids if value]),
-            )
-        )
-    )
-    return resolve_model_forms(role, preloads, morphs)
+    # Queued exports and downloaded local recipes must discover identical forms.
+    return resolve_recipe_forms(await model_recipe(session, release_id, role["Id"]))
 
 
 async def job_forms(session, job):

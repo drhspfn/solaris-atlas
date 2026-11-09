@@ -3,9 +3,11 @@
 from sqlalchemy import func, select
 
 from wuwa_story.db.models.core import Character
+from wuwa_story.db.models.i18n import Locale, LocalizationKey, LocalizationValue
 from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
+from wuwa_story.ingestion.character_identity import MAIN_ROLE_PATH, main_role_identities
 from wuwa_story.story.domain import version_key
 
 REFERENCE_TYPES = {
@@ -18,21 +20,47 @@ REFERENCE_TYPES = {
 
 
 async def model_recipe(session, release_id, character_id):
-    async def rows(path, field, values):
-        return list(await session.scalars(select(SourceRecord.data).join(SourceFile).where(
-            SourceRecord.release_id == release_id, SourceFile.logical_source_path == path,
-            SourceRecord.data[field].astext.in_([str(value) for value in values if value]),
-        ).order_by(SourceRecord.row_index)))
+    async def rows(path, field=None, values=()):
+        query = select(SourceRecord.data).join(SourceFile).where(
+            SourceRecord.release_id == release_id, SourceFile.logical_source_path == path)
+        if field is not None:
+            query = query.where(SourceRecord.data[field].astext.in_(
+                [str(value) for value in values if value]))
+        return list(await session.scalars(query.order_by(SourceRecord.row_index)))
 
     roles = await rows("BinData/role/roleinfo.json", "Id", [character_id])
     if len(roles) != 1:
         raise ValueError("Character model source is missing or ambiguous in this snapshot")
     role = roles[0]
-    morphs = await rows("BinData/role/rolemorph.json", "RoleId", [character_id])
+    # The authored main-role table, not name/ID heuristics, defines Rover's
+    # genders and elements. Keep both genders; identical element meshes are
+    # deduplicated by the worker after resolving all source records.
+    main_roles = await rows(MAIN_ROLE_PATH)
+    identities = {}
+    if any(row.get("Id") == character_id for row in main_roles):
+        roles = await rows("BinData/role/roleinfo.json", "Id", [row.get("Id") for row in main_roles])
+        identities = main_role_identities(main_roles, roles)
+        identity = identities.get(character_id)
+        roles = [item for item in roles if identity and identities.get(item["Id"], {}).get(
+            "canonical_key") == identity["canonical_key"]] or [role]
+        if identity is None:
+            identities = {}
+    role_ids = [item["Id"] for item in roles]
+    morphs = await rows("BinData/role/rolemorph.json", "RoleId", role_ids)
+    skins = await rows("BinData/role/roleskin.json", "RoleId", role_ids)
     preloads = await rows("BinData/model_config_preload/modelconfigpreload.json", "Id", {
-        role.get("MeshId"), role.get("UiMeshId"), *(row.get("MeshId") for row in morphs),
+        mesh for row in [*roles, *morphs, *skins] for mesh in (row.get("MeshId"), row.get("UiMeshId"))
     })
-    return {"role": role, "preloads": preloads, "morphs": morphs}
+    keys = {row.get("TitleName") for row in skins if row.get("TitleName")}
+    labels = dict((await session.execute(select(LocalizationKey.key, LocalizationValue.content)
+        .join(LocalizationValue, LocalizationValue.key_id == LocalizationKey.id)
+        .join(Locale, Locale.id == LocalizationValue.locale_id)
+        .where(LocalizationValue.release_id == release_id, Locale.code == "en",
+               LocalizationKey.key.in_(keys)))).all()) if keys else {}
+    return {"role": role, "preloads": preloads, "morphs": morphs, "skins": skins,
+            "skin_labels": labels,
+            **({"roles": [{**item, "model_gender": identities[item["Id"]]["gender"]}
+                          for item in roles]} if identities else {})}
 
 
 async def npc_model_recipe(session, release_id, owner_node_id, blueprint_id):
