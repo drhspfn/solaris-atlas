@@ -31,6 +31,7 @@ async def test_periodic_update_checks_each_installed_tier_once(monkeypatch, tmp_
     monkeypatch.setattr(worker_updates, 'check_client_update', check)
     await worker_updates.poll_client_updates(tmp_path)
     assert [c.args[1] for c in check.await_args_list] == ['hd','uhd']
+    assert all(c.kwargs['workspace'] == tmp_path for c in check.await_args_list)
 
 @pytest.mark.asyncio
 async def test_admin_update_uses_same_shared_updater(monkeypatch):
