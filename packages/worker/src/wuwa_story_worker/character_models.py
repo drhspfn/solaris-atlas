@@ -122,6 +122,14 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
             # the authored root. Ownership is checked by skeleton metadata.
             character_dir.rsplit("/", 1)[1],
         ]
+        if sources.get("component"):
+            # Component paths do not follow the role hierarchy. Limit discovery
+            # to the component's authored model and sibling animation folders.
+            component_dir = sources["model"].rsplit("/Model/", 1)[0] if "/Model/" in sources["model"] else model_dir
+            filters = [component_dir + "/", *sources["blueprints"],
+                       *([sources["component_blueprint"]] if sources.get("component_blueprint") else []),
+                       *sources.get("montages", []), "Engine/Content/Animation/DefaultAnim",
+                       "ACLAnim", "ACLPlugin.uplugin"]
     if metadata_only:
         filters = [sources['model']]
     filters.extend(additional_filters)
