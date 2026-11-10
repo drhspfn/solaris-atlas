@@ -502,8 +502,9 @@ async def test_second_form_failure_never_starts_publication(tmp_path, monkeypatc
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fail_second", [False, True])
 async def test_forms_build_in_isolated_disposable_workspaces_and_publish_together(
-    tmp_path, monkeypatch, fail_second
+    tmp_path, monkeypatch, fail_second, caplog
 ):
+    caplog.set_level("INFO", logger=worker.__name__)
     payload = job_payload()
     run = SimpleNamespace(metadata_json={"payload": payload}, status="queued")
     session = SimpleNamespace(get=AsyncMock(return_value=run))
@@ -597,3 +598,7 @@ async def test_forms_build_in_isolated_disposable_workspaces_and_publish_togethe
         published.assert_awaited_once()
     assert len(built) == 2
     assert all(not root.exists() for root in roots)
+    assert "character_model.started run=1 source=client" in caplog.text
+    assert "character_model.stage run=1 stage=export forms=2" in caplog.text
+    assert ("character_model.stage run=1 stage=publish" in caplog.text) is not fail_second
+    assert ("character_model.finished run=1 source=client" in caplog.text) is not fail_second
