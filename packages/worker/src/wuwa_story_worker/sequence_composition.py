@@ -36,6 +36,10 @@ class ConversionFailed(ValueError):
     pass
 
 
+class ArchiveValidationError(ValueError):
+    pass
+
+
 MAX_ARCHIVE_ENTRIES = 50000
 MAX_ARCHIVE_ENTRY_SIZE = 256 * 1024 * 1024
 MAX_ARCHIVE_TOTAL_SIZE = 2 * 1024 * 1024 * 1024
@@ -44,16 +48,16 @@ MAX_ARCHIVE_TOTAL_SIZE = 2 * 1024 * 1024 * 1024
 def _validate_archive_limits(infos, label='Archive'):
     """Report which existing archive safety bound was exceeded."""
     if len(infos) > MAX_ARCHIVE_ENTRIES:
-        raise ValueError(f'{label} exceeds entry count limit: {len(infos)} > {MAX_ARCHIVE_ENTRIES}')
+        raise ArchiveValidationError(f'{label} exceeds entry count limit: {len(infos)} > {MAX_ARCHIVE_ENTRIES}')
     duplicates = len(infos) - len({info.filename for info in infos})
     if duplicates:
-        raise ValueError(f'{label} contains duplicate entries: {duplicates}')
+        raise ArchiveValidationError(f'{label} contains duplicate entries: {duplicates}')
     largest = max((info.file_size for info in infos), default=0)
     if largest > MAX_ARCHIVE_ENTRY_SIZE:
-        raise ValueError(f'{label} exceeds per-entry size limit: {largest} > {MAX_ARCHIVE_ENTRY_SIZE} bytes')
+        raise ArchiveValidationError(f'{label} exceeds per-entry size limit: {largest} > {MAX_ARCHIVE_ENTRY_SIZE} bytes')
     total = sum(info.file_size for info in infos)
     if total > MAX_ARCHIVE_TOTAL_SIZE:
-        raise ValueError(f'{label} exceeds total uncompressed size limit: {total} > {MAX_ARCHIVE_TOTAL_SIZE} bytes')
+        raise ArchiveValidationError(f'{label} exceeds total uncompressed size limit: {total} > {MAX_ARCHIVE_TOTAL_SIZE} bytes')
 
 
 def _read(archive, manifest, name):

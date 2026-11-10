@@ -192,9 +192,11 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
             if transient_job_error(error):
                 raise
-            logger.warning('story_spine.missing run=%s owner=%s resource=%s stage=build error_type=%s',
+            from wuwa_story_worker.sequence_composition import ArchiveValidationError
+            reason = str(error) if isinstance(error, ArchiveValidationError) else 'see task diagnostics'
+            logger.warning('story_spine.missing run=%s owner=%s resource=%s stage=build error_type=%s reason=%s',
                            run_id, target.get('owner'),
-                           hashlib.sha256(target['path'].encode()).hexdigest()[:16], type(error).__name__)
+                           hashlib.sha256(target['path'].encode()).hexdigest()[:16], type(error).__name__, reason)
             missing.append(target['path'])
             continue
         if target.get('sequence_metadata_revision', 0) >= 3 or target.get('soundtrack_context'):
