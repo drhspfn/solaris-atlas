@@ -302,6 +302,9 @@ async def consume_jobs(
                         payload = json.loads(message.body)
                         if not isinstance(payload, dict):
                             raise ValueError("Job payload must be a JSON object")
+                        logger.info("job.started queue=%s processor=%s id=%s run=%s redelivered=%s",
+                                    job_key, processor_key, message.message_id, payload.get("run_id"),
+                                    message.redelivered)
                         # A deployment may change a kind's resource pool. Move
                         # retained private deliveries too, before executing them.
                         wrong_pool = job_key.startswith("pool_") and job_key != "pool_" + media_pool(payload)
@@ -342,6 +345,8 @@ async def consume_jobs(
                         await message.nack(requeue=True)
                         raise
                     except JobDeferred as error:
+                        logger.info("job.deferred queue=%s id=%s run=%s reason_type=%s",
+                                    job_key, message.message_id, payload.get("run_id"), type(error).__name__)
                         try:
                             if payload.get("run_id") is not None:
                                 await update_admin_run(payload["run_id"], processor_key, "waiting_dependency",
