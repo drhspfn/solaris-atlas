@@ -47,6 +47,31 @@ def test_400_shared_and_20_variant_clips_require_only_20_new_exports():
     assert len(second["facial"]["clips"]) == 420
 
 
+def test_equal_montage_sequences_keep_separate_actions_and_share_across_skins():
+    first = plan(2)
+    for i, clip in enumerate(first["clips"]):
+        clip.update(source="Client/Content/Aki/Common/AM_Cableway.json",
+                    file=f"Client/Content/Aki/Common/AM_Cableway_SEQ{i + 1}.ueanim",
+                    sha256="a" * 64)
+    skin = deepcopy(first)
+    skin["model_sha256"] = "skin"
+    cache = {}
+    entry = seed(cache, first)
+    assert len(first["clips"]) == len(entry["identities"]) == 2
+    _, reused, unseen = prepare_packs(skin, cache, "recipe")
+    assert not unseen and not skin["clips"]
+    assert reused == [{"entry": entry, "clips": ["clip-0", "clip-1"]}]
+    assert [row["body_clip"] for row in skin["facial"]["clips"]] == ["clip-0", "clip-1"]
+
+
+def test_repeated_same_export_is_still_rejected():
+    first = plan(2)
+    first["clips"][1].update(source=first["clips"][0]["source"],
+                             sha256=first["clips"][0]["sha256"])
+    with pytest.raises(ValueError, match="duplicate animation source"):
+        prepare_packs(first, {}, "recipe")
+
+
 @pytest.mark.parametrize("change", ["rest_pose", "recipe", "contents"])
 def test_skeleton_name_or_clip_name_alone_does_not_authorize_reuse(change):
     cache = {}

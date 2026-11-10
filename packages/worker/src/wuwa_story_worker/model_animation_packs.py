@@ -59,7 +59,11 @@ def owned_sources(sources, ownership):
 
 
 def clip_identity(clip):
-    return fingerprint([package(clip["source"]), clip["sha256"]])
+    # One montage can export several equally-valued sequences. Preserve each
+    # authored export instead of treating equal bytes as a duplicate action.
+    export = clip.get("file")
+    export = export.replace("\\", "/").casefold() if export else None
+    return fingerprint([package(clip["source"]), export, clip["sha256"]])
 
 
 def compatible_rigs(left, right):
