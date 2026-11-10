@@ -63,6 +63,16 @@ def test_cache_bounds_record_count_and_size(tmp_path, monkeypatch):
     assert not (tmp_path / "oversized.json").exists()
 
 
+def test_cache_accepts_current_component_limit(tmp_path):
+    result = {f"component-{index:016x}": {"component": {}, "model": "Aki/Test/Model"}
+              for index in range(cache.MAX_MODEL_COMPONENTS)}
+    cache.write_record(tmp_path, "full", result)
+    assert cache.read_record(tmp_path, "full") == result
+    result["component-overflow"] = {"component": {}, "model": "Aki/Test/Model"}
+    cache.write_record(tmp_path, "overflow", result)
+    assert cache.read_record(tmp_path, "overflow") is None
+
+
 @pytest.mark.asyncio
 async def test_retry_reuses_server_discovery_and_rebuilds_corruption(tmp_path, monkeypatch):
     client = tmp_path / "client"

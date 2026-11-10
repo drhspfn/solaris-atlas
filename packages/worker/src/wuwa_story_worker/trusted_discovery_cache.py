@@ -9,6 +9,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from wuwa_story.ingestion.model_limits import MAX_MODEL_COMPONENTS
+
 from wuwa_story_worker.client_assets import matches
 
 logger = logging.getLogger(__name__)
@@ -68,7 +70,7 @@ def read_record(directory, key):
         record = json.loads(path.read_bytes())
         result = record["result"]
         if (record["key"] != key or record["sha256"] != hashlib.sha256(encoded(result)).hexdigest()
-                or not isinstance(result, dict) or len(result) > 32
+                or not isinstance(result, dict) or len(result) > MAX_MODEL_COMPONENTS
                 or any(not isinstance(k, str) or not isinstance(v, dict)
                        or not isinstance(v.get("component"), dict) or not isinstance(v.get("model"), str)
                        for k, v in result.items())):

@@ -243,7 +243,7 @@ async def test_trusted_discovery_uses_form_ownership_and_explicit_references(tmp
               "blueprints": [], "component_blueprint": "Aki/Test/BP", "montages": []}
              for i in range(2)]
 
-    await model_uploads.discover_upload_components(tmp_path, forms, "3.7.0", "hd")
+    await model_uploads._discover_upload_components(tmp_path, forms, "3.7.0", "hd")
     for form, call in zip(forms, discover.await_args_list, strict=True):
         sources = call.args[1]
         assert sources["animation_ownership"] == {
@@ -279,9 +279,9 @@ async def test_trusted_discovery_limits_total_components(tmp_path, monkeypatch, 
     forms[1]["model"] = "Aki/Test/OtherMesh"
     if count > 128:
         with pytest.raises(ValueError, match="excessive"):
-            await model_uploads.discover_upload_components(tmp_path, forms, "3.7.0", "hd")
+            await model_uploads._discover_upload_components(tmp_path, forms, "3.7.0", "hd")
     else:
-        result = await model_uploads.discover_upload_components(tmp_path, forms, "3.7.0", "hd")
+        result = await model_uploads._discover_upload_components(tmp_path, forms, "3.7.0", "hd")
         assert len(result) == count
         assert {entry["component"]["parent_form_id"] for entry in result.values()} == {"form-0", "form-1"}
 
@@ -301,17 +301,17 @@ async def test_trusted_discovery_rechecks_duplicate_identities(tmp_path, monkeyp
         "id": "part", "parent_component": "CharacterMesh0"}}
     discover = AsyncMock(return_value=[recipe])
     monkeypatch.setattr(model_uploads, "_discover_upload_form", discover)
-    result = await model_uploads.discover_upload_components(
+    result = await model_uploads._discover_upload_components(
         tmp_path, [form, {**form, "id": "two", "label": "Two", "order": 1}], "3.7.0", "hd")
     assert len(result) == 2
     assert {entry["component"]["parent_form_id"] for entry in result.values()} == {"one", "two"}
     assert discover.await_count == 2
     with pytest.raises(ValueError, match="Duplicate or excessive"):
-        await model_uploads.discover_upload_components(tmp_path, [form, form], "3.7.0", "hd")
+        await model_uploads._discover_upload_components(tmp_path, [form, form], "3.7.0", "hd")
     discover.reset_mock()
     discover.return_value = [recipe, recipe]
     with pytest.raises(ValueError, match="Duplicate authored component"):
-        await model_uploads.discover_upload_components(tmp_path, [form], "3.7.0", "hd")
+        await model_uploads._discover_upload_components(tmp_path, [form], "3.7.0", "hd")
 
 
 @pytest.mark.asyncio
@@ -337,7 +337,7 @@ async def test_trusted_discovery_processes_distinct_chisa_forms(tmp_path, monkey
 
     mocked = AsyncMock(side_effect=discover)
     monkeypatch.setattr(model_uploads, "_discover_upload_form", mocked)
-    result = await model_uploads.discover_upload_components(tmp_path, forms, "3.7.0", "hd")
+    result = await model_uploads._discover_upload_components(tmp_path, forms, "3.7.0", "hd")
     assert mocked.await_count == 2
     assert {entry["model"] for entry in result.values()} == {form["model"] for form in forms}
     assert {entry["component"]["source"]["blueprint"] for entry in result.values()} == {
