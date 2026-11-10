@@ -103,11 +103,26 @@ def validate_animation_bones(dto, bone_names):
 
 
 def build_animation_plan(
-    model, converted, skeleton, sources, bone_names, read_animation, animation=None, morph_names=()
+    model, converted, skeleton, sources, bone_names, read_animation, animation=None, morph_names=(),
+    source_root=None,
 ):
     """Decode one DTO at a time; never allocate Blender actions during preflight."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from model_facial import FORMAT, facial_clip
+
+    def extract_face(dto, source, row, name, body_clip=None):
+        try:
+            source_curves = None
+            if source_root is not None and morph_names:
+                exports = json.loads((source_root / source["source"]).read_text(encoding="utf-8-sig"))
+                source_export = next(item for item in exports if item.get("Name") == source["name"]
+                                     and item.get("Type") == source["type"])
+                curve_data = source_export.get("CompressedCurveData")
+                if curve_data is not None:
+                    source_curves = curve_data["FloatCurves"]
+            return facial_clip(dto, name, morph_names, body_clip=body_clip, source_curves=source_curves)
+        except (ValueError, KeyError, TypeError, StopIteration) as exc:
+            raise ValueError(f"Facial animation {source['source']} ({row['file']}): {exc}") from exc
 
     rows, clips, seen, names, facial = [], [], set(), set(), []
     for path in sorted(converted.rglob("*.ueanim")):
@@ -129,6 +144,7 @@ def build_animation_plan(
             "included_in_glb": False,
         }
         rows.append(row)
+
         try:
             excluded = animation_exclusion(dto, require_decoded=True)
         except ValueError as exc:
@@ -136,7 +152,7 @@ def build_animation_plan(
         if excluded:
             row["excluded_reason"] = excluded
             # Facial curves are weights, independent of additive bone transforms.
-            face = facial_clip(dto, f"Expression {len(facial) + 1}: {header.object_name}", morph_names)
+            face = extract_face(dto, source, row, f"Expression {len(facial) + 1}: {header.object_name}")
             if face is not None:
                 facial.append(face)
             del dto
@@ -154,7 +170,7 @@ def build_animation_plan(
         names.add(name)
         row.update(action=name, included_in_glb=True)
         clips.append({**row, "name": name, "sha256": file_sha256(path)})
-        face = facial_clip(dto, name, morph_names, body_clip=name)
+        face = extract_face(dto, source, row, name, body_clip=name)
         if face is not None:
             facial.append(face)
         del dto
@@ -894,6 +910,7 @@ def main():
                 key.name for mesh in meshes if mesh.data.shape_keys
                 for key in list(mesh.data.shape_keys.key_blocks)[1:]
             },
+            source_root=args.source_json,
         )
         args.animation_plan.parent.mkdir(parents=True, exist_ok=True)
         args.animation_plan.write_text(json.dumps(plan, indent=2), encoding="utf-8")

@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace as NS
 
 import pytest
@@ -69,3 +70,42 @@ def test_plan_keeps_synchronized_curves_and_independent_facial_poses(tmp_path):
     assert book["body_clip"] == "Book" and smile["body_clip"] is None
     assert book["tracks"][0]["keys"][1] == [0.5, 1]
     assert len(plan["facial"]["clips"]) == 2
+
+
+def test_plan_preserves_fractional_authored_curve_samples(tmp_path):
+    model = tmp_path / "model.uemodel"
+    model.write_bytes(b"model")
+    (tmp_path / "clip.ueanim").write_bytes(b"animation")
+    authored = [{"CurveName": "e_close", "FloatCurve": {"Keys": [
+        {"Time": 0, "Value": 0.1}, {"Time": 1 / 60, "Value": 0.2},
+        {"Time": 1 / 30, "Value": 0.3}]}}]
+    (tmp_path / "clip.json").write_text(json.dumps([{
+        "Name": "clip", "Type": "AnimSequence", "CompressedCurveData": {"FloatCurves": authored}
+    }]), encoding="utf-8-sig")
+    sources = {"clip": {"source": "clip.json", "name": "clip", "type": "AnimSequence",
+                        "matches_skeleton": True}}
+
+    def read(path, _):
+        result = dto([(0, 0.1), (0, 0.2), (1, 0.3)])
+        result.metadata.additive_anim_type = 0
+        result.tracks = [NS(name="root")]
+        return NS(object_path="clip", object_name="clip"), result
+
+    plan = build_animation_plan(model, tmp_path, "rig", sources, {"root"}, read,
+                                morph_names={"E_Close"}, source_root=tmp_path)
+    assert plan["facial"]["clips"][0]["tracks"][0]["keys"] == [
+        [0, 0.1], [1 / 60, 0.2], [1 / 30, 0.3]]
+    authored[0]["FloatCurve"]["Keys"][1]["Time"] = 0
+    (tmp_path / "clip.json").write_text(json.dumps([{
+        "Name": "clip", "Type": "AnimSequence", "CompressedCurveData": {"FloatCurves": authored}
+    }]), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"clip.json \(clip.ueanim\).*Invalid facial curve samples"):
+        build_animation_plan(model, tmp_path, "rig", sources, {"root"}, read,
+                             morph_names={"E_Close"}, source_root=tmp_path)
+
+
+def test_authored_fractional_curve_still_rejects_invalid_samples():
+    curves = [{"CurveName": "e_close", "FloatCurve": {"Keys": [
+        {"Time": 0, "Value": 1}, {"Time": 0, "Value": 2}]}}]
+    with pytest.raises(ValueError, match="facial curve"):
+        facial_clip(dto([(0, 1)]), "clip", {"E_Close"}, source_curves=curves)
