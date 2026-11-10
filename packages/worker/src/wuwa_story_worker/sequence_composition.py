@@ -36,19 +36,24 @@ class ConversionFailed(ValueError):
     pass
 
 
+MAX_ARCHIVE_ENTRIES = 50000
+MAX_ARCHIVE_ENTRY_SIZE = 256 * 1024 * 1024
+MAX_ARCHIVE_TOTAL_SIZE = 2 * 1024 * 1024 * 1024
+
+
 def _validate_archive_limits(infos, label='Archive'):
     """Report which existing archive safety bound was exceeded."""
-    if len(infos) > 10000:
-        raise ValueError(f'{label} exceeds entry count limit: {len(infos)} > 10000')
+    if len(infos) > MAX_ARCHIVE_ENTRIES:
+        raise ValueError(f'{label} exceeds entry count limit: {len(infos)} > {MAX_ARCHIVE_ENTRIES}')
     duplicates = len(infos) - len({info.filename for info in infos})
     if duplicates:
         raise ValueError(f'{label} contains duplicate entries: {duplicates}')
     largest = max((info.file_size for info in infos), default=0)
-    if largest > 64 * 1024 * 1024:
-        raise ValueError(f'{label} exceeds per-entry size limit: {largest} > {64 * 1024 * 1024} bytes')
+    if largest > MAX_ARCHIVE_ENTRY_SIZE:
+        raise ValueError(f'{label} exceeds per-entry size limit: {largest} > {MAX_ARCHIVE_ENTRY_SIZE} bytes')
     total = sum(info.file_size for info in infos)
-    if total > 512 * 1024 * 1024:
-        raise ValueError(f'{label} exceeds total uncompressed size limit: {total} > {512 * 1024 * 1024} bytes')
+    if total > MAX_ARCHIVE_TOTAL_SIZE:
+        raise ValueError(f'{label} exceeds total uncompressed size limit: {total} > {MAX_ARCHIVE_TOTAL_SIZE} bytes')
 
 
 def _read(archive, manifest, name):
@@ -59,7 +64,7 @@ def _read(archive, manifest, name):
         raise UnsupportedComposition('Missing or ambiguous archive entry')
     info = manifest['files'][name]
     entry = archive.getinfo(name)
-    if entry.file_size > 64 * 1024 * 1024 or entry.file_size != info['size_bytes']:
+    if entry.file_size > MAX_ARCHIVE_ENTRY_SIZE or entry.file_size != info['size_bytes']:
         raise UnsupportedComposition('Invalid archive entry size')
     data = archive.read(entry)
     if len(data) != info['size_bytes'] or hashlib.sha256(data).hexdigest() != info['sha256']:
