@@ -98,6 +98,8 @@ def _parser() -> argparse.ArgumentParser:
     assets = commands.add_parser("plan-assets", help="Inspect official client archives without downloading")
     assets.add_argument("--version", required=True)
     assets.add_argument("--tier", choices=("sd", "hd", "uhd"), default="hd")
+    assets.add_argument("--completed-workspace", type=Path,
+                        help="Verify completed local clients before reusing their keys pin")
     assets.add_argument("--output", type=Path)
     asset_enqueue = commands.add_parser("enqueue-assets", help="Queue a pinned official client download")
     asset_enqueue.add_argument("plan", type=Path)
@@ -419,7 +421,7 @@ def main() -> None:
         queue_concurrency()
         asyncio.run(_run(args.queue, args.pool))
     elif args.command == "plan-assets":
-        plan = discover_plan(args.version, args.tier)
+        plan = discover_plan(args.version, args.tier, completed_workspace=args.completed_workspace)
         if args.output:
             save_json(args.output, plan)
         print(
