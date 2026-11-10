@@ -1,4 +1,5 @@
 export type ModelAsset = { url: string; size_bytes: number };
+export type AnimationPack = ModelAsset & { id: string; clips: string[] };
 export type ModelComponent = {
   id: string;
   parent_form_id: string;
@@ -19,6 +20,8 @@ export type ModelAssets = {
   download: ModelAsset | null;
   physics: ModelAsset | null;
   animations?: ModelAsset | null;
+  animation_packs?: AnimationPack[] | null;
+  animation_manifest?: ModelAsset | null;
   facial?: ModelAsset | null;
   linked_models?: LinkedModel[] | null;
   scene?: { format: string; components: string[]; cues: unknown[] } | null;

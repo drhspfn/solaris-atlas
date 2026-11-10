@@ -9,6 +9,10 @@ import {
   classifyAnimation,
   attachAnimationCatalog,
   prepareAnimatedMeshes,
+  animationPackSources,
+  loadAnimationPacks,
+  bindAnimationPacks,
+  disposeAnimationPacks,
 } from "../src/components/models/engine/animations.js";
 
 function rig({ suffix = "", duplicate = false, missing = false } = {}) {
@@ -70,6 +74,56 @@ test("same-origin HTTP(S) validation and optional integer byte hint", () => {
   ]) {
     assert.equal(animationLoadLabel(value), "Load animations");
   }
+});
+
+test('shared and own packs select exact action names and combine without legacy clips', async () => {
+  const shared = rig(), own = rig(), target = rig({ suffix: '_1' });
+  shared.animations.push(shared.animations[0].clone()); shared.animations[1].name = 'SharedOnly';
+  own.animations[0].name = 'Own';
+  const assets = { animations: { url: 'legacy' }, animation_packs: [
+    { id: 'shared', url: 'shared', clips: ['Stand1'] }, { id: 'own', url: 'own', clips: ['Own'] },
+  ] };
+  const requests = [], disposed = [];
+  const packs = await loadAnimationPacks(assets, async url => { requests.push(url); return url === 'shared' ? shared : own; }, scene => disposed.push(scene));
+  assert.deepEqual(requests, ['shared', 'own']);
+  assert.deepEqual(bindAnimationPacks(packs, target).map(clip => clip.name), ['Stand1', 'Own']);
+  assert.deepEqual(bindAnimationPacks(packs.slice(0, 1), target).map(clip => clip.name), ['Stand1']);
+  disposeAnimationPacks(packs, scene => disposed.push(scene));
+  assert.deepEqual(disposed, [shared.scene, own.scene]);
+  assert.equal(animationPackSources({ animations: { url: 'legacy' }, animation_packs: [] })[0].url, 'legacy');
+  assert.equal(bindAnimationPacks([{ source: { clips: null }, pack: shared }], target).length, 2);
+});
+
+test('invalid whitelists, missing or duplicate actions fail and partial loads are released for retry', async () => {
+  const shared = rig(), target = rig(), disposed = [];
+  for (const list of [{}, [null], [{ id: 'a', url: 'a', clips: 'Stand1' }],
+    [{ id: 'a', url: 'a', clips: ['Stand1', 'Stand1'] }],
+    [{ id: 'a', url: 'a', clips: ['Stand1'] }, { id: 'b', url: 'b', clips: ['Stand1'] }]]) {
+    assert.throws(() => animationPackSources({ animation_packs: list }));
+  }
+  assert.throws(() => bindAnimationPacks([{ source: { clips: ['Missing'] }, pack: shared }], target), /missing/i);
+  shared.animations.push(shared.animations[0].clone());
+  assert.throws(() => bindAnimationPacks([{ source: { clips: ['Stand1'] }, pack: shared }], target), /duplicate/i);
+  shared.animations.pop();
+  const assets = { animation_packs: [{ id: 'a', url: 'a', clips: ['Stand1'] }, { id: 'b', url: 'b', clips: ['Other'] }] };
+  let failed = true;
+  const load = async url => { if (url === 'b' && failed) throw new Error('offline'); return rig(); };
+  await assert.rejects(loadAnimationPacks(assets, load, scene => disposed.push(scene)), /offline/);
+  assert.equal(disposed.length, 1);
+  failed = false;
+  const packs = await loadAnimationPacks(assets, load, scene => disposed.push(scene));
+  disposeAnimationPacks(packs, scene => disposed.push(scene));
+  assert.equal(disposed.length, 3);
+});
+
+test('a pack referenced twice is loaded and disposed once', async () => {
+  const pack = rig(); pack.animations.push(pack.animations[0].clone()); pack.animations[1].name = 'Own';
+  const assets = { animation_packs: [{ id: 'a', url: 'same', clips: ['Stand1'] }, { id: 'b', url: 'same', clips: ['Own'] }] };
+  let requests = 0, disposals = 0;
+  const packs = await loadAnimationPacks(assets, async () => { requests++; return pack; }, () => disposals++);
+  assert.deepEqual(bindAnimationPacks(packs, rig()).map(clip => clip.name), ['Stand1', 'Own']);
+  disposeAnimationPacks(packs, () => disposals++);
+  assert.equal(requests, 1); assert.equal(disposals, 1);
 });
 
 test("resources stay on their viewer origin and reject credentials and downgrades", () => {

@@ -5,7 +5,7 @@ import { SpringBones } from './spring-bones.js';
 import { BoneCamera, cameraBones } from './camera-rig.js';
 import { RootMotionLock } from './root-motion.js';
 import { FacialAnimation } from './facial.js';
-import { attachAnimationCatalog, bindAnimationClips, prepareAnimatedMeshes } from './animations.js';
+import { attachAnimationCatalog, loadAnimationPacks, bindAnimationPacks, disposeAnimationPacks, prepareAnimatedMeshes } from './animations.js';
 import { declaredAccessories } from './accessories.js';
 import { createLinkedModels } from './linked-models.js';
 
@@ -31,10 +31,11 @@ export function declaredResourceOrigins(assets, base) {
     const item = pending.shift();
     if (!item || typeof item !== 'object' || visited.has(item)) continue;
     visited.add(item);
-    for (const key of ['preview', 'download', 'animations', 'facial', 'physics']) {
-      if (typeof item[key]?.url !== 'string') continue;
+    for (const asset of [item.preview, item.download, item.animations, item.animation_manifest, item.facial, item.physics,
+      ...(Array.isArray(item.animation_packs) ? item.animation_packs : [])]) {
+      if (typeof asset?.url !== 'string') continue;
       try {
-        const url = new URL(item[key].url, base);
+        const url = new URL(asset.url, base);
         if (!url.username && !url.password && ['http:', 'https:'].includes(url.protocol)
             && (new URL(base).protocol !== 'https:' || url.protocol === 'https:')) origins.add(url.origin);
       } catch { /* Invalid resource URLs are rejected when requested. */ }
@@ -123,6 +124,8 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   const manager = new THREE.LoadingManager();
   manager.setURLModifier(url => /^(blob:|data:)/.test(url) ? url : resource(url));
   const loader = new GLTFLoader(manager);
+  // Three's FileLoader shares in-flight requests; completed requests use the
+  // browser HTTP cache. Parsed packs belong only to this viewer and are released on close.
   async function loadGLB(url) {
     const loaded = await loader.loadAsync(resource(url), progress => {
       emit({ status: progress.total ? `Loading model · ${Math.round(progress.loaded / progress.total * 100)}%` : 'Loading model…' });
@@ -208,7 +211,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     }
   }
   async function install(loaded, upgrading = false) {
-    const next = preview ? [] : animationPack ? bindAnimationClips(animationPack, loaded)
+    const next = preview ? [] : animationPack ? bindAnimationPacks(animationPack, loaded)
       : loaded.animations.map((clip, index) => attachAnimationCatalog(clip, loaded, index));
     const previous = { name: action?.getClip().name, time: action?.time || 0, rotation: model?.rotation.clone() };
     resetPhysics(); root?.restore(); follow.detach();
@@ -277,16 +280,16 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   function animations() {
     if (animationPack) return Promise.resolve();
     if (animationRequest) return animationRequest;
-    if (!assets.animations) return Promise.reject(new Error('Animation pack is unavailable'));
     animationRequest = (async () => {
-      const pack = await loadGLB(assets.animations.url);
+      const packs = await loadAnimationPacks(assets, loadGLB, disposeObject);
       try {
         await mutate(() => {
-          const next = bindAnimationClips(pack, gltf);
-          installClips(next); animationPack = pack;
+          const next = bindAnimationPacks(packs, gltf);
+          installClips(next); animationPack = packs;
+          linked?.enableAnimations();
           emit({ animationsLoaded: true });
         });
-      } finally { disposeObject(pack.scene); }
+      } finally { disposeAnimationPacks(packs, disposeObject); }
     })().finally(() => { animationRequest = undefined; });
     return animationRequest;
   }
@@ -381,6 +384,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
       renderer.domElement.removeEventListener('webglcontextlost', contextLost);
       controls.dispose(); mixer?.stopAllAction(); if (model) mixer?.uncacheRoot(model);
       linked?.dispose();
+      animationPack = undefined; clips = [];
       disposeObject(scene); scene.clear(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();
     },
   };

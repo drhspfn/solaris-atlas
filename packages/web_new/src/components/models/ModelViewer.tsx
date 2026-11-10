@@ -16,6 +16,7 @@ import {
   ArrowDownToLine,
   Box,
   ChevronLeft,
+  ChevronDown,
   ChevronRight,
   Focus,
   Maximize2,
@@ -56,11 +57,15 @@ const label = (name: string, bytes?: number) =>
 const normalizeAssets = (assets: ModelAssets): ModelAssets => ({
   ...assets,
   ...Object.fromEntries(
-    (["preview", "download", "physics", "animations", "facial"] as const).map((key) => {
+    (["preview", "download", "physics", "animations", "animation_manifest", "facial"] as const).map((key) => {
       const asset = assets[key];
       return [key, asset ? { ...asset, url: apiUrl(asset.url.replace(/^\/api(?=\/)/, "")) } : asset];
     }),
   ),
+  animation_packs: Array.isArray(assets.animation_packs)
+    ? assets.animation_packs.map((pack) => pack && typeof pack.url === "string"
+      ? { ...pack, url: apiUrl(pack.url.replace(/^\/api(?=\/)/, "")) } : pack)
+    : assets.animation_packs,
   linked_models: assets.linked_models?.map((item) => ({ ...item, ...normalizeAssets(item) })),
 });
 
@@ -120,6 +125,11 @@ function ModelViewerInstance({
     () =>
       normalizeAssets(source),
   );
+  const packs = Array.isArray(assets.animation_packs) && assets.animation_packs.length
+    ? assets.animation_packs : assets.animations ? [{ ...assets.animations, id: "Animations" }] : [];
+  const packBytes = [...new Map(packs.filter((pack) => pack && typeof pack.url === "string")
+    .map((pack) => [pack.url, Number.isFinite(pack.size_bytes) && pack.size_bytes > 0 ? pack.size_bytes : 0])).values()]
+    .reduce((sum, size) => sum + size, 0);
   const [settings, setSettings] = useState<ViewerSettings>(defaultSettings);
   const [state, setState] = useState<ViewerState>(initialViewerState);
   const [attempt, setAttempt] = useState(0);
@@ -390,8 +400,8 @@ function ModelViewerInstance({
                   ],
                   [
                     "animations",
-                    assets.animations && !state.animationsLoaded,
-                    label("Load animations", assets.animations?.size_bytes),
+                    (packs.length > 0 || (assets.animation_packs != null && !Array.isArray(assets.animation_packs))) && !state.animationsLoaded,
+                    label("Load animations", packBytes),
                     <ArrowDownToLine size={16} />,
                   ],
                   [
@@ -431,6 +441,19 @@ function ModelViewerInstance({
                 {state.fullQuality ? "Full quality" : "Compact model"}
               </span>
             </div>
+            {(packs.length > 0 || assets.animation_manifest) && (
+              <details className="model-downloads">
+                <summary className="ui-button ui-button-ghost ui-button-sm">Animation downloads <ChevronDown size={16} aria-hidden="true" /></summary>
+                <div className="model-download-list">
+                  {packs.map((pack, index) => pack && typeof pack.url === "string" && (
+                    <a className="ui-button ui-button-default ui-button-sm" href={pack.url} download key={`${pack.url}:${index}`}>
+                      {label(`${index === 0 ? "Animations" : "Additional animations"}${"clips" in pack && Array.isArray(pack.clips) ? ` · ${pack.clips.length} ${pack.clips.length === 1 ? "clip" : "clips"}` : ""}`, pack.size_bytes)}
+                    </a>
+                  ))}
+                  {assets.animation_manifest && <a className="ui-button ui-button-default ui-button-sm" href={assets.animation_manifest.url} download>{label("Animation manifest", assets.animation_manifest.size_bytes)}</a>}
+                </div>
+              </details>
+            )}
             {state.animations.length > 0 && (
               <div className="model-animation-controls">
                 <Button

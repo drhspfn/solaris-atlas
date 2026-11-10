@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { BoneCamera, cameraBones } from '../src/components/models/engine/camera-rig.js';
 import { RootMotionLock } from '../src/components/models/engine/root-motion.js';
 import { FacialAnimation } from '../src/components/models/engine/facial.js';
-import { bindAnimationClips, attachAnimationCatalog, prepareAnimatedMeshes } from '../src/components/models/engine/animations.js';
+import { loadAnimationPacks, bindAnimationPacks, disposeAnimationPacks, attachAnimationCatalog, prepareAnimatedMeshes } from '../src/components/models/engine/animations.js';
 import { declaredAccessories } from '../src/components/models/engine/accessories.js';
 import { createLinkedModels } from '../src/components/models/engine/linked-models.js';
 
@@ -20,12 +20,13 @@ function rig(animated = false, facial = false) {
   return { scene, mesh, bone, parser: { associations: new Map([[bone, { nodes: 0 }]]), json: { nodes: [{ name: 'Hips' }] } },
     animations: animated ? [new THREE.AnimationClip('Stand1', 1, [new THREE.VectorKeyframeTrack('Hips.position', [0, 1], [0, 0, 0, 2, 0, 0])])] : [] };
 }
-async function viewer({ preview = false, defer = false, hold = false, accessory = false, boneAccessory = false, linked = false, childUrl = 'https://cdn.test/child.glb' } = {}) {
+async function viewer({ preview = false, defer = false, hold = false, accessory = false, boneAccessory = false, linked = false, multi = false, childUrl = 'https://cdn.test/child.glb' } = {}) {
   const requests = [], events = new Map(), changes = [], pending = new Map();
   let frame, disconnected = false, destroyed = false, failure = false, finish, resolveResource;
   let geometryDisposals = 0;
   const low = rig(), full = rig(false, true), pack = rig(true);
   const child = rig(true);
+  const own = rig(true); own.animations[0].name = 'Own';
   pack.parser.json.animations = [{ extras: { solaris_atlas: { source: 'Client/Content/Aki/Body/Stand.json' } } }];
   child.parser.json.animations = [{ extras: { solaris_atlas: { source: 'Client/Content/Aki/Prop/Stand.json' } } }];
   if (boneAccessory) {
@@ -58,6 +59,7 @@ async function viewer({ preview = false, defer = false, hold = false, accessory 
       if (failure === true || (typeof failure === 'string' && url.includes(failure))) throw new Error('offline');
       if (hold && /\/(pack|full)\.glb$/.test(url)) await new Promise(resolve => pending.set(url.split('/').at(-1), resolve));
       if (url.endsWith('/pack.glb')) return pack;
+      if (url.endsWith('/own.glb')) return own;
       if (url.endsWith('/child.glb')) return child;
       if (url.endsWith('/full.glb')) return full;
       if (defer) await new Promise(resolve => { finish = resolve; });
@@ -69,7 +71,7 @@ async function viewer({ preview = false, defer = false, hold = false, accessory 
     .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
   const context = { THREE: { ...THREE, WebGLRenderer: Renderer }, GLTFLoader: Loader, OrbitControls: Controls,
     SpringBones: class { joints = [1]; missing = []; reset() {} restore() {} update() {} },
-    BoneCamera, cameraBones, RootMotionLock, FacialAnimation, bindAnimationClips, attachAnimationCatalog, prepareAnimatedMeshes, declaredAccessories, createLinkedModels,
+    BoneCamera, cameraBones, RootMotionLock, FacialAnimation, loadAnimationPacks, bindAnimationPacks, disposeAnimationPacks, attachAnimationCatalog, prepareAnimatedMeshes, declaredAccessories, createLinkedModels,
     location: { href: 'https://atlas.test/characters/hero', protocol: 'https:' }, URL, AbortController,
     devicePixelRatio: 1, document: { hidden: false, addEventListener: (key, fn) => events.set(key, fn), removeEventListener: key => events.delete(key) },
     ResizeObserver: class { observe() {} disconnect() { disconnected = true; } },
@@ -82,7 +84,9 @@ async function viewer({ preview = false, defer = false, hold = false, accessory 
   const settings = { playing: false, speed: 1, floor: true, turntable: false, physics: true, strength: 1,
     lock: false, axes: { x: true, y: false, z: true }, bone: '', follow: false, space: 'world', offset: [0, 0, 0] };
   const controller = context.createViewer({ append() {}, getBoundingClientRect: () => ({ width: 500, height: 400 }) },
-    { id: 'root', preview: asset('low.glb'), download: asset('full.glb'), animations: asset('pack.glb'), physics: asset('physics.json'), facial: asset('face.json'),
+    { id: 'root', preview: asset('low.glb'), download: asset('full.glb'), animations: asset('pack.glb'),
+      animation_packs: multi ? [{ ...asset('pack.glb'), id: 'shared', clips: ['Stand1'] }, { ...asset('own.glb'), id: 'own', clips: ['Own'] }] : undefined,
+      physics: asset('physics.json'), facial: asset('face.json'),
       linked_models: linked ? [{ id: 'prop', parent_id: 'root', label: 'Prop', preview: { url: childUrl }, component: { socket: 'Hips', url: 'https://metadata-evil.test/model.glb', bindings: [{ parent_clip: 'Aki/Body/Stand', child_clip: 'Aki/Prop/Stand' }] } }] : [] },
     preview, settings, patch => { changes.push(patch); Object.assign(state, patch); });
   await flush();
@@ -92,6 +96,31 @@ async function viewer({ preview = false, defer = false, hold = false, accessory 
     frame: ms => frame?.(ms), fail: value => { failure = value; }, finish: () => finish(),
     get disconnected() { return disconnected; }, get destroyed() { return destroyed; }, get disposedGeometry() { return geometryDisposals; } };
 }
+
+test('multiple packs load on demand and rebind together after a quality upgrade', async () => {
+  const v = await viewer({ multi: true });
+  assert(!v.requests.some(url => url.endsWith('/pack.glb') || url.endsWith('/own.glb')));
+  await v.controller.command('animations');
+  assert.deepEqual(Array.from(v.state.animations, item => item.value), ['Stand1', 'Own']);
+  await v.controller.command('quality');
+  v.controller.animation('Own'); v.controller.seek(0.5);
+  assert.equal(v.full.bone.position.x, 1);
+  v.controller.dispose();
+});
+
+test('a failed second pack leaves the catalog unchanged and retries the full install', async () => {
+  const v = await viewer({ multi: true });
+  v.fail('own.glb');
+  await v.controller.command('animations');
+  assert.match(v.state.loadErrors.animations, /offline/);
+  assert(!v.state.animationsLoaded);
+  assert.equal(v.state.animations.length, 0);
+  v.fail(false);
+  await v.controller.command('animations');
+  assert.equal(v.state.loadErrors.animations, '');
+  assert.deepEqual(Array.from(v.state.animations, item => item.value), ['Stand1', 'Own']);
+  v.controller.dispose();
+});
 
 test('linked assets authorize their declared CDN origin without trusting metadata or insecure URLs', async () => {
   const v = await viewer({ linked: true, childUrl: 'https://child-cdn.test/child.glb' }); await flush();
