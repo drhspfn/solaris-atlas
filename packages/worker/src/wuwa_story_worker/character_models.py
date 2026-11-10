@@ -195,8 +195,8 @@ async def extract_model(root, sources, fmodel, converter, include_animations=Tru
     return model, converted, cooked, json.loads(receipt.read_text(encoding="utf-8"))
 
 
-async def run_blender(args, root, timeout=1800):
-    """Preserve only Blender's bounded diagnostic before scratch is removed."""
+async def run_blender(args, root, timeout=1800, *, run_id=None):
+    """Retain the owned Blender log and prioritize exceptions over buffered stdout."""
     log = root / "blender.log"
     try:
         return await tool(args, log, timeout)
@@ -206,11 +206,40 @@ async def run_blender(args, root, timeout=1800):
             if isinstance(exc, subprocess.CalledProcessError)
             else f"timed out after {exc.timeout} seconds"
         )
+        retained = None
+        if type(run_id) is int and run_id > 0:
+            try:
+                directory = asset_workspace() / "model-diagnostics" / str(run_id)
+                directory.mkdir(parents=True, exist_ok=True)
+                retained = directory / (sha256(log) + ".blender.log")
+                shutil.copyfile(log, retained)
+            except OSError:
+                # A failed diagnostic backup must not hide the build exception.
+                retained = None
         try:
+            # stderr may precede thousands of buffered importer stdout lines.
+            # Find exception blocks anywhere in the file, without reading an
+            # unbounded log into memory. Keep the full log outside transient jobs.
+            trace, collecting, exception = "", False, ""
+            with log.open("r", encoding="utf-8", errors="replace") as stream:
+                while line := stream.readline(16384):
+                    start = line.find("Traceback")
+                    if start >= 0:
+                        trace, collecting = "", True
+                        line = line[start:]
+                    if line.startswith("[UEFORMAT]"):
+                        collecting = False
+                    if collecting and len(trace) < 5000:
+                        trace += line[:5000 - len(trace)]
+                    if re.match(r"[\w.]+(?:Error|Exception):", line):
+                        exception = line[:1500]
             with log.open("rb") as stream:
                 stream.seek(0, os.SEEK_END)
                 stream.seek(max(0, stream.tell() - 8192))
                 tail = stream.read(8192)
+            prefix = (exception + trace).encode("utf-8") if trace or exception else b""
+            if prefix and prefix not in tail:
+                tail = prefix[:5500] + b"\nRecent output:\n" + tail[-2500:]
             # Strip CSI, OSC and other terminal escapes, then unsafe controls.
             tail = re.sub(
                 rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\|$)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]",
@@ -222,7 +251,8 @@ async def run_blender(args, root, timeout=1800):
             diagnostic = diagnostic.encode("utf-8")[-8192:].decode("utf-8", errors="ignore")
         except OSError:
             diagnostic = "Blender log unavailable"
-        raise RuntimeError(f"Blender {reason}; blender.log (last 8 KiB):\n{diagnostic}") from exc
+        location = f"; full log: {retained}" if retained else ""
+        raise RuntimeError(f"Blender {reason}{location}; blender.log (last 8 KiB):\n{diagnostic}") from exc
 
 
 async def model_progress(run_id, stage, **details):
@@ -433,18 +463,6 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
             if any(not (cooked / "Client/Content" / (ref + ".json")).is_file() for ref in missing):
                 raise ValueError("An explicitly referenced NPC animation was not exported")
     bone_visibility = {}
-    if sources.get('component_blueprint'):
-        from wuwa_story_worker.npc_accessories import npc_bone_visibility_notifies, visibility_label
-
-        for path in cooked.rglob('*.json'):
-            rows = json.loads(path.read_text(encoding='utf-8-sig'))
-            if not isinstance(rows, list) or not any(
-                row.get('Type') == 'TsAnimNotifyHideBone_C' for row in rows if isinstance(row, dict)):
-                continue
-            for event in npc_bone_visibility_notifies(rows):
-                event['source'] = path.relative_to(cooked).with_suffix('').as_posix()
-                event['label'] = visibility_label(sources['model'], event['bone'])
-                bone_visibility.setdefault(event['bone'], []).append(event)
     output = root / "bundle"
     output.mkdir()
     model_metadata = json.loads(
@@ -459,6 +477,21 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
     if len(skeletons) != 1 or not skeletons[0]:
         raise ValueError("The exported character mesh has no exact skeleton reference")
     skeleton = exported_package(skeletons[0])
+    if sources.get('component_blueprint'):
+        from wuwa_story_worker.model_bundle import animation_sources
+        from wuwa_story_worker.npc_accessories import npc_bone_visibility_notifies, visibility_label
+
+        for clip in animation_sources(cooked, '/Game/' + skeleton).values():
+            if not clip['matches_skeleton']:
+                continue
+            path = cooked / clip['source']
+            rows = json.loads(path.read_text(encoding='utf-8-sig'))
+            if not any(row.get('Type') == 'TsAnimNotifyHideBone_C' for row in rows):
+                continue
+            for event in npc_bone_visibility_notifies(rows):
+                event['source'] = path.relative_to(cooked).with_suffix('').as_posix()
+                event['label'] = visibility_label(sources['model'], event['bone'])
+                bone_visibility.setdefault(event['bone'], []).append(event)
     socket_path = cooked / "Client/Content" / (skeleton + ".json")
     if sources.get("component_blueprint") and not socket_path.is_file():
         skeleton_root = root / "referenced-skeleton"
@@ -615,6 +648,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         [*command, "--rig-only", *(["--animation-plan", plan_path] if include_animations else [])],
         root,
         900,
+        run_id=run_id,
     )
     batch_count = 0
     if include_animations:
@@ -650,6 +684,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
                 ],
                 log_root,
                 600,
+                run_id=run_id,
             )
             part = output / "animation-parts" / f"part-{index:04d}.glb"
             stats = glb_summary(part, allow_animations=True)

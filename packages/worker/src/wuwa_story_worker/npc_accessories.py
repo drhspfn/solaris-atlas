@@ -18,7 +18,7 @@ def visibility_label(model, bone):
 
 def npc_bone_visibility_notifies(rows):
     """Return enabled hide-bone notifies and their sequence-relative times."""
-    sequences = [row for row in rows if row.get("Type") == "AnimSequence"]
+    sequences = [row for row in rows if row.get("Type") in {"AnimSequence", "AnimMontage"}]
     if len(sequences) != 1:
         raise ValueError("Expected exactly one animation sequence")
     sequence = sequences[0]
