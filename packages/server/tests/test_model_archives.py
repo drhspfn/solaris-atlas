@@ -30,6 +30,41 @@ def test_portable_bundle_deduplicates_forms_and_omits_local_secrets(tmp_path):
         write_archive(path, {"character_key": "character:1"}, [first])
 
 
+def test_animation_packs_round_trip_with_form_specific_selections(tmp_path):
+    form, output, summaries, provenance = bundle(tmp_path)
+    (output / "animation-packs").mkdir()
+    (output / "animation-packs/0123456789abcdef.glb").write_bytes(b"shared")
+    (output / "animation-packs/fedcba9876543210.glb").write_bytes(b"variant")
+    (output / "animation-manifest.json").write_text("{}")
+    shared = {"id": "0123456789abcdef", "key": "animation_pack_0123456789abcdef",
+              "clips": [f"shared-{i}" for i in range(400)]}
+    variant = {"id": "fedcba9876543210", "key": "animation_pack_fedcba9876543210",
+               "clips": [f"variant-{i}" for i in range(20)]}
+    first = (form, output, summaries, {**provenance, "animation_packs": [shared, variant]})
+    second = ({**form, "id": "mesh-2"}, output, summaries,
+              {**provenance, "animation_packs": [{**shared, "clips": shared["clips"][:200]}]})
+    archive = tmp_path / "packs.zip"
+    manifest = write_archive(archive, {"character_key": "character:1"}, [first, second])
+    assert len(manifest["objects"]) == 5
+    assert manifest["forms"][0]["files"][shared["key"]] == manifest["forms"][1]["files"][shared["key"]]
+    assert read_archive(archive, tmp_path / "decoded") == manifest
+    assert len(manifest["forms"][0]["provenance"]["animation_packs"][0]["clips"]) == 400
+    assert len(manifest["forms"][1]["provenance"]["animation_packs"][0]["clips"]) == 200
+
+
+@pytest.mark.parametrize("packs", [
+    [{"id": "../bad", "key": "animation_pack_../bad", "clips": ["a"]}],
+    [{"id": "0123456789abcdef", "key": "animation_pack_0123456789abcdef", "clips": ["a", "a"]}],
+    [{"id": "0123456789abcdef", "key": "animation_pack_0123456789abcdef", "clips": ["a"]},
+     {"id": "fedcba9876543210", "key": "animation_pack_fedcba9876543210", "clips": ["a"]}],
+])
+def test_archive_rejects_malformed_pack_descriptors(tmp_path, packs):
+    form, output, summaries, provenance = bundle(tmp_path)
+    with pytest.raises(ValueError):
+        write_archive(tmp_path / "bad.zip", {"character_key": "character:1"},
+                      [(form, output, summaries, {**provenance, "animation_packs": packs})])
+
+
 def test_npc_model_archive_round_trips(tmp_path):
     path = tmp_path / "npc.zip"
     manifest = write_archive(path, {"character_key": "character:npc:17288"}, [bundle(tmp_path)])

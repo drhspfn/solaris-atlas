@@ -18,6 +18,8 @@ from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.repositories.character_models import model_recipe, npc_model_recipe
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.character_models import CharacterModelJob
+from wuwa_story.ingestion.model_animation_packs import validate_animation_packs
+from wuwa_story.ingestion.model_archives import model_file_name
 from wuwa_story.ingestion.model_limits import MAX_MODEL_COMPONENTS
 from wuwa_story.storage.hashing import content_object_key
 from wuwa_story.storage.s3 import S3Storage
@@ -39,6 +41,14 @@ from wuwa_story_worker.media_provenance import (
 )
 from wuwa_story_worker.media_workspace import finish_writes
 from wuwa_story_worker.model_animation_merge import merge_animation_glbs
+from wuwa_story_worker.model_animation_packs import (
+    fingerprint,
+    install_pack,
+    owned_sources,
+    ownership_for,
+    prepare_packs,
+    write_manifest,
+)
 from wuwa_story_worker.model_facial import validate_facial_pack
 from wuwa_story_worker.model_forms import resolve_recipe_forms
 from wuwa_story_worker.model_publication import ensure_glb_download
@@ -301,7 +311,8 @@ async def discover_scene_components(root, sources, cooked, converted=None, manif
         skeleton = exported_package(references[0])
     fetched = set()
     for depth in range(12):
-        clips = [row["source"] for row in animation_sources(cooked, "/Game/" + skeleton).values()
+        clips = [row["source"] for row in owned_sources(
+            animation_sources(cooked, "/Game/" + skeleton), sources.get("animation_ownership")).values()
                  if row["matches_skeleton"]]
         recipes = discover(cooked, {**sources, "parent_form_id": sources.get("id"),
                                     "parent_skeleton": skeleton,
@@ -356,7 +367,10 @@ async def discover_scene_components(root, sources, cooked, converted=None, manif
 
 
 async def build_bundle(root, sources, include_animations=True, *, run_id=None, local_client=None,
-                       animation_workers=1, report_progress=None):
+                       animation_workers=1, report_progress=None, animation_cache=None, asset_cache=None,
+                       animation_ownership=None):
+    if animation_ownership:
+        sources = {**sources, "animation_ownership": animation_ownership}
     async def progress(stage, **details):
         if report_progress is not None:
             report_progress(stage, **details)
@@ -413,10 +427,23 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
     component_filters = {path.rsplit('/', 1)[0] + '/' for path in sources.get('extra_models', [])}
     component_filters.update(path.rsplit('/', 1)[0] + '/'
         for slots in sources.get('part_material_overrides', {}).values() for path in slots.values())
-    model, converted, cooked, manifest = await extract_model(
-        root, sources, fmodel, converter, include_animations,
-        additional_filters=sorted(component_filters), **options
-    )
+    asset_key = ("/".join(sources["model"].split("/")[:5]).casefold(), include_animations)
+    cached = asset_cache.get(asset_key) if asset_cache is not None else None
+    required = [sources["model"], *sources["blueprints"], *sources.get("extra_models", [])]
+    if sources.get("component_blueprint"):
+        required.append(sources["component_blueprint"])
+    if cached and all((cached[2] / "Client/Content" / (path + ".json")).is_file() for path in required) and (
+        cached[1] / "Client/Content" / (sources["model"] + ".uemodel")).is_file():
+        _, converted, cooked, manifest = cached
+        model = converted / "Client/Content" / (sources["model"] + ".uemodel")
+        await progress("reuse_extracted_assets")
+    else:
+        model, converted, cooked, manifest = await extract_model(
+            root, sources, fmodel, converter, include_animations,
+            additional_filters=sorted(component_filters), **options
+        )
+        if asset_cache is not None:
+            asset_cache[asset_key] = model, converted, cooked, manifest
     for _, metadata_cooked, receipt in blueprint_exports:
         shutil.copytree(metadata_cooked, cooked, dirs_exist_ok=True)
         manifest['files'].extend(receipt['files'])
@@ -450,6 +477,11 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
             path = cooked / "Client/Content" / (blueprint + ".json")
             if path.is_file():
                 refs.update(npc_animation_references(json.loads(path.read_text(encoding="utf-8-sig"))))
+        if sources.get("animation_ownership"):
+            sources = {**sources, "animation_ownership": {
+                **sources["animation_ownership"], "explicit": sorted(
+                    refs | set(sources.get("montages", [])) |
+                    set(sources["animation_ownership"].get("explicit", [])))}}
         missing = [ref for ref in refs if not (cooked / "Client/Content" / (ref + ".json")).is_file()]
         if missing:
             extra_root = root / "referenced-animations"
@@ -482,7 +514,8 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         from wuwa_story_worker.model_bundle import animation_sources
         from wuwa_story_worker.npc_accessories import npc_bone_visibility_notifies, visibility_label
 
-        for clip in animation_sources(cooked, '/Game/' + skeleton).values():
+        for clip in owned_sources(animation_sources(cooked, '/Game/' + skeleton),
+                                  sources.get("animation_ownership")).values():
             if not clip['matches_skeleton']:
                 continue
             path = cooked / clip['source']
@@ -644,6 +677,12 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         visibility_path.write_text(json.dumps(bone_visibility), encoding='utf-8')
         command.extend(['--bone-visibility', visibility_path.resolve()])
     plan_path = output / "animation-plan.json"
+    if animation_cache is not None:
+        command.append("--shared-animation-rig")
+    if sources.get("animation_ownership"):
+        ownership_path = root / "animation-ownership.json"
+        ownership_path.write_text(json.dumps(sources["animation_ownership"]), encoding="utf-8")
+        command.extend(["--animation-ownership", ownership_path.resolve()])
     await progress("rig_and_animation_plan" if include_animations else "rig")
     await run_blender(
         [*command, "--rig-only", *(["--animation-plan", plan_path] if include_animations else [])],
@@ -652,10 +691,26 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         run_id=run_id,
     )
     batch_count = 0
+    pack_descriptors, pack_summaries = [], {}
     if include_animations:
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        if animation_cache is not None:
+            recipe = fingerprint([sha256(converter), sha256(blender),
+                                  sha256(Path(__file__).with_name("model_bundle.py")),
+                                  sha256(Path(__file__).with_name("model_animation_merge.py"))])
+            rig_key, reused, new_identities = prepare_packs(plan, animation_cache, recipe)
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            (output / "facial.json").write_text(json.dumps(plan["facial"]), encoding="utf-8")
+            for selected in reused:
+                entry = selected["entry"]
+                descriptor = install_pack(output, entry, selected["clips"])
+                pack_descriptors.append(descriptor)
+                pack_summaries[descriptor["key"]] = entry["summary"]
+            if reused:
+                await progress("reuse_animation_packs", packs=len(reused),
+                               reused_clips=sum(len(item["clips"]) for item in reused))
         clips = plan["clips"]
-        if not clips:
+        if not clips and animation_cache is None:
             raise ValueError("No playable clips in the verified animation plan")
         batch_size = 20
         batch_count = (len(clips) + batch_size - 1) // batch_size
@@ -717,13 +772,31 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
                 if isinstance(result, BaseException):
                     raise result
                 parts.append(result)
-        await progress("merge_animation_batches", batches=batch_count)
-        await asyncio.to_thread(merge_animation_glbs, parts, output / "animations.glb",
-                                source_paths={clip["name"]: clip["source"] for clip in clips})
-        summary = glb_summary(output / "animations.glb", allow_animations=True)
-        if summary["animations"] != len(clips):
-            raise ValueError("Merged animation collection lost clips")
-        (output / "animations.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        if parts:
+            await progress("merge_animation_batches", batches=batch_count)
+            await asyncio.to_thread(merge_animation_glbs, parts, output / "animations.glb",
+                                    source_paths={clip["name"]: clip["source"] for clip in clips})
+            summary = glb_summary(output / "animations.glb", allow_animations=True)
+            if summary["animations"] != len(clips):
+                raise ValueError("Merged animation collection lost clips")
+            if animation_cache is None:
+                (output / "animations.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+            else:
+                pack_id = summary["sha256"][:16]
+                target = output / "animation-packs" / (pack_id + ".glb")
+                target.parent.mkdir(exist_ok=True)
+                (output / "animations.glb").replace(target)
+                entry = {"id": pack_id, "path": target, "summary": summary,
+                         "identities": new_identities, "rig_signature": plan.get("rig_signature"),
+                         "rig_namespace": fingerprint([plan["skeleton"], recipe])}
+                animation_cache[rig_key].append(entry)
+                descriptor = install_pack(output, entry, [clip["name"] for clip in clips])
+                pack_descriptors.append(descriptor)
+                pack_summaries[descriptor["key"]] = summary
+        if animation_cache is not None:
+            if not pack_descriptors:
+                raise ValueError("No verified animation packs for this appearance")
+            write_manifest(output, pack_descriptors)
     profile = None
     for blueprint in sources["blueprints"]:
         path = cooked / "Client/Content" / (blueprint + ".json")
@@ -746,8 +819,9 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         kind: glb_summary(output / name)
         for kind, name in [("preview", "preview.glb"), ("download", "character.glb")]
     }
-    if include_animations:
+    if include_animations and animation_cache is None:
         summaries["animations"] = glb_summary(output / "animations.glb", allow_animations=True)
+    summaries.update(pack_summaries)
     if summaries["preview"]["bytes"] > summaries["download"]["bytes"]:
         raise ValueError("Preview unexpectedly exceeds the full-resolution model")
     provenance = {
@@ -769,7 +843,10 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         "include_animations": include_animations,
         "animation_batches": batch_count,
     }
-    if include_animations:
+    if pack_descriptors:
+        provenance["animation_packs"] = pack_descriptors
+        provenance["animation_coverage"] = plan["animation_coverage"]
+    if include_animations and animation_cache is None:
         provenance["animations"] = json.loads(
             (output / "animations.json").read_text(encoding="utf-8")
         )
@@ -786,13 +863,30 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
     return output, summaries, provenance
 
 
-def publication_files(job, output, summaries):
+def publication_files(job, output, summaries, *, packs=None):
     """Validate every form before uploads or a database publication can begin."""
-    if job.include_animations:
+    packs = validate_animation_packs(packs or [])
+    names = set()
+    if packs:
+        if not job.include_animations:
+            raise ValueError("Unexpected animation packs for a rig-only job")
+        manifest = json.loads((output / "animation-manifest.json").read_text(encoding="utf-8"))
+        if manifest != {"format": "solaris-animation-packs-v1", "packs": packs}:
+            raise ValueError("Animation manifest changed before publication")
+        for pack in packs:
+            actual = glb_summary(output / model_file_name(pack["key"]), allow_animations=True)
+            if summaries.get(pack["key"]) != actual:
+                raise ValueError("Animation pack summary changed before publication")
+            if not set(pack["clips"]) <= {clip["name"] for clip in actual["clips"]}:
+                raise ValueError("Animation pack selects unpublished clips")
+            names.update(pack["clips"])
+        animation_count = len(names)
+    elif job.include_animations:
         actual = glb_summary(output / "animations.glb", allow_animations=True)
         if summaries.get("animations") != actual:
             raise ValueError("Animation summary changed before publication")
         animation_count = actual["animations"]
+        names = {clip["name"] for clip in actual["clips"]}
     elif "animations" in summaries or (output / "animations.glb").exists():
         raise ValueError("Unexpected animations for a rig-only job")
     else:
@@ -802,11 +896,15 @@ def publication_files(job, output, summaries):
         ("download", output / "character.glb", "unknown", "model/gltf-binary"),
     ]
     if job.include_animations:
-        files.append(("animations", output / "animations.glb", "unknown", "model/gltf-binary"))
+        if packs:
+            files.extend((pack["key"], output / model_file_name(pack["key"]), "unknown", "model/gltf-binary")
+                         for pack in packs)
+            files.append(("animation_manifest", output / "animation-manifest.json", "raw_json", "application/json"))
+        else:
+            files.append(("animations", output / "animations.glb", "unknown", "model/gltf-binary"))
         facial_path = output / "facial.json"
         if facial_path.is_file():
             facial = validate_facial_pack(json.loads(facial_path.read_text(encoding="utf-8")))
-            names = {clip["name"] for clip in actual["clips"]}
             if any(clip.get("body_clip") is not None and clip["body_clip"] not in names for clip in facial["clips"]):
                 raise ValueError("Facial curves refer to an unpublished body clip")
             if facial["clips"]:
@@ -827,16 +925,26 @@ async def publish_forms(job, bundles, *, publication_payload=None):
     if not bundles or len({form["id"] for form, *_ in bundles}) != len(bundles):
         raise ValueError("Model publication requires distinct authored forms")
     validated = [publication_files(
-        job.model_copy(update={"include_animations": "animations" in summaries})
-        if form.get("component") else job, output, summaries)
-        for form, output, summaries, _ in bundles]
+        job.model_copy(update={"include_animations": "animations" in summaries or bool(provenance.get("animation_packs"))})
+        if form.get("component") else job, output, summaries, packs=provenance.get("animation_packs"))
+        for form, output, summaries, provenance in bundles]
     storage = S3Storage(get_settings())
     service = FileRegistrationService(storage)
     prepared_forms = []
+    prepared_cache = {}
     for files, _ in validated:
-        prepared = [await service.prepare_file(path, mime) for _, path, _, mime in files]
+        prepared = []
+        for kind, path, _, mime in files:
+            if not kind.startswith("animation_pack_"):
+                prepared.append(await service.prepare_file(path, mime))
+            else:
+                stat = path.stat()
+                identity = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+                if identity not in prepared_cache:
+                    prepared_cache[identity] = await service.prepare_file(path, mime)
+                prepared.append(prepared_cache[identity])
         for (kind, _, _, _), ready in zip(files, prepared, strict=True):
-            if kind in {"download", "animations"}:
+            if kind in {"download", "animations"} or kind.startswith("animation_pack_"):
                 await ensure_glb_download(
                     storage, content_object_key(ready.digest), ready.digest.hex()
                 )
@@ -865,11 +973,14 @@ async def publish_forms(job, bundles, *, publication_payload=None):
                 reference = await service.register_reference(
                     session,
                     file_id=file.id,
-                    reference_type="character_model_" + kind,
+                    reference_type=("character_model_animation_pack" if kind.startswith("animation_pack_")
+                                    else "character_model_" + kind),
                     owner_node_id=job.owner_node_id,
                     release_id=job.release_id,
                     source_path="/Game/" + provenance["model"] + (
-                        "#component=" + form["id"] if form.get("component") else ""),
+                        "#component=" + form["id"] if form.get("component") else "") + (
+                        "#form=" + form["id"] + "&animation-pack=" + kind.removeprefix("animation_pack_")
+                        if kind.startswith("animation_pack_") else ""),
                 )
                 published[kind] = file.id
                 reference.metadata_json = {
@@ -884,6 +995,8 @@ async def publish_forms(job, bundles, *, publication_payload=None):
                     "animation_count": animation_count,
                     **({"component": form["component"]} if form.get("component") else {}),
                     **({"scene": provenance["scene"]} if provenance.get("scene") else {}),
+                    **({"animation_pack": next(pack for pack in provenance["animation_packs"] if pack["key"] == kind)}
+                       if kind.startswith("animation_pack_") else {}),
                 }
             await service.register_variant(
                 session,
@@ -915,13 +1028,17 @@ async def publish_forms(job, bundles, *, publication_payload=None):
 async def build_scene_bundles(staging, forms, *, include_animations=True, **options):
     """Retain independently validated rigs until the complete scene can publish atomically."""
     bundles, total_components = [], 0
+    options = {**options, "animation_cache": {}, "asset_cache": {}}
     for form in forms:
+        form_options = {**options}
+        if form.get("model"):
+            form_options["animation_ownership"] = ownership_for(form, forms)
         root = staging / form["id"]
         root.mkdir()
         if options.get("local_client") is None:
             prepare_entity_workspace(staging, root)
         output, summaries, provenance = await build_bundle(
-            root, form, include_animations=include_animations, **options)
+            root, form, include_animations=include_animations, **form_options)
         provenance["form_source"] = form.get("source")
         components = provenance.pop("linked_components", [])
         total_components += len(components)

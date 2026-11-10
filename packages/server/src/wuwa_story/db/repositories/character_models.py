@@ -16,6 +16,7 @@ REFERENCE_TYPES = {
     "character_model_physics": "physics",
     "character_model_animations": "animations",
     "character_model_facial": "facial",
+    "character_model_animation_manifest": "animation_manifest",
 }
 
 
@@ -116,13 +117,15 @@ async def published_model_files(session, owner_node_id, release_id, bucket):
                 FileReference.metadata_json["form_order"].label("form_order"),
                 FileReference.metadata_json["component"].label("component"),
                 FileReference.metadata_json["scene"].label("scene"),
+                FileReference.metadata_json["animation_pack"].label("animation_pack"),
+                FileReference.metadata_json["game_source"]["animation_packs"].label("declared_animation_packs"),
             )
             .join(FileObject, FileObject.id == FileReference.file_id)
             .join(FileLocation, FileLocation.file_id == FileObject.id)
             .where(
                 FileReference.owner_node_id == owner_node_id,
                 FileReference.release_id == release_id,
-                FileReference.reference_type.in_(REFERENCE_TYPES),
+                FileReference.reference_type.in_((*REFERENCE_TYPES, "character_model_animation_pack")),
                 FileLocation.backend == "s3",
                 FileLocation.bucket == bucket,
                 FileLocation.available.is_(True),

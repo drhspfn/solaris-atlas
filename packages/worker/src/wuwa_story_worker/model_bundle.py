@@ -610,6 +610,8 @@ def main():
     parser.add_argument('--master-pose', action='store_true')
     parser.add_argument('--hide-primary-geometry', action='store_true')
     parser.add_argument('--bone-visibility', type=Path)
+    parser.add_argument('--animation-ownership', type=Path)
+    parser.add_argument('--shared-animation-rig', action='store_true')
     parser.add_argument("--converted", type=Path, required=True)
     parser.add_argument("--source-json", type=Path, required=True)
     parser.add_argument("--skeleton", required=True)
@@ -886,6 +888,10 @@ def main():
         if args.rig_only and not args.animation_plan
         else animation_sources(args.source_json, args.skeleton)
     )
+    if args.animation_ownership:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from model_animation_packs import owned_sources
+        sources = owned_sources(sources, json.loads(args.animation_ownership.read_text(encoding="utf-8")))
     report = {
         "model_source": str(args.model.resolve()),
         "model_sha256": hashlib.sha256(args.model.read_bytes()).hexdigest(),
@@ -912,6 +918,14 @@ def main():
             },
             source_root=args.source_json,
         )
+        # The skeleton reference alone does not establish identical bind poses.
+        if args.shared_animation_rig:
+            rig = {"object": [float(value) for row in armature.matrix_world for value in row],
+                   "bones": [(bone.name, bone.parent.name if bone.parent else None,
+                              [float(value) for row in bone.matrix_local for value in row])
+                             for bone in sorted(armature.data.bones, key=lambda bone: bone.name)]}
+            plan["rig_fingerprint"] = hashlib.sha256(json.dumps(rig, allow_nan=False).encode()).hexdigest()
+            plan["rig_signature"] = rig
         args.animation_plan.parent.mkdir(parents=True, exist_ok=True)
         args.animation_plan.write_text(json.dumps(plan, indent=2), encoding="utf-8")
         report["animations"] = plan["animations"]

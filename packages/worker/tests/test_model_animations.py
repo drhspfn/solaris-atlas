@@ -144,6 +144,33 @@ def test_animation_summary_reads_actual_clips_and_rejects_them_in_rig_mode(tmp_p
         animation_summary(path, {"DifferentBone"})
 
 
+def test_publication_uses_selected_pack_union_and_preserves_own_facial_curves(tmp_path):
+    from wuwa_story_worker.model_animation_packs import write_manifest
+
+    packs = [{"id": "a" * 16, "key": "animation_pack_" + "a" * 16, "clips": ["Stand1"]},
+             {"id": "b" * 16, "key": "animation_pack_" + "b" * 16, "clips": ["SkinIdle"]}]
+    folder = tmp_path / "animation-packs"
+    folder.mkdir()
+    shared, variant = folder / ("a" * 16 + ".glb"), folder / ("b" * 16 + ".glb")
+    animation_glb(shared)
+    animation_glb(variant, lambda data: data["animations"][0].update(name="SkinIdle"))
+    summaries = {pack["key"]: glb_summary(path, allow_animations=True)
+                 for pack, path in zip(packs, (shared, variant), strict=True)}
+    write_manifest(tmp_path, packs)
+    (tmp_path / "facial.json").write_text(json.dumps({"format": "solaris-facial-v1", "clips": [{
+        "name": "Face", "body_clip": "SkinIdle", "seconds": 1,
+        "tracks": [{"target": "Mouth", "keys": [[0, 0], [1, 1]]}]}]}))
+    job = worker.CharacterModelJob.model_validate({**job_payload(), "include_animations": True})
+    files, count = worker.publication_files(job, tmp_path, summaries, packs=packs)
+    assert count == 2
+    assert {kind for kind, *_ in files} == {"preview", "download", "facial", "animation_manifest",
+                                          *(pack["key"] for pack in packs)}
+    packs[1]["clips"] = ["Nonexistent"]
+    write_manifest(tmp_path, packs)
+    with pytest.raises(ValueError, match="unpublished clips"):
+        worker.publication_files(job, tmp_path, summaries, packs=packs)
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -523,7 +550,9 @@ async def test_forms_build_in_isolated_disposable_workspaces_and_publish_togethe
     async def build(root, form, **options):
         built.append(form)
         (root / "raw.uasset").touch()
-        assert options == {"include_animations": False, "run_id": 1}
+        assert options["include_animations"] is False and options["run_id"] == 1
+        assert isinstance(options["animation_cache"], dict) and isinstance(options["asset_cache"], dict)
+        assert options["animation_ownership"]["root"] in options["animation_ownership"]["roots"]
         if fail_second and len(built) == 2:
             raise ValueError("second rig failed")
         output = root / "bundle"

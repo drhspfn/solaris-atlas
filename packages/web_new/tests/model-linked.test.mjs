@@ -108,6 +108,26 @@ test('a component completing after viewer disposal releases its rig without repo
   assert.equal(disposed, 1); assert.equal(reports, before); assert.equal(child.scene.parent, null);
 });
 
+test('linked shared packs wait for animation loading and release their scenes', async () => {
+  const child = rig('Aki/Prop/Stand'), root = rig('Aki/Body/Stand'), pack = rig('Aki/Prop/Stand');
+  const requests = [], disposed = []; let fail = true, state;
+  const linked = createLinkedModels({ assets: { id: 'root', linked_models: [{ id: 'prop', parent_id: 'root', label: 'Prop',
+    preview: asset('child'), animation_packs: [{ id: 'shared', url: 'pack', clips: [pack.animations[0].name] }],
+    component: { bindings: [{ parent_clip: 'Aki/Body/Stand', child_clip: 'Aki/Prop/Stand' }] } }] },
+    load: async url => { requests.push(url); if (url === 'pack' && fail) throw new Error('offline'); return url === 'pack' ? pack : child; }, dispose: scene => disposed.push(scene),
+    report: value => { state = value; }, getRoot: () => root.scene, getAction: () => null });
+  linked.start(); await tick();
+  assert.deepEqual(requests, ['child']);
+  linked.enableAnimations(); await tick();
+  assert.deepEqual(requests, ['child', 'pack']);
+  assert.match(state[0].error, /offline/);
+  fail = false; linked.set('prop', true); await tick();
+  assert.deepEqual(requests, ['child', 'pack', 'pack']);
+  assert.equal(state[0].error, '');
+  assert(disposed.includes(pack.scene));
+  linked.dispose(); assert(disposed.includes(child.scene));
+});
+
 test('unchanged animation frames do not report UI state; visibility and override changes do', async () => {
   const body = rig('Aki/Body/Idle'), child = rig('Aki/Prop/Idle');
   body.animations[0].userData = { sourcePackage: 'Aki/Body/Idle' };

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { attachAnimationCatalog, bindAnimationClips, prepareAnimatedMeshes } from './animations.js';
+import { attachAnimationCatalog, loadAnimationPacks, bindAnimationPacks, disposeAnimationPacks, prepareAnimatedMeshes } from './animations.js';
 
 // Compare package paths, never basenames: different packages may have the same clip name.
 export function packagePath(value) {
@@ -102,7 +102,7 @@ export function createLinkedModels({ assets, load, dispose, report, getRoot, get
   const depth = item => { let n = 0, current = item; const seen = new Set(); while (current && !seen.has(current.id)) { seen.add(current.id); current = items.find(candidate => candidate.id === current.parent_id); n++; } return n; };
   const entries = new Map(items.sort((a, b) => depth(a) - depth(b))
     .map(item => [item.id, { item, visible: item.component.default_visible !== false, override: null, loading: false, error: '', rig: null, request: null, action: null }]));
-  let closed = false, rootModel, rootMeshes = new Map(), reported = false;
+  let closed = false, animationsEnabled = false, rootModel, rootMeshes = new Map(), reported = false;
   function emit() {
     if (closed) return;
     let changed = !reported;
@@ -135,12 +135,33 @@ export function createLinkedModels({ assets, load, dispose, report, getRoot, get
     }
     emit();
   }
+  async function ensurePacks(entry) {
+    if (closed || !animationsEnabled || !entry.rig || entry.packsLoaded || entry.packRequest ||
+        entry.item.animation_packs == null || !entry.item.component.bindings?.some(binding => binding.parent_clip && binding.child_clip)) return;
+    entry.loading = true; entry.error = ''; emit();
+    entry.packRequest = (async () => {
+      let packs;
+      try {
+        packs = await loadAnimationPacks(entry.item, load, dispose);
+        if (closed) return;
+        const clips = bindAnimationPacks(packs, entry.rig);
+        entry.mixer.stopAllAction(); entry.action = null; entry.clips = clips; entry.packsLoaded = true;
+        sync();
+      } catch (error) {
+        if (!closed) entry.error = error.message || 'Component animations could not be loaded';
+      } finally {
+        if (packs) disposeAnimationPacks(packs, dispose);
+        entry.loading = false; entry.packRequest = null; emit();
+      }
+    })();
+    return entry.packRequest;
+  }
   async function ensure(entry) {
     if (entry.rig || closed) return;
     if (entry.request) return entry.request;
     entry.loading = true; entry.error = ''; emit();
     entry.request = (async () => {
-      let rig, pack;
+      let rig, packs;
       try {
         const parent = entries.get(entry.item.parent_id);
         if (parent) { await ensure(parent); if (!parent.rig) throw new Error('Parent component unavailable'); }
@@ -148,9 +169,10 @@ export function createLinkedModels({ assets, load, dispose, report, getRoot, get
         rig = await load(entry.item.preview.url);
         if (closed) return;
         let clips = rig.animations.map((clip, index) => attachAnimationCatalog(clip, rig, index));
-        if (entry.item.animations && entry.item.component.bindings?.some(binding => binding.parent_clip && binding.child_clip)) {
-          pack = await load(entry.item.animations.url);
-          clips = bindAnimationClips(pack, rig);
+        if (entry.item.animation_packs == null && entry.item.animations && entry.item.component.bindings?.some(binding => binding.parent_clip && binding.child_clip)) {
+          packs = await loadAnimationPacks(entry.item, load, dispose);
+          if (closed) return;
+          clips = bindAnimationPacks(packs, rig);
         }
         if (closed) return;
         const target = parentOf(entry);
@@ -164,9 +186,10 @@ export function createLinkedModels({ assets, load, dispose, report, getRoot, get
       } catch (error) {
         if (!closed) entry.error = error.message || 'Component could not be loaded';
       } finally {
-        if (pack) dispose(pack.scene);
+        if (packs) disposeAnimationPacks(packs, dispose);
         if (rig) dispose(rig.scene);
         entry.loading = false; entry.request = null; emit();
+        if (entry.rig) void ensurePacks(entry);
       }
     })();
     return entry.request;
@@ -248,8 +271,9 @@ export function createLinkedModels({ assets, load, dispose, report, getRoot, get
   }
   return {
     start() { sync(); },
-    set(id, visible) { const entry = entries.get(id); if (!entry) return; entry.override = visible; if (visible && entry.error) { entry.error = ''; if (entry.rig) reattach(); } sync(); },
-    retry(id) { const entry = entries.get(id); if (entry) void ensure(entry); },
+    enableAnimations() { animationsEnabled = true; for (const entry of entries.values()) void ensurePacks(entry); },
+    set(id, visible) { const entry = entries.get(id); if (!entry) return; entry.override = visible; if (visible && entry.error) { entry.error = ''; if (entry.rig) { reattach(); void ensurePacks(entry); } } sync(); },
+    retry(id) { const entry = entries.get(id); if (entry) { if (entry.rig) void ensurePacks(entry); else void ensure(entry); } },
     detach() { for (const entry of entries.values()) entry.rig?.scene.removeFromParent(); },
     reattach, sync,
     dispose() { closed = true; for (const [mesh, mask] of rootMeshes) mesh.layers.mask = mask; for (const entry of entries.values()) if (entry.rig) { entry.rig.scene.removeFromParent(); entry.mixer.stopAllAction(); entry.mixer.uncacheRoot(entry.rig.scene); dispose(entry.rig.scene); } },

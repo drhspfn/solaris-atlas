@@ -27,6 +27,7 @@ from wuwa_story.db.repositories.character_models import (
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.ingestion.client_assets import inspect_installed_clients
 from wuwa_story.ingestion.media_jobs import publish_media_job
+from wuwa_story.ingestion.model_animation_packs import validate_animation_packs
 from wuwa_story.ingestion.model_limits import MAX_MODEL_COMPONENTS, MAX_MODEL_ROOTS
 from wuwa_story.storage.s3 import S3Storage
 
@@ -153,6 +154,8 @@ async def public_character_model(session, owner_node_id, release):
         "download": None,
         "physics": None,
         "animations": None,
+        "animation_packs": [],
+        "animation_manifest": None,
         "facial": None,
         "viewer_url": None,
         "forms": [],
@@ -165,9 +168,9 @@ async def public_character_model(session, owner_node_id, release):
     bundles = {}
     malformed = set()
     for row in rows:
-        values = tuple(row) + (None,) * (10 - len(row))
+        values = tuple(row) + (None,) * (12 - len(row))
         (reference_type, model_bundle_id, object_key, size_bytes, viewer_object_key,
-         form_id, form_label, form_order, component, scene) = values
+         form_id, form_label, form_order, component, scene, animation_pack, declared_packs) = values
         if not model_bundle_id:
             continue
         forms = bundles.setdefault(model_bundle_id, {})
@@ -193,12 +196,41 @@ async def public_character_model(session, owner_node_id, release):
             malformed.add(model_bundle_id)
             continue
         form = forms.setdefault(form_id, {"label": form_label, "order": form_order,
-                                         "files": {}, "component": component, "scene": scene})
+                                         "files": {}, "packs": [], "declared_packs": None,
+                                         "component": component, "scene": scene})
         if (form["label"], form["order"], form["component"], form["scene"]) != (form_label, form_order, component, scene):
             malformed.add(model_bundle_id)
-        form["files"].setdefault(
-            REFERENCE_TYPES[reference_type], (object_key, size_bytes, viewer_object_key)
-        )
+        if declared_packs is not None:
+            try:
+                validate_animation_packs(declared_packs)
+                declared = {pack["id"]: pack for pack in declared_packs}
+                if form["declared_packs"] is not None and form["declared_packs"] != declared:
+                    raise ValueError("Conflicting animation pack declarations")
+                form["declared_packs"] = declared
+            except ValueError:
+                malformed.add(model_bundle_id)
+        if reference_type == "character_model_animation_pack":
+            try:
+                validate_animation_packs([animation_pack])
+            except ValueError:
+                malformed.add(model_bundle_id)
+                continue
+            form["packs"].append((animation_pack, object_key, size_bytes))
+        else:
+            form["files"].setdefault(
+                REFERENCE_TYPES[reference_type], (object_key, size_bytes, viewer_object_key)
+            )
+    for bundle_id, forms in bundles.items():
+        for form in forms.values():
+            try:
+                validate_animation_packs([pack for pack, _, _ in form["packs"]])
+                if (form["declared_packs"] is not None
+                        and form["declared_packs"] != {pack["id"]: pack for pack, _, _ in form["packs"]}):
+                    raise ValueError("Animation pack references are incomplete")
+                if bool(form["packs"]) != ("animation_manifest" in form["files"]):
+                    raise ValueError("Animation manifest and packs must be published together")
+            except ValueError:
+                malformed.add(bundle_id)
     def valid_graph(forms):
         components = {key: value for key, value in forms.items() if value["component"] is not None}
         if not 1 <= len(forms) - len(components) <= MAX_MODEL_ROOTS or len(components) > MAX_MODEL_COMPONENTS:
@@ -239,6 +271,8 @@ async def public_character_model(session, owner_node_id, release):
                 "download": None,
                 "physics": None,
                 "animations": None,
+                "animation_packs": [],
+                "animation_manifest": None,
                 "facial": None,
                 "viewer_url": None,
             }
@@ -251,6 +285,14 @@ async def public_character_model(session, owner_node_id, release):
                     r"model-viewer/[0-9a-f]{64}/index\.html", viewer_object_key
                 ):
                     public_form["viewer_url"] = storage.public_url(viewer_object_key)
+            public_form["animation_packs"] = [
+                {"id": pack["id"], "url": storage.public_url(key),
+                 "size_bytes": size, "clips": list(pack["clips"])}
+                for pack, key, size in reversed(form["packs"])
+            ]
+            if public_form["animations"] is None and public_form["animation_packs"]:
+                first = public_form["animation_packs"][0]
+                public_form["animations"] = {"url": first["url"], "size_bytes": first["size_bytes"]}
             return public_form
 
         ordered = sorted(bundle.items(), key=lambda item: (item[1]["order"], item[0]))
@@ -274,6 +316,7 @@ async def public_character_model(session, owner_node_id, release):
             if form["scene"] is not None:
                 public_form["scene"] = form["scene"]
             result["forms"].append(public_form)
-        for kind in (*REFERENCE_TYPES.values(), "viewer_url"):
+        for kind in ("preview", "download", "physics", "animations", "facial",
+                     "animation_manifest", "animation_packs", "viewer_url"):
             result[kind] = result["forms"][0][kind]
     return result

@@ -349,6 +349,8 @@ async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeyp
         "download": None,
         "physics": None,
         "animations": None,
+        "animation_packs": [],
+        "animation_manifest": None,
         "facial": None,
         "viewer_url": None,
         "forms": [],
@@ -375,9 +377,59 @@ async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeyp
         {
             "id": "default",
             "label": "Default",
+            "animation_packs": [],
             **{kind: result[kind] for kind in (*repository.REFERENCE_TYPES.values(), "viewer_url")},
         }
     ]
+
+
+async def test_public_animation_packs_keep_per_form_clip_selections(monkeypatch):
+    shared = {"id": "0123456789abcdef", "key": "animation_pack_0123456789abcdef",
+              "clips": [f"shared-{i}" for i in range(400)]}
+    variant = {"id": "fedcba9876543210", "key": "animation_pack_fedcba9876543210",
+               "clips": [f"variant-{i}" for i in range(20)]}
+    rows = []
+    for form_id, label, order, packs in [("mesh-1", "First", 0, [shared, variant]),
+                                         ("mesh-2", "Second", 1, [{**shared, "clips": ["shared-1"]}])]:
+        def row(kind, key, descriptor=None, form_id=form_id, label=label, order=order):
+            return ("character_model_" + kind, "bundle", key, 10, None,
+                    form_id, label, order, None, None, descriptor)
+        rows.extend([row("preview", "preview"), row("download", "download"),
+                     row("animation_manifest", "manifest")])
+        rows.extend(row("animation_pack", pack["id"], pack) for pack in reversed(packs))
+    monkeypatch.setattr(service, "published_model_files", AsyncMock(return_value=rows))
+    monkeypatch.setattr(service, "S3Storage", lambda _: SimpleNamespace(public_url=lambda key: key))
+    release = SimpleNamespace(id=8, game_version="1.4.0")
+    result = await service.public_character_model(AsyncMock(), 15, release)
+    assert [len(pack["clips"]) for pack in result["animation_packs"]] == [400, 20]
+    assert result["forms"][1]["animation_packs"][0]["clips"] == ["shared-1"]
+    assert result["animations"] == {"url": shared["id"], "size_bytes": 10}
+    assert result["animation_manifest"]["url"] == "manifest"
+    rows.append(rows[-1])
+    assert (await service.public_character_model(AsyncMock(), 15, release))["status"] == "missing"
+
+
+async def test_public_model_falls_back_when_a_declared_pack_is_unavailable(monkeypatch):
+    shared = {"id": "0123456789abcdef", "key": "animation_pack_0123456789abcdef", "clips": ["walk"]}
+    variant = {"id": "fedcba9876543210", "key": "animation_pack_fedcba9876543210", "clips": ["run"]}
+    declared = [shared, variant]
+    def row(kind, bundle, key, descriptor=None, packs=None):
+        return ("character_model_" + kind, bundle, key, 10, None,
+                "mesh-1", "First", 0, None, None, descriptor, packs)
+    rows = [row("animation_manifest", "new", "manifest", packs=declared),
+            row("animation_pack", "new", "shared", shared, declared),
+            row("download", "new", "new-download", packs=declared),
+            row("preview", "new", "new-preview", packs=declared),
+            row("download", "old", "old-download"), row("preview", "old", "old-preview")]
+    monkeypatch.setattr(service, "published_model_files", AsyncMock(return_value=rows))
+    monkeypatch.setattr(service, "S3Storage", lambda _: SimpleNamespace(public_url=lambda key: key))
+    release = SimpleNamespace(id=8, game_version="1.4.0")
+    result = await service.public_character_model(AsyncMock(), 15, release)
+    assert result["preview"]["url"] == "old-preview"
+    rows.insert(1, row("animation_pack", "new", "variant", variant, declared))
+    result = await service.public_character_model(AsyncMock(), 15, release)
+    assert result["preview"]["url"] == "new-preview"
+    assert {pack["id"] for pack in result["animation_packs"]} == {shared["id"], variant["id"]}
 
 
 @pytest.mark.parametrize(
@@ -466,12 +518,14 @@ async def test_repository_filters_available_bucket_and_release():
     assert "viewer_object_key" in sql
     for field in ("form_id", "form_label", "form_order"):
         assert field in sql
-    assert [column.name for column in db.execute.await_args.args[0].selected_columns][-5:] == [
+    assert [column.name for column in db.execute.await_args.args[0].selected_columns][-7:] == [
         "form_id",
         "form_label",
         "form_order",
         "component",
         "scene",
+        "animation_pack",
+        "declared_animation_packs",
     ]
 
 
@@ -548,6 +602,8 @@ async def test_public_forms_keep_files_and_viewers_in_their_form(public_forms):
             "download",
             "physics",
             "animations",
+            "animation_packs",
+            "animation_manifest",
             "facial",
             "viewer_url",
         }

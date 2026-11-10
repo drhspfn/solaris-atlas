@@ -26,6 +26,12 @@
 .model-load-action { display: flex; align-items: center; gap: 6px; min-width: 0; order: 0; }
 .model-load-action [role=alert] { max-width: 220px; font-size: 12px; color: var(--text-secondary); }
 .model-load-actions > [role=status] { box-sizing: border-box; flex: 0 0 auto; order: 3; max-width: 100%; padding-inline-end: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-muted); }
+.model-downloads { order: 3; min-width: 0; max-width: 100%; }
+.model-downloads > summary { cursor: pointer; list-style: none; }
+.model-downloads > summary::-webkit-details-marker { display: none; }
+.model-downloads[open] > summary svg { transform: rotate(180deg); }
+.model-download-list { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 6px; }
+.model-download-list a { white-space: normal; text-decoration: none; }
 .model-animation-controls { display: flex; align-items: center; flex: 0 1 auto; order: 1; gap: 2px; }
 .model-animation-select { flex: 0 1 auto; min-width: 0; }
 .model-settings { box-sizing: border-box; position: fixed; inset: 0 0 0 auto; width: min(400px, 100vw); height: 100dvh; max-height: 100dvh; max-width: 100vw; margin: 0; padding: 20px; border: 1px solid var(--border-default); background: var(--surface-1); color: var(--text-primary); overflow: hidden; }
