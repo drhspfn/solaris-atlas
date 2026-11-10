@@ -85,8 +85,9 @@ def prepare_packs(plan, cache, recipe):
     namespace = fingerprint([plan["skeleton"], recipe])
     if plan.get("rig_signature"):
         rig = next((key for key, entries in cache.items() if entries
-                    and entries[0].get("rig_namespace") == namespace
-                    and compatible_rigs(entries[0].get("rig_signature"), plan["rig_signature"])), rig)
+                    and all(entry.get("rig_namespace") == namespace
+                            and compatible_rigs(entry.get("rig_signature"), plan["rig_signature"])
+                            for entry in entries)), rig)
     entries = cache.setdefault(rig, [])
     reusable = {}
     for entry in entries:

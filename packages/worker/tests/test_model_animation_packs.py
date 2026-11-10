@@ -147,3 +147,31 @@ def test_float_import_noise_does_not_force_a_skin_animation_rebuild():
     assert len(reused) == 1 and not new
     second["rig_signature"]["bones"][0][2][0] += 0.01
     assert not compatible_rigs(signature, second["rig_signature"])
+
+
+def test_reuse_rejects_delta_rig_outside_tolerance_of_later_form():
+    from wuwa_story_worker.model_animation_packs import fingerprint
+
+    cache = {}
+    base = plan(1, rig="base")
+    base["rig_signature"] = {"object": [1.0] * 16, "bones": [["Root", None, [1.0] * 16]]}
+    namespace = fingerprint([base["skeleton"], "recipe"])
+    rig, _, identities = prepare_packs(base, cache, "recipe")
+    cache[rig].append({"id": "a" * 16, "identities": identities,
+                       "rig_signature": deepcopy(base["rig_signature"]), "rig_namespace": namespace})
+
+    skin = plan(2, rig="skin")
+    skin["rig_signature"] = deepcopy(base["rig_signature"])
+    skin["rig_signature"]["bones"][0][2][0] += 0.00009
+    reused_rig, reused, delta = prepare_packs(skin, cache, "recipe")
+    assert reused_rig == rig and len(reused) == 1 and len(delta) == 1
+    cache[rig].append({"id": "b" * 16, "identities": delta,
+                       "rig_signature": deepcopy(skin["rig_signature"]), "rig_namespace": namespace})
+
+    other = plan(2, rig="other")
+    other["rig_signature"] = deepcopy(base["rig_signature"])
+    other["rig_signature"]["bones"][0][2][0] -= 0.00009
+    assert compatible_rigs(base["rig_signature"], other["rig_signature"])
+    assert not compatible_rigs(skin["rig_signature"], other["rig_signature"])
+    other_rig, reused, unseen = prepare_packs(other, cache, "recipe")
+    assert other_rig != rig and not reused and len(unseen) == 2
