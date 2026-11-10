@@ -374,6 +374,23 @@ async def discover_scene_components(root, sources, cooked, converted=None, manif
     return results
 
 
+def validate_component_animation_bindings(sources, cooked, skeleton):
+    """Fail rather than silently discard explicitly bound incompatible clips."""
+    bindings = sources.get("component", {}).get("bindings", [])
+    for clip in sorted({b["child_clip"] for b in bindings if b.get("child_clip") and b.get("parent_clip")}):
+        path = cooked / "Client/Content" / (clip + ".json")
+        if not path.is_file():
+            raise ValueError(f"Authored component animation metadata missing: {clip}")
+        rows = json.loads(path.read_text(encoding="utf-8-sig"))
+        animations = [row for row in rows if row.get("Type") in {"AnimSequence", "AnimMontage"}
+                      and row.get("Name") == clip.rsplit("/", 1)[-1]]
+        reference = (animations[0].get("Properties", {}).get("Skeleton", {}).get("ObjectPath")
+                     if len(animations) == 1 else None)
+        if not reference or exported_package(reference).casefold() != skeleton.casefold():
+            raise ValueError(f"Authored component animation {clip} has skeleton {reference!r}; "
+                             f"mesh {sources['model']} uses {skeleton}; compatibility is unverified")
+
+
 async def build_bundle(root, sources, include_animations=True, *, run_id=None, local_client=None,
                        animation_workers=1, report_progress=None, animation_cache=None, asset_cache=None,
                        animation_ownership=None):
@@ -518,6 +535,8 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
     if len(skeletons) != 1 or not skeletons[0]:
         raise ValueError("The exported character mesh has no exact skeleton reference")
     skeleton = exported_package(skeletons[0])
+    if include_animations and sources.get("component"):
+        validate_component_animation_bindings(sources, cooked, skeleton)
     if sources.get('component_blueprint'):
         from wuwa_story_worker.model_bundle import animation_sources
         from wuwa_story_worker.npc_accessories import npc_bone_visibility_notifies, visibility_label
