@@ -1,11 +1,24 @@
 import hashlib
 import json
 import zipfile
-from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from wuwa_story_worker import sequence_composition as compositor
+
+
+@pytest.mark.parametrize(('sizes', 'duplicate', 'reason'), [
+    ([0] * 10001, False, 'entry count limit'),
+    ([1, 1], True, 'duplicate entries'),
+    ([64 * 1024 * 1024 + 1], False, 'per-entry size limit'),
+    ([64 * 1024 * 1024] * 8 + [1], False, 'total uncompressed size limit'),
+])
+def test_archive_limit_failure_identifies_actual_cause(sizes, duplicate, reason):
+    infos = [SimpleNamespace(filename='same' if duplicate else str(i), file_size=size)
+             for i, size in enumerate(sizes)]
+    with pytest.raises(ValueError, match=reason):
+        compositor._validate_archive_limits(infos)
 
 
 def bundle(path):

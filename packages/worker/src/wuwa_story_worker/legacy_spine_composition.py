@@ -9,7 +9,12 @@ from pathlib import Path
 
 from wuwa_story_worker.lgui_composition import _map, prefab_layout, visible_layers
 from wuwa_story_worker.lgui_properties import properties
-from wuwa_story_worker.sequence_composition import _asset_file, _exports, _read
+from wuwa_story_worker.sequence_composition import (
+    _asset_file,
+    _exports,
+    _read,
+    _validate_archive_limits,
+)
 
 # Exact decoded shader assets checked against their authored parent and blend mode.
 # Different builds must be reviewed before their materials are accepted.
@@ -115,10 +120,7 @@ def _validate_components(export, size):
 def legacy_plan(bundle: Path):
     with zipfile.ZipFile(bundle) as archive:
         infos = archive.infolist()
-        if (len(infos) > 10000 or len({info.filename for info in infos}) != len(infos)
-                or any(info.file_size > 64 * 1024 * 1024 for info in infos)
-                or sum(info.file_size for info in infos) > 512 * 1024 * 1024):
-            raise ValueError('Legacy archive exceeds limits or contains duplicate entries')
+        _validate_archive_limits(infos, 'Legacy archive')
         manifest = json.loads(archive.read('manifest.json'))
         missing = (manifest.get('control_sources') or {}).get('missing', [])
         if not isinstance(missing, list) or any(

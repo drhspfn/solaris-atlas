@@ -9,14 +9,17 @@ import os
 import subprocess
 import tempfile
 import time
-import zipfile
 import uuid
+import zipfile
 from pathlib import Path, PurePosixPath
 
 from PIL import Image, ImageChops
 
 from wuwa_story_worker.lgui_composition import (
-    apply_settled_tracks, prefab_layout, sequence_tracks, visible_layers,
+    apply_settled_tracks,
+    prefab_layout,
+    sequence_tracks,
+    visible_layers,
 )
 from wuwa_story_worker.riglyph_convert import convert_archive
 
@@ -31,6 +34,21 @@ class RendererDisabled(UnsupportedComposition):
 
 class ConversionFailed(ValueError):
     pass
+
+
+def _validate_archive_limits(infos, label='Archive'):
+    """Report which existing archive safety bound was exceeded."""
+    if len(infos) > 10000:
+        raise ValueError(f'{label} exceeds entry count limit: {len(infos)} > 10000')
+    duplicates = len(infos) - len({info.filename for info in infos})
+    if duplicates:
+        raise ValueError(f'{label} contains duplicate entries: {duplicates}')
+    largest = max((info.file_size for info in infos), default=0)
+    if largest > 64 * 1024 * 1024:
+        raise ValueError(f'{label} exceeds per-entry size limit: {largest} > {64 * 1024 * 1024} bytes')
+    total = sum(info.file_size for info in infos)
+    if total > 512 * 1024 * 1024:
+        raise ValueError(f'{label} exceeds total uncompressed size limit: {total} > {512 * 1024 * 1024} bytes')
 
 
 def _read(archive, manifest, name):
@@ -299,12 +317,7 @@ def annotate_bundle(bundle: Path) -> Path:
         root = Path(temporary)
         with zipfile.ZipFile(bundle) as archive:
             infos = archive.infolist()
-            names = [info.filename for info in infos]
-            if (len(infos) > 10000 or len(set(names)) != len(names)
-                    or any(info.file_size > 64 * 1024 * 1024 for info in infos)
-                    or sum(info.file_size for info in infos) > 512 * 1024 * 1024):
-                raise ValueError(
-                    'Archive exceeds composition limits or contains duplicate entries')
+            _validate_archive_limits(infos)
             manifest = json.loads(archive.read('manifest.json'))
             frames = {}
             stage = 'plan'
