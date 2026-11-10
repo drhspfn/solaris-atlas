@@ -49,7 +49,27 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
     resolves to a parent clip only when exactly one candidate has that object name.
     """
     cooked = Path(cooked)
-    required, diagnostics, cache = set(), [], {}
+    required, diagnostics, cache, directories = set(), [], {}, {}
+
+    def case_insensitive_path(root, package):
+        path = root
+        for part in (package + ".json").split("/"):
+            if path not in directories:
+                try:
+                    entries = {}
+                    for entry in path.iterdir():
+                        entries.setdefault(entry.name.casefold(), []).append(entry)
+                    directories[path] = entries
+                except (FileNotFoundError, NotADirectoryError):
+                    directories[path] = {}
+            matches = directories[path].get(part.casefold(), [])
+            if len(matches) > 1:
+                diagnostics.append(f"Ambiguous case-insensitive export: {package}")
+                return None
+            if not matches:
+                return None
+            path = matches[0]
+        return path if path.is_file() else None
 
     def load(ref):
         package = _package(ref)
@@ -57,10 +77,13 @@ def discover(cooked: Path, sources: dict) -> list[dict]:
             return None
         if package in cache:
             return cache[package]
-        candidates = [cooked / "raw/Client/Content" / (package + ".json"),
-                      cooked / "Client/Content" / (package + ".json"),
-                      cooked / (package + ".json")]
-        for path in candidates:
+        roots = [cooked / "raw/Client/Content", cooked / "Client/Content", cooked]
+        for root in roots:
+            path = root / (package + ".json")
+            if not path.is_file():
+                path = case_insensitive_path(root, package)
+            if path is None:
+                continue
             if path.is_file():
                 try:
                     data = json.loads(path.read_text(encoding="utf-8-sig"))
