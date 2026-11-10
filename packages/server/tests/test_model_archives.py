@@ -151,3 +151,31 @@ def test_component_unknown_visibility_and_parent_remain_unknown(tmp_path):
     manifest = write_archive(path, {"character_key": "character:1"},
                              [root, (child, root[1], {}, {})])
     assert read_archive(path, tmp_path / "decoded") == manifest
+
+
+def test_seventy_components_round_trip_with_more_than_256_objects(tmp_path):
+    root = bundle(tmp_path)
+    second = {**root[0], "id": "mesh-2"}
+    bundles = [root, (second, root[1], {}, root[3])]
+    for index in range(70):
+        parent = root[0]["id"] if index < 35 else second["id"]
+        child = component(f"component-{index:016x}", parent, f"effect-{index % 35}")
+        output = tmp_path / f"child-{index}"
+        output.mkdir()
+        for filename in ("preview.glb", "character.glb", "animations.glb", "facial.json", "physics.json"):
+            (output / filename).write_bytes(f"{index}-{filename}".encode())
+        bundles.append((child, output, {}, {}))
+    path = tmp_path / "large.zip"
+    manifest = write_archive(path, {"character_key": "character:1"}, bundles)
+    assert len(manifest["objects"]) == 352
+    restored = read_archive(path, tmp_path / "restored")
+    assert restored == manifest
+    assert len({entry["form"]["id"] for entry in restored["forms"]}) == 72
+
+
+def test_archive_rejects_more_than_128_components(tmp_path):
+    root = bundle(tmp_path)
+    children = [(component(f"component-{i:016x}", root[0]["id"], f"effect-{i}"), root[1], {}, {})
+                for i in range(129)]
+    with pytest.raises(ValueError, match="128 components"):
+        write_archive(tmp_path / "too-many.zip", {"character_key": "character:1"}, [root, *children])

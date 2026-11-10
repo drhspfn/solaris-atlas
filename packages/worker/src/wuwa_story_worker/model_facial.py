@@ -5,20 +5,24 @@ import math
 FORMAT = "solaris-facial-v1"
 
 
-def facial_clip(dto, name, morph_names, *, body_clip=None):
+def facial_clip(dto, name, morph_names, *, body_clip=None, source_curves=None):
     """Keep only exact authored morph matches; gameplay curves are not expressions."""
     names = {name.casefold(): name for name in morph_names}
     if not names:
         return None
     tracks = []
-    for curve in dto.curves:
-        target = names.get(curve.name.casefold())
-        if target is None or not curve.keys:
+    curves = ([(curve["CurveName"], curve["FloatCurve"]["Keys"]) for curve in source_curves]
+              if source_curves is not None else [(curve.name, curve.keys) for curve in dto.curves])
+    for curve_name, curve_keys in curves:
+        target = names.get(curve_name.casefold())
+        if target is None or not curve_keys:
             continue
         fps = dto.metadata.frames_per_second if dto.metadata else 0
         if not math.isfinite(fps) or fps <= 0:
             raise ValueError("Facial animation needs a positive frame rate")
-        keys = [[float(key.frame / fps), float(key.value)] for key in curve.keys]
+        keys = ([[float(key["Time"]), float(key["Value"])] for key in curve_keys]
+                if source_curves is not None else
+                [[float(key.frame / fps), float(key.value)] for key in curve_keys])
         tracks.append({"target": target, "keys": keys})
     if not tracks:
         return None
@@ -28,7 +32,7 @@ def facial_clip(dto, name, morph_names, *, body_clip=None):
     )
     clip = {"name": name, "body_clip": body_clip, "seconds": seconds, "tracks": tracks}
     validate_facial_pack({"format": FORMAT, "clips": [clip]})
-    for track in tracks:
+    for track in tracks if source_curves is None else []:
         # Retain the ends of constant runs without changing linear interpolation.
         compact = []
         for key in track["keys"]:

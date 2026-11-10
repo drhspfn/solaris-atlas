@@ -12,6 +12,11 @@ export class SpringBones {
     const owners = new Map();
     const visited = new Set();
     for (const group of profile.groups) {
+      if (group.dummyAxis !== undefined && (!Array.isArray(group.dummyAxis) ||
+        group.dummyAxis.length !== 3 || ![...group.dummyAxis].every(n => n === 0 || n === 1 || n === -1) ||
+        group.dummyAxis.filter(n => n !== 0).length !== 1)) {
+        throw new Error('Invalid spring dummy-bone axis');
+      }
       for (const name of group.roots) owners.set(name, group);
     }
     const visit = (bone, group) => {
@@ -20,7 +25,8 @@ export class SpringBones {
       if (visited.has(bone)) return;
       visited.add(bone);
       const child = bone.children.find(node => node.isBone && node.position.lengthSq() > 1e-10);
-      const offset = child ? child.position.clone() : new Vector3(group.dummyLength, 0, 0);
+      const offset = child ? child.position.clone() :
+        new Vector3(...(group.dummyAxis ?? [1, 0, 0])).multiplyScalar(group.dummyLength);
       if (offset.lengthSq() > 1e-10) {
         this.joints.push({ bone, offset, group, base: bone.quaternion.clone(),
           tail: new Vector3(), velocity: new Vector3(), anchor: new Vector3(), ready: false });

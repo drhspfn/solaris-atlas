@@ -17,9 +17,10 @@ def test_mask_control_uses_only_its_verified_mesh_and_bone():
     assert visibility_label('Other', 'Bone_Piao027_M') == 'Bone: Bone_Piao027_M'
 
 
-def test_cristoforo_maskoff_notify_is_an_event_not_a_guessed_default():
+@pytest.mark.parametrize("animation_type", ["AnimSequence", "AnimMontage"])
+def test_cristoforo_maskoff_notify_is_an_event_not_a_guessed_default(animation_type):
     rows = [
-        {"Type": "AnimSequence", "Name": "Stand2", "Properties": {"Notifies": [{
+        {"Type": animation_type, "Name": "Stand2", "Properties": {"Notifies": [{
             "NotifyName": "TsAnimNotifyHideBone_C", "bEnabled": True,
             "Notify": {"ObjectName": "TsAnimNotifyHideBone_C'Stand2:TsAnimNotifyHideBone_C_0'"},
             "LinkValue": 0.0, "NotifyTriggerChance": 1.0,

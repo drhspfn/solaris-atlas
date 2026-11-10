@@ -171,6 +171,16 @@ def exported_package(value):
 
 
 def spring_profile(rows, source, digest, expected_skeleton=None):
+    # UEFormat mirrors Unreal Y for Blender; glTF then maps (x, y, z) to
+    # (x, z, -y). These vectors are in the exported joint's local space.
+    axes = {
+        "EBoneForwardAxis::X_Positive": [1, 0, 0],
+        "EBoneForwardAxis::X_Negative": [-1, 0, 0],
+        "EBoneForwardAxis::Y_Positive": [0, 0, 1],
+        "EBoneForwardAxis::Y_Negative": [0, 0, -1],
+        "EBoneForwardAxis::Z_Positive": [0, 1, 0],
+        "EBoneForwardAxis::Z_Negative": [0, -1, 0],
+    }
     if expected_skeleton is not None:
         targets = [
             row.get("Properties", {}).get("TargetSkeleton", {}).get("ObjectPath")
@@ -190,7 +200,8 @@ def spring_profile(rows, source, digest, expected_skeleton=None):
                 or not node.get("PhysicsSettings")
             ):
                 continue
-            if node.get("BoneForwardAxis") != "EBoneForwardAxis::X_Positive":
+            axis = node.get("BoneForwardAxis")
+            if not isinstance(axis, str) or axis not in axes:
                 raise ValueError("Unsupported spring dummy-bone axis")
             settings = node["PhysicsSettings"]
             numbers = [settings.get(key) for key in ("Damping", "Stiffness", "LimitAngle")]
@@ -208,6 +219,7 @@ def spring_profile(rows, source, digest, expected_skeleton=None):
                     "stiffness": numbers[1],
                     "limitAngle": min(numbers[2], 90),
                     "dummyLength": length / 100,
+                    "dummyAxis": axes[axis],
                 }
             )
     return {
