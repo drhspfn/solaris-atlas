@@ -147,7 +147,7 @@ def verified_voice_export(entry) -> Path:
 
 
 async def build_entity_files(root, targets, fmodel, converter, voice_root=None, provenance=None,
-                             voice_diagnostics=None, retained_sequences=None):
+                             voice_diagnostics=None, retained_sequences=None, run_id=None):
     images = [t for t in targets if t["kind"] == "image"]
     icons = {}
     if images:
@@ -192,8 +192,9 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
             if transient_job_error(error):
                 raise
-            logger.warning('story_spine.missing resource=%s error=%s',
-                           target['resource_id'], str(error)[:500])
+            logger.warning('story_spine.missing run=%s owner=%s resource=%s stage=build error_type=%s',
+                           run_id, target.get('owner'),
+                           hashlib.sha256(target['path'].encode()).hexdigest()[:16], type(error).__name__)
             missing.append(target['path'])
             continue
         if target.get('sequence_metadata_revision', 0) >= 3 or target.get('soundtrack_context'):
@@ -290,8 +291,9 @@ async def build_entity_files(root, targets, fmodel, converter, voice_root=None, 
             if identity is None:
                 reason = unresolved.get(
                     target['language'], 'No confirmed media for requested language')
-                logger.warning('entity_media.voice_unresolved source=%s language=%s reason=%s',
-                               source, target['language'], reason)
+                logger.warning('entity_media.voice_unresolved run=%s owner=%s resource=%s language=%s reason=unresolved_mapping',
+                               run_id, target.get('owner'), hashlib.sha256(source.encode()).hexdigest()[:16],
+                               target['language'])
                 if voice_diagnostics is not None:
                     voice_diagnostics.append({'source': source, 'language': target['language'],
                                               'reason': reason})
@@ -362,12 +364,14 @@ async def _locked_process_entity_media(payload: dict) -> None:
         try:
             await _process_entity_media(payload, connection)
         except BlockingIOError as error:
+            logger.warning('entity_media.deferred run=%s stage=workspace_lock reason=workspace_busy', payload['run_id'])
             await connection.rollback()
             await update_admin_run(payload["run_id"], "entity_media", "waiting_dependency", error="Asset workspace is in use by another export; retrying after it finishes")
             raise JobDeferred("Asset workspace is in use") from error
         except Exception as error:
+            logger.error('entity_media.failed run=%s stage=job error_type=%s',
+                         payload['run_id'], type(error).__name__)
             await connection.rollback()
-            from wuwa_story_worker.broker import transient_job_error
             async with SessionFactory(bind=connection) as session:
                 run = await session.get(ProcessingRun, payload["run_id"])
                 if (
@@ -452,6 +456,9 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
             run.status = "running"
             run.error = None
             await session.commit()
+            stage = 'setup'
+            current_target = None
+            logger.info('entity_media.started run=%s requested=%s', run.id, len(payload['targets']))
             try:
                 storage = S3Storage(get_settings())
                 tool_names = ["WUWA_FMODEL_PATH",
@@ -472,6 +479,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 if voice_root is not None and request.voice_plan_id is None and "voice" in request.kinds:
                     source["voice_plan_id"] = json.loads(
                         (voice_root / "plan.json").read_text(encoding="utf-8"))["id"]
+                stage = 'resolve_targets'
                 resolved_targets = await resolve_soundtrack_targets(
                     root, payload['targets'], tool_path('WUWA_FMODEL_PATH'), source)
                 targets = await missing_media_targets(
@@ -485,6 +493,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 voice_diagnostics = []
                 files, missing = [], []
                 if targets:
+                    stage = 'retained_bundles'
                     from wuwa_story_worker.sequence_metadata import retained_bundle
                     retained_sequences = {}
                     for target in targets:
@@ -496,6 +505,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         retained = await retained_bundle(session, storage, root, target, source)
                         if retained is not None:
                             retained_sequences[target['path']] = retained
+                    stage = 'build'
                     files, missing = await build_entity_files(
                         root,
                         targets,
@@ -505,6 +515,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         provenance=voice_provenance,
                         voice_diagnostics=voice_diagnostics,
                         retained_sequences=retained_sequences,
+                        run_id=run.id,
                     )
                 entries = []
                 voice_reasons = {(item['source'], item['language']): item['reason']
@@ -521,6 +532,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 # job must not rescan hundreds of thousands of unrelated assets.
                 inventory_paths = tuple(sorted({p for _, path, _, _, originals in files
                                                 for p in (path, *originals)}))
+                stage = 'inventory'
                 inventory = await publish_inventory(root, paths=inventory_paths)
                 report = {"schema_version": 1, **inventory, "asset_version": request.asset_version,
                           "game_version": request.game_version, "entries": entries,
@@ -542,6 +554,8 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 incomplete_spine_controls = []
                 riglyph_failures = []
                 for target, path, kind, mime, originals in files:
+                    current_target = target
+                    stage = 'prepare_publication'
                     rendered = None
                     animation = None
                     if target['kind'] == 'spine':
@@ -552,6 +566,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                     if animation and animation.get('conversion_allowed') and os.getenv('WUWA_RIGLYPH_ENABLED', '').lower() in {'1', 'true'}:
                         from wuwa_story_worker.riglyph_render import build_animation
                         try:
+                            stage = 'render_animation'
                             rendered = await asyncio.to_thread(build_animation, path)
                             animation = rendered.decision
                             if animation.get('state') == 'render_failed':
@@ -560,10 +575,14 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         except (OSError, ValueError, subprocess.SubprocessError, zipfile.BadZipFile) as error:
                             if transient_job_error(error):
                                 raise
+                            logger.warning('story_spine.render_failed run=%s owner=%s resource=%s stage=render_animation error_type=%s',
+                                           run.id, target['owner'], hashlib.sha256(target['path'].encode()).hexdigest()[:16],
+                                           type(error).__name__)
                             riglyph_failures.append(
                                 {'path': target['path'], 'error': str(error)[:500]})
                             animation = {**animation, 'display': 'static', 'state': 'conversion_failed',
                                          'reasons': [{'code': 'conversion_failed', 'error': str(error)[:500]}]}
+                    stage = 'publish'
                     await session.execute(text("SELECT pg_advisory_xact_lock(:id)"),
                                           {"id": target["owner"]})
                     spine_source = {}
@@ -611,6 +630,7 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         logger.info('entity_media.preserved_newer_reference run=%s owner=%s reference=%s',
                                     run.id, target['owner'], reference.id)
                         await session.commit()
+                        current_target = None
                         continue
                     published = await service.register_file(session, path, kind, mime_type=mime)
                     rendered_metadata = {}
@@ -652,8 +672,17 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                     sequence_media = None
                     if target['kind'] == 'spine':
                         from wuwa_story_worker.sequence_fragments import publish_sequence_fragments
+                        stage = 'composition_publication'
                         sequence_media = await publish_sequence_fragments(
                             session, path, target, published, service, run.id, provenance)
+                        composition = (sequence_media or {}).get('composition')
+                        if composition and composition.get('state') in {'failed', 'unsupported'}:
+                            codes = [reason.get('code') for reason in composition.get('reasons', [])
+                                     if reason.get('code') in {'renderer_disabled', 'conversion_failed',
+                                         'plan_failed', 'plan_unsupported', 'render_failed', 'render_unsupported'}]
+                            logger.warning('composition.unavailable run=%s owner=%s resource=%s state=%s reasons=%s',
+                                           run.id, target['owner'], hashlib.sha256(target['path'].encode()).hexdigest()[:16],
+                                           composition['state'], codes)
                         from wuwa_story.ingestion.media_provenance import composition_retryable
                         if composition_retryable({'sequence_media': sequence_media}):
                             riglyph_failures.append({'path': target['path'],
@@ -696,8 +725,11 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                         # with actor identities, so a failed identity write cannot
                         # leave a published file that makes the retry skip repair.
                         await repair_sequence_bundle_speakers(session, path, target)
+                    stage = 'commit_publication'
                     await session.commit()
                     published_count += 1
+                    current_target = None
+                stage = 'finalize'
                 run.status = "partial" if missing or unsupported_spine or incomplete_spine_controls or riglyph_failures else "completed"
                 run.raw_output = {
                     "media_report": report,
@@ -715,9 +747,15 @@ async def _process_entity_workspace(payload: dict, connection, root: Path) -> No
                 }
                 run.finished_at = datetime.now(UTC)
                 await session.commit()
-                logger.info("entity_media.completed run=%s result=%s",
-                            run.id, run.raw_output)
-            except Exception:
+                logger.info('entity_media.completed run=%s status=%s requested=%s found=%s missing=%s published=%s skipped=%s unsupported_spine=%s incomplete_controls=%s render_failures=%s',
+                            run.id, run.status, report['requested'], report['found'], report['missing'],
+                            published_count, skipped, len(unsupported_spine), len(incomplete_spine_controls),
+                            len(riglyph_failures))
+            except Exception as error:
+                logger.error('entity_media.stage_failed run=%s owner=%s resource=%s stage=%s error_type=%s',
+                             run.id, current_target.get('owner') if current_target else None,
+                             hashlib.sha256(current_target['path'].encode()).hexdigest()[:16] if current_target else None,
+                             stage, type(error).__name__)
                 await session.rollback()
                 # The leased outer handler owns the failure/retry status. If its
                 # status write fails, retain the last nonterminal state for GC
