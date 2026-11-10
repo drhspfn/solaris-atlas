@@ -452,6 +452,18 @@ def test_rig_tolerance_compares_values_without_quantization(tmp_path):
     assert result[0][3]["animation_packs"] == result[1][3]["animation_packs"]
 
 
+def test_cumulative_parent_child_rest_offsets_prevent_sharing(tmp_path):
+    first, second = _bundle(tmp_path, "a", 1), _bundle(tmp_path, "b", 1)
+    path = second[1] / "animations.glb"
+    data, binary = read_glb(path)
+    for node in data["nodes"]:
+        node["translation"] = [0.00009, 0, 0]
+    write_glb(path, data, binary)
+
+    a, b = repack.repackage_bundles([first, second], tmp_path / "out")
+    assert a[3]["animation_packs"][0]["id"] != b[3]["animation_packs"][0]["id"]
+
+
 def test_noisy_400_clip_pack_reuses_only_with_full_source_proof(tmp_path):
     first, second = _bundle(tmp_path, "a", 400), _bundle(tmp_path, "b", 420)
     _noisy_bundle(second)

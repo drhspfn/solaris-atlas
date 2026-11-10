@@ -128,11 +128,35 @@ def _compatible_rigs(a, b, tolerance=1e-4):
         return False
     if a["transforms"].keys() != b["transforms"].keys():
         return False
-    return all(
+    if not all(
         abs(x - y) <= tolerance
         for name in a["transforms"]
         for x, y in zip(a["transforms"][name], b["transforms"][name], strict=True)
-    )
+    ):
+        return False
+
+    def multiply(parent, local):
+        # glTF matrices are column-major: world = parent world @ local.
+        return [
+            sum(parent[k * 4 + row] * local[column * 4 + k] for k in range(4))
+            for column in range(4)
+            for row in range(4)
+        ]
+
+    children = {child for values in a["hierarchy"].values() for child in values}
+    pending = [(name, None, None) for name in a["hierarchy"] if name not in children]
+    while pending:
+        name, parent_a, parent_b = pending.pop()
+        local_a, local_b = a["transforms"][name], b["transforms"][name]
+        world_a = multiply(parent_a, local_a) if parent_a is not None else local_a
+        world_b = multiply(parent_b, local_b) if parent_b is not None else local_b
+        if any(
+            not math.isfinite(x) or not math.isfinite(y) or abs(x - y) > tolerance
+            for x, y in zip(world_a, world_b, strict=True)
+        ):
+            return False
+        pending.extend((child, world_a, world_b) for child in a["hierarchy"][name])
+    return True
 
 
 def _element_blocks(handle, layout):
