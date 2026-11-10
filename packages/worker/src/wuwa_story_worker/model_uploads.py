@@ -316,12 +316,15 @@ async def process_model_upload(payload):
             if run is None or run.metadata_json.get("payload") != job.model_dump():
                 raise ValueError("Model upload identity changed")
             if run.status in {"completed", "cancelled"}:
+                logger.info("character_model.skipped run=%s status=%s", job.run_id, run.status)
                 return
+            logger.info("character_model.started run=%s source=upload", job.run_id)
             forms = await job_forms(session, job)
 
         async def execute():
             await update_admin_run(job.run_id, "character_model", "running",
                                    raw_output={"stage": "validate_archive"})
+            logger.info("character_model.stage run=%s stage=validate_archive", job.run_id)
             with transient_workspace(asset_workspace().parent / "transient-jobs") as root:
                 archive = root / "model.zip"
                 with archive.open("xb") as target:
@@ -346,6 +349,7 @@ async def process_model_upload(payload):
                     raise ValueError("Archive identity or authored model forms do not match")
                 expected_components = None
                 if any(entry["form"].get("component") for entry in manifest["forms"]):
+                    logger.info("character_model.stage run=%s stage=discover_components", job.run_id)
                     # Validate the declared client version before using it to find local assets.
                     CharacterModelJob(run_id=job.run_id, character_key=job.character_key,
                         owner_node_id=job.owner_node_id, release_id=job.release_id,
@@ -361,6 +365,7 @@ async def process_model_upload(payload):
                     decode_bundles, archive, root, job, forms,
                     expected_components=expected_components, _manifest=manifest)
                 await update_admin_run(job.run_id, "character_model", "running", raw_output={"stage": "publish"})
+                logger.info("character_model.stage run=%s stage=publish forms=%s", job.run_id, len(bundles))
                 await publish_forms(publication, bundles, publication_payload=job.model_dump())
             for index in range(chunk_count(job)):
                 try:
@@ -370,3 +375,4 @@ async def process_model_upload(payload):
                         "Published model upload cleanup failed run=%s part=%s", job.run_id, index)
 
         await finish_writes(execute())
+        logger.info("character_model.finished run=%s source=upload", job.run_id)

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
@@ -59,6 +60,8 @@ from wuwa_story_worker.model_sources import (
     spring_profile,
 )
 from wuwa_story_worker.tooling import asset_workspace, tool_path
+
+logger = logging.getLogger(__name__)
 
 
 async def source_row(session, release_id, path, identity):
@@ -279,6 +282,7 @@ async def model_progress(run_id, stage, **details):
         await update_admin_run(
             run_id, "character_model", "running", raw_output={"stage": stage, **details}
         )
+        logger.info("character_model.stage run=%s stage=%s", run_id, stage)
 
 
 def component_model(component, converted, cooked, skeleton, *, master_pose=False):
@@ -1206,7 +1210,9 @@ async def process_character_model(payload):
             ):
                 raise ValueError("Model job payload does not match its durable run")
             if run.status in {"completed", "cancelled"}:
+                logger.info("character_model.skipped run=%s status=%s", job.run_id, run.status)
                 return
+            logger.info("character_model.started run=%s source=client", job.run_id)
             forms = await job_forms(session, job)
         client = (
             asset_workspace() / "assets" / f"{job.asset_version}-{job.tier}-{job.download_id[:16]}"
@@ -1225,6 +1231,7 @@ async def process_character_model(payload):
         await update_admin_run(
             job.run_id, "character_model", "running", raw_output={"stage": "export"}
         )
+        logger.info("character_model.stage run=%s stage=export forms=%s", job.run_id, len(forms))
 
         async def execute():
             # Keep independently extracted rigs until all forms validate. One commit
@@ -1237,3 +1244,4 @@ async def process_character_model(payload):
 
         # Never delete scratch while an owned subprocess/thread is still writing.
         await finish_writes(execute())
+        logger.info("character_model.finished run=%s source=client", job.run_id)

@@ -106,7 +106,8 @@ def test_npc_data_asset_archive_retains_resolved_mesh_and_checks_setup_identity(
 
 
 @pytest.mark.asyncio
-async def test_uploaded_model_publishes_without_game_client_or_extraction(tmp_path, monkeypatch):
+async def test_uploaded_model_publishes_without_game_client_or_extraction(tmp_path, monkeypatch, caplog):
+    caplog.set_level("INFO", logger=model_uploads.__name__)
     archive, form, job = portable(tmp_path)
     run = NS(status="queued", metadata_json={"payload": job.model_dump()})
     session = NS(get=AsyncMock(return_value=run))
@@ -137,6 +138,11 @@ async def test_uploaded_model_publishes_without_game_client_or_extraction(tmp_pa
     assert publish.call_args.kwargs["publication_payload"] == job.model_dump()
     storage.delete.assert_awaited_once()
     assert not list((tmp_path / "transient-jobs").glob("*/model.zip"))
+    assert "character_model.started run=1 source=upload" in caplog.text
+    assert "character_model.stage run=1 stage=validate_archive" in caplog.text
+    assert "character_model.stage run=1 stage=publish forms=1" in caplog.text
+    assert "character_model.finished run=1 source=upload" in caplog.text
+    assert job.storage_token not in caplog.text
 
 
 def test_decode_component_checks_parent_source_and_allows_static_mesh(tmp_path):
