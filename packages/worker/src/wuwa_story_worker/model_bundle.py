@@ -7,6 +7,7 @@ portable: this preview deliberately uses exported base-color textures only.
 import argparse
 import hashlib
 import json
+import math
 import struct
 import sys
 from contextlib import contextmanager
@@ -57,6 +58,30 @@ def missing_animation_sources(sources, exported_keys):
     return [
         row for key, row in sources.items() if row["matches_skeleton"] and key not in exported_keys
     ]
+
+
+def equivalent_skeletons(left, right):
+    """Compare complete UEFormat local bind poses, not just bone names."""
+    if not left or not right or len(left) != len(right):
+        return False
+    for a, b in zip(left, right, strict=True):
+        if a.name != b.name or a.parent_index != b.parent_index:
+            return False
+        for field, length in (("position", 3), ("rotation", 4), ("scale", 3)):
+            x, y = getattr(a, field), getattr(b, field)
+            if len(x) != length or len(y) != length or any(
+                not math.isfinite(float(v)) or not math.isfinite(float(w)) or abs(v - w) > 1e-5
+                for v, w in zip(x, y, strict=True)
+            ):
+                return False
+    return True
+
+
+def require_bound_animations(plan, bound_keys):
+    if bound_keys:
+        included = {package_path(clip["source"].removesuffix(".json")) for clip in plan["clips"]}
+        if bound_keys - included:
+            raise ValueError(f"Authored component animations are not playable: {sorted(bound_keys - included)}")
 
 
 def animation_exclusion(dto, *, require_decoded=False):
@@ -611,6 +636,7 @@ def main():
     parser.add_argument('--hide-primary-geometry', action='store_true')
     parser.add_argument('--bone-visibility', type=Path)
     parser.add_argument('--animation-ownership', type=Path)
+    parser.add_argument('--component-animation-bindings', type=Path)
     parser.add_argument('--shared-animation-rig', action='store_true')
     parser.add_argument("--converted", type=Path, required=True)
     parser.add_argument("--source-json", type=Path, required=True)
@@ -892,6 +918,33 @@ def main():
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from model_animation_packs import owned_sources
         sources = owned_sources(sources, json.loads(args.animation_ownership.read_text(encoding="utf-8")))
+    bound_keys = set()
+    if args.component_animation_bindings and not batch_mode:
+        bindings = json.loads(args.component_animation_bindings.read_text(encoding="utf-8"))
+        _, target = read_animation(args.model)
+        for clip, source_skeleton in bindings.items():
+            key = package_path("/Game/" + clip)
+            source = sources.get(key)
+            if not source or package_path(source["skeleton"]) != package_path("/Game/" + source_skeleton):
+                raise ValueError(f"Missing or changed authored component animation: {clip}")
+            if not source["matches_skeleton"]:
+                skeleton_path = args.converted / "Client/Content" / (source_skeleton + ".uemodel")
+                metadata_path = args.source_json / "Client/Content" / (source_skeleton + ".json")
+                if not skeleton_path.is_file() or not metadata_path.is_file():
+                    raise ValueError(f"Missing authored animation skeleton: {source_skeleton}")
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8-sig"))
+                rows = [row for row in metadata if row.get("Type") == "Skeleton"]
+                tree = rows[0].get("Properties", {}).get("BoneTree", []) if len(rows) == 1 else []
+                _, animation_rig = read_animation(skeleton_path)
+                bones = animation_rig.skeleton.bones
+                if (not tree or len(tree) != len(bones)
+                        or any(item.get("TranslationRetargetingMode") !=
+                               "EBoneTranslationRetargetingMode::Animation" for item in tree)
+                        or rows[0].get("AnimRetargetSources")
+                        or not equivalent_skeletons(target.skeleton.bones, bones)):
+                    raise ValueError(f"Incompatible authored component animation skeleton: {clip} ({source_skeleton})")
+                source["matches_skeleton"] = True
+            bound_keys.add(key)
     report = {
         "model_source": str(args.model.resolve()),
         "model_sha256": hashlib.sha256(args.model.read_bytes()).hexdigest(),
@@ -918,6 +971,7 @@ def main():
             },
             source_root=args.source_json,
         )
+        require_bound_animations(plan, bound_keys)
         # The skeleton reference alone does not establish identical bind poses.
         if args.shared_animation_rig:
             rig = {"object": [float(value) for row in armature.matrix_world for value in row],

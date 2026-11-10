@@ -17,6 +17,7 @@ from wuwa_story_worker.model_bundle import (
     build_animation_plan,
     canonical_animation_rig,
     effect_space_only,
+    equivalent_skeletons,
     face_atlas_transform,
     file_sha256,
     indexed_gltf_references,
@@ -28,10 +29,37 @@ from wuwa_story_worker.model_bundle import (
     package_path,
     preview_materials,
     preview_meshes,
+    require_bound_animations,
     retime_tracks,
     rig_glb_stats,
     same_rest_skeleton,
 )
+
+
+def test_equivalent_skeletons_require_hierarchy_and_complete_finite_rest_pose():
+    bone = SimpleNamespace(name="Root", parent_index=-1, position=[0, 0, 0],
+                           rotation=[0, 0, 0, 1], scale=[1, 1, 1])
+    other = deepcopy(bone)
+    other.position[0] = 0.0000005
+    assert equivalent_skeletons([bone], [other])
+    other.position[0] = 0.01
+    assert not equivalent_skeletons([bone], [other])
+    other.position[0] = float("nan")
+    assert not equivalent_skeletons([bone], [other])
+    other.position[0] = 0
+    other.parent_index = 0
+    assert not equivalent_skeletons([bone], [other])
+    assert not equivalent_skeletons([], [])
+    other.parent_index = -1
+    other.name = "Different"
+    assert not equivalent_skeletons([bone], [other])
+
+
+def test_explicit_component_binding_cannot_be_silently_excluded():
+    key = package_path("/Game/Aki/Book/Idle")
+    require_bound_animations({"clips": [{"source": "Client/Content/Aki/Book/Idle.json"}]}, {key})
+    with pytest.raises(ValueError, match="Authored component animations are not playable"):
+        require_bound_animations({"clips": []}, {key})
 
 
 def test_package_identity_ignores_object_suffix_and_preserves_path():
