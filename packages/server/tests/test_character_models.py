@@ -409,6 +409,29 @@ async def test_public_animation_packs_keep_per_form_clip_selections(monkeypatch)
     assert (await service.public_character_model(AsyncMock(), 15, release))["status"] == "missing"
 
 
+async def test_public_model_falls_back_when_a_declared_pack_is_unavailable(monkeypatch):
+    shared = {"id": "0123456789abcdef", "key": "animation_pack_0123456789abcdef", "clips": ["walk"]}
+    variant = {"id": "fedcba9876543210", "key": "animation_pack_fedcba9876543210", "clips": ["run"]}
+    declared = [shared, variant]
+    def row(kind, bundle, key, descriptor=None, packs=None):
+        return ("character_model_" + kind, bundle, key, 10, None,
+                "mesh-1", "First", 0, None, None, descriptor, packs)
+    rows = [row("animation_manifest", "new", "manifest", packs=declared),
+            row("animation_pack", "new", "shared", shared, declared),
+            row("download", "new", "new-download", packs=declared),
+            row("preview", "new", "new-preview", packs=declared),
+            row("download", "old", "old-download"), row("preview", "old", "old-preview")]
+    monkeypatch.setattr(service, "published_model_files", AsyncMock(return_value=rows))
+    monkeypatch.setattr(service, "S3Storage", lambda _: SimpleNamespace(public_url=lambda key: key))
+    release = SimpleNamespace(id=8, game_version="1.4.0")
+    result = await service.public_character_model(AsyncMock(), 15, release)
+    assert result["preview"]["url"] == "old-preview"
+    rows.insert(1, row("animation_pack", "new", "variant", variant, declared))
+    result = await service.public_character_model(AsyncMock(), 15, release)
+    assert result["preview"]["url"] == "new-preview"
+    assert {pack["id"] for pack in result["animation_packs"]} == {shared["id"], variant["id"]}
+
+
 @pytest.mark.parametrize(
     "viewer_key",
     [
@@ -495,13 +518,14 @@ async def test_repository_filters_available_bucket_and_release():
     assert "viewer_object_key" in sql
     for field in ("form_id", "form_label", "form_order"):
         assert field in sql
-    assert [column.name for column in db.execute.await_args.args[0].selected_columns][-6:] == [
+    assert [column.name for column in db.execute.await_args.args[0].selected_columns][-7:] == [
         "form_id",
         "form_label",
         "form_order",
         "component",
         "scene",
         "animation_pack",
+        "declared_animation_packs",
     ]
 
 

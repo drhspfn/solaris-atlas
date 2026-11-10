@@ -118,6 +118,7 @@ async def published_model_files(session, owner_node_id, release_id, bucket):
                 FileReference.metadata_json["component"].label("component"),
                 FileReference.metadata_json["scene"].label("scene"),
                 FileReference.metadata_json["animation_pack"].label("animation_pack"),
+                FileReference.metadata_json["game_source"]["animation_packs"].label("declared_animation_packs"),
             )
             .join(FileObject, FileObject.id == FileReference.file_id)
             .join(FileLocation, FileLocation.file_id == FileObject.id)

@@ -168,9 +168,9 @@ async def public_character_model(session, owner_node_id, release):
     bundles = {}
     malformed = set()
     for row in rows:
-        values = tuple(row) + (None,) * (11 - len(row))
+        values = tuple(row) + (None,) * (12 - len(row))
         (reference_type, model_bundle_id, object_key, size_bytes, viewer_object_key,
-         form_id, form_label, form_order, component, scene, animation_pack) = values
+         form_id, form_label, form_order, component, scene, animation_pack, declared_packs) = values
         if not model_bundle_id:
             continue
         forms = bundles.setdefault(model_bundle_id, {})
@@ -196,9 +196,19 @@ async def public_character_model(session, owner_node_id, release):
             malformed.add(model_bundle_id)
             continue
         form = forms.setdefault(form_id, {"label": form_label, "order": form_order,
-                                         "files": {}, "packs": [], "component": component, "scene": scene})
+                                         "files": {}, "packs": [], "declared_packs": None,
+                                         "component": component, "scene": scene})
         if (form["label"], form["order"], form["component"], form["scene"]) != (form_label, form_order, component, scene):
             malformed.add(model_bundle_id)
+        if declared_packs is not None:
+            try:
+                validate_animation_packs(declared_packs)
+                declared = {pack["id"]: pack for pack in declared_packs}
+                if form["declared_packs"] is not None and form["declared_packs"] != declared:
+                    raise ValueError("Conflicting animation pack declarations")
+                form["declared_packs"] = declared
+            except ValueError:
+                malformed.add(model_bundle_id)
         if reference_type == "character_model_animation_pack":
             try:
                 validate_animation_packs([animation_pack])
@@ -214,6 +224,9 @@ async def public_character_model(session, owner_node_id, release):
         for form in forms.values():
             try:
                 validate_animation_packs([pack for pack, _, _ in form["packs"]])
+                if (form["declared_packs"] is not None
+                        and form["declared_packs"] != {pack["id"]: pack for pack, _, _ in form["packs"]}):
+                    raise ValueError("Animation pack references are incomplete")
                 if bool(form["packs"]) != ("animation_manifest" in form["files"]):
                     raise ValueError("Animation manifest and packs must be published together")
             except ValueError:
