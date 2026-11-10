@@ -192,6 +192,8 @@ async def test_trusted_discovery_prepares_matching_component(tmp_path, monkeypat
         {"path": str(client), "download_id": "x", "version": "3.7.0", "tier": "hd", "state": "downloaded"}])
     monkeypatch.setattr(model_uploads, "validate_plan", lambda _: None)
     monkeypatch.setattr(model_uploads, "tool_path", lambda _: tmp_path / "tool")
+    monkeypatch.setattr(model_uploads, "asset_workspace", lambda: tmp_path / "assets")
+    monkeypatch.setattr(model_uploads, "input_key", lambda *args: "test")
     extract = AsyncMock(return_value=(None, None, tmp_path, {}))
     monkeypatch.setattr(character_models, "extract_model", extract)
     relation = {"id": "Fox", "name": "Fox", "label": "Fox", "parent_component": "CharacterMesh0",
@@ -411,3 +413,29 @@ def test_decode_nested_component_uses_root_blueprint_not_parent_mesh(tmp_path):
     with pytest.raises(ValueError, match="parent Blueprint"):
         model_uploads.decode_bundles(wrong, tmp_path / "nested-wrong", job, [root],
                                      expected_components=trusted)
+
+
+def test_reports_every_component_mismatch_before_rejecting(tmp_path, caplog):
+    _, root, job = portable(tmp_path)
+    root = {**root, "component_blueprint": "Aki/Npc/Blueprint"}
+    children = []
+    for index, name in enumerate(("Fox", "Hat"), 1):
+        form = {"id": f"component-{index:016x}", "label": name, "order": index,
+                "component": {"id": name, "parent_form_id": root["id"],
+                              "source": {"blueprint": root["component_blueprint"], "component": name}}}
+        children.append(form)
+    archive = tmp_path / "mismatches.zip"
+    write_archive(archive, {"character_key": job.character_key, "game_version": job.game_version,
+                            "asset_version": "3.7.0", "tier": "hd"},
+                  [(root, tmp_path / "bundle", {}, {"model": root["model"]})] +
+                  [(form, tmp_path / "bundle", {}, {"model": "Aki/Archive/" + form["label"]})
+                   for form in children])
+    trusted = {form["id"]: {"component": form["component"], "model": "Aki/Trusted/" + form["label"]}
+               for form in children}
+    with pytest.raises(ValueError, match="trusted authored identity"):
+        model_uploads.decode_bundles(archive, tmp_path / "mismatches", job, [root],
+                                     expected_components=trusted)
+    for form in children:
+        assert form["id"] in caplog.text
+        assert "Aki/Archive/" + form["label"] in caplog.text
+        assert "Aki/Trusted/" + form["label"] in caplog.text
