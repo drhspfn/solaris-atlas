@@ -8,6 +8,8 @@ import stat
 import zipfile
 from pathlib import Path
 
+from wuwa_story.ingestion.model_limits import MAX_MODEL_COMPONENTS, MAX_MODEL_FORMS, MAX_MODEL_ROOTS
+
 FORMAT = "solaris-model-bundle-v1"
 MAX_ARCHIVE_BYTES = 4 * 1024**3
 MAX_EXPANDED_BYTES = 8 * 1024**3
@@ -26,10 +28,10 @@ def validate_manifest(data):
         raise ValueError("Unsupported model archive")
     if not re.fullmatch(r"character:(?:npc:)?[1-9][0-9]*", str(data.get("character_key", ""))):
         raise ValueError("Invalid archive character")
-    if not isinstance(data.get("forms"), list) or not 1 <= len(data["forms"]) <= 48:
-        raise ValueError("Archive must contain 1..16 roots and at most 32 components")
+    if not isinstance(data.get("forms"), list) or not 1 <= len(data["forms"]) <= MAX_MODEL_FORMS:
+        raise ValueError(f"Archive must contain 1..{MAX_MODEL_ROOTS} roots and at most {MAX_MODEL_COMPONENTS} components")
     objects, ids = data.get("objects"), set()
-    if not isinstance(objects, dict) or not 1 <= len(objects) <= 256:
+    if not isinstance(objects, dict) or not 1 <= len(objects) <= len(FILES) * MAX_MODEL_FORMS:
         raise ValueError("Invalid archive objects")
     for key, size in objects.items():
         if not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{64}", key) or type(size) is not int or size < 1:
@@ -108,8 +110,8 @@ def validate_manifest(data):
                     or len(set(scene["components"])) != len(scene["components"])):
                 raise ValueError("Invalid archive scene")
             scenes[form["id"]] = scene
-    if not 1 <= root_count <= 16 or len(parents) > 32:
-        raise ValueError("Archive must contain 1..16 roots and at most 32 components")
+    if not 1 <= root_count <= MAX_MODEL_ROOTS or len(parents) > MAX_MODEL_COMPONENTS:
+        raise ValueError(f"Archive must contain 1..{MAX_MODEL_ROOTS} roots and at most {MAX_MODEL_COMPONENTS} components")
     component_ids = set()
     for child in parents:
         seen, current = set(), child
@@ -176,7 +178,7 @@ def read_archive(source, destination):
         raise ValueError("Model archive exceeds upload limit")
     with zipfile.ZipFile(source) as archive:
         infos = archive.infolist()
-        if len(infos) > 257 or len({info.filename for info in infos}) != len(infos):
+        if len(infos) > 1 + len(FILES) * MAX_MODEL_FORMS or len({info.filename for info in infos}) != len(infos):
             raise ValueError("Duplicate or excessive archive members")
         if any(stat.S_ISLNK(info.external_attr >> 16) or info.flag_bits & 1 for info in infos):
             raise ValueError("Encrypted files and links are not allowed")

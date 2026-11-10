@@ -38,3 +38,11 @@ def test_batch_rejects_parent_cycles(recipes):
 def test_batch_rejects_missing_or_ambiguous_parents(recipes):
     with pytest.raises(ValueError):
         prepare_linked_components(FORM, recipes)
+
+
+def test_component_budget_keeps_distinct_instances_and_rejects_overflow():
+    recipes = [recipe(f"effect-{i}", "Mesh") for i in range(129)]
+    assert len({identity for identity, _ in prepare_linked_components(FORM, recipes[:70])}) == 70
+    assert len(prepare_linked_components(FORM, recipes[:128])) == 128
+    with pytest.raises(ValueError, match="128"):
+        prepare_linked_components(FORM, recipes)

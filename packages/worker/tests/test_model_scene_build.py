@@ -102,3 +102,49 @@ async def test_root_visibility_cues_survive_without_exportable_child(tmp_path, m
         skeleton="Aki/Skeleton", scene=scene)
     assert recipes == []
     assert scene == {"format": "solaris-model-scene-v1", "components": [], "cues": [cue]}
+
+
+@pytest.mark.parametrize("per_root,allowed", [(35, True), (65, False)])
+@pytest.mark.asyncio
+async def test_scene_component_budget_is_total_across_roots(tmp_path, monkeypatch, per_root, allowed):
+    async def build(root, form, **options):
+        components = []
+        if not form.get("component"):
+            for i in range(per_root):
+                item = prop()
+                item["component"].update(id=f"effect-{i}", name=f"effect-{i}", label="Effect")
+                item["component"]["source"]["component"] = f"effect-{i}"
+                components.append(item)
+        return root, {}, {"linked_components": components}
+
+    monkeypatch.setattr(models, "build_bundle", build)
+    forms = [{"id": "mesh-1"}, {"id": "mesh-2"}]
+    if allowed:
+        bundles = await models.build_scene_bundles(tmp_path, forms)
+        assert len(bundles) == 72
+        assert len({form["id"] for form, *_ in bundles}) == 72
+    else:
+        with pytest.raises(ValueError, match="128"):
+            await models.build_scene_bundles(tmp_path, forms)
+
+
+@pytest.mark.parametrize("count", [70, 129])
+@pytest.mark.asyncio
+async def test_discovery_enforces_component_budget(tmp_path, monkeypatch, count):
+    from wuwa_story_worker import linked_models, model_bundle
+
+    recipes = [{"id": f"effect-{i}", "kind": "effect", "model": "Aki/Prop/Shared",
+                "parent_component": "CharacterMesh0", "socket": None, "socket_transform": None,
+                "default_visible": False, "source": {"component": f"effect-{i}"}, "bindings": [],
+                "cues": [], "diagnostics": [], "required_resources": [], "anim_blueprint": None}
+               for i in range(count)]
+    monkeypatch.setattr(model_bundle, "animation_sources", lambda *_: {})
+    monkeypatch.setattr(linked_models, "discover", lambda *_: recipes)
+    call = models.discover_scene_components(tmp_path,
+        {"component_blueprint": "Aki/BP", "model": "Aki/Body"}, tmp_path, skeleton="Aki/Skeleton")
+    if count > 128:
+        with pytest.raises(ValueError, match="128"):
+            await call
+    else:
+        result = await call
+        assert len({item["component"]["id"] for item in result}) == count

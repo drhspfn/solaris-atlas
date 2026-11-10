@@ -27,6 +27,7 @@ from wuwa_story.db.repositories.character_models import (
 from wuwa_story.db.repositories.nodes import get_node
 from wuwa_story.ingestion.client_assets import inspect_installed_clients
 from wuwa_story.ingestion.media_jobs import publish_media_job
+from wuwa_story.ingestion.model_limits import MAX_MODEL_COMPONENTS, MAX_MODEL_ROOTS
 from wuwa_story.storage.s3 import S3Storage
 
 QUEUE = "wuwa.character-model.v1"
@@ -200,7 +201,7 @@ async def public_character_model(session, owner_node_id, release):
         )
     def valid_graph(forms):
         components = {key: value for key, value in forms.items() if value["component"] is not None}
-        if not 1 <= len(forms) - len(components) <= 16 or len(components) > 32:
+        if not 1 <= len(forms) - len(components) <= MAX_MODEL_ROOTS or len(components) > MAX_MODEL_COMPONENTS:
             return False
         for key in components:
             seen, current = set(), key

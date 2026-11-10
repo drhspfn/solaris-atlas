@@ -18,6 +18,7 @@ from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.db.repositories.character_models import model_recipe, npc_model_recipe
 from wuwa_story.db.session import SessionFactory, engine
 from wuwa_story.ingestion.character_models import CharacterModelJob
+from wuwa_story.ingestion.model_limits import MAX_MODEL_COMPONENTS
 from wuwa_story.storage.hashing import content_object_key
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.storage.service import FileRegistrationService
@@ -349,8 +350,8 @@ async def discover_scene_components(root, sources, cooked, converted=None, manif
         results.append({"model": recipe["model"], "blueprints": [recipe["anim_blueprint"]]
                         if recipe.get("anim_blueprint") else [], "montages": child_clips,
                         "component": relation})
-    if len(results) > 32:
-        raise ValueError("Model scene exceeds 32 authored components")
+    if len(results) > MAX_MODEL_COMPONENTS:
+        raise ValueError(f"Model scene exceeds {MAX_MODEL_COMPONENTS} authored components")
     return results
 
 
@@ -924,8 +925,8 @@ async def build_scene_bundles(staging, forms, *, include_animations=True, **opti
         provenance["form_source"] = form.get("source")
         components = provenance.pop("linked_components", [])
         total_components += len(components)
-        if total_components > 32:
-            raise ValueError("Model scene exceeds 32 authored components")
+        if total_components > MAX_MODEL_COMPONENTS:
+            raise ValueError(f"Model scene exceeds {MAX_MODEL_COMPONENTS} authored components")
         linked = []
         children = []
         prepared_components = prepare_linked_components(form, components)

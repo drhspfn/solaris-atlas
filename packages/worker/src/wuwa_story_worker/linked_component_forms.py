@@ -2,6 +2,8 @@
 
 import hashlib
 
+from wuwa_story.ingestion.model_limits import MAX_MODEL_COMPONENTS
+
 
 def prepare_linked_component(form, recipe):
     relation = dict(recipe["component"])
@@ -17,8 +19,8 @@ def prepare_linked_component(form, recipe):
 
 def prepare_linked_components(form, recipes):
     """Return (form ID, relation) pairs in recipe order with verified scene parents."""
-    if len(recipes) > 32:
-        raise ValueError("Model scene exceeds 32 authored components")
+    if len(recipes) > MAX_MODEL_COMPONENTS:
+        raise ValueError(f"Model scene exceeds {MAX_MODEL_COMPONENTS} authored components")
     prepared = [prepare_linked_component(form, recipe) for recipe in recipes]
     aliases = {}
     for identity, relation in prepared:

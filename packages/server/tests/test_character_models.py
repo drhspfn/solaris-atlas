@@ -706,6 +706,21 @@ async def test_public_linked_models_are_grouped_under_root(public_forms):
     assert form["linked_models"][0]["preview"]["url"].endswith(child + "/preview")
 
 
+@pytest.mark.parametrize("count,expected", [(70, "ready"), (128, "ready"), (129, "missing")])
+async def test_publication_component_budget_is_total_across_roots(public_forms, count, expected):
+    roots = ("mesh-100038", "mesh-100039")
+    for root in roots:
+        public_forms.extend([(*row, None, None) for row in form_rows("new", root)])
+    for i in range(count):
+        component_id = f"component-{i:016x}"
+        relation = {"id": f"effect-{i // 2}", "parent_form_id": roots[i % 2]}
+        public_forms.extend([(*row, relation, None) for row in form_rows("new", component_id, "Effect", i)])
+    result = await service.public_character_model(AsyncMock(), 15, SimpleNamespace(id=8, game_version="3.7.0"))
+    assert result["status"] == expected
+    if expected == "ready":
+        assert sum(len(form["linked_models"]) for form in result["forms"]) == count
+
+
 async def test_legacy_seven_column_public_rows(public_forms):
     public_forms.extend(row[:7] for row in form_rows("old"))
     result = await service.public_character_model(AsyncMock(), 15, SimpleNamespace(id=8, game_version="1"))
