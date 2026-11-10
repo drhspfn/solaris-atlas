@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -18,6 +19,19 @@ def prop():
                           "source": {"blueprint": "Aki/Character/NPC/BP_Test", "component": "WeaponCase0"},
                           "default_visible": True, "bindings": [], "cues": [],
                           "parent_component": "CharacterMesh0", "socket": "WeaponProp02"}}
+
+
+def test_bound_component_animation_requires_matching_skeleton(tmp_path):
+    sources = prop()
+    sources["component"]["bindings"] = [{"parent_clip": "Aki/Parent", "child_clip": "Aki/Book/Idle"}]
+    path = tmp_path / "Client/Content/Aki/Book/Idle.json"
+    path.parent.mkdir(parents=True)
+    with pytest.raises(ValueError, match="metadata missing"):
+        models.component_animation_skeletons(sources, tmp_path, "Aki/Mystery/Skeleton")
+    path.write_text(json.dumps([{"Type": "AnimSequence", "Name": "Idle", "Properties": {
+        "Skeleton": {"ObjectPath": "/Game/Aki/Book/Skeleton"}}}]), encoding="utf-8")
+    assert models.component_animation_skeletons(sources, tmp_path, "Aki/Mystery/Skeleton") == {
+        "Aki/Book/Idle": "Aki/Book/Skeleton"}
 
 
 @pytest.mark.asyncio

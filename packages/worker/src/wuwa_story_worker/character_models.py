@@ -374,6 +374,26 @@ async def discover_scene_components(root, sources, cooked, converted=None, manif
     return results
 
 
+def component_animation_skeletons(sources, cooked, skeleton):
+    """Resolve exact authored bindings before requesting their skeleton dependencies."""
+    bindings = sources.get("component", {}).get("bindings", [])
+    result = {}
+    for clip in sorted({b["child_clip"] for b in bindings if b.get("child_clip") and b.get("parent_clip")}):
+        path = cooked / "Client/Content" / (clip + ".json")
+        if not path.is_file():
+            raise ValueError(f"Authored component animation metadata missing: {clip}")
+        rows = json.loads(path.read_text(encoding="utf-8-sig"))
+        animations = [row for row in rows if row.get("Type") in {"AnimSequence", "AnimMontage"}
+                      and row.get("Name") == clip.rsplit("/", 1)[-1]]
+        reference = (animations[0].get("Properties", {}).get("Skeleton", {}).get("ObjectPath")
+                     if len(animations) == 1 else None)
+        if not reference:
+            raise ValueError(f"Authored component animation {clip} has skeleton {reference!r}; "
+                             f"mesh {sources['model']} uses {skeleton}; compatibility is unverified")
+        result[clip] = exported_package(reference)
+    return result
+
+
 async def build_bundle(root, sources, include_animations=True, *, run_id=None, local_client=None,
                        animation_workers=1, report_progress=None, animation_cache=None, asset_cache=None,
                        animation_ownership=None):
@@ -518,6 +538,20 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
     if len(skeletons) != 1 or not skeletons[0]:
         raise ValueError("The exported character mesh has no exact skeleton reference")
     skeleton = exported_package(skeletons[0])
+    component_animations = {}
+    if include_animations and sources.get("component"):
+        component_animations = component_animation_skeletons(sources, cooked, skeleton)
+        other_skeletons = sorted({value for value in component_animations.values()
+                                  if value.casefold() != skeleton.casefold()})
+        if other_skeletons:
+            dependency_root = root / "component-animation-skeletons"
+            dependency_root.mkdir()
+            _, extra_converted, extra_cooked, receipt = await extract_model(
+                dependency_root, sources, fmodel, converter, True,
+                additional_filters=other_skeletons, **options)
+            shutil.copytree(extra_converted, converted, dirs_exist_ok=True)
+            shutil.copytree(extra_cooked, cooked, dirs_exist_ok=True)
+            manifest["files"].extend(receipt["files"])
     if sources.get('component_blueprint'):
         from wuwa_story_worker.model_bundle import animation_sources
         from wuwa_story_worker.npc_accessories import npc_bone_visibility_notifies, visibility_label
@@ -685,6 +719,10 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         visibility_path.write_text(json.dumps(bone_visibility), encoding='utf-8')
         command.extend(['--bone-visibility', visibility_path.resolve()])
     plan_path = output / "animation-plan.json"
+    if component_animations:
+        bindings_path = root / "component-animation-bindings.json"
+        bindings_path.write_text(json.dumps(component_animations), encoding="utf-8")
+        command.extend(["--component-animation-bindings", bindings_path.resolve()])
     if animation_cache is not None:
         command.append("--shared-animation-rig")
     if sources.get("animation_ownership"):
