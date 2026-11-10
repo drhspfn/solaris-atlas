@@ -2,7 +2,9 @@
 
 import asyncio
 import hashlib
+import os
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select, text
@@ -88,7 +90,7 @@ async def enqueue_client_plan(session, plan: dict) -> dict[str, Any]:
     }
 
 
-async def check_client_update(session, tier: str = "hd") -> dict[str, Any]:
+async def check_client_update(session, tier: str = "hd", *, workspace: Path | None = None) -> dict[str, Any]:
     completed_pins = list(await session.scalars(
         select(ProcessingRun.metadata_json["request"])
         .join(Processor, Processor.id == ProcessingRun.processor_id)
@@ -102,5 +104,7 @@ async def check_client_update(session, tier: str = "hd") -> dict[str, Any]:
     ))
     # Release the read transaction before launcher/GitHub network I/O.
     await session.commit()
-    plan = await asyncio.to_thread(discover_plan, None, tier, completed_pins=completed_pins)
+    workspace = workspace or Path(os.getenv("WUWA_ASSET_WORKSPACE", "./var/client-assets"))
+    plan = await asyncio.to_thread(discover_plan, None, tier, completed_pins=completed_pins,
+                                   completed_workspace=workspace)
     return await enqueue_client_plan(session, plan)
