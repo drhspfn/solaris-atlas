@@ -198,6 +198,38 @@ async def test_trusted_discovery_prepares_matching_component(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_trusted_discovery_uses_form_ownership_and_explicit_references(tmp_path, monkeypatch):
+    from wuwa_story_worker import npc_accessories
+    from wuwa_story_worker.model_animation_packs import ownership_for
+
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "plan.json").write_text(json.dumps({"id": "x", "version": "3.7.0", "tier": "hd"}))
+    (client / "status.json").write_text(json.dumps({"id": "x", "state": "downloaded"}))
+    monkeypatch.setattr(model_uploads, "inspect_installed_clients", lambda _: [
+        {"path": str(client), "download_id": "x", "version": "3.7.0", "tier": "hd", "state": "downloaded"}])
+    monkeypatch.setattr(model_uploads, "validate_plan", lambda _: None)
+    monkeypatch.setattr(model_uploads, "tool_path", lambda _: tmp_path / "tool")
+    monkeypatch.setattr(character_models, "extract_model", AsyncMock(return_value=(None, None, tmp_path, {})))
+    reference = "Aki/Test/Other/Referenced"
+    path = tmp_path / "Client/Content" / (reference + ".json")
+    path.parent.mkdir(parents=True)
+    path.write_text("[]")
+    monkeypatch.setattr(npc_accessories, "visibility_sources", lambda _: [reference])
+    discover = AsyncMock(return_value=[])
+    monkeypatch.setattr(character_models, "discover_scene_components", discover)
+    forms = [{"id": f"form-{i}", "model": f"Aki/Test/Variant{i}/Model/Mesh",
+              "blueprints": [], "component_blueprint": "Aki/Test/BP", "montages": []}
+             for i in range(2)]
+
+    await model_uploads.discover_upload_components(tmp_path, forms, "3.7.0", "hd")
+    for form, call in zip(forms, discover.await_args_list, strict=True):
+        sources = call.args[1]
+        assert sources["animation_ownership"] == {
+            **ownership_for(form, forms), "explicit": [reference]}
+
+
+@pytest.mark.asyncio
 async def test_linked_upload_requires_unambiguous_matching_client(tmp_path, monkeypatch):
     monkeypatch.setattr(model_uploads, "inspect_installed_clients", lambda _: [])
     with pytest.raises(ValueError, match="matching ready installed client"):

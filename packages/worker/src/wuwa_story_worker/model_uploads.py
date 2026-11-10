@@ -30,6 +30,7 @@ from wuwa_story_worker.client_assets import validate_plan
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.linked_component_forms import prepare_linked_components
 from wuwa_story_worker.media_workspace import finish_writes
+from wuwa_story_worker.model_animation_packs import ownership_for
 from wuwa_story_worker.model_animations import animation_summary
 from wuwa_story_worker.model_facial import validate_facial_pack
 from wuwa_story_worker.model_sources import authored_package, glb_summary
@@ -209,7 +210,10 @@ async def discover_upload_components(root, forms, asset_version, tier, *, includ
     for form in forms:
         if not form.get("component_blueprint"):
             continue
-        recipes = await _discover_upload_form(root, form, local_client, include_animations)
+        sources = dict(form)
+        if form.get("model"):
+            sources["animation_ownership"] = ownership_for(form, forms)
+        recipes = await _discover_upload_form(root, sources, local_client, include_animations)
         for recipe, (identity, relation) in zip(
             recipes, prepare_linked_components(form, recipes), strict=True
         ):
@@ -282,6 +286,11 @@ async def _discover_upload_form(root, form, local_client, include_animations):
         path = cooked / "Client/Content" / (blueprint + ".json")
         if path.is_file():
             refs.update(npc_animation_references(json.loads(path.read_text(encoding="utf-8-sig"))))
+    if sources.get("animation_ownership"):
+        sources["animation_ownership"] = {
+            **sources["animation_ownership"], "explicit": sorted(
+                refs | set(sources.get("montages", [])) |
+                set(sources["animation_ownership"].get("explicit", [])))}
     missing = [ref for ref in refs if not (cooked / "Client/Content" / (ref + ".json")).is_file()]
     if missing:
         extra_root = workspace / "referenced-animations"
