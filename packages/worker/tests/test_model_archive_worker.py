@@ -234,7 +234,7 @@ async def test_trusted_discovery_limits_total_components(tmp_path, monkeypatch, 
 
 
 @pytest.mark.asyncio
-async def test_trusted_discovery_reuses_equivalent_forms_but_rechecks_identities(tmp_path, monkeypatch):
+async def test_trusted_discovery_rechecks_duplicate_identities(tmp_path, monkeypatch):
     client = tmp_path / "client"
     client.mkdir()
     (client / "plan.json").write_text(json.dumps({"id": "x", "version": "3.7.0", "tier": "hd"}))
@@ -252,13 +252,43 @@ async def test_trusted_discovery_reuses_equivalent_forms_but_rechecks_identities
         tmp_path, [form, {**form, "id": "two", "label": "Two", "order": 1}], "3.7.0", "hd")
     assert len(result) == 2
     assert {entry["component"]["parent_form_id"] for entry in result.values()} == {"one", "two"}
-    discover.assert_awaited_once()
+    assert discover.await_count == 2
     with pytest.raises(ValueError, match="Duplicate or excessive"):
         await model_uploads.discover_upload_components(tmp_path, [form, form], "3.7.0", "hd")
     discover.reset_mock()
     discover.return_value = [recipe, recipe]
     with pytest.raises(ValueError, match="Duplicate authored component"):
         await model_uploads.discover_upload_components(tmp_path, [form], "3.7.0", "hd")
+
+
+@pytest.mark.asyncio
+async def test_trusted_discovery_processes_distinct_chisa_forms(tmp_path, monkeypatch):
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "plan.json").write_text(json.dumps({"id": "x", "version": "3.7.0", "tier": "hd"}))
+    (client / "status.json").write_text(json.dumps({"id": "x", "state": "downloaded"}))
+    monkeypatch.setattr(model_uploads, "inspect_installed_clients", lambda _: [
+        {"path": str(client), "download_id": "x", "version": "3.7.0", "tier": "hd", "state": "downloaded"}])
+    monkeypatch.setattr(model_uploads, "validate_plan", lambda _: None)
+    base = "Aki/Character/Role/FemaleM/Qianxia/"
+    forms = [{"id": "mesh-100052", "model": base + "R2T1QianXiaMd10011/Model/R2T1QianXiaMd10011",
+              "blueprints": [base + "R2T1QianXiaMd10011/ABP_R2T1QianXiaMd10011_PC"],
+              "component_blueprint": base + "BP_QianXia"},
+             {"id": "mesh-1000521", "model": base + "R2T1QianXiaMd20011/Model/R2T1QianXiaMd20011",
+              "blueprints": [base + "R2T1QianXiaMd20011/ABP_R2T1QianXiaMd20011_PC"],
+              "component_blueprint": base + "BP_QianXia_Md20011"}]
+    async def discover(root, form, local_client, include_animations):
+        return [{"model": form["model"], "blueprints": [], "component": {
+            "id": "part", "parent_component": "CharacterMesh0",
+            "source": {"blueprint": form["component_blueprint"], "component": "part"}}}]
+
+    mocked = AsyncMock(side_effect=discover)
+    monkeypatch.setattr(model_uploads, "_discover_upload_form", mocked)
+    result = await model_uploads.discover_upload_components(tmp_path, forms, "3.7.0", "hd")
+    assert mocked.await_count == 2
+    assert {entry["model"] for entry in result.values()} == {form["model"] for form in forms}
+    assert {entry["component"]["source"]["blueprint"] for entry in result.values()} == {
+        form["component_blueprint"] for form in forms}
 
 @pytest.mark.asyncio
 async def test_process_linked_upload_uses_trusted_discovery(tmp_path, monkeypatch):

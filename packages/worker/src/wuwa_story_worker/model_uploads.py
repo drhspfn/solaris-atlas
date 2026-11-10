@@ -206,18 +206,10 @@ async def discover_upload_components(root, forms, asset_version, tier, *, includ
         raise ValueError("Linked model client identity changed")
     local_client = {"game": client_path / "game", "keys": client_path / "keys.txt", "processors": 1}
     result = {}
-    discovered = {}
     for form in forms:
         if not form.get("component_blueprint"):
             continue
-        # Presentation fields do not affect discovery; identities are prepared per form below.
-        key = json.dumps({k: v for k, v in form.items() if k not in {"id", "label", "order"}},
-                         sort_keys=True)
-        if key in discovered:
-            recipes = discovered[key]
-        else:
-            recipes = await _discover_upload_form(root, form, local_client, include_animations)
-            discovered[key] = recipes
+        recipes = await _discover_upload_form(root, form, local_client, include_animations)
         for recipe, (identity, relation) in zip(
             recipes, prepare_linked_components(form, recipes), strict=True
         ):
