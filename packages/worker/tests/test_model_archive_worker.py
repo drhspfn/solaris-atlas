@@ -43,6 +43,38 @@ def test_decoding_uses_archive_identity_and_rejects_stale_authored_forms(tmp_pat
         model_uploads.decode_bundles(archive, tmp_path / "wrong", wrong, [form])
 
 
+def test_decoding_validates_selected_pack_clips_and_materializes_paths(tmp_path, monkeypatch):
+    _, form, job = portable(tmp_path)
+    output = tmp_path / "bundle"
+    (output / "animation-packs").mkdir()
+    pack = {"id": "0123456789abcdef", "key": "animation_pack_0123456789abcdef", "clips": ["walk"]}
+    data = {"nodes": [{"name": "Root"}], "animations": [
+        {"name": "walk", "channels": [{"target": {"node": 0}}]}]}
+    payload = json.dumps(data).encode()
+    (output / "animation-packs/0123456789abcdef.glb").write_bytes(
+        struct.pack("<4sIII4s", b"glTF", 2, 20 + len(payload), len(payload), b"JSON") + payload)
+    (output / "animation-manifest.json").write_text(json.dumps(
+        {"format": "solaris-animation-packs-v1", "packs": [pack]}))
+    monkeypatch.setattr(model_uploads, "animation_summary", lambda path: {"clips": [{"name": "walk"}]})
+    archive = tmp_path / "packs.zip"
+    write_archive(archive, {"character_key": "character:1", "game_version": "3.3.0",
+                            "asset_version": "3.7.0", "tier": "hd"},
+                  [(form, output, {}, {"model": form["model"], "animation_packs": [pack]})])
+    publication, bundles = model_uploads.decode_bundles(archive, tmp_path / "decoded-packs", job, [form])
+    assert publication.include_animations
+    assert (bundles[0][1] / "animation-packs/0123456789abcdef.glb").is_file()
+    assert bundles[0][2][pack["key"]]["clips"] == [{"name": "walk"}]
+    pack["clips"] = ["missing"]
+    (output / "animation-manifest.json").write_text(json.dumps(
+        {"format": "solaris-animation-packs-v1", "packs": [pack]}))
+    bad = tmp_path / "missing.zip"
+    write_archive(bad, {"character_key": "character:1", "game_version": "3.3.0",
+                        "asset_version": "3.7.0", "tier": "hd"},
+                  [(form, output, {}, {"model": form["model"], "animation_packs": [pack]})])
+    with pytest.raises(ValueError, match="missing clips"):
+        model_uploads.decode_bundles(bad, tmp_path / "missing-packs", job, [form])
+
+
 def test_npc_data_asset_archive_retains_resolved_mesh_and_checks_setup_identity(tmp_path):
     _, base, job = portable(tmp_path)
     form = {**base, 'model': 'Aki/Npc/Setup', 'data_asset': 'Aki/Npc/Setup'}

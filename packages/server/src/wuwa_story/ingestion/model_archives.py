@@ -8,6 +8,7 @@ import stat
 import zipfile
 from pathlib import Path
 
+from wuwa_story.ingestion.model_animation_packs import MAX_ANIMATION_PACKS, validate_animation_packs
 from wuwa_story.ingestion.model_limits import MAX_MODEL_COMPONENTS, MAX_MODEL_FORMS, MAX_MODEL_ROOTS
 
 FORMAT = "solaris-model-bundle-v1"
@@ -15,7 +16,17 @@ MAX_ARCHIVE_BYTES = 4 * 1024**3
 MAX_EXPANDED_BYTES = 8 * 1024**3
 CHUNK_BYTES = 8 * 1024**2
 FILES = {"preview": "preview.glb", "download": "character.glb", "animations": "animations.glb",
-         "facial": "facial.json", "physics": "physics.json"}
+         "facial": "facial.json", "physics": "physics.json",
+         "animation_manifest": "animation-manifest.json"}
+MAX_ARCHIVE_OBJECTS = (len(FILES) + MAX_ANIMATION_PACKS) * MAX_MODEL_FORMS
+
+
+def model_file_name(kind):
+    if kind in FILES:
+        return FILES[kind]
+    if isinstance(kind, str) and re.fullmatch(r"animation_pack_[0-9a-f]{16}", kind):
+        return "animation-packs/" + kind.removeprefix("animation_pack_") + ".glb"
+    raise ValueError("Invalid model file kind")
 
 
 def digest(path):
@@ -31,7 +42,7 @@ def validate_manifest(data):
     if not isinstance(data.get("forms"), list) or not 1 <= len(data["forms"]) <= MAX_MODEL_FORMS:
         raise ValueError(f"Archive must contain 1..{MAX_MODEL_ROOTS} roots and at most {MAX_MODEL_COMPONENTS} components")
     objects, ids = data.get("objects"), set()
-    if not isinstance(objects, dict) or not 1 <= len(objects) <= len(FILES) * MAX_MODEL_FORMS:
+    if not isinstance(objects, dict) or not 1 <= len(objects) <= MAX_ARCHIVE_OBJECTS:
         raise ValueError("Invalid archive objects")
     for key, size in objects.items():
         if not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{64}", key) or type(size) is not int or size < 1:
@@ -91,15 +102,20 @@ def validate_manifest(data):
             if component is not None:
                 raise ValueError("Root form cannot be a component")
             root_count += 1
+        if not isinstance(entry.get("provenance"), dict):
+            raise ValueError("Archive lacks model provenance")
+        packs = validate_animation_packs(entry["provenance"].get("animation_packs", []))
+        pack_keys = {pack["key"] for pack in packs}
         files = entry.get("files")
-        if not isinstance(files, dict) or not {"preview", "download"} <= files.keys() or files.keys() - FILES.keys():
+        if (not isinstance(files, dict) or not {"preview", "download"} <= files.keys()
+                or files.keys() - (FILES.keys() | pack_keys)
+                or not pack_keys <= files.keys()
+                or bool(packs) != ("animation_manifest" in files)):
             raise ValueError("Invalid model archive files")
         for value in files.values():
             if not isinstance(value, str) or value not in objects:
                 raise ValueError("Archive references a missing object")
             referenced.add(value)
-        if not isinstance(entry.get("provenance"), dict):
-            raise ValueError("Archive lacks model provenance")
         scene = entry["provenance"].get("scene")
         if scene is not None:
             if (component is not None or not isinstance(scene, dict)
@@ -145,7 +161,9 @@ def write_archive(destination, metadata, bundles):
     objects, sources, forms = {}, {}, []
     for form, output, _summaries, provenance in bundles:
         files = {}
-        for kind, filename in FILES.items():
+        packs = validate_animation_packs(provenance.get("animation_packs", []))
+        for kind in (*FILES, *(pack["key"] for pack in packs)):
+            filename = model_file_name(kind)
             source = output / filename
             if source.is_file():
                 key = digest(source)
@@ -178,7 +196,7 @@ def read_archive(source, destination):
         raise ValueError("Model archive exceeds upload limit")
     with zipfile.ZipFile(source) as archive:
         infos = archive.infolist()
-        if len(infos) > 1 + len(FILES) * MAX_MODEL_FORMS or len({info.filename for info in infos}) != len(infos):
+        if len(infos) > 1 + MAX_ARCHIVE_OBJECTS or len({info.filename for info in infos}) != len(infos):
             raise ValueError("Duplicate or excessive archive members")
         if any(stat.S_ISLNK(info.external_attr >> 16) or info.flag_bits & 1 for info in infos):
             raise ValueError("Encrypted files and links are not allowed")

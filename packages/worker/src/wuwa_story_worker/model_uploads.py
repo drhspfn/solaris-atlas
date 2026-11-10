@@ -17,6 +17,7 @@ from wuwa_story.ingestion.model_archives import (
     CHUNK_BYTES,
     FILES,
     digest,
+    model_file_name,
     read_archive,
     validate_manifest,
 )
@@ -68,7 +69,8 @@ def decode_bundles(archive, root, job, expected_forms, *, expected_components=No
     if forms != expected_forms:
         raise ValueError(
             "Archive forms no longer match authored model sources; rebuild with a fresh recipe")
-    included = ["animations" in entry["files"] for entry in roots]
+    included = ["animations" in entry["files"] or bool(entry["provenance"].get("animation_packs"))
+                for entry in roots]
     if any(included) != all(included):
         raise ValueError(
             "Archive must include animations for every form, or for none")
@@ -114,7 +116,8 @@ def decode_bundles(archive, root, job, expected_forms, *, expected_components=No
         output.mkdir()
         for kind, key in entry["files"].items():
             source = root / "objects" / key
-            destination = output / FILES[kind]
+            destination = output / model_file_name(kind)
+            destination.parent.mkdir(parents=True, exist_ok=True)
             try:
                 os.link(source, destination)
             except OSError:
@@ -134,6 +137,28 @@ def decode_bundles(archive, root, job, expected_forms, *, expected_components=No
                  for skin in full.get("skins", []) for index in skin["joints"]}
         if "animations" in entry["files"]:
             animation_summary(output / "animations.glb", bones)
+        packs = entry["provenance"].get("animation_packs", [])
+        if packs:
+            manifest_data = json.loads((output / "animation-manifest.json").read_text(encoding="utf-8"))
+            if manifest_data != {"format": "solaris-animation-packs-v1", "packs": packs}:
+                raise ValueError("Animation manifest does not match pack descriptors")
+        for pack in packs:
+            path = output / model_file_name(pack["key"])
+            summary = animation_summary(path)
+            available = {clip["name"] for clip in summary["clips"]}
+            selected = set(pack["clips"])
+            if not selected <= available:
+                raise ValueError("Animation pack references missing clips")
+            with path.open("rb") as stream:
+                length = struct.unpack_from("<I", stream.read(20), 12)[0]
+                data = json.loads(stream.read(length))
+            for clip in data["animations"]:
+                if clip["name"] in selected and any(
+                    data["nodes"][channel["target"]["node"]]["name"] not in bones
+                    for channel in clip["channels"]
+                ):
+                    raise ValueError("Selected animation targets a non-rig bone")
+            summaries[pack["key"]] = summary
         if "facial" in entry["files"]:
             pack = validate_facial_pack(json.loads(
                 (output / "facial.json").read_text()))
@@ -314,8 +339,9 @@ async def process_model_upload(payload):
                         tier=manifest.get("tier"), download_id=await asyncio.to_thread(digest, archive))
                     expected_components = await discover_upload_components(
                         root, forms, manifest["asset_version"], manifest["tier"],
-                        include_animations="animations" in next(
-                            entry["files"] for entry in manifest["forms"]
+                        include_animations=any(
+                            "animations" in entry["files"] or bool(entry["provenance"].get("animation_packs"))
+                            for entry in manifest["forms"]
                             if not entry["form"]["id"].startswith("component-")))
                 publication, bundles = await asyncio.to_thread(
                     decode_bundles, archive, root, job, forms,
