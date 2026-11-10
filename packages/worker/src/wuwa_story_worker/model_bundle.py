@@ -77,6 +77,17 @@ def equivalent_skeletons(left, right):
     return True
 
 
+def uses_animation_translation(metadata, bone_count):
+    rows = [row for row in metadata if row.get("Type") == "Skeleton"]
+    if len(rows) != 1 or rows[0].get("AnimRetargetSources") != {}:
+        return False
+    tree = rows[0].get("Properties", {}).get("BoneTree", [])
+    return bool(tree) and len(tree) == bone_count and all(
+        item.get("TranslationRetargetingMode") == "EBoneTranslationRetargetingMode::Animation"
+        for item in tree
+    )
+
+
 def require_bound_animations(plan, bound_keys):
     if bound_keys:
         included = {package_path(clip["source"].removesuffix(".json")) for clip in plan["clips"]}
@@ -930,17 +941,18 @@ def main():
             if not source["matches_skeleton"]:
                 skeleton_path = args.converted / "Client/Content" / (source_skeleton + ".uemodel")
                 metadata_path = args.source_json / "Client/Content" / (source_skeleton + ".json")
-                if not skeleton_path.is_file() or not metadata_path.is_file():
+                target_package = args.skeleton.split(".", 1)[0]
+                if target_package.startswith("/Game/"):
+                    target_package = "Client/Content/" + target_package[6:]
+                target_path = args.source_json / (target_package + ".json")
+                if not skeleton_path.is_file() or not metadata_path.is_file() or not target_path.is_file():
                     raise ValueError(f"Missing authored animation skeleton: {source_skeleton}")
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8-sig"))
-                rows = [row for row in metadata if row.get("Type") == "Skeleton"]
-                tree = rows[0].get("Properties", {}).get("BoneTree", []) if len(rows) == 1 else []
+                target_metadata = json.loads(target_path.read_text(encoding="utf-8-sig"))
                 _, animation_rig = read_animation(skeleton_path)
                 bones = animation_rig.skeleton.bones
-                if (not tree or len(tree) != len(bones)
-                        or any(item.get("TranslationRetargetingMode") !=
-                               "EBoneTranslationRetargetingMode::Animation" for item in tree)
-                        or rows[0].get("AnimRetargetSources")
+                if (not uses_animation_translation(metadata, len(bones))
+                        or not uses_animation_translation(target_metadata, len(target.skeleton.bones))
                         or not equivalent_skeletons(target.skeleton.bones, bones)):
                     raise ValueError(f"Incompatible authored component animation skeleton: {clip} ({source_skeleton})")
                 source["matches_skeleton"] = True

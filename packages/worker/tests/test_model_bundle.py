@@ -33,6 +33,7 @@ from wuwa_story_worker.model_bundle import (
     retime_tracks,
     rig_glb_stats,
     same_rest_skeleton,
+    uses_animation_translation,
 )
 
 
@@ -60,6 +61,19 @@ def test_explicit_component_binding_cannot_be_silently_excluded():
     require_bound_animations({"clips": [{"source": "Client/Content/Aki/Book/Idle.json"}]}, {key})
     with pytest.raises(ValueError, match="Authored component animations are not playable"):
         require_bound_animations({"clips": []}, {key})
+
+
+def test_skeleton_retarget_metadata_must_be_complete_and_animation_only():
+    metadata = [{"Type": "Skeleton", "AnimRetargetSources": {}, "Properties": {"BoneTree": [
+        {"TranslationRetargetingMode": "EBoneTranslationRetargetingMode::Animation"}]}}]
+    assert uses_animation_translation(metadata, 1)
+    assert not uses_animation_translation(metadata, 2)
+    changed = deepcopy(metadata)
+    changed[0]["AnimRetargetSources"] = {"pose": {}}
+    assert not uses_animation_translation(changed, 1)
+    changed = deepcopy(metadata)
+    changed[0]["Properties"]["BoneTree"][0]["TranslationRetargetingMode"] = "Skeleton"
+    assert not uses_animation_translation(changed, 1)
 
 
 def test_package_identity_ignores_object_suffix_and_preserves_path():
