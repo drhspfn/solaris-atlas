@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 
-def attach_facial_pack(pack, *, bpy):
+def attach_facial_pack(pack, *, bpy, strict=False):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from wuwa_story_worker.model_facial import validate_facial_pack
 
@@ -30,6 +30,20 @@ def attach_facial_pack(pack, *, bpy):
     # Re-running must not silently introduce duplicate/ambiguous associations.
     if any(action.get('solaris_facial_clip') is not None for action in bpy.data.actions):
         raise ValueError("Scene already contains Solaris facial actions")
+
+    if strict:
+        for clip in pack['clips']:
+            missing = [track['target'] for track in clip['tracks']
+                       if track['target'].casefold() not in targets]
+            if missing:
+                raise ValueError(f"Facial clip {clip['name']} has unmatched tracks: {missing}")
+            body = clip.get('body_clip')
+            if body:
+                body_action = bpy.data.actions.get(body)
+                slots = ([slot for slot in body_action.slots if slot.target_id_type == 'OBJECT']
+                         if body_action else [])
+                if len(slots) != 1:
+                    raise ValueError(f"Facial clip {clip['name']} has missing or ambiguous body action: {body}")
 
     matched_clips = missing_tracks = key_count = 0
     for clip in pack['clips']:
@@ -117,13 +131,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('facial')
     parser.add_argument('output')
+    parser.add_argument('--strict', action='store_true')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     output = Path(args.output).resolve()
     if bpy.data.filepath and output == Path(bpy.data.filepath).resolve():
         raise ValueError('Output must not overwrite the input Blender file')
     with open(args.facial, encoding='utf-8') as stream:
-        result = attach_facial_pack(json.load(stream), bpy=bpy)
-    bpy.ops.wm.save_as_mainfile(filepath=str(output))
+        result = attach_facial_pack(json.load(stream), bpy=bpy, strict=args.strict)
+    bpy.ops.wm.save_as_mainfile(filepath=str(output), compress=True)
     print('FACIAL_RESULT ' + json.dumps(result), flush=True)
 
 
