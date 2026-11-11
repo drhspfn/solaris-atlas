@@ -90,13 +90,13 @@ def missing_material_resources(cooked, converted, models, overrides=()):
                 package = exported_package(fur)
                 if not (converted / 'Client/Content' / (package + '.png')).is_file():
                     missing.add(package)
-            names = set()
-            if resolved.get('Switches', {}).get('UseFurryParallax') is True:
-                names.update({'HeightMap', 'FlowmapMap'})
-            if resolved.get('Switches', {}).get('FurMaskUseID') is True:
-                names.update({'RegionIDTex', 'TypeMask'})
-            if names:
-                missing.update(fur_material_resources(cooked, converted, source, resolved, names))
+        names = set()
+        if resolved.get('Switches', {}).get('UseFurryParallax') is True:
+            names.update({'HeightMap', 'FlowmapMap'})
+        if resolved.get('Switches', {}).get('FurMaskUseID') is True:
+            names.update({'RegionIDTex', 'TypeMask'})
+        if names:
+            missing.update(fur_material_resources(cooked, converted, source, resolved, names))
         if material_parent(rows) == "/Game/Aki/Render/Shaders/Character/M_WriteStencil":
             mask = material_metadata(metadata).get("Textures", {}).get("Mask", {}).get("ObjectPath")
             if mask:

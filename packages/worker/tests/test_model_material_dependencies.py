@@ -71,6 +71,20 @@ def test_fur_region_mask_fetches_inherited_id_and_type_textures(tmp_path):
     assert missing_material_resources(cooked, converted, ['Body']) == []
 
 
+def test_fur_parallax_inputs_are_fetched_for_cloth_without_fur_cards(tmp_path):
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'Material': {'ObjectPath': '/Game/Cloth.Cloth'}}]}])
+    put(cooked, 'Cloth', [{'Type': 'MaterialInstanceConstant', 'Properties': {}}])
+    put(converted, 'Cloth', {'Switches': {'UseFurryParallax': True, 'FurMaskUseID': True},
+                             'Textures': {
+                                 name: {'ObjectPath': '/Game/' + name}
+                                 for name in ('HeightMap', 'FlowmapMap', 'RegionIDTex', 'TypeMask')
+                             }})
+    assert missing_material_resources(cooked, converted, ['Body']) == [
+        'FlowmapMap', 'HeightMap', 'RegionIDTex', 'TypeMask']
+
+
 def test_follows_exact_shared_parent_and_texture_without_scanning_other_materials(tmp_path):
     cooked, converted = tmp_path / "cooked", tmp_path / "converted"
     put(cooked, "Body", [{"Type": "SkeletalMesh", "SkeletalMaterials": [
