@@ -94,9 +94,10 @@ def test_parallax_fetches_type_mask_without_region_id_mode(tmp_path):
         {'Material': {'ObjectPath': '/Game/Tail.Tail'}}]}])
     put(cooked, 'Tail', [{'Type': 'MaterialInstanceConstant', 'Properties': {}}])
     put(converted, 'Tail', {'Switches': {'UseFurry': True, 'UseFurryParallax': True,
-                                       'UseTypeMask': True},
-                            'Textures': {'TypeMask': {'ObjectPath': '/Game/TailID'}}})
-    assert missing_material_resources(cooked, converted, ['Body']) == ['TailID']
+                                       'UseTypeMask': True, 'UseNormalMap': True},
+                            'Textures': {'TypeMask': {'ObjectPath': '/Game/TailID'},
+                                         'Normal_Roughness_Metallic': {'ObjectPath': '/Game/TailNormal'}}})
+    assert missing_material_resources(cooked, converted, ['Body']) == ['TailID', 'TailNormal']
 
 
 def test_follows_exact_shared_parent_and_texture_without_scanning_other_materials(tmp_path):
