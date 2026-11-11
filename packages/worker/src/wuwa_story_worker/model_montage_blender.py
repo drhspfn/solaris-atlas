@@ -52,3 +52,36 @@ def create_montage_track(armature, montage, actions, fps=30):
         data.nla_tracks.remove(track)
         raise
     return track
+
+
+def bake_montage_preview(armature, montage, actions, output_name, fps=30):
+    """Bake a finite sampled preview; the source segments remain independent."""
+    import math
+
+    import bpy
+
+    bpy.ops.object.select_all(action='DESELECT')
+    armature.select_set(True)
+    bpy.context.view_layer.objects.active = armature
+    armature.animation_data_create().action = None
+    track = create_montage_track(armature, montage, actions, fps=fps)
+    try:
+        bpy.ops.object.mode_set(mode='POSE')
+        bpy.ops.pose.select_all(action='SELECT')
+        result = bpy.ops.nla.bake(frame_start=0, frame_end=math.ceil(montage['duration'] * fps),
+                                  step=1, only_selected=True, visual_keying=True,
+                                  clear_constraints=False, clear_parents=False,
+                                  use_current_action=False, bake_types={'POSE'})
+        if result != {'FINISHED'} or armature.animation_data.action is None:
+            raise ValueError(f'Could not bake montage preview: {output_name}')
+        baked = armature.animation_data.action
+        baked.name = output_name
+        if baked.name != output_name:
+            raise ValueError(f'Blender changed montage name: {output_name}')
+        baked.use_fake_user = True
+        return baked
+    finally:
+        if bpy.context.object and bpy.context.object.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        armature.animation_data.nla_tracks.remove(track)
+        armature.animation_data.action = None

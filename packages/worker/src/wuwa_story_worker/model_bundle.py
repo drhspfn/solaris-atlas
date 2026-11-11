@@ -146,6 +146,10 @@ def build_animation_plan(
     """Decode one DTO at a time; never allocate Blender actions during preflight."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from model_facial import FORMAT, facial_clip
+    from model_montage import montage_references, create_montage_clips
+
+    montage_definitions, montage_refs = montage_references(sources, source_root)
+    montage_sequences = {}
 
     def extract_face(dto, source, row, name, body_clip=None):
         try:
@@ -195,6 +199,14 @@ def build_animation_plan(
             del dto
             continue
         validate_animation_bones(dto, bone_names)
+        if key in montage_refs:
+            if not metadata.frames_per_second or metadata.frames_per_second <= 0:
+                raise ValueError(f"Invalid montage sequence FPS: {row['file']}")
+            montage_sequences[key] = {
+                "file": row["file"], "sha256": file_sha256(path),
+                "duration": metadata.num_frames / metadata.frames_per_second,
+                "matches_skeleton": True,
+            }
         if animation and header.object_name != animation:
             del dto
             continue
@@ -211,6 +223,9 @@ def build_animation_plan(
         if face is not None:
             facial.append(face)
         del dto
+    montage_clips = create_montage_clips(montage_definitions, sources, seen, montage_sequences, names, animation)
+    clips.extend(montage_clips)
+    rows.extend(montage_clips)
     missing = missing_animation_sources(sources, seen)
     if missing:
         raise ValueError(f"Missing matching animation exports: {missing}")
@@ -262,6 +277,9 @@ def animation_batch(plan, model, converted, skeleton, index, size):
     for clip in selected:
         if file_sha256(animation_file(converted, clip["file"])) != clip["sha256"]:
             raise ValueError(f"Animation file hash mismatch: {clip['file']}")
+        for segment in clip.get("montage", {}).get("segments", []):
+            if file_sha256(animation_file(converted, segment["file"])) != segment["sha256"]:
+                raise ValueError(f"Montage segment hash mismatch: {segment['file']}")
     return selected
 
 
@@ -1124,12 +1142,41 @@ def main():
                 if imported.type == "ARMATURE":
                     bpy.data.objects.remove(imported, do_unlink=True)
     if batch_mode:
+        # Blender executes this file as a script, without the worker package on sys.path.
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
         bones = {bone.name for bone in armature.data.bones}
         if set(plan["bones"]) != bones:
             raise ValueError("Animation plan bones do not match imported rig")
         bpy.context.scene.render.fps = 30
+        bpy.context.scene.render.fps_base = 1
         actions = []
         for clip in selected_clips:
+            if clip.get("montage"):
+                from model_montage_blender import bake_montage_preview
+
+                segment_actions = {}
+                for index, segment in enumerate(clip["montage"]["segments"]):
+                    if segment["reference"] in segment_actions:
+                        continue
+                    header, dto = read_animation(animation_file(args.converted, segment["file"]))
+                    if package_path(header.object_path) != segment["reference"]:
+                        raise ValueError("Montage segment source identity changed")
+                    if animation_exclusion(dto, require_decoded=True):
+                        raise ValueError("Montage segment is no longer playable")
+                    validate_animation_bones(dto, bones)
+                    to_blender_space(dto, header.file_version, 0.01)
+                    retime_tracks(dto)
+                    segment_actions[segment["reference"]] = create_anim(
+                        dto, UEAnimOptions(override_skeleton=armature, import_curves=False),
+                        f"__montage_segment_{index}",
+                    )
+                    del dto
+                action = bake_montage_preview(armature, clip["montage"], segment_actions, clip["name"])
+                for segment_action in segment_actions.values():
+                    bpy.data.actions.remove(segment_action, do_unlink=True)
+                action["source_path"] = clip["source"]
+                actions.append(action)
+                continue
             header, dto = read_animation(animation_file(args.converted, clip["file"]))
             if animation_exclusion(dto, require_decoded=True):
                 raise ValueError("Planned animation is no longer playable")
@@ -1176,6 +1223,9 @@ def main():
             )
         if "FINISHED" not in result:
             raise RuntimeError(f"GLB export failed: {part}")
+        from model_montage import annotate_montage_glb
+
+        annotate_montage_glb(part, selected_clips)
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from model_animations import animation_summary
 
@@ -1288,8 +1338,9 @@ def main():
             bm.free()
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from eye_shader import add_eye_highlight, gltf_eye_fallback
-    from model_material_inventory import material_input_inventory
+    from model_material_inventory import material_input_inventory, pack_material_inventory
 
+    blender_materials = []
     for material in sorted(
         {material for mesh in meshes for material in mesh.data.materials if material},
         key=lambda material: material.name,
@@ -1310,9 +1361,10 @@ def main():
         shader = material.node_tree.nodes.get("Principled BSDF")
         if metadata:
             # Preserve authored inputs without claiming unverified shader semantics.
-            material['solaris_material_inputs'] = json.dumps(
-                material_input_inventory(metadata, args.converted), separators=(',', ':')
-            )
+            inventory = material_input_inventory(metadata, args.converted)
+            material['solaris_material_inputs'] = json.dumps(inventory, separators=(',', ':'))
+            if args.blender_source:
+                blender_materials.append((material, inventory))
         eye_payload = eye_material_payload(metadata, args.converted)
         if eye_payload:
             material['solaris_eye_material'] = json.dumps(eye_payload, separators=(',', ':'))
@@ -1542,6 +1594,8 @@ def main():
         report["preview_glb_bytes"] = report["preview_glb"]["bytes"]
         if args.blender_source:
             # Save only after GLB exports: the editable studio is not game geometry.
+            for material, inventory in blender_materials:
+                pack_material_inventory(material, inventory, args.converted)
             add_blender_studio(meshes)
             bpy.context.preferences.filepaths.save_version = 0
             bpy.ops.wm.save_as_mainfile(
