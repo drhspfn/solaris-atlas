@@ -1288,6 +1288,7 @@ def main():
             bm.free()
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from eye_shader import add_eye_highlight, gltf_eye_fallback
+    from model_material_inventory import material_input_inventory
 
     for material in sorted(
         {material for mesh in meshes for material in mesh.data.materials if material},
@@ -1307,6 +1308,11 @@ def main():
             report["missing_textures"].append({"material": material.name, "reference": reference})
         material.use_nodes = True
         shader = material.node_tree.nodes.get("Principled BSDF")
+        if metadata:
+            # Preserve authored inputs without claiming unverified shader semantics.
+            material['solaris_material_inputs'] = json.dumps(
+                material_input_inventory(metadata, args.converted), separators=(',', ':')
+            )
         eye_payload = eye_material_payload(metadata, args.converted)
         if eye_payload:
             material['solaris_eye_material'] = json.dumps(eye_payload, separators=(',', ':'))
