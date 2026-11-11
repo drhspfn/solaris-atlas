@@ -440,7 +440,8 @@ def eye_material_payload(metadata, converted):
             continue
         textures[name] = {'source': reference, 'data_base64': base64.b64encode(image.read_bytes()).decode('ascii')}
     return {'format': 'solaris-eye-material-v1', 'textures': textures,
-            'scalars': metadata.get('Scalars', {}), 'switches': metadata.get('Switches', {})}
+            'scalars': metadata.get('Scalars', {}), 'colors': metadata.get('Colors', {}),
+            'switches': metadata.get('Switches', {})}
 
 
 def add_blender_studio(meshes):
@@ -1272,6 +1273,9 @@ def main():
             bmesh.ops.delete(bm, geom=[face for face in bm.faces if face.material_index in skipped], context="FACES")
             bm.to_mesh(mesh.data)
             bm.free()
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from eye_shader import add_eye_highlight, gltf_eye_fallback
+
     for material in sorted(
         {material for mesh in meshes for material in mesh.data.materials if material},
         key=lambda material: material.name,
@@ -1341,6 +1345,10 @@ def main():
                 material.node_tree.links.new(alpha, shader.inputs["Alpha"])
                 material.surface_render_method = "DITHERED"
         users = [mesh for mesh in meshes if material in mesh.data.materials[:]]
+        uv_names = {mesh.data.uv_layers[0].name for mesh in users if mesh.data.uv_layers}
+        eye_uv = (next(iter(uv_names)) if users and len(uv_names) == 1
+                  and all(mesh.data.uv_layers for mesh in users) else None)
+        add_eye_highlight(material, shader, metadata, args.converted, uv_name=eye_uv)
         fur_uv = fur_uv_name(users)
         color_names = {mesh.data.color_attributes[0].name for mesh in users if mesh.data.color_attributes}
         vertex_color = (next(iter(color_names)) if users and len(color_names) == 1
@@ -1473,7 +1481,7 @@ def main():
             export_anim_single_armature=True,
             export_extras=True,
         )
-        with gltf_fur_fallback(meshes), indexed_gltf_references(GlTF2Exporter, (Accessor, BufferView)):
+        with gltf_fur_fallback(meshes), gltf_eye_fallback(meshes), indexed_gltf_references(GlTF2Exporter, (Accessor, BufferView)):
             if "FINISHED" not in bpy.ops.export_scene.gltf(**options):
                 raise RuntimeError(f"GLB export failed: {name}")
 
