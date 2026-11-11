@@ -287,6 +287,16 @@ one per replica, controlled by `WUWA_MODEL_REPLICAS` (default one).
 The model worker has one CPU and a 4 GiB memory limit: full animation assembly
 can exceed the earlier 2 GiB rig-only budget. It does not reserve that memory
 while idle or change limits for ordinary media workers.
+Set `WUWA_MODEL_BLENDER_EXPORT=true` on a model worker with sufficient memory
+to additionally publish an editable Blender project for each model form and
+linked component. The assembly reuses the exported animation packs and their
+per-form clip selections; it does not re-export animations. The option defaults
+to off on existing workers: an observed 118-action Hsin assembly peaked at
+approximately 1.4 GiB in Blender alone, and larger sets need additional headroom.
+The project retains the editable material nodes and studio lighting; game eye
+and fur shaders are still partial approximations. Existing downloads remain
+available if the option is disabled. This option does not combine linked
+components into one Blender scene.
 Both Linux builds and the offline plugin smoke check passed in run
 [`40574532763`](https://github.com/drhspfn/solaris-atlas/actions/runs/40574532763).
 Actual game-model conversion and browser playback were exercised on Windows;

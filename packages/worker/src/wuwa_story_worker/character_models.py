@@ -730,6 +730,9 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         visibility_path.write_text(json.dumps(bone_visibility), encoding='utf-8')
         command.extend(['--bone-visibility', visibility_path.resolve()])
     plan_path = output / "animation-plan.json"
+    # A full Blender scene can exceed the memory budget of small production workers.
+    # Enable it on a worker explicitly provisioned for the model's animation set.
+    export_blender = os.getenv("WUWA_MODEL_BLENDER_EXPORT", "").lower() in {"1", "true"}
     if component_animations:
         bindings_path = root / "component-animation-bindings.json"
         bindings_path.write_text(json.dumps(component_animations), encoding="utf-8")
@@ -744,7 +747,8 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         command.extend(["--animation-ownership", ownership_path.resolve()])
     await progress("rig_and_animation_plan" if include_animations else "rig")
     await run_blender(
-        [*command, "--rig-only", *(["--animation-plan", plan_path] if include_animations else [])],
+        [*command, "--rig-only", *(["--blender-source"] if export_blender else []),
+         *(["--animation-plan", plan_path] if include_animations else [])],
         root,
         900,
         run_id=run_id,
@@ -859,6 +863,29 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
             if not pack_descriptors:
                 raise ValueError("No verified animation packs for this appearance")
             write_manifest(output, pack_descriptors)
+    if export_blender:
+        await progress("assemble_blender_project")
+        source_blend = output / "blender-source.blend"
+        target_blend = output / "character.blend"
+        report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+        armature = report.get("blender_armature")
+        if not source_blend.is_file() or not isinstance(armature, str) or not armature:
+            raise ValueError("Editable Blender source or its armature is missing")
+        if include_animations:
+            packs = ([output / model_file_name(pack["key"]) for pack in pack_descriptors]
+                     if pack_descriptors else [output / "animations.glb"])
+            await run_blender([
+                blender, "-b", "--factory-startup", "--python-exit-code", "1", "--python",
+                Path(__file__).with_name("blender_ueformat_actions.py").resolve(), "--",
+                "--armature", armature,
+                *(["--manifest", (output / "animation-manifest.json").resolve()]
+                  if pack_descriptors else []),
+                source_blend.resolve(), target_blend.resolve(), *(path.resolve() for path in packs),
+            ], root, 3600, run_id=run_id)
+        else:
+            shutil.copyfile(source_blend, target_blend)
+        if not target_blend.is_file() or target_blend.stat().st_size == 0:
+            raise ValueError("Blender project assembly produced no file")
     profile = None
     for blueprint in sources["blueprints"]:
         path = cooked / "Client/Content" / (blueprint + ".json")
@@ -957,6 +984,8 @@ def publication_files(job, output, summaries, *, packs=None):
         ("preview", output / "preview.glb", "unknown", "model/gltf-binary"),
         ("download", output / "character.glb", "unknown", "model/gltf-binary"),
     ]
+    if (output / "character.blend").is_file():
+        files.append(("blender", output / "character.blend", "unknown", "application/x-blender"))
     if job.include_animations:
         if packs:
             files.extend((pack["key"], output / model_file_name(pack["key"]), "unknown", "model/gltf-binary")

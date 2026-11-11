@@ -261,6 +261,15 @@ def job_payload():
     )
 
 
+def test_publication_includes_optional_blender_project(tmp_path):
+    job = worker.CharacterModelJob.model_validate(job_payload())
+    project = tmp_path / "character.blend"
+    project.write_bytes(b"test project")
+    files, count = worker.publication_files(job, tmp_path, {})
+    assert ("blender", project, "unknown", "application/x-blender") in files
+    assert count == 0
+
+
 def test_facial_publication_is_validated_against_the_body_animation_collection(tmp_path):
     job = worker.CharacterModelJob.model_validate({**job_payload(), "include_animations": True})
     animation_glb(tmp_path / "animations.glb")
