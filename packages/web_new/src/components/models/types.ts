@@ -18,6 +18,7 @@ export type ModelAssets = {
   id?: string;
   preview: ModelAsset | null;
   download: ModelAsset | null;
+  blender?: ModelAsset | null;
   physics: ModelAsset | null;
   animations?: ModelAsset | null;
   animation_packs?: AnimationPack[] | null;

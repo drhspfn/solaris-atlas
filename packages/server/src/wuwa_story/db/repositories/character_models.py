@@ -13,6 +13,7 @@ from wuwa_story.story.domain import version_key
 REFERENCE_TYPES = {
     "character_model_preview": "preview",
     "character_model_download": "download",
+    "character_model_blender": "blender",
     "character_model_physics": "physics",
     "character_model_animations": "animations",
     "character_model_facial": "facial",

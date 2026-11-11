@@ -347,6 +347,7 @@ async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeyp
         "game_version": "1.4.0",
         "preview": None,
         "download": None,
+        "blender": None,
         "physics": None,
         "animations": None,
         "animation_packs": [],
@@ -358,12 +359,16 @@ async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeyp
     rows.append(
         ("character_model_preview", "old", "objects/old-preview", 99, None, None, None, None)
     )
+    rows.append(
+        ("character_model_blender", "old", "objects/old-blender", 900, None, None, None, None)
+    )
     result = await service.public_character_model(AsyncMock(), 15, release)
     assert result["status"] == "ready"
     assert result["preview"] == {
         "url": "https://media.example/objects/old-preview",
         "size_bytes": 99,
     }
+    assert result["blender"]["size_bytes"] == 900
     rows.insert(
         1, ("character_model_download", "new", "objects/new-download", 250, None, None, None, None)
     )
@@ -372,6 +377,7 @@ async def test_public_bundle_does_not_mix_generations_or_expose_metadata(monkeyp
     assert result["animations"]["size_bytes"] == 500
     assert result["download"]["size_bytes"] == 250
     assert result["physics"] is None
+    assert result["blender"] is None
     assert result["viewer_url"] is None
     assert result["forms"] == [
         {
@@ -600,6 +606,7 @@ async def test_public_forms_keep_files_and_viewers_in_their_form(public_forms):
             "label",
             "preview",
             "download",
+            "blender",
             "physics",
             "animations",
             "animation_packs",
