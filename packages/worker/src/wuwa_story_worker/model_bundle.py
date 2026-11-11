@@ -460,9 +460,9 @@ def add_blender_studio(meshes):
     collection = bpy.data.collections.new('Solaris studio')
     bpy.context.scene.collection.children.link(collection)
     for name, offset, power in (
-        ('Key', (1.5, -2, 1.2), 500),
-        ('Fill', (-1.5, -1, .5), 180),
-        ('Rim', (0, 1.5, 1), 300),
+        ('Key', (1.5, -2, 1.2), 160),
+        ('Fill', (-1.5, -1, .5), 55),
+        ('Rim', (0, 1.5, 1), 90),
     ):
         light = bpy.data.lights.new('Solaris ' + name, 'AREA')
         light.energy = power * size * size
