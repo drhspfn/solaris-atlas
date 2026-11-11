@@ -409,6 +409,13 @@ def component_animation_skeletons(sources, cooked, skeleton):
     return result
 
 
+def use_smaller_preview(output, summaries):
+    if summaries["preview"]["bytes"] > summaries["download"]["bytes"]:
+        # Small textureless meshes can gain a few bytes during preview export.
+        shutil.copyfile(output / "character.glb", output / "preview.glb")
+        summaries["preview"] = glb_summary(output / "preview.glb")
+
+
 async def build_bundle(root, sources, include_animations=True, *, run_id=None, local_client=None,
                        animation_workers=1, report_progress=None, animation_cache=None, asset_cache=None,
                        animation_ownership=None):
@@ -925,8 +932,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
     if include_animations and animation_cache is None:
         summaries["animations"] = glb_summary(output / "animations.glb", allow_animations=True)
     summaries.update(pack_summaries)
-    if summaries["preview"]["bytes"] > summaries["download"]["bytes"]:
-        raise ValueError("Preview unexpectedly exceeds the full-resolution model")
+    use_smaller_preview(output, summaries)
     provenance = {
         "source_files": manifest["files"],
         "model": sources["model"],
