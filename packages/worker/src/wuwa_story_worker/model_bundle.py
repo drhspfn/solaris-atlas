@@ -473,6 +473,14 @@ def add_blender_studio(meshes):
         collection.objects.link(obj)
         obj.location = center + Vector(offset) * size
         obj.rotation_euler = (center - obj.location).to_track_quat('-Z', 'Y').to_euler()
+    if bpy.context.scene.camera is None:
+        camera = bpy.data.cameras.new('Solaris camera')
+        camera.lens = 50
+        obj = bpy.data.objects.new(camera.name, camera)
+        collection.objects.link(obj)
+        obj.location = center + Vector((0, -3.0, 0.1)) * size
+        obj.rotation_euler = (center - obj.location).to_track_quat('-Z', 'Y').to_euler()
+        bpy.context.scene.camera = obj
 
 
 def base_color_texture(metadata: dict, converted: Path, parent=None) -> tuple[str | None, Path | None]:
