@@ -9,6 +9,7 @@ import { attachAnimationCatalog, loadAnimationPacks, bindAnimationPacks, dispose
 import { declaredAccessories } from './accessories.js';
 import { createLinkedModels } from './linked-models.js';
 import { installHairStencil } from './hair-stencil.js';
+import { installEyeMaterials } from './eye-material.js';
 
 /** Dispose shared GPU resources once, including failed/obsolete model loads. */
 export function disposeObject(root) {
@@ -227,6 +228,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     if (model) { stage.remove(model); disposeObject(model); }
     gltf = loaded; model = loaded.scene; stage.add(model); prepareAnimatedMeshes(model);
     installHairStencil(model);
+    installEyeMaterials(model);
     if (!preview) model.traverse(node => {
       if (!node.isMesh) return;
       const materials = [node.material].flat();
