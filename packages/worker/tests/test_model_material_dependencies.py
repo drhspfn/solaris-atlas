@@ -100,6 +100,17 @@ def test_parallax_fetches_type_mask_without_region_id_mode(tmp_path):
     assert missing_material_resources(cooked, converted, ['Body']) == ['TailID', 'TailNormal']
 
 
+def test_eye_shader_fetches_authored_highlights_and_sdf(tmp_path):
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'Material': {'ObjectPath': '/Game/Eye.Eye'}}]}])
+    put(cooked, 'Eye', [{'Type': 'MaterialInstanceConstant', 'Properties': {}}])
+    put(converted, 'Eye', {'Switches': {'UseHeightLightShape': True, 'UseEyeSDF': True},
+                           'Textures': {name: {'ObjectPath': '/Game/' + name}
+                                        for name in ('HeightLightMap', 'EM', 'MaskTex')}})
+    assert missing_material_resources(cooked, converted, ['Body']) == ['EM', 'HeightLightMap', 'MaskTex']
+
+
 def test_follows_exact_shared_parent_and_texture_without_scanning_other_materials(tmp_path):
     cooked, converted = tmp_path / "cooked", tmp_path / "converted"
     put(cooked, "Body", [{"Type": "SkeletalMesh", "SkeletalMaterials": [

@@ -6,12 +6,12 @@ from wuwa_story_worker.model_bundle import base_color_texture, material_metadata
 from wuwa_story_worker.model_sources import exported_package
 
 
-def fur_material_resources(cooked, converted, source, metadata, names):
-    """Resolve authored overrides and master defaults for fur shader inputs."""
+def material_shader_resources(cooked, converted, source, metadata, names):
+    """Resolve authored overrides and master defaults for shader inputs."""
     references, missing, seen = {}, set(), set()
     while source.is_file():
         if source in seen:
-            raise ValueError('Cyclic fur material inheritance')
+            raise ValueError('Cyclic material inheritance')
         seen.add(source)
         rows = json.loads(source.read_text(encoding='utf-8-sig'))
         material = next((row for row in rows if row.get('Type') in
@@ -101,8 +101,12 @@ def missing_material_resources(cooked, converted, models, overrides=()):
                 and (resolved.get('Switches', {}).get('UseFurry') is True
                      or resolved.get('Switches', {}).get('UseFurryParallax') is True)):
             names.update({'RegionIDTex', 'TypeMask'})
+        if resolved.get('Switches', {}).get('UseHeightLightShape') is True:
+            names.update({'HeightLightMap', 'EM'})
+            if resolved.get('Switches', {}).get('UseEyeSDF') is True:
+                names.add('MaskTex')
         if names:
-            missing.update(fur_material_resources(cooked, converted, source, resolved, names))
+            missing.update(material_shader_resources(cooked, converted, source, resolved, names))
         if material_parent(rows) == "/Game/Aki/Render/Shaders/Character/M_WriteStencil":
             mask = material_metadata(metadata).get("Textures", {}).get("Mask", {}).get("ObjectPath")
             if mask:
