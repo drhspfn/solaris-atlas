@@ -433,6 +433,10 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
     monkeypatch.setattr(worker, "extract_model", extraction)
 
     async def blender(args, log, timeout):
+        if any(str(arg).endswith("blender_facial_attach.py") for arg in args):
+            assert export_blender and "--strict" in args
+            (tmp_path / "bundle/character-facial.blend").write_bytes(b"with face")
+            return
         if any(str(arg).endswith("blender_ueformat_actions.py") for arg in args):
             assert export_blender and include and clip_count
             assert args[args.index("--armature") + 1] == "Rig"
@@ -466,6 +470,11 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
                 (output / "blender-source.blend").write_bytes(b"source")
                 (output / "report.json").write_text(json.dumps({"blender_armature": "Rig"}))
             if include:
+                if export_blender and clip_count:
+                    (output / "facial.json").write_text(json.dumps({"format": "solaris-facial-v1", "clips": [{
+                        "name": "Face", "body_clip": "Clip0", "seconds": 1,
+                        "tracks": [{"target": "Smile", "keys": [[0, 0], [1, 1]]}],
+                    }]}))
                 (output / "animation-plan.json").write_text(
                     json.dumps({"clips": [{"name": f"Clip{i}",
                         "source": f"Client/Content/Aki/ActualAnim/Clip{i}.json"}
@@ -502,6 +511,8 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
     assert provenance["include_animations"] is exported_animations
     assert provenance["animation_batches"] == (clip_count + 19) // 20
     assert (tmp_path / "bundle/character.blend").is_file() is export_blender
+    if export_blender and exported_animations:
+        assert (tmp_path / "bundle/character.blend").read_bytes() == b"with face"
     if exported_animations:
         assert provenance["animations"]["animations"] == clip_count
         assert provenance["animation_coverage"]["playable_clips"] == clip_count

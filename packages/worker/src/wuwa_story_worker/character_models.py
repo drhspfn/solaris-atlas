@@ -886,6 +886,20 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
             shutil.copyfile(source_blend, target_blend)
         if not target_blend.is_file() or target_blend.stat().st_size == 0:
             raise ValueError("Blender project assembly produced no file")
+        facial_path = output / "facial.json"
+        if include_animations and facial_path.is_file() and json.loads(
+            facial_path.read_text(encoding="utf-8")
+        ).get("clips"):
+            await progress("assemble_blender_facial")
+            facial_blend = output / "character-facial.blend"
+            await run_blender([
+                blender, "-b", target_blend.resolve(), "--python-exit-code", "1", "--python",
+                Path(__file__).with_name("blender_facial_attach.py").resolve(), "--",
+                facial_path.resolve(), facial_blend.resolve(), "--strict",
+            ], root, 3600, run_id=run_id)
+            if not facial_blend.is_file() or facial_blend.stat().st_size == 0:
+                raise ValueError("Blender facial assembly produced no file")
+            facial_blend.replace(target_blend)
     profile = None
     for blueprint in sources["blueprints"]:
         path = cooked / "Client/Content" / (blueprint + ".json")
