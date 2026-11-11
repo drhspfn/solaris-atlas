@@ -17,6 +17,7 @@ from wuwa_story_worker.model_bundle import (
     build_animation_plan,
     canonical_animation_rig,
     effect_space_only,
+    empty_effect_material_slots,
     equivalent_skeletons,
     face_atlas_transform,
     file_sha256,
@@ -35,6 +36,23 @@ from wuwa_story_worker.model_bundle import (
     same_rest_skeleton,
     uses_animation_translation,
 )
+
+
+def test_empty_effect_material_slots_require_explicit_null_source(tmp_path):
+    converted = tmp_path / 'converted'
+    source = tmp_path / 'source'
+    relative = Path('Client/Content/Aki/Effect/SkeletalMesh/Fx.uemodel')
+    model = converted / relative
+    metadata = (source / relative).with_suffix('.json')
+    metadata.parent.mkdir(parents=True)
+    metadata.write_text(json.dumps([{'Type': 'SkeletalMesh', 'Name': 'Fx', 'SkeletalMaterials': [
+        {'MaterialSlotName': 'None', 'Material': None},
+        {'MaterialSlotName': 'Body', 'Material': {'ObjectPath': 'missing'}},
+        {'MaterialSlotName': 'None'},
+    ]}]))
+    assert empty_effect_material_slots(model, converted, source) == {0}
+    assert empty_effect_material_slots(converted / 'Client/Content/Aki/Character/Fx.uemodel', converted, source) == set()
+    assert empty_effect_material_slots(converted / 'Client/Content/Aki/Effect/Other.uemodel', converted, source) == set()
 
 
 def test_equivalent_skeletons_require_hierarchy_and_complete_finite_rest_pose():
