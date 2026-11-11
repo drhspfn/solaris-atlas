@@ -63,12 +63,12 @@ def pack_material_inventory(material, inventory, converted_root):
                     # A prior packed image may no longer have an accessible filepath.
                     # Store its canonical source so repeated calls reuse the datablock.
                     image = next((item for item in bpy.data.images
-                                  if item.get('solaris_inventory_path') == str(path)), None)
+                                  if item.get('solaris_inventory_path') == relative), None)
                     if image is None:
                         image = bpy.data.images.load(str(path), check_existing=True)
                     image.pack()
                     image.use_fake_user = True
-                    image['solaris_inventory_path'] = str(path)
+                    image['solaris_inventory_path'] = relative
                     record['blender_image'] = image.name
         result['textures'][name] = record
     material['solaris_material_inventory'] = json.dumps(result, ensure_ascii=False, sort_keys=True)
