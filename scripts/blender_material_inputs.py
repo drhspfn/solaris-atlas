@@ -75,6 +75,43 @@ def animate_wave_uv(nodes, links, image_node, metadata):
     return True
 
 
+def animate_illustration_uv(nodes, links, available, metadata):
+    """Approximate the authored animated-noise UV distortion of an atlas."""
+    noise = available.get('Noise')
+    uv = (metadata.get('Colors') or {}).get('Noise_UV')
+    scalars = metadata.get('Scalars') or {}
+    strength = scalars.get('Noise_Strength')
+    if (noise is None or wave_uv_parameters({'Colors': {'Base_UV': uv}}) is None
+            or type(strength) not in (int, float) or not math.isfinite(strength)
+            or not 0 < strength <= .1):
+        return False
+    noise.image = noise.image.copy()
+    noise.image.colorspace_settings.name = 'Non-Color'
+    noise.image.alpha_mode = 'CHANNEL_PACKED'
+    noise.image.pack()
+    animate_wave_uv(nodes, links, noise, {'Colors': {'Base_UV': uv}})
+    separate = nodes.new('ShaderNodeSeparateColor')
+    links.new(noise.outputs['Color'], separate.inputs['Color'])
+    offset = nodes.new('ShaderNodeCombineXYZ')
+    offset.label = 'Approximation: animated atlas distortion'
+    for source, target in (('Red', 'X'), ('Green', 'Y')):
+        component = nodes.new('ShaderNodeMath')
+        component.operation = 'MULTIPLY_ADD'
+        component.inputs[1].default_value = strength
+        component.inputs[2].default_value = -strength / 2
+        links.new(separate.outputs[source], component.inputs[0])
+        links.new(component.outputs[0], offset.inputs[target])
+    coords = nodes.new('ShaderNodeTexCoord')
+    distort = nodes.new('ShaderNodeVectorMath')
+    distort.operation = 'ADD'
+    links.new(coords.outputs['UV'], distort.inputs[0])
+    links.new(offset.outputs['Vector'], distort.inputs[1])
+    for key in ('Base', 'Second'):
+        if key in available:
+            links.new(distort.outputs['Vector'], available[key].inputs['Vector'])
+    return True
+
+
 def add_approximate_shading(material, shader, available, metadata):
     """Build editable approximations; none of these nodes are decoded UE graphs."""
     nodes, links = material.node_tree.nodes, material.node_tree.links
@@ -196,6 +233,9 @@ def add_approximate_shading(material, shader, available, metadata):
             applied.append('water_bump_artistic')
             applied.append('water_gradient_lookup_artistic')
         elif switches.get('UseSecondTex') is True and second:
+            if (switches.get('UseSecondMask') is True and switches.get('UseNoise') is True
+                    and animate_illustration_uv(nodes, links, available, metadata)):
+                applied.append('illustration_animated_noise_artistic')
             layer = nodes.new('ShaderNodeMixRGB')
             layer.blend_type = 'ADD'
             layer.label = 'Approximation: second texture layer'
