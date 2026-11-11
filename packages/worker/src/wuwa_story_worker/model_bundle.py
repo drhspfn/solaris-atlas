@@ -422,6 +422,27 @@ def stencil_mask_payload(models, converted, cooked):
     return {'format': 'solaris-hair-stencil-v1', 'masks': masks, 'readers': readers} if masks else None
 
 
+def eye_material_payload(metadata, converted):
+    """Preserve authored eye inputs for consumers that support their shader."""
+    if not metadata.get('Switches', {}).get('UseHeightLightShape'):
+        return None
+    textures = {}
+    root = converted.resolve()
+    for name in ('HeightLightMap', 'EM', 'MaskTex'):
+        reference = (metadata.get('Textures', {}).get(name) or {}).get('ObjectPath')
+        if not reference:
+            continue
+        path = reference.replace('\\', '/').split('.', 1)[0]
+        if path.startswith('/Game/'):
+            path = 'Client/Content/' + path[6:]
+        image = (root / (path + '.png')).resolve()
+        if not image.is_relative_to(root) or not image.is_file():
+            continue
+        textures[name] = {'source': reference, 'data_base64': base64.b64encode(image.read_bytes()).decode('ascii')}
+    return {'format': 'solaris-eye-material-v1', 'textures': textures,
+            'scalars': metadata.get('Scalars', {}), 'switches': metadata.get('Switches', {})}
+
+
 def base_color_texture(metadata: dict, converted: Path, parent=None) -> tuple[str | None, Path | None]:
     metadata = material_metadata(metadata)
     textures = metadata.get("Textures", {})
@@ -1238,6 +1259,9 @@ def main():
             report["missing_textures"].append({"material": material.name, "reference": reference})
         material.use_nodes = True
         shader = material.node_tree.nodes.get("Principled BSDF")
+        eye_payload = eye_material_payload(metadata, args.converted)
+        if eye_payload:
+            material['solaris_eye_material'] = json.dumps(eye_payload, separators=(',', ':'))
         shader.inputs["Roughness"].default_value = 0.85
         shader.inputs["Metallic"].default_value = 0
         if texture:

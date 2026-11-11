@@ -1208,3 +1208,18 @@ def test_empty_component_plan_only_when_no_matching_sources(tmp_path):
         return SimpleNamespace(object_path="clip", object_name="Clip"), dto
     with pytest.raises(ValueError, match="No verified"):
         build_animation_plan(model, converted, "rig", source, {"root"}, read, allow_empty=True)
+def test_eye_material_payload_keeps_authored_inputs_and_rejects_escape(tmp_path):
+    import base64
+    from wuwa_story_worker.model_bundle import eye_material_payload
+
+    image = tmp_path / 'Client/Content/Eyes/Highlight.png'
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b'eye image')
+    metadata = {'Switches': {'UseHeightLightShape': True}, 'Scalars': {'EyeScale': .8},
+                'Textures': {'HeightLightMap': {'ObjectPath': '/Game/Eyes/Highlight.Highlight'},
+                             'EM': {'ObjectPath': '../../outside'}}}
+    payload = eye_material_payload(metadata, tmp_path)
+    assert payload['scalars']['EyeScale'] == .8
+    assert base64.b64decode(payload['textures']['HeightLightMap']['data_base64']) == b'eye image'
+    assert 'EM' not in payload['textures']
+    assert eye_material_payload({'Switches': {}}, tmp_path) is None
