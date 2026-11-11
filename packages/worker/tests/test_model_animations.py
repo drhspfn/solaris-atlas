@@ -384,12 +384,13 @@ async def test_claim_accepts_legacy_payload_but_rejects_changed_animation_reques
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "include,clip_count,fail_batch",
-    [(False, 0, False), (True, 1, False), (True, 41, False), (True, 41, True)],
+    "include,clip_count,fail_batch,component",
+    [(False, 0, False, False), (True, 1, False, False), (True, 41, False, False),
+     (True, 41, True, False), (True, 0, False, True), (True, 1, False, True)],
 )
 @pytest.mark.parametrize("animation_workers", [1, 3])
 async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
-    tmp_path, monkeypatch, include, clip_count, fail_batch, animation_workers
+    tmp_path, monkeypatch, include, clip_count, fail_batch, component, animation_workers
 ):
     model = "Aki/Character/Role/FemaleM/Test/Variant/Model/Rig"
     cooked = tmp_path / "source-json"
@@ -419,6 +420,7 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
 
     async def blender(args, log, timeout):
         assert args[args.index("--skeleton") + 1] == "/Game/Aki/ActualSkeleton"
+        assert ("--allow-empty-component-animations" in args) is component
         assert "--with-animations" not in args
         output = tmp_path / "bundle"
         if "--animation-batch" in args:
@@ -465,15 +467,17 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
             )
         assert not (tmp_path / "bundle/animations.glb").exists()
         return
+    sources = {"model": model, "blueprints": [], **({"component": {"bindings": []}} if component else {})}
     _, summaries, provenance = await worker.build_bundle(
-        tmp_path, {"model": model, "blueprints": []}, include_animations=include,
+        tmp_path, sources, include_animations=include,
         animation_workers=animation_workers,
     )
     assert extraction.call_args.args[-1] is include
-    assert ("animations" in summaries) is include
-    assert provenance["include_animations"] is include
+    exported_animations = include and bool(clip_count)
+    assert ("animations" in summaries) is exported_animations
+    assert provenance["include_animations"] is exported_animations
     assert provenance["animation_batches"] == (clip_count + 19) // 20
-    if include:
+    if exported_animations:
         assert provenance["animations"]["animations"] == clip_count
         assert provenance["animation_coverage"]["playable_clips"] == clip_count
 

@@ -1126,3 +1126,27 @@ def test_plan_skips_foreign_skeleton_before_dto_validation(tmp_path):
     plan = build_animation_plan(model, converted, "rig", sources, {"root"}, read)
     assert [clip["file"] for clip in plan["clips"]] == ["owned.ueanim"]
     assert plan["animation_coverage"]["matching_sources"] == 1
+
+
+def test_empty_component_plan_only_when_no_matching_sources(tmp_path):
+    model = tmp_path / "model.uemodel"
+    model.touch()
+    converted = tmp_path / "converted"
+    converted.mkdir()
+    foreign = {"foreign": {"matches_skeleton": False, "source": "foreign.json"}}
+    plan = build_animation_plan(model, converted, "rig", foreign, {"root"}, None, allow_empty=True)
+    assert plan["clips"] == []
+    assert plan["animation_coverage"]["matching_sources"] == 0
+    with pytest.raises(ValueError, match="No verified"):
+        build_animation_plan(model, converted, "rig", foreign, {"root"}, None)
+    source = {"clip": {"matches_skeleton": True, "source": "clip.json", "name": "Clip"}}
+    with pytest.raises(ValueError, match="Missing matching animation exports"):
+        build_animation_plan(model, converted, "rig", source, {"root"}, None, allow_empty=True)
+    (converted / "clip.ueanim").touch()
+    dto = SimpleNamespace(metadata=SimpleNamespace(num_frames=2, frames_per_second=30,
+                                                    additive_anim_type=1),
+                          tracks=[SimpleNamespace(name="root")], curves=[])
+    def read(*_):
+        return SimpleNamespace(object_path="clip", object_name="Clip"), dto
+    with pytest.raises(ValueError, match="No verified"):
+        build_animation_plan(model, converted, "rig", source, {"root"}, read, allow_empty=True)

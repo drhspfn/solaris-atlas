@@ -140,7 +140,7 @@ def validate_animation_bones(dto, bone_names):
 
 def build_animation_plan(
     model, converted, skeleton, sources, bone_names, read_animation, animation=None, morph_names=(),
-    source_root=None,
+    source_root=None, allow_empty=False,
 ):
     """Decode one DTO at a time; never allocate Blender actions during preflight."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -213,7 +213,7 @@ def build_animation_plan(
     missing = missing_animation_sources(sources, seen)
     if missing:
         raise ValueError(f"Missing matching animation exports: {missing}")
-    if not clips:
+    if not clips and (not allow_empty or any(row["matches_skeleton"] for row in sources.values())):
         raise ValueError("No verified, non-additive animation tracks available")
     return {
         "schema_version": 1,
@@ -648,6 +648,7 @@ def main():
     parser.add_argument('--bone-visibility', type=Path)
     parser.add_argument('--animation-ownership', type=Path)
     parser.add_argument('--component-animation-bindings', type=Path)
+    parser.add_argument('--allow-empty-component-animations', action='store_true')
     parser.add_argument('--shared-animation-rig', action='store_true')
     parser.add_argument("--converted", type=Path, required=True)
     parser.add_argument("--source-json", type=Path, required=True)
@@ -982,6 +983,7 @@ def main():
                 for key in list(mesh.data.shape_keys.key_blocks)[1:]
             },
             source_root=args.source_json,
+            allow_empty=args.allow_empty_component_animations and not bound_keys,
         )
         require_bound_animations(plan, bound_keys)
         # The skeleton reference alone does not establish identical bind poses.

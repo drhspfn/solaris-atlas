@@ -723,6 +723,8 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         bindings_path = root / "component-animation-bindings.json"
         bindings_path.write_text(json.dumps(component_animations), encoding="utf-8")
         command.extend(["--component-animation-bindings", bindings_path.resolve()])
+    if sources.get("component"):
+        command.append("--allow-empty-component-animations")
     if animation_cache is not None:
         command.append("--shared-animation-rig")
     if sources.get("animation_ownership"):
@@ -740,6 +742,9 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
     pack_descriptors, pack_summaries = [], {}
     if include_animations:
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        if sources.get("component") and not plan["clips"]:
+            include_animations = False
+    if include_animations:
         if animation_cache is not None:
             recipe = fingerprint([sha256(converter), sha256(blender),
                                   sha256(Path(__file__).with_name("model_bundle.py")),
