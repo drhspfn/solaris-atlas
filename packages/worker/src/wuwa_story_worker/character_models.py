@@ -931,6 +931,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         "preview_texture_size": 512,
         "include_animations": include_animations,
         "animation_batches": batch_count,
+        "blender_project": export_blender,
     }
     if pack_descriptors:
         provenance["animation_packs"] = pack_descriptors
