@@ -358,6 +358,15 @@ def test_fur_card_preview_excludes_mixed_tail_and_regular_materials():
     assert not uses_fur_vertex_mask({'Switches': mixed['Switches'], 'Scalars': {}})
 
 
+def test_fur_uses_third_uv_only_when_available_for_every_mesh():
+    from wuwa_story_worker.model_bundle import fur_uv_name
+    def mesh(*names):
+        return SimpleNamespace(data=SimpleNamespace(uv_layers=[SimpleNamespace(name=n) for n in names]))
+    assert fur_uv_name([mesh('UV0', 'UV1', 'UV2')]) == 'UV2'
+    assert fur_uv_name([mesh('UV0', 'UV1')]) is None
+    assert fur_uv_name([mesh('UV0', 'UV1', 'UV2'), mesh('UV0', 'UV1', 'other')]) is None
+
+
 def test_animation_container_names_are_form_independent_without_renaming_joints():
     rigs = [SimpleNamespace(name=name, data=SimpleNamespace(name=name, bones=[
         SimpleNamespace(name="root"), SimpleNamespace(name="SolarisAnimationRig"),

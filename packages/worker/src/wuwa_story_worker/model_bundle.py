@@ -558,7 +558,14 @@ def uses_fur_vertex_mask(metadata):
             and scalars.get('UseVertexAMask') == 1 and scalars.get('FurBlendUseVertexRFade') == 1)
 
 
-def add_fur_preview(material, shader, metadata, converted, *, secondary_uv=None, vertex_color=None):
+def fur_uv_name(meshes):
+    """Use a common third UV set only when every participating mesh has one."""
+    names = {mesh.data.uv_layers[2].name for mesh in meshes if len(mesh.data.uv_layers) > 2}
+    return (next(iter(names)) if meshes and len(names) == 1
+            and all(len(mesh.data.uv_layers) > 2 for mesh in meshes) else None)
+
+
+def add_fur_preview(material, shader, metadata, converted, *, fur_uv=None, vertex_color=None):
     """Approximate authored fur texture as relief, retaining an opaque base.
 
     This is an editable Blender preview, not the decoded game shader or fur shells.
@@ -591,12 +598,12 @@ def add_fur_preview(material, shader, metadata, converted, *, secondary_uv=None,
     bump.inputs['Distance'].default_value = .002
     links.new(tex.outputs['Color'], bump.inputs['Height'])
     links.new(bump.outputs['Normal'], shader.inputs['Normal'])
-    if secondary_uv and (uses_fur_card_mask(metadata) or (vertex_color and uses_fur_vertex_mask(metadata))):
-        # The second UV samples the strand atlas. Mixed parallax surfaces also
+    if fur_uv and (uses_fur_card_mask(metadata) or (vertex_color and uses_fur_vertex_mask(metadata))):
+        # The third UV samples the strand atlas. Mixed parallax surfaces also
         # need their vertex alpha to retain the base. This remains an approximation.
         uv = nodes.new('ShaderNodeUVMap')
-        uv.uv_map = secondary_uv
-        uv.label = 'Fur card UV (second UV set)'
+        uv.uv_map = fur_uv
+        uv.label = 'Fur card UV (third UV set)'
         links.new(uv.outputs['UV'], tex.inputs['Vector'])
         opacity = tex.outputs['Color']
         if vertex_color and uses_fur_vertex_mask(metadata):
@@ -1279,14 +1286,12 @@ def main():
                 material.node_tree.links.new(alpha, shader.inputs["Alpha"])
                 material.surface_render_method = "DITHERED"
         users = [mesh for mesh in meshes if material in mesh.data.materials[:]]
-        uv_names = {mesh.data.uv_layers[1].name for mesh in users if len(mesh.data.uv_layers) > 1}
-        secondary_uv = (next(iter(uv_names)) if users and len(uv_names) == 1
-                        and all(len(mesh.data.uv_layers) > 1 for mesh in users) else None)
+        fur_uv = fur_uv_name(users)
         color_names = {mesh.data.color_attributes[0].name for mesh in users if mesh.data.color_attributes}
         vertex_color = (next(iter(color_names)) if users and len(color_names) == 1
                         and all(mesh.data.color_attributes for mesh in users) else None)
         fur_preview = add_fur_preview(material, shader, metadata, args.converted,
-                                      secondary_uv=secondary_uv, vertex_color=vertex_color)
+                                      fur_uv=fur_uv, vertex_color=vertex_color)
         report["materials"].append(
             {"name": material.name, "texture": str(texture) if texture else None,
              "fur_preview": fur_preview}
