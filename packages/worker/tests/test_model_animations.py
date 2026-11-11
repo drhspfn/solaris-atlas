@@ -398,9 +398,11 @@ async def test_claim_accepts_legacy_payload_but_rejects_changed_animation_reques
      (True, 41, True, False), (True, 0, False, True), (True, 1, False, True)],
 )
 @pytest.mark.parametrize("animation_workers", [1, 3])
+@pytest.mark.parametrize("export_blender", [False, True])
 async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
-    tmp_path, monkeypatch, include, clip_count, fail_batch, component, animation_workers
+    tmp_path, monkeypatch, include, clip_count, fail_batch, component, animation_workers, export_blender
 ):
+    monkeypatch.setenv("WUWA_MODEL_BLENDER_EXPORT", "true" if export_blender else "false")
     model = "Aki/Character/Role/FemaleM/Test/Variant/Model/Rig"
     cooked = tmp_path / "source-json"
     metadata = cooked / "Client/Content" / (model + ".json")
@@ -428,6 +430,11 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
     monkeypatch.setattr(worker, "extract_model", extraction)
 
     async def blender(args, log, timeout):
+        if any(str(arg).endswith("blender_ueformat_actions.py") for arg in args):
+            assert export_blender and include and clip_count
+            assert args[args.index("--armature") + 1] == "Rig"
+            (tmp_path / "bundle/character.blend").write_bytes(b"assembled")
+            return
         assert args[args.index("--skeleton") + 1] == "/Game/Aki/ActualSkeleton"
         assert ("--allow-empty-component-animations" in args) is component
         assert "--with-animations" not in args
@@ -451,6 +458,10 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
             animation_glb(parts / f"part-{index:04d}.glb", names)
         else:
             assert "--rig-only" in args
+            if export_blender:
+                assert "--blender-source" in args
+                (output / "blender-source.blend").write_bytes(b"source")
+                (output / "report.json").write_text(json.dumps({"blender_armature": "Rig"}))
             if include:
                 (output / "animation-plan.json").write_text(
                     json.dumps({"clips": [{"name": f"Clip{i}",
@@ -458,7 +469,8 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
                         for i in range(clip_count)]})
                 )
                 (output / "report.json").write_text(
-                    json.dumps({"animation_coverage": {"playable_clips": clip_count}})
+                    json.dumps({"animation_coverage": {"playable_clips": clip_count},
+                                **({"blender_armature": "Rig"} if export_blender else {})})
                 )
 
     real_summary = worker.glb_summary
@@ -486,6 +498,7 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
     assert ("animations" in summaries) is exported_animations
     assert provenance["include_animations"] is exported_animations
     assert provenance["animation_batches"] == (clip_count + 19) // 20
+    assert (tmp_path / "bundle/character.blend").is_file() is export_blender
     if exported_animations:
         assert provenance["animations"]["animations"] == clip_count
         assert provenance["animation_coverage"]["playable_clips"] == clip_count
