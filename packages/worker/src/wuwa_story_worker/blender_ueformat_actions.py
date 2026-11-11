@@ -123,7 +123,9 @@ def assemble(source_path, output_path, part_paths, armature_name=None, tolerance
     target.animation_data_create()
     check = load_compatibility_check()
     count = 0
-    with tempfile.TemporaryDirectory(prefix='solaris-blender-actions-') as temp:
+    # Keep filtered animation packs on the same provisioned workspace as the
+    # model, rather than potentially filling a small system temporary volume.
+    with tempfile.TemporaryDirectory(prefix='solaris-blender-actions-', dir=Path(output_path).parent) as temp:
         for index, path in enumerate(part_paths):
             clips = selected[Path(path)]
             if not clips:
