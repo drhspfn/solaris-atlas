@@ -85,3 +85,21 @@ at different frames with the fan skeleton animation disabled; it is not a
 proof that the game's timing or deformation matches. Material displacement
 support differs by renderer and Blender version; see the
 [Blender displacement documentation](https://docs.blender.org/manual/en/latest/render/materials/components/displacement.html).
+
+The mountains material also enables `UseNoise`; its `Noise_UV` and
+`Noise_Strength` values drive bounded animated UV distortion for both atlas
+layers in the preview. This approximates movement, not the original four-layer
+parallax or a verified flow reconstruction.
+
+For a reusable first lighting stage, `scripts/blender_studio_lighting.py`
+creates a new scene file with three adjustable area lights and an ambient world.
+It scales the lights to visible mesh bounds and orients them relative to the
+camera. Existing lights are hidden only in the output copy. This is a studio
+approximation, not game-wide recovered lighting, and has not been integrated
+into the worker's model packages.
+
+The cooked character data contains `Bangs_HETA`, `Face_HET` and `Eye_HET`
+passes. The latter two use `M_WriteStencil` and face/eye masks; the hair pass
+has `IsHairHET` set. This supports a mask-based technique rather than making
+every strand transparent. The exact depth/stencil interaction and a Blender
+equivalent remain unverified and are not enabled.
