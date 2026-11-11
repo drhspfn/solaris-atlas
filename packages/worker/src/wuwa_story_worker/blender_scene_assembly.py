@@ -9,6 +9,36 @@ import sys
 from pathlib import Path
 
 
+# Only datablocks created by the temporary import are candidates for cleanup.
+TEMPORARY_DATA = ('collections', 'meshes', 'curves', 'armatures', 'cameras',
+                  'lights', 'materials', 'node_groups', 'textures', 'images')
+
+
+def snapshot_temporary_data(bpy):
+    return {name: set(getattr(bpy.data, name)) for name in TEMPORARY_DATA}
+
+
+def cleanup_temporary_data(bpy, before):
+    """Remove only new, unused import data; never purge pre-existing orphans."""
+    changed = True
+    while changed:
+        changed = False
+        for name in TEMPORARY_DATA:
+            data = getattr(bpy.data, name)
+            for item in set(data) - before[name]:
+                if name == 'collections':
+                    # An importer can link a new collection to the scene. Do not
+                    # unlink it if it holds anything (including original data).
+                    if item.objects or item.children or item.users > 1:
+                        continue
+                    data.remove(item, do_unlink=True)
+                elif item.users == 0:
+                    data.remove(item)
+                else:
+                    continue
+                changed = True
+
+
 def incompatible_skeletons(base, incoming, tolerance=1e-5):
     """Compare armature objects in world space as well as every bone rest pose."""
     if set(base.data.bones.keys()) != set(incoming.data.bones.keys()):
@@ -44,6 +74,7 @@ def assemble(rig_path, part_paths, output_path):
     for path in part_paths:
         before_objects = set(bpy.data.objects)
         before_actions = set(bpy.data.actions)
+        before_data = snapshot_temporary_data(bpy)
         bpy.ops.import_scene.gltf(filepath=str(path))
         imported = set(bpy.data.objects) - before_objects
         rigs = [o for o in imported if o.type == 'ARMATURE']
@@ -71,6 +102,7 @@ def assemble(rig_path, part_paths, output_path):
             count += 1
         for obj in imported:
             bpy.data.objects.remove(obj, do_unlink=True)
+        cleanup_temporary_data(bpy, before_data)
         print(f"ASSEMBLY {path}: {len(actions)} actions", flush=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(output_path))
     print('ASSEMBLY_RESULT ' + json.dumps({'actions': count, 'output': str(output_path)}), flush=True)
