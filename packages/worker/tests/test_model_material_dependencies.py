@@ -81,6 +81,29 @@ def test_authored_stencil_mask_is_fetched_and_preserved_with_its_slot(tmp_path):
     assert base64.b64decode(payload['masks'][0]['data_base64']) == b'mask image'
 
 
+def test_stencil_reader_must_be_an_authored_hair_pass_with_an_authored_parent(tmp_path):
+    from wuwa_story_worker.model_bundle import stencil_mask_payload
+
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    model = converted / 'Client/Content/Body.uemodel'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'MaterialSlotName': 'MI_Bangs', 'Material': {'ObjectPath': '/Game/Bangs.0'}},
+        {'MaterialSlotName': 'HETA_Bangs', 'Material': {'ObjectPath': '/Game/HairPass.0'}},
+        {'MaterialSlotName': 'HET_Face', 'Material': {'ObjectPath': '/Game/Face_HET.0'}},
+        {'MaterialSlotName': 'MI_Face', 'Material': {'ObjectPath': '/Game/Face.0'}}]}])
+    put(cooked, 'HairPass', [{'Type': 'MaterialInstanceConstant', 'Properties': {
+        'Parent': {'ObjectPath': '/Game/Bangs.0'}}}])
+    put(converted, 'HairPass', {'Switches': {'IsHairHET': True}})
+    put(cooked, 'Face_HET', [{'Type': 'MaterialInstanceConstant', 'Properties': {
+        'Parent': {'ObjectPath': '/Game/Aki/Render/Shaders/Character/M_WriteStencil'}}}])
+    put(converted, 'Face_HET', {'Textures': {'Mask': {'ObjectPath': '/Game/FaceMask.0'}}})
+    image = converted / 'Client/Content/FaceMask.png'
+    image.write_bytes(b'mask')
+    result = stencil_mask_payload([model], converted, cooked)
+    assert result['readers'][0]['material'] == '/Game/Bangs'
+    assert result['masks'][0]['target_material'] == '/Game/Face'
+
+
 @pytest.mark.parametrize('family', ['WaterMatCap', 'ParallaxSubUV'])
 def test_effect_base_dependency_requires_known_parent(tmp_path, family):
     from wuwa_story_worker.model_bundle import inherited_base_color_texture

@@ -373,7 +373,7 @@ def stencil_mask_payload(models, converted, cooked):
             raise ValueError('Invalid stencil resource path')
         return Path(*parts)
 
-    masks = []
+    masks, readers = [], []
     for model in models:
         relative = model.relative_to(converted).with_suffix('.json')
         source = cooked / relative
@@ -382,7 +382,10 @@ def stencil_mask_payload(models, converted, cooked):
         for row in json.loads(source.read_text(encoding='utf-8-sig')):
             if row.get('Type') not in {'SkeletalMesh', 'StaticMesh'}:
                 continue
-            for slot in row.get('SkeletalMaterials', row.get('StaticMaterials', [])):
+            slots = row.get('SkeletalMaterials', row.get('StaticMaterials', []))
+            authored = {(slot.get('Material') or slot.get('MaterialInterface') or {}).get('ObjectPath', '').split('.', 1)[0]
+                        for slot in slots}
+            for slot in slots:
                 ref = (slot.get('Material') or slot.get('MaterialInterface') or {}).get('ObjectPath')
                 if not ref:
                     continue
@@ -391,17 +394,24 @@ def stencil_mask_payload(models, converted, cooked):
                 if not raw.is_file():
                     continue
                 rows = json.loads(raw.read_text(encoding='utf-8-sig'))
-                if material_parent(rows) != '/Game/Aki/Render/Shaders/Character/M_WriteStencil':
+                parent = material_parent(rows)
+                if str(slot.get('MaterialSlotName', '')).startswith('HETA_') and parent in authored:
+                    metadata = material_metadata(json.loads((converted / path).read_text(encoding='utf-8-sig')))
+                    if metadata.get('Switches', {}).get('IsHairHET') is True:
+                        readers.append({'mesh': relative.as_posix(), 'material': parent})
+                if parent != '/Game/Aki/Render/Shaders/Character/M_WriteStencil':
                     continue
                 metadata = material_metadata(json.loads((converted / path).read_text(encoding='utf-8-sig')))
                 mask = metadata.get('Textures', {}).get('Mask', {}).get('ObjectPath')
                 if not mask:
                     continue
                 image = converted / resource(mask).with_suffix('.png')
+                base = ref.split('.', 1)[0].removesuffix('_HET')
                 masks.append({'mesh': relative.as_posix(), 'slot': slot.get('MaterialSlotName'),
+                              'target_material': base if base in authored else None,
                               'material': ref, 'texture': mask, 'mime_type': 'image/png',
                               'data_base64': base64.b64encode(image.read_bytes()).decode('ascii')})
-    return {'format': 'solaris-hair-stencil-v1', 'masks': masks} if masks else None
+    return {'format': 'solaris-hair-stencil-v1', 'masks': masks, 'readers': readers} if masks else None
 
 
 def base_color_texture(metadata: dict, converted: Path, parent=None) -> tuple[str | None, Path | None]:
