@@ -368,6 +368,7 @@ def test_denia_skin_passes_do_not_cut_neck_but_cloth_and_other_characters_keep_m
         assert not base_color_alpha_is_opacity(name, skin)
         assert base_color_alpha_is_opacity(name, {"BlendMode": 1})
     assert base_color_alpha_is_opacity("MI_R2T1DaniyaMd10011Cloth", skin)
+    assert not base_color_alpha_is_opacity("MI_R2T1LuoselaMd10011Up1", skin)
     assert base_color_alpha_is_opacity("MI_OtherCharacterUp01", skin)
     assert base_color_alpha_is_opacity("Hair", {"BlendMode": 2})
     assert not base_color_alpha_is_opacity("Tail", {"BlendMode": 1, "Switches": {"UseFurry": True}})

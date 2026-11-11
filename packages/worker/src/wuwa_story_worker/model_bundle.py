@@ -636,11 +636,12 @@ def base_color_alpha_is_opacity(material_name: str, metadata: dict) -> bool:
         # Fur opacity is composed with additional masks and parallax in-game;
         # applying the engine's generic cutoff to MainTex alpha removes the base.
         return False
-    if material_name in {"MI_R2T1DaniyaMd10011Up01", "MI_R2T1DaniyaMd10011Up02"} and (
+    if material_name in {"MI_R2T1DaniyaMd10011Up01", "MI_R2T1DaniyaMd10011Up02",
+                         "MI_R2T1LuoselaMd10011Up1"} and (
         metadata.get("Switches", {}).get("UseOnlySkinRampColor") is True
     ):
-        # Verified against both cooked skin passes and before/after renders.
-        # Their diffuse alpha clips the neck; retain cloth/hair mask behavior.
+        # Direct clipping removes visible body sections on these skin passes;
+        # their full game opacity formula is not established. Keep cloth/hair masks.
         return False
     return metadata.get("BlendMode") in {1, 2}
 
