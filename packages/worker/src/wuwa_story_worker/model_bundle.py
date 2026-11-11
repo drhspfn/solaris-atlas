@@ -443,6 +443,37 @@ def eye_material_payload(metadata, converted):
             'scalars': metadata.get('Scalars', {}), 'switches': metadata.get('Switches', {})}
 
 
+def add_blender_studio(meshes):
+    """Add adjustable lighting around the exported model in the Blender file."""
+    import bpy
+    from mathutils import Vector
+
+    points = [mesh.matrix_world @ Vector(corner) for mesh in meshes for corner in mesh.bound_box]
+    if not points:
+        return
+    low = Vector(tuple(min(p[i] for p in points) for i in range(3)))
+    high = Vector(tuple(max(p[i] for p in points) for i in range(3)))
+    center = (low + high) * .5
+    size = max(high - low)
+    if not math.isfinite(size) or size <= 0:
+        return
+    collection = bpy.data.collections.new('Solaris studio')
+    bpy.context.scene.collection.children.link(collection)
+    for name, offset, power in (
+        ('Key', (1.5, -2, 1.2), 500),
+        ('Fill', (-1.5, -1, .5), 180),
+        ('Rim', (0, 1.5, 1), 300),
+    ):
+        light = bpy.data.lights.new('Solaris ' + name, 'AREA')
+        light.energy = power * size * size
+        light.shape = 'DISK'
+        light.size = size
+        obj = bpy.data.objects.new(light.name, light)
+        collection.objects.link(obj)
+        obj.location = center + Vector(offset) * size
+        obj.rotation_euler = (center - obj.location).to_track_quat('-Z', 'Y').to_euler()
+
+
 def base_color_texture(metadata: dict, converted: Path, parent=None) -> tuple[str | None, Path | None]:
     metadata = material_metadata(metadata)
     textures = metadata.get("Textures", {})
@@ -1452,6 +1483,7 @@ def main():
             (action for action in actions if action.name == "Stand1"), actions[0]
         )
         bpy.context.scene.frame_set(30)
+        add_blender_studio(meshes)
         bpy.context.preferences.filepaths.save_version = 0
         bpy.ops.wm.save_as_mainfile(
             filepath=str((args.output / "character.blend").resolve()), compress=True
