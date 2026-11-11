@@ -456,13 +456,16 @@ def test_preview_mesh_copies_keep_render_uv_and_restore_original_attributes_on_f
     assert len(original.uv_layers) == 2 and original.color_attributes == ["COL0"]
 
 
-def test_preview_mesh_keeps_fur_uv_and_vertex_colors():
+@pytest.mark.parametrize("material", [
+    {"solaris_fur_preview": "fur"}, {"solaris_eye_material": "eye"},
+])
+def test_preview_mesh_keeps_material_uv_and_vertex_colors(material):
     class MeshData(SimpleNamespace):
         def copy(self):
             return deepcopy(self)
 
     original = MeshData(uv_layers=[SimpleNamespace(name='UV0'), SimpleNamespace(name='UV1')],
-                        color_attributes=['COL0'], materials=[{'solaris_fur_preview': 'fur'}])
+                        color_attributes=['COL0'], materials=[material])
     mesh = SimpleNamespace(data=original)
     with preview_meshes([mesh]):
         assert len(mesh.data.uv_layers) == 2
@@ -1210,6 +1213,7 @@ def test_empty_component_plan_only_when_no_matching_sources(tmp_path):
         build_animation_plan(model, converted, "rig", source, {"root"}, read, allow_empty=True)
 def test_eye_material_payload_keeps_authored_inputs_and_rejects_escape(tmp_path):
     import base64
+
     from wuwa_story_worker.model_bundle import eye_material_payload
 
     image = tmp_path / 'Client/Content/Eyes/Highlight.png'

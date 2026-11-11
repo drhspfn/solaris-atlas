@@ -761,14 +761,15 @@ def canonical_animation_rig(armature):
 
 @contextmanager
 def preview_meshes(meshes):
-    """Trim unused mesh attributes, retaining inputs needed by fur materials."""
+    """Trim unused mesh attributes, retaining authored fur and eye inputs."""
     originals = []
     try:
         for mesh in meshes:
             original = mesh.data
             originals.append((mesh, original))
             mesh.data = original.copy()
-            if any(material and material.get('solaris_fur_preview') for material in mesh.data.materials):
+            if any(material and (material.get('solaris_fur_preview') or material.get('solaris_eye_material'))
+                   for material in mesh.data.materials):
                 continue
             uv_name = next(
                 (uv.name for uv in mesh.data.uv_layers if uv.active_render),
