@@ -43,6 +43,21 @@ test('UV positioning, rotation, vertex green and independent widths', () => {
   assert.equal(singularAtTime, null);
 });
 
+test('Hsin and Denia authored map centers respond to original vertex green', () => {
+  for (const [x, y, dx, dy, wx, wy, angle] of [
+    [.431905, .382857, .038095, -.002857, .644574, .415261, 0],
+    [.47881, .340952, -.049999, 0, .866215, .664286, .042938],
+    [.459762, .321904, -.021428, 0, .313834, .42691, .042938],
+  ]) {
+    const p = { ...scalars, SecondLight_PositionX: x, SecondLight_PositionY: y,
+      SecondLight_Position_02X: dx, SecondLight_Position_02Y: dy,
+      SecondLight_WidthX: wx, SecondLight_WidthY: wy, RotateAngle: angle };
+    const result = evaluateEyeSm5({ ...input, uv: [x + .05 + dx * .25, y + dy * .25],
+      vertexGreen: .25, scalars: p });
+    close(result.heightUv[0], .5); close(result.heightUv[1], .5);
+  }
+});
+
 test('missing data, singular widths and edge denominator reject the experiment', () => {
   assert.equal(evaluateEyeSm5({ ...input, colors: {} }), null);
   assert.equal(evaluateEyeSm5({ ...input, sampleHeightMap: () => null }), null);
@@ -53,10 +68,15 @@ test('missing data, singular widths and edge denominator reject the experiment',
     uvFlipV: false, textureFlipV: false, mipBias: 0 };
   assert.equal(createEyeSm5Experiment(options), null);
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0], 2));
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute([1, 1, 1], 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute([1, 1, 1, 1], 4));
+  assert.equal(createEyeSm5Experiment(options), null); // Synthetic COLOR_0 is not the game color.
+  geometry.setAttribute('color_1', new THREE.BufferAttribute(new Uint16Array([0, 32768, 0, 65535]), 4, true));
   const material = createEyeSm5Experiment(options);
   assert.ok(material.isShaderMaterial);
   assert.equal(material.uniforms.UseProLight.value, 12);
+  assert.match(material.vertexShader, /green=color_1\.g/);
+  geometry.getAttribute('color_1').normalized = false;
+  assert.equal(createEyeSm5Experiment(options), null);
   assert.match(material.fragmentShader, /mix\(base,mix\(base\+vec3\(core\),EdgeColor\.rgb,edge\),UseProLight\)/);
   assert.equal(createEyeSm5Experiment({ ...options, uvFlipV: undefined }), null);
   material.dispose();

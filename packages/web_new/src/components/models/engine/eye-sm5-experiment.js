@@ -56,8 +56,9 @@ export function evaluateEyeSm5({ uv, vertexGreen, time, base, scalars: p, colors
 // Explicit opt-in diagnostic shader; does not modify a viewer, an existing material, or a texture.
 // uvFlipV converts geometry UV to UE UV; textureFlipV maps UE UV to this texture's sampler convention.
 export function createEyeSm5Experiment({ geometry, texture, base, scalars, colors, time, mipBias, uvFlipV, textureFlipV, output = 'color' }) {
-  if (!validInputs(scalars, colors) || !geometry?.getAttribute('uv') || !geometry?.getAttribute('color')
-    || geometry.getAttribute('color').itemSize < 3 || !texture?.isTexture
+  const uv = geometry?.getAttribute('uv'), color = geometry?.getAttribute('color_1');
+  if (!validInputs(scalars, colors) || !uv || !color || color.itemSize < 3 || color.count !== uv.count
+    || (!(color.array instanceof Float32Array) && !color.normalized) || !texture?.isTexture
     || !Array.isArray(base) || base.length !== 3 || !base.every(Number.isFinite)
     || !Number.isFinite(time) || !Number.isFinite(mipBias) || typeof uvFlipV !== 'boolean' || typeof textureFlipV !== 'boolean'
     || !['color', 'blueTerm'].includes(output)) return null;
@@ -69,8 +70,8 @@ export function createEyeSm5Experiment({ geometry, texture, base, scalars, color
   for (const k of scalarNames) uniforms[k] = { value: scalars[k] };
   for (const k of colorNames) { const c = colors[k]; uniforms[k] = { value: new THREE.Vector4(c.R, c.G, c.B, c.A) }; }
   return new THREE.ShaderMaterial({ uniforms, toneMapped: false,
-    vertexShader: `attribute vec3 color; varying vec2 eyeUV; varying float green;
-      void main(){ eyeUV=uv; green=color.g; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    vertexShader: `attribute vec4 color_1; varying vec2 eyeUV; varying float green;
+      void main(){ eyeUV=uv; green=color_1.g; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `uniform sampler2D eyeMap; uniform vec3 base; uniform float time, mipBias;
       uniform bool uvFlipV, textureFlipV;
       uniform float ${scalarNames.join(', ')}; uniform vec4 ${colorNames.join(', ')};
