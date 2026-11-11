@@ -43,6 +43,19 @@ def test_decoding_uses_archive_identity_and_rejects_stale_authored_forms(tmp_pat
         model_uploads.decode_bundles(archive, tmp_path / "wrong", wrong, [form])
 
 
+def test_uploaded_archive_preserves_blender_project_for_publication(tmp_path):
+    _, form, job = portable(tmp_path)
+    output = tmp_path / "bundle"
+    (output / "character.blend").write_bytes(b"BLENDER-v450")
+    archive = tmp_path / "with-blender.zip"
+    write_archive(archive, {"character_key": "character:1", "game_version": "3.3.0",
+                            "asset_version": "3.7.0", "tier": "hd"},
+                  [(form, output, {}, {"model": form["model"]})])
+    publication, bundles = model_uploads.decode_bundles(archive, tmp_path / "decoded-blender", job, [form])
+    files, _ = character_models.publication_files(publication, bundles[0][1], bundles[0][2])
+    assert any(kind == "blender" and path.read_bytes() == b"BLENDER-v450" for kind, path, *_ in files)
+
+
 def test_decoding_validates_selected_pack_clips_and_materializes_paths(tmp_path, monkeypatch):
     _, form, job = portable(tmp_path)
     output = tmp_path / "bundle"
