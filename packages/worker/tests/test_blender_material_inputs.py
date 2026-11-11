@@ -42,3 +42,12 @@ def test_water_gradient_requires_authored_features_and_gradient_texture(mapper):
     assert not mapper.uses_water_gradient(switches, (512, 512))
     assert not mapper.uses_water_gradient(switches, (0, 0))
     assert not mapper.uses_water_gradient({'UseMatcap': True}, (512, 4))
+
+
+def test_wave_uv_parameters_reject_missing_or_invalid(mapper):
+    assert mapper.wave_uv_parameters({'Colors': {'Base_UV': {'R': .8, 'G': 2.5, 'B': .05, 'A': .1}}}) == (
+        .8, 2.5, .05, .1
+    )
+    assert mapper.wave_uv_parameters({'Colors': {'Base_UV': {'R': .8}}}) is None
+    assert mapper.wave_uv_parameters({'Colors': {'Base_UV': 'invalid'}}) is None
+    assert mapper.wave_uv_parameters({'Colors': {'Base_UV': {'R': .8, 'G': float('nan'), 'B': 0, 'A': 0}}}) is None

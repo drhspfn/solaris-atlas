@@ -74,3 +74,14 @@ an illustrated overlay when the second mask is enabled. These are artistic
 choices informed by the supplied screenshots, not recovered UE operations.
 Full-frame front and back renders show the mountain overlay remains too faint
 and the game's animated highlights/refraction are still missing.
+
+The water instance has `UseWPO`, `UseMatcap` and `MatcapNormal_UseTFlow`
+enabled; `Base_UV` contains `(0.8, 2.5, 0.05, 0.1)`. Their exact compiled
+formula is not established. The optional approximation interprets the first
+two values as UV scale and the last two as time-based X/Y drift, adds a bump
+from the wave texture and, for `UseWPO`, a small adjustable material
+displacement. The drift drivers use the scene frame rate. Motion was checked
+at different frames with the fan skeleton animation disabled; it is not a
+proof that the game's timing or deformation matches. Material displacement
+support differs by renderer and Blender version; see the
+[Blender displacement documentation](https://docs.blender.org/manual/en/latest/render/materials/components/displacement.html).

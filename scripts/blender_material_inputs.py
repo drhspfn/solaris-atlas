@@ -6,6 +6,7 @@ kept as labelled nodes; the cooked shader program is not reconstructed.
 """
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -39,6 +40,39 @@ def uses_packed_character_diffuse(metadata):
 def uses_water_gradient(switches, size):
     return (switches.get('UseWaterClothColor') is True and switches.get('UseMatcap') is True
             and size[0] > 0 and size[1] > 0 and size[0] >= 4 * size[1])
+
+
+def wave_uv_parameters(metadata):
+    value = (metadata.get('Colors') or {}).get('Base_UV') or {}
+    if not isinstance(value, dict):
+        return None
+    values = [value.get(key) for key in ('R', 'G', 'B', 'A')]
+    if any(type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 100 for v in values):
+        return None
+    return tuple(values)
+
+
+def animate_wave_uv(nodes, links, image_node, metadata):
+    params = wave_uv_parameters(metadata)
+    if params is None:
+        return False
+    scale_x, scale_y, speed_x, speed_y = params
+    coords = nodes.new('ShaderNodeTexCoord')
+    mapping = nodes.new('ShaderNodeMapping')
+    mapping.label = 'Approximation: UV scale and XY drift'
+    mapping.inputs['Scale'].default_value = (scale_x, scale_y, 1)
+    links.new(coords.outputs['UV'], mapping.inputs['Vector'])
+    links.new(mapping.outputs['Vector'], image_node.inputs['Vector'])
+    for axis, speed in enumerate((speed_x, speed_y)):
+        driver = mapping.inputs['Location'].driver_add('default_value', axis).driver
+        for name, path in (('fps', 'render.fps'), ('fps_base', 'render.fps_base')):
+            variable = driver.variables.new()
+            variable.name = name
+            variable.targets[0].id_type = 'SCENE'
+            variable.targets[0].id = bpy.context.scene
+            variable.targets[0].data_path = path
+        driver.expression = f'frame * fps_base / fps * {speed!r}'
+    return True
 
 
 def add_approximate_shading(material, shader, available, metadata):
@@ -117,6 +151,8 @@ def add_approximate_shading(material, shader, available, metadata):
             # This is not the game's recovered material graph.
             intensity = nodes.new('ShaderNodeRGBToBW')
             intensity.label = 'Approximation: wave intensity'
+            if animate_wave_uv(nodes, links, available['Base'], metadata):
+                applied.append('water_uv_drift_assumed')
             links.new(available['Base'].outputs['Color'], intensity.inputs['Color'])
             gradient_position = nodes.new('ShaderNodeMath')
             gradient_position.operation = 'MULTIPLY_ADD'
@@ -140,6 +176,24 @@ def add_approximate_shading(material, shader, available, metadata):
             links.new(intensity.outputs['Val'], glow.inputs[0])
             links.new(glow.outputs[0], shader.inputs['Emission Strength'])
             shader.inputs['Roughness'].default_value = .22
+            bump = nodes.new('ShaderNodeBump')
+            bump.label = 'Approximation: wave relief'
+            bump.inputs['Strength'].default_value = .3
+            bump.inputs['Distance'].default_value = .01
+            links.new(intensity.outputs['Val'], bump.inputs['Height'])
+            links.new(bump.outputs['Normal'], shader.inputs['Normal'])
+            if switches.get('UseWPO') is True:
+                # Cycles-only material displacement: a small visual hypothesis,
+                # not a recovered UE World Position Offset formula.
+                displacement = nodes.new('ShaderNodeDisplacement')
+                displacement.label = 'Approximation: Cycles water displacement'
+                displacement.inputs['Scale'].default_value = .006
+                links.new(intensity.outputs['Val'], displacement.inputs['Height'])
+                output = next(n for n in nodes if n.type == 'OUTPUT_MATERIAL')
+                links.new(displacement.outputs['Displacement'], output.inputs['Displacement'])
+                material.displacement_method = 'BOTH'
+                applied.append('water_cycles_displacement_artistic')
+            applied.append('water_bump_artistic')
             applied.append('water_gradient_lookup_artistic')
         elif switches.get('UseSecondTex') is True and second:
             layer = nodes.new('ShaderNodeMixRGB')
