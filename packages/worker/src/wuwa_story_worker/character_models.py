@@ -374,6 +374,21 @@ async def discover_scene_components(root, sources, cooked, converted=None, manif
     return results
 
 
+def cached_model_covers_sources(cached, sources, include_animations):
+    if not cached:
+        return False
+    required = [sources['model'], *sources['blueprints'], *sources.get('extra_models', []),
+                *sources.get('montages', [])]
+    if sources.get('component_blueprint'):
+        required.append(sources['component_blueprint'])
+    converted, cooked = cached[1:3]
+    return (all((cooked / 'Client/Content' / (path + '.json')).is_file() for path in required)
+            and (converted / 'Client/Content' / (sources['model'] + '.uemodel')).is_file()
+            and (not include_animations or all(
+                (converted / 'Client/Content' / (clip + '.ueanim')).is_file()
+                for clip in sources.get('montages', []))))
+
+
 def component_animation_skeletons(sources, cooked, skeleton):
     """Resolve exact authored bindings before requesting their skeleton dependencies."""
     bindings = sources.get("component", {}).get("bindings", [])
@@ -457,11 +472,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         for slots in sources.get('part_material_overrides', {}).values() for path in slots.values())
     asset_key = ("/".join(sources["model"].split("/")[:5]).casefold(), include_animations)
     cached = asset_cache.get(asset_key) if asset_cache is not None else None
-    required = [sources["model"], *sources["blueprints"], *sources.get("extra_models", [])]
-    if sources.get("component_blueprint"):
-        required.append(sources["component_blueprint"])
-    if cached and all((cached[2] / "Client/Content" / (path + ".json")).is_file() for path in required) and (
-        cached[1] / "Client/Content" / (sources["model"] + ".uemodel")).is_file():
+    if cached_model_covers_sources(cached, sources, include_animations):
         _, converted, cooked, manifest = cached
         model = converted / "Client/Content" / (sources["model"] + ".uemodel")
         await progress("reuse_extracted_assets")
