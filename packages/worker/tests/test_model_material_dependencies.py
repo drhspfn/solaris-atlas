@@ -58,6 +58,29 @@ def test_raw_material_color_parameter_uses_the_exact_reference(tmp_path):
     assert base_color_texture(raw, tmp_path) == ('/Game/ExactColor.0', None)
 
 
+def test_authored_stencil_mask_is_fetched_and_preserved_with_its_slot(tmp_path):
+    import base64
+    from wuwa_story_worker.model_bundle import stencil_mask_payload
+
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    model = converted / 'Client/Content/Body.uemodel'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'MaterialSlotName': 'HET_Face', 'Material': {'ObjectPath': '/Game/FaceMask.0'}}]}])
+    put(cooked, 'FaceMask', [{'Type': 'MaterialInstanceConstant', 'Properties': {
+        'Parent': {'ObjectPath': '/Game/Aki/Render/Shaders/Character/M_WriteStencil'}}}])
+    put(converted, 'FaceMask', {'Textures': {'Mask': {'ObjectPath': '/Game/Textures/Face.0'}}})
+    assert missing_material_resources(cooked, converted, ['Body']) == ['Textures/Face']
+    image = converted / 'Client/Content/Textures/Face.png'
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b'mask image')
+    assert missing_material_resources(cooked, converted, ['Body']) == []
+    payload = stencil_mask_payload([model], converted, cooked)
+    assert payload['format'] == 'solaris-hair-stencil-v1'
+    assert payload['masks'][0]['slot'] == 'HET_Face'
+    assert payload['masks'][0]['texture'] == '/Game/Textures/Face.0'
+    assert base64.b64decode(payload['masks'][0]['data_base64']) == b'mask image'
+
+
 @pytest.mark.parametrize('family', ['WaterMatCap', 'ParallaxSubUV'])
 def test_effect_base_dependency_requires_known_parent(tmp_path, family):
     from wuwa_story_worker.model_bundle import inherited_base_color_texture

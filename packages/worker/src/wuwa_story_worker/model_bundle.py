@@ -5,6 +5,7 @@ portable: this preview deliberately uses exported base-color textures only.
 """
 
 import argparse
+import base64
 import hashlib
 import json
 import math
@@ -359,6 +360,48 @@ def material_parent(rows):
     parents = [row.get("Properties", {}).get("Parent", {}).get("ObjectPath")
                for row in rows if row.get("Type") == "MaterialInstanceConstant"]
     return parents[0].split(".", 1)[0] if len(parents) == 1 and parents[0] else None
+
+
+def stencil_mask_payload(models, converted, cooked):
+    """Keep authored stencil masks with their mesh slots; they use the face's UVs."""
+    def resource(reference):
+        value = reference.replace('\\', '/').split('.', 1)[0]
+        if value.startswith('/Game/'):
+            value = 'Client/Content/' + value[6:]
+        parts = value.split('/')
+        if parts[:2] != ['Client', 'Content'] or any(p in ('', '.', '..') for p in parts):
+            raise ValueError('Invalid stencil resource path')
+        return Path(*parts)
+
+    masks = []
+    for model in models:
+        relative = model.relative_to(converted).with_suffix('.json')
+        source = cooked / relative
+        if not source.is_file():
+            raise ValueError(f'Missing model metadata for stencil masks: {relative}')
+        for row in json.loads(source.read_text(encoding='utf-8-sig')):
+            if row.get('Type') not in {'SkeletalMesh', 'StaticMesh'}:
+                continue
+            for slot in row.get('SkeletalMaterials', row.get('StaticMaterials', [])):
+                ref = (slot.get('Material') or slot.get('MaterialInterface') or {}).get('ObjectPath')
+                if not ref:
+                    continue
+                path = resource(ref).with_suffix('.json')
+                raw = cooked / path
+                if not raw.is_file():
+                    continue
+                rows = json.loads(raw.read_text(encoding='utf-8-sig'))
+                if material_parent(rows) != '/Game/Aki/Render/Shaders/Character/M_WriteStencil':
+                    continue
+                metadata = material_metadata(json.loads((converted / path).read_text(encoding='utf-8-sig')))
+                mask = metadata.get('Textures', {}).get('Mask', {}).get('ObjectPath')
+                if not mask:
+                    continue
+                image = converted / resource(mask).with_suffix('.png')
+                masks.append({'mesh': relative.as_posix(), 'slot': slot.get('MaterialSlotName'),
+                              'material': ref, 'texture': mask, 'mime_type': 'image/png',
+                              'data_base64': base64.b64encode(image.read_bytes()).decode('ascii')})
+    return {'format': 'solaris-hair-stencil-v1', 'masks': masks} if masks else None
 
 
 def base_color_texture(metadata: dict, converted: Path, parent=None) -> tuple[str | None, Path | None]:
@@ -1115,6 +1158,18 @@ def main():
     if rig_mode and report["missing_textures"]:
         (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         raise ValueError(f"Missing required base-color textures: {report['missing_textures']}")
+
+    if not batch_mode:
+        mask_models = [args.model, *args.extra_model]
+        if args.attachments:
+            mask_models.extend(Path(item['file']) for item in json.loads(
+                args.attachments.read_text(encoding='utf-8')))
+        stencil = stencil_mask_payload(mask_models, args.converted, args.source_json)
+        if stencil:
+            # Exported as glTF extras, so the masks survive both publication and
+            # Blender re-import without being mistaken for the hair's own UVs.
+            armature['solaris_hair_stencil'] = json.dumps(stencil, separators=(',', ':'))
+            report['stencil_masks'] = len(stencil['masks'])
 
     actions = []
 
