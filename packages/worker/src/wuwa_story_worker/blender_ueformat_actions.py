@@ -6,10 +6,10 @@ The manifest uses solaris-animation-packs-v1 and addresses each part by its file
 import argparse
 import importlib.util
 import json
-from pathlib import Path
 import struct
 import sys
 import tempfile
+from pathlib import Path
 
 
 def load_compatibility_check():

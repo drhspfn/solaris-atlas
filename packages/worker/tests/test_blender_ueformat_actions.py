@@ -1,6 +1,16 @@
+import json
+import struct
 from types import SimpleNamespace
 
-from wuwa_story_worker.blender_ueformat_actions import load_compatibility_check
+import pytest
+
+from wuwa_story_worker.blender_ueformat_actions import (
+    filtered_glb,
+    load_compatibility_check,
+    load_manifest,
+    preflight,
+    read_glb,
+)
 
 
 def make_rig(offset):
@@ -20,14 +30,6 @@ def test_small_ueformat_gltf_rounding_is_within_explicit_tolerance():
 
 def test_larger_rest_pose_difference_is_rejected():
     assert 'rest pose' in load_compatibility_check()(make_rig(0), make_rig(2.1e-5), tolerance=2e-5)
-
-import json
-import struct
-
-import pytest
-
-from wuwa_story_worker.blender_ueformat_actions import filtered_glb, load_manifest, preflight, read_glb
-
 
 def make_glb(path, names):
     payload = json.dumps({'asset': {'version': '2.0'}, 'animations': [{'name': n} for n in names]}).encode()
@@ -86,6 +88,7 @@ def test_manifest_requires_exact_pack_set_and_unique_clips(tmp_path):
 
 def test_static_scene_without_armature_is_saved_compressed(tmp_path, monkeypatch):
     import sys
+
     from wuwa_story_worker.blender_ueformat_actions import assemble
 
     calls = []

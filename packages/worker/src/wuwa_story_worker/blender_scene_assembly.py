@@ -5,8 +5,8 @@ Run with Blender: blender -b --python blender_scene_assembly.py -- rig.glb outpu
 import argparse
 import json
 import math
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def incompatible_skeletons(base, incoming, tolerance=1e-5):

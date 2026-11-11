@@ -7,7 +7,6 @@ import math
 from contextlib import contextmanager
 from pathlib import Path
 
-
 _ADD_NODE = 'Solaris Eye EM Highlight'
 
 
