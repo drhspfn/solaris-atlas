@@ -1532,6 +1532,7 @@ def main():
             bpy.ops.wm.save_as_mainfile(
                 filepath=str((args.output / "blender-source.blend").resolve()), compress=True
             )
+            report["blender_armature"] = armature.name
     if args.with_animations:
         try:
             import_actions()
