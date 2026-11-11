@@ -22,8 +22,13 @@ their own static permutations.
    `LoadedMaterialResources`, including `ShaderMapId`, `ResourceHash` and
    `Content`; do not substitute a parent material's hash for an instance's hash.
 2. Extract the relevant `.ushaderbytecode` archive. In the tested 3.7.2 client,
-   the main SM5 `Client_Chunk` archive is approximately 1.27 GB; extraction can
-   require multiple GiB of memory. Match a shader map against every applicable
+   the main SM5 `Client_Chunk` archive is approximately 1.27 GB and SM6 is
+   approximately 5.61 GB. The tested stock FModelCLI truncated SM6 by exactly
+   4 GiB despite reporting success. A separately patched, streamed extraction
+   produced a 5,614,312,610-byte archive with no out-of-bounds index entries;
+   the same streaming method produced an SM5 file matching the original SHA-256.
+   Always validate archive bounds and do not trust an extractor's success message
+   alone. Match a shader map against every applicable
    base and patch archive, preserving the source archive and game version.
 3. Run `python scripts/inspect_shader_archive.py ARCHIVE --material-json MATERIAL.json
    --feature-level SM5`. Archive version 2 is supported. The tool validates table
@@ -59,6 +64,12 @@ High and Medium SM5 maps, with 78 and 74 referenced shader entries respectively.
 This confirms the join works for more than the two fan effect instances, but
 does not establish which quality or permutation is active in a particular game
 session.
+
+The fully extracted SM6 archive also matched the fan water material and Hsin's
+body maps, including their quality variants. The effect material `MI_SS1HuliFX`
+matched independently in SM5 and SM6, demonstrating that the same lookup can
+identify an effect material's compiled shader map. It does not identify the
+complete particle system or reconstruct the effect's timing and runtime inputs.
 
 VFX, Niagara, dynamic parameters and a faithful Blender or web shader are not
 implemented by this diagnostic. Multiple passes, runtime conditions and
