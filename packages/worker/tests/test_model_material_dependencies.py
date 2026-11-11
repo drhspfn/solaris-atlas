@@ -50,6 +50,27 @@ def test_fur_parallax_follows_master_defaults_and_preserves_instance_override(tm
     assert missing_material_resources(cooked, converted, ['Body']) == []
 
 
+def test_fur_region_mask_fetches_inherited_id_and_type_textures(tmp_path):
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'Material': {'ObjectPath': '/Game/Fur.Fur'}}]}])
+    put(cooked, 'Fur', [{'Type': 'MaterialInstanceConstant', 'Properties': {
+        'Parent': {'ObjectName': "MaterialInstanceConstant'Cloth'", 'ObjectPath': '/Game/Cloth.Cloth'}}}])
+    put(converted, 'Fur', {'Switches': {'UseFurry': True, 'FurMaskUseID': True}, 'Textures': {}})
+    put(cooked, 'Cloth', [{'Type': 'MaterialInstanceConstant', 'Properties': {
+        'TextureParameterValues': [
+            {'ParameterInfo': {'Name': 'RegionIDTex'}, 'ParameterValue': {'ObjectPath': '/Game/Region'}},
+            {'ParameterInfo': {'Name': 'TypeMask'}, 'ParameterValue': {'ObjectPath': '/Game/Type'}},
+        ]}}])
+    put(converted, 'Cloth', {'Textures': {}})
+    assert missing_material_resources(cooked, converted, ['Body']) == ['Region', 'Type']
+    for name in ['Region', 'Type']:
+        path = converted / 'Client/Content' / (name + '.png')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    assert missing_material_resources(cooked, converted, ['Body']) == []
+
+
 def test_follows_exact_shared_parent_and_texture_without_scanning_other_materials(tmp_path):
     cooked, converted = tmp_path / "cooked", tmp_path / "converted"
     put(cooked, "Body", [{"Type": "SkeletalMesh", "SkeletalMaterials": [

@@ -6,9 +6,8 @@ from wuwa_story_worker.model_bundle import base_color_texture, material_metadata
 from wuwa_story_worker.model_sources import exported_package
 
 
-def fur_parallax_resources(cooked, converted, source, metadata):
-    """Resolve authored overrides and master defaults used by fur parallax."""
-    names = {'HeightMap', 'FlowmapMap'}
+def fur_material_resources(cooked, converted, source, metadata, names):
+    """Resolve authored overrides and master defaults for fur shader inputs."""
     references, missing, seen = {}, set(), set()
     while source.is_file():
         if source in seen:
@@ -91,8 +90,13 @@ def missing_material_resources(cooked, converted, models, overrides=()):
                 package = exported_package(fur)
                 if not (converted / 'Client/Content' / (package + '.png')).is_file():
                     missing.add(package)
+            names = set()
             if resolved.get('Switches', {}).get('UseFurryParallax') is True:
-                missing.update(fur_parallax_resources(cooked, converted, source, resolved))
+                names.update({'HeightMap', 'FlowmapMap'})
+            if resolved.get('Switches', {}).get('FurMaskUseID') is True:
+                names.update({'RegionIDTex', 'TypeMask'})
+            if names:
+                missing.update(fur_material_resources(cooked, converted, source, resolved, names))
         if material_parent(rows) == "/Game/Aki/Render/Shaders/Character/M_WriteStencil":
             mask = material_metadata(metadata).get("Textures", {}).get("Mask", {}).get("ObjectPath")
             if mask:
