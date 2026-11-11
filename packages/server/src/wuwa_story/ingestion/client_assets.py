@@ -16,8 +16,8 @@ from urllib.request import Request, urlopen
 logger = logging.getLogger(__name__)
 
 INDEX_URL = (
-    "https://prod-alicdn-gamestarter.kurogame.com/launcher/game/G153/"
-    "50004_obOHXFrFanqsaIEOmuKroCcbZkQRBC7c/index.json"
+    "https://prod-alicdn-gamestarter.kurogame.com/launcher/game/"
+    "50004_P7xcUZnEr1AXIGON25E6KjpOgTlVrg6e/G153/official/index.json"
 )
 CDN_HOSTS = {
     "hw-pcdownload-qcloud.aki-game.net",
@@ -69,8 +69,9 @@ def plan_id(plan: dict[str, Any]) -> str:
 def get_live_launcher_info(timeout: int = 15) -> dict[str, Any]:
     try:
         body = read_url(INDEX_URL, timeout=timeout)
-        data = json.loads(body)["default"]
-        config = data.get("config", {})
+        index = json.loads(body)
+        data = index if "resourcePacks" in index else index["default"]
+        config = data["resourcePacks"]["common"] if "resourcePacks" in data else data.get("config", {})
         return {
             "version": config.get("version"),
             "index_file": config.get("indexFile"),
@@ -86,61 +87,77 @@ def discover_plan(
     tier: str = "hd",
     *,
     completed_pins: Sequence[dict[str, Any]] = (),
+    completed_workspace: Path | None = None,
 ) -> dict[str, Any]:
     if version is not None and not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", version):
         raise ValueError("Game version must be major.minor or major.minor.patch")
     if tier not in {"sd", "hd", "uhd"}:
         raise ValueError("Resource tier must be sd, hd or uhd")
-    index = json.loads(read_url(INDEX_URL))["default"]
-    config = index["config"]
-    actual_version = config["version"]
-    if version is not None and actual_version != version and not (
-        version.count(".") == 1 and actual_version.startswith(version + ".")
-    ):
-        raise ValueError(
-            f"Official CDN serves {actual_version}, requested {version}; old patches are not old clients"
-        )
-    cdns = [item["url"] for item in index["cdnList"]]
-    failures = []
-    manifest_bytes = b""
-    for cdn in cdns:
-        try:
-            body = read_url(cdn_url(cdn, config["indexFile"]))
-            if hashlib.md5(body).hexdigest() != md5(config["indexFileMd5"]):
-                raise ValueError("Launcher manifest checksum mismatch")
-            manifest = json.loads(body)
-            manifest_bytes = body
-            break
-        except (OSError, ValueError) as exc:
-            failures.append(str(exc))
+    index = json.loads(read_url(INDEX_URL))
+    packs = index.get("resourcePacks")
+    if packs is not None:
+        if not isinstance(packs, dict) or "common" not in packs or tier not in packs:
+            raise ValueError(f"Official index does not offer common and {tier}")
+        configs = [packs["common"], packs[tier]]
+        actual_version = configs[0]["version"]
+        if configs[1]["version"] != actual_version:
+            raise ValueError("Resource pack versions do not match")
+        data = index
     else:
-        raise RuntimeError(f"No official CDN returned a valid manifest: {failures}")
+        data = index["default"]
+        configs = [data["config"]]
+        actual_version = configs[0]["version"]
+    if version is not None and actual_version != version and not (version.count(".") == 1 and actual_version.startswith(version + ".")):
+        raise ValueError(f"Official CDN serves {actual_version}, requested {version}; old patches are not old clients")
+    cdns = [item["url"] for item in data["cdnList"]]
     files = []
     available_tiers = set()
     paths = set()
-    for item in manifest["resource"]:
-        path = safe_path(item["dest"])
-        parts = path.split("/")
-        if len(parts) < 4 or parts[:2] != ["Client", "Content"]:
-            continue
-        group = parts[2].lower()
-        if group in {"sd", "hd", "uhd"}:
-            available_tiers.add(group)
-        if group not in {"paks", tier}:
-            continue
-        if not path.lower().endswith((".pak", ".sig", ".utoc", ".ucas")):
-            continue
-        if path.casefold() in paths:
-            raise ValueError(f"Duplicate resource path: {path}")
-        paths.add(path.casefold())
-        size = item["size"]
-        if type(size) is not int or size < 0:
-            raise ValueError(f"Invalid resource size: {path}")
-        files.append({"path": path, "size": size, "md5": md5(item["md5"])})
+    manifest_hashes = []
+    tier_archive_found = False
+    for config in configs:
+        base_path = safe_path(config["baseUrl"].rstrip("/"))
+        failures = []
+        for cdn in cdns:
+            try:
+                body = read_url(cdn_url(cdn, config["indexFile"]))
+                if hashlib.md5(body).hexdigest() != md5(config["indexFileMd5"]):
+                    raise ValueError("Launcher manifest checksum mismatch")
+                manifest = json.loads(body)
+                break
+            except (OSError, ValueError) as exc:
+                failures.append(str(exc))
+        else:
+            raise RuntimeError(f"No official CDN returned a valid manifest: {failures}")
+        manifest_hashes.append(hashlib.sha256(body).hexdigest())
+        for item in manifest["resource"]:
+            path = safe_path(item["dest"])
+            parts = path.split("/")
+            if len(parts) < 4 or parts[:2] != ["Client", "Content"]:
+                continue
+            group = parts[2].lower()
+            if group in {"sd", "hd", "uhd"}:
+                available_tiers.add(group)
+            if group not in {"paks", tier}:
+                continue
+            if not path.lower().endswith((".pak", ".sig", ".utoc", ".ucas")):
+                continue
+            if packs is not None and config is configs[1] and group == tier and path.lower().endswith((".pak", ".utoc")):
+                tier_archive_found = True
+            if path.casefold() in paths:
+                raise ValueError(f"Duplicate resource path: {path}")
+            paths.add(path.casefold())
+            size = item["size"]
+            if type(size) is not int or size < 0:
+                raise ValueError(f"Invalid resource size: {path}")
+            file = {"path": path, "size": size, "md5": md5(item["md5"])}
+            if packs is not None:
+                file["base_path"] = base_path
+            files.append(file)
+    if packs is not None and not tier_archive_found:
+        raise ValueError(f"Official {tier} pack contains no {tier} archives")
     if available_tiers and tier not in available_tiers:
-        raise ValueError(
-            f"Official manifest offers {', '.join(sorted(available_tiers))}, not {tier}; no tier substitution"
-        )
+        raise ValueError(f"Official manifest offers {', '.join(sorted(available_tiers))}, not {tier}; no tier substitution")
     if not available_tiers and tier != "hd":
         raise ValueError("Legacy manifest has no selectable tiers; only the default hd is supported")
     if not any(item["path"].lower().endswith((".pak", ".utoc")) for item in files):
@@ -161,9 +178,10 @@ def discover_plan(
         "version": actual_version,
         "tier": tier,
         "index_url": INDEX_URL,
-        "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "manifest_sha256": (manifest_hashes[0] if packs is None else
+                            hashlib.sha256(json.dumps(manifest_hashes, separators=(",", ":")).encode()).hexdigest()),
         "cdns": cdns,
-        "base_path": safe_path(config["baseUrl"].rstrip("/")),
+        "base_path": safe_path(configs[0]["baseUrl"].rstrip("/")),
         "keys_commit": key_commit,
         "files": sorted(files, key=lambda item: item["path"]),
     }
@@ -185,6 +203,46 @@ def discover_plan(
                 validate_plan(plan)
                 logger.info("Reusing completed client download pin download_id=%s", plan["id"])
                 return plan
+        if completed_workspace is not None:
+            wanted = {(item["path"], item["size"], item["md5"]) for item in files}
+            for pin in completed_pins:
+                try:
+                    old_version, old_tier, old_id = pin["version"], pin["tier"], pin["download_id"]
+                    if (old_tier != tier or not re.fullmatch(r"\d+\.\d+\.\d+", old_version)
+                            or not re.fullmatch(r"[0-9a-f]{64}", old_id)):
+                        continue
+                    assets_dir = (completed_workspace / "assets").resolve()
+                    root = (assets_dir / f"{old_version}-{old_tier}-{old_id[:16]}").resolve()
+                    if not root.is_relative_to(assets_dir):
+                        continue
+                    previous = json.loads((root / "plan.json").read_text(encoding="utf-8"))
+                    status = json.loads((root / "status.json").read_text(encoding="utf-8"))
+                    validate_plan(previous)
+                    if (previous["id"] != old_id or previous["version"] != old_version
+                            or previous["tier"] != old_tier or previous["keys_commit"] != pin.get("keys_commit")
+                            or status.get("state") != "downloaded" or status.get("id") != old_id):
+                        continue
+                    old = {(item["path"], item["size"], item["md5"]) for item in previous["files"]}
+                    if old != wanted:
+                        continue
+                    game = (root / "game").resolve()
+                    if not game.is_relative_to(root):
+                        continue
+                    def verified(item, game=game):
+                        path = (game / item["path"]).resolve()
+                        if not path.is_relative_to(game) or not path.is_file() or path.stat().st_size != item["size"]:
+                            return False
+                        with path.open("rb") as stream:
+                            return hashlib.file_digest(stream, "md5").hexdigest() == item["md5"]
+                    if not all(verified(item) for item in previous["files"]):
+                        continue
+                    plan["keys_commit"] = previous["keys_commit"]
+                    plan["id"] = plan_id(plan)
+                    validate_plan(plan)
+                    logger.info("Reusing keys pin from validated completed client download_id=%s", old_id)
+                    return plan
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue
         raise ValueError(f"No version-labelled AES key update found for {actual_version}")
     plan["id"] = plan_id(plan)
     return plan
@@ -208,6 +266,9 @@ def validate_plan(plan: dict[str, Any]) -> None:
     paths = set()
     for item in plan["files"]:
         path = safe_path(item["path"])
+        if "base_path" in item:
+            for cdn in plan["cdns"]:
+                cdn_url(cdn, item["base_path"])
         if not path.startswith(("Client/Content/Paks/", f"Client/Content/{plan['tier'].upper()}/")):
             raise ValueError("Asset job contains an unexpected resource directory")
         if path.casefold() in paths:

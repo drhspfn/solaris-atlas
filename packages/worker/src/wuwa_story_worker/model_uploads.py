@@ -21,6 +21,7 @@ from wuwa_story.ingestion.model_archives import (
     read_archive,
     validate_manifest,
 )
+from wuwa_story.ingestion.model_limits import MAX_MODEL_COMPONENTS
 from wuwa_story.ingestion.model_uploads import ModelUploadJob, chunk_count, chunk_key
 from wuwa_story.storage.s3 import S3Storage
 
@@ -29,6 +30,7 @@ from wuwa_story_worker.client_assets import validate_plan
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.linked_component_forms import prepare_linked_components
 from wuwa_story_worker.media_workspace import finish_writes
+from wuwa_story_worker.model_animation_packs import ownership_for
 from wuwa_story_worker.model_animations import animation_summary
 from wuwa_story_worker.model_facial import validate_facial_pack
 from wuwa_story_worker.model_sources import authored_package, glb_summary
@@ -189,8 +191,6 @@ def decode_bundles(archive, root, job, expected_forms, *, expected_components=No
 
 async def discover_upload_components(root, forms, asset_version, tier, *, include_animations=True):
     """Independently derive component identities from a matching installed client."""
-    from wuwa_story_worker.character_models import discover_scene_components, extract_model
-
     clients = [client for client in await asyncio.to_thread(inspect_installed_clients, asset_workspace())
                if client.get("version") == asset_version and client.get("tier") == tier
                and client.get("state") == "downloaded"]
@@ -210,85 +210,99 @@ async def discover_upload_components(root, forms, asset_version, tier, *, includ
     for form in forms:
         if not form.get("component_blueprint"):
             continue
-        workspace = root / ("discovery-" + form["id"])
-        workspace.mkdir()
         sources = dict(form)
-        if sources.get("blueprint_model"):
-            from wuwa_story_worker.npc_setup import blueprint_sources
-
-            package, visited = sources["blueprint_model"], set()
-            for depth in range(8):
-                if package in visited:
-                    raise ValueError("Cyclic NPC Blueprint model inheritance")
-                visited.add(package)
-                setup_root = workspace / f"blueprint-{depth}"
-                setup_root.mkdir()
-                _, _, setup_cooked, _ = await extract_model(
-                    setup_root, {"model": package, "blueprints": []},
-                    tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
-                    False, metadata_only=True, local_client=local_client)
-                path = setup_cooked / "Client/Content" / (package + ".json")
-                resolved = blueprint_sources(json.loads(path.read_text(encoding="utf-8-sig")), package)
-                if "model" in resolved:
-                    sources = {**sources, **resolved,
-                               "blueprints": sources["blueprints"] or resolved.get("blueprints", [])}
-                    break
-                package = resolved["parent"]
-            else:
-                raise ValueError("NPC Blueprint model inheritance exceeds eight authored parents")
-        if sources.get("data_asset"):
-            from wuwa_story_worker.npc_setup import setup_sources
-
-            setup_root = workspace / "setup"
-            setup_root.mkdir()
-            _, _, setup_cooked, _ = await extract_model(
-                setup_root, sources, tool_path("WUWA_FMODEL_PATH"),
-                tool_path("WUWA_TEXTURE_CONVERTER_PATH"), False,
-                metadata_only=True, local_client=local_client)
-            path = setup_cooked / "Client/Content" / (sources["data_asset"] + ".json")
-            sources = {**sources, **setup_sources(json.loads(path.read_text(encoding="utf-8-sig")),
-                                                   sources["data_asset"])}
-        model = sources["model"]
-        character_dir = ((model.rsplit("/Model/", 1)[0] if "/Model/" in model else model.rsplit("/", 1)[0])
-                         if model.startswith("Aki/Character/NPC/") else "/".join(model.split("/")[:5]))
-        filters = [sources["component_blueprint"], *sources.get("blueprints", [])]
-        if include_animations:
-            filters.extend([*sources.get("montages", []), character_dir + "/",
-                            "/".join(model.split("/")[:4]) + "/BaseAnim",
-                            "Engine/Content/Animation/DefaultAnim", "ACLAnim", "ACLPlugin.uplugin",
-                            character_dir.rsplit("/", 1)[-1]])
-        else:
-            filters.append(model.rsplit("/", 1)[0] + "/")
-        _, _, cooked, _ = await extract_model(
-            workspace, sources, tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
-            False, local_client=local_client, metadata_only=True, additional_filters=filters)
-        from wuwa_story_worker.model_sources import npc_animation_references
-        from wuwa_story_worker.npc_accessories import visibility_sources
-
-        refs = set(visibility_sources(model))
-        for blueprint in [*sources["blueprints"], *sources.get("montages", [])]:
-            path = cooked / "Client/Content" / (blueprint + ".json")
-            if path.is_file():
-                refs.update(npc_animation_references(json.loads(path.read_text(encoding="utf-8-sig"))))
-        missing = [ref for ref in refs if not (cooked / "Client/Content" / (ref + ".json")).is_file()]
-        if missing:
-            extra_root = workspace / "referenced-animations"
-            extra_root.mkdir()
-            _, _, extra_cooked, _ = await extract_model(
-                extra_root, sources, tool_path("WUWA_FMODEL_PATH"),
-                tool_path("WUWA_TEXTURE_CONVERTER_PATH"), False, metadata_only=True,
-                additional_filters=sorted(missing), local_client=local_client)
-            shutil.copytree(extra_cooked, cooked, dirs_exist_ok=True)
-            if any(not (cooked / "Client/Content" / (ref + ".json")).is_file() for ref in missing):
-                raise ValueError("An explicitly referenced NPC animation was not exported")
-        recipes = await discover_scene_components(workspace, sources, cooked, local_client=local_client)
+        if form.get("model"):
+            sources["animation_ownership"] = ownership_for(form, forms)
+        recipes = await _discover_upload_form(root, sources, local_client, include_animations)
         for recipe, (identity, relation) in zip(
             recipes, prepare_linked_components(form, recipes), strict=True
         ):
-            if identity in result or len(result) >= 32:
+            if identity in result or len(result) >= MAX_MODEL_COMPONENTS:
                 raise ValueError("Duplicate or excessive authored components")
             result[identity] = {"component": relation, "model": recipe["model"]}
     return result
+
+
+async def _discover_upload_form(root, form, local_client, include_animations):
+    from wuwa_story_worker.character_models import discover_scene_components, extract_model
+
+    workspace = root / ("discovery-" + form["id"])
+    workspace.mkdir()
+    sources = dict(form)
+    if sources.get("blueprint_model"):
+        from wuwa_story_worker.npc_setup import blueprint_sources
+
+        package, visited = sources["blueprint_model"], set()
+        for depth in range(8):
+            if package in visited:
+                raise ValueError("Cyclic NPC Blueprint model inheritance")
+            visited.add(package)
+            setup_root = workspace / f"blueprint-{depth}"
+            setup_root.mkdir()
+            _, _, setup_cooked, _ = await extract_model(
+                setup_root, {"model": package, "blueprints": []},
+                tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
+                False, metadata_only=True, local_client=local_client)
+            path = setup_cooked / "Client/Content" / (package + ".json")
+            resolved = blueprint_sources(json.loads(path.read_text(encoding="utf-8-sig")), package)
+            if "model" in resolved:
+                sources = {**sources, **resolved,
+                           "blueprints": sources["blueprints"] or resolved.get("blueprints", [])}
+                break
+            package = resolved["parent"]
+        else:
+            raise ValueError("NPC Blueprint model inheritance exceeds eight authored parents")
+    if sources.get("data_asset"):
+        from wuwa_story_worker.npc_setup import setup_sources
+
+        setup_root = workspace / "setup"
+        setup_root.mkdir()
+        _, _, setup_cooked, _ = await extract_model(
+            setup_root, sources, tool_path("WUWA_FMODEL_PATH"),
+            tool_path("WUWA_TEXTURE_CONVERTER_PATH"), False,
+            metadata_only=True, local_client=local_client)
+        path = setup_cooked / "Client/Content" / (sources["data_asset"] + ".json")
+        sources = {**sources, **setup_sources(json.loads(path.read_text(encoding="utf-8-sig")),
+                                               sources["data_asset"])}
+    model = sources["model"]
+    character_dir = ((model.rsplit("/Model/", 1)[0] if "/Model/" in model else model.rsplit("/", 1)[0])
+                     if model.startswith("Aki/Character/NPC/") else "/".join(model.split("/")[:5]))
+    filters = [sources["component_blueprint"], *sources.get("blueprints", [])]
+    if include_animations:
+        filters.extend([*sources.get("montages", []), character_dir + "/",
+                        "/".join(model.split("/")[:4]) + "/BaseAnim",
+                        "Engine/Content/Animation/DefaultAnim", "ACLAnim", "ACLPlugin.uplugin",
+                        character_dir.rsplit("/", 1)[-1]])
+    else:
+        filters.append(model.rsplit("/", 1)[0] + "/")
+    _, _, cooked, _ = await extract_model(
+        workspace, sources, tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH"),
+        False, local_client=local_client, metadata_only=True, additional_filters=filters)
+    from wuwa_story_worker.model_sources import npc_animation_references
+    from wuwa_story_worker.npc_accessories import visibility_sources
+
+    refs = set(visibility_sources(model))
+    for blueprint in [*sources["blueprints"], *sources.get("montages", [])]:
+        path = cooked / "Client/Content" / (blueprint + ".json")
+        if path.is_file():
+            refs.update(npc_animation_references(json.loads(path.read_text(encoding="utf-8-sig"))))
+    if sources.get("animation_ownership"):
+        sources["animation_ownership"] = {
+            **sources["animation_ownership"], "explicit": sorted(
+                refs | set(sources.get("montages", [])) |
+                set(sources["animation_ownership"].get("explicit", [])))}
+    missing = [ref for ref in refs if not (cooked / "Client/Content" / (ref + ".json")).is_file()]
+    if missing:
+        extra_root = workspace / "referenced-animations"
+        extra_root.mkdir()
+        _, _, extra_cooked, _ = await extract_model(
+            extra_root, sources, tool_path("WUWA_FMODEL_PATH"),
+            tool_path("WUWA_TEXTURE_CONVERTER_PATH"), False, metadata_only=True,
+            additional_filters=sorted(missing), local_client=local_client)
+        shutil.copytree(extra_cooked, cooked, dirs_exist_ok=True)
+        if any(not (cooked / "Client/Content" / (ref + ".json")).is_file() for ref in missing):
+            raise ValueError("An explicitly referenced NPC animation was not exported")
+    return await discover_scene_components(workspace, sources, cooked, local_client=local_client)
 
 
 async def process_model_upload(payload):
