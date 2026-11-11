@@ -138,6 +138,21 @@ def main():
         raise ValueError('Output must not overwrite the input Blender file')
     with open(args.facial, encoding='utf-8') as stream:
         result = attach_facial_pack(json.load(stream), bpy=bpy, strict=args.strict)
+    guide = bpy.data.texts.new('Solaris facial animation instructions')
+    guide.write(
+        "Facial actions are stored in this file; scripts do not run on open.\n\n"
+        "In Blender's Python Console, list facial actions and associated body clips:\n"
+        "[(a.name, a.get('solaris_body_clip')) for a in bpy.data.actions "
+        "if a.get('solaris_facial_clip') is not None]\n\n"
+        "Choose an action and bind its Shape Keys slots, replacing the example name:\n"
+        "a = bpy.data.actions['Face: Action01']\n"
+        'exec("for s in a.slots:\\n k = bpy.data.shape_keys[s.name_display]'
+        '\\n k.animation_data_create()\\n k.animation_data.action = a'
+        '\\n k.animation_data.action_slot = s")\n\n'
+        "Select the corresponding body action on the armature in the Action Editor. "
+        "Standalone expressions can use the current body action. Frame 0 is time zero. "
+        "When switching expressions, clear prior Shape Key actions not used by the new expression.\n"
+    )
     bpy.ops.wm.save_as_mainfile(filepath=str(output), compress=True)
     print('FACIAL_RESULT ' + json.dumps(result), flush=True)
 
