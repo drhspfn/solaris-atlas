@@ -529,6 +529,10 @@ def effect_space_only(metadata: dict) -> bool:
 
 def base_color_alpha_is_opacity(material_name: str, metadata: dict) -> bool:
     """The base-color fallback must not treat Denia's skin shader data as holes."""
+    if metadata.get('Switches', {}).get('UseFurry') is True:
+        # Fur opacity is composed with additional masks and parallax in-game;
+        # applying the engine's generic cutoff to MainTex alpha removes the base.
+        return False
     if material_name in {"MI_R2T1DaniyaMd10011Up01", "MI_R2T1DaniyaMd10011Up02"} and (
         metadata.get("Switches", {}).get("UseOnlySkinRampColor") is True
     ):
