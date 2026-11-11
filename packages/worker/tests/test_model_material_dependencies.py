@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from wuwa_story_worker.model_material_dependencies import missing_material_resources
 
 
@@ -54,3 +56,30 @@ def test_raw_material_color_parameter_uses_the_exact_reference(tmp_path):
         'TextureParameterValues': [{'ParameterInfo': {'Name': 'MainTex'},
                                     'ParameterValue': {'ObjectPath': '/Game/ExactColor.0'}}]}}]
     assert base_color_texture(raw, tmp_path) == ('/Game/ExactColor.0', None)
+
+
+@pytest.mark.parametrize('family', ['WaterMatCap', 'ParallaxSubUV'])
+def test_effect_base_dependency_requires_known_parent(tmp_path, family):
+    from wuwa_story_worker.model_bundle import inherited_base_color_texture
+
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    parent = f'Aki/Render/MaterialInstance/Effect/CharacterMesh/MI_AdvancedEffect_{family}_CM'
+    put(cooked, 'Body', [{'Type': 'StaticMesh', 'StaticMaterials': [
+        {'MaterialInterface': {'ObjectPath': '/Game/Fan.0'}}]}])
+    put(cooked, 'Fan', [{'Type': 'MaterialInstanceConstant', 'Properties': {'Parent': {
+        'ObjectName': "MaterialInstanceConstant'Parent'", 'ObjectPath': f'/Game/{parent}.0'}}}])
+    put(converted, 'Fan', {'Textures': {'Base': {'ObjectPath': '/Game/Effect/Exact.0'}}})
+    put(cooked, parent, [])
+    put(converted, parent, {})
+    assert missing_material_resources(cooked, converted, ['Body']) == ['Effect/Exact']
+    texture = converted / 'Client/Content/Effect/Exact.png'
+    texture.parent.mkdir(parents=True)
+    texture.touch()
+    assert missing_material_resources(cooked, converted, ['Body']) == []
+    path = converted / 'Client/Content/Fan.json'
+    assert inherited_base_color_texture(json.loads(path.read_text()), path, converted, cooked) == (
+        '/Game/Effect/Exact.0', texture)
+    put(cooked, 'Fan', [{'Type': 'MaterialInstanceConstant', 'Properties': {'Parent': {
+        'ObjectName': "Material'Other'", 'ObjectPath': '/Game/Other.0'}}}])
+    texture.unlink()
+    assert missing_material_resources(cooked, converted, ['Body']) == []

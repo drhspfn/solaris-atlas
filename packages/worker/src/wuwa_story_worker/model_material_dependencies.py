@@ -2,7 +2,7 @@
 
 import json
 
-from wuwa_story_worker.model_bundle import base_color_texture
+from wuwa_story_worker.model_bundle import base_color_texture, material_parent
 from wuwa_story_worker.model_sources import exported_package
 
 
@@ -30,7 +30,8 @@ def missing_material_resources(cooked, converted, models, overrides=()):
         if not source.is_file():
             missing.add(material)
             continue
-        for row in json.loads(source.read_text(encoding="utf-8-sig")):
+        rows = json.loads(source.read_text(encoding="utf-8-sig"))
+        for row in rows:
             parent = row.get("Properties", {}).get("Parent") or {}
             if str(parent.get("ObjectName", "")).startswith("MaterialInstanceConstant'"):
                 pending.append(exported_package(parent["ObjectPath"]))
@@ -39,7 +40,7 @@ def missing_material_resources(cooked, converted, models, overrides=()):
             missing.add(material)
             continue
         metadata = json.loads(path.read_text(encoding="utf-8-sig"))
-        reference, texture = base_color_texture(metadata, converted)
+        reference, texture = base_color_texture(metadata, converted, material_parent(rows))
         if reference and texture is None:
             missing.add(exported_package(reference))
     return sorted(missing)

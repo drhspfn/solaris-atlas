@@ -221,6 +221,26 @@ def test_material_metadata_prefers_exact_model_neighbor_and_rejects_ambiguity(tm
         material_metadata_path("Body", model, [other, tmp_path / "Third/Body.json"])
 
 
+def test_effect_preview_opacity_connects_base_alpha_and_multiplier():
+    from wuwa_story_worker.model_bundle import effect_preview_opacity
+
+    sockets = [SimpleNamespace(default_value=None), SimpleNamespace(default_value=None)]
+    multiply = SimpleNamespace(inputs=sockets, outputs=['result'])
+    links = []
+    material = SimpleNamespace(node_tree=SimpleNamespace(
+        nodes=SimpleNamespace(new=lambda kind: multiply),
+        links=SimpleNamespace(new=lambda a, b: links.append((a, b)))))
+    node = SimpleNamespace(outputs={'Alpha': 'alpha'})
+    shader = SimpleNamespace(inputs={'Alpha': 'opacity'})
+    effect_preview_opacity(material, node, shader, {'Scalars': {'Base_Alpha_Multiply': 0.7}})
+    assert multiply.operation == 'MULTIPLY'
+    assert sockets[1].default_value == 0.7
+    assert links == [('alpha', sockets[0]), ('result', 'opacity')]
+    assert material.surface_render_method == 'DITHERED'
+    with pytest.raises(ValueError, match='Unsupported effect preview opacity'):
+        effect_preview_opacity(material, node, shader, {'Scalars': {'Base_Alpha_Multiply': -1}})
+
+
 def test_base_color_uses_exact_maintex_then_basecolor_without_fuzzy_fallback(tmp_path):
     texture = tmp_path / "Client/Content/Test/Body.png"
     texture.parent.mkdir(parents=True)

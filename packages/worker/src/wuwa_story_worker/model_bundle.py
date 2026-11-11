@@ -349,7 +349,19 @@ def material_metadata(metadata):
     }
 
 
-def base_color_texture(metadata: dict, converted: Path) -> tuple[str | None, Path | None]:
+EFFECT_PREVIEW_PARENTS = {
+    "/Game/Aki/Render/MaterialInstance/Effect/CharacterMesh/MI_AdvancedEffect_WaterMatCap_CM",
+    "/Game/Aki/Render/MaterialInstance/Effect/CharacterMesh/MI_AdvancedEffect_ParallaxSubUV_CM",
+}
+
+
+def material_parent(rows):
+    parents = [row.get("Properties", {}).get("Parent", {}).get("ObjectPath")
+               for row in rows if row.get("Type") == "MaterialInstanceConstant"]
+    return parents[0].split(".", 1)[0] if len(parents) == 1 and parents[0] else None
+
+
+def base_color_texture(metadata: dict, converted: Path, parent=None) -> tuple[str | None, Path | None]:
     metadata = material_metadata(metadata)
     textures = metadata.get("Textures", {})
     switches = metadata.get("Switches", {})
@@ -370,6 +382,8 @@ def base_color_texture(metadata: dict, converted: Path) -> tuple[str | None, Pat
     ):
         face_atlas_transform(metadata)
         reference = textures["Tex_FaceAni"].get("ObjectPath")
+    elif parent in EFFECT_PREVIEW_PARENTS:
+        reference = textures.get("Base", {}).get("ObjectPath")
     else:
         reference = next(
             (textures[key].get("ObjectPath") for key in
@@ -408,17 +422,15 @@ def inherited_base_color_texture(metadata: dict, path: Path | None, converted: P
     visited = set()
     while True:
         metadata = material_metadata(metadata)
-        reference, texture = base_color_texture(metadata, converted)
+        source = source_json / path.relative_to(converted) if path else None
+        rows = json.loads(source.read_text(encoding="utf-8-sig")) if source and source.is_file() else []
+        reference, texture = base_color_texture(metadata, converted, material_parent(rows))
         if reference or path is None:
             return reference, texture
         relative = path.relative_to(converted)
         if relative in visited:
             raise ValueError("Cyclic material parent chain")
         visited.add(relative)
-        source = source_json / relative
-        if not source.is_file():
-            return None, None
-        rows = json.loads(source.read_text(encoding="utf-8-sig"))
         parents = [
             row.get("Properties", {}).get("Parent", {}).get("ObjectPath")
             for row in rows
@@ -463,6 +475,19 @@ def base_color_alpha_is_opacity(material_name: str, metadata: dict) -> bool:
         # Their diffuse alpha clips the neck; retain cloth/hair mask behavior.
         return False
     return metadata.get("BlendMode") in {1, 2}
+
+
+def effect_preview_opacity(material, node, shader, metadata):
+    """Approximate effect opacity from Base alpha and the authored multiplier."""
+    value = metadata.get("Scalars", {}).get("Base_Alpha_Multiply", 1)
+    if type(value) not in (int, float) or not 0 <= value <= 1:
+        raise ValueError("Unsupported effect preview opacity multiplier")
+    multiply = material.node_tree.nodes.new("ShaderNodeMath")
+    multiply.operation = "MULTIPLY"
+    multiply.inputs[1].default_value = value
+    material.node_tree.links.new(node.outputs["Alpha"], multiply.inputs[0])
+    material.node_tree.links.new(multiply.outputs[0], shader.inputs["Alpha"])
+    material.surface_render_method = "DITHERED"
 
 
 def compatible_master_pose(primary, extra) -> bool:
@@ -1070,7 +1095,11 @@ def main():
                 material.node_tree.links.new(mapping.outputs['Vector'], node.inputs['Vector'])
             material.node_tree.links.new(node.outputs["Color"], shader.inputs["Base Color"])
             blend_mode = metadata.get("BlendMode")
-            if base_color_alpha_is_opacity(path.stem if path else material.name, metadata):
+            source = args.source_json / path.relative_to(args.converted) if path else None
+            rows = json.loads(source.read_text(encoding="utf-8-sig")) if source and source.is_file() else []
+            if material_parent(rows) in EFFECT_PREVIEW_PARENTS:
+                effect_preview_opacity(material, node, shader, metadata)
+            elif base_color_alpha_is_opacity(path.stem if path else material.name, metadata):
                 alpha = node.outputs["Alpha"]
                 if blend_mode == 1:
                     clip = material.node_tree.nodes.new("ShaderNodeMath")
