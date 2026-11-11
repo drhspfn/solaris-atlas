@@ -7,8 +7,8 @@ reference. It does not infer animation synchronization or game visibility cues.
 import argparse
 import json
 import math
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def validate_manifest(data):
@@ -21,7 +21,7 @@ def validate_manifest(data):
             raise ValueError(f'{key} must be a 4x4 matrix')
         if any(type(v) not in (int, float) or not math.isfinite(v) for row in matrix for v in row):
             raise ValueError(f'{key} must contain finite numbers')
-        if any(abs(a-b) > 1e-8 for a,b in zip(matrix[3], (0,0,0,1))):
+        if any(abs(a-b) > 1e-8 for a,b in zip(matrix[3], (0,0,0,1), strict=True)):
             raise ValueError(f'{key} must be affine')
     return data
 
@@ -42,7 +42,7 @@ def combine(root_path, child_path, manifest_path, output_path):
         names = tuple(src.objects)
         dst.objects = list(names)
         dst.actions = list(src.actions)
-    objects = dict(zip(names, dst.objects))
+    objects = dict(zip(names, dst.objects, strict=True))
     if any(obj is None for obj in objects.values()):
         raise ValueError('Child object could not be appended')
     child = objects[data['child_root']]
