@@ -18,7 +18,7 @@ export function installEyeMaterials(root, makeTexture = url => new THREE.Texture
   const seen = new Set();
   root.traverse(node => {
     for (const material of [node.material || []].flat()) {
-      if (!material || seen.has(material) || !material.isMeshStandardMaterial) continue;
+      if (!material || seen.has(material) || material.solarisEyeTexture || !material.isMeshStandardMaterial) continue;
       seen.add(material);
       let payload;
       try { payload = JSON.parse(material.userData?.solaris_eye_material); } catch { continue; }
