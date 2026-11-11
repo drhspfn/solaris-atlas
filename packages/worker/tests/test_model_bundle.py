@@ -345,6 +345,19 @@ def test_denia_skin_passes_do_not_cut_neck_but_cloth_and_other_characters_keep_m
     assert not base_color_alpha_is_opacity("Face", {"BlendMode": 0})
 
 
+def test_fur_card_preview_excludes_mixed_tail_and_regular_materials():
+    from wuwa_story_worker.model_bundle import uses_fur_card_mask, uses_fur_vertex_mask
+    cards = {'Switches': {'UseFurry': True, 'FurMaskUseID': True, 'UseFurryParallax': False}}
+    assert uses_fur_card_mask(cards)
+    assert not uses_fur_card_mask({'Switches': {**cards['Switches'], 'UseFurryParallax': True}})
+    assert not uses_fur_card_mask({**cards, 'Textures': {'MainTex': {'ObjectPath': '/Game/Color'}}})
+    assert not uses_fur_card_mask({})
+    mixed = {'Switches': {'UseFurry': True, 'UseFurryParallax': True},
+             'Scalars': {'UseVertexAMask': 1, 'FurBlendUseVertexRFade': 1}}
+    assert uses_fur_vertex_mask(mixed)
+    assert not uses_fur_vertex_mask({'Switches': mixed['Switches'], 'Scalars': {}})
+
+
 def test_animation_container_names_are_form_independent_without_renaming_joints():
     rigs = [SimpleNamespace(name=name, data=SimpleNamespace(name=name, bones=[
         SimpleNamespace(name="root"), SimpleNamespace(name="SolarisAnimationRig"),
@@ -420,6 +433,7 @@ def test_preview_mesh_copies_keep_render_uv_and_restore_original_attributes_on_f
             SimpleNamespace(name="UV1", active_render=True),
         ],
         color_attributes=["COL0"],
+        materials=[],
         shape_keys=SimpleNamespace(key_blocks=list(range(87))),
     )
     mesh = SimpleNamespace(data=original)
@@ -431,6 +445,20 @@ def test_preview_mesh_copies_keep_render_uv_and_restore_original_attributes_on_f
         raise RuntimeError("export failed")
     assert mesh.data is original
     assert len(original.uv_layers) == 2 and original.color_attributes == ["COL0"]
+
+
+def test_preview_mesh_keeps_fur_uv_and_vertex_colors():
+    class MeshData(SimpleNamespace):
+        def copy(self):
+            return deepcopy(self)
+
+    original = MeshData(uv_layers=[SimpleNamespace(name='UV0'), SimpleNamespace(name='UV1')],
+                        color_attributes=['COL0'], materials=[{'solaris_fur_preview': 'fur'}])
+    mesh = SimpleNamespace(data=original)
+    with preview_meshes([mesh]):
+        assert len(mesh.data.uv_layers) == 2
+        assert mesh.data.color_attributes == ['COL0']
+    assert mesh.data is original
 
 
 def write_test_glb(path, document):

@@ -542,7 +542,23 @@ def base_color_alpha_is_opacity(material_name: str, metadata: dict) -> bool:
     return metadata.get("BlendMode") in {1, 2}
 
 
-def add_fur_preview(material, shader, metadata, converted):
+def uses_fur_card_mask(metadata):
+    """Recognize the textureless fur-card material tested on Denia's sleeves."""
+    switches = metadata.get('Switches') or {}
+    textures = metadata.get('Textures') or {}
+    return (switches.get('UseFurry') is True
+            and switches.get('FurMaskUseID') is True
+            and switches.get('UseFurryParallax') is False
+            and not (textures.get('MainTex') or textures.get('BaseColor')))
+
+
+def uses_fur_vertex_mask(metadata):
+    switches, scalars = metadata.get('Switches') or {}, metadata.get('Scalars') or {}
+    return (switches.get('UseFurry') is True and switches.get('UseFurryParallax') is True
+            and scalars.get('UseVertexAMask') == 1 and scalars.get('FurBlendUseVertexRFade') == 1)
+
+
+def add_fur_preview(material, shader, metadata, converted, *, secondary_uv=None, vertex_color=None):
     """Approximate authored fur texture as relief, retaining an opaque base.
 
     This is an editable Blender preview, not the decoded game shader or fur shells.
@@ -575,7 +591,29 @@ def add_fur_preview(material, shader, metadata, converted):
     bump.inputs['Distance'].default_value = .002
     links.new(tex.outputs['Color'], bump.inputs['Height'])
     links.new(bump.outputs['Normal'], shader.inputs['Normal'])
-    material['solaris_fur_preview'] = 'Approximation: texture relief; game fur shader not recovered'
+    if secondary_uv and (uses_fur_card_mask(metadata) or (vertex_color and uses_fur_vertex_mask(metadata))):
+        # The second UV samples the strand atlas. Mixed parallax surfaces also
+        # need their vertex alpha to retain the base. This remains an approximation.
+        uv = nodes.new('ShaderNodeUVMap')
+        uv.uv_map = secondary_uv
+        uv.label = 'Fur card UV (second UV set)'
+        links.new(uv.outputs['UV'], tex.inputs['Vector'])
+        opacity = tex.outputs['Color']
+        if vertex_color and uses_fur_vertex_mask(metadata):
+            vertex = nodes.new('ShaderNodeVertexColor')
+            vertex.layer_name = vertex_color
+            vertex.label = 'Authored vertex alpha (base coverage)'
+            coverage = nodes.new('ShaderNodeMath')
+            coverage.operation = 'MAXIMUM'
+            coverage.label = 'Approximation: retain base under fur'
+            links.new(vertex.outputs['Alpha'], coverage.inputs[0])
+            links.new(opacity, coverage.inputs[1])
+            opacity = coverage.outputs[0]
+        links.new(opacity, shader.inputs['Alpha'])
+        material.surface_render_method = 'DITHERED'
+        material['solaris_fur_preview'] = 'Approximation: fur card mask; game shader not recovered'
+    else:
+        material['solaris_fur_preview'] = 'Approximation: texture relief; game fur shader not recovered'
     return True
 
 
@@ -655,13 +693,15 @@ def canonical_animation_rig(armature):
 
 @contextmanager
 def preview_meshes(meshes):
-    """The generated base-color shaders use only the render UV and no colors."""
+    """Trim unused mesh attributes, retaining inputs needed by fur materials."""
     originals = []
     try:
         for mesh in meshes:
             original = mesh.data
             originals.append((mesh, original))
             mesh.data = original.copy()
+            if any(material and material.get('solaris_fur_preview') for material in mesh.data.materials):
+                continue
             uv_name = next(
                 (uv.name for uv in mesh.data.uv_layers if uv.active_render),
                 mesh.data.uv_layers[0].name if mesh.data.uv_layers else None,
@@ -676,6 +716,32 @@ def preview_meshes(meshes):
     finally:
         for mesh, original in originals:
             mesh.data = original
+
+
+@contextmanager
+def gltf_fur_fallback(meshes):
+    """Do not export a Blender-only mask that glTF bakes with the wrong UV."""
+    removed, defaults = [], []
+    try:
+        materials = {material for mesh in meshes for material in mesh.data.materials if material}
+        for material in materials:
+            if material.get('solaris_fur_preview') != 'Approximation: fur card mask; game shader not recovered':
+                continue
+            shader = next((node for node in material.node_tree.nodes if node.type == 'BSDF_PRINCIPLED'), None)
+            if shader is None:
+                continue
+            alpha = shader.inputs['Alpha']
+            defaults.append((alpha, alpha.default_value))
+            for link in list(alpha.links):
+                removed.append((material.node_tree.links, link.from_socket, alpha))
+                material.node_tree.links.remove(link)
+            alpha.default_value = 1
+        yield
+    finally:
+        for links, output, alpha in removed:
+            links.new(output, alpha)
+        for alpha, value in defaults:
+            alpha.default_value = value
 
 
 @contextmanager
@@ -739,7 +805,7 @@ def rig_glb_stats(path: Path, bones: int, morph_targets: int, textures: int) -> 
     if stats["animations"] or stats["joints"] != bones or stats["morph_targets"] != morph_targets:
         raise ValueError(f"Rig GLB lost joints/morphs or contains animations: {stats}")
     if (
-        stats["textures"] != textures
+        stats["textures"] < textures
         or any("bufferView" not in image or "uri" in image for image in document.get("images", []))
         or any("uri" in buffer for buffer in document.get("buffers", []))
     ):
@@ -1212,7 +1278,15 @@ def main():
                     alpha = clip.outputs[0]
                 material.node_tree.links.new(alpha, shader.inputs["Alpha"])
                 material.surface_render_method = "DITHERED"
-        fur_preview = add_fur_preview(material, shader, metadata, args.converted)
+        users = [mesh for mesh in meshes if material in mesh.data.materials[:]]
+        uv_names = {mesh.data.uv_layers[1].name for mesh in users if len(mesh.data.uv_layers) > 1}
+        secondary_uv = (next(iter(uv_names)) if users and len(uv_names) == 1
+                        and all(len(mesh.data.uv_layers) > 1 for mesh in users) else None)
+        color_names = {mesh.data.color_attributes[0].name for mesh in users if mesh.data.color_attributes}
+        vertex_color = (next(iter(color_names)) if users and len(color_names) == 1
+                        and all(mesh.data.color_attributes for mesh in users) else None)
+        fur_preview = add_fur_preview(material, shader, metadata, args.converted,
+                                      secondary_uv=secondary_uv, vertex_color=vertex_color)
         report["materials"].append(
             {"name": material.name, "texture": str(texture) if texture else None,
              "fur_preview": fur_preview}
@@ -1339,7 +1413,7 @@ def main():
             export_anim_single_armature=True,
             export_extras=True,
         )
-        with indexed_gltf_references(GlTF2Exporter, (Accessor, BufferView)):
+        with gltf_fur_fallback(meshes), indexed_gltf_references(GlTF2Exporter, (Accessor, BufferView)):
             if "FINISHED" not in bpy.ops.export_scene.gltf(**options):
                 raise RuntimeError(f"GLB export failed: {name}")
 
@@ -1356,7 +1430,9 @@ def main():
     export_glb("character.glb", animations=not rig_mode)
     if rig_mode:
         report["rig_only"] = args.rig_only
-        report["textures"] = len({row["texture"] for row in report["materials"]})
+        # glTF may bake additional textures when a fur mask and diffuse use
+        # different images; require at least all distinct source color textures.
+        report["textures"] = len({row["texture"] for row in report["materials"] if row["texture"]})
         report["morph_targets"] = sum(
             len(mesh.data.shape_keys.key_blocks) - 1 for mesh in meshes if mesh.data.shape_keys
         )
