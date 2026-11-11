@@ -41,3 +41,22 @@ values as material properties. The report lists missing parameters. This is an
 input inventory with a diffuse fallback: it does not translate bytecode,
 interpret alpha channels or recover the original render graph. Do not use its
 output as a replacement for a verified game material.
+
+With `--approximate`, the builder adds explicitly labelled, adjustable preview
+nodes: positive-Z reconstruction from the R/G normal channels when the instance
+enables normal mapping, a roughness and unlit fill for hair, and a simple
+translucent effect preview with a second layer when the instance enables it.
+These formulas are hypotheses, not recovered game code. The report records
+which approximations were applied. Backface hair fill was tested but did not
+resolve the dark ponytail in the controlled rear render and was discarded.
+
+The ponytail's opaque hair diffuse texture has alpha values below 1. Blender's
+default straight-alpha interpretation darkened its RGB even in an emission-only
+test. For opaque or masked character instances with `UseHairVCGradient` or
+`UsePBR`, the builder makes an independent image copy using `CHANNEL_PACKED`;
+an identical rear render then retained the light hair colour. The original
+image and translucent effect materials are unchanged. The masked material's
+alpha still needs an independently verified use in the shader. This
+does not establish the exact purpose of alpha or implement transparency over the
+eyes. Blender describes channel-packed RGB and alpha as independent data in its
+[Image API](https://docs.blender.org/api/current/bpy.types.Image.html).

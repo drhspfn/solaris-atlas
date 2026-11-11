@@ -30,7 +30,110 @@ def resolve_texture(reference, roots):
     return None
 
 
-def build_material(material, metadata, roots):
+def uses_packed_character_diffuse(metadata):
+    switches = metadata.get('Switches') or {}
+    return (metadata.get('BlendMode') in (0, 1)
+            and (switches.get('UseHairVCGradient') is True or switches.get('UsePBR') is True))
+
+
+def add_approximate_shading(material, shader, available, metadata):
+    """Build editable approximations; none of these nodes are decoded UE graphs."""
+    nodes, links = material.node_tree.nodes, material.node_tree.links
+    original_nodes = set(nodes)
+    switches = metadata.get('Switches') or {}
+    scalars = metadata.get('Scalars') or {}
+    applied = []
+    normal = available.get('Normal_Roughness_Metallic')
+    if normal and (switches.get('UseNormalMap') is True or switches.get('UseNormalTex') is True):
+        # Hypothesis: R/G encode tangent-space X/Y. Reconstruct positive Z.
+        # Copy the image: colorspace is per-image and must not change color nodes.
+        normal.image = normal.image.copy()
+        normal.image.colorspace_settings.name = 'Non-Color'
+        normal.image.alpha_mode = 'CHANNEL_PACKED'
+        normal.image.pack()
+        separate = nodes.new('ShaderNodeSeparateColor')
+        links.new(normal.outputs['Color'], separate.inputs['Color'])
+        squares = []
+        for channel in ('Red', 'Green'):
+            remap = nodes.new('ShaderNodeMath')
+            remap.operation = 'MULTIPLY_ADD'
+            remap.inputs[1].default_value = 2
+            remap.inputs[2].default_value = -1
+            links.new(separate.outputs[channel], remap.inputs[0])
+            square = nodes.new('ShaderNodeMath')
+            square.operation = 'MULTIPLY'
+            links.new(remap.outputs[0], square.inputs[0])
+            links.new(remap.outputs[0], square.inputs[1])
+            squares.append(square.outputs[0])
+        add = nodes.new('ShaderNodeMath')
+        add.operation = 'ADD'
+        links.new(squares[0], add.inputs[0])
+        links.new(squares[1], add.inputs[1])
+        remaining = nodes.new('ShaderNodeMath')
+        remaining.operation = 'SUBTRACT'
+        remaining.use_clamp = True
+        remaining.inputs[0].default_value = 1
+        links.new(add.outputs[0], remaining.inputs[1])
+        sqrt = nodes.new('ShaderNodeMath')
+        sqrt.operation = 'SQRT'
+        links.new(remaining.outputs[0], sqrt.inputs[0])
+        blue = nodes.new('ShaderNodeMath')
+        blue.operation = 'MULTIPLY_ADD'
+        blue.inputs[1].default_value = .5
+        blue.inputs[2].default_value = .5
+        links.new(sqrt.outputs[0], blue.inputs[0])
+        combine = nodes.new('ShaderNodeCombineColor')
+        links.new(separate.outputs['Red'], combine.inputs['Red'])
+        links.new(separate.outputs['Green'], combine.inputs['Green'])
+        links.new(blue.outputs[0], combine.inputs['Blue'])
+        normal_map = nodes.new('ShaderNodeNormalMap')
+        normal_map.label = 'Approximation: reconstruct positive Z from RG'
+        strength = scalars.get('NormalStrength', 1)
+        if type(strength) in (float, int) and 0 <= strength <= 10:
+            normal_map.inputs['Strength'].default_value = strength
+        links.new(combine.outputs['Color'], normal_map.inputs['Color'])
+        links.new(normal_map.outputs['Normal'], shader.inputs['Normal'])
+        shader.inputs['Roughness'].default_value = .58
+        applied.append('normal_rg_positive_z_assumed')
+    if switches.get('UseHairVCGradient') is True:
+        shader.inputs['Roughness'].default_value = .48
+        applied.append('hair_roughness_artistic')
+    if 'MainTex' in available and (normal or switches.get('UseHairVCGradient') is True):
+        # A small adjustable unlit contribution mitigates double-lighting
+        # painted diffuse textures. It is not a recovered game lighting model.
+        links.new(available['MainTex'].outputs['Color'], shader.inputs['Emission Color'])
+        shader.inputs['Emission Strength'].default_value = .3
+        applied.append('painted_diffuse_fill_artistic')
+    if metadata.get('BlendMode') == 2 and 'Base' in available:
+        if switches.get('UseSecondTex') is True and 'Second' in available:
+            layer = nodes.new('ShaderNodeMixRGB')
+            layer.blend_type = 'ADD'
+            layer.label = 'Approximation: second texture layer'
+            amount = scalars.get('Base_bAddSecond', .1)
+            if type(amount) not in (int, float) or not 0 <= amount <= 1:
+                amount = .1
+            layer.inputs[0].default_value = amount
+            links.new(available['Base'].outputs['Color'], layer.inputs[1])
+            links.new(available['Second'].outputs['Color'], layer.inputs[2])
+            links.new(layer.outputs['Color'], shader.inputs['Base Color'])
+            applied.append('effect_second_layer_approximation')
+        # Unreal effect graph combines several masks/refraction; simple alpha is
+        # an artistic fallback, not an interpretation of the authored equations.
+        alpha = nodes.new('ShaderNodeMath')
+        alpha.operation = 'MULTIPLY'
+        alpha.label = 'Approximation: adjustable effect opacity'
+        alpha.inputs[1].default_value = .35
+        links.new(available['Base'].outputs['Alpha'], alpha.inputs[0])
+        links.new(alpha.outputs[0], shader.inputs['Alpha'])
+        material.surface_render_method = 'DITHERED'
+        shader.inputs['Roughness'].default_value = .38
+        applied.append('translucent_alpha_artistic')
+    for index, node in enumerate(n for n in nodes if n not in original_nodes):
+        node.location = (-170 - 220 * (index // 6), -240 * (index % 6))
+    return applied
+
+
+def build_material(material, metadata, roots, approximate=False):
     textures = metadata.get('Textures') or {}
     material.use_nodes = True
     nodes = material.node_tree.nodes
@@ -61,13 +164,23 @@ def build_material(material, metadata, roots):
         available[name] = node
     base = next((available[name] for name in ('MainTex', 'BaseColor', 'Base') if name in available), None)
     if base:
+        # Preserve RGB independent of packed alpha for tested character inputs.
+        # The alpha channel remains available for masks. Copy the image because
+        # other nodes can share the same source with a different interpretation.
+        if base.label == 'MainTex' and uses_packed_character_diffuse(metadata):
+            base.image = base.image.copy()
+            base.image.alpha_mode = 'CHANNEL_PACKED'
+            base.image.pack()
         links.new(base.outputs['Color'], shader.inputs['Base Color'])
     for key in ('Scalars', 'Colors', 'Switches'):
         # Preserve parameter values without inventing their cooked semantics.
         material['UE ' + key] = json.dumps(metadata.get(key) or {}, ensure_ascii=False)
-    material['UE mapper status'] = 'partial: diffuse only; remaining shader logic not recovered'
+    approximations = add_approximate_shading(material, shader, available, metadata) if approximate else []
+    material['UE mapper status'] = 'partial: original shader logic not recovered'
+    material['UE approximations'] = json.dumps(approximations)
     return {'material': material.name, 'base': base.label if base else None,
-            'available': list(available), 'missing': missing, 'status': 'partial'}
+            'available': list(available), 'missing': missing, 'status': 'partial',
+            'approximations': approximations}
 
 
 def main():
@@ -77,6 +190,8 @@ def main():
     parser.add_argument('--textures', required=True, action='append', type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--report', required=True, type=Path)
+    parser.add_argument('--approximate', action='store_true',
+                        help='Add experimental normal, hair and effect shading')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     if args.output.exists() or args.report.exists():
         raise FileExistsError('Output and report must not already exist')
@@ -90,7 +205,7 @@ def main():
         data = json.loads(path.read_text(encoding='utf-8-sig'))
         if not isinstance(data, dict) or not isinstance(data.get('Textures'), dict):
             raise TypeError(f'Unsupported material metadata: {path}')
-        results.append(build_material(material, data, roots))
+        results.append(build_material(material, data, roots, args.approximate))
     bpy.ops.file.pack_all()
     bpy.ops.wm.save_as_mainfile(filepath=str(args.output.resolve()))
     args.report.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding='utf-8')

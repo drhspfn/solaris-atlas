@@ -27,3 +27,10 @@ def test_resolves_exact_game_and_converted_paths(mapper, tmp_path):
 def test_rejects_untrusted_or_missing_paths(mapper, tmp_path):
     for reference in ('/Game/../../outside', '/Other/Test', 'Client/Content/missing', None):
         assert mapper.resolve_texture({'ObjectPath': reference}, [tmp_path]) is None
+
+
+def test_packed_diffuse_for_character_materials_but_not_effects(mapper):
+    assert mapper.uses_packed_character_diffuse({'BlendMode': 0, 'Switches': {'UseHairVCGradient': True}})
+    assert mapper.uses_packed_character_diffuse({'BlendMode': 1, 'Switches': {'UsePBR': True}})
+    assert not mapper.uses_packed_character_diffuse({'BlendMode': 2, 'Switches': {'UseHairVCGradient': True}})
+    assert not mapper.uses_packed_character_diffuse({'BlendMode': 0, 'Switches': {}})
