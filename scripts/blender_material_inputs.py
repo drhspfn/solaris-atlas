@@ -36,6 +36,11 @@ def uses_packed_character_diffuse(metadata):
             and (switches.get('UseHairVCGradient') is True or switches.get('UsePBR') is True))
 
 
+def uses_water_gradient(switches, size):
+    return (switches.get('UseWaterClothColor') is True and switches.get('UseMatcap') is True
+            and size[0] > 0 and size[1] > 0 and size[0] >= 4 * size[1])
+
+
 def add_approximate_shading(material, shader, available, metadata):
     """Build editable approximations; none of these nodes are decoded UE graphs."""
     nodes, links = material.node_tree.nodes, material.node_tree.links
@@ -105,7 +110,38 @@ def add_approximate_shading(material, shader, available, metadata):
         shader.inputs['Emission Strength'].default_value = .3
         applied.append('painted_diffuse_fill_artistic')
     if metadata.get('BlendMode') == 2 and 'Base' in available:
-        if switches.get('UseSecondTex') is True and 'Second' in available:
+        second = available.get('Second')
+        if second and uses_water_gradient(switches, second.image.size):
+            # Artistic water/matcap approximation: the authored gradient is a
+            # color lookup, driven here by the observed wave texture intensity.
+            # This is not the game's recovered material graph.
+            intensity = nodes.new('ShaderNodeRGBToBW')
+            intensity.label = 'Approximation: wave intensity'
+            links.new(available['Base'].outputs['Color'], intensity.inputs['Color'])
+            gradient_position = nodes.new('ShaderNodeMath')
+            gradient_position.operation = 'MULTIPLY_ADD'
+            gradient_position.use_clamp = True
+            gradient_position.label = 'Approximation: water gradient range'
+            gradient_position.inputs[1].default_value = -.25
+            gradient_position.inputs[2].default_value = .68
+            links.new(intensity.outputs['Val'], gradient_position.inputs[0])
+            gradient_uv = nodes.new('ShaderNodeCombineXYZ')
+            gradient_uv.label = 'Approximation: sample water gradient'
+            gradient_uv.inputs['Y'].default_value = .5
+            links.new(gradient_position.outputs[0], gradient_uv.inputs['X'])
+            links.new(gradient_uv.outputs['Vector'], second.inputs['Vector'])
+            links.new(second.outputs['Color'], shader.inputs['Base Color'])
+            links.new(second.outputs['Color'], shader.inputs['Emission Color'])
+            glow = nodes.new('ShaderNodeMath')
+            glow.operation = 'MULTIPLY_ADD'
+            glow.label = 'Approximation: illuminated wave crests'
+            glow.inputs[1].default_value = 1.4
+            glow.inputs[2].default_value = .1
+            links.new(intensity.outputs['Val'], glow.inputs[0])
+            links.new(glow.outputs[0], shader.inputs['Emission Strength'])
+            shader.inputs['Roughness'].default_value = .22
+            applied.append('water_gradient_lookup_artistic')
+        elif switches.get('UseSecondTex') is True and second:
             layer = nodes.new('ShaderNodeMixRGB')
             layer.blend_type = 'ADD'
             layer.label = 'Approximation: second texture layer'
@@ -122,11 +158,22 @@ def add_approximate_shading(material, shader, available, metadata):
         alpha = nodes.new('ShaderNodeMath')
         alpha.operation = 'MULTIPLY'
         alpha.label = 'Approximation: adjustable effect opacity'
-        alpha.inputs[1].default_value = .35
+        opacity = scalars.get('Base_Alpha_Multiply')
+        alpha.inputs[1].default_value = (
+            opacity if switches.get('UseSecondMask') is True and type(opacity) in (int, float)
+            and 0 <= opacity <= 1 else .35
+        )
         links.new(available['Base'].outputs['Alpha'], alpha.inputs[0])
         links.new(alpha.outputs[0], shader.inputs['Alpha'])
         material.surface_render_method = 'DITHERED'
-        shader.inputs['Roughness'].default_value = .38
+        if switches.get('UseSecondMask') is True:
+            # An editable emissive fill keeps the illustrated overlay legible
+            # through the water layer; the game's lighting is not recovered.
+            links.new(available['Base'].outputs['Color'], shader.inputs['Emission Color'])
+            shader.inputs['Emission Strength'].default_value = 2
+            applied.append('effect_overlay_fill_artistic')
+        if 'water_gradient_lookup_artistic' not in applied:
+            shader.inputs['Roughness'].default_value = .38
         applied.append('translucent_alpha_artistic')
     for index, node in enumerate(n for n in nodes if n not in original_nodes):
         node.location = (-170 - 220 * (index // 6), -240 * (index % 6))
@@ -167,7 +214,9 @@ def build_material(material, metadata, roots, approximate=False):
         # Preserve RGB independent of packed alpha for tested character inputs.
         # The alpha channel remains available for masks. Copy the image because
         # other nodes can share the same source with a different interpretation.
-        if base.label == 'MainTex' and uses_packed_character_diffuse(metadata):
+        effect_atlas = (base.label == 'Base' and metadata.get('BlendMode') == 2
+                        and (metadata.get('Switches') or {}).get('UseSecondMask') is True)
+        if (base.label == 'MainTex' and uses_packed_character_diffuse(metadata)) or effect_atlas:
             base.image = base.image.copy()
             base.image.alpha_mode = 'CHANNEL_PACKED'
             base.image.pack()

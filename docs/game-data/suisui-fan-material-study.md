@@ -60,3 +60,17 @@ alpha still needs an independently verified use in the shader. This
 does not establish the exact purpose of alpha or implement transparency over the
 eyes. Blender describes channel-packed RGB and alpha as independent data in its
 [Image API](https://docs.blender.org/api/current/bpy.types.Image.html).
+
+The blueprint also references `ESuisuiFazanMd10011` as `OtherCase12`, parented
+to `CharacterMesh0`. Its eight rest-bone matrices match the body rig within
+0.00001; its mesh has been verified as the hair ornament from the supplied game
+reference. The experimental scene binds its mesh to the body rig. The blueprint
+sets `bHiddenInGame`, so visibility in other game situations is not established.
+
+For translucent effect instances that enable water color and matcap and provide
+a narrow gradient texture, the optional preview uses the exported wave texture
+to sample that gradient. It also adds an adjustable emission approximation and
+an illustrated overlay when the second mask is enabled. These are artistic
+choices informed by the supplied screenshots, not recovered UE operations.
+Full-frame front and back renders show the mountain overlay remains too faint
+and the game's animated highlights/refraction are still missing.

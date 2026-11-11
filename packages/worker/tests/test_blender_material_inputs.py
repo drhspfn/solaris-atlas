@@ -34,3 +34,11 @@ def test_packed_diffuse_for_character_materials_but_not_effects(mapper):
     assert mapper.uses_packed_character_diffuse({'BlendMode': 1, 'Switches': {'UsePBR': True}})
     assert not mapper.uses_packed_character_diffuse({'BlendMode': 2, 'Switches': {'UseHairVCGradient': True}})
     assert not mapper.uses_packed_character_diffuse({'BlendMode': 0, 'Switches': {}})
+
+
+def test_water_gradient_requires_authored_features_and_gradient_texture(mapper):
+    switches = {'UseWaterClothColor': True, 'UseMatcap': True}
+    assert mapper.uses_water_gradient(switches, (512, 4))
+    assert not mapper.uses_water_gradient(switches, (512, 512))
+    assert not mapper.uses_water_gradient(switches, (0, 0))
+    assert not mapper.uses_water_gradient({'UseMatcap': True}, (512, 4))
