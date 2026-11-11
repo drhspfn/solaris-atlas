@@ -7,6 +7,7 @@ import os
 import shutil
 import tempfile
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,7 +21,20 @@ CASES = {
     "hsin": ("mesh-100071", "36712d2cf01a14f58152840903ea303903c313c168df858b0356970b8b35f0d6", "d70ce1f5a0dea717f9d90969747b01d1ffdb3d8fdaa1407eda21a3252518360e", 506),
     "suisui": ("mesh-100070", "29abbb6541660b6fb58472471567b5395c47c62d9c228e2a7f0e60182cb2ea74", "9e9853d2484cafbc1d2db5ce2e505b02caa2079dde1f472753aa7a565abea029", 356),
 }
-TOOLS = ["7143a9f6e3b8c2e4f5c3499c79efc6687c135435151b9edc75a863c1b0f55cc4", "7421ab1c52a25df4b5dbb0f2ee3f008d9f71f4bb437ff69a1d0af78dfec50323", "7799c90bfe3809c51e3039a9fd404b650d5fd792f3359f5735cdd0ea0296b809", "0a5717717de1a33077c97155e649c5949141c2f0acb91b40ce89483507fa3b41"]
+TOOLS = ["7143a9f6e3b8c2e4f5c3499c79efc6687c135435151b9edc75a863c1b0f55cc4", "7421ab1c52a25df4b5dbb0f2ee3f008d9f71f4bb437ff69a1d0af78dfec50323", "b076a8f681247be0ff1131167f8325301b9f74ac7e4a57e3d08fe2237067492e", "0a5717717de1a33077c97155e649c5949141c2f0acb91b40ce89483507fa3b41"]
+
+
+@contextmanager
+def retained_workspace(*, prefix, dir):
+    path = Path(tempfile.mkdtemp(prefix=prefix, dir=dir))
+    print(json.dumps({"stage": "workspace_created", "workspace": str(path)}), flush=True)
+    try:
+        yield str(path)
+    except BaseException:
+        print(json.dumps({"stage": "failed_workspace_preserved", "workspace": str(path)}), flush=True)
+        raise
+    else:
+        shutil.rmtree(path)
 
 
 def verified_pack(name, retained):
@@ -49,7 +63,7 @@ def verified_pack(name, retained):
              Path(cm.__file__).with_name("model_bundle.py"), Path(cm.__file__).with_name("model_animation_merge.py")]
     if [sha256(p) for p in paths] != TOOLS:
         raise ValueError("Animation tools or recipe differ from the retained build")
-    if (sha256(Path(cm.__file__)) != "bfaf56d33808ec6139dc5ee4269dbee60413b9a6907a4be639b5f912dc921cd4"
+    if (sha256(Path(cm.__file__)) != "5fec73cbc42060370df435c35bb34ecf749aae25ca7ad1acf614d2760e0c6fc5"
             or sha256(Path(cm.__file__).with_name("model_animation_packs.py")) != "78151e48fb4f3f24a31d1350dcbd0e167d9feb72f31cb8fc8a94c6ee9ad3aac2"):
         raise ValueError("Importer or animation cache implementation differs from retained build")
     recipe = fingerprint(TOOLS)
@@ -90,7 +104,7 @@ async def resume(args, saved, recipe, entry):
         raise FileExistsError(args.output)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     # Separate scratch and private pack copy: retained data is never modified or hard-linked.
-    with tempfile.TemporaryDirectory(prefix=".verified-resume-", dir=args.output.parent) as scratch:
+    with retained_workspace(prefix=".verified-resume-", dir=args.output.parent) as scratch:
         scratch = Path(scratch)
         pack = scratch / "retained.glb"
         shutil.copyfile(entry["path"], pack)
@@ -126,12 +140,15 @@ async def resume(args, saved, recipe, entry):
 
         cm.prepare_packs, cm.build_bundle = prepare, bundle
         archive = scratch / "archive.zip"
+        previous_tempfile = model_cli.tempfile
+        model_cli.tempfile = SimpleNamespace(TemporaryDirectory=retained_workspace)
         try:
             await model_cli.build(SimpleNamespace(recipe=args.recipe, game_dir=args.game_dir, keys_file=args.keys_file,
                 asset_version=args.asset_version, tier="hd", output=archive, workers=1, without_animations=False,
                 fmodel=None, converter=None, blender=None, ueformat_plugin=None))
         finally:
             cm.prepare_packs, cm.build_bundle = original_prepare, original_bundle
+            model_cli.tempfile = previous_tempfile
         if not injected:
             raise ValueError("Root animation pack was not injected")
         with zipfile.ZipFile(archive) as z:
