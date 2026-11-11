@@ -24,3 +24,20 @@ parameter names exist, but naming alone does not establish the graph operations
 or bindings in compiled code. See `shader-map-inspection.md` for locating the
 compiled permutations. Validate a reconstruction with matching game poses,
 lighting and effects before promoting it to the importer.
+
+## Inspectable material inputs
+
+`scripts/blender_material_inputs.py` can create a separate Blender project
+from existing converted material-instance JSON and extracted PNGs. Pass the
+original `.blend` with `--scene`, each JSON with `--metadata`, one or more
+converted roots with `--textures`, and new paths for `--output` and `--report`.
+The JSON filename must match an existing material in the scene. It uses exact
+`/Game/` or `Client/Content/` paths and refuses to overwrite outputs.
+
+For each material, the builder connects only `MainTex`, `BaseColor` or `Base`
+to a standard Principled surface; it also creates labelled, unconnected nodes
+for other available texture parameters and preserves scalar, vector and switch
+values as material properties. The report lists missing parameters. This is an
+input inventory with a diffuse fallback: it does not translate bytecode,
+interpret alpha channels or recover the original render graph. Do not use its
+output as a replacement for a verified game material.
