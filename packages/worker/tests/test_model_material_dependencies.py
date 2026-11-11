@@ -104,12 +104,13 @@ def test_stencil_reader_must_be_an_authored_hair_pass_with_an_authored_parent(tm
     assert result['masks'][0]['target_material'] == '/Game/Face'
 
 
-@pytest.mark.parametrize('family', ['WaterMatCap', 'ParallaxSubUV', 'Refraction'])
+@pytest.mark.parametrize('family', ['WaterMatCap', 'ParallaxSubUV', 'Refraction', 'AdvancedEffect'])
 def test_effect_base_dependency_requires_known_parent(tmp_path, family):
     from wuwa_story_worker.model_bundle import inherited_base_color_texture
 
     cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
-    name = 'MI_Refraction_CM' if family == 'Refraction' else f'MI_AdvancedEffect_{family}_CM'
+    name = {'Refraction': 'MI_Refraction_CM', 'AdvancedEffect': 'MI_AdvancedEffect_CM'}.get(
+        family, f'MI_AdvancedEffect_{family}_CM')
     parent = f'Aki/Render/MaterialInstance/Effect/CharacterMesh/{name}'
     put(cooked, 'Body', [{'Type': 'StaticMesh', 'StaticMaterials': [
         {'MaterialInterface': {'ObjectPath': '/Game/Fan.0'}}]}])
