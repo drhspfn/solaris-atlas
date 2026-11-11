@@ -93,6 +93,8 @@ def missing_material_resources(cooked, converted, models, overrides=()):
         names = set()
         if resolved.get('Switches', {}).get('UseFurryParallax') is True:
             names.update({'HeightMap', 'FlowmapMap'})
+            if resolved.get('Switches', {}).get('UseTypeMask') is True:
+                names.add('TypeMask')
         if (resolved.get('Switches', {}).get('FurMaskUseID') is True
                 and (resolved.get('Switches', {}).get('UseFurry') is True
                      or resolved.get('Switches', {}).get('UseFurryParallax') is True)):
