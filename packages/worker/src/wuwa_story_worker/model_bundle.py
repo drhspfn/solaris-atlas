@@ -928,6 +928,8 @@ def main():
         help="Maximum preview texture dimension (rig-only mode)",
     )
     parser.add_argument("--animation-plan", type=Path)
+    parser.add_argument("--blender-source", action="store_true",
+                        help="Save the rig-only Blender scene with its editable materials and studio")
     parser.add_argument("--animation-batch", type=int)
     parser.add_argument("--animation-batch-size", type=int, default=None)
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1 :])
@@ -948,6 +950,8 @@ def main():
         parser.error("--animation-batch-size requires --animation-batch")
     if args.animation_plan and not batch_mode and not args.rig_only:
         parser.error("Creating --animation-plan requires --rig-only")
+    if args.blender_source and not args.rig_only:
+        parser.error("--blender-source requires --rig-only")
     rig_mode = args.rig_only or args.with_animations
     import bpy
 
@@ -1521,6 +1525,13 @@ def main():
         )
         report["preview_texture_size"] = args.preview_texture_size
         report["preview_glb_bytes"] = report["preview_glb"]["bytes"]
+        if args.blender_source:
+            # Save only after GLB exports: the editable studio is not game geometry.
+            add_blender_studio(meshes)
+            bpy.context.preferences.filepaths.save_version = 0
+            bpy.ops.wm.save_as_mainfile(
+                filepath=str((args.output / "blender-source.blend").resolve()), compress=True
+            )
     if args.with_animations:
         try:
             import_actions()
