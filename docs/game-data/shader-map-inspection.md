@@ -8,7 +8,17 @@ their own static permutations.
 1. Extract the material instance and its `.uexp` with the existing FModel
    workflow. Decode it with CUE4Parse configured for `GAME_WutheringWaves` and
    **`ReadShaderMaps = true` before the package is loaded**. The stock CLI used
-   for model extraction does not currently set this flag. Export the material's
+   for model extraction does not currently set this flag. The local probe below
+   uses the existing worker runtime and .NET 10 SDK; `CUE4ParseDir` points to the
+   directory containing the matching worker `CUE4Parse.dll` and its dependencies:
+
+   ```text
+   dotnet build scripts/shader_material_probe/ShaderMaterialProbe.csproj -c Release -p:CUE4ParseDir=PATH_TO_RUNTIME
+   dotnet scripts/shader_material_probe/bin/Release/net10.0/ShaderMaterialProbe.dll EXTRACTED_ROOT MATERIAL.uasset OUTPUT.json
+   ```
+
+   The probe requires exactly one matching filename and does not overwrite an
+   existing output. Export the material's
    `LoadedMaterialResources`, including `ShaderMapId`, `ResourceHash` and
    `Content`; do not substitute a parent material's hash for an instance's hash.
 2. Extract the relevant `.ushaderbytecode` archive. In the tested 3.7.2 client,
