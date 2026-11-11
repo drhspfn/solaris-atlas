@@ -40,6 +40,13 @@ def missing_material_resources(cooked, converted, models, overrides=()):
             missing.add(material)
             continue
         metadata = json.loads(path.read_text(encoding="utf-8-sig"))
+        resolved = material_metadata(metadata)
+        if resolved.get('Switches', {}).get('UseFurry') is True:
+            fur = resolved.get('Textures', {}).get('Fur_Tex', {}).get('ObjectPath')
+            if fur:
+                package = exported_package(fur)
+                if not (converted / 'Client/Content' / (package + '.png')).is_file():
+                    missing.add(package)
         if material_parent(rows) == "/Game/Aki/Render/Shaders/Character/M_WriteStencil":
             mask = material_metadata(metadata).get("Textures", {}).get("Mask", {}).get("ObjectPath")
             if mask:

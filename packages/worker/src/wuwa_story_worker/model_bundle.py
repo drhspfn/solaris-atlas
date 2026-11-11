@@ -542,6 +542,43 @@ def base_color_alpha_is_opacity(material_name: str, metadata: dict) -> bool:
     return metadata.get("BlendMode") in {1, 2}
 
 
+def add_fur_preview(material, shader, metadata, converted):
+    """Approximate authored fur texture as relief, retaining an opaque base.
+
+    This is an editable Blender preview, not the decoded game shader or fur shells.
+    """
+    if metadata.get('Switches', {}).get('UseFurry') is not True:
+        return False
+    reference = metadata.get('Textures', {}).get('Fur_Tex', {}).get('ObjectPath')
+    if not isinstance(reference, str):
+        return False
+    relative = reference.replace('\\', '/').split('.', 1)[0]
+    if relative.startswith('/Game/'):
+        relative = 'Client/Content/' + relative[6:]
+    root = converted.resolve()
+    texture = (root / (relative + '.png')).resolve()
+    if not texture.is_relative_to(root) or not texture.is_file():
+        return False
+    import bpy
+
+    image = bpy.data.images.load(str(texture), check_existing=False)
+    image.colorspace_settings.name = 'Non-Color'
+    image.alpha_mode = 'CHANNEL_PACKED'
+    image.pack()
+    nodes, links = material.node_tree.nodes, material.node_tree.links
+    tex = nodes.new('ShaderNodeTexImage')
+    tex.label = 'Fur mask (game texture)'
+    tex.image = image
+    bump = nodes.new('ShaderNodeBump')
+    bump.label = 'Approximate fur relief (adjustable)'
+    bump.inputs['Strength'].default_value = .22
+    bump.inputs['Distance'].default_value = .002
+    links.new(tex.outputs['Color'], bump.inputs['Height'])
+    links.new(bump.outputs['Normal'], shader.inputs['Normal'])
+    material['solaris_fur_preview'] = 'Approximation: texture relief; game fur shader not recovered'
+    return True
+
+
 def effect_preview_opacity(material, node, shader, metadata):
     """Approximate effect opacity from Base alpha and the authored multiplier."""
     value = metadata.get("Scalars", {}).get("Base_Alpha_Multiply", 1)
@@ -1175,8 +1212,10 @@ def main():
                     alpha = clip.outputs[0]
                 material.node_tree.links.new(alpha, shader.inputs["Alpha"])
                 material.surface_render_method = "DITHERED"
+        fur_preview = add_fur_preview(material, shader, metadata, args.converted)
         report["materials"].append(
-            {"name": material.name, "texture": str(texture) if texture else None}
+            {"name": material.name, "texture": str(texture) if texture else None,
+             "fur_preview": fur_preview}
         )
     if rig_mode and report["missing_textures"]:
         (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

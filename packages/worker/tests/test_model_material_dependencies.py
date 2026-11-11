@@ -11,6 +11,25 @@ def put(root, package, value):
     path.write_text(json.dumps(value))
 
 
+def test_fur_fetches_only_authored_texture_when_enabled(tmp_path):
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'Material': {'ObjectPath': '/Game/MI_Fur.MI_Fur'}}]}])
+    put(cooked, 'MI_Fur', [])
+    metadata = {'Switches': {'UseFurry': True}, 'Textures': {
+        'Fur_Tex': {'ObjectPath': '/Game/Shared/Fur.Fur'}}}
+    put(converted, 'MI_Fur', metadata)
+    assert missing_material_resources(cooked, converted, ['Body']) == ['Shared/Fur']
+    texture = converted / 'Client/Content/Shared/Fur.png'
+    texture.parent.mkdir(parents=True)
+    texture.touch()
+    assert missing_material_resources(cooked, converted, ['Body']) == []
+    texture.unlink()
+    metadata['Switches']['UseFurry'] = False
+    put(converted, 'MI_Fur', metadata)
+    assert missing_material_resources(cooked, converted, ['Body']) == []
+
+
 def test_follows_exact_shared_parent_and_texture_without_scanning_other_materials(tmp_path):
     cooked, converted = tmp_path / "cooked", tmp_path / "converted"
     put(cooked, "Body", [{"Type": "SkeletalMesh", "SkeletalMaterials": [
