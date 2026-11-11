@@ -264,10 +264,13 @@ def job_payload():
 def test_publication_includes_optional_blender_project(tmp_path):
     job = worker.CharacterModelJob.model_validate(job_payload())
     project = tmp_path / "character.blend"
-    project.write_bytes(b"test project")
+    project.write_bytes(b"BLENDER-v450")
     files, count = worker.publication_files(job, tmp_path, {})
     assert ("blender", project, "unknown", "application/x-blender") in files
     assert count == 0
+    project.write_bytes(b"not a project")
+    with pytest.raises(ValueError, match="Invalid Blender project"):
+        worker.publication_files(job, tmp_path, {})
 
 
 def test_facial_publication_is_validated_against_the_body_animation_collection(tmp_path):

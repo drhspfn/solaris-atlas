@@ -984,8 +984,13 @@ def publication_files(job, output, summaries, *, packs=None):
         ("preview", output / "preview.glb", "unknown", "model/gltf-binary"),
         ("download", output / "character.glb", "unknown", "model/gltf-binary"),
     ]
-    if (output / "character.blend").is_file():
-        files.append(("blender", output / "character.blend", "unknown", "application/x-blender"))
+    project = output / "character.blend"
+    if project.is_file():
+        with project.open("rb") as stream:
+            header = stream.read(12)
+        if len(header) < 12 or not (header.startswith(b"BLENDER") or header.startswith(b"\x28\xb5\x2f\xfd")):
+            raise ValueError("Invalid Blender project header")
+        files.append(("blender", project, "unknown", "application/x-blender"))
     if job.include_animations:
         if packs:
             files.extend((pack["key"], output / model_file_name(pack["key"]), "unknown", "model/gltf-binary")
