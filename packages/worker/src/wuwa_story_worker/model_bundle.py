@@ -524,6 +524,9 @@ def base_color_texture(metadata: dict, converted: Path, parent=None) -> tuple[st
         reference = textures["Tex_FaceAni"].get("ObjectPath")
     elif parent in EFFECT_PREVIEW_PARENTS:
         reference = textures.get("Base", {}).get("ObjectPath")
+    elif parent == "/Game/Aki/Render/MaterialInstance/Effect/MeshParticle/MI_BPProp_Gobletliquid_Com":
+        # The cooked goblet-liquid material uses BaseTex for its diffuse input.
+        reference = textures.get("BaseTex", {}).get("ObjectPath")
     else:
         reference = next(
             (textures[key].get("ObjectPath") for key in

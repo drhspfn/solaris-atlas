@@ -55,6 +55,17 @@ def test_empty_effect_material_slots_require_explicit_null_source(tmp_path):
     assert empty_effect_material_slots(converted / 'Client/Content/Aki/Effect/Other.uemodel', converted, source) == set()
 
 
+def test_goblet_liquid_uses_authored_base_texture(tmp_path):
+    parent = '/Game/Aki/Render/MaterialInstance/Effect/MeshParticle/MI_BPProp_Gobletliquid_Com'
+    metadata = {'Textures': {'BaseTex': {'ObjectPath': '/Game/Coffee.0'}}}
+    assert base_color_texture(metadata, tmp_path, parent) == ('/Game/Coffee.0', None)
+    texture = tmp_path / 'Client/Content/Coffee.png'
+    texture.parent.mkdir(parents=True)
+    texture.write_bytes(b'png')
+    assert base_color_texture(metadata, tmp_path, parent) == ('/Game/Coffee.0', texture)
+    assert base_color_texture(metadata, tmp_path, '/Game/Unknown') == (None, None)
+
+
 def test_equivalent_skeletons_require_hierarchy_and_complete_finite_rest_pose():
     bone = SimpleNamespace(name="Root", parent_index=-1, position=[0, 0, 0],
                            rotation=[0, 0, 0, 1], scale=[1, 1, 1])
