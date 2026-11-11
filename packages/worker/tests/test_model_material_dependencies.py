@@ -30,6 +30,26 @@ def test_fur_fetches_only_authored_texture_when_enabled(tmp_path):
     assert missing_material_resources(cooked, converted, ['Body']) == []
 
 
+def test_fur_parallax_follows_master_defaults_and_preserves_instance_override(tmp_path):
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'Material': {'ObjectPath': '/Game/Fur.Fur'}}]}])
+    put(cooked, 'Fur', [{'Type': 'MaterialInstanceConstant', 'Properties': {
+        'Parent': {'ObjectName': "Material'Master'", 'ObjectPath': '/Game/Master.Master'}}}])
+    put(converted, 'Fur', {'Switches': {'UseFurry': True, 'UseFurryParallax': True},
+                           'Textures': {'HeightMap': {'ObjectPath': '/Game/CustomHeight'}}})
+    assert missing_material_resources(cooked, converted, ['Body']) == ['CustomHeight', 'Master']
+    put(cooked, 'Master', [{'Type': 'Material', 'CachedExpressionData': {'Parameters': {
+        'RuntimeEntries[2]': {'ParameterInfos': [{'Name': 'HeightMap'}, {'Name': 'FlowmapMap'}]},
+        'TextureValues': [{'ObjectPath': '/Game/DefaultHeight'}, {'ObjectPath': '/Game/Flow'}]}}}])
+    assert missing_material_resources(cooked, converted, ['Body']) == ['CustomHeight', 'Flow']
+    for name in ['CustomHeight', 'Flow']:
+        path = converted / 'Client/Content' / (name + '.png')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    assert missing_material_resources(cooked, converted, ['Body']) == []
+
+
 def test_follows_exact_shared_parent_and_texture_without_scanning_other_materials(tmp_path):
     cooked, converted = tmp_path / "cooked", tmp_path / "converted"
     put(cooked, "Body", [{"Type": "SkeletalMesh", "SkeletalMaterials": [
