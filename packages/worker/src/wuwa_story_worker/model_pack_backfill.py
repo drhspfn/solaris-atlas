@@ -30,7 +30,6 @@ from wuwa_story_worker.transient_workspace import transient_workspace
 logger = logging.getLogger(__name__)
 JOB_TYPE = "media.character_model_pack_reuse"
 FIXED_KINDS = {kind: name for kind, name in FILES.items() if kind != "animation_manifest"}
-FIXED_KINDS["blender"] = "character.blend"
 
 
 def source_job(run, processor_key):
