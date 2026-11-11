@@ -15,7 +15,7 @@ FORMAT = "solaris-model-bundle-v1"
 MAX_ARCHIVE_BYTES = 4 * 1024**3
 MAX_EXPANDED_BYTES = 8 * 1024**3
 CHUNK_BYTES = 8 * 1024**2
-FILES = {"preview": "preview.glb", "download": "character.glb", "animations": "animations.glb",
+FILES = {"preview": "preview.glb", "download": "character.glb", "blender": "character.blend", "animations": "animations.glb",
          "facial": "facial.json", "physics": "physics.json",
          "animation_manifest": "animation-manifest.json"}
 MAX_ARCHIVE_OBJECTS = (len(FILES) + MAX_ANIMATION_PACKS) * MAX_MODEL_FORMS

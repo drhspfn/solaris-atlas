@@ -221,6 +221,26 @@ def test_material_metadata_prefers_exact_model_neighbor_and_rejects_ambiguity(tm
         material_metadata_path("Body", model, [other, tmp_path / "Third/Body.json"])
 
 
+def test_effect_preview_opacity_connects_base_alpha_and_multiplier():
+    from wuwa_story_worker.model_bundle import effect_preview_opacity
+
+    sockets = [SimpleNamespace(default_value=None), SimpleNamespace(default_value=None)]
+    multiply = SimpleNamespace(inputs=sockets, outputs=['result'])
+    links = []
+    material = SimpleNamespace(node_tree=SimpleNamespace(
+        nodes=SimpleNamespace(new=lambda kind: multiply),
+        links=SimpleNamespace(new=lambda a, b: links.append((a, b)))))
+    node = SimpleNamespace(outputs={'Alpha': 'alpha'})
+    shader = SimpleNamespace(inputs={'Alpha': 'opacity'})
+    effect_preview_opacity(material, node, shader, {'Scalars': {'Base_Alpha_Multiply': 0.7}})
+    assert multiply.operation == 'MULTIPLY'
+    assert sockets[1].default_value == 0.7
+    assert links == [('alpha', sockets[0]), ('result', 'opacity')]
+    assert material.surface_render_method == 'DITHERED'
+    with pytest.raises(ValueError, match='Unsupported effect preview opacity'):
+        effect_preview_opacity(material, node, shader, {'Scalars': {'Base_Alpha_Multiply': -1}})
+
+
 def test_base_color_uses_exact_maintex_then_basecolor_without_fuzzy_fallback(tmp_path):
     texture = tmp_path / "Client/Content/Test/Body.png"
     texture.parent.mkdir(parents=True)
@@ -321,7 +341,30 @@ def test_denia_skin_passes_do_not_cut_neck_but_cloth_and_other_characters_keep_m
     assert base_color_alpha_is_opacity("MI_R2T1DaniyaMd10011Cloth", skin)
     assert base_color_alpha_is_opacity("MI_OtherCharacterUp01", skin)
     assert base_color_alpha_is_opacity("Hair", {"BlendMode": 2})
+    assert not base_color_alpha_is_opacity("Tail", {"BlendMode": 1, "Switches": {"UseFurry": True}})
     assert not base_color_alpha_is_opacity("Face", {"BlendMode": 0})
+
+
+def test_fur_card_preview_excludes_mixed_tail_and_regular_materials():
+    from wuwa_story_worker.model_bundle import uses_fur_card_mask, uses_fur_vertex_mask
+    cards = {'Switches': {'UseFurry': True, 'FurMaskUseID': True, 'UseFurryParallax': False}}
+    assert uses_fur_card_mask(cards)
+    assert not uses_fur_card_mask({'Switches': {**cards['Switches'], 'UseFurryParallax': True}})
+    assert not uses_fur_card_mask({**cards, 'Textures': {'MainTex': {'ObjectPath': '/Game/Color'}}})
+    assert not uses_fur_card_mask({})
+    mixed = {'Switches': {'UseFurry': True, 'UseFurryParallax': True},
+             'Scalars': {'UseVertexAMask': 1, 'FurBlendUseVertexRFade': 1}}
+    assert uses_fur_vertex_mask(mixed)
+    assert not uses_fur_vertex_mask({'Switches': mixed['Switches'], 'Scalars': {}})
+
+
+def test_fur_uses_third_uv_only_when_available_for_every_mesh():
+    from wuwa_story_worker.model_bundle import fur_uv_name
+    def mesh(*names):
+        return SimpleNamespace(data=SimpleNamespace(uv_layers=[SimpleNamespace(name=n) for n in names]))
+    assert fur_uv_name([mesh('UV0', 'UV1', 'UV2')]) == 'UV2'
+    assert fur_uv_name([mesh('UV0', 'UV1')]) is None
+    assert fur_uv_name([mesh('UV0', 'UV1', 'UV2'), mesh('UV0', 'UV1', 'other')]) is None
 
 
 def test_animation_container_names_are_form_independent_without_renaming_joints():
@@ -399,6 +442,7 @@ def test_preview_mesh_copies_keep_render_uv_and_restore_original_attributes_on_f
             SimpleNamespace(name="UV1", active_render=True),
         ],
         color_attributes=["COL0"],
+        materials=[],
         shape_keys=SimpleNamespace(key_blocks=list(range(87))),
     )
     mesh = SimpleNamespace(data=original)
@@ -410,6 +454,23 @@ def test_preview_mesh_copies_keep_render_uv_and_restore_original_attributes_on_f
         raise RuntimeError("export failed")
     assert mesh.data is original
     assert len(original.uv_layers) == 2 and original.color_attributes == ["COL0"]
+
+
+@pytest.mark.parametrize("material", [
+    {"solaris_fur_preview": "fur"}, {"solaris_eye_material": "eye"},
+])
+def test_preview_mesh_keeps_material_uv_and_vertex_colors(material):
+    class MeshData(SimpleNamespace):
+        def copy(self):
+            return deepcopy(self)
+
+    original = MeshData(uv_layers=[SimpleNamespace(name='UV0'), SimpleNamespace(name='UV1')],
+                        color_attributes=['COL0'], materials=[material])
+    mesh = SimpleNamespace(data=original)
+    with preview_meshes([mesh]):
+        assert len(mesh.data.uv_layers) == 2
+        assert mesh.data.color_attributes == ['COL0']
+    assert mesh.data is original
 
 
 def write_test_glb(path, document):
@@ -1126,3 +1187,43 @@ def test_plan_skips_foreign_skeleton_before_dto_validation(tmp_path):
     plan = build_animation_plan(model, converted, "rig", sources, {"root"}, read)
     assert [clip["file"] for clip in plan["clips"]] == ["owned.ueanim"]
     assert plan["animation_coverage"]["matching_sources"] == 1
+
+
+def test_empty_component_plan_only_when_no_matching_sources(tmp_path):
+    model = tmp_path / "model.uemodel"
+    model.touch()
+    converted = tmp_path / "converted"
+    converted.mkdir()
+    foreign = {"foreign": {"matches_skeleton": False, "source": "foreign.json"}}
+    plan = build_animation_plan(model, converted, "rig", foreign, {"root"}, None, allow_empty=True)
+    assert plan["clips"] == []
+    assert plan["animation_coverage"]["matching_sources"] == 0
+    with pytest.raises(ValueError, match="No verified"):
+        build_animation_plan(model, converted, "rig", foreign, {"root"}, None)
+    source = {"clip": {"matches_skeleton": True, "source": "clip.json", "name": "Clip"}}
+    with pytest.raises(ValueError, match="Missing matching animation exports"):
+        build_animation_plan(model, converted, "rig", source, {"root"}, None, allow_empty=True)
+    (converted / "clip.ueanim").touch()
+    dto = SimpleNamespace(metadata=SimpleNamespace(num_frames=2, frames_per_second=30,
+                                                    additive_anim_type=1),
+                          tracks=[SimpleNamespace(name="root")], curves=[])
+    def read(*_):
+        return SimpleNamespace(object_path="clip", object_name="Clip"), dto
+    with pytest.raises(ValueError, match="No verified"):
+        build_animation_plan(model, converted, "rig", source, {"root"}, read, allow_empty=True)
+def test_eye_material_payload_keeps_authored_inputs_and_rejects_escape(tmp_path):
+    import base64
+
+    from wuwa_story_worker.model_bundle import eye_material_payload
+
+    image = tmp_path / 'Client/Content/Eyes/Highlight.png'
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b'eye image')
+    metadata = {'Switches': {'UseHeightLightShape': True}, 'Scalars': {'EyeScale': .8},
+                'Textures': {'HeightLightMap': {'ObjectPath': '/Game/Eyes/Highlight.Highlight'},
+                             'EM': {'ObjectPath': '../../outside'}}}
+    payload = eye_material_payload(metadata, tmp_path)
+    assert payload['scalars']['EyeScale'] == .8
+    assert base64.b64decode(payload['textures']['HeightLightMap']['data_base64']) == b'eye image'
+    assert 'EM' not in payload['textures']
+    assert eye_material_payload({'Switches': {}}, tmp_path) is None

@@ -8,6 +8,8 @@ import { FacialAnimation } from './facial.js';
 import { attachAnimationCatalog, loadAnimationPacks, bindAnimationPacks, disposeAnimationPacks, prepareAnimatedMeshes } from './animations.js';
 import { declaredAccessories } from './accessories.js';
 import { createLinkedModels } from './linked-models.js';
+import { installHairStencil } from './hair-stencil.js';
+import { installEyeMaterials } from './eye-material.js';
 
 /** Dispose shared GPU resources once, including failed/obsolete model loads. */
 export function disposeObject(root) {
@@ -93,8 +95,10 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   const stage = new THREE.Group();
   scene.add(stage);
   const camera = new THREE.PerspectiveCamera(35, 1, 0.001, 60);
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, stencil: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.shadowMap.enabled = !preview;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.15;
@@ -110,6 +114,9 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   const target = new THREE.Vector3();
   scene.add(new THREE.HemisphereLight('#e5f0ff', '#657370', 2.6));
   const key = new THREE.DirectionalLight('#ffffff', 2.5);
+  key.castShadow = !preview;
+  key.shadow.mapSize.set(1024, 1024);
+  key.shadow.normalBias = 0.005;
   key.position.set(3, 5, 4); scene.add(key);
   const rim = new THREE.DirectionalLight('#82cbcd', 1);
   rim.position.set(-3, 2, -2); scene.add(rim);
@@ -117,6 +124,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
   const plane = new THREE.Mesh(new THREE.PlaneGeometry(40, 40),
     new THREE.MeshStandardMaterial({ color: '#162123', roughness: 1 }));
   plane.rotation.x = -Math.PI / 2; plane.position.y = -0.006;
+  plane.receiveShadow = true;
   floor.add(plane, new THREE.GridHelper(20, 40, '#647d79', '#304345'), new THREE.AxesHelper(0.6));
   floor.visible = !preview && settings.floor;
   scene.add(floor);
@@ -131,6 +139,7 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
       emit({ status: progress.total ? `Loading model · ${Math.round(progress.loaded / progress.total * 100)}%` : 'Loading model…' });
     });
     if (disposed) { disposeObject(loaded.scene); throw new Error('Viewer closed'); }
+    installEyeMaterials(loaded.scene);
     return loaded;
   }
   async function json(url) {
@@ -219,6 +228,13 @@ export function createViewer(host, assets, preview, initialSettings, onState) {
     linked?.detach();
     if (model) { stage.remove(model); disposeObject(model); }
     gltf = loaded; model = loaded.scene; stage.add(model); prepareAnimatedMeshes(model);
+    installHairStencil(model);
+    if (!preview) model.traverse(node => {
+      if (!node.isMesh) return;
+      const materials = [node.material].flat();
+      node.castShadow = materials.some(material => material && material.colorWrite && !material.transparent);
+      node.receiveShadow = node.castShadow;
+    });
     const declared = accessories = declaredAccessories(model, accessoryVisibility);
     for (const option of declared.options) accessoryVisibility[option.name] = option.visible;
     emit({ accessories: declared.options });

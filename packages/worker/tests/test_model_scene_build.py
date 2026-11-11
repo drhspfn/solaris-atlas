@@ -21,6 +21,23 @@ def prop():
                           "parent_component": "CharacterMesh0", "socket": "WeaponProp02"}}
 
 
+def test_asset_cache_requires_each_bound_clip_metadata_and_export(tmp_path):
+    converted, cooked = tmp_path / 'converted', tmp_path / 'cooked'
+    sources = {'model': 'Aki/Prop', 'blueprints': [], 'montages': ['Aki/Anim/Stand']}
+    def make(root, name):
+        path = root / 'Client/Content' / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    make(cooked, 'Aki/Prop.json')
+    make(converted, 'Aki/Prop.uemodel')
+    cached = (None, converted, cooked, {})
+    assert not models.cached_model_covers_sources(cached, sources, True)
+    make(cooked, 'Aki/Anim/Stand.json')
+    assert not models.cached_model_covers_sources(cached, sources, True)
+    make(converted, 'Aki/Anim/Stand.ueanim')
+    assert models.cached_model_covers_sources(cached, sources, True)
+
+
 def test_bound_component_animation_requires_matching_skeleton(tmp_path):
     sources = prop()
     sources["component"]["bindings"] = [{"parent_clip": "Aki/Parent", "child_clip": "Aki/Book/Idle"}]

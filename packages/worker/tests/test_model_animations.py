@@ -261,6 +261,18 @@ def job_payload():
     )
 
 
+def test_publication_includes_optional_blender_project(tmp_path):
+    job = worker.CharacterModelJob.model_validate(job_payload())
+    project = tmp_path / "character.blend"
+    project.write_bytes(b"BLENDER-v450")
+    files, count = worker.publication_files(job, tmp_path, {})
+    assert ("blender", project, "unknown", "application/x-blender") in files
+    assert count == 0
+    project.write_bytes(b"not a project")
+    with pytest.raises(ValueError, match="Invalid Blender project"):
+        worker.publication_files(job, tmp_path, {})
+
+
 def test_facial_publication_is_validated_against_the_body_animation_collection(tmp_path):
     job = worker.CharacterModelJob.model_validate({**job_payload(), "include_animations": True})
     animation_glb(tmp_path / "animations.glb")
@@ -384,13 +396,16 @@ async def test_claim_accepts_legacy_payload_but_rejects_changed_animation_reques
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "include,clip_count,fail_batch",
-    [(False, 0, False), (True, 1, False), (True, 41, False), (True, 41, True)],
+    "include,clip_count,fail_batch,component",
+    [(False, 0, False, False), (True, 1, False, False), (True, 41, False, False),
+     (True, 41, True, False), (True, 0, False, True), (True, 1, False, True)],
 )
 @pytest.mark.parametrize("animation_workers", [1, 3])
+@pytest.mark.parametrize("export_blender", [False, True])
 async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
-    tmp_path, monkeypatch, include, clip_count, fail_batch, animation_workers
+    tmp_path, monkeypatch, include, clip_count, fail_batch, component, animation_workers, export_blender
 ):
+    monkeypatch.setenv("WUWA_MODEL_BLENDER_EXPORT", "true" if export_blender else "false")
     model = "Aki/Character/Role/FemaleM/Test/Variant/Model/Rig"
     cooked = tmp_path / "source-json"
     metadata = cooked / "Client/Content" / (model + ".json")
@@ -418,7 +433,17 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
     monkeypatch.setattr(worker, "extract_model", extraction)
 
     async def blender(args, log, timeout):
+        if any(str(arg).endswith("blender_facial_attach.py") for arg in args):
+            assert export_blender and "--strict" in args
+            (tmp_path / "bundle/character-facial.blend").write_bytes(b"with face")
+            return
+        if any(str(arg).endswith("blender_ueformat_actions.py") for arg in args):
+            assert export_blender and include and clip_count
+            assert args[args.index("--armature") + 1] == "Rig"
+            (tmp_path / "bundle/character.blend").write_bytes(b"assembled")
+            return
         assert args[args.index("--skeleton") + 1] == "/Game/Aki/ActualSkeleton"
+        assert ("--allow-empty-component-animations" in args) is component
         assert "--with-animations" not in args
         output = tmp_path / "bundle"
         if "--animation-batch" in args:
@@ -440,14 +465,24 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
             animation_glb(parts / f"part-{index:04d}.glb", names)
         else:
             assert "--rig-only" in args
+            if export_blender:
+                assert "--blender-source" in args
+                (output / "blender-source.blend").write_bytes(b"source")
+                (output / "report.json").write_text(json.dumps({"blender_armature": "Rig"}))
             if include:
+                if export_blender and clip_count:
+                    (output / "facial.json").write_text(json.dumps({"format": "solaris-facial-v1", "clips": [{
+                        "name": "Face", "body_clip": "Clip0", "seconds": 1,
+                        "tracks": [{"target": "Smile", "keys": [[0, 0], [1, 1]]}],
+                    }]}))
                 (output / "animation-plan.json").write_text(
                     json.dumps({"clips": [{"name": f"Clip{i}",
                         "source": f"Client/Content/Aki/ActualAnim/Clip{i}.json"}
                         for i in range(clip_count)]})
                 )
                 (output / "report.json").write_text(
-                    json.dumps({"animation_coverage": {"playable_clips": clip_count}})
+                    json.dumps({"animation_coverage": {"playable_clips": clip_count},
+                                **({"blender_armature": "Rig"} if export_blender else {})})
                 )
 
     real_summary = worker.glb_summary
@@ -465,15 +500,20 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
             )
         assert not (tmp_path / "bundle/animations.glb").exists()
         return
+    sources = {"model": model, "blueprints": [], **({"component": {"bindings": []}} if component else {})}
     _, summaries, provenance = await worker.build_bundle(
-        tmp_path, {"model": model, "blueprints": []}, include_animations=include,
+        tmp_path, sources, include_animations=include,
         animation_workers=animation_workers,
     )
     assert extraction.call_args.args[-1] is include
-    assert ("animations" in summaries) is include
-    assert provenance["include_animations"] is include
+    exported_animations = include and bool(clip_count)
+    assert ("animations" in summaries) is exported_animations
+    assert provenance["include_animations"] is exported_animations
     assert provenance["animation_batches"] == (clip_count + 19) // 20
-    if include:
+    assert (tmp_path / "bundle/character.blend").is_file() is export_blender
+    if export_blender and exported_animations:
+        assert (tmp_path / "bundle/character.blend").read_bytes() == b"with face"
+    if exported_animations:
         assert provenance["animations"]["animations"] == clip_count
         assert provenance["animation_coverage"]["playable_clips"] == clip_count
 

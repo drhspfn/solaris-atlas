@@ -57,7 +57,7 @@ const label = (name: string, bytes?: number) =>
 const normalizeAssets = (assets: ModelAssets): ModelAssets => ({
   ...assets,
   ...Object.fromEntries(
-    (["preview", "download", "physics", "animations", "animation_manifest", "facial"] as const).map((key) => {
+    (["preview", "download", "blender", "physics", "animations", "animation_manifest", "facial"] as const).map((key) => {
       const asset = assets[key];
       return [key, asset ? { ...asset, url: apiUrl(asset.url.replace(/^\/api(?=\/)/, "")) } : asset];
     }),
@@ -441,6 +441,7 @@ function ModelViewerInstance({
                 {state.fullQuality ? "Full quality" : "Compact model"}
               </span>
             </div>
+            {assets.blender && <a className="ui-button ui-button-default ui-button-sm" href={assets.blender.url} download>{label("Blender project", assets.blender.size_bytes)}</a>}
             {(packs.length > 0 || assets.animation_manifest) && (
               <details className="model-downloads">
                 <summary className="ui-button ui-button-ghost ui-button-sm">Animation downloads <ChevronDown size={16} aria-hidden="true" /></summary>

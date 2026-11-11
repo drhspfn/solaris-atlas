@@ -63,7 +63,12 @@ def clip_identity(clip):
     # authored export instead of treating equal bytes as a duplicate action.
     export = clip.get("file")
     export = export.replace("\\", "/").casefold() if export else None
-    return fingerprint([package(clip["source"]), export, clip["sha256"]])
+    identity = [package(clip["source"]), export, clip["sha256"]]
+    if clip.get("montage"):
+        # A montage depends on every segment and its authored timing/sections,
+        # not just the first segment used as the plan's representative file.
+        identity.append(clip["montage"])
+    return fingerprint(identity)
 
 
 def compatible_rigs(left, right):

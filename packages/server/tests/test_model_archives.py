@@ -30,6 +30,18 @@ def test_portable_bundle_deduplicates_forms_and_omits_local_secrets(tmp_path):
         write_archive(path, {"character_key": "character:1"}, [first])
 
 
+def test_blender_project_round_trips_in_portable_archive(tmp_path):
+    entry = bundle(tmp_path)
+    project = entry[1] / "character.blend"
+    project.write_bytes(b"BLENDER-v450")
+    archive = tmp_path / "model.zip"
+    manifest = write_archive(archive, {"character_key": "character:1"}, [entry])
+    decoded = tmp_path / "decoded"
+    assert read_archive(archive, decoded) == manifest
+    key = manifest["forms"][0]["files"]["blender"]
+    assert (decoded / "objects" / key).read_bytes() == project.read_bytes()
+
+
 def test_animation_packs_round_trip_with_form_specific_selections(tmp_path):
     form, output, summaries, provenance = bundle(tmp_path)
     (output / "animation-packs").mkdir()

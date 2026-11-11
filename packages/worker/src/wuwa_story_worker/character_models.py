@@ -374,6 +374,21 @@ async def discover_scene_components(root, sources, cooked, converted=None, manif
     return results
 
 
+def cached_model_covers_sources(cached, sources, include_animations):
+    if not cached:
+        return False
+    required = [sources['model'], *sources['blueprints'], *sources.get('extra_models', []),
+                *sources.get('montages', [])]
+    if sources.get('component_blueprint'):
+        required.append(sources['component_blueprint'])
+    converted, cooked = cached[1:3]
+    return (all((cooked / 'Client/Content' / (path + '.json')).is_file() for path in required)
+            and (converted / 'Client/Content' / (sources['model'] + '.uemodel')).is_file()
+            and (not include_animations or all(
+                (converted / 'Client/Content' / (clip + '.ueanim')).is_file()
+                for clip in sources.get('montages', []))))
+
+
 def component_animation_skeletons(sources, cooked, skeleton):
     """Resolve exact authored bindings before requesting their skeleton dependencies."""
     bindings = sources.get("component", {}).get("bindings", [])
@@ -457,11 +472,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         for slots in sources.get('part_material_overrides', {}).values() for path in slots.values())
     asset_key = ("/".join(sources["model"].split("/")[:5]).casefold(), include_animations)
     cached = asset_cache.get(asset_key) if asset_cache is not None else None
-    required = [sources["model"], *sources["blueprints"], *sources.get("extra_models", [])]
-    if sources.get("component_blueprint"):
-        required.append(sources["component_blueprint"])
-    if cached and all((cached[2] / "Client/Content" / (path + ".json")).is_file() for path in required) and (
-        cached[1] / "Client/Content" / (sources["model"] + ".uemodel")).is_file():
+    if cached_model_covers_sources(cached, sources, include_animations):
         _, converted, cooked, manifest = cached
         model = converted / "Client/Content" / (sources["model"] + ".uemodel")
         await progress("reuse_extracted_assets")
@@ -719,10 +730,15 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         visibility_path.write_text(json.dumps(bone_visibility), encoding='utf-8')
         command.extend(['--bone-visibility', visibility_path.resolve()])
     plan_path = output / "animation-plan.json"
+    # A full Blender scene can exceed the memory budget of small production workers.
+    # Enable it on a worker explicitly provisioned for the model's animation set.
+    export_blender = os.getenv("WUWA_MODEL_BLENDER_EXPORT", "").lower() in {"1", "true"}
     if component_animations:
         bindings_path = root / "component-animation-bindings.json"
         bindings_path.write_text(json.dumps(component_animations), encoding="utf-8")
         command.extend(["--component-animation-bindings", bindings_path.resolve()])
+    if sources.get("component"):
+        command.append("--allow-empty-component-animations")
     if animation_cache is not None:
         command.append("--shared-animation-rig")
     if sources.get("animation_ownership"):
@@ -731,7 +747,8 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         command.extend(["--animation-ownership", ownership_path.resolve()])
     await progress("rig_and_animation_plan" if include_animations else "rig")
     await run_blender(
-        [*command, "--rig-only", *(["--animation-plan", plan_path] if include_animations else [])],
+        [*command, "--rig-only", *(["--blender-source"] if export_blender else []),
+         *(["--animation-plan", plan_path] if include_animations else [])],
         root,
         900,
         run_id=run_id,
@@ -740,6 +757,9 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
     pack_descriptors, pack_summaries = [], {}
     if include_animations:
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        if sources.get("component") and not plan["clips"]:
+            include_animations = False
+    if include_animations:
         if animation_cache is not None:
             recipe = fingerprint([sha256(converter), sha256(blender),
                                   sha256(Path(__file__).with_name("model_bundle.py")),
@@ -843,6 +863,43 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
             if not pack_descriptors:
                 raise ValueError("No verified animation packs for this appearance")
             write_manifest(output, pack_descriptors)
+    if export_blender:
+        await progress("assemble_blender_project")
+        source_blend = output / "blender-source.blend"
+        target_blend = output / "character.blend"
+        report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+        armature = report.get("blender_armature")
+        if not source_blend.is_file() or not isinstance(armature, str) or not armature:
+            raise ValueError("Editable Blender source or its armature is missing")
+        if include_animations:
+            packs = ([output / model_file_name(pack["key"]) for pack in pack_descriptors]
+                     if pack_descriptors else [output / "animations.glb"])
+            await run_blender([
+                blender, "-b", "--factory-startup", "--python-exit-code", "1", "--python",
+                Path(__file__).with_name("blender_ueformat_actions.py").resolve(), "--",
+                "--armature", armature,
+                *(["--manifest", (output / "animation-manifest.json").resolve()]
+                  if pack_descriptors else []),
+                source_blend.resolve(), target_blend.resolve(), *(path.resolve() for path in packs),
+            ], root, 3600, run_id=run_id)
+        else:
+            shutil.copyfile(source_blend, target_blend)
+        if not target_blend.is_file() or target_blend.stat().st_size == 0:
+            raise ValueError("Blender project assembly produced no file")
+        facial_path = output / "facial.json"
+        if include_animations and facial_path.is_file() and json.loads(
+            facial_path.read_text(encoding="utf-8")
+        ).get("clips"):
+            await progress("assemble_blender_facial")
+            facial_blend = output / "character-facial.blend"
+            await run_blender([
+                blender, "-b", target_blend.resolve(), "--python-exit-code", "1", "--python",
+                Path(__file__).with_name("blender_facial_attach.py").resolve(), "--",
+                facial_path.resolve(), facial_blend.resolve(), "--strict",
+            ], root, 3600, run_id=run_id)
+            if not facial_blend.is_file() or facial_blend.stat().st_size == 0:
+                raise ValueError("Blender facial assembly produced no file")
+            facial_blend.replace(target_blend)
     profile = None
     for blueprint in sources["blueprints"]:
         path = cooked / "Client/Content" / (blueprint + ".json")
@@ -888,6 +945,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         "preview_texture_size": 512,
         "include_animations": include_animations,
         "animation_batches": batch_count,
+        "blender_project": export_blender,
     }
     if pack_descriptors:
         provenance["animation_packs"] = pack_descriptors
@@ -941,6 +999,13 @@ def publication_files(job, output, summaries, *, packs=None):
         ("preview", output / "preview.glb", "unknown", "model/gltf-binary"),
         ("download", output / "character.glb", "unknown", "model/gltf-binary"),
     ]
+    project = output / "character.blend"
+    if project.is_file():
+        with project.open("rb") as stream:
+            header = stream.read(12)
+        if len(header) < 12 or not (header.startswith(b"BLENDER") or header.startswith(b"\x28\xb5\x2f\xfd")):
+            raise ValueError("Invalid Blender project header")
+        files.append(("blender", project, "unknown", "application/x-blender"))
     if job.include_animations:
         if packs:
             files.extend((pack["key"], output / model_file_name(pack["key"]), "unknown", "model/gltf-binary")

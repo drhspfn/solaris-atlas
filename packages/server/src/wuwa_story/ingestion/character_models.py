@@ -152,6 +152,7 @@ async def public_character_model(session, owner_node_id, release):
         "game_version": release.game_version if release else None,
         "preview": None,
         "download": None,
+        "blender": None,
         "physics": None,
         "animations": None,
         "animation_packs": [],
@@ -269,6 +270,7 @@ async def public_character_model(session, owner_node_id, release):
                 "label": form["label"],
                 "preview": None,
                 "download": None,
+                "blender": None,
                 "physics": None,
                 "animations": None,
                 "animation_packs": [],
@@ -316,7 +318,7 @@ async def public_character_model(session, owner_node_id, release):
             if form["scene"] is not None:
                 public_form["scene"] = form["scene"]
             result["forms"].append(public_form)
-        for kind in ("preview", "download", "physics", "animations", "facial",
+        for kind in ("preview", "download", "blender", "physics", "animations", "facial",
                      "animation_manifest", "animation_packs", "viewer_url"):
             result[kind] = result["forms"][0][kind]
     return result

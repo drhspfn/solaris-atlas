@@ -9,6 +9,8 @@ import { FacialAnimation } from '../src/components/models/engine/facial.js';
 import { loadAnimationPacks, bindAnimationPacks, disposeAnimationPacks, attachAnimationCatalog, prepareAnimatedMeshes } from '../src/components/models/engine/animations.js';
 import { declaredAccessories } from '../src/components/models/engine/accessories.js';
 import { createLinkedModels } from '../src/components/models/engine/linked-models.js';
+import { installHairStencil } from '../src/components/models/engine/hair-stencil.js';
+import { installEyeMaterials } from '../src/components/models/engine/eye-material.js';
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function rig(animated = false, facial = false) {
@@ -45,6 +47,7 @@ async function viewer({ preview = false, defer = false, hold = false, accessory 
   }
   low.mesh.geometry.addEventListener('dispose', () => geometryDisposals++);
   class Renderer {
+    shadowMap = {};
     domElement = { setAttribute() {}, addEventListener: (key, value) => events.set(key, value), removeEventListener: key => events.delete(key), remove() {} };
     setPixelRatio() {} setSize() {} render() {} dispose() { destroyed = true; } forceContextLoss() {}
     setAnimationLoop(fn) { frame = fn; }
@@ -71,7 +74,7 @@ async function viewer({ preview = false, defer = false, hold = false, accessory 
     .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
   const context = { THREE: { ...THREE, WebGLRenderer: Renderer }, GLTFLoader: Loader, OrbitControls: Controls,
     SpringBones: class { joints = [1]; missing = []; reset() {} restore() {} update() {} },
-    BoneCamera, cameraBones, RootMotionLock, FacialAnimation, loadAnimationPacks, bindAnimationPacks, disposeAnimationPacks, attachAnimationCatalog, prepareAnimatedMeshes, declaredAccessories, createLinkedModels,
+    BoneCamera, cameraBones, RootMotionLock, FacialAnimation, loadAnimationPacks, bindAnimationPacks, disposeAnimationPacks, attachAnimationCatalog, prepareAnimatedMeshes, declaredAccessories, createLinkedModels, installHairStencil, installEyeMaterials,
     location: { href: 'https://atlas.test/characters/hero', protocol: 'https:' }, URL, AbortController,
     devicePixelRatio: 1, document: { hidden: false, addEventListener: (key, fn) => events.set(key, fn), removeEventListener: key => events.delete(key) },
     ResizeObserver: class { observe() {} disconnect() { disconnected = true; } },
