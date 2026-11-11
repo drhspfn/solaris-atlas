@@ -353,13 +353,18 @@ def material_metadata(metadata):
 EFFECT_PREVIEW_PARENTS = {
     "/Game/Aki/Render/MaterialInstance/Effect/CharacterMesh/MI_AdvancedEffect_WaterMatCap_CM",
     "/Game/Aki/Render/MaterialInstance/Effect/CharacterMesh/MI_AdvancedEffect_ParallaxSubUV_CM",
+    "/Game/Aki/Render/MaterialInstance/Effect/CharacterMesh/MI_Refraction_CM",
+    "/Game/Aki/Render/MaterialInstance/Effect/CharacterMesh/MI_AdvancedEffect_CM",
 }
 
 
 def material_parent(rows):
     parents = [row.get("Properties", {}).get("Parent", {}).get("ObjectPath")
                for row in rows if row.get("Type") == "MaterialInstanceConstant"]
-    return parents[0].split(".", 1)[0] if len(parents) == 1 and parents[0] else None
+    if len(parents) != 1 or not parents[0]:
+        return None
+    parent = parents[0].split(".", 1)[0]
+    return '/Game/' + parent[len('Client/Content/'):] if parent.startswith('Client/Content/') else parent
 
 
 def stencil_mask_payload(models, converted, cooked):
@@ -375,10 +380,12 @@ def stencil_mask_payload(models, converted, cooked):
 
     masks, readers = [], []
     for model in models:
+        if not model.is_relative_to(converted):
+            continue
         relative = model.relative_to(converted).with_suffix('.json')
         source = cooked / relative
         if not source.is_file():
-            raise ValueError(f'Missing model metadata for stencil masks: {relative}')
+            continue
         for row in json.loads(source.read_text(encoding='utf-8-sig')):
             if row.get('Type') not in {'SkeletalMesh', 'StaticMesh'}:
                 continue
@@ -395,7 +402,8 @@ def stencil_mask_payload(models, converted, cooked):
                     continue
                 rows = json.loads(raw.read_text(encoding='utf-8-sig'))
                 parent = material_parent(rows)
-                if str(slot.get('MaterialSlotName', '')).startswith('HETA_') and parent in authored:
+                if (str(slot.get('MaterialSlotName', '')).startswith('HETA_') and parent
+                        and package_path(parent) in {package_path(item) for item in authored}):
                     metadata = material_metadata(json.loads((converted / path).read_text(encoding='utf-8-sig')))
                     if metadata.get('Switches', {}).get('IsHairHET') is True:
                         readers.append({'mesh': relative.as_posix(), 'material': parent})
@@ -533,10 +541,11 @@ def base_color_alpha_is_opacity(material_name: str, metadata: dict) -> bool:
 def effect_preview_opacity(material, node, shader, metadata):
     """Approximate effect opacity from Base alpha and the authored multiplier."""
     value = metadata.get("Scalars", {}).get("Base_Alpha_Multiply", 1)
-    if type(value) not in (int, float) or not 0 <= value <= 1:
+    if type(value) not in (int, float) or not 0 <= value <= 100:
         raise ValueError("Unsupported effect preview opacity multiplier")
     multiply = material.node_tree.nodes.new("ShaderNodeMath")
     multiply.operation = "MULTIPLY"
+    multiply.use_clamp = True
     multiply.inputs[1].default_value = value
     material.node_tree.links.new(node.outputs["Alpha"], multiply.inputs[0])
     material.node_tree.links.new(multiply.outputs[0], shader.inputs["Alpha"])

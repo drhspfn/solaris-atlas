@@ -104,12 +104,13 @@ def test_stencil_reader_must_be_an_authored_hair_pass_with_an_authored_parent(tm
     assert result['masks'][0]['target_material'] == '/Game/Face'
 
 
-@pytest.mark.parametrize('family', ['WaterMatCap', 'ParallaxSubUV'])
+@pytest.mark.parametrize('family', ['WaterMatCap', 'ParallaxSubUV', 'Refraction'])
 def test_effect_base_dependency_requires_known_parent(tmp_path, family):
     from wuwa_story_worker.model_bundle import inherited_base_color_texture
 
     cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
-    parent = f'Aki/Render/MaterialInstance/Effect/CharacterMesh/MI_AdvancedEffect_{family}_CM'
+    name = 'MI_Refraction_CM' if family == 'Refraction' else f'MI_AdvancedEffect_{family}_CM'
+    parent = f'Aki/Render/MaterialInstance/Effect/CharacterMesh/{name}'
     put(cooked, 'Body', [{'Type': 'StaticMesh', 'StaticMaterials': [
         {'MaterialInterface': {'ObjectPath': '/Game/Fan.0'}}]}])
     put(cooked, 'Fan', [{'Type': 'MaterialInstanceConstant', 'Properties': {'Parent': {
@@ -117,6 +118,9 @@ def test_effect_base_dependency_requires_known_parent(tmp_path, family):
     put(converted, 'Fan', {'Textures': {'Base': {'ObjectPath': '/Game/Effect/Exact.0'}}})
     put(cooked, parent, [])
     put(converted, parent, {})
+    assert missing_material_resources(cooked, converted, ['Body']) == ['Effect/Exact']
+    put(cooked, 'Fan', [{'Type': 'MaterialInstanceConstant', 'Properties': {'Parent': {
+        'ObjectName': "MaterialInstanceConstant'Parent'", 'ObjectPath': f'Client/Content/{parent}.0'}}}])
     assert missing_material_resources(cooked, converted, ['Body']) == ['Effect/Exact']
     texture = converted / 'Client/Content/Effect/Exact.png'
     texture.parent.mkdir(parents=True)
