@@ -5,6 +5,7 @@ shader graph. Consumers must not infer texture channels or blending formulas
 from parameter names alone.
 """
 
+import json
 from pathlib import Path, PurePosixPath
 
 
@@ -36,3 +37,39 @@ def material_input_inventory(metadata, converted_root):
         'colors': dict(metadata.get('Colors') or {}),
         'switches': dict(metadata.get('Switches') or {}),
     }
+
+
+def pack_material_inventory(material, inventory, converted_root):
+    """Pack available images and attach the inventory to a Blender material.
+
+    This records parameters as metadata only; it does not create shader links.
+    Missing images remain recorded with no Blender image name. Returns the
+    metadata saved on the material. Callers save the .blend in the usual way.
+    """
+    import bpy
+
+    root = (Path(converted_root) / 'Client' / 'Content').resolve()
+    result = {key: dict(inventory.get(key) or {}) for key in ('scalars', 'colors', 'switches')}
+    result['textures'] = {}
+    for name, entry in (inventory.get('textures') or {}).items():
+        source, relative = entry.get('source'), entry.get('image')
+        record = {'source': source, 'image': relative, 'blender_image': None}
+        if isinstance(relative, str):
+            parts = PurePosixPath(relative).parts
+            if (parts and all(part not in ('.', '..') and '\\' not in part for part in parts)
+                    and not PurePosixPath(relative).is_absolute()):
+                path = root.joinpath(*parts).resolve()
+                if path.is_relative_to(root) and path.is_file():
+                    # A prior packed image may no longer have an accessible filepath.
+                    # Store its canonical source so repeated calls reuse the datablock.
+                    image = next((item for item in bpy.data.images
+                                  if item.get('solaris_inventory_path') == str(path)), None)
+                    if image is None:
+                        image = bpy.data.images.load(str(path), check_existing=True)
+                    image.pack()
+                    image.use_fake_user = True
+                    image['solaris_inventory_path'] = str(path)
+                    record['blender_image'] = image.name
+        result['textures'][name] = record
+    material['solaris_material_inventory'] = json.dumps(result, ensure_ascii=False, sort_keys=True)
+    return result
