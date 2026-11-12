@@ -1,6 +1,6 @@
 {
   "private": true,
   "dependencies": {
-    "@riglyph/cli": "0.16.2"
+    "@riglyph/cli": "0.16.3"
   }
 }
