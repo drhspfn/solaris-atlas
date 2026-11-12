@@ -32,10 +32,13 @@ def sound_timing(blob: bytes) -> tuple[float, float | None]:
     return max(0, start), None if end < 0 else end
 
 
+SUPPORTED_CUTSCENE_VERSIONS: set[str] = {"3.7.0", "3.7.1", "3.8.0"}
+
+
 def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, *, missing_assets: list | None = None,
                   frame_audio: list[dict] | None = None) -> dict:
-    if asset_version not in {"3.7.0", "3.7.1"}:
-        raise ValueError("Config schema is verified for clients 3.7.0 and 3.7.1 only")
+    if asset_version not in SUPPORTED_CUTSCENE_VERSIONS:
+        raise ValueError(f"Config schema is verified for clients {sorted(SUPPORTED_CUTSCENE_VERSIONS)} only")
     # Read-only: never create or modify an absent game database.
     with sqlite3.connect(config_db.resolve().as_uri() + "?mode=ro", uri=True) as db:
         videos = db.execute(

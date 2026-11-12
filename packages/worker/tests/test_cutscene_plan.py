@@ -19,7 +19,7 @@ def sound(path, start, end):
     return bytes(builder.Output())
 
 
-@pytest.mark.parametrize("asset_version", ["3.7.0", "3.7.1"])
+@pytest.mark.parametrize("asset_version", ["3.7.0", "3.7.1", "3.8.0"])
 def test_other_cutscene_single_and_gender_specific_timed_sound(tmp_path, asset_version):
     db_path = tmp_path / "videos.db"
     with sqlite3.connect(db_path) as db:
@@ -54,7 +54,7 @@ def test_other_cutscene_single_and_gender_specific_timed_sound(tmp_path, asset_v
     assert branch["videos"][1]["soundtrack"] == []
 
 
-@pytest.mark.parametrize("asset_version", ["3.6.0", "3.8.0", "4.0.0", "3.7.2", "3.7"])
+@pytest.mark.parametrize("asset_version", ["3.6.0", "3.9.0", "4.0.0", "3.7.2", "3.7"])
 def test_unverified_client_schema_is_rejected_before_opening_database(tmp_path, asset_version):
     with pytest.raises(ValueError, match="Config schema is verified"):
         plan_cutscene(tmp_path / "absent.db", tmp_path, "Other", asset_version)
