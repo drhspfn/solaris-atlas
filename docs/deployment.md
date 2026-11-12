@@ -516,7 +516,7 @@ failures. Missing historical bytes are not recovered by repeating the same build
 
 The worker consuming `asset_download` checks installed resource tiers hourly and queues
 updates through the same idempotent service as **Check & update client** in Data operations.
-`WUWA_CLIENT_UPDATE_INTERVAL_SECONDS` defaults to `3600`; set it to `0` to disable polling
+`WUWA_CLIENT_UPDATE_INTERVAL_SECONDS` defaults to `7200` (every 2 hours); set it to `0` to disable polling
 or to at least `60` to change the interval. An empty installation is bootstrapped by a
 manual download. `client-update-status.json` records the last check and failures.
 
