@@ -44,7 +44,7 @@ def delivery(body=b'{"run_id":1,"kind":"voices","job_type":"media.release"}', **
     (subprocess.CalledProcessError(-15, "extractor"), False),
     (subprocess.CalledProcessError(143, "extractor"), False),
     (RuntimeError("exit 137; missing Done"), False),
-    (MemoryError("worker memory exhausted"), False),
+    (MemoryError("worker memory exhausted"), True),
 ])
 def test_extraction_failure_classification(error, transient):
     assert broker.transient_job_error(error) is transient
