@@ -35,7 +35,7 @@ async def search(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     character: str | None = None,
-    character_kind: Literal["playable", "story", "npc", "technical", "all"] = "playable",
+    character_kind: Literal["playable", "story", "npc", "technical", "all"] = "all",
     quest_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:

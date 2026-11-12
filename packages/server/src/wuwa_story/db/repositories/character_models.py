@@ -79,11 +79,19 @@ async def npc_model_recipe(session, release_id, owner_node_id, blueprint_id):
 
 
 async def model_release(session, game_version=None):
+    from wuwa_story.db.models.ops import ImportRun
+
     query = select(GameRelease)
     if game_version is not None:
         query = query.where(GameRelease.game_version == game_version)
+    else:
+        succeeded_releases = select(ImportRun.release_id).where(ImportRun.status == "succeeded")
+        query = query.where(GameRelease.id.in_(succeeded_releases))
+    releases = list(await session.scalars(query))
+    if not releases and game_version is None:
+        releases = list(await session.scalars(select(GameRelease)))
     return max(
-        await session.scalars(query),
+        releases,
         key=lambda release: (version_key(release.game_version), release.sequence),
         default=None,
     )

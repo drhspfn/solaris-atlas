@@ -77,9 +77,8 @@ async def npc_flow_state_ids(session, node_id, npc, release_id):
     states = set(await session.scalars(select(QuestState.node_id).where(
         source_edge(npc.get("owner_ids", [node_id]), QuestState.node_id, "references_flow_state", release_id))))
     for offset in range(0, len(valid), 100):
-        conditions = [and_(QuestState.flow_list_name == name, QuestState.flow_id == flow_id,
-                           QuestState.state_id == state_id) for name, flow_id, state_id in valid[offset:offset + 100]]
-        states.update(await session.scalars(select(QuestState.node_id).where(or_(*conditions))))
+        batch = [f"{name}_{flow_id}_{state_id}" for name, flow_id, state_id in valid[offset:offset + 100]]
+        states.update(await session.scalars(select(QuestState.node_id).where(QuestState.state_key.in_(batch))))
     return sorted(states)
 
 

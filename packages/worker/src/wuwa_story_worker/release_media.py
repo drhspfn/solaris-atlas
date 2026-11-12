@@ -498,8 +498,25 @@ async def cutscene_assets(payload, parent):
     from wuwa_story_worker.voice_bootstrap import discover_video_plan
     from wuwa_story_worker.voice_packages import download_voice_plan
     video_diagnostics = {}
-    plan = await asyncio.to_thread(discover_video_plan, parent["asset_version"], assets, parent["tier"], cg_ids,
-                                   diagnostics=video_diagnostics)
+    try:
+        plan = await asyncio.to_thread(discover_video_plan, parent["asset_version"], assets, parent["tier"], cg_ids,
+                                       diagnostics=video_diagnostics)
+    except (RuntimeError, ValueError) as err:
+        err_msg = str(err)
+        if any(marker in err_msg for marker in ("Official video manifest is unavailable", "Video CDN serves", "Official video configuration is unavailable")):
+            video_diagnostics["manifest_unavailable"] = err_msg
+            plan = {
+                "schema_version": 1,
+                "job_type": "voices.download",
+                "version": parent["asset_version"],
+                "languages": [],
+                "cdns": [],
+                "files": [],
+                "cipher_source": "",
+                "id": f"video-plan-unavailable-{parent.get('release_id')}-{parent.get('asset_version')}",
+            }
+        else:
+            raise
     if plan["files"]:
         video_root = await asyncio.to_thread(download_voice_plan, plan, asset_workspace() / "videos",
                                              concurrency=int(os.getenv("WUWA_ASSET_DOWNLOAD_CONCURRENCY", "4")))
@@ -590,7 +607,25 @@ async def cutscene(payload, parent):
     assets = root / "release-media" / "files"
     config = await asyncio.to_thread(video_database, assets)
     missing_assets = []
-    recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"], missing_assets=missing_assets)
+    try:
+        recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"], missing_assets=missing_assets)
+    except ValueError as err:
+        if "Cutscene not found in VideoData" in str(err):
+            await cleanup_published_output(parent, payload["run_id"], "cutscene")
+            return {
+                "videos": 0,
+                "asset_version": parent.get("asset_version"),
+                "missing_assets": [payload["targets"][0]],
+                "media_report": {
+                    "entries": [{
+                        "expected": payload["targets"][0],
+                        "status": "not_in_videodata",
+                        "error": str(err),
+                        "matches": [],
+                    }]
+                },
+            }, "partial"
+        raise
     missing_sources = [video["asset"] for video in recipe["videos"]
                        if not confined(assets, exported_video_path(video["asset"].removeprefix("asset:ue:"))).is_file()]
     if missing_sources:
@@ -647,8 +682,26 @@ async def cutscene(payload, parent):
         identity = f"frame_audio:{payload['targets'][0]}:{diagnostic.get('code', 'unresolved')}"
         if identity not in missing_assets:
             missing_assets.append(identity)
-    recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"],
-                                     missing_assets=missing_assets, frame_audio=frame_audio)
+    try:
+        recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"],
+                                         missing_assets=missing_assets, frame_audio=frame_audio)
+    except ValueError as err:
+        if "Cutscene not found in VideoData" in str(err):
+            await cleanup_published_output(parent, payload["run_id"], "cutscene")
+            return {
+                "videos": 0,
+                "asset_version": parent.get("asset_version"),
+                "missing_assets": [payload["targets"][0]],
+                "media_report": {
+                    "entries": [{
+                        "expected": payload["targets"][0],
+                        "status": "not_in_videodata",
+                        "error": str(err),
+                        "matches": [],
+                    }]
+                },
+            }, "partial"
+        raise
     if frame_audio and isinstance(recipe.get('flow'), dict):
         sources = [binding.get('source', {}) for binding in frame_report['contexts'] if binding.get('events')]
         recipe['flow']['evidence'] += '; Movie frame audio sources: ' + json.dumps(sources, ensure_ascii=False, sort_keys=True)
@@ -680,7 +733,7 @@ async def cutscene(payload, parent):
                                              source_context=context)
     except ValueError as error:
         if "Incomplete cutscene rebuild cannot replace a complete publication" in str(error):
-            logger.info("Cutscene %s is already published completely; preserving existing complete publication", name)
+            logger.info("Cutscene %s is already published completely; preserving existing complete publication", payload["targets"][0])
             await cleanup_published_output(parent, payload["run_id"], "cutscene")
             return {**report, "reused_complete": True, "asset_version": parent["asset_version"],
                     "media_report": report}, "completed"

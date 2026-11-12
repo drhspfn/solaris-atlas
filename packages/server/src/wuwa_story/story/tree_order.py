@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.db.models.core import AuthoredTreeOrder, QuestAction, QuestState
 from wuwa_story.db.models.graph import NodeRevision
@@ -13,21 +14,25 @@ from wuwa_story.ingestion.dungeon_context import DUNGEONS, level_memberships, wa
 from wuwa_story.ingestion.level_interactions import verified_interactions
 from wuwa_story.ingestion.quest_tree_order import records_match
 from wuwa_story.story.media import media_links
-from wuwa_story.story.runtime_blocks import dungeon_requirement, project_blocks
 from wuwa_story.story.review_order import quest_review_order
+from wuwa_story.story.runtime_blocks import dungeon_requirement, project_blocks
 
 
 def flow_positions(quest_nodes: list[dict], quest_records: dict[int, dict],
                    level_trees: dict[int, tuple[list[dict], dict[int, dict]]],
-                   valid_states: set[str]) -> list[tuple[str, tuple[int, ...]]]:
+                   valid_states: set[str],
+                   quest_data: dict[str, Any] | None = None) -> list[tuple[str, tuple[int, ...]]]:
     """Return authored flow positions; branches remain source order, not runtime history."""
     if not records_match(quest_nodes, quest_records):
         return []
     found: dict[str, tuple[int, ...]] = {}
 
     def add_flows(raw: dict[str, Any], path: tuple[int, ...]):
-        for phase, field in enumerate(('EnterActions', 'Condition', 'FinishActions')):
-            for index, (_, value) in enumerate(walk(raw.get(field))):
+        for phase, field in enumerate(('EnterActions', 'Condition', 'FinishActions', 'ActiveActions', 'AddInteractOption')):
+            target = raw.get(field)
+            if target is None:
+                continue
+            for index, (_, value) in enumerate(walk(target)):
                 name, flow, state = (value.get(k) for k in (
                     'FlowListName', 'FlowId', 'StateId'))
                 if not isinstance(name, str) or type(flow) is not int or type(state) is not int:
@@ -39,6 +44,9 @@ def flow_positions(quest_nodes: list[dict], quest_records: dict[int, dict],
                          'FinishActions' else 0, phase, index)
                 if state_key in valid_states and (state_key not in found or order < found[state_key]):
                     found[state_key] = order
+
+    if quest_data:
+        add_flows(quest_data, (0,))
 
     for node in quest_nodes:
         raw = quest_records[node['id']]
@@ -57,6 +65,25 @@ def flow_positions(quest_nodes: list[dict], quest_records: dict[int, dict],
         for level_node in level_nodes:
             add_flows(level_records[level_node['id']],
                       (*path, 1, *(index + 1 for index in level_node['path'])))
+
+    # Fallback for remaining valid flow states: if sibling states from the same FlowList
+    # are already positioned, preserve flow continuity by ordering by their StateId.
+    flow_prefixes: dict[str, tuple[tuple[int, ...], int]] = {}
+    for sk, ord_path in found.items():
+        if "_" in sk:
+            prefix, _, s_id = sk.rpartition("_")
+            if s_id.isdigit():
+                num_id = int(s_id)
+                if prefix not in flow_prefixes or ord_path < flow_prefixes[prefix][0]:
+                    flow_prefixes[prefix] = (ord_path, num_id)
+
+    for state_key in sorted(valid_states):
+        if state_key not in found and "_" in state_key:
+            prefix, _, s_id = state_key.rpartition("_")
+            if s_id.isdigit() and prefix in flow_prefixes:
+                base_path, _ = flow_prefixes[prefix]
+                found[state_key] = (*base_path, 10, int(s_id))
+
     return sorted(found.items(), key=lambda item: (item[1], item[0]))
 
 
@@ -81,6 +108,23 @@ async def _authored_tree_order(session, quest_id: int, release_id: int | None):
     if not candidates:
         return None
     qrecords = await rows('BinData/QuestNodeData/questnodedata.json', quest_id)
+    quest_data = None
+    if isinstance(session, AsyncSession):
+        try:
+            q_data_values = await session.scalars(
+                select(SourceRecord.data).join(
+                    SourceFile, SourceFile.id == SourceRecord.source_file_id)
+                .where(SourceRecord.release_id == release_id, SourceFile.release_id == release_id,
+                       SourceFile.logical_source_path == 'BinData/QuestData/questdata.json',
+                       or_(
+                           SourceRecord.data['QuestId'].as_integer() == quest_id,
+                           SourceRecord.data['Data']['Id'].as_integer() == quest_id,
+                       )).limit(1)
+            )
+            quest_raw = next(iter(q_data_values), None)
+            quest_data = quest_raw.get('Data', quest_raw) if isinstance(quest_raw, dict) else None
+        except Exception:
+            quest_data = None
     candidates.sort(key=lambda value: (tuple(
         map(int, value.asset_version.split('.'))), value.download_id), reverse=True)
     quest_tree = next(
@@ -172,7 +216,10 @@ async def _authored_tree_order(session, quest_id: int, release_id: int | None):
     optional_states = {flow['state'] for items in interactions.values(
     ) for item in items for flow in item['flow_states']}
     possible.update(optional_states)
-    for record in list(qrecords.values()) + [row for _, records in level_trees.values() for row in records.values()]:
+    records_to_walk = list(qrecords.values()) + [row for _, records in level_trees.values() for row in records.values()]
+    if quest_data:
+        records_to_walk.append(quest_data)
+    for record in records_to_walk:
         for _, value in walk(record):
             name, flow, state = (value.get(k)
                                  for k in ('FlowListName', 'FlowId', 'StateId'))
@@ -231,7 +278,7 @@ async def _authored_tree_order(session, quest_id: int, release_id: int | None):
         return {'state_ids': sorted(state_ids), 'asset_version': quest_tree.asset_version,
                 'ordering': 'related', 'mapped_flow_states': [], 'positions': {}, 'blocks': blocks}
     positions = flow_positions(
-        quest_tree.nodes, qrecords, level_trees, set(states))
+        quest_tree.nodes, qrecords, level_trees, set(states), quest_data=quest_data)
     if not positions and not blocks:
         return None
     ids = [states[key] for key, _ in positions]
