@@ -11,6 +11,8 @@ import { Link, useSearchParams } from "@/lib/router";
 import { questPath } from "@/lib/routeKey";
 import { Select } from "@/components/ui/Select";
 import { SearchInput } from "@/components/ui/SearchInput";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorPanel, PageLoader } from "@/components/ui/Feedback";
 import { InfiniteScroll } from "@/components/ui/InfiniteScroll";
 import { Cutscene } from "./QuestCutscenes";
@@ -187,11 +189,21 @@ export function CutsceneArchive({
   }
   return (
     <main className="page-container cutscene-archive">
-      <header className="cutscene-archive-heading">
-        {/* <span className="eyebrow">SOLARIS / CINEMATIC ARCHIVE</span> */}
-        <h1>Cutscenes</h1>
-        <p>Watch the story. Return to the quest where it unfolds.</p>
-      </header>
+      <Breadcrumbs
+        items={[{ label: "Archive", to: "/" }, { label: "Cutscenes" }]}
+      />
+      <PageHeader
+        title="Cutscenes"
+        description="Watch the story. Return to the quest where it unfolds."
+        actions={
+          data?.total != null ? (
+            <div className="total-chip">
+              <span>{data.total.toLocaleString()}</span>
+              <small>scenes</small>
+            </div>
+          ) : undefined
+        }
+      />
       <div className="cutscene-filters">
         <SearchInput
           ref={searchInput}
@@ -396,24 +408,25 @@ export function CutsceneRecord({
   if (!data) return <PageLoader />;
   return (
     <main className="page-container cutscene-archive">
-      <Link
-        className="cutscene-back"
-        to={`/cutscenes?game_version=${data.game_version}`}
-      >
-        <ArrowLeft size={16} />
-        Cutscene archive
-      </Link>
-      <header className="cutscene-archive-heading">
-        <span className="eyebrow">
-          {data.name} / SNAPSHOT {data.game_version}
-        </span>
-        <h1>
-          <PlayerText value={data.title} display={display} />
-        </h1>
-        {data.title_kind === "analysis" && (
-          <p>AI title · Grounded in the scene analysis</p>
-        )}
-      </header>
+      <Breadcrumbs
+        items={[
+          { label: "Archive", to: "/" },
+          {
+            label: "Cutscenes",
+            to: `/cutscenes?game_version=${data.game_version}`,
+          },
+          { label: <PlayerText value={data.title} display={display} /> },
+        ]}
+      />
+      <PageHeader
+        title={<PlayerText value={data.title} display={display} />}
+        showPeriod={false}
+        description={
+          data.title_kind === "analysis"
+            ? "AI title · Grounded in the scene analysis"
+            : `Snapshot ${data.game_version} · ${data.name}`
+        }
+      />
       {data.event.playback ? (
         <Cutscene
           event={{ ...data.event, title: data.title }}

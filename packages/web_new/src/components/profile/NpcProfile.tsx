@@ -13,6 +13,7 @@ import { ErrorPanel } from "@/components/ui/Feedback";
 import { Skeleton, SkeletonGroup, TextSkeleton } from "@/components/ui/Skeleton";
 import { Pagination } from "@/components/ui/Pagination";
 import { PanelTitle } from "@/components/ui/PanelTitle";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { gameTextPlainText } from "@/data/gameText";
 import {
   PlayerText,
@@ -367,19 +368,21 @@ export function NpcProfile({
   const [revision, setRevision] = useState(0);
   return (
     <div className="page-container character-profile-page">
-      <div className="breadcrumbs">
-        <Link to="/">Archive</Link>
-        <span> / </span>
-        <Link to="/catalog/character">Characters</Link>
-        <span> / </span>
-        <span>
-          <PlayerText
-            value={character.name}
-            fallback={name}
-            display={display}
-          />
-        </span>
-      </div>
+      <Breadcrumbs
+        items={[
+          { label: "Archive", to: "/" },
+          { label: "Characters", to: "/catalog/character" },
+          {
+            label: (
+              <PlayerText
+                value={character.name}
+                fallback={name}
+                display={display}
+              />
+            ),
+          },
+        ]}
+      />
       <div className="profile-hero character-profile-hero npc-profile-hero">
         <CharacterProfileVisual
           characterKey={character.canonical_key}
@@ -389,7 +392,6 @@ export function NpcProfile({
           refreshKey={revision}
         />
         <div className="profile-main">
-          <span className="eyebrow left">NPC PROFILE</span>
           <div className="character-profile-title-row">
             <h1>
               <PlayerText

@@ -7,6 +7,8 @@ import { PlayerText } from '@/components/dialogue/PlayerText';
 import { ROVER_TITLES } from '@/data/playerName';
 import { usePlayerDisplay } from '@/hooks/usePlayerDisplay';
 import { Link } from '@/lib/router';
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { useNarrativePreferences } from '@/preferences/NarrativePreferences';
 
 export function SettingsClient() {
@@ -27,20 +29,12 @@ export function SettingsClient() {
 
   return (
     <div className="page-container settings-page">
-      <div className="breadcrumbs">
-        <Link to="/">Archive</Link>
-        <ChevronRight size={13} />
-        <span>Settings</span>
-      </div>
-      <header className="page-heading settings-heading">
-        <div>
-          <span className="eyebrow left">YOUR READING EXPERIENCE</span>
-          <h1>
-            Settings<span className="heading-period">.</span>
-          </h1>
-          <p>Choose how the Rover appears in dialogue across the archive.</p>
-        </div>
-      </header>
+      <Breadcrumbs items={[{ label: 'Archive', to: '/' }, { label: 'Settings' }]} />
+      <PageHeader
+        className="settings-heading"
+        title="Settings"
+        description="Choose how the Rover appears in dialogue across the archive."
+      />
 
       <div className="settings-grid">
         <section className="content-panel settings-panel" aria-labelledby="rover-setting-title">

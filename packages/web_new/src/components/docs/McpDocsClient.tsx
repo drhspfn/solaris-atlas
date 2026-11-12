@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "@/lib/router";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { Input } from "@/components/ui/Input";
 import "@/styles/mcp-docs.css";
 
@@ -66,27 +68,16 @@ export function McpDocsClient() {
   const sseUrl = `${base}/api/mcp/sse`;
   return (
     <main className="mcp-page page-container">
-      <nav className="mcp-breadcrumb" aria-label="Breadcrumb">
-        <Link to="/">Archive</Link>
-        <span>/</span>
-        <span>MCP</span>
-      </nav>
-      <header className="mcp-hero">
-        <span className="mcp-eyebrow">SOLARIS ATLAS / DEVELOPER ACCESS</span>
-        <div className="mcp-hero-heading">
-          <div>
-            <h1>
-              Connect to the archive<span>.</span>
-            </h1>
-            <p>
-              Bring Wuthering Waves stories, characters and source-linked
-              dialogue into your AI tools with the Model Context Protocol.
-            </p>
-          </div>
+      <Breadcrumbs items={[{ label: "Archive", to: "/" }, { label: "MCP" }]} />
+      <PageHeader
+        title="Connect to the archive"
+        description="Bring Wuthering Waves stories, characters and source-linked dialogue into your AI tools with the Model Context Protocol."
+        actions={
           <div className="mcp-hero-mark" aria-hidden="true">
             <Network size={38} strokeWidth={1.2} />
           </div>
-        </div>
+        }
+      >
         <div className="mcp-hero-tags">
           <span>
             <span className="mcp-dot" /> Public endpoint
@@ -94,7 +85,7 @@ export function McpDocsClient() {
           <span>Streamable HTTP</span>
           <span>Model Context Protocol</span>
         </div>
-      </header>
+      </PageHeader>
       <section
         className="mcp-panel mcp-connect"
         aria-labelledby="connection-title"

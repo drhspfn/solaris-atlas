@@ -3,6 +3,7 @@
 import { ArrowRight, ChevronRight, ExternalLink, Network } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from '@/lib/router';
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 
 import { api } from '@/api/client';
 import { PlayerText } from '@/components/dialogue/PlayerText';
@@ -109,21 +110,18 @@ export function NodeExplorerPage({
   const title = dialogueText || node.canonical_key;
   return (
     <div className="page-container">
-      <div className="breadcrumbs">
-        <Link to="/">Archive</Link>
-        <ChevronRight size={13} />
-        <span>Source node</span>
-        <ChevronRight size={13} />
-        <span>{title}</span>
-      </div>
+      <Breadcrumbs
+        items={[
+          { label: 'Archive', to: '/' },
+          { label: 'Source node' },
+          { label: title },
+        ]}
+      />
       <section className="generic-node-hero">
         <div className="generic-node-icon">
           <Network size={26} />
         </div>
         <div>
-          <span className="eyebrow left">
-            {narrative ? 'DIALOGUE ENTRY' : `SOURCE-LINKED NODE / ${node.status.toUpperCase()}`}
-          </span>
           <h1>
             {narrative ? (
               <PlayerText

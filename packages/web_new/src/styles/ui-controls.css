@@ -72,3 +72,6 @@
 .ui-copyable-status { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 @media (max-width:480px) { .ui-copyable-button { padding:0 12px; } }
 .ui-copyable-error { position:absolute; top:100%; left:0; color:var(--danger, #ef9b9b); font-size:12px; margin-top:4px; }
+.page-heading-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.page-heading-main { min-width: 0; overflow-wrap: anywhere; flex: 1; }
+

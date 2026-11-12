@@ -22,7 +22,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 20px;
+  margin: 24px 0 20px;
 }
 .event-archive-nav a {
   display: inline-flex;

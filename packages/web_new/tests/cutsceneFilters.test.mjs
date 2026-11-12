@@ -48,6 +48,8 @@ function archive(queryText) {
     "@/components/ui/Select": { Select: "atlas-select" },
     "@/components/ui/InfiniteScroll": { InfiniteScroll: "infinite-scroll" },
     "@/components/ui/SearchInput": { SearchInput: "search-input" },
+    "@/components/ui/Breadcrumbs": { Breadcrumbs: "breadcrumbs" },
+    "@/components/ui/PageHeader": { PageHeader: "page-header" },
     "./QuestCutscenes": dummy,
     "./cutsceneAnchor": dummy,
     "../ui/Skeleton": dummy,

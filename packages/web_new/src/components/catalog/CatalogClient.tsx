@@ -7,6 +7,8 @@ import { EntityCard, EntityCardSkeleton } from "@/components/cards/EntityCard";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { SearchInput } from "@/components/ui/SearchInput";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { SkeletonGroup } from "@/components/ui/Skeleton";
 import { Pill } from "@/components/ui/Pill";
 import { Pagination } from "@/components/ui/Pagination";
@@ -115,27 +117,19 @@ export function CatalogClient({
 
   return (
     <div className="page-container">
-      <div className="breadcrumbs">
-        <Link to="/">Archive</Link>
-        <ChevronRight size={13} />
-        <span>{title}</span>
-      </div>
-      <div className="page-heading">
-        <div>
-          {/* <span className="eyebrow left">THE ATLAS / COLLECTION</span> */}
-          <h1>
-            {title}
-            <span className="heading-period">.</span>
-          </h1>
-          <p>Browse source-linked entries from the current game archive.</p>
-        </div>
-        <div className="total-chip">
-          <span>
-            {(searchResults ? searchResults.length : total).toLocaleString()}
-          </span>
-          <small>{searchResults ? "matches" : "entries"}</small>
-        </div>
-      </div>
+      <Breadcrumbs items={[{ label: "Archive", to: "/" }, { label: title }]} />
+      <PageHeader
+        title={title}
+        description="Browse source-linked entries from the current game archive."
+        actions={
+          <div className="total-chip">
+            <span>
+              {(searchResults ? searchResults.length : total).toLocaleString()}
+            </span>
+            <small>{searchResults ? "matches" : "entries"}</small>
+          </div>
+        }
+      />
       <div className="catalog-tools">
         <SearchInput
           ref={searchInput}
