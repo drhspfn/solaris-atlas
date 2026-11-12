@@ -2,6 +2,7 @@
 
 import json
 
+from wuwa_story_worker.decoded_json import load_exports
 from wuwa_story_worker.sequence_bytecode import resolve_event_calls
 from wuwa_story_worker.sequence_media import sequence_media_score
 
@@ -24,7 +25,7 @@ def exported_controls(assets):
         if asset.get('decode_failed'):
             continue
         for path in sorted(asset['decoded'].rglob('*.json')):
-            values = json.loads(path.read_text(encoding='utf-8-sig'))
+            values = load_exports(path)
             if not isinstance(values, list) or not any(isinstance(v, dict) and v.get('Type') for v in values):
                 continue
             # Normalize extraction-root prefixes without confusing packages that

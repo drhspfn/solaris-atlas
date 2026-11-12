@@ -42,7 +42,24 @@ class ArchiveValidationError(ValueError):
 
 MAX_ARCHIVE_ENTRIES = 50000
 MAX_ARCHIVE_ENTRY_SIZE = 256 * 1024 * 1024
-MAX_ARCHIVE_TOTAL_SIZE = 2 * 1024 * 1024 * 1024
+# Decoded Sequence JSON is read as a stream and pruned of derived data, so it may exceed the in-memory
+# bound. The largest real 3.8 sample is 497735180 bytes (about 11 MiB deflated); 1 GiB leaves 2x headroom.
+MAX_DECODED_ENTRY_SIZE = 1024 * 1024 * 1024
+# Source packages and authored media are only copied or hashed in streams, never loaded.
+MAX_STREAMED_ENTRY_SIZE = 2 * 1024 * 1024 * 1024
+MAX_ARCHIVE_TOTAL_SIZE = 4 * 1024 * 1024 * 1024
+# Entries above this size must not look like a decompression bomb. Real decoded JSON is about 44:1.
+LARGE_ENTRY_RATIO_FROM = 64 * 1024 * 1024
+MAX_LARGE_ENTRY_RATIO = 500
+
+
+def entry_size_limit(name):
+    """Per-entry bound by role: tight for everything composed in memory, wider for streamed data."""
+    if name.startswith('decoded/') and name.endswith('.json'):
+        return MAX_DECODED_ENTRY_SIZE
+    if name.startswith(('source/', 'media/')):
+        return MAX_STREAMED_ENTRY_SIZE
+    return MAX_ARCHIVE_ENTRY_SIZE
 
 
 def _validate_archive_limits(infos, label='Archive'):
@@ -52,9 +69,15 @@ def _validate_archive_limits(infos, label='Archive'):
     duplicates = len(infos) - len({info.filename for info in infos})
     if duplicates:
         raise ArchiveValidationError(f'{label} contains duplicate entries: {duplicates}')
-    largest = max((info.file_size for info in infos), default=0)
-    if largest > MAX_ARCHIVE_ENTRY_SIZE:
-        raise ArchiveValidationError(f'{label} exceeds per-entry size limit: {largest} > {MAX_ARCHIVE_ENTRY_SIZE} bytes')
+    for info in infos:
+        limit = entry_size_limit(info.filename)
+        if info.file_size > limit:
+            raise ArchiveValidationError(
+                f'{label} exceeds per-entry size limit: {info.filename} {info.file_size} > {limit} bytes')
+        if (info.file_size > LARGE_ENTRY_RATIO_FROM
+                and info.file_size > max(getattr(info, 'compress_size', info.file_size), 1) * MAX_LARGE_ENTRY_RATIO):
+            raise ArchiveValidationError(
+                f'{label} entry has a suspicious compression ratio: {info.filename} {info.compress_size} -> {info.file_size}')
     total = sum(info.file_size for info in infos)
     if total > MAX_ARCHIVE_TOTAL_SIZE:
         raise ArchiveValidationError(f'{label} exceeds total uncompressed size limit: {total} > {MAX_ARCHIVE_TOTAL_SIZE} bytes')
@@ -81,10 +104,27 @@ def _exports(archive, manifest, source):
         raise UnsupportedComposition('Invalid asset source path')
     path = 'decoded/files/Client/Content/' + \
         source.removeprefix('/Game/') + '.json'
-    result = json.loads(_read(archive, manifest, path))
-    if not isinstance(result, list):
-        raise UnsupportedComposition('Invalid decoded asset exports')
-    return result
+    return _decoded_exports(archive, manifest, path)
+
+
+def _decoded_exports(archive, manifest, name):
+    """Stream one decoded export array, verifying its recorded size and checksum without loading it whole."""
+    pure = PurePosixPath(name)
+    if (pure.is_absolute() or '..' in pure.parts or '\\' in name or name not in manifest['files']
+            or not name.startswith('decoded/')):
+        raise UnsupportedComposition('Invalid or unrecorded archive entry')
+    if archive.namelist().count(name) != 1:
+        raise UnsupportedComposition('Missing or ambiguous archive entry')
+    info = manifest['files'][name]
+    entry = archive.getinfo(name)
+    if entry.file_size > MAX_DECODED_ENTRY_SIZE or entry.file_size != info['size_bytes']:
+        raise UnsupportedComposition('Invalid archive entry size')
+    try:
+        with archive.open(entry) as handle:
+            from wuwa_story_worker.decoded_json import iter_stream
+            return list(iter_stream(handle, size=entry.file_size, expected_sha256=info['sha256']))
+    except ValueError as error:
+        raise UnsupportedComposition(f'Decoded asset exports are invalid: {error}') from error
 
 
 def _asset_file(archive, manifest, source, export_type, field):

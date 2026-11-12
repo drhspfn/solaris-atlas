@@ -252,6 +252,14 @@ services:
     deploy:
       replicas: ${WUWA_IMAGE_REPLICAS:-1}
 
+  illustrated-worker:
+    <<: *asset-worker
+    command: ["wuwa-story-worker", "run", "--pool", "illustrated"]
+    cpus: ${WUWA_ILLUSTRATED_CPUS:-1.5}
+    mem_limit: ${WUWA_ILLUSTRATED_MEMORY:-4g}
+    deploy:
+      replicas: ${WUWA_ILLUSTRATED_REPLICAS:-1}
+
   audio-worker:
     <<: *asset-worker
     command: ["wuwa-story-worker", "run", "--pool", "audio"]

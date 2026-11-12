@@ -18,6 +18,7 @@ from wuwa_story.story.cutscene_descriptions import attach_public_descriptions, p
 from wuwa_story.story.cutscenes import summaries
 from wuwa_story.story.domain import version_key
 from wuwa_story.story.service import _release_id
+from wuwa_story.version import is_caption_supported
 
 router = APIRouter(prefix="/cutscenes", tags=["story browsing"])
 
@@ -131,7 +132,7 @@ async def detail(name: str, game_version: str | None = None, locale: str = "en",
         flows = await cutscene_flows(session, [row.node_id])
         playback = flows.get(row.node_id)
         captions = {}
-        if playback and playback.get("asset_version") in {"3.7.0", "3.7.1"}:
+        if playback and is_caption_supported(playback.get("asset_version")):
             links = await _links(session, [row.node_id], ("uses_caption",), snapshot.id)
             ids = [link["node_id"] for link in links.get(row.node_id, [])]
             if ids:

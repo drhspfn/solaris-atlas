@@ -48,7 +48,7 @@ QUEUES = {
 for _pool in MEDIA_POOLS:
     _key = f"pool_{_pool}"
     QUEUES[_key] = QueueSpec(
-        _key, f"wuwa.pool-{_pool}.v1", 3 if _pool == "coordinator" else 1)
+        _key, f"wuwa.pool-{_pool}.v1", 3 if _pool == "coordinator" else 2 if _pool == "image" else 1)
 
 
 def queue_concurrency() -> dict[str, int]:

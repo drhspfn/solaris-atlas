@@ -13,6 +13,7 @@ from wuwa_story.db.models.game_events import GameEvent
 from wuwa_story.ingestion.game_events import CLIENT_SOURCE
 from wuwa_story.ingestion.release_media import enqueue_event_images
 
+from wuwa_story_worker.decoded_json import load_exports
 from wuwa_story_worker.archive_index import ensure_archive_index, indexed_package_paths
 from wuwa_story_worker.asset_export import _sha256, export_assets
 from wuwa_story_worker.client_assets import workspace_lock
@@ -193,7 +194,7 @@ async def prefab_images(root: Path, paths: list[str], *, assets: dict | None = N
                                            env={**os.environ, "DOTNET_PROCESSOR_COUNT": "2",
                                                 "WUWA_READ_SCRIPT_DATA": "1" if include_sequences else "0"})
                     references = sorted({ref for path in output.rglob("*.json") if path != complete
-                                         for ref in ui_references(json.loads(path.read_text(encoding="utf-8-sig")),
+                                         for ref in ui_references(load_exports(path),
                                                                   include_sequences=include_sequences,
                                                                   control_sources_only=control_sources_only)})
                     if not list(output.rglob("*.json")):
@@ -252,7 +253,7 @@ async def event_resources(payload, parent, session, root: Path):
                 if file.name == 'references.json':
                     continue
                 try:
-                    decoded = json.loads(file.read_text(encoding='utf-8-sig'))
+                    decoded = load_exports(file)
                 except (OSError, ValueError):
                     missing.append({'expected': source, 'status': 'invalid_decoded_source'})
                     continue

@@ -231,7 +231,9 @@ def mark_legacy_eligible(bundle: Path):
                 'reasons': [{'code': 'render_validation_required'}]}
             for info in source.infolist():
                 if info.filename != 'manifest.json':
-                    target.writestr(info, source.read(info))
+                    with source.open(info) as s_in, target.open(info, 'w', force_zip64=True) as t_out:
+                        while chunk := s_in.read(1024 * 1024):
+                            t_out.write(chunk)
             info = zipfile.ZipInfo('manifest.json', (2000, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             target.writestr(info, json.dumps(manifest, ensure_ascii=False, sort_keys=True))

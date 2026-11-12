@@ -18,7 +18,7 @@ from wuwa_story_worker.riglyph_convert import convert_archive
 from wuwa_story_worker.tooling import asset_workspace
 
 RECIPE = "riglyph-native-v2"
-VERSION = "0.16.2"
+VERSION = "0.16.3"
 
 
 @dataclass

@@ -29,6 +29,15 @@ wheels = [
 ]
 
 [[package]]
+name = "aiosqlite"
+version = "0.22.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4e/8a/64761f4005f17809769d23e518d915db74e6310474e733e3593cfc854ef1/aiosqlite-0.22.1.tar.gz", hash = "sha256:043e0bd78d32888c0a9ca90fc788b38796843360c855a7262a532813133a0650", size = 14821, upload-time = "2025-12-23T19:25:43.997Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/00/b7/e3bf5133d697a08128598c8d0abc5e16377b51465a33756de24fa7dee953/aiosqlite-0.22.1-py3-none-any.whl", hash = "sha256:21c002eb13823fad740196c5a2e9d8e62f6243bd9e7e4a1f87fb5e44ecb4fceb", size = 17405, upload-time = "2025-12-23T19:25:42.139Z" },
+]
+
+[[package]]
 name = "alembic"
 version = "1.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1200,7 +1209,7 @@ wheels = [
 [[package]]
 name = "wuwa-story-server"
 version = "0.1.0"
-source = { directory = "../server" }
+source = { editable = "../server" }
 dependencies = [
     { name = "aio-pika" },
     { name = "alembic" },
@@ -1213,6 +1222,7 @@ dependencies = [
     { name = "joserfc" },
     { name = "mcp" },
     { name = "pgvector" },
+    { name = "pillow" },
     { name = "pwdlib", extra = ["argon2"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -1236,7 +1246,11 @@ requires-dist = [
     { name = "ijson", specifier = ">=3.3,<4" },
     { name = "joserfc", specifier = ">=1.4,<2" },
     { name = "mcp", specifier = ">=1.9,<2" },
+    { name = "numpy", marker = "extra == 'visual-memory'", specifier = ">=1.26,<3" },
+    { name = "onnxruntime", marker = "extra == 'visual-memory'", specifier = ">=1.18,<2" },
+    { name = "opencv-python-headless", marker = "extra == 'visual-memory'", specifier = ">=4.8,<5" },
     { name = "pgvector", specifier = ">=0.3,<1" },
+    { name = "pillow", specifier = ">=10,<13" },
     { name = "pwdlib", extras = ["argon2"], specifier = ">=0.2,<1" },
     { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "pydantic-settings", specifier = ">=2.6,<3" },
@@ -1244,15 +1258,20 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36,<2.1" },
     { name = "sqlglot", specifier = ">=27,<30" },
     { name = "starlette-admin", specifier = ">=0.17.1,<0.18" },
+    { name = "torch", marker = "(sys_platform == 'linux' and extra == 'visual-memory') or (sys_platform == 'win32' and extra == 'visual-memory')", specifier = ">=2.2,<3", index = "https://download.pytorch.org/whl/cpu" },
+    { name = "torch", marker = "sys_platform != 'linux' and sys_platform != 'win32' and extra == 'visual-memory'", specifier = ">=2.2,<3" },
+    { name = "transformers", marker = "extra == 'visual-memory'", specifier = ">=4.44,<5" },
     { name = "tzdata", specifier = ">=2025" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32,<1" },
 ]
+provides-extras = ["visual-memory"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "aiosqlite", specifier = ">=0.20,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "mypy", specifier = ">=1.13,<2" },
+    { name = "numpy", specifier = ">=1.26,<3" },
     { name = "pytest", specifier = ">=8.3,<9" },
     { name = "pytest-asyncio", specifier = ">=0.24,<1" },
     { name = "ruff", specifier = ">=0.8,<1" },
@@ -1266,12 +1285,14 @@ dependencies = [
     { name = "aio-pika" },
     { name = "cryptography" },
     { name = "flatbuffers" },
+    { name = "ijson" },
     { name = "pillow" },
     { name = "wuwa-story-server" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "aiosqlite" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -1283,12 +1304,14 @@ requires-dist = [
     { name = "aio-pika", specifier = ">=9.5,<10" },
     { name = "cryptography", specifier = ">=44,<47" },
     { name = "flatbuffers", specifier = ">=25,<26" },
+    { name = "ijson", specifier = ">=3.3,<4" },
     { name = "pillow", specifier = ">=11,<13" },
-    { name = "wuwa-story-server", directory = "../server" },
+    { name = "wuwa-story-server", editable = "../server" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aiosqlite", specifier = ">=0.20,<1" },
     { name = "mypy", specifier = ">=1.13,<2" },
     { name = "pytest", specifier = ">=8.3,<9" },
     { name = "pytest-asyncio", specifier = ">=0.24,<1" },

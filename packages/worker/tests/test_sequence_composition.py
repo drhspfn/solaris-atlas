@@ -12,7 +12,7 @@ from wuwa_story_worker import sequence_composition as compositor
     ([0] * 50001, False, 'entry count limit'),
     ([1, 1], True, 'duplicate entries'),
     ([256 * 1024 * 1024 + 1], False, 'per-entry size limit'),
-    ([256 * 1024 * 1024] * 8 + [1], False, 'total uncompressed size limit'),
+    ([256 * 1024 * 1024] * 16 + [1], False, 'total uncompressed size limit'),
 ])
 def test_archive_limit_failure_identifies_actual_cause(sizes, duplicate, reason):
     infos = [SimpleNamespace(filename='same' if duplicate else str(i), file_size=size)

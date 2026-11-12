@@ -176,7 +176,7 @@ def _extract_files(root, executable, asset_filter, plan, output, temporary, log,
                 [str(executable.resolve()), str((game_dir or root / "game").resolve()),
                  "@" + str((keys_file or root / "keys.txt").resolve()), str(data.resolve()), asset_filter],
                 stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=7200,
-                env={**os.environ, "DOTNET_PROCESSOR_COUNT": str(processors)},
+                env={**os.environ, "DOTNET_PROCESSOR_COUNT": str(processors), "DOTNET_gcServer": "0", "DOTNET_GCLargeObjectHeapCompactionMode": "1"},
             )
         except subprocess.TimeoutExpired as error:
             raise ExtractionTimeoutError(error, log) from error
