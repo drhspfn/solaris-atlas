@@ -15,6 +15,7 @@ from wuwa_story.api.routes.story.captions import caption_texts, caption_tracks
 from wuwa_story.api.routes.story.cutscene_audio import audio_bundles
 from wuwa_story.api.routes.story.shared import _release_id
 from wuwa_story.config.settings import get_settings
+from wuwa_story.version import is_caption_supported
 from wuwa_story.db.models.content import Document, DocumentHead
 from wuwa_story.db.models.core import QuestAction, QuestState
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
@@ -513,7 +514,7 @@ async def quest_media(
                 resource_raw[child["node_id"]]
                 for child in variants.get(target_id, [])
                 if child["relation"] == "uses_caption" and child["node_id"] in resource_raw
-            ], texts) if entry["playback"] and entry["playback"]["asset_version"] in {"3.7.0", "3.7.1"} else {}
+            ], texts) if entry["playback"] and is_caption_supported(entry["playback"].get("asset_version")) else {}
             entry["resources"] = [
                 {"kind": child["relation"], "reference": child["canonical_key"],
                  "basis": child["basis"], "source": child["source"],

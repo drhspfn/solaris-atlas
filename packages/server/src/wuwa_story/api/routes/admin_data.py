@@ -68,7 +68,7 @@ class ClientAssetDownloadRequest(_PayloadModel):
 
 
 class MapBuildRequest(_PayloadModel):
-    version: str = Field(default="3.7.0", pattern=r"^\d+\.\d+(\.\d+)?$")
+    version: str | None = Field(default=None, pattern=r"^\d+\.\d+(\.\d+)?$")
     tier: Literal["sd", "hd", "uhd"] = "hd"
     download_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
@@ -572,12 +572,22 @@ async def enqueue_map_build(
         target_client = next(
             (c for c in installed if c.get("download_id") == request.download_id), None
         )
-    else:
+    elif request.version:
         target_client = next(
             (
                 c
                 for c in installed
                 if c.get("version") == request.version and c.get("tier") == request.tier
+            ),
+            None,
+        )
+    else:
+        # Default to the newest installed client for this tier
+        target_client = next(
+            (
+                c
+                for c in installed
+                if c.get("state") == "downloaded" and c.get("tier") == request.tier
             ),
             None,
         )
