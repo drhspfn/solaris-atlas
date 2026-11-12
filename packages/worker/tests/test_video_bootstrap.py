@@ -127,3 +127,24 @@ def test_official_video_plan_resolves_cumulative_version_when_manifest_in_earlie
     assert len(plan["files"]) == 2
     assert all("/Windows/3.7.0/Video/" in item["remote_path"] for item in plan["files"])
 
+
+def test_extract_candidate_versions_discovers_versions_dynamically():
+    package_config = {
+        "PackageVersion": "4.2.0",
+        "ResVersions": {
+            "resource": {
+                "Version": "4.1.5",
+                "IndexSha1": {
+                    "4.1.0": "hash1",
+                    "4.1.3": "hash2",
+                },
+            },
+            "launcher": {
+                "Version": "4.1.9",
+            },
+        },
+    }
+    cands = voice_bootstrap.extract_candidate_versions(package_config, "4.1.2")
+    assert cands == ["4.2.0", "4.1.2", "4.1.0", "4.1.5", "4.1.3", "4.1.9"]
+
+

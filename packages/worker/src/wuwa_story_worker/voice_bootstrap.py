@@ -34,6 +34,27 @@ def discover_client_voices(version: str, exported_config: Path) -> dict:
     return plan
 
 
+def extract_candidate_versions(package_config: dict, requested_version: str) -> list[str]:
+    candidates = []
+
+    def add(v: str | None) -> None:
+        if isinstance(v, str) and re.fullmatch(r"\d+\.\d+\.\d+", v) and v not in candidates:
+            candidates.append(v)
+            parts = v.split(".")
+            base = f"{parts[0]}.{parts[1]}.0"
+            if base not in candidates:
+                candidates.append(base)
+
+    add(package_config.get("PackageVersion"))
+    add(requested_version)
+    for res_info in package_config.get("ResVersions", {}).values():
+        if isinstance(res_info, dict):
+            add(res_info.get("Version"))
+            for ver_key in res_info.get("IndexSha1", {}).keys():
+                add(ver_key)
+    return candidates
+
+
 def discover_video_plan(version: str, exported_config: Path, tier: str, cg_ids: set[int],
                         *, diagnostics: dict | None = None) -> dict:
     configs = sorted(exported_config.rglob("KuroPublicConfig.ini"))
@@ -82,10 +103,7 @@ def discover_video_plan(version: str, exported_config: Path, tier: str, cg_ids: 
         raise ValueError(f"Video CDN serves {package_version}, requested {version}")
     config = decrypt_config(fetch(f"{mix}/Windows/VideoConfig_{tier}.json"), crypto)
     target_sha1 = config["IndexSha1"].lower()
-    candidate_versions = []
-    for cand in (package_version, version, "3.7.0", "3.7.1", "3.8.0"):
-        if cand and cand not in candidate_versions:
-            candidate_versions.append(cand)
+    candidate_versions = extract_candidate_versions(package_config, version)
     body = None
     for cand in candidate_versions:
         try:
