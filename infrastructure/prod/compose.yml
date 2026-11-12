@@ -263,10 +263,26 @@ services:
   image-worker:
     <<: *worker
     command: ["wuwa-story-worker", "run", "--pool", "image"]
-    cpus: ${WUWA_IMAGE_CPUS:-0.75}
+    cpus: ${WUWA_IMAGE_CPUS:-1.0}
     mem_limit: ${WUWA_IMAGE_MEMORY:-2g}
     deploy:
-      replicas: ${WUWA_IMAGE_REPLICAS:-1}
+      replicas: ${WUWA_IMAGE_REPLICAS:-2}
+    environment:
+      WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
+      WUWA_RIGLYPH_ENABLED: "false"
+      WUWA_QUEUE_CONCURRENCY: pool_image=2
+
+  illustrated-worker:
+    <<: *worker
+    command: ["wuwa-story-worker", "run", "--pool", "illustrated"]
+    cpus: ${WUWA_ILLUSTRATED_CPUS:-1.5}
+    mem_limit: ${WUWA_ILLUSTRATED_MEMORY:-4g}
+    deploy:
+      replicas: ${WUWA_ILLUSTRATED_REPLICAS:-1}
+    environment:
+      WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
+      WUWA_RIGLYPH_ENABLED: "true"
+      WUWA_QUEUE_CONCURRENCY: pool_illustrated=1
 
   audio-worker:
     <<: *worker
