@@ -974,11 +974,14 @@ async def process_release_media(payload):
 async def _process_release_media(payload):
     async with engine.connect() as connection, job_lock(connection, 702, payload["run_id"]):
         try:
+            logger.info("release_media.started run=%s kind=%s release=%s parent=%s",
+                        payload["run_id"], payload["kind"], payload.get("release_id"), payload.get("parent_id"))
             async with SessionFactory(bind=connection) as session:
                 run = await session.get(ProcessingRun, payload["run_id"])
                 if run is None or run.metadata_json.get("payload") != payload:
                     raise ValueError("Media task is not the pinned backend request")
                 if run.status in {"completed", "partial", "cancelled"}:
+                    logger.info("release_media.skipped run=%s kind=%s status=%s", run.id, payload["kind"], run.status)
                     return
                 await session.commit()
                 if payload["kind"] == "prepare":
@@ -991,6 +994,8 @@ async def _process_release_media(payload):
                         "request", {}).get("kind") in {"event_catalog", "event_resources"}
                     if parent.status != "completed" and not partial_resources:
                         if parent.status in {"failed", "enqueue_failed", "blocked", "cancelled"}:
+                            logger.warning("release_media.blocked run=%s kind=%s parent=%s parent_status=%s",
+                                           run.id, payload["kind"], parent.id, parent.status)
                             await update_admin_run(run.id, "release_media", "blocked", error=f"Client preparation #{parent.id} failed; retry the media import")
                             return
                         raise JobDeferred("Client preparation is still queued or running")
@@ -1074,15 +1079,20 @@ async def _process_release_media(payload):
                 logger.info("release_media.finished run=%s kind=%s status=%s", run.id, payload["kind"], status)
         except JobDeferred as error:
             await connection.rollback()
+            logger.info("release_media.deferred run=%s kind=%s reason=%s",
+                        payload["run_id"], payload["kind"], type(error).__name__)
             await update_admin_run(payload["run_id"], "release_media", "waiting_dependency", error=str(error))
             raise
         except BlockingIOError as error:
             await connection.rollback()
+            logger.info("release_media.workspace_busy run=%s kind=%s", payload["run_id"], payload["kind"])
             await update_admin_run(payload["run_id"], "release_media", "waiting_dependency", error="Asset workspace is in use by another export; retrying after it finishes")
             raise JobDeferred("Asset workspace is in use") from error
         except Exception as error:
             await connection.rollback()
             from wuwa_story_worker.broker import transient_job_error
             status = "waiting_dependency" if transient_job_error(error) else "failed"
+            logger.warning("release_media.error run=%s kind=%s status=%s error_type=%s",
+                           payload["run_id"], payload["kind"], status, type(error).__name__)
             await update_admin_run(payload["run_id"], "release_media", status, error=f"{type(error).__name__}: {error}"[:2000])
             raise
