@@ -142,8 +142,8 @@ async def enqueue_release_media(
         if kind in {"cutscene", "cutscene_assets"} and request.get('cutscene_assembly_schema', 0) >= 2:
             queue = CUTSCENE_ASSEMBLY_QUEUE
         if (event_artwork_only and kind == "event_catalog" or notices_only and kind == "event_notices"
-                or npc_catalog_only and kind == "npc_catalog") and run.status == "completed":
-            # An explicit reimport must revisit failed/partial image children,
+                or npc_catalog_only and kind == "npc_catalog") and run.status != "running":
+            # An explicit reimport must revisit failed/partial/stale image children,
             # or resolve NPC edges whose endpoints were imported afterwards.
             # Successful extraction work remains reusable.
             run.status = "pending"
