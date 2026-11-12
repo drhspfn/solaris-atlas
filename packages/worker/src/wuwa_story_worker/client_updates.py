@@ -27,7 +27,7 @@ async def poll_client_updates(workspace):
 
 
 async def watch_client_updates():
-    interval = int(os.getenv("WUWA_CLIENT_UPDATE_INTERVAL_SECONDS", "3600"))
+    interval = int(os.getenv("WUWA_CLIENT_UPDATE_INTERVAL_SECONDS", "7200"))
     if interval == 0:
         return
     if interval < 60:

@@ -127,7 +127,7 @@ GROUPS = {
         "WUWA_IMPORT_BATCH_SIZE": "500",
         "WUWA_ASSET_WORKSPACE": "/var/lib/wuwa-worker/client-assets",
         "WUWA_ASSET_DOWNLOAD_CONCURRENCY": "4",
-        "WUWA_CLIENT_UPDATE_INTERVAL_SECONDS": "3600",
+        "WUWA_CLIENT_UPDATE_INTERVAL_SECONDS": "7200",
         "WUWA_ASSET_EXPORT_FILTERS": "ConfigDB",
         "WUWA_ASSET_BUILD_MAPS": "0",
         "WUWA_RIGLYPH_ENABLED": "false",
