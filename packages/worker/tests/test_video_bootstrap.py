@@ -88,3 +88,42 @@ def test_official_video_plan_accepts_newer_supported_version(tmp_path, monkeypat
     assert plan["package_version"] == "3.8.0"
     assert len(plan["files"]) == 2
     assert all("/Windows/3.8.0/Video/" in item["remote_path"] for item in plan["files"])
+
+
+def test_official_video_plan_resolves_cumulative_version_when_manifest_in_earlier_folder(tmp_path, monkeypatch):
+    config = tmp_path / "KuroPublicConfig.ini"
+    host = sorted(voice_bootstrap.CONFIG_HOSTS)[0]
+    config.write_text(f"InternalPrefix=https://{host}\nUrlPath=client\n")
+    item = {"PakName": "native.pak", "SigName": "native.sig", "PakSize": 12, "SigSize": 4,
+            "PakHash": "a" * 40, "SigHash": "b" * 40}
+    documents = {
+        b"entry": {"default": {"CdnUrl": [{"url": "https://cdn-aws-hw-mc.aki-game.net/prod/client/", "weight": 1}],
+                                "MixUri": "mix", "ResUri": "resources"}},
+        b"package": {"PackageVersion": "3.8.0"},
+        b"config": {"IndexSha1": hashlib.sha1(b"manifest_370").hexdigest()},
+        b"manifest_370": {"VideoInfos": {"PakMap": {"157_0": item}}},
+    }
+
+    def read(url):
+        if url == voice_bootstrap.CIPHER_SOURCE:
+            return b"[encryption]\nkey = 'fixture'\n"
+        if url.endswith("/index.json"):
+            return b"entry"
+        if url.endswith("/VideoConfig_hd.json"):
+            return b"config"
+        if url.endswith("/config.json"):
+            return b"package"
+        if url.endswith(("/Windows/3.8.0/Video/VideoManifest_hd.json", "/Windows/3.7.1/Video/VideoManifest_hd.json")):
+            raise OSError("Not found on CDN")
+        if url.endswith("/Windows/3.7.0/Video/VideoManifest_hd.json"):
+            return b"manifest_370"
+        raise AssertionError(f"Unexpected video bootstrap request: {url}")
+
+    monkeypatch.setattr(voice_bootstrap, "read_url", read)
+    monkeypatch.setattr(voice_bootstrap, "decrypt_config", lambda body, _: documents[body])
+    plan = voice_bootstrap.discover_video_plan("3.7.1", tmp_path, "hd", {157})
+    assert plan["version"] == "3.7.1"
+    assert plan["package_version"] == "3.7.0"
+    assert len(plan["files"]) == 2
+    assert all("/Windows/3.7.0/Video/" in item["remote_path"] for item in plan["files"])
+
