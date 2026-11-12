@@ -7,4 +7,7 @@
 .block small, .sourceOnly small { display: block; overflow-wrap: anywhere; }
 .sourceOnly { display: none; min-width: 0; scroll-margin-top: 100px; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
 .sourceOnly:target { display: block; margin: 8px 0; }
+.block > details { margin-top: 10px; padding-top: 6px; border-top: 1px dashed var(--border-default, rgba(255, 255, 255, 0.08)); font-size: 12px; color: var(--text-muted); }
+.block > details > summary { color: var(--text-muted); font-size: 12px; min-height: 28px; padding: 4px 0; cursor: pointer; }
+.block > details > summary:hover { color: var(--mint); }
 @media (max-width: 480px) { .block:global(.quest-runtime-block) { padding: 8px; } }

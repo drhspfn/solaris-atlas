@@ -16,7 +16,7 @@ function archive(queryText) {
   const code = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
-      jsx: ts.JsxEmit.ReactJSX,
+      jsx: ts.JsxEmТам щасit.ReactJSX,
       esModuleInterop: true,
     },
   }).outputText;

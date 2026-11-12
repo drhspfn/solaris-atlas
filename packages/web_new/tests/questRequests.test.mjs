@@ -69,8 +69,13 @@ function questHarness({
       "@/components/story/QuestExplanation",
       "@/components/story/QuestMediaReferences",
       "@/components/ui/Feedback",
+      "@/components/ui/Breadcrumbs",
       "@/data/entities",
       "@/components/ui/Select",
+      "../dialogue/speakerName",
+      "@/components/dialogue/speakerName",
+      "../story/sequenceIllustrations",
+      "@/components/story/sequenceIllustrations",
     ].map((id) => [id, dummy]),
   );
   Object.assign(mocks, {
@@ -78,7 +83,10 @@ function questHarness({
       "../src/components/quest/questSidebarModel.ts",
       {},
     ),
-    "@/data/gameText": { gameTextPlainText: (value, _display, fallback = "") => typeof value === "string" ? value : value?.content || fallback },
+    "@/data/gameText": {
+      gameTextPlainText: (value, _display, fallback = "") =>
+        typeof value === "string" ? value : value?.content || fallback,
+    },
     "@/data/localized": load("../src/data/localized.ts", {}),
     "@/components/story/cutsceneAnchor": load(
       "../src/components/story/cutsceneAnchor.ts",

@@ -40,18 +40,19 @@ def dialogue_text(localized, inline_text):
 
 def source_edge(owner_id, target, relation, release_id):
     return select(Edge.id).join(RelationType, RelationType.id == Edge.relation_type_id).where(
-        Edge.from_node_id.in_(owner_id if isinstance(owner_id, (list, tuple)) else [owner_id]),
+        Edge.from_node_id.in_(owner_id if isinstance(
+            owner_id, (list, tuple)) else [owner_id]),
         Edge.to_node_id == target, Edge.layer == "source",
         RelationType.key == relation,
         select(EdgeEvidence.id).where(EdgeEvidence.edge_id == Edge.id,
-                                     EdgeEvidence.release_id == release_id).exists(),
+                                      EdgeEvidence.release_id == release_id).exists(),
     ).exists()
 
 
 def interaction_dialogue(release_id, state_ids, *, include_action=False):
     """Include authored lines without a speaker as well as spoken lines in interaction states."""
     action_edge, talk_edge, spoken = (Edge.__table__.alias(name) for name in
-                                       ("npc_actions", "npc_talks", "npc_spoken"))
+                                      ("npc_actions", "npc_talks", "npc_spoken"))
 
     def evidenced(edge, relation):
         return and_(edge.c.layer == "source", edge.c.relation_type_id == select(RelationType.id).where(
@@ -60,12 +61,12 @@ def interaction_dialogue(release_id, state_ids, *, include_action=False):
 
     query = (select(talk_edge.c.to_node_id.label("line_id"), action_edge.c.from_node_id.label("state_id"),
                     spoken.c.to_node_id.label("speaker_id"))
-            .select_from(action_edge).join(talk_edge, talk_edge.c.from_node_id == action_edge.c.to_node_id)
-            .outerjoin(spoken, and_(spoken.c.from_node_id == talk_edge.c.to_node_id,
-                                    evidenced(spoken, "spoken_by")))
-            .join(DialogueLine, DialogueLine.node_id == talk_edge.c.to_node_id)
-            .where(action_edge.c.from_node_id.in_(state_ids), evidenced(action_edge, "contains_action"),
-                   evidenced(talk_edge, "presents_talk_item")).distinct())
+             .select_from(action_edge).join(talk_edge, talk_edge.c.from_node_id == action_edge.c.to_node_id)
+             .outerjoin(spoken, and_(spoken.c.from_node_id == talk_edge.c.to_node_id,
+                                     evidenced(spoken, "spoken_by")))
+             .join(DialogueLine, DialogueLine.node_id == talk_edge.c.to_node_id)
+             .where(action_edge.c.from_node_id.in_(state_ids), evidenced(action_edge, "contains_action"),
+                    evidenced(talk_edge, "presents_talk_item")).distinct())
     return query.add_columns(action_edge.c.to_node_id.label("action_id")) if include_action else query
 
 
@@ -77,7 +78,8 @@ async def npc_flow_state_ids(session, node_id, npc, release_id):
     states = set(await session.scalars(select(QuestState.node_id).where(
         source_edge(npc.get("owner_ids", [node_id]), QuestState.node_id, "references_flow_state", release_id))))
     for offset in range(0, len(valid), 100):
-        batch = [f"{name}_{flow_id}_{state_id}" for name, flow_id, state_id in valid[offset:offset + 100]]
+        batch = [f"{name}_{flow_id}_{state_id}" for name,
+                 flow_id, state_id in valid[offset:offset + 100]]
         states.update(await session.scalars(select(QuestState.node_id).where(QuestState.state_key.in_(batch))))
     return sorted(states)
 
@@ -122,9 +124,9 @@ async def npc_profile(session, node, character, npc, release_id, locale):
     scoped_name = False
     if character.name_key_id is None:
         row = (await session.execute(select(SearchDocument.title)
-            .join(Locale, Locale.id == SearchDocument.locale_id)
-            .where(SearchDocument.target_node_id == node.id, SearchDocument.category == "character",
-                   Locale.code == locale))).first()
+                                     .join(Locale, Locale.id == SearchDocument.locale_id)
+                                     .where(SearchDocument.target_node_id == node.id, SearchDocument.category == "character",
+                                            Locale.code == locale))).first()
         if row and row.title:
             name = {"content": row.title}
             variants = [row.title]
@@ -139,11 +141,36 @@ async def npc_profile(session, node, character, npc, release_id, locale):
             text = (localized or {}).get("content")
             if text and text not in variants:
                 variants.append(text)
-    mixed = ((getattr(character, "metadata_json", None) or {}).get("public_identity") or {}).get("classification") == "mixed_instances"
+    mixed = ((getattr(character, "metadata_json", None) or {}).get(
+        "public_identity") or {}).get("classification") == "mixed_instances"
     if mixed:
         names = sorted(set(variants))
         suffix = " / ".join(names[:3]) + (" / …" if len(names) > 3 else "")
-        name = {"content": "Shared NPC template" + (f" · {suffix}" if suffix else "")}
+        name = {"content": "Shared NPC template" +
+                (f" · {suffix}" if suffix else "")}
+    npc_speakers = []
+    if hasattr(session, "execute"):
+        speaker_rows = list(await session.execute(
+            select(Node.id, Node.canonical_key, Node.slug)
+            .join(Edge, Edge.from_node_id == Node.id)
+            .join(RelationType, RelationType.id == Edge.relation_type_id)
+            .where(Edge.to_node_id == node.id, RelationType.key == "references_character")
+        ))
+        npc_speakers = [{"id": r[0], "canonical_key": r[1],
+                         "slug": r[2]} for r in speaker_rows]
+        if not npc_speakers and getattr(node, "slug", None):
+            slug_base = node.slug.split("-", 1)[-1]
+            matching_speakers = list(await session.execute(
+                select(Node.id, Node.canonical_key, Node.slug)
+                .where(Node.type_id == 2, Node.slug.ilike(f"%-{slug_base}"))
+                .limit(5)
+            ))
+            npc_speakers = [{"id": r[0], "canonical_key": r[1],
+                             "slug": r[2]} for r in matching_speakers]
+        if npc_speakers:
+            await prefetch_node_labels(session, [s["id"] for s in npc_speakers], locale)
+            for s in npc_speakers:
+                s["label"] = await _node_label(session, s["id"], locale)
     return {"character": {"canonical_key": node.canonical_key, **node_address(node, "character"),
                           "canonical_name": character.canonical_name,
                           "name": name,
@@ -152,7 +179,7 @@ async def npc_profile(session, node, character, npc, release_id, locale):
                           if mixed else character.description, "playable": False},
             "npc": {"blueprint_id": npc.get("blueprint_id"), "blueprint_type": npc.get("blueprint_type"),
                     "kind": "template" if mixed else "npc",
-                    "speakers": [],
+                    "speakers": npc_speakers,
                     "name_scope": "instance" if scoped_name else "blueprint",
                     "name_variants": variants,
                     "flow_reference_count": len(npc.get("flow_references") or []),
@@ -172,7 +199,8 @@ async def npc_instances(canonical_key: str, locale: str = "en", game_version: st
     _, _, npc, release_id = await npc_record(session, canonical_key, game_version)
     instances = npc.get("instances") or []
     page = instances[offset:offset + limit]
-    keys = {item.get("name", {}).get("key") for item in page if isinstance(item.get("name"), dict)} - {None}
+    keys = {item.get("name", {}).get("key")
+            for item in page if isinstance(item.get("name"), dict)} - {None}
     key_ids = dict((await session.execute(select(LocalizationKey.key, LocalizationKey.id).where(
         LocalizationKey.key.in_(keys)))).all()) if keys else {}
     await prefetch_localizations(session, list(key_ids.values()), locale, release_id)
@@ -200,7 +228,8 @@ async def npc_shops(canonical_key: str, locale: str = "en", game_version: str | 
     await prefetch_localizations(session, list(key_ids.values()), locale, release_id)
     results = []
     for shop in page:
-        info = next((row for row in shop.get("shopinfo") or [] if isinstance(row, dict)), {})
+        info = next((row for row in shop.get("shopinfo")
+                    or [] if isinstance(row, dict)), {})
         key = info.get("ShopName")
         results.append({"id": shop.get("id"),
                         "name": await _localized(session, key_ids.get(key), locale, release_id),
@@ -213,27 +242,38 @@ async def npc_shop_offers(canonical_key: str, shop_id: int, locale: str = "en",
                           game_version: str | None = None, limit: int = Query(50, ge=1, le=50),
                           offset: int = Query(0, ge=0), session: AsyncSession = Depends(get_session)):
     _, _, npc, _ = await npc_record(session, canonical_key, game_version)
-    shop = next((row for row in npc.get("shops") or [] if isinstance(row, dict) and row.get("id") == shop_id), None)
+    shop = next((row for row in npc.get("shops") or [] if isinstance(
+        row, dict) and row.get("id") == shop_id), None)
     if shop is None:
         raise HTTPException(404, "Shop not found")
-    offers = [row for row in shop.get("shopfixed") or [] if isinstance(row, dict)]
+    offers = [row for row in shop.get(
+        "shopfixed") or [] if isinstance(row, dict)]
     page = offers[offset:offset + limit]
-    item_ids = {row.get("ItemId") for row in page if type(row.get("ItemId")) is int}
+    item_ids = {row.get("ItemId")
+                for row in page if type(row.get("ItemId")) is int}
     item_ids.update(item_id for row in page for field in ("Price", "OriginalPrice")
                     for item_id, _ in price_pairs(row.get(field)))
     item_nodes = dict((await session.execute(select(Item.game_item_id, Node.id).join(
         Node, Node.id == Item.node_id).where(Item.game_item_id.in_(item_ids)))).all()) if item_ids else {}
     await prefetch_node_labels(session, list(item_nodes.values()), locale)
     labels = {identity: await _node_label(session, node_id, locale) for identity, node_id in item_nodes.items()}
+    from wuwa_story.storage.entity_media import entity_image_urls
+    images = await entity_image_urls(session, list(item_nodes.values()))
+
     def item(identity):
-        return labels.get(identity) or {"game_item_id": identity, "label": f"Item {identity}"}
+        node_id = item_nodes.get(identity)
+        payload = dict(labels.get(identity) or {
+                       "game_item_id": identity, "label": f"Item {identity}"})
+        if node_id and node_id in images:
+            payload["image_url"] = images[node_id]
+        return payload
     results = []
     for row in page:
         results.append({"id": row.get("Id"), "item": item(row.get("ItemId")), "count": row.get("ItemNum"),
                         "price": [{"item": item(key), "amount": amount} for key, amount in price_pairs(row.get("Price"))],
                         "original_price": [{"item": item(key), "amount": amount} for key, amount in price_pairs(row.get("OriginalPrice"))],
                         "limit": row.get("LimitNum"), "conditions": {key: row.get(key) for key in
-                            ("Show", "CondId", "VisableCondition", "DisableCondition")}})
+                                                                     ("Show", "CondId", "VisableCondition", "DisableCondition")}})
     return {"results": results, "total": len(offers), "limit": limit, "offset": offset, "reset": None}
 
 
@@ -248,9 +288,9 @@ async def npc_flow_participants(canonical_key: str, locale: str = "en", game_ver
         return {"results": [], "truncated": False}
     participation = dialogue_participation(release_id, state_ids=states[:100])
     rows = list(await session.execute(select(Node.id, QuestState.state_key)
-        .join(participation, participation.c.speaker_id == Node.id)
-        .join(QuestState, QuestState.node_id == participation.c.state_id)
-        .distinct().order_by(QuestState.state_key, Node.id).limit(101)))
+                                      .join(participation, participation.c.speaker_id == Node.id)
+                                      .join(QuestState, QuestState.node_id == participation.c.state_id)
+                                      .distinct().order_by(QuestState.state_key, Node.id).limit(101)))
     await prefetch_node_labels(session, [speaker for speaker, _ in rows[:100]], locale)
     return {"results": [{"speaker": await _node_label(session, speaker, locale), "flow_state": state}
                         for speaker, state in rows[:100]],
@@ -278,7 +318,8 @@ async def npc_dialogue(canonical_key: str, locale: str = "en", game_version: str
         state_ids = [state_id]
     if not state_ids:
         return {"results": [], "total": 0, "limit": limit, "offset": offset}
-    selected = interaction_dialogue(release_id, state_ids, include_action=True).subquery()
+    selected = interaction_dialogue(
+        release_id, state_ids, include_action=True).subquery()
     query = select(selected.c.line_id, selected.c.state_id, selected.c.speaker_id, selected.c.action_id).join(
         DialogueLine, DialogueLine.node_id == selected.c.line_id)
     if q.strip():
@@ -286,11 +327,12 @@ async def npc_dialogue(canonical_key: str, locale: str = "en", game_version: str
             LocalizationValue.key_id == DialogueLine.localization_key_id,
             LocalizationValue.locale_id == locale_id, LocalizationValue.release_id == release_id,
             LocalizationValue.content.icontains(q.strip(), autoescape=True)).exists()
-        query = query.where(or_(DialogueLine.inline_text.icontains(q.strip(), autoescape=True), match))
+        query = query.where(
+            or_(DialogueLine.inline_text.icontains(q.strip(), autoescape=True), match))
     rows = query.subquery()
     total = await session.scalar(select(func.count()).select_from(rows)) or 0
     page = list(await session.execute(select(DialogueLine, Node, QuestState, rows.c.speaker_id,
-        source_edge(npc.get("owner_ids", [node.id]), DialogueLine.node_id, "presents_talk_item", release_id)).join(
+                                             source_edge(npc.get("owner_ids", [node.id]), DialogueLine.node_id, "presents_talk_item", release_id)).join(
         rows, rows.c.line_id == DialogueLine.node_id).join(Node, Node.id == DialogueLine.node_id).join(
         QuestState, QuestState.node_id == rows.c.state_id).outerjoin(
         QuestAction, QuestAction.node_id == rows.c.action_id).order_by(
