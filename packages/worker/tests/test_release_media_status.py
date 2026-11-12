@@ -471,6 +471,7 @@ async def test_successful_assets_continue_when_other_event_assets_are_missing(mo
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind,artwork,notices,targets", [
     ("voice_packages", False, False, []), ("images", False, False, []), ("cutscene", False, False, []),
+    ("npc_catalog", False, False, []),
     ("event_catalog", True, False, []), ("event_images", True, False, []),
     ("event_resources", True, False, []), ("event_notices", False, True, []),
     ('tree_order', False, False, []), ('images', False, False, ['flow_state:Story_1_29'])])
@@ -501,7 +502,8 @@ async def test_queued_legacy_dependency_renews_scoped_pipeline_before_export(
 
     async def renew(*args, **kwargs):
         assert args == (session, 9)
-        expected = {"event_artwork_only": artwork, "notices_only": notices}
+        expected = {"event_artwork_only": artwork, "notices_only": notices,
+                    "npc_catalog_only": kind == "npc_catalog"}
         if kind == 'tree_order':
             expected['story_structure_only'] = True
         elif targets:
