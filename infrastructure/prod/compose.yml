@@ -203,7 +203,7 @@ services:
     command: ["wuwa-story-worker", "run", "--queue", "snapshot_build"]
     stop_grace_period: 120s
     cpus: ${WUWA_SNAPSHOT_CPUS:-1.0}
-    mem_limit: ${WUWA_SNAPSHOT_MEMORY:-2g}
+    mem_limit: ${WUWA_SNAPSHOT_MEMORY:-4g}
     deploy:
       replicas: ${WUWA_SNAPSHOT_REPLICAS:-1}
     volumes:

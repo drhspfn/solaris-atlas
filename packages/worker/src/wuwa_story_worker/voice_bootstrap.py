@@ -6,6 +6,7 @@ import tomllib
 from pathlib import Path
 from urllib.parse import urlparse
 
+from wuwa_story.version import is_supported_cutscene_version
 from wuwa_story_worker.client_assets import plan_id, read_url, safe_path
 from wuwa_story_worker.voice_packages import (
     CONFIG_HOSTS,
@@ -64,9 +65,19 @@ def discover_video_plan(version: str, exported_config: Path, tier: str, cg_ids: 
     mix = safe_path(entry["MixUri"])
     package_config = decrypt_config(fetch(f"{mix}/Windows/config.json"), crypto)
     package_version = package_config["PackageVersion"]
-    if (not isinstance(package_version, str)
-            or not re.fullmatch(r"\d+\.\d+\.\d+", package_version)
-            or package_version.rsplit(".", 1)[0] != version.rsplit(".", 1)[0]):
+    same_minor = (
+        isinstance(package_version, str)
+        and re.fullmatch(r"\d+\.\d+\.\d+", package_version) is not None
+        and package_version.rsplit(".", 1)[0] == version.rsplit(".", 1)[0]
+    )
+    compatible_supported = (
+        isinstance(package_version, str)
+        and re.fullmatch(r"\d+\.\d+\.\d+", package_version) is not None
+        and package_version.split(".", 1)[0] == version.split(".", 1)[0]
+        and is_supported_cutscene_version(package_version)
+        and is_supported_cutscene_version(version)
+    )
+    if not (same_minor or compatible_supported):
         raise ValueError(f"Video CDN serves {package_version}, requested {version}")
     config = decrypt_config(fetch(f"{mix}/Windows/VideoConfig_{tier}.json"), crypto)
     body = fetch(f"{mix}/Windows/{package_version}/Video/VideoManifest_{tier}.json")

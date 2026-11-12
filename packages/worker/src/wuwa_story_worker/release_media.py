@@ -678,7 +678,12 @@ async def cutscene(payload, parent):
         result = await import_cutscene_recipe(recipe_path, assets, assets, assets, work,
                                              tool_path("WUWA_VGMSTREAM_PATH"), Path(ffmpeg), missing_assets=missing_assets,
                                              source_context=context)
-    except ValueError:
+    except ValueError as error:
+        if "Incomplete cutscene rebuild cannot replace a complete publication" in str(error):
+            logger.info("Cutscene %s is already published completely; preserving existing complete publication", name)
+            await cleanup_published_output(parent, payload["run_id"], "cutscene")
+            return {**report, "reused_complete": True, "asset_version": parent["asset_version"],
+                    "media_report": report}, "completed"
         if missing_assets:
             entries.extend({"expected": name, "status": "not_resolved", "matches": []} for name in missing_assets)
             report.update(requested=len(entries), found=sum(e["status"] == "found" for e in entries),
@@ -699,16 +704,17 @@ async def voice_packages(parent):
     from wuwa_story_worker.voice_packages import download_voice_plan
 
     voice_cache = client_root(parent) / "voices" if parent.get("workspace_id") else asset_workspace() / "voices"
-    markers = sorted(voice_cache.glob(f"{parent['asset_version']}-*/audio-export.json"),
-                     key=lambda path: path.stat().st_mtime, reverse=True)
-    for marker in markers:
+    candidates = sorted(voice_cache.glob(f"{parent['asset_version']}-*"),
+                        key=lambda path: path.stat().st_mtime, reverse=True)
+    for candidate in candidates:
         try:
-            cached = json.loads((marker.parent / "plan.json").read_text(encoding="utf-8"))
-            status = json.loads((marker.parent / "status.json").read_text(encoding="utf-8"))
-            exported = json.loads(marker.read_text(encoding="utf-8"))
+            cached = json.loads((candidate / "plan.json").read_text(encoding="utf-8"))
+            status = json.loads((candidate / "status.json").read_text(encoding="utf-8"))
+            marker = candidate / "audio-export.json"
+            exported = json.loads(marker.read_text(encoding="utf-8")) if marker.exists() else {}
             if (cached["version"] == parent["asset_version"]
                     and status.get("state") == "downloaded" and status.get("id") == cached["id"]
-                    and exported.get("plan_id") == cached["id"]):
+                    and (exported.get("plan_id") == cached["id"] or (candidate / "game").is_dir())):
                 return {**parent, "voice_plan_id": cached["id"], "stage": "voice_packages_ready",
                         "media_report": exported.get("media_report", {})}, "completed"
         except (OSError, ValueError, KeyError):
