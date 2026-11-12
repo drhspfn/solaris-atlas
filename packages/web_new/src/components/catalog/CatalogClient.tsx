@@ -6,6 +6,7 @@ import { api } from "@/api/client";
 import { EntityCard, EntityCardSkeleton } from "@/components/cards/EntityCard";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { SearchInput } from "@/components/ui/SearchInput";
 import { SkeletonGroup } from "@/components/ui/Skeleton";
 import { Pill } from "@/components/ui/Pill";
 import { Pagination } from "@/components/ui/Pagination";
@@ -121,7 +122,7 @@ export function CatalogClient({
       </div>
       <div className="page-heading">
         <div>
-          <span className="eyebrow left">THE ATLAS / COLLECTION</span>
+          {/* <span className="eyebrow left">THE ATLAS / COLLECTION</span> */}
           <h1>
             {title}
             <span className="heading-period">.</span>
@@ -136,39 +137,27 @@ export function CatalogClient({
         </div>
       </div>
       <div className="catalog-tools">
-        <form
-          className="catalog-search ui-search-form"
-          onSubmit={search}
-          noValidate
-        >
-          <Search size={17} />
-          <Input
-            ref={searchInput}
-            aria-label="Search catalog"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={`Search ${title.toLowerCase()}...`}
-          />
-          {query && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              icon={<X size={17} />}
-              className="search-clear search-action"
-              aria-label="Clear catalog search"
-              onClick={() => {
-                setQuery("");
-                setSearchResults(null);
-                setSubmittedQuery("");
-                setError("");
-                searchInput.current?.focus();
-              }}
-            />
-          )}
-          <Button type="submit" variant="ghost" size="icon" className="search-action"
-            aria-label="Search catalog" icon={<ArrowRight size={20} />} loading={loading} />
-        </form>
+        <SearchInput
+          ref={searchInput}
+          asForm
+          className="catalog-search"
+          value={query}
+          onChange={setQuery}
+          onSubmit={() => {
+            setSubmittedQuery(query.trim());
+            setOffset(0);
+            setRetry((value) => value + 1);
+          }}
+          onClear={() => {
+            setQuery("");
+            setSearchResults(null);
+            setSubmittedQuery("");
+            setError("");
+          }}
+          placeholder={`Search ${title.toLowerCase()}...`}
+          ariaLabel={`Search ${title.toLowerCase()}`}
+          loading={loading}
+        />
         <nav className="filter-pills" aria-label="Catalog categories">
           {categories.map((c) => (
             <Pill
@@ -216,15 +205,23 @@ export function CatalogClient({
         />
       ) : loading ? (
         <SkeletonGroup className="entity-grid" label="Loading catalog">
-          {Array.from({ length: APP_SETTINGS.presentation.skeletonCount }, (_, i) => (
-            <EntityCardSkeleton key={i} />
-          ))}
+          {Array.from(
+            { length: APP_SETTINGS.presentation.skeletonCount },
+            (_, i) => (
+              <EntityCardSkeleton key={i} />
+            ),
+          )}
         </SkeletonGroup>
       ) : list.length ? (
         <>
           <div className="entity-grid">
             {list.map((item, i) => (
-              <EntityCard item={item} index={i} display={display} key={`${item.id}-${i}`} />
+              <EntityCard
+                item={item}
+                index={i}
+                display={display}
+                key={`${item.id}-${i}`}
+              />
             ))}
           </div>
           {!searchResults && total > APP_SETTINGS.limits.catalogPage && (

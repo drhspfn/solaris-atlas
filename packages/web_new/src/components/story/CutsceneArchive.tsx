@@ -10,6 +10,7 @@ import { PlayerText } from "@/components/dialogue/PlayerText";
 import { Link, useSearchParams } from "@/lib/router";
 import { questPath } from "@/lib/routeKey";
 import { Select } from "@/components/ui/Select";
+import { SearchInput } from "@/components/ui/SearchInput";
 import { ErrorPanel, PageLoader } from "@/components/ui/Feedback";
 import { InfiniteScroll } from "@/components/ui/InfiniteScroll";
 import { Cutscene } from "./QuestCutscenes";
@@ -187,46 +188,21 @@ export function CutsceneArchive({
   return (
     <main className="page-container cutscene-archive">
       <header className="cutscene-archive-heading">
-        <span className="eyebrow">SOLARIS / CINEMATIC ARCHIVE</span>
+        {/* <span className="eyebrow">SOLARIS / CINEMATIC ARCHIVE</span> */}
         <h1>Cutscenes</h1>
         <p>Watch the story. Return to the quest where it unfolds.</p>
       </header>
-      <form
-        className="cutscene-filters"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          filter("q", searchText.trim());
-        }}
-      >
-        <label className="cutscene-filter">
-          Scene name or code
-          <div className="cutscene-search">
-            <Search size={17} aria-hidden="true" />
-            <input
-              ref={searchInput}
-              name="q"
-              placeholder="Search scenes…"
-              value={searchText}
-              onChange={(event) => setSearchText(event.target.value)}
-              maxLength={128}
-            />
-            {searchText && (
-              <button
-                type="button"
-                className="search-clear"
-                aria-label="Clear scene search"
-                onClick={() => {
-                  setSearchText("");
-                  filter("q", "");
-                  searchInput.current?.focus();
-                }}
-              >
-                <X size={16} aria-hidden="true" />
-              </button>
-            )}
-          </div>
-        </label>
+      <div className="cutscene-filters">
+        <SearchInput
+          ref={searchInput}
+          className="cutscene-search-bar"
+          value={searchText}
+          onChange={setSearchText}
+          placeholder="Search scene name, code or quest..."
+          ariaLabel="Search cutscenes"
+          onSubmit={(q) => filter("q", q.trim())}
+          onClear={() => filter("q", "")}
+        />
         <div className="cutscene-filter">
           <span>Game version</span>
           <Select
@@ -254,10 +230,7 @@ export function CutsceneArchive({
             ]}
           />
         </div>
-        <button type="submit" className="cutscene-apply">
-          Search
-        </button>
-      </form>
+      </div>
       {error ? (
         <ErrorPanel
           message={error}
@@ -457,28 +430,43 @@ export function CutsceneRecord({
           <h2>Scene descriptions</h2>
           {data.public_descriptions.map((description, index) => {
             const flow = data.event.playback;
-            const clips = flow?.nodes.filter((node) =>
-              node.kind === "clip" &&
-              flow.media[node.segment || node.asset]?.asset_node_id === description.asset_node_id,
-            ) || [];
-            const rovers = new Set(clips.map((clip) => clipRover(flow!, clip.id, "ask")));
+            const clips =
+              flow?.nodes.filter(
+                (node) =>
+                  node.kind === "clip" &&
+                  flow.media[node.segment || node.asset]?.asset_node_id ===
+                    description.asset_node_id,
+              ) || [];
+            const rovers = new Set(
+              clips.map((clip) => clipRover(flow!, clip.id, "ask")),
+            );
             const rover = rovers.size === 1 ? [...rovers][0] : "ask";
-            const variant = rover === "female" ? "Female Rover" : rover === "male" ? "Male Rover" : `Version ${index + 1}`;
-            return <section key={description.asset_node_id}>
-              <h3>
-                <PlayerText value={description.title} display={display} />
-              </h3>
-              {(data.public_descriptions!.length > 1 || description.origin === "analysis") && (
-                <small>
-                  {data.public_descriptions!.length > 1 && variant}
-                  {data.public_descriptions!.length > 1 && description.origin === "analysis" && " · "}
-                  {description.origin === "analysis" && "AI description"}
-                </small>
-              )}
-              <p>
-                <PlayerText value={description.text} display={display} />
-              </p>
-            </section>;
+            const variant =
+              rover === "female"
+                ? "Female Rover"
+                : rover === "male"
+                  ? "Male Rover"
+                  : `Version ${index + 1}`;
+            return (
+              <section key={description.asset_node_id}>
+                <h3>
+                  <PlayerText value={description.title} display={display} />
+                </h3>
+                {(data.public_descriptions!.length > 1 ||
+                  description.origin === "analysis") && (
+                  <small>
+                    {data.public_descriptions!.length > 1 && variant}
+                    {data.public_descriptions!.length > 1 &&
+                      description.origin === "analysis" &&
+                      " · "}
+                    {description.origin === "analysis" && "AI description"}
+                  </small>
+                )}
+                <p>
+                  <PlayerText value={description.text} display={display} />
+                </p>
+              </section>
+            );
           })}
         </section>
       )}

@@ -58,6 +58,17 @@
 .ui-copyable-button:hover:not(:disabled) { background:var(--accent-mint-strong); }
 .ui-copyable-button:focus-visible { outline:2px solid var(--accent-mint-strong); outline-offset:2px; }
 .ui-copyable-button:disabled { opacity:.45; cursor:default; }
+
+.ui-search-bar { display: flex; align-items: center; gap: 8px; box-sizing: border-box; min-height: 44px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-1); color: var(--text-secondary); padding: 0 6px 0 14px; transition: border-color .15s ease, background-color .15s ease; }
+.ui-search-bar:focus-within { border-color: var(--accent-mint); background: var(--surface-2); }
+.ui-search-bar > .ui-search-bar-icon { flex: 0 0 auto; color: var(--text-secondary); display: inline-flex; align-items: center; justify-content: center; pointer-events: none; }
+.ui-search-bar > .ui-search-bar-input { flex: 1; min-width: 0; width: 0; height: 42px; min-height: 42px; padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 13px; outline: none; box-shadow: none; }
+.ui-search-bar > .ui-search-bar-input:focus, .ui-search-bar > .ui-search-bar-input:focus-visible { outline: none; box-shadow: none; }
+.ui-search-bar > .ui-search-bar-input::-webkit-search-cancel-button, .ui-search-bar > .ui-search-bar-input::-webkit-search-decoration { display: none; }
+.ui-search-bar > .ui-search-bar-input::placeholder { color: var(--text-muted); }
+.ui-search-bar > .ui-button.search-action { flex: 0 0 32px; width: 32px; height: 32px; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--text-secondary); box-shadow: none; }
+.ui-search-bar > .ui-button.search-action:hover:not(:disabled) { color: var(--text-primary); background: var(--surface-3); }
+
 .ui-copyable-status { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 @media (max-width:480px) { .ui-copyable-button { padding:0 12px; } }
 .ui-copyable-error { position:absolute; top:100%; left:0; color:var(--danger, #ef9b9b); font-size:12px; margin-top:4px; }
