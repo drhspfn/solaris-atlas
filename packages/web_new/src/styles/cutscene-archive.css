@@ -1,4 +1,3 @@
-.cutscene-archive { max-width: 1180px; }
 .cutscene-archive .page-heading { margin-bottom: 24px; }
 .cutscene-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; padding-bottom: 28px; border-bottom: 1px solid var(--border-default); margin-top: 24px; }
 .cutscene-search-bar { flex: 2 1 320px; min-height: 44px; }

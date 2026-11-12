@@ -80,7 +80,7 @@ export default async function NoticePage({ params, searchParams }: Props) {
     searchParams,
   );
   return (
-    <main className="notices-page notice-detail">
+    <main className="page-container notices-page notice-detail">
       <Breadcrumbs
         items={[
           { label: "Archive", href: "/" },
