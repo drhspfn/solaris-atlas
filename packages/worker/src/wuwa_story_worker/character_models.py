@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
@@ -59,6 +60,8 @@ from wuwa_story_worker.model_sources import (
     spring_profile,
 )
 from wuwa_story_worker.tooling import asset_workspace, tool_path
+
+logger = logging.getLogger(__name__)
 
 
 async def source_row(session, release_id, path, identity):
@@ -279,6 +282,7 @@ async def model_progress(run_id, stage, **details):
         await update_admin_run(
             run_id, "character_model", "running", raw_output={"stage": stage, **details}
         )
+        logger.info("character_model.stage run=%s stage=%s", run_id, stage)
 
 
 def component_model(component, converted, cooked, skeleton, *, master_pose=False):
@@ -407,6 +411,13 @@ def component_animation_skeletons(sources, cooked, skeleton):
                              f"mesh {sources['model']} uses {skeleton}; compatibility is unverified")
         result[clip] = exported_package(reference)
     return result
+
+
+def use_smaller_preview(output, summaries):
+    if summaries["preview"]["bytes"] > summaries["download"]["bytes"]:
+        # Small textureless meshes can gain a few bytes during preview export.
+        shutil.copyfile(output / "character.glb", output / "preview.glb")
+        summaries["preview"] = glb_summary(output / "preview.glb")
 
 
 async def build_bundle(root, sources, include_animations=True, *, run_id=None, local_client=None,
@@ -925,8 +936,7 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
     if include_animations and animation_cache is None:
         summaries["animations"] = glb_summary(output / "animations.glb", allow_animations=True)
     summaries.update(pack_summaries)
-    if summaries["preview"]["bytes"] > summaries["download"]["bytes"]:
-        raise ValueError("Preview unexpectedly exceeds the full-resolution model")
+    use_smaller_preview(output, summaries)
     provenance = {
         "source_files": manifest["files"],
         "model": sources["model"],
@@ -1200,7 +1210,9 @@ async def process_character_model(payload):
             ):
                 raise ValueError("Model job payload does not match its durable run")
             if run.status in {"completed", "cancelled"}:
+                logger.info("character_model.skipped run=%s status=%s", job.run_id, run.status)
                 return
+            logger.info("character_model.started run=%s source=client", job.run_id)
             forms = await job_forms(session, job)
         client = (
             asset_workspace() / "assets" / f"{job.asset_version}-{job.tier}-{job.download_id[:16]}"
@@ -1219,6 +1231,7 @@ async def process_character_model(payload):
         await update_admin_run(
             job.run_id, "character_model", "running", raw_output={"stage": "export"}
         )
+        logger.info("character_model.stage run=%s stage=export forms=%s", job.run_id, len(forms))
 
         async def execute():
             # Keep independently extracted rigs until all forms validate. One commit
@@ -1231,3 +1244,4 @@ async def process_character_model(payload):
 
         # Never delete scratch while an owned subprocess/thread is still writing.
         await finish_writes(execute())
+        logger.info("character_model.finished run=%s source=client", job.run_id)

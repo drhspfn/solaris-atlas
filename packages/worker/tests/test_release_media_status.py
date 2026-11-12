@@ -264,7 +264,7 @@ async def test_deferred_child_is_waited_for_instead_of_failed():
     ("completed", "different", "failed"),
 ])
 async def test_cutscene_dependency_read_finishes_before_io_without_releasing_job_lock(
-    monkeypatch, voice_status, voice_download, expected
+    monkeypatch, caplog, voice_status, voice_download, expected
 ):
     from contextlib import asynccontextmanager
 
@@ -309,6 +309,7 @@ async def test_cutscene_dependency_read_finishes_before_io_without_releasing_job
     monkeypatch.setattr(release_media, "cutscene", AsyncMock(side_effect=convert))
     update = AsyncMock()
     monkeypatch.setattr(release_media, "update_admin_run", update)
+    caplog.set_level("INFO", logger=release_media.__name__)
     if expected == "waiting_dependency":
         with pytest.raises(release_media.JobDeferred):
             await release_media._process_release_media(payload)
@@ -318,6 +319,11 @@ async def test_cutscene_dependency_read_finishes_before_io_without_releasing_job
     else:
         await release_media._process_release_media(payload)
     assert update.await_args.args[2] == expected
+    assert "release_media.started run=90 kind=cutscene release=9 parent=80" in caplog.text
+    if expected == "waiting_dependency":
+        assert "release_media.deferred run=90 kind=cutscene" in caplog.text
+    elif expected == "failed":
+        assert "release_media.error run=90 kind=cutscene status=failed error_type=ValueError" in caplog.text
     assert release_media.cutscene.await_count == (expected == "completed")
     assert session.commit.await_count == (3 if expected == "completed" else 2)
     connection.invalidate.assert_awaited_once()
@@ -465,6 +471,7 @@ async def test_successful_assets_continue_when_other_event_assets_are_missing(mo
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind,artwork,notices,targets", [
     ("voice_packages", False, False, []), ("images", False, False, []), ("cutscene", False, False, []),
+    ("npc_catalog", False, False, []),
     ("event_catalog", True, False, []), ("event_images", True, False, []),
     ("event_resources", True, False, []), ("event_notices", False, True, []),
     ('tree_order', False, False, []), ('images', False, False, ['flow_state:Story_1_29'])])
@@ -495,7 +502,8 @@ async def test_queued_legacy_dependency_renews_scoped_pipeline_before_export(
 
     async def renew(*args, **kwargs):
         assert args == (session, 9)
-        expected = {"event_artwork_only": artwork, "notices_only": notices}
+        expected = {"event_artwork_only": artwork, "notices_only": notices,
+                    "npc_catalog_only": kind == "npc_catalog"}
         if kind == 'tree_order':
             expected['story_structure_only'] = True
         elif targets:

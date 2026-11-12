@@ -21,6 +21,16 @@ def prop():
                           "parent_component": "CharacterMesh0", "socket": "WeaponProp02"}}
 
 
+def test_preview_uses_full_model_when_it_is_smaller(tmp_path, monkeypatch):
+    (tmp_path / 'character.glb').write_bytes(b'full')
+    (tmp_path / 'preview.glb').write_bytes(b'preview')
+    monkeypatch.setattr(models, 'glb_summary', lambda path: {'bytes': path.stat().st_size})
+    summaries = {'preview': {'bytes': 7}, 'download': {'bytes': 4}}
+    models.use_smaller_preview(tmp_path, summaries)
+    assert (tmp_path / 'preview.glb').read_bytes() == b'full'
+    assert summaries['preview']['bytes'] == 4
+
+
 def test_asset_cache_requires_each_bound_clip_metadata_and_export(tmp_path):
     converted, cooked = tmp_path / 'converted', tmp_path / 'cooked'
     sources = {'model': 'Aki/Prop', 'blueprints': [], 'montages': ['Aki/Anim/Stand']}

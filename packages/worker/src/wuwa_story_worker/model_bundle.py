@@ -146,7 +146,7 @@ def build_animation_plan(
     """Decode one DTO at a time; never allocate Blender actions during preflight."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from model_facial import FORMAT, facial_clip
-    from model_montage import montage_references, create_montage_clips
+    from model_montage import create_montage_clips, montage_references
 
     montage_definitions, montage_refs = montage_references(sources, source_root)
     montage_sequences = {}
@@ -524,6 +524,9 @@ def base_color_texture(metadata: dict, converted: Path, parent=None) -> tuple[st
         reference = textures["Tex_FaceAni"].get("ObjectPath")
     elif parent in EFFECT_PREVIEW_PARENTS:
         reference = textures.get("Base", {}).get("ObjectPath")
+    elif parent == "/Game/Aki/Render/MaterialInstance/Effect/MeshParticle/MI_BPProp_Gobletliquid_Com":
+        # The cooked goblet-liquid material uses BaseTex for its diffuse input.
+        reference = textures.get("BaseTex", {}).get("ObjectPath")
     else:
         reference = next(
             (textures[key].get("ObjectPath") for key in
@@ -590,6 +593,27 @@ def inherited_base_color_texture(metadata: dict, path: Path | None, converted: P
         metadata = json.loads(path.read_text(encoding="utf-8-sig"))
 
 
+def empty_effect_material_slots(model: Path, converted: Path, source_json: Path) -> set[int]:
+    """Identify explicitly empty material slots on an authored effect mesh."""
+    try:
+        relative = model.resolve().relative_to(converted.resolve())
+    except ValueError:
+        return set()
+    parts = [part.casefold() for part in relative.parts]
+    if parts[:3] != ['client', 'content', 'aki'] or len(parts) < 4 or parts[3] != 'effect':
+        return set()
+    source = (source_json / relative).with_suffix('.json')
+    if not source.is_file():
+        return set()
+    rows = json.loads(source.read_text(encoding='utf-8-sig'))
+    matches = [row for row in rows if row.get('Type') == 'SkeletalMesh' and row.get('Name') == model.stem]
+    if len(matches) != 1 or not isinstance(matches[0].get('SkeletalMaterials'), list):
+        return set()
+    return {index for index, slot in enumerate(matches[0]['SkeletalMaterials'])
+            if isinstance(slot, dict) and 'Material' in slot and slot['Material'] is None
+            and slot.get('MaterialSlotName') == 'None'}
+
+
 def opacity_mask_cutoff(metadata: dict) -> float:
     """Use the cooked Unreal mask cutoff, or its engine default."""
     cutoff = metadata.get("Properties", {}).get("BasePropertyOverrides", {}).get(
@@ -612,11 +636,12 @@ def base_color_alpha_is_opacity(material_name: str, metadata: dict) -> bool:
         # Fur opacity is composed with additional masks and parallax in-game;
         # applying the engine's generic cutoff to MainTex alpha removes the base.
         return False
-    if material_name in {"MI_R2T1DaniyaMd10011Up01", "MI_R2T1DaniyaMd10011Up02"} and (
+    if material_name in {"MI_R2T1DaniyaMd10011Up01", "MI_R2T1DaniyaMd10011Up02",
+                         "MI_R2T1LuoselaMd10011Up1"} and (
         metadata.get("Switches", {}).get("UseOnlySkinRampColor") is True
     ):
-        # Verified against both cooked skin passes and before/after renders.
-        # Their diffuse alpha clips the neck; retain cloth/hair mask behavior.
+        # Direct clipping removes visible body sections on these skin passes;
+        # their full game opacity formula is not established. Keep cloth/hair masks.
         return False
     return metadata.get("BlendMode") in {1, 2}
 
@@ -1340,6 +1365,7 @@ def main():
     from eye_shader import add_eye_highlight, gltf_eye_fallback
     from model_material_inventory import material_input_inventory, pack_material_inventory
 
+    empty_effect_slots = empty_effect_material_slots(args.model, args.converted, args.source_json)
     blender_materials = []
     for material in sorted(
         {material for mesh in meshes for material in mesh.data.materials if material},
@@ -1355,7 +1381,13 @@ def main():
             material.use_nodes = True
             continue
         reference, texture = inherited_base_color_texture(metadata, path, args.converted, args.source_json)
-        if texture is None:
+        users = [mesh for mesh in meshes if material in mesh.data.materials[:]]
+        empty_effect = (
+            not args.extra_model and material.name == 'None' and users
+            and all(index in empty_effect_slots
+                    for mesh in users for index, slot in enumerate(mesh.data.materials) if slot == material)
+        )
+        if texture is None and not empty_effect:
             report["missing_textures"].append({"material": material.name, "reference": reference})
         material.use_nodes = True
         shader = material.node_tree.nodes.get("Principled BSDF")
@@ -1415,7 +1447,6 @@ def main():
                     alpha = clip.outputs[0]
                 material.node_tree.links.new(alpha, shader.inputs["Alpha"])
                 material.surface_render_method = "DITHERED"
-        users = [mesh for mesh in meshes if material in mesh.data.materials[:]]
         uv_names = {mesh.data.uv_layers[0].name for mesh in users if mesh.data.uv_layers}
         eye_uv = (next(iter(uv_names)) if users and len(uv_names) == 1
                   and all(mesh.data.uv_layers for mesh in users) else None)
@@ -1428,7 +1459,7 @@ def main():
                                       fur_uv=fur_uv, vertex_color=vertex_color)
         report["materials"].append(
             {"name": material.name, "texture": str(texture) if texture else None,
-             "fur_preview": fur_preview}
+             "fur_preview": fur_preview, "authored_empty_effect_slot": bool(empty_effect)}
         )
     if rig_mode and report["missing_textures"]:
         (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

@@ -106,7 +106,8 @@ def test_npc_data_asset_archive_retains_resolved_mesh_and_checks_setup_identity(
 
 
 @pytest.mark.asyncio
-async def test_uploaded_model_publishes_without_game_client_or_extraction(tmp_path, monkeypatch):
+async def test_uploaded_model_publishes_without_game_client_or_extraction(tmp_path, monkeypatch, caplog):
+    caplog.set_level("INFO", logger=model_uploads.__name__)
     archive, form, job = portable(tmp_path)
     run = NS(status="queued", metadata_json={"payload": job.model_dump()})
     session = NS(get=AsyncMock(return_value=run))
@@ -137,6 +138,11 @@ async def test_uploaded_model_publishes_without_game_client_or_extraction(tmp_pa
     assert publish.call_args.kwargs["publication_payload"] == job.model_dump()
     storage.delete.assert_awaited_once()
     assert not list((tmp_path / "transient-jobs").glob("*/model.zip"))
+    assert "character_model.started run=1 source=upload" in caplog.text
+    assert "character_model.stage run=1 stage=validate_archive" in caplog.text
+    assert "character_model.stage run=1 stage=publish forms=1" in caplog.text
+    assert "character_model.finished run=1 source=upload" in caplog.text
+    assert job.storage_token not in caplog.text
 
 
 def test_decode_component_checks_parent_source_and_allows_static_mesh(tmp_path):
@@ -186,6 +192,8 @@ async def test_trusted_discovery_prepares_matching_component(tmp_path, monkeypat
         {"path": str(client), "download_id": "x", "version": "3.7.0", "tier": "hd", "state": "downloaded"}])
     monkeypatch.setattr(model_uploads, "validate_plan", lambda _: None)
     monkeypatch.setattr(model_uploads, "tool_path", lambda _: tmp_path / "tool")
+    monkeypatch.setattr(model_uploads, "asset_workspace", lambda: tmp_path / "assets")
+    monkeypatch.setattr(model_uploads, "input_key", lambda *args: "test")
     extract = AsyncMock(return_value=(None, None, tmp_path, {}))
     monkeypatch.setattr(character_models, "extract_model", extract)
     relation = {"id": "Fox", "name": "Fox", "label": "Fox", "parent_component": "CharacterMesh0",
@@ -235,7 +243,7 @@ async def test_trusted_discovery_uses_form_ownership_and_explicit_references(tmp
               "blueprints": [], "component_blueprint": "Aki/Test/BP", "montages": []}
              for i in range(2)]
 
-    await model_uploads.discover_upload_components(tmp_path, forms, "3.7.0", "hd")
+    await model_uploads._discover_upload_components(tmp_path, forms, "3.7.0", "hd")
     for form, call in zip(forms, discover.await_args_list, strict=True):
         sources = call.args[1]
         assert sources["animation_ownership"] == {
@@ -271,9 +279,9 @@ async def test_trusted_discovery_limits_total_components(tmp_path, monkeypatch, 
     forms[1]["model"] = "Aki/Test/OtherMesh"
     if count > 128:
         with pytest.raises(ValueError, match="excessive"):
-            await model_uploads.discover_upload_components(tmp_path, forms, "3.7.0", "hd")
+            await model_uploads._discover_upload_components(tmp_path, forms, "3.7.0", "hd")
     else:
-        result = await model_uploads.discover_upload_components(tmp_path, forms, "3.7.0", "hd")
+        result = await model_uploads._discover_upload_components(tmp_path, forms, "3.7.0", "hd")
         assert len(result) == count
         assert {entry["component"]["parent_form_id"] for entry in result.values()} == {"form-0", "form-1"}
 
@@ -293,17 +301,17 @@ async def test_trusted_discovery_rechecks_duplicate_identities(tmp_path, monkeyp
         "id": "part", "parent_component": "CharacterMesh0"}}
     discover = AsyncMock(return_value=[recipe])
     monkeypatch.setattr(model_uploads, "_discover_upload_form", discover)
-    result = await model_uploads.discover_upload_components(
+    result = await model_uploads._discover_upload_components(
         tmp_path, [form, {**form, "id": "two", "label": "Two", "order": 1}], "3.7.0", "hd")
     assert len(result) == 2
     assert {entry["component"]["parent_form_id"] for entry in result.values()} == {"one", "two"}
     assert discover.await_count == 2
     with pytest.raises(ValueError, match="Duplicate or excessive"):
-        await model_uploads.discover_upload_components(tmp_path, [form, form], "3.7.0", "hd")
+        await model_uploads._discover_upload_components(tmp_path, [form, form], "3.7.0", "hd")
     discover.reset_mock()
     discover.return_value = [recipe, recipe]
     with pytest.raises(ValueError, match="Duplicate authored component"):
-        await model_uploads.discover_upload_components(tmp_path, [form], "3.7.0", "hd")
+        await model_uploads._discover_upload_components(tmp_path, [form], "3.7.0", "hd")
 
 
 @pytest.mark.asyncio
@@ -329,7 +337,7 @@ async def test_trusted_discovery_processes_distinct_chisa_forms(tmp_path, monkey
 
     mocked = AsyncMock(side_effect=discover)
     monkeypatch.setattr(model_uploads, "_discover_upload_form", mocked)
-    result = await model_uploads.discover_upload_components(tmp_path, forms, "3.7.0", "hd")
+    result = await model_uploads._discover_upload_components(tmp_path, forms, "3.7.0", "hd")
     assert mocked.await_count == 2
     assert {entry["model"] for entry in result.values()} == {form["model"] for form in forms}
     assert {entry["component"]["source"]["blueprint"] for entry in result.values()} == {
@@ -405,3 +413,29 @@ def test_decode_nested_component_uses_root_blueprint_not_parent_mesh(tmp_path):
     with pytest.raises(ValueError, match="parent Blueprint"):
         model_uploads.decode_bundles(wrong, tmp_path / "nested-wrong", job, [root],
                                      expected_components=trusted)
+
+
+def test_reports_every_component_mismatch_before_rejecting(tmp_path, caplog):
+    _, root, job = portable(tmp_path)
+    root = {**root, "component_blueprint": "Aki/Npc/Blueprint"}
+    children = []
+    for index, name in enumerate(("Fox", "Hat"), 1):
+        form = {"id": f"component-{index:016x}", "label": name, "order": index,
+                "component": {"id": name, "parent_form_id": root["id"],
+                              "source": {"blueprint": root["component_blueprint"], "component": name}}}
+        children.append(form)
+    archive = tmp_path / "mismatches.zip"
+    write_archive(archive, {"character_key": job.character_key, "game_version": job.game_version,
+                            "asset_version": "3.7.0", "tier": "hd"},
+                  [(root, tmp_path / "bundle", {}, {"model": root["model"]})] +
+                  [(form, tmp_path / "bundle", {}, {"model": "Aki/Archive/" + form["label"]})
+                   for form in children])
+    trusted = {form["id"]: {"component": form["component"], "model": "Aki/Trusted/" + form["label"]}
+               for form in children}
+    with pytest.raises(ValueError, match="trusted authored identity"):
+        model_uploads.decode_bundles(archive, tmp_path / "mismatches", job, [root],
+                                     expected_components=trusted)
+    for form in children:
+        assert form["id"] in caplog.text
+        assert "Aki/Archive/" + form["label"] in caplog.text
+        assert "Aki/Trusted/" + form["label"] in caplog.text

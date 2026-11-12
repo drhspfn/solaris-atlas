@@ -26,7 +26,7 @@ from wuwa_story.ingestion.model_uploads import ModelUploadJob, chunk_count, chun
 from wuwa_story.storage.s3 import S3Storage
 
 from wuwa_story_worker.broker import job_lock
-from wuwa_story_worker.client_assets import validate_plan
+from wuwa_story_worker.client_assets import validate_plan, wait_workspace_lock
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.linked_component_forms import prepare_linked_components
 from wuwa_story_worker.media_workspace import finish_writes
@@ -36,6 +36,7 @@ from wuwa_story_worker.model_facial import validate_facial_pack
 from wuwa_story_worker.model_sources import authored_package, glb_summary
 from wuwa_story_worker.tooling import asset_workspace, tool_path
 from wuwa_story_worker.transient_workspace import transient_workspace
+from wuwa_story_worker.trusted_discovery_cache import input_key, read_record, write_record
 
 logger = logging.getLogger(__name__)
 
@@ -83,16 +84,46 @@ def decode_bundles(archive, root, job, expected_forms, *, expected_components=No
     children = [entry for entry in manifest["forms"] if entry["form"].get("component")]
     if children:
         # The archive is untrusted; its claimed Blueprint and component name prove nothing.
-        if not isinstance(expected_components, dict) or set(expected_components) != {
-            entry["form"]["id"] for entry in children
-        }:
+        if not isinstance(expected_components, dict):
             raise ValueError("Archive components require trusted authored component identities")
+        actual_ids = {entry["form"]["id"] for entry in children}
+        missing = sorted(set(expected_components) - actual_ids)
+        unexpected = sorted(actual_ids - set(expected_components))
+        mismatches = []
         for entry in children:
-            expected = expected_components[entry["form"]["id"]]
+            identity = entry["form"]["id"]
+            expected = expected_components.get(identity)
+            if expected is None:
+                continue
             if (not isinstance(expected, dict)
                     or expected.get("component") != entry["form"]["component"]
                     or expected.get("model") != entry["provenance"].get("model")):
-                raise ValueError("Archive component does not match its trusted authored identity")
+                actual = entry["form"]["component"]
+                trusted = expected.get("component", {}) if isinstance(expected, dict) else {}
+                mismatches.append({"id": identity, "archive_model": entry["provenance"].get("model"),
+                    "trusted_model": expected.get("model") if isinstance(expected, dict) else None,
+                    "archive_source": actual.get("source"), "trusted_source": trusted.get("source"),
+                    "different_fields": sorted(key for key in set(actual) | set(trusted)
+                                               if actual.get(key) != trusted.get(key))})
+        if missing or unexpected or mismatches:
+            logger.error("Archive component identity sets: missing=%s unexpected=%s", missing, unexpected)
+            for identity in missing:
+                item = expected_components[identity]
+                logger.error("Missing archive component id=%s trusted=%s", identity,
+                             json.dumps(item, ensure_ascii=True, default=str)[:8192])
+            for entry in children:
+                if entry["form"]["id"] in unexpected:
+                    logger.error("Unexpected archive component id=%s model=%s source=%s",
+                                 entry["form"]["id"],
+                                 json.dumps(entry["provenance"].get("model"), ensure_ascii=True)[:2048],
+                                 json.dumps(entry["form"]["component"].get("source"), ensure_ascii=True)[:4096])
+            for mismatch in mismatches:
+                # Archive strings are untrusted: escape controls and limit each value.
+                detail = {key: (str(value)[:2048] if value is not None else None)
+                          for key, value in mismatch.items()}
+                logger.error("Archive component identity mismatch: %s", json.dumps(detail, ensure_ascii=True))
+            raise ValueError("Archive component does not match its trusted authored identity; "
+                             "see worker log for component IDs and paths")
     entries = {entry["form"]["id"]: entry for entry in manifest["forms"]}
     for entry in manifest["forms"]:
         component = entry["form"].get("component")
@@ -190,6 +221,58 @@ def decode_bundles(archive, root, job, expected_forms, *, expected_components=No
 
 
 async def discover_upload_components(root, forms, asset_version, tier, *, include_animations=True):
+    """Reuse only our verified discovery, never identities supplied by an upload."""
+    # Coordinate with managed downloads and repairs while reading the client.
+    async with wait_workspace_lock(asset_workspace()):
+        return await _discover_cached_upload_components(
+            root, forms, asset_version, tier, include_animations=include_animations)
+
+
+async def _discover_cached_upload_components(root, forms, asset_version, tier, *, include_animations=True):
+    clients = [client for client in await asyncio.to_thread(inspect_installed_clients, asset_workspace())
+               if client.get("version") == asset_version and client.get("tier") == tier
+               and client.get("state") == "downloaded"]
+    if len(clients) != 1:
+        raise ValueError("Linked model upload requires exactly one matching ready installed client")
+    client = clients[0]
+    client_path = Path(client["path"])
+    plan = json.loads((client_path / "plan.json").read_text(encoding="utf-8"))
+    status = json.loads((client_path / "status.json").read_text(encoding="utf-8"))
+    validate_plan(plan)
+    if (plan.get("id") != client.get("download_id") or plan.get("version") != asset_version
+            or plan.get("tier") != tier or status.get("state") != "downloaded"
+            or status.get("id") != plan.get("id")):
+        raise ValueError("Linked model client identity changed")
+    directory = asset_workspace() / "trusted-model-discovery"
+    try:
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError as error:
+        logger.warning("Trusted discovery cache unavailable: %s", error)
+        return await _discover_upload_components(root, forms, asset_version, tier,
+                                                 include_animations=include_animations)
+    tools = [tool_path("WUWA_FMODEL_PATH"), tool_path("WUWA_TEXTURE_CONVERTER_PATH")]
+    key = await asyncio.to_thread(input_key, plan, client_path, forms, include_animations, tools)
+    cached = await asyncio.to_thread(read_record, directory, key)
+    if cached is not None:
+        logger.info("Trusted model discovery cache hit plan=%s", plan["id"])
+        return cached
+    result = await _discover_upload_components(root, forms, asset_version, tier,
+                                               include_animations=include_animations)
+    latest_plan = json.loads((client_path / "plan.json").read_text(encoding="utf-8"))
+    latest_status = json.loads((client_path / "status.json").read_text(encoding="utf-8"))
+    if latest_plan != plan or latest_status != status:
+        raise ValueError("Linked model client identity changed during discovery")
+    current = await asyncio.to_thread(input_key, latest_plan, client_path, forms, include_animations, tools)
+    if current != key:
+        raise ValueError("Trusted discovery input changed during extraction")
+    try:
+        await asyncio.to_thread(write_record, directory, key, result)
+    except OSError as error:
+        logger.warning("Could not persist trusted discovery cache: %s", error)
+    return result
+
+
+async def _discover_upload_components(root, forms, asset_version, tier, *, include_animations=True):
     """Independently derive component identities from a matching installed client."""
     clients = [client for client in await asyncio.to_thread(inspect_installed_clients, asset_workspace())
                if client.get("version") == asset_version and client.get("tier") == tier
@@ -316,12 +399,15 @@ async def process_model_upload(payload):
             if run is None or run.metadata_json.get("payload") != job.model_dump():
                 raise ValueError("Model upload identity changed")
             if run.status in {"completed", "cancelled"}:
+                logger.info("character_model.skipped run=%s status=%s", job.run_id, run.status)
                 return
+            logger.info("character_model.started run=%s source=upload", job.run_id)
             forms = await job_forms(session, job)
 
         async def execute():
             await update_admin_run(job.run_id, "character_model", "running",
                                    raw_output={"stage": "validate_archive"})
+            logger.info("character_model.stage run=%s stage=validate_archive", job.run_id)
             with transient_workspace(asset_workspace().parent / "transient-jobs") as root:
                 archive = root / "model.zip"
                 with archive.open("xb") as target:
@@ -346,6 +432,7 @@ async def process_model_upload(payload):
                     raise ValueError("Archive identity or authored model forms do not match")
                 expected_components = None
                 if any(entry["form"].get("component") for entry in manifest["forms"]):
+                    logger.info("character_model.stage run=%s stage=discover_components", job.run_id)
                     # Validate the declared client version before using it to find local assets.
                     CharacterModelJob(run_id=job.run_id, character_key=job.character_key,
                         owner_node_id=job.owner_node_id, release_id=job.release_id,
@@ -361,6 +448,7 @@ async def process_model_upload(payload):
                     decode_bundles, archive, root, job, forms,
                     expected_components=expected_components, _manifest=manifest)
                 await update_admin_run(job.run_id, "character_model", "running", raw_output={"stage": "publish"})
+                logger.info("character_model.stage run=%s stage=publish forms=%s", job.run_id, len(bundles))
                 await publish_forms(publication, bundles, publication_payload=job.model_dump())
             for index in range(chunk_count(job)):
                 try:
@@ -370,3 +458,4 @@ async def process_model_upload(payload):
                         "Published model upload cleanup failed run=%s part=%s", job.run_id, index)
 
         await finish_writes(execute())
+        logger.info("character_model.finished run=%s source=upload", job.run_id)
