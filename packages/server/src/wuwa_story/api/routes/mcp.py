@@ -65,7 +65,7 @@ async def handle_list_tools() -> list[Tool]:
                         "default": "en"
                     },
                     "game_version": {"type": "string", "description": "Optional imported snapshot."},
-                    "character_kind": {"type": "string", "enum": ["playable", "story", "npc", "technical", "all"], "default": "playable"},
+                    "character_kind": {"type": "string", "enum": ["playable", "story", "npc", "technical", "all"], "default": "all"},
                     "character": {
                         "type": "string",
                         "description": "Filter by speaker/character when searching dialogue."
@@ -383,7 +383,7 @@ async def handle_call_tool(name: str, arguments: dict[str, Any] | None) -> list[
                     character=arguments.get("character"),
                     quest_id=arguments.get("quest_id"),
                     game_version=arguments.get("game_version"),
-                    character_kind=arguments.get("character_kind", "playable"),
+                    character_kind=arguments.get("character_kind", "all"),
                     session=session,
                 )
                 return [TextContent(type="text", text=_dump_json(res))]
