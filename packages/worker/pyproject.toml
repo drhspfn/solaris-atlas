@@ -7,6 +7,7 @@ dependencies = [
   "aio-pika>=9.5,<10",
   "cryptography>=44,<47",
   "flatbuffers>=25,<26",
+  "ijson>=3.3,<4",
   "pillow>=11,<13",
   "wuwa-story-server",
 ]

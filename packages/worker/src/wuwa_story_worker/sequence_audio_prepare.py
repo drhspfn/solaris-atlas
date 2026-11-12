@@ -89,27 +89,20 @@ async def _banks(root, voice, expected, initial, work, fmodel, tool):
 
 
 async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=None, soundtrack_context=None):
+    from wuwa_story_worker import bundle_io
+    with bundle_io.spill_directory(Path(bundle).parent) as spill:
+        return await _prepare_sequence_audio(root, bundle, fmodel, converter, voice_root, soundtrack_context, spill)
+
+
+async def _prepare_sequence_audio(root, bundle, fmodel, converter, voice_root, soundtrack_context, spill):
     """Return a new verified bundle and audio originals; section failures remain partial."""
+    from wuwa_story_worker import bundle_io
     from wuwa_story_worker.entity_media import client_voice_exports, tool, verified_voice_export
 
     root, bundle = Path(root), Path(bundle)
     with zipfile.ZipFile(bundle) as archive:
         manifest = json.loads(archive.read('manifest.json'))
-        inventory = manifest['files']
-        if len(inventory) > 10000 or sum(item['size_bytes'] for item in inventory.values()) > 512 * 1024**2:
-            raise ValueError(
-                'Sequence audio input exceeds retained bundle bounds')
-        entries = {}
-        for name, expected in inventory.items():
-            _safe(name)
-            if archive.getinfo(name).file_size != expected['size_bytes']:
-                raise ValueError(
-                    'Sequence audio input size differs from manifest')
-            data = archive.read(name)
-            if hashlib.sha256(data).hexdigest() != expected['sha256']:
-                raise ValueError(
-                    'Sequence audio input checksum differs from manifest')
-            entries[name] = data
+        entries = bundle_io.load_entries(archive, manifest['files'], spill)
     legacy_controls = 'controls.json' not in entries
     if legacy_controls:
         if not soundtrack_context or soundtrack_context.get('kind') not in {'flow_authored_music', 'levelplay_fixed_start', 'state_consumer_fixed_start'}:
@@ -380,15 +373,14 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
             if value not in missing:
                 missing.append(value)
     for source in originals:
-        name, data = 'source/' + package_path(source), source.read_bytes()
-        if name in entries and entries[name] != data:
+        name, data = 'source/' + package_path(source), Path(source)
+        if name in entries and not bundle_io.same_content(entries[name], data):
             raise ValueError(
                 'Sequence audio original conflicts with retained source bytes')
         entries[name] = data
     entries['controls.json'] = json.dumps(
         controls, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()
-    manifest['files'] = {name: {'size_bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
-                         for name, data in entries.items()}
+    manifest['files'] = {name: bundle_io.digest(data) for name, data in entries.items()}
     entries['manifest.json'] = json.dumps(
         manifest, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()
     # Different flow/release music proofs can share the same visual source ZIP.
@@ -397,11 +389,7 @@ async def prepare_sequence_audio(root, bundle, fmodel, converter, voice_root=Non
     output = bundle.with_name(bundle.stem + '-audio-' + identity + '.zip')
     temporary = output.with_name(output.name + '.' + uuid.uuid4().hex + '.partial')
     try:
-        with zipfile.ZipFile(temporary, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
-            for name, data in sorted(entries.items()):
-                info = zipfile.ZipInfo(name, date_time=(2000, 1, 1, 0, 0, 0))
-                info.compress_type = zipfile.ZIP_DEFLATED
-                archive.writestr(info, data)
+        bundle_io.write_archive(temporary, entries)
         temporary.replace(output)
     finally:
         temporary.unlink(missing_ok=True)
