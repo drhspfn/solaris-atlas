@@ -527,6 +527,9 @@ def base_color_texture(metadata: dict, converted: Path, parent=None) -> tuple[st
     elif parent == "/Game/Aki/Render/MaterialInstance/Effect/MeshParticle/MI_BPProp_Gobletliquid_Com":
         # The cooked goblet-liquid material uses BaseTex for its diffuse input.
         reference = textures.get("BaseTex", {}).get("ObjectPath")
+    elif parent == "/Game/Aki/Render/Shaders/Character/M_Char_XinHen":
+        # The cooked tacet-mark shader uses D for its diffuse input.
+        reference = textures.get("D", {}).get("ObjectPath")
     else:
         reference = next(
             (textures[key].get("ObjectPath") for key in
