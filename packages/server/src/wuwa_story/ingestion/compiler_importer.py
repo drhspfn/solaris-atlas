@@ -1,8 +1,10 @@
+import asyncio
 import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.agents.revisits import schedule_revisits
@@ -113,6 +115,26 @@ class CompiledDatasetImporter(Importer):
             raise
 
     @staticmethod
+    async def _commit_localization_batch(
+        session: AsyncSession, release_id: int, batch: list[dict[str, Any]]
+    ) -> tuple[int, int]:
+        for attempt in range(4):
+            try:
+                inserted_keys, inserted_values = await import_localization_batch(
+                    session, release_id, batch
+                )
+                await session.commit()
+                return inserted_keys, inserted_values
+            except DBAPIError as exc:
+                orig = getattr(exc, "orig", None)
+                is_deadlock = getattr(orig, "sqlstate", None) == "40P01" or "deadlock" in str(exc).lower()
+                if not is_deadlock or attempt >= 3:
+                    raise
+                await session.rollback()
+                await asyncio.sleep(0.05 * (attempt + 1))
+        raise RuntimeError("unreachable")
+
+    @staticmethod
     async def _import_localization(
         path: Path, session: AsyncSession, release_id: int, batch_size: int
     ) -> tuple[int, int]:
@@ -135,18 +157,16 @@ class CompiledDatasetImporter(Importer):
                     raise ValueError(f"Localization identity is malformed at {path}:{line_number}")
                 batch.append(row)
                 if len(batch) >= batch_size:
-                    inserted_keys, inserted_values = await import_localization_batch(
+                    inserted_keys, inserted_values = await CompiledDatasetImporter._commit_localization_batch(
                         session, release_id, batch
                     )
                     seen += len(batch) + sum(len(row.get("values_by_locale", {})) for row in batch)
                     created += inserted_keys + inserted_values
-                    await session.commit()
                     batch.clear()
         if batch:
-            inserted_keys, inserted_values = await import_localization_batch(
+            inserted_keys, inserted_values = await CompiledDatasetImporter._commit_localization_batch(
                 session, release_id, batch
             )
             seen += len(batch) + sum(len(row.get("values_by_locale", {})) for row in batch)
             created += inserted_keys + inserted_values
-            await session.commit()
         return seen, created
