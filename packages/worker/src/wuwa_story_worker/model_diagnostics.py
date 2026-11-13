@@ -305,18 +305,30 @@ async def diagnose_scene_bundles(
     report_progress=None,
     export_blender: bool = True,
     check_animations: bool = True,
+    material_variants: bool | None = None,
 ) -> dict:
     """Run full preflight diagnostics across all forms and linked components without packing animations."""
     from wuwa_story_worker.model_material_forms import expand_material_replacement_forms
 
-    forms = await expand_material_replacement_forms(staging, forms, local_client=local_client)
+    collapse_variants = bool(
+        material_variants
+        if material_variants is not None
+        else os.getenv("WUWA_MODEL_MATERIAL_VARIANTS", "").lower() in {"1", "true"}
+    )
+    forms = await expand_material_replacement_forms(
+        staging,
+        forms,
+        local_client=local_client,
+        collapse_variants=collapse_variants,
+    )
     previous_blender_export = os.environ.get("WUWA_MODEL_BLENDER_EXPORT")
     if export_blender:
         os.environ["WUWA_MODEL_BLENDER_EXPORT"] = "1"
     entries: list[dict] = []
     asset_cache: dict = {}
     asset_locks: dict = {}
-    semaphore = asyncio.Semaphore(character_models.model_form_workers(include_animations=False))
+    semaphore = asyncio.Semaphore(
+        character_models.model_form_workers(include_animations=False))
 
     async def diagnose_bounded(root: Path, item: dict):
         async with semaphore:
@@ -332,7 +344,8 @@ async def diagnose_scene_bundles(
             first_result = await diagnose_bounded(first_root, forms[0])
             rest_tasks = [
                 asyncio.create_task(
-                    diagnose_bounded(staging / (form.get("id") or f"form-{index}"), form)
+                    diagnose_bounded(
+                        staging / (form.get("id") or f"form-{index}"), form)
                 )
                 for index, form in enumerate(forms[1:], start=1)
             ]
@@ -350,10 +363,12 @@ async def diagnose_scene_bundles(
                     child_form = {**recipe, "id": component_id, "label": relation["label"],
                                   "order": child_index, "component": relation}
                     child_root = staging / component_id
-                    group.append(asyncio.create_task(diagnose_bounded(child_root, child_form)))
+                    group.append(asyncio.create_task(
+                        diagnose_bounded(child_root, child_form)))
                 child_task_groups.append(group)
 
-            all_child_tasks = [task for group in child_task_groups for task in group]
+            all_child_tasks = [
+                task for group in child_task_groups for task in group]
             if all_child_tasks:
                 await asyncio.gather(*all_child_tasks)
 

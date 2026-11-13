@@ -94,24 +94,32 @@ def _replace_base_materials_entries(da_dir: Path) -> list[tuple[str, list[str | 
     return entries
 
 
-def discover_material_replacement_forms_from_cooked(cooked: Path, forms: list[dict]) -> list[dict]:
-    """Append deduplicated ReplaceBaseMaterials variants after each matching base/skin form."""
+def discover_material_replacement_forms_from_cooked(
+    cooked: Path,
+    forms: list[dict],
+    *,
+    collapse_variants: bool = False,
+) -> list[dict]:
+    """Append or attach deduplicated ReplaceBaseMaterials variants for each matching base/skin form."""
     expanded: list[dict] = []
     for form in forms:
-        expanded.append(form)
         model = form.get("model")
         if (
             not isinstance(model, str)
             or not model.startswith("Aki/Character/Role/")
             or form.get("component")
             or form.get("part_material_overrides")
+            or form.get("material_variants")
         ):
+            expanded.append(form)
             continue
         parts = model.split("/")
         if len(parts) < 5:
+            expanded.append(form)
             continue
         da_dir = _find_character_da_dir(cooked, parts[4])
         if da_dir is None:
+            expanded.append(form)
             continue
         base_materials = _skeletal_mesh_material_packages(cooked, model)
         model_dir_cf = (model.rsplit("/", 1)[0] + "/").casefold()
@@ -120,6 +128,7 @@ def discover_material_replacement_forms_from_cooked(cooked: Path, forms: list[di
         seen_sigs: set[tuple[str, ...]] = {
             base_sig} if base_materials else set()
         variant_index = 2
+        discovered_variants: list[dict] = []
         for da_package, replace_packages in _replace_base_materials_entries(da_dir):
             if base_materials and len(replace_packages) != len(base_materials):
                 continue
@@ -142,20 +151,36 @@ def discover_material_replacement_forms_from_cooked(cooked: Path, forms: list[di
             }
             if not overrides:
                 continue
+            discovered_variants.append({
+                "id": f"form-{variant_index}",
+                "label": f"Form {variant_index}",
+                "overrides": {model: overrides},
+                "material_controller": da_package,
+            })
+            variant_index += 1
+
+        if collapse_variants and discovered_variants:
+            expanded.append({
+                **form,
+                "material_variants": [
+                    {"id": "form-1", "label": "Form 1", "overrides": {}},
+                    *discovered_variants,
+                ],
+            })
+        else:
+            expanded.append(form)
             base_label = form.get("label") or "Default"
-            expanded.append(
-                {
+            for variant in discovered_variants:
+                expanded.append({
                     **form,
-                    "id": f"{form['id']}-form-{variant_index}",
-                    "label": f"{base_label} · Form {variant_index}",
-                    "part_material_overrides": {model: overrides},
+                    "id": f"{form['id']}-{variant['id']}",
+                    "label": f"{base_label} · {variant['label']}",
+                    "part_material_overrides": variant["overrides"],
                     "source": {
                         **(form.get("source") or {}),
-                        "material_controller": da_package,
+                        "material_controller": variant["material_controller"],
                     },
-                }
-            )
-            variant_index += 1
+                })
     return [{**item, "order": idx} for idx, item in enumerate(expanded)]
 
 
@@ -166,6 +191,7 @@ async def expand_material_replacement_forms(
     local_client=None,
     include_animations: bool = True,
     asset_cache: dict | None = None,
+    collapse_variants: bool = False,
 ) -> list[dict]:
     """Extract DA_Character material controllers once and expand matching ReplaceBaseMaterials forms."""
     role_forms = [
@@ -230,4 +256,6 @@ async def expand_material_replacement_forms(
             metadata_only=True,
             **extract_options,
         )
-    return discover_material_replacement_forms_from_cooked(cooked, forms)
+    return discover_material_replacement_forms_from_cooked(
+        cooked, forms, collapse_variants=collapse_variants
+    )

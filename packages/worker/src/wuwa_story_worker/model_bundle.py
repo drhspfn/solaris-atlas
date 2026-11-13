@@ -952,6 +952,7 @@ def main():
     parser.add_argument("--attachments", type=Path)
     parser.add_argument("--material-overrides", type=Path)
     parser.add_argument('--part-material-overrides', type=Path)
+    parser.add_argument('--material-variants', type=Path)
     parser.add_argument('--master-pose', action='store_true')
     parser.add_argument('--hide-primary-geometry', action='store_true')
     parser.add_argument('--bone-visibility', type=Path)
@@ -1378,10 +1379,12 @@ def main():
 
     empty_effect_slots = empty_effect_material_slots(args.model, args.converted, args.source_json)
     blender_materials = []
-    for material in sorted(
-        {material for mesh in meshes for material in mesh.data.materials if material},
-        key=lambda material: material.name,
-    ):
+    built_materials = set()
+
+    def setup_blender_material(material, users):
+        if material.name in built_materials:
+            return
+        built_materials.add(material.name)
         path = (
             material_metadata_path(material.name, args.model, metadata_files)
             if rig_mode
@@ -1390,9 +1393,8 @@ def main():
         metadata = material_metadata(json.loads(path.read_text(encoding="utf-8-sig"))) if path else {}
         if args.extra_model and effect_space_only(metadata):
             material.use_nodes = True
-            continue
+            return
         reference, texture = inherited_base_color_texture(metadata, path, args.converted, args.source_json)
-        users = [mesh for mesh in meshes if material in mesh.data.materials[:]]
         empty_effect = (
             not args.extra_model and material.name == 'None' and users
             and all(index in empty_effect_slots
@@ -1472,6 +1474,13 @@ def main():
             {"name": material.name, "texture": str(texture) if texture else None,
              "fur_preview": fur_preview, "authored_empty_effect_slot": bool(empty_effect)}
         )
+
+    for material in sorted(
+        {material for mesh in meshes for material in mesh.data.materials if material},
+        key=lambda material: material.name,
+    ):
+        users = [mesh for mesh in meshes if material in mesh.data.materials[:]]
+        setup_blender_material(material, users)
     if rig_mode and report["missing_textures"]:
         (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         raise ValueError(f"Missing required base-color textures: {report['missing_textures']}")
@@ -1634,6 +1643,64 @@ def main():
         )
         report["preview_texture_size"] = args.preview_texture_size
         report["preview_glb_bytes"] = report["preview_glb"]["bytes"]
+        if args.material_variants:
+            variants_spec = json.loads(args.material_variants.read_text(encoding="utf-8"))
+            if len(variants_spec) > 1:
+                from model_gltf_variants import merge_glb_material_variants
+
+                base_slots = {mesh: list(mesh.data.materials) for mesh in meshes}
+                base_label = variants_spec[0].get("label") or "Form 1"
+                package = args.model.relative_to(args.converted / "Client/Content").with_suffix("").as_posix()
+                variant_char_glbs = []
+                variant_prev_glbs = []
+                try:
+                    for idx, variant in enumerate(variants_spec[1:], start=1):
+                        for mesh, slots in base_slots.items():
+                            for s_idx, mat in enumerate(slots):
+                                mesh.data.materials[s_idx] = mat
+                        overrides_for_pkg = (variant.get("overrides") or {}).get(package, {})
+                        for slot, material_path in overrides_for_pkg.items():
+                            target_meshes = [
+                                obj for obj in meshes if int(slot) < len(obj.data.materials)
+                            ]
+                            if not target_meshes:
+                                continue
+                            name = material_path.rsplit("/", 1)[-1]
+                            mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+                            mat.use_fake_user = True
+                            for obj in target_meshes:
+                                obj.data.materials[int(slot)] = mat
+                            setup_blender_material(mat, target_meshes)
+                        if report["missing_textures"]:
+                            (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                            raise ValueError(f"Missing required base-color textures: {report['missing_textures']}")
+                        var_label = variant.get("label") or f"Form {idx + 1}"
+                        var_char = f".variant-{idx}-character.glb"
+                        var_prev = f".variant-{idx}-preview.glb"
+                        export_glb(var_char, animations=False)
+                        with preview_meshes(meshes), preview_materials(meshes, args.preview_texture_size):
+                            export_glb(var_prev, morph=False)
+                        variant_char_glbs.append((var_label, args.output / var_char))
+                        variant_prev_glbs.append((var_label, args.output / var_prev))
+                finally:
+                    for mesh, slots in base_slots.items():
+                        for s_idx, mat in enumerate(slots):
+                            mesh.data.materials[s_idx] = mat
+
+                if variant_char_glbs:
+                    merge_glb_material_variants(args.output / "character.glb", variant_char_glbs, base_name=base_label)
+                    merge_glb_material_variants(args.output / "preview.glb", variant_prev_glbs, base_name=base_label)
+                    report["character_glb"]["bytes"] = (args.output / "character.glb").stat().st_size
+                    report["preview_glb"]["bytes"] = (args.output / "preview.glb").stat().st_size
+                    report["preview_glb_bytes"] = report["preview_glb"]["bytes"]
+                    report["material_variants"] = [
+                        {"id": v.get("id"), "label": v.get("label")} for v in variants_spec
+                    ]
+                    armature["solaris_material_variants"] = json.dumps(
+                        report["material_variants"], separators=(",", ":")
+                    )
+                for _, tmp_path in (*variant_char_glbs, *variant_prev_glbs):
+                    tmp_path.unlink(missing_ok=True)
         if args.blender_source:
             # Save only after GLB exports: the editable studio is not game geometry.
             for material, inventory in blender_materials:

@@ -106,16 +106,58 @@ export function CharacterModel({
     };
   }, [viewing]);
 
-  const formOptions =
-    model?.forms?.map(({ id, label }) => ({ value: id, label })) ?? [];
-  const formSelector = formOptions.length > 1 && (
-    <Select
-      className="character-model-form-select"
-      label="Model form"
-      value={form?.id ?? ""}
-      options={formOptions}
-      onChange={setSelectedForm}
-    />
+  const appearanceGroups = (model?.forms ?? []).reduce<
+    {
+      key: string;
+      label: string;
+      items: { id: string; subLabel: string; label: string }[];
+    }[]
+  >((groups, item) => {
+    const match = item.label.match(/^(.*?)\s*·\s*(Form\s+\d+)$/i);
+    const groupLabel = match ? match[1] : item.label;
+    const subLabel = match ? match[2] : "Form 1";
+    let group = groups.find((g) => g.label === groupLabel);
+    if (!group) {
+      group = { key: item.id, label: groupLabel, items: [] };
+      groups.push(group);
+    }
+    group.items.push({ id: item.id, subLabel, label: item.label });
+    return groups;
+  }, []);
+  const activeGroup =
+    appearanceGroups.find((g) => g.items.some((i) => i.id === form?.id)) ??
+    appearanceGroups[0];
+  const formSelector = (appearanceGroups.length > 1 ||
+    (activeGroup?.items.length ?? 0) > 1) && (
+    <>
+      {appearanceGroups.length > 1 && (
+        <Select
+          className="character-model-form-select"
+          label="Model form"
+          value={activeGroup?.key ?? ""}
+          options={appearanceGroups.map((g) => ({
+            value: g.key,
+            label: g.label,
+          }))}
+          onChange={(groupKey) => {
+            const next = appearanceGroups.find((g) => g.key === groupKey);
+            if (next?.items[0]) setSelectedForm(next.items[0].id);
+          }}
+        />
+      )}
+      {(activeGroup?.items.length ?? 0) > 1 && (
+        <Select
+          className="character-model-form-select"
+          label="Form"
+          value={form?.id ?? ""}
+          options={activeGroup!.items.map((i) => ({
+            value: i.id,
+            label: i.subLabel,
+          }))}
+          onChange={setSelectedForm}
+        />
+      )}
+    </>
   );
 
   return (
@@ -148,6 +190,7 @@ export function CharacterModel({
                   key={`${form?.id ?? "legacy"}:${assets.preview.url}`}
                   assets={assets}
                   name={name}
+                  formLabel={form?.label}
                   preview
                   active={nearby}
                 />
@@ -183,6 +226,7 @@ export function CharacterModel({
                 key={`${viewing}:${form?.id ?? "legacy"}:${assets.preview.url}`}
                 assets={assets}
                 name={name}
+                formLabel={form?.label}
                 active={viewing}
                 titleId={`${id}-viewer-title`}
                 formSelector={formSelector}

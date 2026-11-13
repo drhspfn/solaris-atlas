@@ -528,6 +528,12 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         '/', 1)[0] + '/' for path in sources.get('extra_models', [])}
     component_filters.update(path.rsplit('/', 1)[0] + '/'
                              for slots in sources.get('part_material_overrides', {}).values() for path in slots.values())
+    component_filters.update(
+        path.rsplit('/', 1)[0] + '/'
+        for variant in sources.get('material_variants', [])
+        for slots in (variant.get('overrides') or {}).values()
+        for path in slots.values()
+    )
     asset_key = model_asset_key(sources["model"], include_animations)
     asset_lock = asset_locks.setdefault(asset_key, asyncio.Lock()) if asset_locks is not None else None
     if asset_lock is not None:
@@ -753,9 +759,14 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
 
     material_models = [sources["model"], *sources.get("extra_models", []),
                        *(item["model"] for item in attachments)]
-    override_packages = [*material_overrides.values(),
-                         *(path for slots in sources.get("part_material_overrides", {}).values()
-                           for path in slots.values())]
+    override_packages = [
+        *material_overrides.values(),
+        *(path for slots in sources.get("part_material_overrides", {}).values()
+          for path in slots.values()),
+        *(path for variant in sources.get("material_variants", [])
+          for slots in (variant.get("overrides") or {}).values()
+          for path in slots.values()),
+    ]
     material_fetched = set()
     for depth in range(8):
         missing = missing_material_resources(
@@ -819,6 +830,11 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         material_path.write_text(json.dumps(
             sources['part_material_overrides']), encoding='utf-8')
         command.extend(['--part-material-overrides', material_path.resolve()])
+    if sources.get('material_variants'):
+        variants_path = root / 'material-variants.json'
+        variants_path.write_text(json.dumps(
+            sources['material_variants']), encoding='utf-8')
+        command.extend(['--material-variants', variants_path.resolve()])
     if bone_visibility:
         visibility_path = root / 'npc-bone-visibility.json'
         visibility_path.write_text(json.dumps(
@@ -1316,6 +1332,10 @@ async def build_scene_bundles(staging, forms, *, include_animations=True, **opti
     """Retain independently validated rigs until the complete scene can publish atomically."""
     from wuwa_story_worker.model_material_forms import expand_material_replacement_forms
 
+    collapse_variants = bool(
+        options.pop("material_variants", None)
+        or os.getenv("WUWA_MODEL_MATERIAL_VARIANTS", "").lower() in {"1", "true"}
+    )
     options = {**options, "animation_cache": {}, "asset_cache": {}, "asset_locks": {}}
     forms = await expand_material_replacement_forms(
         staging,
@@ -1323,6 +1343,7 @@ async def build_scene_bundles(staging, forms, *, include_animations=True, **opti
         local_client=options.get("local_client"),
         include_animations=include_animations,
         asset_cache=options["asset_cache"],
+        collapse_variants=collapse_variants,
     )
     if not forms:
         return []
