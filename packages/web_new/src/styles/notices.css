@@ -1,7 +1,7 @@
 .notices-page {
-  width: min(1440px, calc(100% - 48px));
+  width: min(1200px, calc(100% - 48px));
   margin: 0 auto;
-  padding: 40px 0 64px;
+  padding: 37px 0 100px;
   color: var(--text-primary);
 }
 .notices-heading {

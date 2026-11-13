@@ -1,6 +1,6 @@
 from typing import Any
 
-from sqlalchemy import asc, desc, func, literal, or_, select
+from sqlalchemy import asc, case, desc, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.db.models.core import Character
@@ -30,7 +30,7 @@ async def lexical_search(
     sort_by: str = "relevance",
     sort_order: str = "desc",
     offset: int = 0,
-    character_kind: str = "playable",
+    character_kind: str = "all",
 ) -> list[dict[str, Any]]:
     if sort_by not in {"relevance", "name"}:
         raise ValueError("sort_by must be 'relevance' or 'name'")
@@ -63,6 +63,15 @@ async def lexical_search(
         not selected_categories or canonical_rows[0]["node_type"] in selected_categories
     ):
         return canonical_rows[offset : offset + limit]
+    TYPE_PRIORITY = {"character": 5, "quest": 4, "item": 3, "area": 2, "location": 2, "speaker": 1}
+    category_priority = case(
+        (NodeType.key == "character", 1),
+        (NodeType.key == "quest", 2),
+        (NodeType.key == "item", 3),
+        (NodeType.key.in_(("area", "location")), 4),
+        (NodeType.key == "speaker", 5),
+        else_=6,
+    )
     exact_statement = (
         select(
             Node.id,
@@ -81,7 +90,9 @@ async def lexical_search(
     if selected_categories:
         exact_statement = exact_statement.where(NodeType.key.in_(selected_categories))
     if sort_by == "name":
-        exact_statement = exact_statement.order_by(sort(EntityAlias.alias), Node.id)
+        exact_statement = exact_statement.order_by(sort(EntityAlias.alias), category_priority, Node.id)
+    else:
+        exact_statement = exact_statement.order_by(category_priority, Node.id)
     exact = await session.execute(exact_statement.limit(min(max((limit + offset) * 20, 200), 4000)))
     exact_rows = _unique_entities(
         [dict(row._mapping) for row in exact], min(max((limit + offset) * 20, 200), 4000)
@@ -109,7 +120,7 @@ async def lexical_search(
         fts = fts.where(SearchDocument.locale_id == locale_id)
     rank = func.ts_rank(SearchDocument.search_vector, func.plainto_tsquery("simple", query))
     fts = fts.order_by(
-        sort(SearchDocument.title) if sort_by == "name" else sort(rank), Node.id
+        sort(SearchDocument.title) if sort_by == "name" else sort(rank), category_priority, Node.id
     ).limit(min(max((limit + offset) * 20, 200), 4000))
     full_text_rows = [dict(row._mapping) for row in await session.execute(fts)]
     trigram_rows = []
@@ -133,7 +144,7 @@ async def lexical_search(
         if locale_id:
             statement = statement.where(SearchDocument.locale_id == locale_id)
         statement = statement.order_by(
-            sort(SearchDocument.title) if sort_by == "name" else sort(score), Node.id
+            sort(SearchDocument.title) if sort_by == "name" else sort(score), category_priority, Node.id
         ).limit(min(max((limit + offset) * 20, 200), 4000))
         trigram_rows = [dict(row._mapping) for row in await session.execute(statement)]
     # Whole-word matches take priority. Only try fuzzy matching when none exist;
@@ -147,12 +158,12 @@ async def lexical_search(
     rows = list(combined.values())
     if sort_by == "name":
         rows.sort(
-            key=lambda row: (str(row["alias"]).casefold(), row["id"]),
+            key=lambda row: (str(row["alias"]).casefold(), -TYPE_PRIORITY.get(row.get("node_type"), 0), row["id"]),
             reverse=sort_order == "desc",
         )
     else:
         rows.sort(
-            key=lambda row: (float(row["score"]), str(row["alias"]).casefold(), row["id"]),
+            key=lambda row: (float(row["score"]), TYPE_PRIORITY.get(row.get("node_type"), 0), -row["id"]),
             reverse=sort_order == "desc",
         )
     return rows[offset : offset + limit]

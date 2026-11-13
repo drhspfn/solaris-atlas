@@ -17,6 +17,7 @@ import {
 import { CharacterConnections, CharacterConnectionsSkeleton } from '@/components/characters/CharacterConnections';
 import { ItemAcquisition } from '@/components/items/ItemAcquisition';
 import { NpcSellers } from '@/components/items/NpcSellers';
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { InlineDialogueSearch } from '@/components/search/InlineDialogueSearch';
 import { EmptyInline, ErrorPanel, PageLoader } from '@/components/ui/Feedback';
 import { PanelTitle } from '@/components/ui/PanelTitle';
@@ -222,13 +223,13 @@ export function EntityProfileClient({
     <div className={`page-container${kind === 'character' ? ' character-profile-page' : ''}`}>
       {error && <ErrorPanel message={error} onRetry={() => setProfileRetry((value) => value + 1)} />}
       {loading && <p role="status">Updating archive record…</p>}
-      <div className="breadcrumbs">
-        <Link to="/">Archive</Link>
-        <ChevronRight size={13} />
-        <Link to={`/catalog/${kind}`}>{categoryTitle[kind]}</Link>
-        <ChevronRight size={13} />
-        <span><PlayerText value={name} display={playerDisplay} /></span>
-      </div>
+      <Breadcrumbs
+        items={[
+          { label: 'Archive', to: '/' },
+          { label: categoryTitle[kind], to: `/catalog/${kind}` },
+          { label: <PlayerText value={name} display={playerDisplay} /> },
+        ]}
+      />
       <div className={`profile-hero${kind === 'character' ? ' character-profile-hero' : ''}`}>
         {kind === 'character' ? (
           <CharacterProfileVisual key={entity?.canonical_key ?? selectedRole} characterKey={entity?.canonical_key ?? selectedRole} name={gameTextPlainText(name, playerDisplay)} portraitUrl={portraitUrl}
@@ -242,7 +243,6 @@ export function EntityProfileClient({
           </div>
         )}
         <div className="profile-main">
-          <span className="eyebrow left">{categoryTitle[kind].toUpperCase()} PROFILE</span>
           <div className="character-profile-title-row">
             <h1><PlayerText value={name} display={playerDisplay} /><span className="heading-period">.</span></h1>
             {kind === 'character' && entity?.canonical_key && (

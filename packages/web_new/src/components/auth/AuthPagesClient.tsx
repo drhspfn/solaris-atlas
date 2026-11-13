@@ -7,6 +7,8 @@ import { type FormEvent, useEffect, useState } from 'react';
 import { api, ApiError, apiUrl } from '@/api/client';
 import { type CurrentUser, useAuth } from '@/auth/AuthProvider';
 import { Link, useLocation, useNavigate, useSearchParams } from '@/lib/router';
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
+import { PageHeader } from '@/components/ui/PageHeader';
 
 function AuthFrame({
   eyebrow,
@@ -494,24 +496,17 @@ export function AccountPageClient() {
 
   return (
     <div className="page-container account-page">
-      <div className="breadcrumbs">
-        <Link to="/">Archive</Link>
-        <span>›</span>
-        <span>Account</span>
-      </div>
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow left">YOUR SOLARIS ATLAS</p>
-          <h1>
-            Account<span className="heading-period">.</span>
-          </h1>
-          <p>Manage the credentials connected to your archive account.</p>
-        </div>
-        <span className="account-role">
-          <ShieldCheck size={14} />
-          {user.role}
-        </span>
-      </div>
+      <Breadcrumbs items={[{ label: 'Archive', to: '/' }, { label: 'Account' }]} />
+      <PageHeader
+        title="Account"
+        description="Manage the credentials connected to your archive account."
+        actions={
+          <span className="account-role">
+            <ShieldCheck size={14} />
+            {user.role}
+          </span>
+        }
+      />
       <div className="account-grid">
         <section className="content-panel">
           <h2>Profile</h2>

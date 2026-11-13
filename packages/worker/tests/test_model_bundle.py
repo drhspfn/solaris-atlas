@@ -66,6 +66,16 @@ def test_goblet_liquid_uses_authored_base_texture(tmp_path):
     assert base_color_texture(metadata, tmp_path, '/Game/Unknown') == (None, None)
 
 
+def test_tacet_mark_shader_uses_authored_diffuse_texture(tmp_path):
+    parent = '/Game/Aki/Render/Shaders/Character/M_Char_XinHen'
+    metadata = {'Textures': {'D': {'ObjectPath': '/Game/Star_D.1'}}}
+    assert base_color_texture(metadata, tmp_path, parent) == ('/Game/Star_D.1', None)
+    texture = tmp_path / 'Client/Content/Star_D.png'
+    texture.parent.mkdir(parents=True)
+    texture.write_bytes(b'png')
+    assert base_color_texture(metadata, tmp_path, parent) == ('/Game/Star_D.1', texture)
+
+
 def test_equivalent_skeletons_require_hierarchy_and_complete_finite_rest_pose():
     bone = SimpleNamespace(name="Root", parent_index=-1, position=[0, 0, 0],
                            rotation=[0, 0, 0, 1], scale=[1, 1, 1])

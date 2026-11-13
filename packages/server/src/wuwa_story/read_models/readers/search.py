@@ -50,7 +50,7 @@ async def search_page(
     quest_id=None,
     *,
     _full_dialogue=False,
-    character_kind="playable",
+    character_kind="all",
 ):
     snapshot = game_version or "current"
     if scope == "dialogue" and sort_by != "relevance":

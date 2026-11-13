@@ -13,7 +13,11 @@ const source = readFileSync(
   "utf8",
 );
 const code = ts.transpileModule(source, {
-  compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  compilerOptions: {
+    target: ts.ScriptTarget.ES2020,
+    module: ts.ModuleKind.CommonJS,
+    jsx: ts.JsxEmit.ReactJSX,
+  },
 }).outputText;
 const components = {};
 const mocks = {
@@ -26,6 +30,20 @@ const mocks = {
   },
   "./QuestCutscenes": { Cutscene: () => null },
   "./cutsceneAudioSelection": require("../src/components/story/cutsceneAudioSelection.ts"),
+  "@/components/ui/Breadcrumbs": {
+    Breadcrumbs: ({ items }) =>
+      React.createElement(
+        "nav",
+        null,
+        items?.map((i, idx) =>
+          React.createElement("span", { key: idx }, i.label),
+        ),
+      ),
+  },
+  "@/components/ui/PageHeader": {
+    PageHeader: ({ title, description }) =>
+      React.createElement("header", null, title, description),
+  },
 };
 vm.runInNewContext(code, {
   exports: components,
@@ -39,15 +57,25 @@ test("standalone descriptions use authored Rover selectors and avoid technical a
     game_version: "1.0",
     title: "Scene",
     title_kind: "source",
-    event: { playback: {
-      nodes: [
-        { id: "female", kind: "clip", asset: "a", rover: "female" },
-        { id: "male", kind: "clip", asset: "b" },
-        { id: "choice", kind: "choice", options: [{ next: "male", rover: "male" }] },
-        { id: "unknown", kind: "clip", asset: "c" },
-      ],
-      media: { a: { asset_node_id: 12 }, b: { asset_node_id: 13 }, c: { asset_node_id: 14 } },
-    } },
+    event: {
+      playback: {
+        nodes: [
+          { id: "female", kind: "clip", asset: "a", rover: "female" },
+          { id: "male", kind: "clip", asset: "b" },
+          {
+            id: "choice",
+            kind: "choice",
+            options: [{ next: "male", rover: "male" }],
+          },
+          { id: "unknown", kind: "clip", asset: "c" },
+        ],
+        media: {
+          a: { asset_node_id: 12 },
+          b: { asset_node_id: 13 },
+          c: { asset_node_id: 14 },
+        },
+      },
+    },
     passages: [],
     public_descriptions: [
       {
@@ -81,10 +109,16 @@ test("standalone descriptions use authored Rover selectors and avoid technical a
   assert.match(html, /Legacy.*Version 3.*Legacy text/);
   assert.doesNotMatch(html, /Private visual report|Video asset|<details/);
 
-  const single = renderToStaticMarkup(React.createElement(components.CutsceneRecord, {
-    name: scene.name,
-    initial: { ...scene, event: { playback: null }, public_descriptions: [scene.public_descriptions[2]] },
-  }));
+  const single = renderToStaticMarkup(
+    React.createElement(components.CutsceneRecord, {
+      name: scene.name,
+      initial: {
+        ...scene,
+        event: { playback: null },
+        public_descriptions: [scene.public_descriptions[2]],
+      },
+    }),
+  );
   assert.match(single, /Legacy text/);
   assert.doesNotMatch(single, /Version \d|Rover|Video asset/);
 

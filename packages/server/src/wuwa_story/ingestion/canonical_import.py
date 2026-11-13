@@ -396,15 +396,23 @@ async def _insert_typed_entities(
                 )
             )
         elif kind == "flow_state":
+            state_key = record["state_key"]
+            flow_list_name, flow_id, state_id = None, None, None
+            parts = state_key.rsplit("_", 2)
+            if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
+                flow_list_name, flow_id, state_id = parts[0], int(parts[1]), int(parts[2])
             typed.append(
                 (
                     QuestState,
                     [
                         {
                             "node_id": node_id,
-                            "state_key": record["state_key"],
+                            "state_key": state_key,
+                            "flow_list_name": flow_list_name,
+                            "flow_id": flow_id,
+                            "state_id": state_id,
                             "source_record_id": source_id,
-                            "metadata": {"game_state_key": record["state_key"]},
+                            "metadata": {"game_state_key": state_key},
                         }
                     ],
                 )

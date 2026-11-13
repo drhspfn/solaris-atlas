@@ -60,10 +60,24 @@ async def test_exact_identity_and_alias_still_short_circuit(exact_stage):
 async def test_exact_source_key_uses_the_same_character_family_visibility_filter():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
+
     from sqlalchemy.dialects import postgresql
+
     from wuwa_story.db.repositories.search import lexical_search
     session = SimpleNamespace(execute=AsyncMock(return_value=[]))
     assert await lexical_search(session, "character:5015", categories=["character"]) == []
     query = str(session.execute.await_args_list[0].args[0].compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
     assert "public_identity" in query and "role_type" in query
     assert "core.character" in query
+
+
+@pytest.mark.asyncio
+async def test_character_outranks_speaker_with_equal_search_score():
+    speaker = dict(id=88859, canonical_key="speaker:1218", slug="88859-ebony-gatekeeper",
+                   node_type="speaker", alias="Ebony Gatekeeper", score=0.8)
+    character = dict(id=7303121, canonical_key="character:npc:17952", slug="17952-ebony-gatekeeper",
+                     node_type="character", alias="Ebony Gatekeeper", score=0.8)
+    session = SimpleNamespace(execute=AsyncMock(side_effect=[[], [], rows(speaker, character)]))
+    results = await lexical_search(session, "Ebony Gatekeeper")
+    assert [r["canonical_key"] for r in results] == ["character:npc:17952", "speaker:1218"]
+

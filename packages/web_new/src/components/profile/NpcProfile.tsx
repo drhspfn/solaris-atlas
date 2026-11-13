@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { Volume2, X } from "lucide-react";
 import { api } from "@/api/client";
 import { CharacterModelImport } from "@/components/characters/CharacterModelImport";
 import { CharacterProfileVisual } from "@/components/characters/CharacterProfileVisual";
@@ -10,9 +10,14 @@ import { NpcInstances } from "@/components/profile/NpcInstances";
 import { NpcShops } from "@/components/profile/NpcShops";
 import type { CharacterModelData } from "@/components/models/types";
 import { ErrorPanel } from "@/components/ui/Feedback";
-import { Skeleton, SkeletonGroup, TextSkeleton } from "@/components/ui/Skeleton";
+import {
+  Skeleton,
+  SkeletonGroup,
+  TextSkeleton,
+} from "@/components/ui/Skeleton";
 import { Pagination } from "@/components/ui/Pagination";
 import { PanelTitle } from "@/components/ui/PanelTitle";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import { gameTextPlainText } from "@/data/gameText";
 import {
   PlayerText,
@@ -42,7 +47,10 @@ type Npc = {
   blueprint_id: number;
   name_scope: "instance" | "blueprint";
   name_variants: string[];
-  speakers: string[];
+  speakers: (
+    | string
+    | { id: number; canonical_key: string; slug?: string; label?: any }
+  )[];
   flow_reference_count: number;
   shop_count: number;
 };
@@ -72,15 +80,28 @@ function questHref(
 }
 
 export function NpcQuestCardSkeleton() {
-  return <div className="npc-quest-card"><Skeleton style={{ width: "70%", height: 14 }} /></div>;
+  return (
+    <div className="npc-quest-card">
+      <Skeleton style={{ width: "70%", height: 14 }} />
+    </div>
+  );
 }
 
 export function NpcDialogueSkeleton() {
-  return <article className="npc-dialogue-card">
-    <div className="npc-dialogue-text"><TextSkeleton lines={2} /></div>
-    <div className="npc-dialogue-meta"><Skeleton style={{ width: 100, height: 12 }} /><Skeleton style={{ width: 130, height: 12 }} /></div>
-    <div className="npc-dialogue-source"><Skeleton style={{ width: 90, height: 12 }} /></div>
-  </article>;
+  return (
+    <article className="npc-dialogue-card">
+      <div className="npc-dialogue-text">
+        <TextSkeleton lines={2} />
+      </div>
+      <div className="npc-dialogue-meta">
+        <Skeleton style={{ width: 100, height: 12 }} />
+        <Skeleton style={{ width: 130, height: 12 }} />
+      </div>
+      <div className="npc-dialogue-source">
+        <Skeleton style={{ width: 90, height: 12 }} />
+      </div>
+    </article>
+  );
 }
 
 function NpcQuests({
@@ -132,7 +153,11 @@ function NpcQuests({
           onRetry={() => setRetry((value) => value + 1)}
         />
       ) : !result ? (
-        <SkeletonGroup label="Loading quests" className="npc-quest-grid">{Array.from({ length: 4 }, (_, i) => <NpcQuestCardSkeleton key={i} />)}</SkeletonGroup>
+        <SkeletonGroup label="Loading quests" className="npc-quest-grid">
+          {Array.from({ length: 4 }, (_, i) => (
+            <NpcQuestCardSkeleton key={i} />
+          ))}
+        </SkeletonGroup>
       ) : (
         <>
           {!result.results.length && <p>No linked quest appearances found.</p>}
@@ -212,10 +237,19 @@ export function NpcInteractions({
       });
     return () => controller.abort();
   }, [characterKey, locale, query, page, retry, gameVersion]);
+  const hasShops = (npc.shop_count || 0) > 0;
   return (
     <>
+      {hasShops && (
+        <NpcShops
+          characterKey={characterKey}
+          gameVersion={gameVersion}
+          display={display}
+          sectionNumber="01"
+        />
+      )}
       <section className="content-panel full-panel npc-section">
-        <PanelTitle number="01" title="Dialogue" />
+        <PanelTitle number={hasShops ? "02" : "01"} title="Dialogue" />
         <form
           className="dialogue-search"
           noValidate
@@ -255,7 +289,11 @@ export function NpcInteractions({
             onRetry={() => setRetry((value) => value + 1)}
           />
         ) : !result ? (
-          <SkeletonGroup label="Loading dialogue" className="npc-dialogue-list">{Array.from({ length: 3 }, (_, i) => <NpcDialogueSkeleton key={i} />)}</SkeletonGroup>
+          <SkeletonGroup label="Loading dialogue" className="npc-dialogue-list">
+            {Array.from({ length: 3 }, (_, i) => (
+              <NpcDialogueSkeleton key={i} />
+            ))}
+          </SkeletonGroup>
         ) : (
           <>
             {!result.results.length && <p>No linked dialogue found.</p>}
@@ -331,13 +369,6 @@ export function NpcInteractions({
         gameVersion={gameVersion}
         display={display}
       />
-      {npc.shop_count > 0 && (
-        <NpcShops
-          characterKey={characterKey}
-          gameVersion={gameVersion}
-          display={display}
-        />
-      )}
       <NpcFlowParticipants
         characterKey={characterKey}
         gameVersion={gameVersion}
@@ -362,41 +393,75 @@ export function NpcProfile({
   const name = gameTextPlainText(
     character.name,
     display,
-    gameTextPlainText(character.canonical_name, display, `NPC ${npc.blueprint_id}`),
+    gameTextPlainText(
+      character.canonical_name,
+      display,
+      `NPC ${npc.blueprint_id}`,
+    ),
   );
+  const isSharedTemplate = name.startsWith("Shared NPC template");
+  const templateVariants = isSharedTemplate
+    ? name
+        .replace(/^Shared NPC template(\s*·\s*)?/, "")
+        .split("/")
+        .map((s) => s.trim().replace(/\.$/, ""))
+        .filter(Boolean)
+    : [];
+  const slugKey = (
+    character.slug ||
+    character.canonical_key ||
+    ""
+  ).toLowerCase();
+  const primaryTitle = isSharedTemplate
+    ? templateVariants.find((v) => slugKey.includes(v.toLowerCase())) ||
+      templateVariants[0] ||
+      name
+    : name;
   const [revision, setRevision] = useState(0);
   return (
     <div className="page-container character-profile-page">
-      <div className="breadcrumbs">
-        <Link to="/">Archive</Link>
-        <span> / </span>
-        <Link to="/catalog/character">Characters</Link>
-        <span> / </span>
-        <span>
-          <PlayerText
-            value={character.name}
-            fallback={name}
-            display={display}
-          />
-        </span>
-      </div>
-      <div className="profile-hero character-profile-hero npc-profile-hero">
-        <CharacterProfileVisual
-          characterKey={character.canonical_key}
-          name={name}
-          portraitUrl={null}
-          initialModel={initialModel}
-          refreshKey={revision}
-        />
-        <div className="profile-main">
-          <span className="eyebrow left">NPC PROFILE</span>
-          <div className="character-profile-title-row">
-            <h1>
+      <Breadcrumbs
+        items={[
+          { label: "Archive", to: "/" },
+          { label: "Characters", to: "/catalog/character" },
+          {
+            label: isSharedTemplate ? (
+              primaryTitle
+            ) : (
               <PlayerText
                 value={character.name}
                 fallback={name}
                 display={display}
               />
+            ),
+          },
+        ]}
+      />
+      <div className="profile-hero character-profile-hero npc-profile-hero">
+        <CharacterProfileVisual
+          characterKey={character.canonical_key}
+          name={isSharedTemplate ? primaryTitle : name}
+          portraitUrl={null}
+          initialModel={initialModel}
+          refreshKey={revision}
+        />
+        <div className="profile-main">
+          <div className="character-profile-title-row">
+            <h1>
+              {isSharedTemplate ? (
+                <>
+                  {primaryTitle}
+                  <span className="npc-shared-template-pill">
+                    Shared Template
+                  </span>
+                </>
+              ) : (
+                <PlayerText
+                  value={character.name}
+                  fallback={name}
+                  display={display}
+                />
+              )}
               <span className="heading-period">.</span>
             </h1>
             <CharacterModelImport
@@ -412,6 +477,39 @@ export function NpcProfile({
               display={display}
             />
           </p>
+          {isSharedTemplate && templateVariants.length > 1 && (
+            <p className="npc-shared-variants-note">
+              Shared character configuration · Identical model also appears as:{" "}
+              <b>
+                {templateVariants.filter((v) => v !== primaryTitle).join(", ")}
+              </b>
+            </p>
+          )}
+          {npc.speakers && npc.speakers.length > 0 && (
+            <div className="npc-speaker-connections">
+              <span className="npc-speaker-label">Spoken Voice:</span>
+              {npc.speakers.map((spk, idx) => {
+                const spkSlug =
+                  typeof spk === "string" ? spk : spk.slug || spk.canonical_key;
+                const spkLabel =
+                  typeof spk === "string"
+                    ? spk
+                    : spk.label?.content ||
+                      spk.slug?.replace(/^\d+-/, "") ||
+                      spk.canonical_key;
+                return (
+                  <Link
+                    key={idx}
+                    to={`/nodes/${encodeURIComponent(spkSlug)}`}
+                    className="npc-speaker-chip"
+                  >
+                    <Volume2 size={13} aria-hidden="true" />
+                    <span>{spkLabel}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
           {npc.name_scope === "instance" && (
             <p>
               This name is recorded for one appearance.

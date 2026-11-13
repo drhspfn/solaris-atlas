@@ -5,7 +5,7 @@ import "@/styles/notices.css";
 
 export default function NoticesLoading() {
   return (
-    <main className="notices-page">
+    <main className="page-container notices-page">
       <EventArchiveHeader active="announcements" />
       <SkeletonGroup className="notices-grid" label="Loading announcements">
         {Array.from({ length: 6 }, (_, index) => (

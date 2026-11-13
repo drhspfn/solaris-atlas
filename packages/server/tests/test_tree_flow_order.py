@@ -268,3 +268,23 @@ async def test_related_state_is_visible_in_media_manifest_without_global_positio
         dialect=postgresql.dialect(), compile_kwargs={'literal_binds': True}))
     # Included through related encounter despite empty original quest states.
     assert '4648369' in query
+
+
+def test_quest_data_interact_option_and_sibling_flow_positions():
+    qrecords = {1: {'EnterActions': [{'Name': 'PlayFlow', 'FlowListName': 'Quest_POI_1', 'FlowId': 1, 'StateId': 3}]}}
+    qnodes = nodes(qrecords, [(1, [])])
+    quest_data = {
+        'AddInteractOption': {
+            'Option': {'Type': {'Flow': {'FlowListName': 'Quest_POI_1', 'FlowId': 1, 'StateId': 6}, 'Type': 'Flow'}}
+        }
+    }
+    # States 3 and 6 are explicitly in tree/quest_data; state 8 is a sibling flow continuation
+    valid = {'Quest_POI_1_1_3', 'Quest_POI_1_1_6', 'Quest_POI_1_1_8'}
+    positions = dict(flow_positions(qnodes, qrecords, {}, valid, quest_data=quest_data))
+
+    assert 'Quest_POI_1_1_6' in positions
+    assert 'Quest_POI_1_1_3' in positions
+    assert 'Quest_POI_1_1_8' in positions
+    # Sibling state 8 is ordered after state 3
+    assert positions['Quest_POI_1_1_8'] > positions['Quest_POI_1_1_3']
+

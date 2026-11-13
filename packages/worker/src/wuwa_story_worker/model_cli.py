@@ -14,15 +14,17 @@ from wuwa_story.ingestion.model_archives import write_archive
 
 async def build(args):
     from wuwa_story_worker.character_models import build_scene_bundles
+    from wuwa_story_worker.model_diagnostics import diagnose_scene_bundles
     from wuwa_story_worker.model_forms import resolve_recipe_forms
 
+    diagnose_mode = bool(getattr(args, "diagnose", False))
     recipe = json.loads(args.recipe.read_text(encoding="utf-8-sig"))
     if recipe.get("format") != "solaris-model-recipe-v1":
         raise ValueError(
             "Download a model recipe from the character import dialog")
-    if not re.fullmatch(r"\d+\.\d+\.\d+", args.asset_version):
+    if not diagnose_mode and not re.fullmatch(r"\d+\.\d+\.\d+", args.asset_version or ""):
         raise ValueError("Asset version must use major.minor.patch format")
-    if args.output.exists():
+    if not diagnose_mode and args.output.exists():
         raise ValueError("Output already exists; choose a new archive path")
     if not args.game_dir.is_dir() or not args.keys_file.is_file():
         raise ValueError("Local game directory or keys file is missing")
@@ -33,12 +35,30 @@ async def build(args):
     forms = resolve_recipe_forms(recipe)
     started = time.monotonic()
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    if diagnose_mode:
+        with tempfile.TemporaryDirectory(prefix=".solaris-model-diag-", dir=args.output.parent) as scratch:
+            report = await diagnose_scene_bundles(
+                Path(scratch), forms,
+                local_client={"game": args.game_dir.resolve(), "keys": args.keys_file.resolve(),
+                              "processors": args.workers},
+                report_progress=lambda stage, **details: print(
+                    json.dumps({"stage": stage, **details}), flush=True),
+            )
+        report["character_key"] = recipe["character_key"]
+        report["game_version"] = recipe["game_version"]
+        report["seconds"] = round(time.monotonic() - started, 2)
+        args.output.write_text(json.dumps(
+            report, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(json.dumps({"diagnostic_report": str(args.output.resolve()),
+                          "forms": report["forms_total"], "entries": report["entries_total"],
+                          "errors": report["error_count"], "seconds": report["seconds"]}))
+        return
     with tempfile.TemporaryDirectory(prefix=".solaris-model-", dir=args.output.parent) as scratch:
         bundles = await build_scene_bundles(Path(scratch), forms,
-            include_animations=not args.without_animations,
-            local_client={"game": args.game_dir.resolve(), "keys": args.keys_file.resolve(),
-                          "processors": args.workers}, animation_workers=args.workers,
-            report_progress=lambda stage, **details: print(json.dumps({"stage": stage, **details}), flush=True))
+                                            include_animations=not args.without_animations,
+                                            local_client={"game": args.game_dir.resolve(), "keys": args.keys_file.resolve(),
+                                                          "processors": args.workers}, animation_workers=args.workers,
+                                            report_progress=lambda stage, **details: print(json.dumps({"stage": stage, **details}), flush=True))
         manifest = await asyncio.to_thread(write_archive, args.output, {
             "character_key": recipe["character_key"], "game_version": recipe["game_version"],
             "asset_version": args.asset_version, "tier": args.tier,
@@ -53,9 +73,10 @@ def main():
     parser.add_argument("--recipe", type=Path, required=True)
     parser.add_argument("--game-dir", type=Path, required=True)
     parser.add_argument("--keys-file", type=Path, required=True)
-    parser.add_argument("--asset-version", required=True)
+    parser.add_argument("--asset-version")
     parser.add_argument("--tier", choices=["sd", "hd", "uhd"], default="hd")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--diagnose", action="store_true")
     parser.add_argument("--without-animations", action="store_true")
     parser.add_argument("--workers", type=int, choices=range(1,
                         9), default=min(4, os.cpu_count() or 1))

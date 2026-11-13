@@ -1,4 +1,4 @@
-.mcp-page { max-width: 1120px; padding-top: 36px; padding-bottom: 96px; }
+.mcp-page { width: min(1200px, calc(100% - 48px)); max-width: 1200px; margin: 0 auto; padding: 37px 0 100px; }
 .mcp-breadcrumb { display:flex; gap:12px; color:var(--text-muted); font-size:13px; margin-bottom:44px; }
 .mcp-breadcrumb a,.mcp-return { color:var(--accent-mint); text-decoration:none; }
 .mcp-hero { padding-bottom:40px; border-bottom:1px solid var(--border-default); }

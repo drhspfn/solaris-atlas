@@ -1,20 +1,29 @@
-'use client';
+"use client";
 
-import { ArrowRight, ChevronRight, ExternalLink, Network } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from '@/lib/router';
+import {
+  ArrowRight,
+  ChevronRight,
+  ExternalLink,
+  MessageSquare,
+  Network,
+  User,
+  Volume2,
+} from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "@/lib/router";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 
-import { api } from '@/api/client';
-import { PlayerText } from '@/components/dialogue/PlayerText';
-import { cutsceneAnchor } from '@/components/story/cutsceneAnchor';
-import { EmptyInline, ErrorPanel, PageLoader } from '@/components/ui/Feedback';
-import { APP_SETTINGS } from '@/config/settings';
-import { type Entity, entityPath } from '@/data/entities';
-import { localizedText } from '@/data/localized';
-import { gameTextPlainText } from '@/data/gameText';
-import { questPassagePath } from '@/data/story';
-import { useLocale } from '@/hooks/useLocale';
-import { usePlayerDisplay } from '@/hooks/usePlayerDisplay';
+import { api } from "@/api/client";
+import { PlayerText } from "@/components/dialogue/PlayerText";
+import { cutsceneAnchor } from "@/components/story/cutsceneAnchor";
+import { EmptyInline, ErrorPanel, PageLoader } from "@/components/ui/Feedback";
+import { APP_SETTINGS } from "@/config/settings";
+import { type Entity, entityPath } from "@/data/entities";
+import { localizedText } from "@/data/localized";
+import { gameTextPlainText } from "@/data/gameText";
+import { questPassagePath } from "@/data/story";
+import { useLocale } from "@/hooks/useLocale";
+import { usePlayerDisplay } from "@/hooks/usePlayerDisplay";
 
 type NodeDetail = {
   canonical_key: string;
@@ -27,7 +36,14 @@ type Related = {
   relation: string;
   direction: string;
   basis: string;
-  node: { id: number; canonical_key: string; type: string; label: string; slug?: string | null; href?: string };
+  node: {
+    id: number;
+    canonical_key: string;
+    type: string;
+    label: string;
+    slug?: string | null;
+    href?: string;
+  };
 };
 
 export function NodeExplorerPage({
@@ -44,41 +60,53 @@ export function NodeExplorerPage({
   const key = nodeKey;
   const selectedLocale = useLocale();
   const params = useSearchParams();
-  const locale = params?.get('locale') || selectedLocale;
-  const gameVersion = params?.get('game_version') || '';
+  const locale = params?.get("locale") || selectedLocale;
+  const gameVersion = params?.get("game_version") || "";
   const playerDisplay = usePlayerDisplay();
   const [node, setNode] = useState<NodeDetail | null>(initialDetail ?? null);
   const [related, setRelated] = useState<Related[]>(initialRelated ?? []);
-  const [narrative, setNarrative] = useState<any>(initialNarrative?.available ? initialNarrative : null);
+  const [narrative, setNarrative] = useState<any>(
+    initialNarrative?.available ? initialNarrative : null,
+  );
   const [loading, setLoading] = useState(!initialDetail);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
 
   useEffect(() => {
-    if (locale === 'en' && !gameVersion && retry === 0 && initialDetail && initialRelated && initialNarrative) {
+    if (
+      locale === "en" &&
+      !gameVersion &&
+      retry === 0 &&
+      initialDetail &&
+      initialRelated &&
+      initialNarrative
+    ) {
       setNode(initialDetail ?? null);
       setRelated(initialRelated ?? []);
       setNarrative(initialNarrative?.available ? initialNarrative : null);
-      setError('');
+      setError("");
       setLoading(false);
       return;
     }
     let active = true;
     const controller = new AbortController();
     setLoading(true);
-    setError('');
+    setError("");
     const canonicalKey = key;
     const selection = new URLSearchParams({ locale });
-    if (gameVersion) selection.set('game_version', gameVersion);
+    if (gameVersion) selection.set("game_version", gameVersion);
     Promise.all([
-      api<NodeDetail>(`/nodes/${encodeURIComponent(canonicalKey)}`, { signal: controller.signal }),
+      api<NodeDetail>(`/nodes/${encodeURIComponent(canonicalKey)}`, {
+        signal: controller.signal,
+      }),
       api<{ results: Related[] }>(
         `/nodes/${encodeURIComponent(canonicalKey)}/related?locale=${locale}&limit=${APP_SETTINGS.limits.relatedNodes}`,
         { signal: controller.signal },
       ),
-      api<any>(`/nodes/${encodeURIComponent(canonicalKey)}/narrative-context?${selection}`, { signal: controller.signal }).catch(
-        () => null,
-      ),
+      api<any>(
+        `/nodes/${encodeURIComponent(canonicalKey)}/narrative-context?${selection}`,
+        { signal: controller.signal },
+      ).catch(() => null),
     ])
       .then(([detail, links, context]) => {
         if (!active) return;
@@ -96,36 +124,58 @@ export function NodeExplorerPage({
       active = false;
       controller.abort();
     };
-  }, [key, locale, gameVersion, initialDetail, initialRelated, initialNarrative, retry]);
+  }, [
+    key,
+    locale,
+    gameVersion,
+    initialDetail,
+    initialRelated,
+    initialNarrative,
+    retry,
+  ]);
 
   if (loading) return <PageLoader />;
   if (error || !node)
     return (
       <div className="page-container">
-        <ErrorPanel message={error || 'Node not found'} onRetry={() => setRetry((value) => value + 1)} />
+        <ErrorPanel
+          message={error || "Node not found"}
+          onRetry={() => setRetry((value) => value + 1)}
+        />
       </div>
     );
-  const dialogueText = gameTextPlainText(narrative?.dialogue?.text, playerDisplay, narrative?.dialogue?.text?.inline_text || '');
-  const title = dialogueText || node.canonical_key;
+  const isSpeaker = node.canonical_key.startsWith("speaker:");
+  const speakerNameFromSlug = node.slug
+    ? node.slug
+        .replace(/^\d+-/, "")
+        .split("-")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ")
+    : null;
+  const dialogueText = gameTextPlainText(
+    narrative?.dialogue?.text,
+    playerDisplay,
+    narrative?.dialogue?.text?.inline_text || "",
+  );
+  const title = isSpeaker
+    ? speakerNameFromSlug || node.canonical_key
+    : dialogueText || node.canonical_key;
   return (
     <div className="page-container">
-      <div className="breadcrumbs">
-        <Link to="/">Archive</Link>
-        <ChevronRight size={13} />
-        <span>Source node</span>
-        <ChevronRight size={13} />
-        <span>{title}</span>
-      </div>
+      <Breadcrumbs
+        items={[
+          { label: "Archive", to: "/" },
+          { label: isSpeaker ? "Speakers" : "Source node" },
+          { label: title },
+        ]}
+      />
       <section className="generic-node-hero">
         <div className="generic-node-icon">
-          <Network size={26} />
+          {isSpeaker ? <Volume2 size={26} /> : <Network size={26} />}
         </div>
         <div>
-          <span className="eyebrow left">
-            {narrative ? 'DIALOGUE ENTRY' : `SOURCE-LINKED NODE / ${node.status.toUpperCase()}`}
-          </span>
           <h1>
-            {narrative ? (
+            {narrative && !isSpeaker ? (
               <PlayerText
                 display={playerDisplay}
                 value={narrative.dialogue?.text}
@@ -136,6 +186,9 @@ export function NodeExplorerPage({
             )}
             <span className="heading-period">.</span>
           </h1>
+          {isSpeaker && (
+            <span className="speaker-role-pill">Story Speaker &amp; Voice</span>
+          )}
           {narrative?.dialogue?.speaker && (
             <Link
               className="node-speaker-link"
@@ -147,8 +200,11 @@ export function NodeExplorerPage({
                 node_type: narrative.dialogue.speaker.type,
               } as Entity)}
             >
-              Spoken by{' '}
-              <PlayerText display={playerDisplay} value={narrative.dialogue.speaker.label} />{' '}
+              Spoken by{" "}
+              <PlayerText
+                display={playerDisplay}
+                value={narrative.dialogue.speaker.label}
+              />{" "}
               <ArrowRight size={13} />
             </Link>
           )}
@@ -162,6 +218,26 @@ export function NodeExplorerPage({
           Raw API <ExternalLink size={13} />
         </a>
       </section>
+      {isSpeaker && (
+        <section className="content-panel speaker-character-card">
+          <div className="speaker-character-icon">
+            <User size={24} />
+          </div>
+          <div className="speaker-character-content">
+            <h3>Character Profile · {title}</h3>
+            <p>
+              Explore character appearance, 3D model, shop goods, and quest
+              connections.
+            </p>
+          </div>
+          <Link
+            to={`/characters/${encodeURIComponent(node.slug || node.canonical_key)}`}
+            className="speaker-character-action"
+          >
+            Open Profile <ArrowRight size={14} />
+          </Link>
+        </section>
+      )}
       {narrative && (
         <section className="content-panel node-narrative-context">
           <div className="panel-title">
@@ -173,10 +249,10 @@ export function NodeExplorerPage({
               <PlayerText
                 display={playerDisplay}
                 value={narrative.dialogue?.text}
-                fallback={narrative.dialogue?.text?.inline_text || ''}
+                fallback={narrative.dialogue?.text?.inline_text || ""}
               />
             ) : (
-              'Text is unavailable in this locale.'
+              "Text is unavailable in this locale."
             )}
           </blockquote>
           <div className="node-context-meta">
@@ -184,17 +260,17 @@ export function NodeExplorerPage({
               Flow state <b>{narrative.flow_state?.state_key}</b>
             </span>
             <span>
-              Authored order{' '}
+              Authored order{" "}
               <b>
-                {narrative.dialogue?.action?.name || 'ShowTalk'} · line{' '}
-                {narrative.dialogue?.source_index ?? '—'}
+                {narrative.dialogue?.action?.name || "ShowTalk"} · line{" "}
+                {narrative.dialogue?.source_index ?? "—"}
               </b>
             </span>
             <span>
-              Source{' '}
+              Source{" "}
               <b>
-                {narrative.dialogue?.provenance?.source_file || 'Unknown'} · row{' '}
-                {narrative.dialogue?.provenance?.source_row ?? '—'}
+                {narrative.dialogue?.provenance?.source_file || "Unknown"} · row{" "}
+                {narrative.dialogue?.provenance?.source_row ?? "—"}
               </b>
             </span>
           </div>
@@ -202,25 +278,46 @@ export function NodeExplorerPage({
             <h3>Quest references</h3>
             {narrative.quests?.length ? (
               narrative.quests.map((quest: any) => {
-                const id = quest.game_quest_id || quest.canonical_key?.split(':').at(-1);
+                const id =
+                  quest.game_quest_id || quest.canonical_key?.split(":").at(-1);
                 return (
                   <Link
                     className="node-quest-card"
-                    to={quest.context_inferred && quest.scene
-                      ? `/quests/${encodeURIComponent(quest.slug || id)}?${new URLSearchParams({
-                          locale, ...(narrative.game_version || gameVersion ? { game_version: narrative.game_version || gameVersion } : {}),
-                        })}#${cutsceneAnchor(quest.scene)}`
-                      : questPassagePath(
-                      quest.slug || id,
-                      narrative.dialogue.id,
-                      locale,
-                      narrative.game_version || gameVersion,
-                    )}
+                    to={
+                      quest.context_inferred && quest.scene
+                        ? `/quests/${encodeURIComponent(quest.slug || id)}?${new URLSearchParams(
+                            {
+                              locale,
+                              ...(narrative.game_version || gameVersion
+                                ? {
+                                    game_version:
+                                      narrative.game_version || gameVersion,
+                                  }
+                                : {}),
+                            },
+                          )}#${cutsceneAnchor(quest.scene)}`
+                        : questPassagePath(
+                            quest.slug || id,
+                            narrative.dialogue.id,
+                            locale,
+                            narrative.game_version || gameVersion,
+                          )
+                    }
                     key={quest.canonical_key || id}
                   >
                     <span>
-                      <strong><PlayerText value={quest.name} fallback={`Quest ${id}`} display={playerDisplay} /></strong>
-                      <small>{quest.context_inferred ? 'Possible quest connection · open related scene →' : 'Open quest at this line →'}</small>
+                      <strong>
+                        <PlayerText
+                          value={quest.name}
+                          fallback={`Quest ${id}`}
+                          display={playerDisplay}
+                        />
+                      </strong>
+                      <small>
+                        {quest.context_inferred
+                          ? "Possible quest connection · open related scene →"
+                          : "Open quest at this line →"}
+                      </small>
                     </span>
                     <ArrowRight size={15} />
                   </Link>
@@ -228,8 +325,8 @@ export function NodeExplorerPage({
               })
             ) : (
               <p>
-                No confirmed quest link is available for this line in the imported data. Nearby
-                dialogue is shown below.
+                No confirmed quest link is available for this line in the
+                imported data. Nearby dialogue is shown below.
               </p>
             )}
           </div>
@@ -239,8 +336,8 @@ export function NodeExplorerPage({
               <article
                 className={
                   line.id === narrative.dialogue?.id
-                    ? 'node-context-line current'
-                    : 'node-context-line'
+                    ? "node-context-line current"
+                    : "node-context-line"
                 }
                 key={line.id}
               >
@@ -255,7 +352,10 @@ export function NodeExplorerPage({
                   <PlayerText
                     display={playerDisplay}
                     value={line.text}
-                    fallback={line.text?.inline_text || 'Text unavailable in this locale.'}
+                    fallback={
+                      line.text?.inline_text ||
+                      "Text unavailable in this locale."
+                    }
                   />
                 </p>
                 {line.id !== narrative.dialogue?.id && (
@@ -267,8 +367,8 @@ export function NodeExplorerPage({
             ))}
           </div>
           <small className="node-context-note">
-            Authored order is preserved; this excerpt does not claim a specific runtime branch
-            traversal.
+            Authored order is preserved; this excerpt does not claim a specific
+            runtime branch traversal.
           </small>
         </section>
       )}
@@ -279,30 +379,45 @@ export function NodeExplorerPage({
         </summary>
         {related.length ? (
           <div className="list-stack">
-            {related.map((edge, index) => (
-              <Link
-                className="connection-row"
-                to={entityPath({
-                  id: edge.node.id,
-                  slug: edge.node.slug,
-                  href: edge.node.href,
-                  canonical_key: edge.node.canonical_key,
-                  node_type: edge.node.type,
-                } as Entity)}
-                key={`${edge.node.canonical_key}-${edge.relation}-${index}`}
-              >
-                <span className="connection-index">
-                  {edge.direction === 'outgoing' ? '↗' : '↙'}
-                </span>
-                <div>
-                  <strong>{edge.node.label}</strong>
-                  <small>
-                    {edge.relation.replaceAll('_', ' ')} · {edge.basis.replaceAll('_', ' ')}
-                  </small>
-                </div>
-                <ChevronRight size={15} />
-              </Link>
-            ))}
+            {related.map((edge, index) => {
+              const isTalk =
+                edge.node.type === "talk_item" ||
+                edge.node.canonical_key?.startsWith("talk_item:");
+              const displayLabel = isTalk
+                ? `Spoken Line · ${edge.node.canonical_key.replace(/^talk_item:/, "")}`
+                : edge.node.label;
+              const displayRelation = isTalk
+                ? "Dialogue line in story flow"
+                : `${edge.relation.replaceAll("_", " ")} · ${edge.basis.replaceAll("_", " ")}`;
+              return (
+                <Link
+                  className="connection-row"
+                  to={entityPath({
+                    id: edge.node.id,
+                    slug: edge.node.slug,
+                    href: edge.node.href,
+                    canonical_key: edge.node.canonical_key,
+                    node_type: edge.node.type,
+                  } as Entity)}
+                  key={`${edge.node.canonical_key}-${edge.relation}-${index}`}
+                >
+                  <span className="connection-index">
+                    {isTalk ? (
+                      <MessageSquare size={14} aria-hidden="true" />
+                    ) : edge.direction === "outgoing" ? (
+                      "↗"
+                    ) : (
+                      "↙"
+                    )}
+                  </span>
+                  <div>
+                    <strong>{displayLabel}</strong>
+                    <small>{displayRelation}</small>
+                  </div>
+                  <ChevronRight size={15} />
+                </Link>
+              );
+            })}
           </div>
         ) : (
           <EmptyInline text="No linked entity neighbors are available for this node." />

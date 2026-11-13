@@ -29,7 +29,7 @@ async def test_reverse_state_lookup_is_bounded_and_follows_caption_and_quest_pat
         if relations == ("contains_action",):
             assert ids == {7}
             return [(7, 201)]
-        if relations == ("references_flow_state", "references_dungeon_flow_state"):
+        if relations == ("references_flow_state", "references_dungeon_flow_state", "references_scenario_flow_state"):
             assert ids == {100, 201}
             return [(100, 1), (201, 10), (201, 20)]
         if relations == ("has_quest_node",):
