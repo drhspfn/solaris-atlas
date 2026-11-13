@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -29,7 +30,8 @@ def _skeleton_from_cooked(cooked: Path, model_package: str) -> str | None:
     target_name = model_package.rsplit("/", 1)[-1]
     for row in rows:
         if isinstance(row, dict) and row.get("Type") == "SkeletalMesh" and row.get("Name") == target_name:
-            obj_path = row.get("Properties", {}).get("Skeleton", {}).get("ObjectPath")
+            obj_path = row.get("Properties", {}).get(
+                "Skeleton", {}).get("ObjectPath")
             if isinstance(obj_path, str) and obj_path:
                 return character_models.exported_package(obj_path)
     return None
@@ -41,7 +43,8 @@ def _material_inventory_summary(cooked: Path, converted: Path, model_package: st
     missing_deps = []
     if cooked.is_dir() and converted.is_dir():
         try:
-            missing_deps = missing_material_resources(cooked, converted, [model_package])
+            missing_deps = missing_material_resources(
+                cooked, converted, [model_package])
         except (OSError, ValueError) as exc:
             missing_deps = [f"error:{exc}"]
     materials = []
@@ -61,7 +64,8 @@ def _material_inventory_summary(cooked: Path, converted: Path, model_package: st
             converted_meta = _read_json(meta_path)
             if not isinstance(converted_meta, dict):
                 continue
-            cooked_meta = _read_json(content_cooked / (rel.as_posix() + ".json"))
+            cooked_meta = _read_json(
+                content_cooked / (rel.as_posix() + ".json"))
             parent = None
             if isinstance(cooked_meta, list):
                 for row in cooked_meta:
@@ -71,7 +75,8 @@ def _material_inventory_summary(cooked: Path, converted: Path, model_package: st
                             parent = parent_obj["ObjectPath"]
                             break
             inv = material_input_inventory(converted_meta, converted)
-            missing_tex = [k for k, v in inv["textures"].items() if v.get("image") is None]
+            missing_tex = [k for k, v in inv["textures"].items()
+                           if v.get("image") is None]
             materials.append({
                 "name": meta_path.stem,
                 "package": rel.as_posix(),
@@ -128,7 +133,8 @@ def _check_animation_metadata(cooked: Path, skeleton: str | None, form: dict) ->
     comp = form.get("component") or {}
     if comp.get("bindings"):
         try:
-            checked = character_models.component_animation_skeletons(form, cooked, skeleton)
+            checked = character_models.component_animation_skeletons(
+                form, cooked, skeleton)
             for clip, skel in sorted(checked.items()):
                 result["binding_checks"].append({
                     "clip": clip,
@@ -142,7 +148,8 @@ def _check_animation_metadata(cooked: Path, skeleton: str | None, form: dict) ->
 
 async def _diagnose_single_form(root: Path, form: dict, *, local_client=None,
                                 report_progress=None, check_animations: bool = True,
-                                asset_cache: dict | None = None) -> tuple[dict, list[dict]]:
+                                asset_cache: dict | None = None,
+                                asset_locks: dict | None = None) -> tuple[dict, list[dict]]:
     """Run non-destructive preflight build + inspection on one form or component."""
     root.mkdir(parents=True, exist_ok=True)
     comp = form.get("component") or {}
@@ -179,7 +186,8 @@ async def _diagnose_single_form(root: Path, form: dict, *, local_client=None,
         "status": "ok",
     }
     linked: list[dict] = []
-    options = {**({"local_client": local_client} if local_client is not None else {}), "asset_cache": asset_cache}
+    options = {**({"local_client": local_client}
+                  if local_client is not None else {}), "asset_cache": asset_cache, "asset_locks": asset_locks}
     try:
         output, summaries, metadata = await character_models.build_bundle(
             root, form, include_animations=False, report_progress=report_progress, **options
@@ -201,10 +209,12 @@ async def _diagnose_single_form(root: Path, form: dict, *, local_client=None,
         for glb_name, key in (("preview.glb", "preview"), ("character.glb", "download")):
             glb_path = output / glb_name
             if glb_path.is_file():
-                entry["probe_outputs"][glb_name] = summaries.get(key) or character_models.glb_summary(glb_path)
+                entry["probe_outputs"][glb_name] = summaries.get(
+                    key) or character_models.glb_summary(glb_path)
         blend_path = output / "model.blend"
         if blend_path.is_file():
-            entry["probe_outputs"]["model.blend"] = {"bytes": blend_path.stat().st_size}
+            entry["probe_outputs"]["model.blend"] = {
+                "bytes": blend_path.stat().st_size}
     except Exception as exc:  # noqa: BLE001 - diagnostic mode records errors and continues
         entry["status"] = "error"
         entry["errors"].append({
@@ -225,18 +235,22 @@ async def _diagnose_single_form(root: Path, form: dict, *, local_client=None,
                 if (cached_converted / "Client/Content" / (model_pkg + ".uemodel")).is_file():
                     converted = cached_converted
                     cooked = cached_cooked
-        entry["mesh_found"] = (converted / "Client/Content" / (model_pkg + ".uemodel")).is_file()
+        entry["mesh_found"] = (
+            converted / "Client/Content" / (model_pkg + ".uemodel")).is_file()
         skeleton = _skeleton_from_cooked(cooked, model_pkg)
         entry["skeleton"] = skeleton
         if skeleton:
-            entry["skeleton_found"] = (cooked / "Client/Content" / (skeleton + ".json")).is_file()
+            entry["skeleton_found"] = (
+                cooked / "Client/Content" / (skeleton + ".json")).is_file()
             if not entry["skeleton_found"]:
-                entry["warnings"].append(f"Skeleton metadata not in primary source-json: {skeleton}")
+                entry["warnings"].append(
+                    f"Skeleton metadata not in primary source-json: {skeleton}")
         report_data = _read_json(root / "bundle/report.json")
         if not isinstance(report_data, dict):
             report_data = _read_json(root / "report.json")
         entry["materials"] = _material_inventory_summary(
-            cooked, converted, model_pkg, report_data if isinstance(report_data, dict) else None
+            cooked, converted, model_pkg, report_data if isinstance(
+                report_data, dict) else None
         )
         if entry["materials"].get("missing_textures"):
             entry["warnings"].append(
@@ -245,23 +259,28 @@ async def _diagnose_single_form(root: Path, form: dict, *, local_client=None,
         if entry["materials"].get("missing_material_dependencies"):
             entry["warnings"].append(
                 "Missing material dependencies: "
-                + ", ".join(entry["materials"]["missing_material_dependencies"])
+                + ", ".join(entry["materials"]
+                            ["missing_material_dependencies"])
             )
         if check_animations and (form.get("montages") or comp.get("bindings")):
             anim_cooked = cooked
             if local_client is not None or os.getenv("WUWA_FMODEL_PATH"):
                 try:
                     fmodel = character_models.tool_path("WUWA_FMODEL_PATH")
-                    converter = character_models.tool_path("WUWA_TEXTURE_CONVERTER_PATH")
+                    converter = character_models.tool_path(
+                        "WUWA_TEXTURE_CONVERTER_PATH")
                     anim_root = root / "anim-metadata"
                     anim_root.mkdir(exist_ok=True)
-                    extract_options = {"local_client": local_client} if local_client is not None else {}
+                    extract_options = {
+                        "local_client": local_client} if local_client is not None else {}
                     _, _, anim_cooked, _ = await character_models.extract_model(
                         anim_root, form, fmodel, converter, True, metadata_only=True, **extract_options
                     )
                 except Exception as exc:  # noqa: BLE001
-                    entry["warnings"].append(f"Animation metadata check failed: {exc}")
-            entry["animation_check"] = _check_animation_metadata(anim_cooked, skeleton, form)
+                    entry["warnings"].append(
+                        f"Animation metadata check failed: {exc}")
+            entry["animation_check"] = _check_animation_metadata(
+                anim_cooked, skeleton, form)
             if entry["animation_check"]["binding_errors"]:
                 entry["status"] = "error"
                 for err in entry["animation_check"]["binding_errors"]:
@@ -272,7 +291,8 @@ async def _diagnose_single_form(root: Path, form: dict, *, local_client=None,
                     })
     blender_log = root / "blender.log"
     if entry["status"] == "error" and blender_log.is_file():
-        lines = blender_log.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = blender_log.read_text(
+            encoding="utf-8", errors="replace").splitlines()
         entry["blender_log_tail"] = lines[-20:]
     return entry, linked
 
@@ -287,33 +307,61 @@ async def diagnose_scene_bundles(
     check_animations: bool = True,
 ) -> dict:
     """Run full preflight diagnostics across all forms and linked components without packing animations."""
+    from wuwa_story_worker.model_material_forms import expand_material_replacement_forms
+
+    forms = await expand_material_replacement_forms(staging, forms, local_client=local_client)
     previous_blender_export = os.environ.get("WUWA_MODEL_BLENDER_EXPORT")
     if export_blender:
         os.environ["WUWA_MODEL_BLENDER_EXPORT"] = "1"
     entries: list[dict] = []
     asset_cache: dict = {}
-    try:
-        for index, form in enumerate(forms):
-            root = staging / (form.get("id") or f"form-{index}")
-            entry, linked = await _diagnose_single_form(
-                root, form, local_client=local_client,
+    asset_locks: dict = {}
+    semaphore = asyncio.Semaphore(character_models.model_form_workers(include_animations=False))
+
+    async def diagnose_bounded(root: Path, item: dict):
+        async with semaphore:
+            return await _diagnose_single_form(
+                root, item, local_client=local_client,
                 report_progress=report_progress, check_animations=check_animations,
-                asset_cache=asset_cache,
+                asset_cache=asset_cache, asset_locks=asset_locks,
             )
-            entries.append(entry)
-            prepared_components = character_models.prepare_linked_components(form, linked) if linked else []
-            for child_index, (recipe, (component_id, relation)) in enumerate(
-                zip(linked, prepared_components, strict=True)
-            ):
-                child_form = {**recipe, "id": component_id, "label": relation["label"],
-                              "order": child_index, "component": relation}
-                child_root = staging / component_id
-                child_entry, _ = await _diagnose_single_form(
-                    child_root, child_form, local_client=local_client,
-                    report_progress=report_progress, check_animations=check_animations,
-                    asset_cache=asset_cache,
+
+    try:
+        if forms:
+            first_root = staging / (forms[0].get("id") or "form-0")
+            first_result = await diagnose_bounded(first_root, forms[0])
+            rest_tasks = [
+                asyncio.create_task(
+                    diagnose_bounded(staging / (form.get("id") or f"form-{index}"), form)
                 )
-                entries.append(child_entry)
+                for index, form in enumerate(forms[1:], start=1)
+            ]
+            rest_results = await asyncio.gather(*rest_tasks) if rest_tasks else []
+            form_results = [first_result, *rest_results]
+
+            child_task_groups: list[list[asyncio.Task]] = []
+            for form, (entry, linked) in zip(forms, form_results, strict=True):
+                prepared_components = character_models.prepare_linked_components(
+                    form, linked) if linked else []
+                group = []
+                for child_index, (recipe, (component_id, relation)) in enumerate(
+                    zip(linked, prepared_components, strict=True)
+                ):
+                    child_form = {**recipe, "id": component_id, "label": relation["label"],
+                                  "order": child_index, "component": relation}
+                    child_root = staging / component_id
+                    group.append(asyncio.create_task(diagnose_bounded(child_root, child_form)))
+                child_task_groups.append(group)
+
+            all_child_tasks = [task for group in child_task_groups for task in group]
+            if all_child_tasks:
+                await asyncio.gather(*all_child_tasks)
+
+            for (entry, _), child_group in zip(form_results, child_task_groups, strict=True):
+                entries.append(entry)
+                for task in child_group:
+                    child_entry, _ = task.result()
+                    entries.append(child_entry)
     finally:
         if export_blender:
             if previous_blender_export is None:
@@ -353,10 +401,12 @@ def diagnose_workspace(workspace: Path) -> dict:
                         continue
                     for slot in row.get("SkeletalMaterials", []):
                         if isinstance(slot, dict):
-                            ref = (slot.get("MaterialInterface") or slot.get("Material") or {}).get("ObjectPath")
+                            ref = (slot.get("MaterialInterface") or slot.get(
+                                "Material") or {}).get("ObjectPath")
                             if ref:
                                 materials.append(ref)
-                    skel = row.get("Properties", {}).get("Skeleton", {}).get("ObjectPath")
+                    skel = row.get("Properties", {}).get(
+                        "Skeleton", {}).get("ObjectPath")
                     if skel and not skeleton:
                         skeleton = skel
             meshes.append({
@@ -369,8 +419,10 @@ def diagnose_workspace(workspace: Path) -> dict:
         if log.is_file():
             for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
                 if any(token in line for token in ("Error", "ValueError", "RuntimeError", "Traceback")):
-                    errors.append({"source": "blender.log", "error": line.strip()})
-        report = _read_json(folder / "bundle/report.json") or _read_json(folder / "report.json")
+                    errors.append(
+                        {"source": "blender.log", "error": line.strip()})
+        report = _read_json(
+            folder / "bundle/report.json") or _read_json(folder / "report.json")
         components.append({
             "workspace": folder.name,
             "meshes": meshes,

@@ -1075,15 +1075,23 @@ def main():
             if not part_materials:
                 return
             package = model_path.relative_to(args.converted / 'Client/Content').with_suffix('').as_posix()
-            for slot, material_path in part_materials.get(package, {}).items():
-                name = material_path.rsplit('/', 1)[-1]
-                material = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+            overrides_for_pkg = part_materials.get(package, {})
+            if not overrides_for_pkg:
+                return
+            applied = 0
+            for slot, material_path in overrides_for_pkg.items():
                 meshes = [obj for obj in rig.children_recursive if obj.type == 'MESH'
                           and int(slot) < len(obj.data.materials)]
                 if not meshes:
-                    raise ValueError(f'NPC part material targets absent slot: {package}:{slot}')
+                    continue
+                name = material_path.rsplit('/', 1)[-1]
+                material = bpy.data.materials.get(name) or bpy.data.materials.new(name)
                 for obj in meshes:
                     obj.data.materials[int(slot)] = material
+                applied += 1
+            if applied == 0:
+                first_slot = next(iter(overrides_for_pkg))
+                raise ValueError(f'NPC part material targets absent slot: {package}:{first_slot}')
 
         if args.hide_primary_geometry:
             if not args.master_pose or not args.extra_model:
