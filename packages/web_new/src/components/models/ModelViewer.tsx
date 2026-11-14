@@ -1,6 +1,6 @@
 "use client";
 
-import { Skeleton, SkeletonGroup } from '../ui/Skeleton';
+import { Skeleton, SkeletonGroup } from "../ui/Skeleton";
 import {
   Component,
   lazy,
@@ -57,16 +57,37 @@ const label = (name: string, bytes?: number) =>
 const normalizeAssets = (assets: ModelAssets): ModelAssets => ({
   ...assets,
   ...Object.fromEntries(
-    (["preview", "download", "blender", "physics", "animations", "animation_manifest", "facial"] as const).map((key) => {
+    (
+      [
+        "preview",
+        "download",
+        "blender",
+        "physics",
+        "animations",
+        "animation_manifest",
+        "facial",
+      ] as const
+    ).map((key) => {
       const asset = assets[key];
-      return [key, asset ? { ...asset, url: apiUrl(asset.url.replace(/^\/api(?=\/)/, "")) } : asset];
+      return [
+        key,
+        asset
+          ? { ...asset, url: apiUrl(asset.url.replace(/^\/api(?=\/)/, "")) }
+          : asset,
+      ];
     }),
   ),
   animation_packs: Array.isArray(assets.animation_packs)
-    ? assets.animation_packs.map((pack) => pack && typeof pack.url === "string"
-      ? { ...pack, url: apiUrl(pack.url.replace(/^\/api(?=\/)/, "")) } : pack)
+    ? assets.animation_packs.map((pack) =>
+        pack && typeof pack.url === "string"
+          ? { ...pack, url: apiUrl(pack.url.replace(/^\/api(?=\/)/, "")) }
+          : pack,
+      )
     : assets.animation_packs,
-  linked_models: assets.linked_models?.map((item) => ({ ...item, ...normalizeAssets(item) })),
+  linked_models: assets.linked_models?.map((item) => ({
+    ...item,
+    ...normalizeAssets(item),
+  })),
 });
 
 class CanvasBoundary extends Component<
@@ -92,6 +113,7 @@ class CanvasBoundary extends Component<
 type ModelViewerProps = {
   assets: ModelAssets;
   name: string;
+  formLabel?: string;
   preview?: boolean;
   active?: boolean;
   titleId?: string;
@@ -105,31 +127,60 @@ export function ModelViewer(props: ModelViewerProps) {
   const item = linked.find((model) => model.id === selected);
   const assets = item ?? props.assets;
   const selector = !props.preview && linked.length > 0 && (
-    <Select label="Model view" value={selected} onChange={setSelected}
-      options={[{ value: "", label: "Full scene" }, ...linked.map(({ id, label }) => ({ value: id, label }))]} />
+    <Select
+      label="Model view"
+      value={selected}
+      onChange={setSelected}
+      options={[
+        { value: "", label: "Full scene" },
+        ...linked.map(({ id, label }) => ({ value: id, label })),
+      ]}
+    />
   );
-  return <ModelViewerInstance key={selected} {...props} assets={assets}
-    formSelector={<>{props.formSelector}{selector}</>} />;
+  return (
+    <ModelViewerInstance
+      key={selected}
+      {...props}
+      assets={assets}
+      formSelector={
+        <>
+          {props.formSelector}
+          {selector}
+        </>
+      }
+    />
+  );
 }
 
 function ModelViewerInstance({
   assets: source,
   name,
+  formLabel,
   preview = false,
   active = true,
   titleId,
   formSelector,
   onClose,
 }: ModelViewerProps) {
-  const [assets] = useState<ModelAssets>(
-    () =>
-      normalizeAssets(source),
-  );
-  const packs = Array.isArray(assets.animation_packs) && assets.animation_packs.length
-    ? assets.animation_packs : assets.animations ? [{ ...assets.animations, id: "Animations" }] : [];
-  const packBytes = [...new Map(packs.filter((pack) => pack && typeof pack.url === "string")
-    .map((pack) => [pack.url, Number.isFinite(pack.size_bytes) && pack.size_bytes > 0 ? pack.size_bytes : 0])).values()]
-    .reduce((sum, size) => sum + size, 0);
+  const [assets] = useState<ModelAssets>(() => normalizeAssets(source));
+  const packs =
+    Array.isArray(assets.animation_packs) && assets.animation_packs.length
+      ? assets.animation_packs
+      : assets.animations
+        ? [{ ...assets.animations, id: "Animations" }]
+        : [];
+  const packBytes = [
+    ...new Map(
+      packs
+        .filter((pack) => pack && typeof pack.url === "string")
+        .map((pack) => [
+          pack.url,
+          Number.isFinite(pack.size_bytes) && pack.size_bytes > 0
+            ? pack.size_bytes
+            : 0,
+        ]),
+    ).values(),
+  ].reduce((sum, size) => sum + size, 0);
   const [settings, setSettings] = useState<ViewerSettings>(defaultSettings);
   const [state, setState] = useState<ViewerState>(initialViewerState);
   const [attempt, setAttempt] = useState(0);
@@ -271,11 +322,7 @@ function ModelViewerInstance({
       >
         {active && !(state.error && !state.ready) && (
           <CanvasBoundary key={attempt} retry={retry}>
-            <Suspense
-              fallback={
-                <ModelViewerSkeleton />
-              }
-            >
+            <Suspense fallback={<ModelViewerSkeleton />}>
               <ModelCanvas
                 assets={assets}
                 preview={preview}
@@ -287,7 +334,9 @@ function ModelViewerInstance({
           </CanvasBoundary>
         )}
         {!state.ready && !state.error && (
-          <ModelViewerSkeleton label={active ? state.status : "Preview loads when visible"} />
+          <ModelViewerSkeleton
+            label={active ? state.status : "Preview loads when visible"}
+          />
         )}
         {state.error && (
           <div className="model-stage-status" role="alert">
@@ -400,7 +449,10 @@ function ModelViewerInstance({
                   ],
                   [
                     "animations",
-                    (packs.length > 0 || (assets.animation_packs != null && !Array.isArray(assets.animation_packs))) && !state.animationsLoaded,
+                    (packs.length > 0 ||
+                      (assets.animation_packs != null &&
+                        !Array.isArray(assets.animation_packs))) &&
+                      !state.animationsLoaded,
                     label("Load animations", packBytes),
                     <ArrowDownToLine size={16} />,
                   ],
@@ -441,17 +493,83 @@ function ModelViewerInstance({
                 {state.fullQuality ? "Full quality" : "Compact model"}
               </span>
             </div>
-            {assets.blender && <a className="ui-button ui-button-default ui-button-sm" href={assets.blender.url} download>{label("Blender project", assets.blender.size_bytes)}</a>}
+            {state.materialVariants.length > 1 && (
+              <Select
+                className="character-model-form-select"
+                label="Form"
+                value={state.materialVariant}
+                disabled={!state.ready}
+                options={state.materialVariants}
+                onChange={(value) => controller.current?.materialVariant(value)}
+              />
+            )}
+            {(assets.download || assets.blender) && (
+              <details className="model-downloads">
+                <summary className="ui-button ui-button-default ui-button-sm">
+                  {`Download · ${[name, formLabel || "Default", state.materialVariant && !formLabel?.includes(state.materialVariant) ? state.materialVariant : ""].filter(Boolean).join(" - ")}`}
+                  <ChevronDown size={16} aria-hidden="true" />
+                </summary>
+                <div className="model-download-list">
+                  {assets.download && (
+                    <a
+                      className="ui-button ui-button-default ui-button-sm"
+                      href={assets.download.url}
+                      download
+                    >
+                      {label(".glb", assets.download.size_bytes)}
+                    </a>
+                  )}
+                  {assets.blender && (
+                    <a
+                      className="ui-button ui-button-default ui-button-sm"
+                      href={assets.blender.url}
+                      download
+                    >
+                      {label(
+                        ".blend (with shaders)",
+                        assets.blender.size_bytes,
+                      )}
+                    </a>
+                  )}
+                </div>
+              </details>
+            )}
             {(packs.length > 0 || assets.animation_manifest) && (
               <details className="model-downloads">
-                <summary className="ui-button ui-button-ghost ui-button-sm">Animation downloads <ChevronDown size={16} aria-hidden="true" /></summary>
+                <summary className="ui-button ui-button-ghost ui-button-sm">
+                  Animation downloads{" "}
+                  <ChevronDown size={16} aria-hidden="true" />
+                </summary>
                 <div className="model-download-list">
-                  {packs.map((pack, index) => pack && typeof pack.url === "string" && (
-                    <a className="ui-button ui-button-default ui-button-sm" href={pack.url} download key={`${pack.url}:${index}`}>
-                      {label(`${index === 0 ? "Animations" : "Additional animations"}${"clips" in pack && Array.isArray(pack.clips) ? ` · ${pack.clips.length} ${pack.clips.length === 1 ? "clip" : "clips"}` : ""}`, pack.size_bytes)}
+                  {packs.map(
+                    (pack, index) =>
+                      pack &&
+                      typeof pack.url === "string" && (
+                        <a
+                          className="ui-button ui-button-default ui-button-sm"
+                          href={pack.url}
+                          download
+                          key={`${pack.url}:${index}`}
+                        >
+                          {label(
+                            `${index === 0 ? "Animations" : "Additional animations"}${"clips" in pack && Array.isArray(pack.clips) ? ` · ${pack.clips.length} ${pack.clips.length === 1 ? "clip" : "clips"}` : ""}`,
+                            pack.size_bytes,
+                          )}
+                        </a>
+                      ),
+                  )}
+                  {assets.animation_manifest && (
+                    <a
+                      className="ui-button ui-button-default ui-button-sm"
+                      href={assets.animation_manifest.url}
+                      download
+                    >
+                      {label(
+                        "Animation manifest",
+                        assets.animation_manifest.size_bytes,
+                      )}
                     </a>
-                  ))}
-                  {assets.animation_manifest && <a className="ui-button ui-button-default ui-button-sm" href={assets.animation_manifest.url} download>{label("Animation manifest", assets.animation_manifest.size_bytes)}</a>}
+                  )}
                 </div>
               </details>
             )}
@@ -553,24 +671,80 @@ function ModelViewerInstance({
                   {checkbox("Show floor and world axes", "floor")}
                   {checkbox("Turntable", "turntable")}
                   {checkbox("Lock root position", "lock", !state.rootAvailable)}
-                  {state.components.length > 0 && <fieldset>
-                    <legend>Linked components</legend>
-                    {state.components.map((component) => <div key={component.id}>
-                      <Checkbox label={component.name} checked={component.visible}
-                        disabled={disabled} onChange={(event) => controller.current?.component(component.id, event.target.checked)} />
-                      {component.override !== null && <Button size="sm" variant="ghost" onClick={() => controller.current?.component(component.id, null)}>Follow animation</Button>}
-                      {component.loading && <SkeletonGroup label="Loading linked model"><Skeleton style={{width:"5rem"}} /></SkeletonGroup>}
-                      {component.error && <div role="alert">{component.error}{" "}
-                        <Button size="sm" onClick={() => controller.current?.component(component.id, true)}>Retry</Button>
-                      </div>}
-                    </div>)}
-                  </fieldset>}
-                  {state.accessories.length > 0 && <fieldset>
-                    <legend>Accessories</legend>
-                    {state.accessories.map((accessory) => <Checkbox key={accessory.name}
-                      label={accessory.name} checked={accessory.visible} disabled={disabled}
-                      onChange={(event) => controller.current?.accessory(accessory.name, event.target.checked)} />)}
-                  </fieldset>}
+                  {state.components.length > 0 && (
+                    <fieldset>
+                      <legend>Linked components</legend>
+                      {state.components.map((component) => (
+                        <div key={component.id}>
+                          <Checkbox
+                            label={component.name}
+                            checked={component.visible}
+                            disabled={disabled}
+                            onChange={(event) =>
+                              controller.current?.component(
+                                component.id,
+                                event.target.checked,
+                              )
+                            }
+                          />
+                          {component.override !== null && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() =>
+                                controller.current?.component(
+                                  component.id,
+                                  null,
+                                )
+                              }
+                            >
+                              Follow animation
+                            </Button>
+                          )}
+                          {component.loading && (
+                            <SkeletonGroup label="Loading linked model">
+                              <Skeleton style={{ width: "5rem" }} />
+                            </SkeletonGroup>
+                          )}
+                          {component.error && (
+                            <div role="alert">
+                              {component.error}{" "}
+                              <Button
+                                size="sm"
+                                onClick={() =>
+                                  controller.current?.component(
+                                    component.id,
+                                    true,
+                                  )
+                                }
+                              >
+                                Retry
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </fieldset>
+                  )}
+                  {state.accessories.length > 0 && (
+                    <fieldset>
+                      <legend>Accessories</legend>
+                      {state.accessories.map((accessory) => (
+                        <Checkbox
+                          key={accessory.name}
+                          label={accessory.name}
+                          checked={accessory.visible}
+                          disabled={disabled}
+                          onChange={(event) =>
+                            controller.current?.accessory(
+                              accessory.name,
+                              event.target.checked,
+                            )
+                          }
+                        />
+                      ))}
+                    </fieldset>
+                  )}
                   <fieldset disabled={disabled || !settings.lock}>
                     <legend>
                       <HelpLabel

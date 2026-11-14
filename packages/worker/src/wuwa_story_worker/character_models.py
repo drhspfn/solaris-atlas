@@ -447,9 +447,19 @@ def use_smaller_preview(output, summaries):
         summaries["preview"] = glb_summary(output / "preview.glb")
 
 
+def model_asset_key(model_package: str, include_animations: bool) -> tuple[str, bool]:
+    """Key extracted assets by Role character folder, or per-asset folder for props/weapons/NPCs."""
+    parts = model_package.split("/")
+    if len(parts) >= 7 and parts[1].casefold() == "character" and parts[2].casefold() == "role":
+        prefix_len = 5
+    else:
+        prefix_len = max(5, len(parts) - 2)
+    return ("/".join(parts[:prefix_len]).casefold(), include_animations)
+
+
 async def build_bundle(root, sources, include_animations=True, *, run_id=None, local_client=None,
                        animation_workers=1, report_progress=None, animation_cache=None, asset_cache=None,
-                       animation_ownership=None):
+                       asset_locks=None, animation_ownership=None):
     if animation_ownership:
         sources = {**sources, "animation_ownership": animation_ownership}
 
@@ -518,20 +528,32 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         '/', 1)[0] + '/' for path in sources.get('extra_models', [])}
     component_filters.update(path.rsplit('/', 1)[0] + '/'
                              for slots in sources.get('part_material_overrides', {}).values() for path in slots.values())
-    asset_key = ("/".join(sources["model"].split("/")
-                 [:5]).casefold(), include_animations)
-    cached = asset_cache.get(asset_key) if asset_cache is not None else None
-    if cached_model_covers_sources(cached, sources, include_animations):
-        _, converted, cooked, manifest = cached
-        model = converted / "Client/Content" / (sources["model"] + ".uemodel")
-        await progress("reuse_extracted_assets")
-    else:
-        model, converted, cooked, manifest = await extract_model(
-            root, sources, fmodel, converter, include_animations,
-            additional_filters=sorted(component_filters), **options
-        )
-        if asset_cache is not None:
-            asset_cache[asset_key] = model, converted, cooked, manifest
+    component_filters.update(
+        path.rsplit('/', 1)[0] + '/'
+        for variant in sources.get('material_variants', [])
+        for slots in (variant.get('overrides') or {}).values()
+        for path in slots.values()
+    )
+    asset_key = model_asset_key(sources["model"], include_animations)
+    asset_lock = asset_locks.setdefault(asset_key, asyncio.Lock()) if asset_locks is not None else None
+    if asset_lock is not None:
+        await asset_lock.acquire()
+    try:
+        cached = asset_cache.get(asset_key) if asset_cache is not None else None
+        if cached_model_covers_sources(cached, sources, include_animations):
+            _, converted, cooked, manifest = cached
+            model = converted / "Client/Content" / (sources["model"] + ".uemodel")
+            await progress("reuse_extracted_assets")
+        else:
+            model, converted, cooked, manifest = await extract_model(
+                root, sources, fmodel, converter, include_animations,
+                additional_filters=sorted(component_filters), **options
+            )
+            if asset_cache is not None:
+                asset_cache[asset_key] = model, converted, cooked, manifest
+    finally:
+        if asset_lock is not None:
+            asset_lock.release()
     for _, metadata_cooked, receipt in blueprint_exports:
         shutil.copytree(metadata_cooked, cooked, dirs_exist_ok=True)
         manifest['files'].extend(receipt['files'])
@@ -737,9 +759,14 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
 
     material_models = [sources["model"], *sources.get("extra_models", []),
                        *(item["model"] for item in attachments)]
-    override_packages = [*material_overrides.values(),
-                         *(path for slots in sources.get("part_material_overrides", {}).values()
-                           for path in slots.values())]
+    override_packages = [
+        *material_overrides.values(),
+        *(path for slots in sources.get("part_material_overrides", {}).values()
+          for path in slots.values()),
+        *(path for variant in sources.get("material_variants", [])
+          for slots in (variant.get("overrides") or {}).values()
+          for path in slots.values()),
+    ]
     material_fetched = set()
     for depth in range(8):
         missing = missing_material_resources(
@@ -803,6 +830,11 @@ async def build_bundle(root, sources, include_animations=True, *, run_id=None, l
         material_path.write_text(json.dumps(
             sources['part_material_overrides']), encoding='utf-8')
         command.extend(['--part-material-overrides', material_path.resolve()])
+    if sources.get('material_variants'):
+        variants_path = root / 'material-variants.json'
+        variants_path.write_text(json.dumps(
+            sources['material_variants']), encoding='utf-8')
+        command.extend(['--material-variants', variants_path.resolve()])
     if bone_visibility:
         visibility_path = root / 'npc-bone-visibility.json'
         visibility_path.write_text(json.dumps(
@@ -1251,35 +1283,102 @@ async def publish_forms(job, bundles, *, publication_payload=None):
         await session.commit()
 
 
+def _detect_memory_limit_bytes() -> int | None:
+    """Return effective cgroup or host physical memory limit in bytes when available."""
+    candidates: list[int] = []
+    for path in (
+        Path("/sys/fs/cgroup/memory.max"),
+        Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
+    ):
+        try:
+            raw = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if raw.isdigit():
+            val = int(raw)
+            if 0 < val < (1 << 60):
+                candidates.append(val)
+    if hasattr(os, "sysconf"):
+        try:
+            pages = os.sysconf("SC_PHYS_PAGES")
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            if isinstance(pages, int) and isinstance(page_size, int) and pages > 0 and page_size > 0:
+                candidates.append(pages * page_size)
+        except (OSError, ValueError):
+            pass
+    return min(candidates) if candidates else None
+
+
+def model_form_workers(*, include_animations: bool = True, form_workers: int | None = None) -> int:
+    """Resolve bounded concurrency for parallel model form/component builds based on host CPU and RAM."""
+    if form_workers is not None:
+        return max(1, int(form_workers))
+    raw = os.getenv("WUWA_MODEL_FORM_WORKERS")
+    if raw:
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            pass
+    cpus = os.cpu_count() or 2
+    mem_bytes = _detect_memory_limit_bytes()
+    gib = 1024 ** 3
+    per_worker_bytes = int(1.5 * gib) if include_animations else gib
+    ram_cap = max(1, (mem_bytes - gib) // per_worker_bytes) if mem_bytes else 2
+    cpu_cap = max(1, cpus // 2) if include_animations else max(1, min(8, cpus))
+    return max(1, min(8, ram_cap, cpu_cap))
+
+
 async def build_scene_bundles(staging, forms, *, include_animations=True, **options):
     """Retain independently validated rigs until the complete scene can publish atomically."""
-    bundles, total_components = [], 0
-    options = {**options, "animation_cache": {}, "asset_cache": {}}
-    for form in forms:
-        form_options = {**options}
-        if form.get("model"):
-            form_options["animation_ownership"] = ownership_for(form, forms)
-        root = staging / form["id"]
-        root.mkdir()
-        if options.get("local_client") is None:
-            prepare_entity_workspace(staging, root)
-        output, summaries, provenance = await build_bundle(
-            root, form, include_animations=include_animations, **form_options)
-        provenance["form_source"] = form.get("source")
-        components = provenance.pop("linked_components", [])
-        total_components += len(components)
-        if total_components > MAX_MODEL_COMPONENTS:
-            raise ValueError(
-                f"Model scene exceeds {MAX_MODEL_COMPONENTS} authored components")
-        linked = []
-        children = []
-        prepared_components = prepare_linked_components(form, components)
-        for recipe, (component_id, relation) in zip(components, prepared_components, strict=True):
-            if component_id in linked:
-                raise ValueError("Duplicate authored component in model scene")
-            linked.append(component_id)
-            child_form = {**recipe, "id": component_id, "label": relation["label"],
-                          "order": len(children), "component": relation}
+    from wuwa_story_worker.model_material_forms import expand_material_replacement_forms
+
+    collapse_variants = bool(
+        options.pop("material_variants", None)
+        or os.getenv("WUWA_MODEL_MATERIAL_VARIANTS", "").lower() in {"1", "true"}
+    )
+    options = {**options, "animation_cache": {}, "asset_cache": {}, "asset_locks": {}}
+    forms = await expand_material_replacement_forms(
+        staging,
+        forms,
+        local_client=options.get("local_client"),
+        include_animations=include_animations,
+        asset_cache=options["asset_cache"],
+        collapse_variants=collapse_variants,
+    )
+    if not forms:
+        return []
+    workers = model_form_workers(
+        include_animations=include_animations,
+        form_workers=options.get("form_workers"),
+    )
+    semaphore = asyncio.Semaphore(workers)
+
+    async def build_primary_form(form, *, wait_for=None):
+        if wait_for is not None:
+            await wait_for
+        async with semaphore:
+            form_options = {**options}
+            if form.get("model"):
+                form_options["animation_ownership"] = ownership_for(form, forms)
+            root = staging / form["id"]
+            root.mkdir()
+            if options.get("local_client") is None:
+                prepare_entity_workspace(staging, root)
+            output, summaries, provenance = await build_bundle(
+                root, form, include_animations=include_animations, **form_options)
+            provenance["form_source"] = form.get("source")
+            components = provenance.pop("linked_components", [])
+            return form, output, summaries, provenance, components
+
+    async def build_child_component(recipe, component_id, relation, child_order):
+        async with semaphore:
+            child_form = {
+                **recipe,
+                "id": component_id,
+                "label": relation["label"],
+                "order": child_order,
+                "component": relation,
+            }
             child_root = staging / component_id
             child_root.mkdir()
             if options.get("local_client") is None:
@@ -1291,14 +1390,61 @@ async def build_scene_bundles(staging, forms, *, include_animations=True, **opti
             child_output, child_summaries, child_provenance = await build_bundle(
                 child_root, child_form, include_animations=animated, **options)
             child_provenance["form_source"] = relation["source"]
-            children.append((child_form, child_output,
-                            child_summaries, child_provenance))
+            return child_form, child_output, child_summaries, child_provenance
+
+    # Build forms[0] first so asset_cache and animation_cache are warmed before parallel forms start.
+    first_result = await build_primary_form(forms[0])
+    base_tasks: dict[str, asyncio.Task] = {}
+    rest_tasks: list[asyncio.Task] = []
+    for form in forms[1:]:
+        model = form.get("model")
+        is_override = bool(form.get("part_material_overrides"))
+        wait_for = base_tasks.get(model) if is_override and isinstance(model, str) else None
+        task = asyncio.create_task(build_primary_form(form, wait_for=wait_for))
+        rest_tasks.append(task)
+        if isinstance(model, str) and not is_override and model != forms[0].get("model"):
+            base_tasks.setdefault(model, task)
+    rest_results = await asyncio.gather(*rest_tasks) if rest_tasks else []
+    form_results = [first_result, *rest_results]
+
+    total_components = 0
+    prepared_all: list[tuple[list[str], list[tuple[dict, str, dict]]]] = []
+    for form, _, _, _, components in form_results:
+        total_components += len(components)
+        if total_components > MAX_MODEL_COMPONENTS:
+            raise ValueError(
+                f"Model scene exceeds {MAX_MODEL_COMPONENTS} authored components")
+        linked: list[str] = []
+        child_specs: list[tuple[dict, str, dict]] = []
+        prepared_components = prepare_linked_components(form, components)
+        for recipe, (component_id, relation) in zip(components, prepared_components, strict=True):
+            if component_id in linked:
+                raise ValueError("Duplicate authored component in model scene")
+            linked.append(component_id)
+            child_specs.append((recipe, component_id, relation))
+        prepared_all.append((linked, child_specs))
+
+    child_task_groups = [
+        [
+            asyncio.create_task(build_child_component(recipe, component_id, relation, child_index))
+            for child_index, (recipe, component_id, relation) in enumerate(child_specs)
+        ]
+        for _, child_specs in prepared_all
+    ]
+    all_child_tasks = [task for group in child_task_groups for task in group]
+    if all_child_tasks:
+        await asyncio.gather(*all_child_tasks)
+
+    bundles = []
+    for (form, output, summaries, provenance, _), (linked, _), child_group in zip(
+        form_results, prepared_all, child_task_groups, strict=True
+    ):
         if linked:
             scene = provenance.setdefault(
                 "scene", {"format": "solaris-model-scene-v1", "cues": []})
             scene["components"] = linked
         bundles.append((form, output, summaries, provenance))
-        bundles.extend(children)
+        bundles.extend(task.result() for task in child_group)
     return bundles
 
 

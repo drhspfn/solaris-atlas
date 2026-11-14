@@ -35,12 +35,16 @@ async def build(args):
     forms = resolve_recipe_forms(recipe)
     started = time.monotonic()
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    if getattr(args, "with_blender", False):
+        os.environ["WUWA_MODEL_BLENDER_EXPORT"] = "1"
+    scratch_dir = Path(os.getenv("WUWA_MODEL_SCRATCH_DIR")) if os.getenv("WUWA_MODEL_SCRATCH_DIR") else None
     if diagnose_mode:
-        with tempfile.TemporaryDirectory(prefix=".solaris-model-diag-", dir=args.output.parent) as scratch:
+        with tempfile.TemporaryDirectory(prefix=".solaris-model-diag-", dir=scratch_dir, ignore_cleanup_errors=True) as scratch:
             report = await diagnose_scene_bundles(
                 Path(scratch), forms,
                 local_client={"game": args.game_dir.resolve(), "keys": args.keys_file.resolve(),
                               "processors": args.workers},
+                material_variants=getattr(args, "material_variants", False),
                 report_progress=lambda stage, **details: print(
                     json.dumps({"stage": stage, **details}), flush=True),
             )
@@ -53,9 +57,11 @@ async def build(args):
                           "forms": report["forms_total"], "entries": report["entries_total"],
                           "errors": report["error_count"], "seconds": report["seconds"]}))
         return
-    with tempfile.TemporaryDirectory(prefix=".solaris-model-", dir=args.output.parent) as scratch:
+    with tempfile.TemporaryDirectory(prefix=".solaris-model-", dir=scratch_dir, ignore_cleanup_errors=True) as scratch:
         bundles = await build_scene_bundles(Path(scratch), forms,
                                             include_animations=not args.without_animations,
+                                            material_variants=getattr(
+                                                args, "material_variants", False),
                                             local_client={"game": args.game_dir.resolve(), "keys": args.keys_file.resolve(),
                                                           "processors": args.workers}, animation_workers=args.workers,
                                             report_progress=lambda stage, **details: print(json.dumps({"stage": stage, **details}), flush=True))
@@ -78,6 +84,8 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--diagnose", action="store_true")
     parser.add_argument("--without-animations", action="store_true")
+    parser.add_argument("--material-variants", action="store_true")
+    parser.add_argument("--with-blender", action="store_true")
     parser.add_argument("--workers", type=int, choices=range(1,
                         9), default=min(4, os.cpu_count() or 1))
     for name in ["fmodel", "converter", "blender", "ueformat-plugin"]:
