@@ -2,16 +2,27 @@
   "title": "Solaris Atlas — Structured Logs (Sentry-style)",
   "uid": "solaris-logs-explorer",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "refresh": "30s",
   "time": { "from": "now-15m", "to": "now" },
   "templating": {
     "list": [
       {
+        "name": "job",
+        "label": "Source",
+        "type": "custom",
+        "query": "solaris-app,caddy-access",
+        "options": [
+          { "selected": true, "text": "solaris-app", "value": "solaris-app" },
+          { "selected": false, "text": "caddy-access", "value": "caddy-access" }
+        ],
+        "current": { "text": "solaris-app", "value": "solaris-app" }
+      },
+      {
         "name": "service",
         "type": "query",
         "datasource": { "type": "loki", "uid": "loki" },
-        "query": "label_values(service)",
+        "query": "label_values({job=\"$job\"}, service)",
         "refresh": 1,
         "includeAll": true,
         "allValue": ".+",
@@ -22,7 +33,7 @@
         "name": "level",
         "type": "query",
         "datasource": { "type": "loki", "uid": "loki" },
-        "query": "label_values(level)",
+        "query": "label_values({job=\"$job\"}, level)",
         "refresh": 1,
         "includeAll": true,
         "allValue": ".+",
@@ -43,7 +54,7 @@
       "title": "Errors & Warnings Volume",
       "gridPos": { "x": 0, "y": 0, "w": 24, "h": 5 },
       "datasource": { "type": "loki", "uid": "loki" },
-      "targets": [{ "expr": "sum by (service, level) (count_over_time({job=~\".+\", service=~\"$service\", level=~\"ERROR|WARNING|CRITICAL\"}[1m]))", "legendFormat": "{{service}} [{{level}}]", "refId": "A" }]
+      "targets": [{ "expr": "sum by (service, level) (count_over_time({job=\"$job\", service=~\"$service\", level=~\"ERROR|WARNING|CRITICAL\"}[1m]))", "legendFormat": "{{service}} [{{level}}]", "refId": "A" }]
     },
     {
       "id": 2,
@@ -53,8 +64,8 @@
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
-          "expr": "{job=~\".+\", service=~\"$service\", level=~\"ERROR|CRITICAL\"} |= \"$search\" | json | line_format \"[{{.level}}] [{{.service}}] {{if .message}}{{.message}}{{else}}{{.msg}}{{end}}{{if .exception_type}} — {{.exception_type}}: {{.exception_message}}{{end}}\"",
-          "maxLines": 200,
+          "expr": "{job=\"$job\", service=~\"$service\", level=~\"ERROR|CRITICAL\"} |= \"$search\" | json | line_format \"[{{.level}}] [{{.service}}] {{if .message}}{{.message}}{{else}}{{.msg}}{{end}}{{if .exception_type}} — {{.exception_type}}: {{.exception_message}}{{end}}\"",
+          "maxLines": 100,
           "refId": "A"
         }
       ],
@@ -71,13 +82,13 @@
     {
       "id": 3,
       "type": "logs",
-      "title": "All Service Logs (click row for JSON context)",
+      "title": "Service Logs (click row for JSON context)",
       "gridPos": { "x": 0, "y": 13, "w": 24, "h": 14 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
-          "expr": "{job=~\".+\", service=~\"$service\", level=~\"$level\"} |= \"$search\" | json | line_format \"[{{.level}}] [{{.service}}] {{if .request_method}}{{.request_method}} {{.request_uri}} [{{.status}}]{{else if .message}}{{.message}}{{else if .msg}}{{.msg}}{{end}}{{if .exception_type}} — {{.exception_type}}: {{.exception_message}}{{end}}\"",
-          "maxLines": 200,
+          "expr": "{job=\"$job\", service=~\"$service\", level=~\"$level\"} |= \"$search\" | json | line_format \"[{{.level}}] [{{.service}}] {{if .request_method}}{{.request_method}} {{.request_uri}} [{{.status}}]{{else if .message}}{{.message}}{{else if .msg}}{{.msg}}{{end}}{{if .exception_type}} — {{.exception_type}}: {{.exception_message}}{{end}}\"",
+          "maxLines": 100,
           "refId": "A"
         }
       ],
