@@ -1,10 +1,147 @@
 {% extends "@starlette-admin/base.html" %} {% block head_meta %} {{ super() }}
 <script>
   document.documentElement.setAttribute("data-bs-theme", "dark");
+  document.documentElement.classList.add("sa-sb-init");
 </script>
 {% endblock %} {% block head_css %} {{ super() }}
 <link
   rel="stylesheet"
   href="{{ url_for(__name__ ~ ':statics', path='solaris-admin.css') }}"
 />
+{% endblock %} {% block script %}{{ super() }}
+<script>
+  (function () {
+    const KEY = "sa_sidebar_groups_v1";
+    const SCROLL_KEY = "sa_sidebar_scroll_v1";
+    const sidebar =
+      document.querySelector(".navbar-vertical .navbar-collapse") ||
+      document.querySelector(".navbar-vertical");
+    let saved = {};
+    try {
+      saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {};
+    } catch {
+      saved = {};
+    }
+    const save = () => {
+      try {
+        localStorage.setItem(KEY, JSON.stringify(saved));
+      } catch {}
+    };
+    const saveScroll = () => {
+      if (!sidebar) return;
+      try {
+        sessionStorage.setItem(SCROLL_KEY, String(sidebar.scrollTop || 0));
+      } catch {}
+    };
+
+    const currentPath = location.pathname.replace(/\/+$/, "");
+    document
+      .querySelectorAll(".navbar-vertical .nav-item.dropdown")
+      .forEach((group) => {
+        const toggle = group.querySelector(
+          ":scope > .nav-link.dropdown-toggle",
+        );
+        const menu = group.querySelector(":scope > .dropdown-menu");
+        if (!toggle || !menu) return;
+
+        const label = (
+          toggle.querySelector(".nav-link-title")?.textContent ||
+          toggle.textContent ||
+          ""
+        ).trim();
+        let hasActiveChild = false;
+        menu.querySelectorAll("a.dropdown-item").forEach((link) => {
+          try {
+            const linkPath = new URL(
+              link.href,
+              location.origin,
+            ).pathname.replace(/\/+$/, "");
+            if (
+              linkPath === currentPath ||
+              (linkPath !== "/console" &&
+                currentPath.startsWith(linkPath + "/"))
+            ) {
+              link.classList.add("active", "fw-bold");
+              hasActiveChild = true;
+            }
+          } catch {}
+          link.addEventListener("click", saveScroll);
+        });
+        if (hasActiveChild) {
+          group.classList.add("active");
+        }
+
+        const defaultOpen = hasActiveChild || menu.classList.contains("show");
+        const isOpen = Object.prototype.hasOwnProperty.call(saved, label)
+          ? Boolean(saved[label])
+          : defaultOpen;
+        group.classList.toggle("is-open", isOpen);
+        menu.classList.toggle("show", isOpen);
+        toggle.classList.toggle("show", isOpen);
+        toggle.setAttribute("aria-expanded", String(isOpen));
+        toggle.removeAttribute("data-bs-toggle");
+
+        toggle.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          const nextOpen = !menu.classList.contains("show");
+          group.classList.toggle("is-open", nextOpen);
+          menu.classList.toggle("show", nextOpen);
+          toggle.classList.toggle("show", nextOpen);
+          toggle.setAttribute("aria-expanded", String(nextOpen));
+          if (label) {
+            saved[label] = nextOpen;
+            save();
+          }
+        });
+      });
+
+    if (sidebar) {
+      try {
+        const y = Number(sessionStorage.getItem(SCROLL_KEY) || "0");
+        if (y > 0) sidebar.scrollTop = y;
+      } catch {}
+      window.addEventListener("beforeunload", saveScroll);
+    }
+
+    // Mobile/tablet off-canvas drawer for #sidebar-menu
+    const toggler = document.querySelector(".navbar-vertical .navbar-toggler");
+    if (sidebar && toggler) {
+      toggler.removeAttribute("data-bs-toggle");
+      toggler.removeAttribute("data-bs-target");
+
+      const backdrop = document.createElement("div");
+      backdrop.className = "sa-drawer-backdrop";
+      document.body.appendChild(backdrop);
+
+      const brandTitle =
+        document.querySelector(".navbar-vertical .navbar-brand h3")?.textContent?.trim() ||
+        "Solaris Atlas · Admin";
+      const head = document.createElement("div");
+      head.className = "sa-drawer-head";
+      head.innerHTML = `<span class="sa-drawer-title"></span><button type="button" class="sa-drawer-close" aria-label="Close menu">&times;</button>`;
+      head.querySelector(".sa-drawer-title").textContent = brandTitle;
+      sidebar.prepend(head);
+
+      const setDrawer = (open) => {
+        document.body.classList.toggle("sa-drawer-open", open);
+        toggler.setAttribute("aria-expanded", String(open));
+      };
+      toggler.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDrawer(!document.body.classList.contains("sa-drawer-open"));
+      });
+      head.querySelector(".sa-drawer-close").addEventListener("click", () => setDrawer(false));
+      backdrop.addEventListener("click", () => setDrawer(false));
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && document.body.classList.contains("sa-drawer-open")) {
+          setDrawer(false);
+        }
+      });
+    }
+
+    document.documentElement.classList.remove("sa-sb-init");
+  })();
+</script>
 {% endblock %}

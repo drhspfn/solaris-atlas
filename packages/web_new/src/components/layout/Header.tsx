@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import {
   CalendarDays,
@@ -13,13 +13,13 @@ import {
   Sparkles,
   UserRound,
   X,
-} from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { usePathname } from 'next/navigation';
-import { Link } from '@/lib/router';
-import { useAuth } from '@/auth/AuthProvider';
-import { LocaleSwitcher } from './LocaleSwitcher';
-import { categories } from '@/data/entities';
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
+import { Link } from "@/lib/router";
+import { useAuth } from "@/auth/AuthProvider";
+import { LocaleSwitcher } from "./LocaleSwitcher";
+import { categories } from "@/data/entities";
 
 export function Header() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -31,9 +31,11 @@ export function Header() {
   const { user, logout } = useAuth();
 
   function closeMenus() {
-    header.current?.querySelectorAll<HTMLDetailsElement>('details[open]').forEach((item) => {
-      item.open = false;
-    });
+    header.current
+      ?.querySelectorAll<HTMLDetailsElement>("details[open]")
+      .forEach((item) => {
+        item.open = false;
+      });
     setMobileOpen(false);
   }
   useEffect(() => {
@@ -41,35 +43,41 @@ export function Header() {
   }, [pathname]);
   useEffect(() => {
     function outside(event: PointerEvent) {
-      if (event.target instanceof Node && !header.current?.contains(event.target)) closeMenus();
+      if (
+        event.target instanceof Node &&
+        !header.current?.contains(event.target)
+      )
+        closeMenus();
     }
     function escape(event: KeyboardEvent) {
-      if (event.key !== 'Escape') return;
-      const open = header.current?.querySelector<HTMLDetailsElement>('details[open]');
+      if (event.key !== "Escape") return;
+      const open =
+        header.current?.querySelector<HTMLDetailsElement>("details[open]");
       if (open) {
         open.open = false;
-        open.querySelector('summary')?.focus({ preventScroll: true });
+        open.querySelector("summary")?.focus({ preventScroll: true });
       } else if (mobileOpen) {
         setMobileOpen(false);
         menuButton.current?.focus({ preventScroll: true });
       }
     }
-    document.addEventListener('pointerdown', outside);
-    document.addEventListener('keydown', escape);
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
     return () => {
-      document.removeEventListener('pointerdown', outside);
-      document.removeEventListener('keydown', escape);
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
     };
   }, [mobileOpen]);
   useEffect(() => {
-    const wide = window.matchMedia('(min-width: 900px)');
+    const wide = window.matchMedia("(min-width: 900px)");
     function resize() {
       closeMenus();
     }
-    wide.addEventListener('change', resize);
-    return () => wide.removeEventListener('change', resize);
+    wide.addEventListener("change", resize);
+    return () => wide.removeEventListener("change", resize);
   }, []);
-  const active = (path: string) => pathname === path || pathname.startsWith(`${path}/`);
+  const active = (path: string) =>
+    pathname === path || pathname.startsWith(`${path}/`);
   async function signOut() {
     closeMenus();
     setSigningOut(true);
@@ -88,7 +96,8 @@ export function Header() {
       className="site-header"
       ref={header}
       onClick={(event) => {
-        if ((event.target as Element).closest('a, .site-locale button')) closeMenus();
+        if ((event.target as Element).closest("a, .site-locale button"))
+          closeMenus();
       }}
     >
       <div className="site-header-inner">
@@ -103,21 +112,31 @@ export function Header() {
         <nav
           id="primary-navigation"
           aria-label="Main navigation"
-          className={`site-navigation${mobileOpen ? ' is-open' : ''}`}
+          className={`site-navigation${mobileOpen ? " is-open" : ""}`}
         >
           <details className="site-disclosure" name="site-header-menu">
-            <summary className={active('/map') || active('/story-map') ? 'is-active' : ''}>
+            <summary
+              className={
+                active("/map") || active("/story-map") ? "is-active" : ""
+              }
+            >
               Maps <ChevronDown size={14} />
             </summary>
             <div className="site-menu-panel">
               <span className="site-menu-caption">Explore Solaris-3</span>
-              <Link to="/map" aria-current={active('/map') ? 'page' : undefined}>
+              <Link
+                to="/map"
+                aria-current={active("/map") ? "page" : undefined}
+              >
                 <Map size={18} />
                 <span>
                   Interactive map<small>Places, markers & collectibles</small>
                 </span>
               </Link>
-              <Link to="/story-map" aria-current={active('/story-map') ? 'page' : undefined}>
+              <Link
+                to="/story-map"
+                aria-current={active("/story-map") ? "page" : undefined}
+              >
                 <Layers size={18} />
                 <span>
                   Story map<small>Follow connected stories</small>
@@ -128,36 +147,50 @@ export function Header() {
           <details className="site-disclosure" name="site-header-menu">
             <summary
               className={
-                active('/catalog') ||
-                active('/notices') ||
-                active('/cutscenes') ||
-                ['/characters', '/quests', '/locations', '/items'].some(active)
-                  ? 'is-active'
-                  : ''
+                active("/catalog") ||
+                active("/notices") ||
+                active("/cutscenes") ||
+                ["/characters", "/quests", "/locations", "/items"].some(active)
+                  ? "is-active"
+                  : ""
               }
             >
               Archive <ChevronDown size={14} />
             </summary>
             <div className="site-menu-panel">
-              <span className="site-menu-caption">People, stories & places</span>
-              <Link to="/notices" aria-current={active('/notices') ? 'page' : undefined}>
+              <span className="site-menu-caption">
+                People, stories & places
+              </span>
+              <Link
+                to="/notices"
+                aria-current={active("/notices") ? "page" : undefined}
+              >
                 <CalendarDays size={18} />
                 <span>
-                  Announcements<small>Official in-game news & event rules</small>
+                  Announcements
+                  <small>Official in-game news & event rules</small>
                 </span>
               </Link>
-              <Link to="/cutscenes" aria-current={active('/cutscenes') ? 'page' : undefined}>
-                <Film size={18} /><span>Cutscenes<small>Watch scenes & find their quests</small></span>
+              <Link
+                to="/cutscenes"
+                aria-current={active("/cutscenes") ? "page" : undefined}
+              >
+                <Film size={18} />
+                <span>
+                  Cutscenes<small>Watch scenes & find their quests</small>
+                </span>
               </Link>
               {categories.map((category) => (
                 <Link
                   key={category.key}
                   to={`/catalog/${category.key}`}
-                  aria-current={active(`/catalog/${category.key}`) ? 'page' : undefined}
+                  aria-current={
+                    active(`/catalog/${category.key}`) ? "page" : undefined
+                  }
                 >
                   <category.icon size={18} />
                   <span>
-                    {category.key === 'quest' ? 'Story' : category.label}
+                    {category.key === "quest" ? "Story" : category.label}
                     <small>{category.description}</small>
                   </span>
                 </Link>
@@ -167,7 +200,7 @@ export function Header() {
           <Link
             className="site-nav-link"
             to="/events"
-            aria-current={active('/events') ? 'page' : undefined}
+            aria-current={active("/events") ? "page" : undefined}
           >
             <CalendarDays size={17} />
             Events
@@ -176,7 +209,10 @@ export function Header() {
         <div className="site-header-actions">
           <LocaleSwitcher />
           {user ? (
-            <details className="site-disclosure site-account" name="site-header-menu">
+            <details
+              className="site-disclosure site-account"
+              name="site-header-menu"
+            >
               <summary aria-label={`Account: ${user.nickname}`}>
                 <UserRound size={17} />
                 <span>{user.nickname}</span>
@@ -192,15 +228,15 @@ export function Header() {
                   <Settings size={17} />
                   Settings
                 </Link>
-                {user.role === 'admin' && (
-                  <Link to="/admin">
+                {user.role === "admin" && (
+                  <a href="/console/data-operations">
                     <Shield size={17} />
                     Admin panel
-                  </Link>
+                  </a>
                 )}
                 <button onClick={() => void signOut()} disabled={signingOut}>
                   <LogOut size={17} />
-                  {signingOut ? 'Signing out…' : 'Sign out'}
+                  {signingOut ? "Signing out…" : "Sign out"}
                 </button>
               </div>
             </details>
@@ -223,7 +259,7 @@ export function Header() {
             ref={menuButton}
             className="site-menu-toggle site-icon-button"
             onClick={() => setMobileOpen(!mobileOpen)}
-            aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
+            aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
             aria-expanded={mobileOpen}
             aria-controls="primary-navigation"
           >
@@ -233,7 +269,7 @@ export function Header() {
       </div>
       {logoutError && (
         <p className="site-session-error" role="alert">
-          Could not sign out.{' '}
+          Could not sign out.{" "}
           <button onClick={() => void signOut()} disabled={signingOut}>
             Try again
           </button>
