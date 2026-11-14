@@ -1,4 +1,5 @@
 {
+	metrics
 	servers {
 		# Official edge networks: https://www.cloudflare.com/ips-v4 and /ips-v6
 		# Trust only Cloudflare peers, never arbitrary incoming forwarding headers.
@@ -17,6 +18,16 @@
 
 {$DOMAIN} {
 	encode zstd gzip
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 50mb
+			roll_keep 3
+		}
+		format json
+	}
+
+	@blockedMetrics path /metrics /api/metrics
+	respond @blockedMetrics 404
 
 	@api path /api /api/*
 	handle @api {
@@ -42,7 +53,32 @@
 
 api.{$DOMAIN} {
 	encode zstd gzip
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 50mb
+			roll_keep 3
+		}
+		format json
+	}
+
+	@blockedMetrics path /metrics /api/metrics
+	respond @blockedMetrics 404
 	reverse_proxy api:8000 {
+		import verified_client
+	}
+}
+
+grafana.{$DOMAIN} {
+	encode zstd gzip
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 50mb
+			roll_keep 3
+		}
+		format json
+	}
+
+	reverse_proxy grafana:3000 {
 		import verified_client
 	}
 }

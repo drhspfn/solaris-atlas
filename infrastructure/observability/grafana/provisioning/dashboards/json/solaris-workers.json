@@ -1,0 +1,46 @@
+{
+  "title": "Solaris Atlas — Workers & Queues",
+  "uid": "solaris-workers",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-3h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Active Worker Jobs",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum by (service, queue) (solaris_worker_jobs_active)", "legendFormat": "{{service}} ({{queue}})", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "RabbitMQ Queue Depth (Ready + Unacked)",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (queue) (rabbitmq_queue_messages_ready)", "legendFormat": "ready: {{queue}}", "refId": "A" },
+        { "expr": "sum by (queue) (rabbitmq_queue_messages_unacked)", "legendFormat": "unacked: {{queue}}", "refId": "B" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Worker Job Throughput by Status (jobs/min)",
+      "gridPos": { "x": 0, "y": 7, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum by (queue, status) (rate(solaris_worker_jobs_total[5m])) * 60", "legendFormat": "{{queue}} [{{status}}]", "refId": "A" }]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Worker Job Duration p95 (s)",
+      "gridPos": { "x": 12, "y": 7, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (le, queue) (rate(solaris_worker_job_duration_seconds_bucket[15m])))", "legendFormat": "{{queue}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    }
+  ]
+}

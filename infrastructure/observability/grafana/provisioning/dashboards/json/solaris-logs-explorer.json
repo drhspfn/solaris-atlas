@@ -1,0 +1,63 @@
+{
+  "title": "Solaris Atlas — Structured Logs (Sentry-style)",
+  "uid": "solaris-logs-explorer",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "loki" },
+        "query": "label_values(service)",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "level",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "loki" },
+        "query": "label_values(level)",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "search",
+        "type": "textbox",
+        "current": { "text": "", "value": "" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Errors & Warnings Volume",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 5 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [{ "expr": "sum by (service, level) (count_over_time({service=~\"$service\", level=~\"ERROR|WARNING|CRITICAL\"}[1m]))", "legendFormat": "{{service}} [{{level}}]", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "type": "logs",
+      "title": "Errors & Tracebacks",
+      "gridPos": { "x": 0, "y": 5, "w": 24, "h": 8 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [{ "expr": "{service=~\"$service\", level=~\"ERROR|CRITICAL\"} |= \"$search\"", "refId": "A" }],
+      "options": { "showTime": true, "showLabels": true, "enableLogDetails": true, "prettifyLogMessage": true }
+    },
+    {
+      "id": 3,
+      "type": "logs",
+      "title": "All Service Logs (JSON Context)",
+      "gridPos": { "x": 0, "y": 13, "w": 24, "h": 12 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [{ "expr": "{service=~\"$service\", level=~\"$level\"} |= \"$search\"", "refId": "A" }],
+      "options": { "showTime": true, "showLabels": true, "enableLogDetails": true, "prettifyLogMessage": true }
+    }
+  ]
+}

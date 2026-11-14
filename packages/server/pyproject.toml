@@ -16,6 +16,7 @@ dependencies = [
   "pgvector>=0.3,<1",
   "Pillow>=10,<13",
   "pwdlib[argon2]>=0.2,<1",
+  "prometheus-client>=0.21,<1",
   "redis>=5.2,<7",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.6,<3",

@@ -1,0 +1,92 @@
+local.file_match "solaris_jsonl" {
+  path_targets = [
+    { "__path__" = "/var/log/solaris/*.jsonl", "job" = "solaris-app" },
+  ]
+  sync_period = "5s"
+}
+
+loki.source.file "solaris_jsonl" {
+  targets    = local.file_match.solaris_jsonl.targets
+  forward_to = [loki.process.solaris_json.receiver]
+}
+
+loki.process "solaris_json" {
+  stage.json {
+    expressions = {
+      level       = "level",
+      service     = "service",
+      request_id  = "request_id",
+      job_id      = "job_id",
+      queue       = "queue",
+      run_id      = "run_id",
+      status_code = "status_code",
+      timestamp   = "timestamp",
+    }
+  }
+
+  stage.timestamp {
+    source = "timestamp"
+    format = "RFC3339Nano"
+  }
+
+  stage.labels {
+    values = {
+      level   = "",
+      service = "",
+    }
+  }
+
+  stage.structured_metadata {
+    values = {
+      request_id  = "",
+      job_id      = "",
+      queue       = "",
+      run_id      = "",
+      status_code = "",
+    }
+  }
+
+  forward_to = [loki.write.local_loki.receiver]
+}
+
+local.file_match "caddy_access" {
+  path_targets = [
+    { "__path__" = "/var/log/caddy/*.log", "job" = "caddy-access", "service" = "caddy" },
+  ]
+  sync_period = "5s"
+}
+
+loki.source.file "caddy_access" {
+  targets    = local.file_match.caddy_access.targets
+  forward_to = [loki.process.caddy_json.receiver]
+}
+
+loki.process "caddy_json" {
+  stage.json {
+    expressions = {
+      level  = "level",
+      status = "status",
+      ts     = "ts",
+    }
+  }
+
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+
+  stage.structured_metadata {
+    values = {
+      status = "",
+    }
+  }
+
+  forward_to = [loki.write.local_loki.receiver]
+}
+
+loki.write "local_loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

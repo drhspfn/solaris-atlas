@@ -161,6 +161,9 @@ else
   docker compose --profile local-storage -f "$COMPOSE_FILE" --env-file "$ENV_DIR/compose.runtime.env" stop minio minio-init >/dev/null 2>&1 || true
   docker compose --profile local-storage -f "$COMPOSE_FILE" --env-file "$ENV_DIR/compose.runtime.env" rm -f minio minio-init >/dev/null 2>&1 || true
 fi
+if [[ "$DEPLOY_COMPONENT" == observability || "$DEPLOY_COMPONENT" == all ]]; then
+  compose+=(--profile observability)
+fi
 case "$DEPLOY_COMPONENT" in
   infrastructure)
     services=(postgres rabbitmq redis)
@@ -169,9 +172,10 @@ case "$DEPLOY_COMPONENT" in
   api) services=(api) ;;
   web) services=(web) ;;
   caddy) services=(caddy) ;;
+  observability) services=(prometheus loki alloy grafana node-exporter cadvisor postgres-exporter redis-exporter) ;;
   snapshot-worker) services=(snapshot-worker asset-worker media-worker projection-worker image-worker audio-worker video-worker model-worker cutscene-assembly-worker) ;;
   story-agent|cutscene-vision|cutscene-assembly-worker) services=("$DEPLOY_COMPONENT") ;;
-  all) services=(api web caddy snapshot-worker asset-worker media-worker projection-worker image-worker audio-worker video-worker model-worker story-agent cutscene-vision cutscene-assembly-worker) ;;
+  all) services=(api web caddy snapshot-worker asset-worker media-worker projection-worker image-worker audio-worker video-worker model-worker story-agent cutscene-vision cutscene-assembly-worker prometheus loki alloy grafana node-exporter cadvisor postgres-exporter redis-exporter) ;;
   *) echo "Unsupported DEPLOY_COMPONENT: $DEPLOY_COMPONENT" >&2; exit 2 ;;
 esac
 
@@ -295,6 +299,9 @@ if [[ "$DEPLOY_COMPONENT" == all ]]; then
 elif [[ "$DEPLOY_COMPONENT" != caddy && "$DEPLOY_COMPONENT" != infrastructure ]]; then
   "${compose[@]}" up -d "${services[@]}"
 fi
+if [[ "$DEPLOY_COMPONENT" == infrastructure || "$DEPLOY_COMPONENT" == observability || "$DEPLOY_COMPONENT" == all ]]; then
+  "${compose[@]}" exec -T rabbitmq rabbitmq-plugins enable --online rabbitmq_prometheus >/dev/null 2>&1 || true
+fi
 if [[ "$DEPLOY_COMPONENT" == infrastructure ]]; then
   "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-assets-long-jobs \
     '^wuwa[.](snapshot-build|asset-(download|extract)|release-(media|images)|entity-(media|images)|event-media|character-model|pool-(coordinator|image|audio|video))[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues
@@ -304,7 +311,7 @@ fi
 # Updating a bind-mounted Caddyfile does not reload the running proxy. In
 # particular, switching the web image from nginx to Next.js changes its port.
 case "$DEPLOY_COMPONENT" in
-  web|all)
+  web|observability|all)
     "${compose[@]}" exec -T caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
     "${compose[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
     ;;
