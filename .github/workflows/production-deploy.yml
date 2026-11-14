@@ -43,7 +43,7 @@ jobs:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
           KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
-          [[ "$COMPONENT" =~ ^(infrastructure|api|web|caddy|snapshot-worker|story-agent|cutscene-vision|cutscene-assembly-worker|all)$ ]]
+          [[ "$COMPONENT" =~ ^(infrastructure|api|web|caddy|observability|snapshot-worker|story-agent|cutscene-vision|cutscene-assembly-worker|all)$ ]]
           [[ "$IMAGE_TAG" =~ ^[A-Za-z0-9_.-]{1,128}$ ]]
           test -n "$HOST" && test -n "$USER" && test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS"
       - name: Render service env files from individual Variables and Secrets
@@ -51,6 +51,8 @@ jobs:
           CACHE_NAMESPACE: ${{ vars.CACHE_NAMESPACE }}
           CACHE_TIMEOUT_SECONDS: ${{ vars.CACHE_TIMEOUT_SECONDS }}
           DOMAIN: ${{ vars.DOMAIN }}
+          GRAFANA_ADMIN_USER: ${{ vars.GRAFANA_ADMIN_USER }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
           USE_MINIO: ${{ vars.USE_MINIO }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
@@ -174,14 +176,14 @@ jobs:
           printf 'WUWA_MODEL_REPLICAS=%s\nMODEL_WORKER_IMAGE=%s\n' \
             "${WUWA_MODEL_REPLICAS:-1}" "$MODEL_WORKER_IMAGE" >> "$env_dir/compose.env"
       - name: Log in to GHCR for image validation
-        if: ${{ inputs.component != 'infrastructure' && inputs.component != 'caddy' }}
+        if: ${{ inputs.component != 'infrastructure' && inputs.component != 'caddy' && inputs.component != 'observability' }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify requested images exist
-        if: ${{ inputs.component != 'infrastructure' && inputs.component != 'caddy' }}
+        if: ${{ inputs.component != 'infrastructure' && inputs.component != 'caddy' && inputs.component != 'observability' }}
         env:
           COMPONENT: ${{ inputs.component }}
           IMAGE_TAG: ${{ inputs.image_tag }}
@@ -219,8 +221,9 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
           target="$USER@$HOST"
-          ssh "$target" 'mkdir -p ~/solaris-atlas/postgres ~/solaris-atlas/pgbouncer ~/solaris-atlas/scripts ~/solaris-atlas/env'
+          ssh "$target" 'mkdir -p ~/solaris-atlas/postgres ~/solaris-atlas/pgbouncer ~/solaris-atlas/scripts ~/solaris-atlas/env ~/solaris-atlas/observability'
           scp infrastructure/prod/compose.yml infrastructure/prod/Caddyfile "$target:solaris-atlas/"
+          scp -r infrastructure/observability/* "$target:solaris-atlas/observability/"
           scp infrastructure/local/postgres/init.sql "$target:solaris-atlas/postgres/"
           scp infrastructure/prod/pgbouncer/pgbouncer.ini infrastructure/prod/pgbouncer/auth.sql "$target:solaris-atlas/pgbouncer/"
           scp scripts/deploy-remote.sh scripts/bootstrap-server.sh "$target:solaris-atlas/scripts/"

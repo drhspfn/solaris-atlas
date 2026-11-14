@@ -13,6 +13,8 @@ GROUPS = {
     "compose.env": {
         "VISUAL_MEMORY_IMAGE_TAG": "main",
         "DOMAIN": "example.invalid",
+        "GRAFANA_ADMIN_USER": "admin",
+        "GRAFANA_ADMIN_PASSWORD": "",
         "USE_MINIO": "true",
         "POSTGRES_USER": "wuwa",
         "POSTGRES_PASSWORD": None,

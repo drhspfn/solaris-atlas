@@ -11,17 +11,23 @@ import socket
 import subprocess
 import time
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
 from typing import Any
 
 import aio_pika
 from aio_pika.abc import AbstractIncomingMessage
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
+from wuwa_story.config.logging import log_context
 from wuwa_story.db.models.ops import ProcessingRun
 from wuwa_story.db.session import SessionFactory
 
 from wuwa_story_worker.job_tracking import update_admin_run
+from wuwa_story_worker.metrics import (
+    WORKER_JOB_DURATION_SECONDS,
+    WORKER_JOBS_ACTIVE,
+    WORKER_JOBS_TOTAL,
+)
 from wuwa_story_worker.notifications import notify_job_result
 from wuwa_story_worker.queues import QUEUES, media_pool, queue_concurrency
 
@@ -29,7 +35,8 @@ logger = logging.getLogger(__name__)
 EXCHANGE_NAME = "wuwa.jobs.v1"
 FAILED_EXCHANGE_NAME = "wuwa.jobs.failed.v1"
 JobHandler = Callable[[dict[str, Any]], Awaitable[None]]
-MEDIA_QUEUES = {"release_media", "event_media", "entity_media", "release_images", "entity_images", "cutscene_assembly"}
+MEDIA_QUEUES = {"release_media", "event_media", "entity_media",
+                "release_images", "entity_images", "cutscene_assembly"}
 
 
 def transient_job_error(error: Exception) -> bool:
@@ -85,7 +92,8 @@ async def execute_media_job(payload: dict, handler: JobHandler) -> None:
         try:
             await finish_writes(cleanup_workspace(workspace_id))
         except Exception:
-            logger.exception("Could not clean media workspace %s", workspace_id)
+            logger.exception(
+                "Could not clean media workspace %s", workspace_id)
 
 
 async def cleanup_skipped_media(payload: dict) -> None:
@@ -97,9 +105,13 @@ async def cleanup_skipped_media(payload: dict) -> None:
 async def recover_media_workspaces(stop: asyncio.Event, *, include_model_uploads: bool = False) -> None:
     """Recover committed terminal trees even when their final ACK preceded a crash."""
     from wuwa_story.ingestion.model_uploads import cleanup_model_uploads
+
     from wuwa_story_worker.media_workspace import cleanup_workspace
     from wuwa_story_worker.tooling import asset_workspace
-    from wuwa_story_worker.transient_workspace import cleanup_stale_temp_dirs, cleanup_transient_workspaces
+    from wuwa_story_worker.transient_workspace import (
+        cleanup_stale_temp_dirs,
+        cleanup_transient_workspaces,
+    )
 
     interval = float(os.getenv("WUWA_WORKSPACE_RECOVERY_SECONDS", "300"))
     if interval <= 0:
@@ -118,14 +130,16 @@ async def recover_media_workspaces(stop: asyncio.Event, *, include_model_uploads
             removed = await asyncio.to_thread(cleanup_transient_workspaces)
             stale_tmp = await asyncio.to_thread(cleanup_stale_temp_dirs)
             if removed or stale_tmp:
-                logger.info("transient_workspace.recovered directories=%s temp_dirs=%s", removed, stale_tmp)
+                logger.info(
+                    "transient_workspace.recovered directories=%s temp_dirs=%s", removed, stale_tmp)
             for workspace_id in await asyncio.to_thread(workspace_ids):
                 if stop.is_set():
                     return
                 try:
                     await cleanup_workspace(workspace_id)
                 except Exception:
-                    logger.exception("Workspace recovery failed workspace=%s", workspace_id)
+                    logger.exception(
+                        "Workspace recovery failed workspace=%s", workspace_id)
             if include_model_uploads and not stop.is_set():
                 try:
                     async with SessionFactory() as session:
@@ -227,7 +241,8 @@ async def publish_job(key: str, payload: dict[str, Any], message_id: str) -> Non
         exchange, _ = await declare_queue(channel, key)
         await exchange.publish(
             aio_pika.Message(
-                body=json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+                body=json.dumps(payload, ensure_ascii=False,
+                                sort_keys=True).encode("utf-8"),
                 content_type="application/json",
                 delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
                 message_id=message_id,
@@ -304,113 +319,151 @@ async def consume_jobs(
                 async with limiter:
                     started = time.monotonic()
                     payload = {}
-                    source_key = message.type if job_key.startswith("pool_") else job_key
+                    source_key = message.type if job_key.startswith(
+                        "pool_") else job_key
                     processor_key = {"release_images": "release_media", "event_media": "release_media",
                                      "cutscene_assembly": "release_media",
                                      "entity_images": "entity_media", "snapshot_build": "snapshot_import"}.get(source_key, source_key)
-                    try:
-                        payload = json.loads(message.body)
-                        if not isinstance(payload, dict):
-                            raise ValueError("Job payload must be a JSON object")
-                        logger.info("job.started queue=%s processor=%s id=%s run=%s redelivered=%s",
-                                    job_key, processor_key, message.message_id, payload.get("run_id"),
-                                    message.redelivered)
-                        # A deployment may change a kind's resource pool. Move
-                        # retained private deliveries too, before executing them.
-                        wrong_pool = job_key.startswith("pool_") and job_key != "pool_" + media_pool(payload)
-                        if (route_media and job_key in MEDIA_QUEUES and job_key != "cutscene_assembly") or wrong_pool:
-                            destination = "pool_" + media_pool(payload)
-                            headers = dict(message.headers or {})
-                            if message.redelivered:
-                                # A fresh publication loses RabbitMQ's redelivery
-                                # bit, but its DB run may still be running.
-                                headers["pool_redelivered"] = True
-                            try:
-                                exchange, _ = await declare_queue(job_channel, destination)
-                                await exchange.publish(aio_pika.Message(
-                                    body=message.body, content_type="application/json",
-                                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-                                    message_id=message.message_id, type=source_key,
-                                    headers=headers),
-                                    routing_key=QUEUES[destination].name, mandatory=True)
-                            except Exception:
-                                logger.exception("Could not forward %s to %s", message.message_id, destination)
-                                await message.nack(requeue=True)
-                                return
-                            await message.ack()
-                            return
-                        if source_key in {"cutscene_assembly", "release_media", "event_media", "entity_media", "release_images", "entity_images", "asset_download",
-                                       "asset_extract", "snapshot_build", "character_model"}:
-                            if not await claim_import(payload, redelivered=message.redelivered
-                                                      or (message.headers or {}).get("pool_redelivered") is True):
-                                if source_key in MEDIA_QUEUES:
-                                    await cleanup_skipped_media(payload)
+                    WORKER_JOBS_ACTIVE.labels(
+                        queue=job_key, processor=processor_key).inc()
+                    job_status = "succeeded"
+                    with ExitStack() as log_stack:
+                        log_stack.enter_context(
+                            log_context(
+                                job_id=message.message_id,
+                                queue=job_key,
+                                processor=processor_key,
+                            )
+                        )
+                        try:
+                            payload = json.loads(message.body)
+                            if not isinstance(payload, dict):
+                                raise ValueError(
+                                    "Job payload must be a JSON object")
+                            if payload.get("run_id") is not None:
+                                log_stack.enter_context(
+                                    log_context(run_id=payload.get("run_id")))
+                            logger.info("job.started queue=%s processor=%s id=%s run=%s redelivered=%s",
+                                        job_key, processor_key, message.message_id, payload.get(
+                                            "run_id"),
+                                        message.redelivered)
+                            # A deployment may change a kind's resource pool. Move
+                            # retained private deliveries too, before executing them.
+                            wrong_pool = job_key.startswith(
+                                "pool_") and job_key != "pool_" + media_pool(payload)
+                            if (route_media and job_key in MEDIA_QUEUES and job_key != "cutscene_assembly") or wrong_pool:
+                                destination = "pool_" + media_pool(payload)
+                                headers = dict(message.headers or {})
+                                if message.redelivered:
+                                    # A fresh publication loses RabbitMQ's redelivery
+                                    # bit, but its DB run may still be running.
+                                    headers["pool_redelivered"] = True
+                                try:
+                                    exchange, _ = await declare_queue(job_channel, destination)
+                                    await exchange.publish(aio_pika.Message(
+                                        body=message.body, content_type="application/json",
+                                        delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                                        message_id=message.message_id, type=source_key,
+                                        headers=headers),
+                                        routing_key=QUEUES[destination].name, mandatory=True)
+                                except Exception:
+                                    logger.exception(
+                                        "Could not forward %s to %s", message.message_id, destination)
+                                    await message.nack(requeue=True)
+                                    return
                                 await message.ack()
                                 return
-                        if source_key in MEDIA_QUEUES:
-                            await execute_media_job(payload, job_handler)
-                        else:
-                            await job_handler(payload)
-                    except asyncio.CancelledError:
-                        await message.nack(requeue=True)
-                        raise
-                    except JobDeferred as error:
-                        logger.info("job.deferred queue=%s id=%s run=%s reason_type=%s",
-                                    job_key, message.message_id, payload.get("run_id"), type(error).__name__)
-                        try:
-                            if payload.get("run_id") is not None:
-                                await update_admin_run(payload["run_id"], processor_key, "waiting_dependency",
-                                                       error=str(error))
-                            await defer_job(job_channel, job_key, message)
-                        except Exception:
-                            logger.exception("Could not defer %s", message.message_id)
+                            if source_key in {"cutscene_assembly", "release_media", "event_media", "entity_media", "release_images", "entity_images", "asset_download",
+                                              "asset_extract", "snapshot_build", "character_model"}:
+                                if not await claim_import(payload, redelivered=message.redelivered
+                                                          or (message.headers or {}).get("pool_redelivered") is True):
+                                    if source_key in MEDIA_QUEUES:
+                                        await cleanup_skipped_media(payload)
+                                    await message.ack()
+                                    return
+                            if source_key in MEDIA_QUEUES:
+                                await execute_media_job(payload, job_handler)
+                            else:
+                                await job_handler(payload)
+                        except asyncio.CancelledError:
+                            job_status = "cancelled"
                             await message.nack(requeue=True)
-                    except DBAPIError as error:
-                        retries = int((message.headers or {}).get("db_retry_count", 0))
-                        transient = transient_job_error(error)
-                        if transient and retries < 3:
+                            raise
+                        except JobDeferred as error:
+                            job_status = "deferred"
+                            logger.info("job.deferred queue=%s id=%s run=%s reason_type=%s",
+                                        job_key, message.message_id, payload.get("run_id"), type(error).__name__)
                             try:
                                 if payload.get("run_id") is not None:
                                     await update_admin_run(payload["run_id"], processor_key, "waiting_dependency",
-                                                           error=f"Database contention; retry {retries + 1}/3")
-                                await defer_job(job_channel, job_key, message, retry_count=retries + 1)
-                                logger.warning("Deferred %s run=%s after database contention (retry %s/3)",
-                                               job_key, payload.get("run_id"), retries + 1)
+                                                           error=str(error))
+                                await defer_job(job_channel, job_key, message)
                             except Exception:
-                                logger.exception("Could not defer database retry")
+                                logger.exception(
+                                    "Could not defer %s", message.message_id)
                                 await message.nack(requeue=True)
-                        else:
-                            logger.exception("Database job failure exhausted retries (%s)", job_key)
+                        except DBAPIError as error:
+                            retries = int((message.headers or {}).get(
+                                "db_retry_count", 0))
+                            transient = transient_job_error(error)
+                            if transient and retries < 3:
+                                try:
+                                    if payload.get("run_id") is not None:
+                                        await update_admin_run(payload["run_id"], processor_key, "waiting_dependency",
+                                                               error=f"Database contention; retry {retries + 1}/3")
+                                    await defer_job(job_channel, job_key, message, retry_count=retries + 1)
+                                    logger.warning("Deferred %s run=%s after database contention (retry %s/3)",
+                                                   job_key, payload.get("run_id"), retries + 1)
+                                except Exception:
+                                    logger.exception(
+                                        "Could not defer database retry")
+                                    await message.nack(requeue=True)
+                            else:
+                                job_status = "failed"
+                                logger.exception(
+                                    "Database job failure exhausted retries (%s)", job_key)
+                                await record_job_failure(payload, processor_key, error)
+                                await notify_job_result(payload.get("run_id"), processor_key, str(error))
+                                await message.nack(requeue=False)
+                        except Exception as error:
+                            retries = int((message.headers or {}).get(
+                                "db_retry_count", 0))
+                            if transient_job_error(error) and retries < 3:
+                                try:
+                                    if payload.get("run_id") is not None:
+                                        await update_admin_run(payload["run_id"], processor_key, "waiting_dependency",
+                                                               error=f"Transient failure; retry {retries + 1}/3: {type(error).__name__}: {error}"[:2000])
+                                    await defer_job(job_channel, job_key, message, retry_count=retries + 1)
+                                except Exception:
+                                    logger.exception(
+                                        "Could not defer transient retry")
+                                    await message.nack(requeue=True)
+                                return
+                            job_status = "failed"
+                            logger.exception(
+                                "Worker job failed (%s, id=%s); moving it to the failed queue",
+                                job_key,
+                                message.message_id,
+                            )
                             await record_job_failure(payload, processor_key, error)
-                            await notify_job_result(payload.get("run_id"), processor_key, str(error))
+                            await notify_job_result(payload.get("run_id") if isinstance(payload, dict) else None,
+                                                    processor_key, str(error))
                             await message.nack(requeue=False)
-                    except Exception as error:
-                        retries = int((message.headers or {}).get("db_retry_count", 0))
-                        if transient_job_error(error) and retries < 3:
-                            try:
-                                if payload.get("run_id") is not None:
-                                    await update_admin_run(payload["run_id"], processor_key, "waiting_dependency",
-                                                           error=f"Transient failure; retry {retries + 1}/3: {type(error).__name__}: {error}"[:2000])
-                                await defer_job(job_channel, job_key, message, retry_count=retries + 1)
-                            except Exception:
-                                logger.exception("Could not defer transient retry")
-                                await message.nack(requeue=True)
-                            return
-                        logger.exception(
-                            "Worker job failed (%s, id=%s); moving it to the failed queue",
-                            job_key,
-                            message.message_id,
-                        )
-                        await record_job_failure(payload, processor_key, error)
-                        await notify_job_result(payload.get("run_id") if isinstance(payload, dict) else None,
-                                                processor_key, str(error))
-                        await message.nack(requeue=False)
-                    else:
-                        await notify_job_result(payload.get("run_id"), processor_key)
-                        await message.ack()
-                    finally:
-                        logger.info("job.delivery queue=%s id=%s elapsed_seconds=%.3f",
-                                    job_key, message.message_id, time.monotonic() - started)
+                        else:
+                            await notify_job_result(payload.get("run_id"), processor_key)
+                            await message.ack()
+                        finally:
+                            elapsed = max(time.monotonic() - started, 0.0)
+                            WORKER_JOBS_ACTIVE.labels(
+                                queue=job_key, processor=processor_key).dec()
+                            WORKER_JOBS_TOTAL.labels(
+                                queue=job_key, processor=processor_key, status=job_status
+                            ).inc()
+                            WORKER_JOB_DURATION_SECONDS.labels(
+                                queue=job_key, processor=processor_key
+                            ).observe(elapsed)
+                            logger.info("job.delivery queue=%s id=%s elapsed_seconds=%.3f",
+                                        job_key, message.message_id, elapsed)
 
             async def process(
                 message: AbstractIncomingMessage,
@@ -431,7 +484,8 @@ async def consume_jobs(
 
             tag = await queue.consume(process, no_ack=False)
             consumers.append((queue, tag))
-            logger.info("Consuming %s with concurrency=%d", QUEUES[key].name, limits[key])
+            logger.info("Consuming %s with concurrency=%d",
+                        QUEUES[key].name, limits[key])
         if stop is None:
             await asyncio.Future()
         else:
@@ -441,7 +495,8 @@ async def consume_jobs(
             try:
                 await queue.cancel(tag)
             except Exception:
-                logger.warning("Could not cancel consumer; closing connection will requeue deliveries")
+                logger.warning(
+                    "Could not cancel consumer; closing connection will requeue deliveries")
         if active:
             _, pending = await asyncio.wait(active, timeout=shutdown_timeout)
             for task in pending:

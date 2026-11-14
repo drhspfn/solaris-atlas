@@ -13,9 +13,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-os.environ.setdefault("WUWA_WORKER_DB_POOL_SIZE", "4")
-os.environ.setdefault("WUWA_WORKER_DB_MAX_OVERFLOW", "4")
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
@@ -25,6 +22,7 @@ from wuwa_story.agents.contracts import AnalysisRequest
 from wuwa_story.agents.cutscene_vision import enqueue_visual_job, resume_visual_job
 from wuwa_story.agents.jobs import enqueue_analysis
 from wuwa_story.agents.settings import get_agent_settings
+from wuwa_story.config.logging import configure_logging
 from wuwa_story.config.settings import get_settings
 from wuwa_story.db.models.ops import ProcessingRun, Processor
 from wuwa_story.db.models.storage import FileReference
@@ -44,6 +42,7 @@ from wuwa_story_worker.client_assets import discover_plan, download_plan, save_j
 from wuwa_story_worker.cutscene_vision import dispatch_visual_jobs, process_cutscene_vision
 from wuwa_story_worker.entity_media import process_entity_media
 from wuwa_story_worker.map_assets import build_maps, refresh_map_sources
+from wuwa_story_worker.metrics import start_worker_metrics_server
 from wuwa_story_worker.queues import MEDIA_POOLS, QUEUES, queue_concurrency
 from wuwa_story_worker.release_media import process_release_media
 from wuwa_story_worker.runtime_checks import check_database_codecs
@@ -60,11 +59,15 @@ from wuwa_story_worker.story_agent import (
 )
 from wuwa_story_worker.voice_packages import discover_voice_plan, download_voice_plan
 
+os.environ.setdefault("WUWA_WORKER_DB_POOL_SIZE", "4")
+os.environ.setdefault("WUWA_WORKER_DB_MAX_OVERFLOW", "4")
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wuwa-story-worker")
     commands = parser.add_subparsers(dest="command", required=True)
-    agent = commands.add_parser("enqueue-analysis", help="Queue source-cited story analysis")
+    agent = commands.add_parser(
+        "enqueue-analysis", help="Queue source-cited story analysis")
     agent.add_argument("--quest-id", type=int, required=True)
     agent.add_argument("--version", required=True)
     agent.add_argument(
@@ -92,20 +95,24 @@ def _parser() -> argparse.ArgumentParser:
     )
     vision_status.add_argument("--limit", type=int, default=20)
     runner = commands.add_parser("run", help="Consume selected RabbitMQ jobs")
-    runner.add_argument("--queue", action="append", choices=tuple(QUEUES), default=None)
+    runner.add_argument("--queue", action="append",
+                        choices=tuple(QUEUES), default=None)
     runner.add_argument("--pool", choices=MEDIA_POOLS,
                         help="Consume a private execution pool; coordinator also routes public media queues")
     runner.add_argument("--debug-import", action="store_true",
                         help="Enable verbose per-batch/category timing logs for snapshot imports")
-    assets = commands.add_parser("plan-assets", help="Inspect official client archives without downloading")
+    assets = commands.add_parser(
+        "plan-assets", help="Inspect official client archives without downloading")
     assets.add_argument("--version", required=True)
     assets.add_argument("--tier", choices=("sd", "hd", "uhd"), default="hd")
     assets.add_argument("--completed-workspace", type=Path,
                         help="Verify completed local clients before reusing their keys pin")
     assets.add_argument("--output", type=Path)
-    asset_enqueue = commands.add_parser("enqueue-assets", help="Queue a pinned official client download")
+    asset_enqueue = commands.add_parser(
+        "enqueue-assets", help="Queue a pinned official client download")
     asset_enqueue.add_argument("plan", type=Path)
-    asset_download = commands.add_parser("download-assets", help="Download a pinned client plan locally")
+    asset_download = commands.add_parser(
+        "download-assets", help="Download a pinned client plan locally")
     asset_download.add_argument("plan", type=Path)
     asset_download.add_argument("--workspace", type=Path, required=True)
     asset_download.add_argument("--concurrency", type=int, default=4)
@@ -121,15 +128,19 @@ def _parser() -> argparse.ArgumentParser:
     voice_download.add_argument("--workspace", type=Path, required=True)
     voice_download.add_argument("--installed-game", type=Path)
     voice_download.add_argument("--concurrency", type=int, default=4)
-    asset_export = commands.add_parser("extract-assets", help="Export a completed client download using FModelCLI")
+    asset_export = commands.add_parser(
+        "extract-assets", help="Export a completed client download using FModelCLI")
     asset_export.add_argument("root", type=Path)
     asset_export.add_argument("--fmodel", type=Path, required=True)
     asset_export.add_argument("--filter", required=True)
-    asset_export.add_argument("--upload", action="store_true", help="Publish raw exported files and manifest to S3")
-    maps = commands.add_parser("extract-maps", help="Decode map tiles, assemble previews and extract positioned objects")
+    asset_export.add_argument("--upload", action="store_true",
+                              help="Publish raw exported files and manifest to S3")
+    maps = commands.add_parser(
+        "extract-maps", help="Decode map tiles, assemble previews and extract positioned objects")
     maps.add_argument("root", type=Path)
     maps.add_argument("--fmodel", type=Path, required=True)
-    maps.add_argument("--converter", type=Path, required=True, help="CUE4Parse.CLI executable")
+    maps.add_argument("--converter", type=Path, required=True,
+                      help="CUE4Parse.CLI executable")
     maps.add_argument(
         "--publish",
         action="store_true",
@@ -139,14 +150,17 @@ def _parser() -> argparse.ArgumentParser:
         "refresh-map-sources", help="Refresh item acquisition evidence for published map markers"
     )
     refresh_maps.add_argument("root", type=Path)
-    map_enqueue = commands.add_parser("enqueue-maps", help="Queue map extraction for a downloaded client plan")
+    map_enqueue = commands.add_parser(
+        "enqueue-maps", help="Queue map extraction for a downloaded client plan")
     map_enqueue.add_argument("plan", type=Path)
-    importer = commands.add_parser("import-compiler", help="Import a compiled output directory")
+    importer = commands.add_parser(
+        "import-compiler", help="Import a compiled output directory")
     importer.add_argument("dataset", type=Path)
     importer.add_argument("--batch-size", type=int, default=1000)
     importer.add_argument("--debug-import", action="store_true",
                           help="Enable verbose per-batch/category timing logs for snapshot imports")
-    series = commands.add_parser("import-series", help="Import compiled snapshots in version order")
+    series = commands.add_parser(
+        "import-series", help="Import compiled snapshots in version order")
     series.add_argument("root", type=Path)
     series.add_argument("--from-version", default="1.0")
     series.add_argument("--to-version", default="3.6")
@@ -154,23 +168,33 @@ def _parser() -> argparse.ArgumentParser:
     series.add_argument("--dry-run", action="store_true")
     series.add_argument("--debug-import", action="store_true",
                         help="Enable verbose per-batch/category timing logs for snapshot imports")
-    enqueue = commands.add_parser("enqueue-snapshot", help="Queue one upstream version snapshot")
-    enqueue.add_argument("--version", required=True, help="Upstream branch, for example 1.0")
-    enqueue.add_argument("--commit", help="Pin an explicit full commit SHA; defaults to branch head")
+    enqueue = commands.add_parser(
+        "enqueue-snapshot", help="Queue one upstream version snapshot")
+    enqueue.add_argument("--version", required=True,
+                         help="Upstream branch, for example 1.0")
+    enqueue.add_argument(
+        "--commit", help="Pin an explicit full commit SHA; defaults to branch head")
     enqueue.add_argument("--repo-url", default=DEFAULT_REPOSITORY)
-    watch = commands.add_parser("watch-upstream", help="Poll upstream branches and enqueue new commits")
+    watch = commands.add_parser(
+        "watch-upstream", help="Poll upstream branches and enqueue new commits")
     watch.add_argument("--repo-url", default=DEFAULT_REPOSITORY)
     watch.add_argument("--from-version", default="1.0")
     watch.add_argument("--to-version", help="Optional upper major.minor bound")
-    watch.add_argument("--workspace", type=Path, default=Path("/var/lib/wuwa-worker"))
+    watch.add_argument("--workspace", type=Path,
+                       default=Path("/var/lib/wuwa-worker"))
     watch.add_argument("--interval-seconds", type=int, default=1800)
-    watch.add_argument("--once", action="store_true", help="Scan once and exit")
-    replay = commands.add_parser("replay-failed", help="Requeue dead-lettered jobs")
-    replay.add_argument("--queue", choices=tuple(QUEUES), default="snapshot_build")
+    watch.add_argument("--once", action="store_true",
+                       help="Scan once and exit")
+    replay = commands.add_parser(
+        "replay-failed", help="Requeue dead-lettered jobs")
+    replay.add_argument("--queue", choices=tuple(QUEUES),
+                        default="snapshot_build")
     replay.add_argument("--limit", type=int, default=100)
-    metadata = commands.add_parser("enqueue-sequence-metadata", help="Recompile one prior sequence-only job with the current metadata revision")
+    metadata = commands.add_parser(
+        "enqueue-sequence-metadata", help="Recompile one prior sequence-only job with the current metadata revision")
     metadata.add_argument("run_id", type=int)
-    metadata.add_argument("--apply", action="store_true", help="Enqueue through normal target resolution; default is a read-only plan")
+    metadata.add_argument("--apply", action="store_true",
+                          help="Enqueue through normal target resolution; default is a read-only plan")
     return parser
 
 
@@ -179,26 +203,33 @@ def discover_versioned_datasets(root: Path, first: str, last: str) -> list[tuple
         first_parts = tuple(int(part) for part in first.split("."))
         last_parts = tuple(int(part) for part in last.split("."))
     except ValueError as exc:
-        raise ValueError("Version bounds must be numeric major.minor values, for example 3.0") from exc
+        raise ValueError(
+            "Version bounds must be numeric major.minor values, for example 3.0") from exc
     if len(first_parts) != 2 or len(last_parts) != 2 or first_parts > last_parts:
-        raise ValueError("Version bounds must be ordered major.minor values, for example 1.0 to 3.6")
+        raise ValueError(
+            "Version bounds must be ordered major.minor values, for example 1.0 to 3.6")
     if not root.is_dir():
-        raise FileNotFoundError(f"Snapshot root does not exist or is not a directory: {root}")
+        raise FileNotFoundError(
+            f"Snapshot root does not exist or is not a directory: {root}")
 
     snapshots: list[tuple[tuple[int, int, int], str, Path]] = []
     for manifest_path in root.glob("*/manifest.json"):
         try:
-            manifest: Any = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest: Any = json.loads(
+                manifest_path.read_text(encoding="utf-8"))
             raw_version = manifest["game_version"]
             if not isinstance(raw_version, str):
                 raise ValueError("game_version must be a string")
             version = tuple(int(part) for part in raw_version.split("."))
         except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-            raise ValueError(f"Invalid compiled dataset manifest: {manifest_path}") from exc
+            raise ValueError(
+                f"Invalid compiled dataset manifest: {manifest_path}") from exc
         if len(version) < 2:
-            raise ValueError(f"Invalid game_version in {manifest_path}: {raw_version!r}")
+            raise ValueError(
+                f"Invalid game_version in {manifest_path}: {raw_version!r}")
         if first_parts <= version[:2] <= last_parts:
-            snapshots.append(((version + (0, 0, 0))[:3], raw_version, manifest_path.parent))
+            snapshots.append(
+                ((version + (0, 0, 0))[:3], raw_version, manifest_path.parent))
     snapshots.sort(key=lambda item: (item[0], str(item[2])))
     available = {version[:2] for version, _, _ in snapshots}
     # A major release ends at its last available minor, not at an invented .99.
@@ -214,14 +245,16 @@ def discover_versioned_datasets(root: Path, first: str, last: str) -> list[tuple
         missing.extend(f"{major}.{minor}" for minor in range(lower, max(lower, upper) + 1)
                        if (major, minor) not in available)
     if missing:
-        raise FileNotFoundError("No compiled snapshot found for required game versions: " + ", ".join(missing))
+        raise FileNotFoundError(
+            "No compiled snapshot found for required game versions: " + ", ".join(missing))
     return [(version, path) for _, version, path in snapshots]
 
 
 async def _import_datasets(datasets: list[tuple[str, Path]], batch_size: int) -> None:
     settings = get_settings()
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
-    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    factory = async_sessionmaker(
+        engine, expire_on_commit=False, autoflush=False)
     try:
         importer = CompiledDatasetImporter()
         for version, path in datasets:
@@ -246,9 +279,11 @@ async def _consume(queues: list[str] | None = None, pool: str | None = None) -> 
     pool_size = int(os.getenv("WUWA_WORKER_DB_POOL_SIZE", "4"))
     overflow = int(os.getenv("WUWA_WORKER_DB_MAX_OVERFLOW", "4"))
     if pool_size < 1 or overflow < 0:
-        raise ValueError("Worker DB pool size must be positive and overflow nonnegative")
+        raise ValueError(
+            "Worker DB pool size must be positive and overflow nonnegative")
     if pool and 2 * queue_concurrency()[f"pool_{pool}"] + 2 > pool_size + overflow:
-        raise ValueError("Worker DB capacity must cover lease + job connection per task plus two spare")
+        raise ValueError(
+            "Worker DB capacity must cover lease + job connection per task plus two spare")
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     signals = []
@@ -273,8 +308,10 @@ async def _consume(queues: list[str] | None = None, pool: str | None = None) -> 
         "story_agent": process_story_analysis,
         "cutscene_vision": process_cutscene_vision,
     }
+
     async def media_handler(payload):
-        handler = process_entity_media if payload.get("job_type") == "media.entities" else process_release_media
+        handler = process_entity_media if payload.get(
+            "job_type") == "media.entities" else process_release_media
         await handler(payload)
 
     handlers.update({f"pool_{name}": media_handler for name in MEDIA_POOLS})
@@ -286,12 +323,18 @@ async def _consume(queues: list[str] | None = None, pool: str | None = None) -> 
             selected.update({key: handlers[key] for key in (
                 "release_media", "event_media", "entity_media", "release_images", "entity_images")})
     background = []
+    start_worker_metrics_server(
+        service=os.getenv("WUWA_LOG_SERVICE", "wuwa-worker"),
+        pool=pool,
+        queues=list(selected.keys()),
+    )
     try:
         await check_database_codecs(engine)
         background.append(asyncio.create_task(
             recover_media_workspaces(
                 stop,
-                include_model_uploads=(pool == "coordinator" or "character_model" in selected),
+                include_model_uploads=(
+                    pool == "coordinator" or "character_model" in selected),
             )
         ))
         if "story_agent" in selected or "cutscene_vision" in selected or "asset_download" in selected:
@@ -299,7 +342,8 @@ async def _consume(queues: list[str] | None = None, pool: str | None = None) -> 
                 from wuwa_story_worker.client_updates import watch_client_updates
                 background.append(asyncio.create_task(watch_client_updates()))
             if "story_agent" in selected:
-                background.append(asyncio.create_task(dispatch_story_revisits()))
+                background.append(asyncio.create_task(
+                    dispatch_story_revisits()))
                 background.append(asyncio.create_task(dispatch_story_work()))
             if "cutscene_vision" in selected:
                 background.append(asyncio.create_task(dispatch_visual_jobs()))
@@ -308,7 +352,8 @@ async def _consume(queues: list[str] | None = None, pool: str | None = None) -> 
         await consume_jobs(selected, stop=stop, route_media=pool == "coordinator")
         for task in background:
             if task.done():
-                task.result()  # Supervisor failures must fail the process for restart.
+                # Supervisor failures must fail the process for restart.
+                task.result()
     finally:
         for task in background:
             task.cancel()
@@ -328,10 +373,13 @@ async def _replay_failed(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = _parser().parse_args()
     if getattr(args, "debug_import", False):
         os.environ["WUWA_IMPORT_DEBUG"] = "1"
+    configure_logging(
+        os.getenv("LOG_LEVEL", "INFO"),
+        service=os.getenv("WUWA_LOG_SERVICE", "wuwa-worker"),
+    )
     if args.command in (
         "enqueue-cutscene-vision",
         "resume-cutscene-vision",
@@ -369,7 +417,8 @@ def main() -> None:
                                 FileReference.reference_type == "cutscene_video",
                                 FileReference.owner_node_id.is_not(None),
                                 FileReference.metadata_json["asset_version"].astext == args.version,
-                                *([FileReference.owner_node_id == args.asset_node_id] if args.asset_node_id else []),
+                                *([FileReference.owner_node_id == args.asset_node_id]
+                                  if args.asset_node_id else []),
                             )
                             .distinct(FileReference.owner_node_id)
                             .order_by(FileReference.owner_node_id, FileReference.id.desc())
@@ -433,7 +482,8 @@ def main() -> None:
         queue_concurrency()
         asyncio.run(_run(args.queue, args.pool))
     elif args.command == "plan-assets":
-        plan = discover_plan(args.version, args.tier, completed_workspace=args.completed_workspace)
+        plan = discover_plan(args.version, args.tier,
+                             completed_workspace=args.completed_workspace)
         if args.output:
             save_json(args.output, plan)
         print(
@@ -450,7 +500,8 @@ def main() -> None:
             )
         )
     elif args.command == "enqueue-assets":
-        asyncio.run(enqueue_assets(json.loads(args.plan.read_text(encoding="utf-8"))))
+        asyncio.run(enqueue_assets(json.loads(
+            args.plan.read_text(encoding="utf-8"))))
     elif args.command == "download-assets":
         root = download_plan(
             json.loads(args.plan.read_text(encoding="utf-8")),
@@ -482,13 +533,16 @@ def main() -> None:
             )
         )
     elif args.command == "extract-assets":
-        print(asyncio.run(export_assets(args.root.resolve(), args.fmodel, args.filter, args.upload)))
+        print(asyncio.run(export_assets(args.root.resolve(),
+              args.fmodel, args.filter, args.upload)))
     elif args.command == "extract-maps":
-        print(asyncio.run(build_maps(args.root.resolve(), args.fmodel, args.converter, args.publish)))
+        print(asyncio.run(build_maps(args.root.resolve(),
+              args.fmodel, args.converter, args.publish)))
     elif args.command == "refresh-map-sources":
         print(json.dumps(asyncio.run(refresh_map_sources(args.root.resolve()))))
     elif args.command == "enqueue-maps":
-        asyncio.run(enqueue_maps(json.loads(args.plan.read_text(encoding="utf-8"))))
+        asyncio.run(enqueue_maps(json.loads(
+            args.plan.read_text(encoding="utf-8"))))
     elif args.command == "enqueue-snapshot":
         asyncio.run(_enqueue(args))
     elif args.command == "watch-upstream":
@@ -498,12 +552,14 @@ def main() -> None:
     elif args.command == "import-compiler":
         if args.batch_size < 1:
             raise SystemExit("--batch-size must be positive")
-        asyncio.run(_import_datasets([(args.dataset.name, args.dataset)], args.batch_size))
+        asyncio.run(_import_datasets(
+            [(args.dataset.name, args.dataset)], args.batch_size))
     elif args.command == "import-series":
         if args.batch_size < 1:
             raise SystemExit("--batch-size must be positive")
         try:
-            datasets = discover_versioned_datasets(args.root, args.from_version, args.to_version)
+            datasets = discover_versioned_datasets(
+                args.root, args.from_version, args.to_version)
         except (ValueError, FileNotFoundError) as exc:
             raise SystemExit(str(exc)) from exc
         for version, path in datasets:

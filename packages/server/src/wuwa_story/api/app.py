@@ -10,6 +10,7 @@ from starlette.middleware.cors import CORSMiddleware
 from wuwa_story.api.admission import RequestAdmission
 from wuwa_story.api.cache import PublicResponseCache
 from wuwa_story.api.errors import install_error_handlers
+from wuwa_story.api.observability import ObservabilityMiddleware, metrics_router
 from wuwa_story.api.routes import (
     admin_data,
     character_models,
@@ -75,6 +76,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "X-CSRF-Token"],
 )
+app.add_middleware(ObservabilityMiddleware)
 install_error_handlers(app)
 
 
@@ -103,6 +105,7 @@ async def auth_error_handler(_request: Request, exc: AuthError) -> JSONResponse:
 
 
 app.include_router(health.router)
+app.include_router(metrics_router)
 app.include_router(releases.router)
 app.include_router(game_events.router)
 app.include_router(notices.router)

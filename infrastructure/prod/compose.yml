@@ -98,7 +98,12 @@ services:
     image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-api:${IMAGE_TAG:-latest}
     restart: unless-stopped
     # Two independent event loops; 8 origin requests each fit the 20-server DB pool.
-    command: ["uvicorn", "wuwa_story.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+    command:
+      [
+        "sh",
+        "-c",
+        "rm -rf /tmp/prom_multiproc && mkdir -p /tmp/prom_multiproc && exec uvicorn wuwa_story.api.app:app --host 0.0.0.0 --port 8000 --workers 2",
+      ]
     env_file:
       - path: ./env/api.runtime.env
         format: raw
@@ -112,9 +117,13 @@ services:
       WUWA_ASSET_WORKSPACE: /var/lib/wuwa-worker/client-assets
       VISUAL_MEMORY_DINO_PATH: /models/dinov2-small
       VISUAL_MEMORY_DETECTOR_PATH: /models/anime-character-detector/character.onnx
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prom_multiproc
+      WUWA_LOG_JSON_DIR: /var/log/solaris
+      WUWA_LOG_SERVICE: api
     volumes:
       - worker_data:/var/lib/wuwa-worker:ro
       - ./models/visual-memory:/models:ro
+      - solaris_logs:/var/log/solaris
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -188,6 +197,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+      - caddy_logs:/var/log/caddy
 
   snapshot-worker: &worker
     image: ${WORKER_IMAGE:-ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/solaris-atlas-worker:${IMAGE_TAG:-latest}}
@@ -208,9 +218,12 @@ services:
       replicas: ${WUWA_SNAPSHOT_REPLICAS:-1}
     volumes:
       - worker_data:/var/lib/wuwa-worker
+      - solaris_logs:/var/log/solaris
     environment:
       WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
       WUWA_SNAPSHOT_REPLICAS: ${WUWA_SNAPSHOT_REPLICAS:-1}
+      WUWA_LOG_JSON_DIR: /var/log/solaris
+      WUWA_LOG_SERVICE: worker
     depends_on:
       postgres:
         condition: service_healthy
@@ -327,8 +340,11 @@ services:
     command: ["wuwa-story-worker", "run", "--queue", "story_agent"]
     volumes:
       - worker_data:/var/lib/wuwa-worker
+      - solaris_logs:/var/log/solaris
     environment:
       WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
+      WUWA_LOG_JSON_DIR: /var/log/solaris
+      WUWA_LOG_SERVICE: story-agent
     depends_on:
       postgres:
         condition: service_healthy
@@ -354,8 +370,11 @@ services:
     command: ["wuwa-story-worker", "run", "--queue", "cutscene_vision"]
     volumes:
       - worker_data:/var/lib/wuwa-worker
+      - solaris_logs:/var/log/solaris
     environment:
       WUWA_WORKER_WORKSPACE: /var/lib/wuwa-worker
+      WUWA_LOG_JSON_DIR: /var/log/solaris
+      WUWA_LOG_SERVICE: cutscene-vision
     depends_on:
       postgres:
         condition: service_healthy
@@ -367,6 +386,109 @@ services:
         condition: service_completed_successfully
         required: ${USE_MINIO:-true}
 
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    profiles: [observability]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    volumes:
+      - ${OBSERVABILITY_DIR:-./observability}/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+  loki:
+    image: grafana/loki:3.3.2
+    restart: unless-stopped
+    profiles: [observability]
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ${OBSERVABILITY_DIR:-./observability}/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+
+  alloy:
+    image: grafana/alloy:v1.5.1
+    restart: unless-stopped
+    profiles: [observability]
+    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "/etc/alloy/config.alloy"]
+    volumes:
+      - ${OBSERVABILITY_DIR:-./observability}/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - solaris_logs:/var/log/solaris:ro
+      - caddy_logs:/var/log/caddy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    restart: unless-stopped
+    profiles: [observability]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme}
+      GF_SERVER_ROOT_URL: https://grafana.${DOMAIN:?Set DOMAIN to the public hostname}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ${OBSERVABILITY_DIR:-./observability}/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    profiles: [observability]
+    pid: host
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.51.0
+    restart: unless-stopped
+    profiles: [observability]
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    restart: unless-stopped
+    profiles: [observability]
+    env_file:
+      - path: ./env/runtime.env
+        format: raw
+    environment:
+      DATA_SOURCE_URI: "postgres:5432/${POSTGRES_DB:-wuwa_story}?sslmode=disable"
+      DATA_SOURCE_USER: "${POSTGRES_USER:-wuwa}"
+      DATA_SOURCE_PASS: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    restart: unless-stopped
+    profiles: [observability]
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   rabbitmq_data:
@@ -374,3 +496,8 @@ volumes:
   worker_data:
   caddy_data:
   caddy_config:
+  solaris_logs:
+  caddy_logs:
+  prometheus_data:
+  loki_data:
+  grafana_data:
