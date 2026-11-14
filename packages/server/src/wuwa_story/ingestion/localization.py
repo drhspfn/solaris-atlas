@@ -5,25 +5,59 @@ from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import BigInteger, SmallInteger, String, Text, bindparam, select, text
+from sqlalchemy.dialects.postgresql import ARRAY, BYTEA, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from wuwa_story.db.models.i18n import (
     Locale,
     LocalizationContent,
     LocalizationKey,
-    LocalizationValue,
 )
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
 from wuwa_story.ingestion.import_progress import import_debug_enabled
 
 logger = logging.getLogger(__name__)
 
-_KEY_INSERT_CHUNK = 4000
-_CONTENT_CHUNK = 4000
-_VALUE_INSERT_CHUNK = 3000
+_KEY_INSERT_CHUNK = 10000
+_CONTENT_CHUNK = 10000
+_VALUE_INSERT_CHUNK = 20000
 _SOURCE_POS_CHUNK = 5000
+
+_INSERT_KEYS_UNNEST = text(
+    "INSERT INTO i18n.localization_key (key, namespace, first_release_id, metadata) "
+    "SELECT * FROM UNNEST(:keys, :namespaces, :release_ids, :metadatas) "
+    "ON CONFLICT (key) DO NOTHING"
+).bindparams(
+    bindparam("keys", type_=ARRAY(String)),
+    bindparam("namespaces", type_=ARRAY(String)),
+    bindparam("release_ids", type_=ARRAY(BigInteger)),
+    bindparam("metadatas", type_=ARRAY(JSONB)),
+)
+
+_INSERT_CONTENTS_UNNEST = text(
+    "INSERT INTO i18n.localization_content (content_hash, content) "
+    "SELECT * FROM UNNEST(:hashes, :contents) "
+    "ON CONFLICT (content_hash) DO NOTHING"
+).bindparams(
+    bindparam("hashes", type_=ARRAY(BYTEA)),
+    bindparam("contents", type_=ARRAY(Text)),
+)
+
+_INSERT_VALUES_UNNEST = text(
+    "INSERT INTO i18n.localization_value "
+    "(release_id, key_id, locale_id, content_id, status, redirect_key_id, source_record_id) "
+    "SELECT * FROM UNNEST(:release_ids, :key_ids, :locale_ids, :content_ids, :statuses, :redirect_key_ids, :source_record_ids) "
+    "ON CONFLICT (release_id, key_id, locale_id) DO NOTHING"
+).bindparams(
+    bindparam("release_ids", type_=ARRAY(BigInteger)),
+    bindparam("key_ids", type_=ARRAY(BigInteger)),
+    bindparam("locale_ids", type_=ARRAY(SmallInteger)),
+    bindparam("content_ids", type_=ARRAY(BigInteger)),
+    bindparam("statuses", type_=ARRAY(String)),
+    bindparam("redirect_key_ids", type_=ARRAY(BigInteger)),
+    bindparam("source_record_ids", type_=ARRAY(BigInteger)),
+)
 
 
 @dataclass
@@ -107,9 +141,13 @@ async def import_localization_batch(
         for offset in range(0, len(keys_to_insert), _KEY_INSERT_CHUNK):
             chunk = keys_to_insert[offset : offset + _KEY_INSERT_CHUNK]
             key_result = await session.execute(
-                insert(LocalizationKey)
-                .values(chunk)
-                .on_conflict_do_nothing(index_elements=[LocalizationKey.key])
+                _INSERT_KEYS_UNNEST,
+                {
+                    "keys": [item["key"] for item in chunk],
+                    "namespaces": [item["namespace"] for item in chunk],
+                    "release_ids": [item["first_release_id"] for item in chunk],
+                    "metadatas": [item["metadata_json"] for item in chunk],
+                },
             )
             inserted_key_count += max(getattr(key_result, "rowcount", 0) or 0, 0)
         fetched_keys: dict[str, int] = {}
@@ -231,11 +269,11 @@ async def import_localization_batch(
         for offset in range(0, len(missing_hashes), _CONTENT_CHUNK):
             hashes = missing_hashes[offset : offset + _CONTENT_CHUNK]
             await session.execute(
-                insert(LocalizationContent)
-                .values(
-                    [{"content_hash": digest, "content": contents[digest]} for digest in hashes]
-                )
-                .on_conflict_do_nothing(index_elements=[LocalizationContent.content_hash])
+                _INSERT_CONTENTS_UNNEST,
+                {
+                    "hashes": hashes,
+                    "contents": [contents[digest] for digest in hashes],
+                },
             )
             stored = await session.execute(
                 select(
@@ -260,15 +298,16 @@ async def import_localization_batch(
         for offset in range(0, len(values), _VALUE_INSERT_CHUNK):
             value_chunk = values[offset : offset + _VALUE_INSERT_CHUNK]
             value_result = await session.execute(
-                insert(LocalizationValue)
-                .values(value_chunk)
-                .on_conflict_do_nothing(
-                    index_elements=[
-                        LocalizationValue.release_id,
-                        LocalizationValue.key_id,
-                        LocalizationValue.locale_id,
-                    ]
-                )
+                _INSERT_VALUES_UNNEST,
+                {
+                    "release_ids": [item["release_id"] for item in value_chunk],
+                    "key_ids": [item["key_id"] for item in value_chunk],
+                    "locale_ids": [item["locale_id"] for item in value_chunk],
+                    "content_ids": [item["content_id"] for item in value_chunk],
+                    "statuses": [item["status"] for item in value_chunk],
+                    "redirect_key_ids": [item["redirect_key_id"] for item in value_chunk],
+                    "source_record_ids": [item["source_record_id"] for item in value_chunk],
+                },
             )
             inserted_value_count += max(getattr(value_result, "rowcount", 0) or 0, 0)
         if debug:
