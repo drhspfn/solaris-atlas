@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from wuwa_story.ingestion.import_progress import ImportProgress
+from wuwa_story.ingestion.import_progress import ImportProgress, import_debug_enabled
 
 
 def run():
@@ -58,3 +58,14 @@ async def test_resume_query_pins_dataset_identity_and_importer_version():
     assert "source_fingerprint" in sql
     assert "importer_version = '2'" in sql
     assert "release_id = 4" in sql
+
+
+def test_import_debug_enabled_parses_truthy_env_values(monkeypatch):
+    monkeypatch.delenv("WUWA_IMPORT_DEBUG", raising=False)
+    assert import_debug_enabled() is False
+    monkeypatch.setenv("WUWA_IMPORT_DEBUG", "1")
+    assert import_debug_enabled() is True
+    monkeypatch.setenv("WUWA_IMPORT_DEBUG", "true")
+    assert import_debug_enabled() is True
+    monkeypatch.setenv("WUWA_IMPORT_DEBUG", "0")
+    assert import_debug_enabled() is False

@@ -15,7 +15,7 @@ from wuwa_story.ingestion.context import ImportSummary
 from wuwa_story.ingestion.cutscene_order import rebuild as rebuild_cutscene_order
 from wuwa_story.ingestion.import_progress import ImportProgress
 from wuwa_story.ingestion.importer import Importer
-from wuwa_story.ingestion.localization import import_localization_batch
+from wuwa_story.ingestion.localization import LocalizationImportCache, import_localization_batch
 from wuwa_story.ingestion.raw import import_raw_snapshot
 from wuwa_story.ingestion.releases import register_release, start_import_run
 from wuwa_story.search.indexer import build_lexical_index
@@ -61,22 +61,41 @@ class CompiledDatasetImporter(Importer):
             )
             seen += raw_seen
             created += raw_created
+            localization_batch = max(batch_size, 2000)
+            canonical_batch = max(batch_size, 2000)
+            search_batch = max(batch_size, 4000)
             localization_seen, localization_created = await progress.phase(
                 "localization", lambda: self._import_localization(
                     source / "localization" / "all-locales.jsonl", session,
-                    release.id, min(batch_size, 250),
+                    release.id, localization_batch,
                 )
             )
             seen += localization_seen
             created += localization_created
             adapter = CanonicalRecordAdapter(source)
+            shared_source_files: dict[str, int] = {}
+            shared_node_ids: dict[str, int] = {}
             async def entities():
                 count = await import_canonical_entities(
-                    adapter, session, release.id, release.sequence, batch_size)
+                    adapter,
+                    session,
+                    release.id,
+                    release.sequence,
+                    canonical_batch,
+                    source_file_cache=shared_source_files,
+                    node_id_cache=shared_node_ids,
+                )
                 return count, count
 
             async def edges():
-                count = await import_canonical_edges(adapter, session, release.id, batch_size)
+                count = await import_canonical_edges(
+                    adapter,
+                    session,
+                    release.id,
+                    canonical_batch,
+                    source_file_cache=shared_source_files,
+                    node_id_cache=shared_node_ids,
+                )
                 return count, count
 
             entity_count, entity_created = await progress.phase("entities", entities)
@@ -85,7 +104,7 @@ class CompiledDatasetImporter(Importer):
             # Search documents are a deterministic projection of imported localized text.
             # Build them as part of snapshot import so freshly imported releases are searchable.
             async def search():
-                await build_lexical_index(session, release.game_version, batch_size, release_id=release.id)
+                await build_lexical_index(session, release.game_version, search_batch, release_id=release.id)
                 return 0, 0
 
             await progress.phase("search", search)
@@ -116,13 +135,22 @@ class CompiledDatasetImporter(Importer):
 
     @staticmethod
     async def _commit_localization_batch(
-        session: AsyncSession, release_id: int, batch: list[dict[str, Any]]
+        session: AsyncSession,
+        release_id: int,
+        batch: list[dict[str, Any]],
+        *,
+        cache: LocalizationImportCache | None = None,
     ) -> tuple[int, int]:
         for attempt in range(4):
             try:
-                inserted_keys, inserted_values = await import_localization_batch(
-                    session, release_id, batch
-                )
+                if cache is not None:
+                    inserted_keys, inserted_values = await import_localization_batch(
+                        session, release_id, batch, cache=cache
+                    )
+                else:
+                    inserted_keys, inserted_values = await import_localization_batch(
+                        session, release_id, batch
+                    )
                 await session.commit()
                 return inserted_keys, inserted_values
             except DBAPIError as exc:
@@ -131,6 +159,8 @@ class CompiledDatasetImporter(Importer):
                 if not is_deadlock or attempt >= 3:
                     raise
                 await session.rollback()
+                if cache is not None:
+                    cache.reset_transactional()
                 await asyncio.sleep(0.05 * (attempt + 1))
         raise RuntimeError("unreachable")
 
@@ -142,6 +172,7 @@ class CompiledDatasetImporter(Importer):
             raise FileNotFoundError(f"Compiler localization output is missing: {path}")
         seen = created = 0
         batch: list[dict[str, Any]] = []
+        cache = LocalizationImportCache()
         with path.open(encoding="utf-8") as stream:
             for line_number, line in enumerate(stream, start=1):
                 try:
@@ -158,14 +189,14 @@ class CompiledDatasetImporter(Importer):
                 batch.append(row)
                 if len(batch) >= batch_size:
                     inserted_keys, inserted_values = await CompiledDatasetImporter._commit_localization_batch(
-                        session, release_id, batch
+                        session, release_id, batch, cache=cache
                     )
                     seen += len(batch) + sum(len(row.get("values_by_locale", {})) for row in batch)
                     created += inserted_keys + inserted_values
                     batch.clear()
         if batch:
             inserted_keys, inserted_values = await CompiledDatasetImporter._commit_localization_batch(
-                session, release_id, batch
+                session, release_id, batch, cache=cache
             )
             seen += len(batch) + sum(len(row.get("values_by_locale", {})) for row in batch)
             created += inserted_keys + inserted_values

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from wuwa_story.db.models.i18n import LocalizationContent, LocalizationKey, LocalizationValue
 from wuwa_story.db.models.ops import GameRelease
-from wuwa_story.ingestion.localization import import_localization_batch
+from wuwa_story.ingestion.localization import LocalizationImportCache, import_localization_batch
 
 DATABASE_URL = os.getenv("WUWA_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="WUWA_TEST_DATABASE_URL is not configured")
@@ -239,3 +239,18 @@ async def test_existing_data_migration_and_rollback_preserve_exact_values(sessio
         )
     ).all()
     assert restored == original
+
+
+async def test_localization_cache_reuses_keys_and_contents_and_resets_safely(session):
+    db, (first, second) = session
+    cache = LocalizationImportCache()
+    keys1, vals1 = await import_localization_batch(db, first, rows(), cache=cache)
+    assert (keys1, vals1) == (1, 4)
+    assert "dedup-test" in cache.key_ids
+    assert hashlib.sha256(b"same text").digest() in cache.content_ids
+    keys2, vals2 = await import_localization_batch(db, second, rows(), cache=cache)
+    assert (keys2, vals2) == (0, 4)
+    cache.reset_transactional()
+    assert cache.key_ids == {}
+    assert cache.content_ids == {}
+    assert cache.locales is not None
