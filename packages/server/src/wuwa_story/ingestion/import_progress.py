@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import os
 from time import monotonic
 
 from sqlalchemy import select
@@ -9,6 +10,11 @@ from sqlalchemy import select
 from wuwa_story.db.models.ops import ImportRun
 
 logger = logging.getLogger(__name__)
+
+
+def import_debug_enabled() -> bool:
+    """Return True when verbose snapshot import timing logs are enabled."""
+    return os.getenv("WUWA_IMPORT_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class ImportProgress:

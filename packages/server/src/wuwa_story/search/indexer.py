@@ -1,12 +1,18 @@
 """Build deterministic lexical search documents from imported typed text references."""
 
 import hashlib
+import logging
 from collections.abc import AsyncIterator
+from time import monotonic
 from typing import Any
 
-from sqlalchemy import delete, func, select, tuple_
+from sqlalchemy import and_, delete, func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from wuwa_story.ingestion.import_progress import import_debug_enabled
+
+logger = logging.getLogger(__name__)
 
 from wuwa_story.db.models import (
     Character,
@@ -210,21 +216,25 @@ async def build_lexical_index(
             select(ImportRun.release_id).where(ImportRun.status == "succeeded")
         )
     )))
+    debug = import_debug_enabled()
     historical = bool(newer_release_ids)
     indexed = 0
     for model, key_field, category in TEXT_SOURCES:
         if categories is not None and category not in categories:
             continue
+        t_cat = monotonic() if debug else 0.0
+        cat_indexed = 0
         batch: list[dict[str, Any]] = []
         rows = (_historical_source_rows(session, model, key_field, category, release.id, releases, batch_size)
                 if historical else _source_rows(session, model, key_field, category, release.id, batch_size))
         async for row in rows:
             batch.append(row)
             if len(batch) >= batch_size:
-                indexed += await _upsert_batch(session, batch, newer_release_ids)
+                cat_indexed += await _upsert_batch(session, batch, newer_release_ids)
                 batch.clear()
         if batch:
-            indexed += await _upsert_batch(session, batch, newer_release_ids)
+            cat_indexed += await _upsert_batch(session, batch, newer_release_ids)
+        indexed += cat_indexed
         if model is Character and key_field == "name_key_id" and not historical:
             scoped_nodes = (select(Character.node_id).join(
                 NodeRevision, NodeRevision.node_id == Character.node_id).where(
@@ -241,28 +251,45 @@ async def build_lexical_index(
             if batch:
                 indexed += await _upsert_batch(session, batch, newer_release_ids)
             await session.commit()
+        if debug:
+            logger.info(
+                "snapshot.debug.search_category category=%s indexed=%d elapsed_s=%.2f",
+                category,
+                cat_indexed,
+                monotonic() - t_cat,
+            )
     return indexed
 
 
 async def _upsert_batch(session: AsyncSession, batch: list[dict[str, Any]], newer_release_ids=None) -> int:
-    statement = insert(SearchDocument).values(batch)
-    protected = set(await session.scalars(select(NodeRevision.node_id).where(
-        NodeRevision.node_id.in_([value["target_node_id"] for value in batch]),
-        NodeRevision.release_id.in_(newer_release_ids),
-    ))) if newer_release_ids else set()
-    result = await session.execute(
-        statement.on_conflict_do_update(
-            constraint="uq_search_document",
-            set_={
-                "title": statement.excluded.title,
-                "aliases": statement.excluded.aliases,
-                "body": statement.excluded.body,
-                "search_vector": statement.excluded.search_vector,
-                "content_hash": statement.excluded.content_hash,
-                "updated_at": func.now(),
-            },
-            where=statement.excluded.target_node_id.not_in(protected) if protected else None,
+    total_written = 0
+    for offset in range(0, len(batch), 3000):
+        chunk = batch[offset : offset + 3000]
+        statement = insert(SearchDocument).values(chunk)
+        protected = set(await session.scalars(select(NodeRevision.node_id).where(
+            NodeRevision.node_id.in_([value["target_node_id"] for value in chunk]),
+            NodeRevision.release_id.in_(newer_release_ids),
+        ))) if newer_release_ids else set()
+        changed = SearchDocument.content_hash.is_distinct_from(statement.excluded.content_hash)
+        where_clause = (
+            and_(changed, statement.excluded.target_node_id.not_in(protected))
+            if protected
+            else changed
         )
-    )
+        result = await session.execute(
+            statement.on_conflict_do_update(
+                constraint="uq_search_document",
+                set_={
+                    "title": statement.excluded.title,
+                    "aliases": statement.excluded.aliases,
+                    "body": statement.excluded.body,
+                    "search_vector": statement.excluded.search_vector,
+                    "content_hash": statement.excluded.content_hash,
+                    "updated_at": func.now(),
+                },
+                where=where_clause,
+            )
+        )
+        total_written += max(result.rowcount or 0, 0)
     await session.commit()
-    return max(result.rowcount or 0, 0)
+    return total_written

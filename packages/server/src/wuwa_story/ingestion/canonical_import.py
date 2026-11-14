@@ -1,13 +1,19 @@
 import hashlib
 import itertools
 import json
+import logging
 import re
 from collections.abc import Iterable
+from time import monotonic
 from typing import Any
 
 from sqlalchemy import case, func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from wuwa_story.ingestion.import_progress import import_debug_enabled
+
+logger = logging.getLogger(__name__)
 
 from wuwa_story.db.models import (
     NPC,
@@ -81,20 +87,40 @@ def _source_identity(source: dict[str, Any] | None) -> tuple[str, int] | None:
     return (source["file"], row) if row is not None else None
 
 
+async def _ensure_source_file_cache(
+    session: AsyncSession, release_id: int, cache: dict[str, int]
+) -> dict[str, int]:
+    if not cache:
+        file_rows = await session.execute(
+            select(SourceFile.logical_source_path, SourceFile.id).where(
+                SourceFile.release_id == release_id,
+            )
+        )
+        cache.update(file_rows.all())
+    return cache
+
+
 async def _source_record_ids(
-    session: AsyncSession, release_id: int, refs: Iterable[tuple[str, int]]
+    session: AsyncSession,
+    release_id: int,
+    refs: Iterable[tuple[str, int]],
+    *,
+    source_file_cache: dict[str, int] | None = None,
 ) -> dict[tuple[str, int], int]:
     pairs = sorted(set(refs))
     if not pairs:
         return {}
-    paths = sorted({path for path, _ in pairs})
-    file_rows = await session.execute(
-        select(SourceFile.logical_source_path, SourceFile.id).where(
-            SourceFile.release_id == release_id,
-            SourceFile.logical_source_path.in_(paths),
+    if source_file_cache is not None:
+        file_ids = await _ensure_source_file_cache(session, release_id, source_file_cache)
+    else:
+        paths = sorted({path for path, _ in pairs})
+        file_rows = await session.execute(
+            select(SourceFile.logical_source_path, SourceFile.id).where(
+                SourceFile.release_id == release_id,
+                SourceFile.logical_source_path.in_(paths),
+            )
         )
-    )
-    file_ids = dict(file_rows.all())
+        file_ids = dict(file_rows.all())
     positions_by_path: dict[str, list[int]] = {}
     for path, row in pairs:
         positions_by_path.setdefault(path, []).append(row)
@@ -103,12 +129,12 @@ async def _source_record_ids(
         file_id = file_ids.get(path)
         if file_id is None:
             continue
-        for offset in range(0, len(positions), 1000):
+        for offset in range(0, len(positions), 5000):
             result = await session.execute(
                 select(SourceRecord.row_index, SourceRecord.id).where(
                     SourceRecord.release_id == release_id,
                     SourceRecord.source_file_id == file_id,
-                    SourceRecord.row_index.in_(positions[offset : offset + 1000]),
+                    SourceRecord.row_index.in_(positions[offset : offset + 5000]),
                 )
             )
             resolved.update(((path, row), record_id) for row, record_id in result)
@@ -134,14 +160,21 @@ async def import_canonical_entities(
     release_id: int,
     revision: int,
     batch_size: int = 1000,
+    *,
+    source_file_cache: dict[str, int] | None = None,
+    node_id_cache: dict[str, int] | None = None,
 ) -> int:
     """Import compiler entities as stable graph identities and typed source records."""
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
+    debug = import_debug_enabled()
     releases = list(await session.scalars(select(GameRelease)))
     current = next(release for release in releases if release.id == release_id)
     newer_release_ids = [release.id for release in releases if release_order(release) > release_order(current)]
     type_ids = {row.key: row.id for row in await session.scalars(select(NodeType))}
+    if source_file_cache is None:
+        source_file_cache = {}
+    node_map_cache: dict[str, tuple[int, int]] = {}
     total = 0
     for path in adapter.entity_files():
         kind = path.stem
@@ -149,11 +182,16 @@ async def import_canonical_entities(
             raise ValueError(
                 f"Canonical entity type is not in the controlled node vocabulary: {kind}"
             )
+        t_kind = monotonic() if debug else 0.0
+        kind_count = 0
         records = adapter.iter_entities(kind)
         while batch := list(itertools.islice(records, batch_size)):
             refs = [_source_identity(row.get("source")) for row in batch]
             source_ids = await _source_record_ids(
-                session, release_id, (ref for ref in refs if ref is not None)
+                session,
+                release_id,
+                (ref for ref in refs if ref is not None),
+                source_file_cache=source_file_cache,
             )
             node_values = []
             for record in batch:
@@ -173,17 +211,29 @@ async def import_canonical_entities(
                         },
                     }
                 )
-            await session.execute(
-                insert(Node.__table__)
-                .values(node_values)
-                .on_conflict_do_nothing(index_elements=[Node.canonical_key])
-            )
-            node_rows = await session.execute(
-                select(Node.id, Node.canonical_key, Node.type_id).where(
-                    Node.canonical_key.in_([row["canonical_key"] for row in node_values])
+            for offset in range(0, len(node_values), 4000):
+                await session.execute(
+                    insert(Node.__table__)
+                    .values(node_values[offset : offset + 4000])
+                    .on_conflict_do_nothing(index_elements=[Node.canonical_key])
                 )
-            )
-            node_map = {key: (node_id, node_type) for node_id, key, node_type in node_rows}
+            node_map: dict[str, tuple[int, int]] = {}
+            missing_keys: list[str] = []
+            for row in node_values:
+                key = row["canonical_key"]
+                cached = node_map_cache.get(key)
+                if cached is not None:
+                    node_map[key] = cached
+                else:
+                    missing_keys.append(key)
+            for offset in range(0, len(missing_keys), 5000):
+                node_rows = await session.execute(
+                    select(Node.id, Node.canonical_key, Node.type_id).where(
+                        Node.canonical_key.in_(missing_keys[offset : offset + 5000])
+                    )
+                )
+                for node_id, key, node_type in node_rows:
+                    node_map[key] = (node_id, node_type)
             if any(node_map[row["id"]][1] != type_ids[kind] for row in batch):
                 raise ValueError(f"Canonical key changed graph type in entity file {kind}")
             digests = [
@@ -219,13 +269,30 @@ async def import_canonical_entities(
                              and isinstance(record.get("npc"), dict)]
             npc_ids = {value["node_id"] for value in npc_revisions}
             ordinary = [value for value in revision_values if value["node_id"] not in npc_ids]
-            if ordinary:
-                await session.execute(insert(NodeRevision.__table__).values(ordinary).on_conflict_do_nothing(
-                    index_elements=[NodeRevision.node_id, NodeRevision.revision]))
+            for offset in range(0, len(ordinary), 4000):
+                await session.execute(
+                    insert(NodeRevision.__table__)
+                    .values(ordinary[offset : offset + 4000])
+                    .on_conflict_do_nothing(
+                        index_elements=[NodeRevision.node_id, NodeRevision.revision]
+                    )
+                )
             if npc_revisions:
                 await _upsert_npc_revisions(session, npc_revisions)
             await session.commit()
+            node_map_cache.update(node_map)
+            if node_id_cache is not None:
+                for key, (node_id, _) in node_map.items():
+                    node_id_cache[key] = node_id
             total += len(batch)
+            kind_count += len(batch)
+        if debug and kind_count:
+            logger.info(
+                "snapshot.debug.entity_nodes kind=%s rows=%d elapsed_s=%.2f",
+                kind,
+                kind_count,
+                monotonic() - t_kind,
+            )
     typed_order = (
         "speaker",
         "character",
@@ -248,20 +315,43 @@ async def import_canonical_entities(
     for kind in typed_order:
         if not (adapter.root / "entities" / f"{kind}.jsonl").is_file():
             continue
+        t_typed = monotonic() if debug else 0.0
+        typed_count = 0
         for batch in _batches(adapter.iter_entities(kind), batch_size):
             keys = [record["id"] for record in batch]
-            node_rows = await session.execute(
-                select(Node.id, Node.canonical_key, Node.type_id).where(
-                    Node.canonical_key.in_(keys)
+            node_map = {}
+            missing_keys = []
+            for key in keys:
+                cached = node_map_cache.get(key)
+                if cached is not None:
+                    node_map[key] = cached
+                else:
+                    missing_keys.append(key)
+            for offset in range(0, len(missing_keys), 5000):
+                node_rows = await session.execute(
+                    select(Node.id, Node.canonical_key, Node.type_id).where(
+                        Node.canonical_key.in_(missing_keys[offset : offset + 5000])
+                    )
                 )
-            )
-            node_map = {key: (node_id, type_id) for node_id, key, type_id in node_rows}
+                for node_id, key, type_id in node_rows:
+                    node_map[key] = (node_id, type_id)
             refs = [_source_identity(row.get("source")) for row in batch]
             source_ids = await _source_record_ids(
-                session, release_id, (ref for ref in refs if ref is not None)
+                session,
+                release_id,
+                (ref for ref in refs if ref is not None),
+                source_file_cache=source_file_cache,
             )
             await _insert_typed_entities(session, kind, batch, node_map, source_ids, newer_release_ids)
             await session.commit()
+            typed_count += len(batch)
+        if debug and typed_count:
+            logger.info(
+                "snapshot.debug.entity_typed kind=%s rows=%d elapsed_s=%.2f",
+                kind,
+                typed_count,
+                monotonic() - t_typed,
+            )
     return total
 
 
@@ -768,8 +858,16 @@ async def import_canonical_edges(
     relation_filter: set[str] | None = None,
     type_filter: set[str] | None = None,
     skip_missing_endpoints: bool = False,
+    *,
+    source_file_cache: dict[str, int] | None = None,
+    node_id_cache: dict[str, int] | None = None,
 ) -> int:
+    debug = import_debug_enabled()
     relation_ids = {row.key: row.id for row in await session.scalars(select(RelationType))}
+    if source_file_cache is None:
+        source_file_cache = {}
+    if node_id_cache is None:
+        node_id_cache = {}
     count = 0
     records = adapter.iter_edges()
     if relation_filter is not None:
@@ -777,18 +875,25 @@ async def import_canonical_edges(
     if type_filter is not None:
         records = (record for record in records if record.get("type") in type_filter)
     for batch in _batches(records, batch_size):
+        t0 = monotonic() if debug else 0.0
         node_keys = {record["from"] for record in batch} | {record["to"] for record in batch}
         node_ids: dict[str, int] = {}
-        ordered_node_keys = sorted(node_keys)
-        for offset in range(0, len(ordered_node_keys), 250):
+        missing_node_keys: list[str] = []
+        for key in sorted(node_keys):
+            cached_id = node_id_cache.get(key)
+            if cached_id is not None:
+                node_ids[key] = cached_id
+            else:
+                missing_node_keys.append(key)
+        for offset in range(0, len(missing_node_keys), 5000):
             node_rows = await session.execute(
                 select(Node.id, Node.canonical_key).where(
-                    Node.canonical_key.in_(ordered_node_keys[offset : offset + 250])
+                    Node.canonical_key.in_(missing_node_keys[offset : offset + 5000])
                 )
             )
-            node_ids.update(
-                (canonical_key, node_id) for node_id, canonical_key in node_rows
-            )
+            for node_id, canonical_key in node_rows:
+                node_ids[canonical_key] = node_id
+                node_id_cache[canonical_key] = node_id
         relation_keys = {record["type"] for record in batch}
         unknown = relation_keys - relation_ids.keys()
         if unknown:
@@ -832,19 +937,20 @@ async def import_canonical_edges(
                     },
                 }
             )
-        await session.execute(
-            insert(Edge.__table__)
-            .values(edge_values)
-            .on_conflict_do_nothing(
-                index_elements=[
-                    Edge.from_node_id,
-                    Edge.relation_type_id,
-                    Edge.to_node_id,
-                    Edge.layer,
-                    Edge.basis,
-                ]
+        for offset in range(0, len(edge_values), 2500):
+            await session.execute(
+                insert(Edge.__table__)
+                .values(edge_values[offset : offset + 2500])
+                .on_conflict_do_nothing(
+                    index_elements=[
+                        Edge.from_node_id,
+                        Edge.relation_type_id,
+                        Edge.to_node_id,
+                        Edge.layer,
+                        Edge.basis,
+                    ]
+                )
             )
-        )
         edge_keys = [
             (
                 row["from_node_id"],
@@ -855,34 +961,36 @@ async def import_canonical_edges(
             )
             for row in edge_values
         ]
-        found = await session.execute(
-            select(
-                Edge.id,
-                Edge.from_node_id,
-                Edge.relation_type_id,
-                Edge.to_node_id,
-                Edge.layer,
-                Edge.basis,
-            ).where(
-                tuple_(
+        edge_ids: dict[tuple[int, int, int, str, str], int] = {}
+        for offset in range(0, len(edge_keys), 2000):
+            found = await session.execute(
+                select(
+                    Edge.id,
                     Edge.from_node_id,
                     Edge.relation_type_id,
                     Edge.to_node_id,
                     Edge.layer,
                     Edge.basis,
-                ).in_(edge_keys)
+                ).where(
+                    tuple_(
+                        Edge.from_node_id,
+                        Edge.relation_type_id,
+                        Edge.to_node_id,
+                        Edge.layer,
+                        Edge.basis,
+                    ).in_(edge_keys[offset : offset + 2000])
+                )
             )
-        )
-        edge_ids = {
-            (from_id, relation_id, to_id, layer, basis): edge_id
-            for edge_id, from_id, relation_id, to_id, layer, basis in found
-        }
+            for edge_id, from_id, relation_id, to_id, layer, basis in found:
+                edge_ids[(from_id, relation_id, to_id, layer, basis)] = edge_id
         source_refs = []
         for record in batch:
             match = re.match(r"^\$\[(\d+)\]", record["raw_path"])
             if match and isinstance(record.get("source"), str):
                 source_refs.append((record["source"], int(match.group(1))))
-        source_ids = await _source_record_ids(session, release_id, source_refs)
+        source_ids = await _source_record_ids(
+            session, release_id, source_refs, source_file_cache=source_file_cache
+        )
         speaker_links = []
         for record in batch:
             if record.get("type") != "references_character" or record.get("relation") != "exact_join":
@@ -907,10 +1015,10 @@ async def import_canonical_edges(
                     },
                 }
             )
-        if speaker_links:
+        for offset in range(0, len(speaker_links), 2500):
             await session.execute(
                 insert(SpeakerEntityLink.__table__)
-                .values(speaker_links)
+                .values(speaker_links[offset : offset + 2500])
                 .on_conflict_do_nothing(
                     index_elements=[SpeakerEntityLink.speaker_node_id, SpeakerEntityLink.entity_node_id]
                 )
@@ -936,10 +1044,10 @@ async def import_canonical_edges(
                     "explanation": record["basis"],
                 }
             )
-        if evidences:
+        for offset in range(0, len(evidences), 2500):
             await session.execute(
                 insert(EdgeEvidence)
-                .values(evidences)
+                .values(evidences[offset : offset + 2500])
                 .on_conflict_do_nothing(
                     index_elements=[
                         EdgeEvidence.edge_id,
@@ -951,6 +1059,14 @@ async def import_canonical_edges(
             )
         await session.commit()
         count += len(batch)
+        if debug:
+            logger.info(
+                "snapshot.debug.edges_batch batch=%d total=%d missing_nodes=%d elapsed_ms=%.1f",
+                len(batch),
+                count,
+                len(missing_node_keys),
+                (monotonic() - t0) * 1000,
+            )
     return count
 
 

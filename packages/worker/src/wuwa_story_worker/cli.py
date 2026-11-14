@@ -95,6 +95,8 @@ def _parser() -> argparse.ArgumentParser:
     runner.add_argument("--queue", action="append", choices=tuple(QUEUES), default=None)
     runner.add_argument("--pool", choices=MEDIA_POOLS,
                         help="Consume a private execution pool; coordinator also routes public media queues")
+    runner.add_argument("--debug-import", action="store_true",
+                        help="Enable verbose per-batch/category timing logs for snapshot imports")
     assets = commands.add_parser("plan-assets", help="Inspect official client archives without downloading")
     assets.add_argument("--version", required=True)
     assets.add_argument("--tier", choices=("sd", "hd", "uhd"), default="hd")
@@ -142,12 +144,16 @@ def _parser() -> argparse.ArgumentParser:
     importer = commands.add_parser("import-compiler", help="Import a compiled output directory")
     importer.add_argument("dataset", type=Path)
     importer.add_argument("--batch-size", type=int, default=1000)
+    importer.add_argument("--debug-import", action="store_true",
+                          help="Enable verbose per-batch/category timing logs for snapshot imports")
     series = commands.add_parser("import-series", help="Import compiled snapshots in version order")
     series.add_argument("root", type=Path)
     series.add_argument("--from-version", default="1.0")
     series.add_argument("--to-version", default="3.6")
     series.add_argument("--batch-size", type=int, default=1000)
     series.add_argument("--dry-run", action="store_true")
+    series.add_argument("--debug-import", action="store_true",
+                        help="Enable verbose per-batch/category timing logs for snapshot imports")
     enqueue = commands.add_parser("enqueue-snapshot", help="Queue one upstream version snapshot")
     enqueue.add_argument("--version", required=True, help="Upstream branch, for example 1.0")
     enqueue.add_argument("--commit", help="Pin an explicit full commit SHA; defaults to branch head")
@@ -324,6 +330,8 @@ async def _replay_failed(args: argparse.Namespace) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = _parser().parse_args()
+    if getattr(args, "debug_import", False):
+        os.environ["WUWA_IMPORT_DEBUG"] = "1"
     if args.command in (
         "enqueue-cutscene-vision",
         "resume-cutscene-vision",
