@@ -9,17 +9,26 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "API Uptime",
-      "gridPos": { "x": 0, "y": 0, "w": 5, "h": 4 },
+      "title": "API Uptime (since restart)",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{ "expr": "max(solaris_app_uptime_seconds)", "refId": "A" }],
-      "fieldConfig": { "defaults": { "unit": "s" } }
+      "fieldConfig": { "defaults": { "unit": "s", "thresholds": { "steps": [{ "color": "yellow", "value": null }, { "color": "green", "value": 30 }] } } }
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "API Availability %",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "100 * avg_over_time(up{job=\"api\"}[$__range])", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "decimals": 2, "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 99 }, { "color": "green", "value": 99.9 }] } } }
     },
     {
       "id": 2,
       "type": "stat",
       "title": "API Request Rate (req/s)",
-      "gridPos": { "x": 5, "y": 0, "w": 5, "h": 4 },
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{ "expr": "sum(rate(solaris_http_requests_total[1m]))", "refId": "A" }],
       "fieldConfig": { "defaults": { "unit": "reqps", "decimals": 2 } }
@@ -28,7 +37,7 @@
       "id": 9,
       "type": "stat",
       "title": "API In-Progress",
-      "gridPos": { "x": 10, "y": 0, "w": 4, "h": 4 },
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{ "expr": "sum(solaris_http_requests_in_progress)", "refId": "A" }],
       "fieldConfig": { "defaults": { "decimals": 0 } }
@@ -37,16 +46,16 @@
       "id": 3,
       "type": "stat",
       "title": "API 5xx Error Rate %",
-      "gridPos": { "x": 14, "y": 0, "w": 5, "h": 4 },
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{ "expr": "100 * (sum(rate(solaris_http_requests_total{status_code=~\"5..\"}[5m])) / clamp_min(sum(rate(solaris_http_requests_total[5m])), 0.001))", "refId": "A" }],
+      "targets": [{ "expr": "100 * ((sum(rate(solaris_http_requests_total{status_code=~\"5..\"}[5m])) or vector(0)) / clamp_min(sum(rate(solaris_http_requests_total[5m])), 0.001))", "refId": "A" }],
       "fieldConfig": { "defaults": { "unit": "percent", "decimals": 2, "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 }] } } }
     },
     {
       "id": 4,
       "type": "stat",
       "title": "API p95 Latency",
-      "gridPos": { "x": 19, "y": 0, "w": 5, "h": 4 },
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{ "expr": "histogram_quantile(0.95, sum by (le) (rate(solaris_http_request_duration_seconds_bucket[5m])))", "refId": "A" }],
       "fieldConfig": { "defaults": { "unit": "s", "decimals": 3 } }
