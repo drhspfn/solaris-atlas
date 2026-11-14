@@ -36,6 +36,8 @@ groups:
                   query: { params: [B] }
                   reducer: { type: last }
         for: 1m
+        noDataState: Alerting
+        execErrState: Error
         annotations:
           summary: "Service {{ $labels.job }} is DOWN"
           description: "Prometheus target {{ $labels.job }} has been unreachable for 1 minute."
@@ -166,7 +168,7 @@ groups:
             relativeTimeRange: { from: 300, to: 0 }
             datasourceUid: prometheus
             model:
-              expr: 100 * (sum(rate(solaris_http_requests_total{status_code=~"5.."}[5m])) / clamp_min(sum(rate(solaris_http_requests_total[5m])), 0.01))
+              expr: 100 * ((sum(rate(solaris_http_requests_total{status_code=~"5.."}[5m])) or vector(0)) / clamp_min(sum(rate(solaris_http_requests_total[5m])), 0.01))
               instant: true
               refId: A
           - refId: B
@@ -188,6 +190,8 @@ groups:
                   query: { params: [B] }
                   reducer: { type: last }
         for: 2m
+        noDataState: OK
+        execErrState: Error
         annotations:
           summary: "API 5xx error rate above 5%"
           description: "API 5xx percentage is {{ $values.B.Value }}%."
@@ -226,6 +230,8 @@ groups:
                   query: { params: [B] }
                   reducer: { type: last }
         for: 2m
+        noDataState: OK
+        execErrState: Error
         annotations:
           summary: "Postgres transaction running > 10 minutes"
           description: "Max active transaction duration is {{ $values.B.Value }}s (possible hang or lock)."
