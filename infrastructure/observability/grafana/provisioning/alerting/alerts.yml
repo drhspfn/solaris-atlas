@@ -41,6 +41,8 @@ groups:
           description: "Prometheus target {{ $labels.job }} has been unreachable for 1 minute."
         labels:
           severity: critical
+          channel: telegram
+          category: outage
 
       - uid: solaris-disk-low
         title: Root Disk Space Low (< 15% free)
@@ -77,6 +79,8 @@ groups:
           description: "Available disk space on / is {{ $values.B.Value }}%."
         labels:
           severity: warning
+          channel: email
+          category: disk
 
       - uid: solaris-ram-high
         title: Host RAM Usage > 90%
@@ -113,6 +117,8 @@ groups:
           description: "Host memory utilization is {{ $values.B.Value }}%."
         labels:
           severity: warning
+          channel: email
+          category: memory
 
       - uid: solaris-cpu-high
         title: Host CPU Usage > 90%
@@ -149,6 +155,8 @@ groups:
           description: "Host CPU utilization is {{ $values.B.Value }}%."
         labels:
           severity: warning
+          channel: email
+          category: cpu
 
       - uid: solaris-api-5xx
         title: API 5xx Error Rate > 5%
@@ -185,6 +193,8 @@ groups:
           description: "API 5xx percentage is {{ $values.B.Value }}%."
         labels:
           severity: critical
+          channel: telegram
+          category: api
 
       - uid: solaris-pg-long-tx
         title: Postgres Long Transaction (> 600s)
@@ -221,3 +231,5 @@ groups:
           description: "Max active transaction duration is {{ $values.B.Value }}s (possible hang or lock)."
         labels:
           severity: warning
+          channel: email
+          category: database
