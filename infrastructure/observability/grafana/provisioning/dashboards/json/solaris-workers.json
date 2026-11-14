@@ -2,23 +2,47 @@
   "title": "Solaris Atlas — Workers & Queues",
   "uid": "solaris-workers",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "15s",
   "time": { "from": "now-3h", "to": "now" },
   "panels": [
     {
-      "id": 1,
-      "type": "timeseries",
-      "title": "Active Worker Jobs",
-      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 7 },
+      "id": 10,
+      "type": "stat",
+      "title": "RabbitMQ Connections",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{ "expr": "sum by (service, queue) (solaris_worker_jobs_active)", "legendFormat": "{{service}} ({{queue}})", "refId": "A" }]
+      "targets": [{ "expr": "sum(rabbitmq_connections)", "refId": "A" }]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Active Consumers",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rabbitmq_consumers)", "refId": "A" }]
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Messages Ready",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rabbitmq_queue_messages_ready)", "refId": "A" }]
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Messages Unacked",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rabbitmq_queue_messages_unacked)", "refId": "A" }]
     },
     {
       "id": 2,
       "type": "timeseries",
       "title": "RabbitMQ Queue Depth (Ready + Unacked)",
-      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 7 },
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "expr": "sum by (queue) (rabbitmq_queue_messages_ready)", "legendFormat": "ready: {{queue}}", "refId": "A" },
@@ -26,10 +50,29 @@
       ]
     },
     {
+      "id": 14,
+      "type": "timeseries",
+      "title": "RabbitMQ Publish vs Ack Rate (msg/s)",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (queue) (rate(rabbitmq_queue_messages_published_total[1m]))", "legendFormat": "pub: {{queue}}", "refId": "A" },
+        { "expr": "sum by (queue) (rate(rabbitmq_queue_messages_acked_total[1m]))", "legendFormat": "ack: {{queue}}", "refId": "B" }
+      ]
+    },
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Active Worker Jobs (requires updated workers)",
+      "gridPos": { "x": 0, "y": 12, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum by (service, queue) (solaris_worker_jobs_active)", "legendFormat": "{{service}} ({{queue}})", "refId": "A" }]
+    },
+    {
       "id": 3,
       "type": "timeseries",
       "title": "Worker Job Throughput by Status (jobs/min)",
-      "gridPos": { "x": 0, "y": 7, "w": 12, "h": 8 },
+      "gridPos": { "x": 8, "y": 12, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{ "expr": "sum by (queue, status) (rate(solaris_worker_jobs_total[5m])) * 60", "legendFormat": "{{queue}} [{{status}}]", "refId": "A" }]
     },
@@ -37,7 +80,7 @@
       "id": 4,
       "type": "timeseries",
       "title": "Worker Job Duration p95 (s)",
-      "gridPos": { "x": 12, "y": 7, "w": 12, "h": 8 },
+      "gridPos": { "x": 16, "y": 12, "w": 8, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{ "expr": "histogram_quantile(0.95, sum by (le, queue) (rate(solaris_worker_job_duration_seconds_bucket[15m])))", "legendFormat": "{{queue}}", "refId": "A" }],
       "fieldConfig": { "defaults": { "unit": "s" } }
