@@ -596,15 +596,21 @@ def inherited_base_color_texture(metadata: dict, path: Path | None, converted: P
         metadata = json.loads(path.read_text(encoding="utf-8-sig"))
 
 
-def empty_effect_material_slots(model: Path, converted: Path, source_json: Path) -> set[int]:
-    """Identify explicitly empty material slots on an authored effect mesh."""
+def is_effect_model(model: Path, converted: Path) -> bool:
+    """Return True when *model* lives under Client/Content/Aki/Effect."""
     try:
         relative = model.resolve().relative_to(converted.resolve())
     except ValueError:
-        return set()
+        return False
     parts = [part.casefold() for part in relative.parts]
-    if parts[:3] != ['client', 'content', 'aki'] or len(parts) < 4 or parts[3] != 'effect':
+    return parts[:3] == ['client', 'content', 'aki'] and len(parts) >= 4 and parts[3] == 'effect'
+
+
+def empty_effect_material_slots(model: Path, converted: Path, source_json: Path) -> set[int]:
+    """Identify explicitly empty material slots on an authored effect mesh."""
+    if not is_effect_model(model, converted):
         return set()
+    relative = model.resolve().relative_to(converted.resolve())
     source = (source_json / relative).with_suffix('.json')
     if not source.is_file():
         return set()
@@ -1400,7 +1406,12 @@ def main():
             and all(index in empty_effect_slots
                     for mesh in users for index, slot in enumerate(mesh.data.materials) if slot == material)
         )
-        if texture is None and not empty_effect:
+        textureless_effect = (
+            is_effect_model(Path(args.model), args.converted)
+            and path is not None
+            and reference is None
+        )
+        if texture is None and not empty_effect and not textureless_effect:
             report["missing_textures"].append({"material": material.name, "reference": reference})
         material.use_nodes = True
         shader = material.node_tree.nodes.get("Principled BSDF")

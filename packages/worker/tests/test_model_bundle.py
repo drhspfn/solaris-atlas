@@ -23,6 +23,7 @@ from wuwa_story_worker.model_bundle import (
     file_sha256,
     indexed_gltf_references,
     inherited_base_color_texture,
+    is_effect_model,
     main,
     material_metadata_path,
     missing_animation_sources,
@@ -53,6 +54,13 @@ def test_empty_effect_material_slots_require_explicit_null_source(tmp_path):
     assert empty_effect_material_slots(model, converted, source) == {0}
     assert empty_effect_material_slots(converted / 'Client/Content/Aki/Character/Fx.uemodel', converted, source) == set()
     assert empty_effect_material_slots(converted / 'Client/Content/Aki/Effect/Other.uemodel', converted, source) == set()
+
+
+def test_is_effect_model(tmp_path):
+    converted = tmp_path / 'converted'
+    assert is_effect_model(converted / 'Client/Content/Aki/Effect/SkeletalMesh/Fx.uemodel', converted)
+    assert not is_effect_model(converted / 'Client/Content/Aki/Character/Char.uemodel', converted)
+    assert not is_effect_model(tmp_path / 'outside/Fx.uemodel', converted)
 
 
 def test_goblet_liquid_uses_authored_base_texture(tmp_path):
@@ -596,8 +604,14 @@ def test_preview_glb_requires_zero_morph_targets(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "rig_only,missing_texture,planned",
-    [(False, False, False), (True, False, False), (True, True, False), (True, False, True)],
+    ("rig_only", "missing_texture", "planned", "effect_textureless"),
+    [
+        (False, False, False, False),
+        (True, False, False, False),
+        (True, True, False, False),
+        (True, False, True, False),
+        (True, False, False, True),
+    ],
 )
 def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_clips(
     tmp_path,
@@ -605,11 +619,18 @@ def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_
     rig_only,
     missing_texture,
     planned,
+    effect_textureless,
 ):
-    model = tmp_path / "Character.uemodel"
-    model.touch()
     converted = tmp_path / "converted"
     converted.mkdir()
+    if effect_textureless:
+        model = converted / "Client/Content/Aki/Effect/SkeletalMesh/Fx_Ain_Attack06.uemodel"
+        model.parent.mkdir(parents=True)
+        mat_json = converted / "Client/Content/Aki/Effect/MI_Trans_Chunse_None.json"
+        mat_json.write_text(json.dumps({"Textures": {}}), encoding="utf-8")
+    else:
+        model = tmp_path / "Character.uemodel"
+    model.touch()
     output = tmp_path / "output"
     argv = [
         "blender",
@@ -656,18 +677,43 @@ def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_
             color_attributes=[],
         ),
     )
-    if missing_texture:
-        material = type("Material", (), {})()
-        material.name = "Body"
-        material.node_tree = SimpleNamespace(
-            nodes={
-                "Principled BSDF": SimpleNamespace(
-                    inputs={
-                        "Roughness": SimpleNamespace(default_value=0),
-                        "Metallic": SimpleNamespace(default_value=0),
-                    }
-                ),
-            }
+    if missing_texture or effect_textureless:
+        class FakeMaterial:
+            def __init__(self, name, node_tree):
+                self.name = name
+                self.node_tree = node_tree
+                self._props = {}
+
+            def __setitem__(self, key, value):
+                self._props[key] = value
+
+            def __getitem__(self, key):
+                return self._props[key]
+
+            def get(self, key, default=None):
+                return self._props.get(key, default)
+
+            def copy(self):
+                return deepcopy(self)
+
+        class NodeCollection(dict):
+            def __iter__(self):
+                return iter(self.values())
+
+        material = FakeMaterial(
+            "MI_Trans_Chunse_None" if effect_textureless else "Body",
+            SimpleNamespace(
+                nodes=NodeCollection({
+                    "Principled BSDF": SimpleNamespace(
+                        type="BSDF_PRINCIPLED",
+                        inputs={
+                            "Roughness": SimpleNamespace(default_value=0),
+                            "Metallic": SimpleNamespace(default_value=0),
+                        },
+                    ),
+                }),
+                links=[],
+            ),
         )
         mesh.data.materials.append(material)
     calls = []
