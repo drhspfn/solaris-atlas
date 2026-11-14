@@ -128,22 +128,42 @@ class JsonLineFormatter(logging.Formatter):
         ):
             if key in merged_context and merged_context[key] is not None:
                 payload[key] = merged_context.pop(key)
+        src_file = merged_context.pop("source_file", None)
+        src_line = merged_context.pop("source_line", None)
+        src_func = merged_context.pop("source_function", None)
         if merged_context:
             payload["context"] = merged_context
         if record.exc_info and record.exc_info[0] is not None:
             exc_type, exc_val, exc_tb = record.exc_info
+            tb_frames = traceback.extract_tb(exc_tb)
+            last_frame = tb_frames[-1] if tb_frames else None
             payload["exception"] = {
                 "type": exc_type.__name__,
                 "message": str(exc_val),
                 "traceback": "".join(traceback.format_exception(exc_type, exc_val, exc_tb)),
             }
+            if last_frame is not None:
+                payload["source"] = {
+                    "file": Path(last_frame.filename).name,
+                    "line": last_frame.lineno,
+                    "function": last_frame.name,
+                }
         elif record.stack_info:
             payload["stack_info"] = self.formatStack(record.stack_info)
-        payload["source"] = {
-            "file": record.filename,
-            "line": record.lineno,
-            "function": record.funcName,
-        }
+
+        if "source" not in payload:
+            if src_file:
+                payload["source"] = {
+                    "file": src_file,
+                    "line": src_line,
+                    "function": src_func,
+                }
+            else:
+                payload["source"] = {
+                    "file": record.filename,
+                    "line": record.lineno,
+                    "function": record.funcName,
+                }
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 

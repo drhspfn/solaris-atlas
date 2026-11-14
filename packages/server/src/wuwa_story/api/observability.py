@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
@@ -76,11 +78,33 @@ def _route_label(request: Request) -> str:
 
 
 def _client_ip(request: Request) -> str | None:
-    forwarded = request.headers.get(
-        "x-real-ip") or request.headers.get("x-forwarded-for")
+    forwarded = (
+        request.headers.get("cf-connecting-ip")
+        or request.headers.get("true-client-ip")
+        or request.headers.get("x-real-ip")
+        or request.headers.get("x-forwarded-for")
+    )
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else None
+
+
+def _endpoint_source(request: Request) -> dict[str, object]:
+    endpoint = request.scope.get("endpoint")
+    if endpoint is None:
+        return {}
+    try:
+        fn = inspect.unwrap(endpoint)
+        code = getattr(fn, "__code__", None)
+        if code is None:
+            return {}
+        return {
+            "source_file": Path(code.co_filename).name,
+            "source_line": code.co_firstlineno,
+            "source_function": getattr(fn, "__qualname__", fn.__name__),
+        }
+    except Exception:
+        return {}
 
 
 class ObservabilityMiddleware(BaseHTTPMiddleware):
@@ -162,5 +186,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                             "route": final_route,
                             "status_code": status_code,
                             "duration_ms": duration_ms,
+                            **_endpoint_source(request),
                         },
                     )
