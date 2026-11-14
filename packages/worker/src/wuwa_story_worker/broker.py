@@ -94,11 +94,12 @@ async def cleanup_skipped_media(payload: dict) -> None:
     await cleanup_workspace(await run_workspace_id(payload["run_id"]))
 
 
-async def recover_media_workspaces(stop: asyncio.Event) -> None:
+async def recover_media_workspaces(stop: asyncio.Event, *, include_model_uploads: bool = False) -> None:
     """Recover committed terminal trees even when their final ACK preceded a crash."""
+    from wuwa_story.ingestion.model_uploads import cleanup_model_uploads
     from wuwa_story_worker.media_workspace import cleanup_workspace
     from wuwa_story_worker.tooling import asset_workspace
-    from wuwa_story_worker.transient_workspace import cleanup_transient_workspaces
+    from wuwa_story_worker.transient_workspace import cleanup_stale_temp_dirs, cleanup_transient_workspaces
 
     interval = float(os.getenv("WUWA_WORKSPACE_RECOVERY_SECONDS", "300"))
     if interval <= 0:
@@ -115,8 +116,9 @@ async def recover_media_workspaces(stop: asyncio.Event) -> None:
     while not stop.is_set():
         try:
             removed = await asyncio.to_thread(cleanup_transient_workspaces)
-            if removed:
-                logger.info("transient_workspace.recovered directories=%s", removed)
+            stale_tmp = await asyncio.to_thread(cleanup_stale_temp_dirs)
+            if removed or stale_tmp:
+                logger.info("transient_workspace.recovered directories=%s temp_dirs=%s", removed, stale_tmp)
             for workspace_id in await asyncio.to_thread(workspace_ids):
                 if stop.is_set():
                     return
@@ -124,6 +126,14 @@ async def recover_media_workspaces(stop: asyncio.Event) -> None:
                     await cleanup_workspace(workspace_id)
                 except Exception:
                     logger.exception("Workspace recovery failed workspace=%s", workspace_id)
+            if include_model_uploads and not stop.is_set():
+                try:
+                    async with SessionFactory() as session:
+                        stats = await cleanup_model_uploads(session)
+                    if any(stats.values()):
+                        logger.info("model_uploads.recovered %s", stats)
+                except Exception:
+                    logger.exception("Model upload recovery failed")
         except Exception:
             logger.exception("Could not scan media workspaces for recovery")
         try:

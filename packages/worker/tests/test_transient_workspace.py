@@ -4,7 +4,11 @@ import sys
 
 import pytest
 
-from wuwa_story_worker.transient_workspace import cleanup_transient_workspaces, transient_workspace
+from wuwa_story_worker.transient_workspace import (
+    cleanup_stale_temp_dirs,
+    cleanup_transient_workspaces,
+    transient_workspace,
+)
 
 
 def test_active_scratch_is_retained_and_normal_exit_cleans_it(tmp_path):
@@ -45,3 +49,19 @@ def test_collector_ignores_redirected_entries_and_rejects_redirected_root(tmp_pa
     assert (target / "game.pak").exists()
     with pytest.raises(ValueError, match="redirected"):
         cleanup_transient_workspaces(link)
+
+
+def test_cleanup_stale_temp_dirs_removes_only_old_solaris_dirs(tmp_path):
+    old_dir = tmp_path / ".solaris-model-old"
+    fresh_dir = tmp_path / ".solaris-model-diag-fresh"
+    other_dir = tmp_path / "unrelated-old"
+    for directory in (old_dir, fresh_dir, other_dir):
+        directory.mkdir()
+        (directory / "file.bin").write_bytes(b"data")
+    old_time = 1_000_000.0
+    os.utime(old_dir, (old_time, old_time))
+    os.utime(other_dir, (old_time, old_time))
+    assert cleanup_stale_temp_dirs(tmp_path, max_age_seconds=3600) == 1
+    assert not old_dir.exists()
+    assert fresh_dir.exists()
+    assert other_dir.exists()
