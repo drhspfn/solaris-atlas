@@ -366,7 +366,8 @@ async def test_process_linked_upload_uses_trusted_discovery(tmp_path, monkeypatc
     async def get(key):
         yield archive.read_bytes()
 
-    monkeypatch.setattr(model_uploads, "S3Storage", lambda _: NS(get=get, delete=AsyncMock()))
+    delete = AsyncMock()
+    monkeypatch.setattr(model_uploads, "S3Storage", lambda _: NS(get=get, delete=delete))
     monkeypatch.setattr(model_uploads, "engine", NS(connect=context))
     monkeypatch.setattr(model_uploads, "job_lock", context)
     monkeypatch.setattr(model_uploads, "SessionFactory", context)
@@ -384,6 +385,7 @@ async def test_process_linked_upload_uses_trusted_discovery(tmp_path, monkeypatc
     with pytest.raises(ValueError, match="trusted authored identity"):
         await model_uploads.process_model_upload(job.model_dump())
     assert publish.await_count == 1
+    assert delete.await_count == 2
 
 
 def test_decode_nested_component_uses_root_blueprint_not_parent_mesh(tmp_path):

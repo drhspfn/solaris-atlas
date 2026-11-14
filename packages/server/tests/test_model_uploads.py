@@ -76,3 +76,75 @@ def test_all_upload_mutations_keep_admin_and_csrf_dependencies():
     for route in paths:
         calls = {dep.call for dep in route.dependant.dependencies}
         assert {require_admin, require_csrf} <= calls
+
+
+@pytest.mark.asyncio
+async def test_delete_storage_keys_batches_s3_deletes():
+    deleted_batches = []
+    client = NS(delete_objects=lambda **kw: deleted_batches.append([item["Key"] for item in kw["Delete"]["Objects"]]))
+    storage = NS(bucket="wuwa", client=client)
+    keys = [f"model-uploads/abc/{i:04d}" for i in range(1005)] + ["model-uploads/abc/0000"]
+    count = await uploads.delete_storage_keys(storage, keys)
+    assert count == 1005
+    assert [len(batch) for batch in deleted_batches] == [1000, 5]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_model_uploads_expires_cleans_terminal_and_sweeps_orphans():
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    expired_job = uploads.ModelUploadJob(
+        run_id=10, character_key="character:1108", owner_node_id=1, release_id=1,
+        game_version="3.8.0", archive_bytes=1024, storage_token="0" * 32,
+    )
+    failed_job = uploads.ModelUploadJob(
+        run_id=11, character_key="character:1108", owner_node_id=1, release_id=1,
+        game_version="3.8.0", archive_bytes=10 * 1024**2, storage_token="1" * 32,
+    )
+    expired_run = NS(
+        id=10, status="uploading", error=None, finished_at=None,
+        metadata_json={"payload": expired_job.model_dump(), "uploaded_parts": [0]},
+    )
+    failed_run = NS(
+        id=11, status="failed", error="boom", finished_at=now,
+        metadata_json={"payload": failed_job.model_dump()},
+    )
+    active_meta = {"payload": {"storage_token": "2" * 32}}
+    calls = [[expired_run], [failed_run], [active_meta]]
+
+    async def scalars(_query):
+        return calls.pop(0)
+
+    db = NS(scalars=AsyncMock(side_effect=scalars), commit=AsyncMock())
+    deleted = []
+    orphan_key = f"model-uploads/{'3' * 32}/0000"
+    active_key = f"model-uploads/{'2' * 32}/0000"
+    fresh_orphan = f"model-uploads/{'4' * 32}/0000"
+
+    class Paginator:
+        def paginate(self, **_kw):
+            return [{
+                "Contents": [
+                    {"Key": orphan_key, "LastModified": now - timedelta(hours=30)},
+                    {"Key": active_key, "LastModified": now - timedelta(hours=30)},
+                    {"Key": fresh_orphan, "LastModified": now - timedelta(hours=1)},
+                ]
+            }]
+
+    client = NS(
+        delete_objects=lambda **kw: deleted.extend(item["Key"] for item in kw["Delete"]["Objects"]),
+        get_paginator=lambda name: Paginator(),
+    )
+    storage = NS(bucket="wuwa", client=client)
+    stats = await uploads.cleanup_model_uploads(db, storage)
+    assert stats == {"expired": 1, "terminal_cleaned": 1, "orphan_objects": 1, "deleted_keys": 4}
+    assert expired_run.status == "cancelled"
+    assert expired_run.metadata_json["chunks_cleaned"] is True
+    assert failed_run.metadata_json["chunks_cleaned"] is True
+    assert deleted == [
+        f"model-uploads/{'0' * 32}/0000",
+        f"model-uploads/{'1' * 32}/0000",
+        f"model-uploads/{'1' * 32}/0001",
+        orphan_key,
+    ]

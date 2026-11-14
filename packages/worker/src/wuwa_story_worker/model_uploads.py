@@ -22,10 +22,15 @@ from wuwa_story.ingestion.model_archives import (
     validate_manifest,
 )
 from wuwa_story.ingestion.model_limits import MAX_MODEL_COMPONENTS
-from wuwa_story.ingestion.model_uploads import ModelUploadJob, chunk_count, chunk_key
+from wuwa_story.ingestion.model_uploads import (
+    ModelUploadJob,
+    chunk_count,
+    chunk_key,
+    cleanup_upload_chunks,
+)
 from wuwa_story.storage.s3 import S3Storage
 
-from wuwa_story_worker.broker import job_lock
+from wuwa_story_worker.broker import job_lock, transient_job_error
 from wuwa_story_worker.client_assets import validate_plan, wait_workspace_lock
 from wuwa_story_worker.job_tracking import update_admin_run
 from wuwa_story_worker.linked_component_forms import prepare_linked_components
@@ -436,6 +441,24 @@ async def _discover_upload_form(root, form, local_client, include_animations):
     return await discover_scene_components(workspace, sources, cooked, local_client=local_client)
 
 
+async def _cleanup_staged_chunks(storage, job: ModelUploadJob) -> None:
+    """Best-effort cleanup of staged R2 upload chunks without masking job errors."""
+    try:
+        await cleanup_upload_chunks(storage, job)
+    except Exception:
+        logger.exception("Model upload chunk cleanup failed run=%s", job.run_id)
+        return
+    try:
+        async with SessionFactory() as session:
+            run = await session.get(ProcessingRun, job.run_id)
+            if run is not None and isinstance(run.metadata_json, dict) and not run.metadata_json.get("chunks_cleaned"):
+                run.metadata_json = {**run.metadata_json, "chunks_cleaned": True}
+                if hasattr(session, "commit"):
+                    await session.commit()
+    except Exception:
+        logger.exception("Could not record chunks_cleaned state run=%s", job.run_id)
+
+
 async def process_model_upload(payload):
     from wuwa_story_worker.character_models import job_forms, publish_forms
 
@@ -449,6 +472,8 @@ async def process_model_upload(payload):
             if run.status in {"completed", "cancelled"}:
                 logger.info("character_model.skipped run=%s status=%s",
                             job.run_id, run.status)
+                if not run.metadata_json.get("chunks_cleaned"):
+                    await _cleanup_staged_chunks(storage, job)
                 return
             logger.info(
                 "character_model.started run=%s source=upload", job.run_id)
@@ -459,65 +484,65 @@ async def process_model_upload(payload):
                                    raw_output={"stage": "validate_archive"})
             logger.info(
                 "character_model.stage run=%s stage=validate_archive", job.run_id)
-            with transient_workspace(asset_workspace().parent / "transient-jobs") as root:
-                archive = root / "model.zip"
-                with archive.open("xb") as target:
-                    for index in range(chunk_count(job)):
-                        received = 0
-                        expected = min(
-                            CHUNK_BYTES, job.archive_bytes - index * CHUNK_BYTES)
-                        async for block in storage.get(chunk_key(job, index)):
-                            received += len(block)
-                            if received > expected:
+            try:
+                with transient_workspace(asset_workspace().parent / "transient-jobs") as root:
+                    archive = root / "model.zip"
+                    with archive.open("xb") as target:
+                        for index in range(chunk_count(job)):
+                            received = 0
+                            expected = min(
+                                CHUNK_BYTES, job.archive_bytes - index * CHUNK_BYTES)
+                            async for block in storage.get(chunk_key(job, index)):
+                                received += len(block)
+                                if received > expected:
+                                    raise ValueError(
+                                        "Stored upload chunk exceeds declared size")
+                                target.write(block)
+                            if received != expected:
                                 raise ValueError(
-                                    "Stored upload chunk exceeds declared size")
-                            target.write(block)
-                        if received != expected:
-                            raise ValueError(
-                                "Stored model upload chunk is incomplete")
-                manifest = await asyncio.to_thread(read_archive, archive, root)
-                archive_roots = [
-                    entry["form"] for entry in manifest["forms"]
-                    if not entry["form"]["id"].startswith("component-")
-                ]
-                if ((manifest.get("character_key"), manifest.get("game_version"))
-                        != (job.character_key, job.game_version)
-                        or _canonical_authored_forms(archive_roots) != _canonical_authored_forms(forms)):
-                    raise ValueError(
-                        "Archive identity or authored model forms do not match")
-                archive_digest = await asyncio.to_thread(digest, archive)
-                archive.unlink(missing_ok=True)
-                expected_components = None
-                if any(entry["form"].get("component") for entry in manifest["forms"]):
+                                    "Stored model upload chunk is incomplete")
+                    manifest = await asyncio.to_thread(read_archive, archive, root)
+                    archive_roots = [
+                        entry["form"] for entry in manifest["forms"]
+                        if not entry["form"]["id"].startswith("component-")
+                    ]
+                    if ((manifest.get("character_key"), manifest.get("game_version"))
+                            != (job.character_key, job.game_version)
+                            or _canonical_authored_forms(archive_roots) != _canonical_authored_forms(forms)):
+                        raise ValueError(
+                            "Archive identity or authored model forms do not match")
+                    archive_digest = await asyncio.to_thread(digest, archive)
+                    archive.unlink(missing_ok=True)
+                    expected_components = None
+                    if any(entry["form"].get("component") for entry in manifest["forms"]):
+                        logger.info(
+                            "character_model.stage run=%s stage=discover_components", job.run_id)
+                        # Validate the declared client version before using it to find local assets.
+                        CharacterModelJob(run_id=job.run_id, character_key=job.character_key,
+                                          owner_node_id=job.owner_node_id, release_id=job.release_id,
+                                          game_version=job.game_version, asset_version=manifest.get(
+                                              "asset_version"),
+                                          tier=manifest.get("tier"), download_id=archive_digest)
+                        expected_components = await discover_upload_components(
+                            root, forms, manifest["asset_version"], manifest["tier"],
+                            include_animations=any(
+                                "animations" in entry["files"] or bool(
+                                    entry["provenance"].get("animation_packs"))
+                                for entry in manifest["forms"]
+                                if not entry["form"]["id"].startswith("component-")))
+                    publication, bundles = await asyncio.to_thread(
+                        decode_bundles, archive, root, job, forms,
+                        expected_components=expected_components, _manifest=manifest,
+                        archive_digest=archive_digest)
+                    await update_admin_run(job.run_id, "character_model", "running", raw_output={"stage": "publish"})
                     logger.info(
-                        "character_model.stage run=%s stage=discover_components", job.run_id)
-                    # Validate the declared client version before using it to find local assets.
-                    CharacterModelJob(run_id=job.run_id, character_key=job.character_key,
-                                      owner_node_id=job.owner_node_id, release_id=job.release_id,
-                                      game_version=job.game_version, asset_version=manifest.get(
-                                          "asset_version"),
-                                      tier=manifest.get("tier"), download_id=archive_digest)
-                    expected_components = await discover_upload_components(
-                        root, forms, manifest["asset_version"], manifest["tier"],
-                        include_animations=any(
-                            "animations" in entry["files"] or bool(
-                                entry["provenance"].get("animation_packs"))
-                            for entry in manifest["forms"]
-                            if not entry["form"]["id"].startswith("component-")))
-                publication, bundles = await asyncio.to_thread(
-                    decode_bundles, archive, root, job, forms,
-                    expected_components=expected_components, _manifest=manifest,
-                    archive_digest=archive_digest)
-                await update_admin_run(job.run_id, "character_model", "running", raw_output={"stage": "publish"})
-                logger.info(
-                    "character_model.stage run=%s stage=publish forms=%s", job.run_id, len(bundles))
-                await publish_forms(publication, bundles, publication_payload=job.model_dump())
-            for index in range(chunk_count(job)):
-                try:
-                    await storage.delete(chunk_key(job, index))
-                except Exception:
-                    logger.exception(
-                        "Published model upload cleanup failed run=%s part=%s", job.run_id, index)
+                        "character_model.stage run=%s stage=publish forms=%s", job.run_id, len(bundles))
+                    await publish_forms(publication, bundles, publication_payload=job.model_dump())
+            except Exception as error:
+                if not transient_job_error(error):
+                    await _cleanup_staged_chunks(storage, job)
+                raise
+            await _cleanup_staged_chunks(storage, job)
 
         await finish_writes(execute())
         logger.info("character_model.finished run=%s source=upload", job.run_id)

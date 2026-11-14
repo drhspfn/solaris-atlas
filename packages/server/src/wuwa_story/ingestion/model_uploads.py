@@ -3,13 +3,15 @@
 import asyncio
 import hashlib
 import json
+import re
 import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from botocore.exceptions import ClientError
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select, text, update
+from sqlalchemy import Boolean, cast, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 
 from wuwa_story.config.settings import get_settings
@@ -150,18 +152,153 @@ async def finish_upload(session, run_id):
     return run
 
 
-async def expire_uploads(session):
-    """Collect abandoned browser uploads when the next upload starts."""
-    runs = list(await session.scalars(select(ProcessingRun).where(
-        ProcessingRun.status == "uploading", ProcessingRun.started_at < datetime.now(UTC) - timedelta(hours=24),
-        ProcessingRun.metadata_json["payload"]["job_type"].astext == "media.character_model_upload",
-    ).with_for_update(skip_locked=True).limit(20)))
-    jobs = [(ModelUploadJob.model_validate(run.metadata_json["payload"]), run.metadata_json.get("uploaded_parts", [])) for run in runs]
-    for run in runs:
-        run.status, run.error = "cancelled", "Abandoned model upload expired after 24 hours"
+_HEX_TOKEN = re.compile(r"^[0-9a-f]{32}$")
+_S3_DELETE_BATCH = 1000
+
+
+async def delete_storage_keys(storage, keys: Iterable[str]) -> int:
+    """Delete storage keys in batches using S3 delete_objects when available."""
+    unique = list(dict.fromkeys(key for key in keys if key))
+    if not unique:
+        return 0
+    client = getattr(storage, "client", None)
+    if client is None:
+        for key in unique:
+            await storage.delete(key)
+        return len(unique)
+    for start in range(0, len(unique), _S3_DELETE_BATCH):
+        batch = unique[start:start + _S3_DELETE_BATCH]
+        await asyncio.to_thread(
+            client.delete_objects,
+            Bucket=storage.bucket,
+            Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True},
+        )
+    return len(unique)
+
+
+async def cleanup_upload_chunks(storage, job: ModelUploadJob, parts: Iterable[int] | None = None) -> int:
+    """Remove staged upload chunks for *job* from object storage."""
+    total = chunk_count(job)
+    indices = range(total) if parts is None else (i for i in parts if type(i) is int and 0 <= i < total)
+    return await delete_storage_keys(storage, (chunk_key(job, index) for index in indices))
+
+
+def _parse_upload_job(run: ProcessingRun) -> ModelUploadJob | None:
+    payload = (run.metadata_json or {}).get("payload")
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return ModelUploadJob.model_validate(payload)
+    except Exception:
+        return None
+
+
+async def _find_orphan_upload_keys(storage, active_tokens: set[str], cutoff: datetime) -> list[str]:
+    client = getattr(storage, "client", None)
+    if client is None:
+        return []
+
+    def _scan() -> list[str]:
+        paginator = client.get_paginator("list_objects_v2")
+        orphans: list[str] = []
+        for page in paginator.paginate(Bucket=storage.bucket, Prefix="model-uploads/"):
+            for obj in page.get("Contents") or ():
+                key = obj.get("Key") or ""
+                modified = obj.get("LastModified")
+                if modified is None:
+                    continue
+                if modified.tzinfo is None:
+                    modified = modified.replace(tzinfo=UTC)
+                if modified >= cutoff:
+                    continue
+                segments = key.split("/", 2)
+                token = segments[1] if len(segments) >= 2 else ""
+                if not _HEX_TOKEN.fullmatch(token) or token not in active_tokens:
+                    orphans.append(key)
+        return orphans
+
+    return await asyncio.to_thread(_scan)
+
+
+async def cleanup_model_uploads(
+    session,
+    storage=None,
+    *,
+    max_runs: int = 50,
+    orphan_ttl_hours: float = 24.0,
+    scan_orphans: bool = True,
+) -> dict[str, int]:
+    """Expire abandoned uploads, clean terminal upload chunks, and sweep orphan R2 objects."""
+    storage = storage or S3Storage(get_settings())
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(hours=orphan_ttl_hours)
+
+    abandoned = list(await session.scalars(
+        select(ProcessingRun).where(
+            ProcessingRun.status.in_(("uploading", "enqueue_failed")),
+            ProcessingRun.started_at < cutoff,
+            ProcessingRun.metadata_json["payload"]["job_type"].astext == "media.character_model_upload",
+        ).with_for_update(skip_locked=True).limit(max_runs)
+    ))
+    pending_deletes: list[tuple[ModelUploadJob, Iterable[int] | None]] = []
+    for run in abandoned:
+        job = _parse_upload_job(run)
+        was_uploading = run.status == "uploading"
+        run.status = "cancelled"
+        run.error = f"Abandoned model upload expired after {int(orphan_ttl_hours)} hours"
+        run.finished_at = now
+        if job is not None:
+            parts = run.metadata_json.get("uploaded_parts", []) if was_uploading else None
+            pending_deletes.append((job, parts))
+        run.metadata_json = {**(run.metadata_json or {}), "chunks_cleaned": True}
+
+    terminal = list(await session.scalars(
+        select(ProcessingRun).where(
+            ProcessingRun.status.in_(("completed", "failed", "cancelled")),
+            ProcessingRun.metadata_json["payload"]["job_type"].astext == "media.character_model_upload",
+            or_(
+                ProcessingRun.metadata_json["chunks_cleaned"].is_(None),
+                cast(ProcessingRun.metadata_json["chunks_cleaned"].astext, Boolean).is_(False),
+            ),
+        ).with_for_update(skip_locked=True).limit(max_runs)
+    ))
+    for run in terminal:
+        job = _parse_upload_job(run)
+        if job is not None:
+            pending_deletes.append((job, None))
+        run.metadata_json = {**(run.metadata_json or {}), "chunks_cleaned": True}
+
     await session.commit()
-    storage = S3Storage(get_settings())
-    for job, parts in jobs:
-        if parts:
-            await asyncio.to_thread(storage.client.delete_objects, Bucket=storage.bucket,
-                Delete={"Objects": [{"Key": chunk_key(job, index)} for index in parts], "Quiet": True})
+
+    deleted_keys = 0
+    for job, parts in pending_deletes:
+        deleted_keys += await cleanup_upload_chunks(storage, job, parts)
+
+    orphan_keys: list[str] = []
+    if scan_orphans:
+        active_runs = list(await session.scalars(
+            select(ProcessingRun.metadata_json).where(
+                ProcessingRun.status.in_(("uploading", "enqueue_failed", "queued", "running", "waiting_dependency")),
+                ProcessingRun.metadata_json["payload"]["job_type"].astext == "media.character_model_upload",
+            )
+        ))
+        active_tokens = {
+            meta["payload"]["storage_token"]
+            for meta in active_runs
+            if isinstance(meta, dict) and isinstance(meta.get("payload"), dict)
+            and isinstance(meta["payload"].get("storage_token"), str)
+        }
+        orphan_keys = await _find_orphan_upload_keys(storage, active_tokens, cutoff)
+        deleted_keys += await delete_storage_keys(storage, orphan_keys)
+
+    return {
+        "expired": len(abandoned),
+        "terminal_cleaned": len(terminal),
+        "orphan_objects": len(orphan_keys),
+        "deleted_keys": deleted_keys,
+    }
+
+
+async def expire_uploads(session):
+    """Collect abandoned browser uploads and uncleaned terminal chunks when the next upload starts."""
+    return await cleanup_model_uploads(session, max_runs=20, scan_orphans=False)
