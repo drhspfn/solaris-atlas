@@ -20,8 +20,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -279,6 +281,22 @@ def remove_workspace(workspace_id: int, *, base: Path | None = None) -> bool:
     return True
 
 
+def workspace_expired(workspace_id: int, *, base: Path | None = None, ttl_hours: float | None = None) -> bool:
+    """Return True when a workspace marker is older than the configured TTL."""
+    hours = float(os.getenv("WUWA_WORKSPACE_TTL_HOURS", "72")) if ttl_hours is None else ttl_hours
+    if hours <= 0:
+        return False
+    root = workspace_path(workspace_id, base=base)
+    if not root.exists():
+        return False
+    marker = root / "workspace.json"
+    probe = marker if marker.exists() and not marker.is_symlink() else root
+    try:
+        return (time.time() - probe.stat().st_mtime) >= hours * 3600.0
+    except OSError:
+        return False
+
+
 async def cleanup_workspace(workspace_id: int | None) -> bool:
     """Recheck the whole graph under an exclusive lease, then remove raw files.
 
@@ -311,7 +329,8 @@ async def cleanup_workspace(workspace_id: int | None) -> bool:
                     )
                 """), {"workspace_id": workspace_id, "identity": str(workspace_id),
                        "terminal": sorted(TERMINAL)})
-                if active:
+                stale = await asyncio.to_thread(workspace_expired, workspace_id)
+                if active and not stale:
                     return False
                 # Project once: recursive UNION over full reports repeatedly detoasts
                 # megabytes per run and holds the cleanup lease for minutes.
@@ -365,11 +384,16 @@ async def cleanup_workspace(workspace_id: int | None) -> bool:
                                                  {"workspace_id": workspace_id, "identity": str(workspace_id)}))
                 members = _members(runs, workspace_id)
                 indexed = {run.id: run for run in runs}
-                if any(key not in indexed or indexed[key].status not in TERMINAL for key in members):
+                unfinished = [key for key in members if key not in indexed or indexed[key].status not in TERMINAL]
+                owner = indexed.get(workspace_id)
+                has_running = any(key in indexed and indexed[key].status == "running" for key in unfinished)
+                if unfinished and (not stale or has_running or owner is None or owner.status not in TERMINAL):
                     logger.info("media_workspace.retained workspace=%s reason=unfinished_descendants tasks=%s",
                                 workspace_id, len(members))
                     return False
-                owner = indexed[workspace_id]
+                if unfinished:
+                    logger.warning("media_workspace.expiring_stale workspace=%s unfinished=%s",
+                                   workspace_id, len(unfinished))
                 request = (owner.metadata_json or {}).get("request") or (owner.metadata_json or {}).get("payload") or {}
                 if request.get("kind") != "prepare":
                     raise ValueError("Workspace owner must be a prepare run")
