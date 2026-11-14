@@ -431,3 +431,34 @@ async def test_entity_failure_status_is_safe_before_final_cleanup(
         assert state["removed"] == ([] if transient else [11])
     assert state["cleanup_statuses"][-1] == (0, leaf.status)
     assert state["shared"] == 0
+
+
+@pytest.mark.asyncio
+async def test_stale_workspace_with_queued_descendant_is_cleaned_after_ttl(tmp_path, monkeypatch):
+    import os
+    import time
+
+    ws_dir = workspaces.workspace_path(11, base=tmp_path)
+    ws_dir.mkdir(parents=True)
+    marker = ws_dir / "workspace.json"
+    marker.write_text(json.dumps({"workspace_id": 11}))
+    old_time = time.time() - 80 * 3600
+    os.utime(marker, (old_time, old_time))
+    assert workspaces.workspace_expired(11, base=tmp_path, ttl_hours=72)
+    assert not workspaces.workspace_expired(11, base=tmp_path, ttl_hours=100)
+
+    owner = run(11, status="completed", kind="prepare")
+    queued_leaf = run(20, status="queued", parent=11, kind="cutscene")
+    connection, session = mock_database(monkeypatch, [owner, queued_leaf])
+    session.scalar.return_value = True
+    monkeypatch.setattr(workspaces, "workspace_expired", lambda wid: wid == 11)
+    removed = []
+    monkeypatch.setattr(workspaces, "remove_workspace", lambda wid: removed.append(wid) or True)
+    assert await workspaces.cleanup_workspace(11)
+    assert removed == [11]
+
+    running_leaf = run(21, status="running", parent=11, kind="cutscene")
+    mock_database(monkeypatch, [owner, running_leaf])
+    removed.clear()
+    assert not await workspaces.cleanup_workspace(11)
+    assert removed == []

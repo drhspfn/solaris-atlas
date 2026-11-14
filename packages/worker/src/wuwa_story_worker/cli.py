@@ -282,10 +282,12 @@ async def _consume(queues: list[str] | None = None, pool: str | None = None) -> 
     background = []
     try:
         await check_database_codecs(engine)
-        if pool == "coordinator" or "character_model" in selected:
-            background.append(asyncio.create_task(
-                recover_media_workspaces(stop, include_model_uploads=True)
-            ))
+        background.append(asyncio.create_task(
+            recover_media_workspaces(
+                stop,
+                include_model_uploads=(pool == "coordinator" or "character_model" in selected),
+            )
+        ))
         if "story_agent" in selected or "cutscene_vision" in selected or "asset_download" in selected:
             if "asset_download" in selected:
                 from wuwa_story_worker.client_updates import watch_client_updates

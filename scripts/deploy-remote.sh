@@ -317,3 +317,5 @@ if ! docker image prune -f --filter until=24h > /tmp/solaris-image-prune.log 2>&
 else
   tail -n 2 /tmp/solaris-image-prune.log
 fi
+docker container prune -f --filter until=24h >/dev/null 2>&1 || true
+docker image prune -a -f --filter until=168h >/dev/null 2>&1 || true
