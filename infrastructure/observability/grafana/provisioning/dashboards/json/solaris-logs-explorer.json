@@ -51,17 +51,41 @@
       "title": "Errors & Tracebacks",
       "gridPos": { "x": 0, "y": 5, "w": 24, "h": 8 },
       "datasource": { "type": "loki", "uid": "loki" },
-      "targets": [{ "expr": "{job=~\".+\", service=~\"$service\", level=~\"ERROR|CRITICAL\"} |= \"$search\"", "refId": "A" }],
-      "options": { "showTime": true, "showLabels": true, "enableLogDetails": true, "prettifyLogMessage": true }
+      "targets": [
+        {
+          "expr": "{job=~\".+\", service=~\"$service\", level=~\"ERROR|CRITICAL\"} |= \"$search\" | json | line_format \"{{if .message}}{{.message}}{{else}}{{.msg}}{{end}}{{if .exception_type}} — {{.exception_type}}: {{.exception_message}}{{end}}\"",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": false,
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "dedupStrategy": "none"
+      }
     },
     {
       "id": 3,
       "type": "logs",
-      "title": "All Service Logs (JSON Context)",
+      "title": "All Service Logs (click row for JSON context)",
       "gridPos": { "x": 0, "y": 13, "w": 24, "h": 12 },
       "datasource": { "type": "loki", "uid": "loki" },
-      "targets": [{ "expr": "{job=~\".+\", service=~\"$service\", level=~\"$level\"} |= \"$search\"", "refId": "A" }],
-      "options": { "showTime": true, "showLabels": true, "enableLogDetails": true, "prettifyLogMessage": true }
+      "targets": [
+        {
+          "expr": "{job=~\".+\", service=~\"$service\", level=~\"$level\"} |= \"$search\" | json | line_format \"{{if .message}}{{.message}}{{else if .msg}}{{.msg}}{{else}}{{.__line__}}{{end}}{{if .status_code}} [{{.status_code}} {{.duration_ms}}ms]{{end}}{{if .exception_type}} — {{.exception_type}}: {{.exception_message}}{{end}}\"",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": false,
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "dedupStrategy": "none"
+      }
     }
   ]
 }

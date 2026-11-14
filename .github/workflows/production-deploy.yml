@@ -53,6 +53,13 @@ jobs:
           DOMAIN: ${{ vars.DOMAIN }}
           GRAFANA_ADMIN_USER: ${{ vars.GRAFANA_ADMIN_USER }}
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          GF_SMTP_ENABLED: ${{ vars.GF_SMTP_ENABLED }}
+          GF_SMTP_HOST: ${{ vars.GF_SMTP_HOST }}
+          GF_SMTP_USER: ${{ vars.GF_SMTP_USER }}
+          GF_SMTP_PASSWORD: ${{ secrets.GF_SMTP_PASSWORD }}
+          GF_SMTP_FROM_ADDRESS: ${{ vars.GF_SMTP_FROM_ADDRESS }}
+          GF_SMTP_FROM_NAME: ${{ vars.GF_SMTP_FROM_NAME }}
+          GF_SMTP_SKIP_VERIFY: ${{ vars.GF_SMTP_SKIP_VERIFY }}
           USE_MINIO: ${{ vars.USE_MINIO }}
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
