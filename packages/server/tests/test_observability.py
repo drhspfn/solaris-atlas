@@ -104,3 +104,26 @@ def test_observability_middleware_and_metrics_endpoint() -> None:
     assert "solaris_http_requests_total" in body
     assert 'route="/ping"' in body
     assert "solaris_app_uptime_seconds" in body
+
+
+def test_fast_200_http_requests_are_not_logged_by_default(caplog) -> None:
+    app = FastAPI()
+    app.add_middleware(ObservabilityMiddleware)
+
+    @app.get("/fast")
+    def fast() -> dict[str, bool]:
+        return {"ok": True}
+
+    @app.get("/broken")
+    def broken() -> dict[str, bool]:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=500, detail="fail")
+
+    client = TestClient(app)
+    with caplog.at_level(logging.INFO, logger="wuwa_story.http"):
+        assert client.get("/fast").status_code == 200
+        assert not [r for r in caplog.records if "http.request GET /fast" in r.message]
+
+        assert client.get("/broken").status_code == 500
+        assert any("http.request GET /broken" in r.message for r in caplog.records)

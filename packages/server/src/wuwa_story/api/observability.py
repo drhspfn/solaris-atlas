@@ -137,12 +137,19 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     elapsed
                 )
                 duration_ms = round(elapsed * 1000, 2)
-                if path not in ("/health", "/metrics") or status_code >= 400:
+                slow_ms = float(os.getenv("WUWA_SLOW_REQUEST_MS", "1000"))
+                log_all_http = os.getenv("WUWA_LOG_HTTP_REQUESTS", "").strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                }
+                is_slow = path not in ("/health", "/metrics") and duration_ms >= slow_ms
+                if status_code >= 400 or is_slow or (log_all_http and path not in ("/health", "/metrics")):
                     log_fn = (
                         logger.error
                         if status_code >= 500
                         else logger.warning
-                        if status_code >= 400
+                        if status_code >= 400 or is_slow
                         else logger.info
                     )
                     log_fn(

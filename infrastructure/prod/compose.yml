@@ -102,7 +102,7 @@ services:
       [
         "sh",
         "-c",
-        "rm -rf /tmp/prom_multiproc && mkdir -p /tmp/prom_multiproc && exec uvicorn wuwa_story.api.app:app --host 0.0.0.0 --port 8000 --workers 2",
+        "rm -rf /tmp/prom_multiproc && mkdir -p /tmp/prom_multiproc && exec uvicorn wuwa_story.api.app:app --host 0.0.0.0 --port 8000 --workers 2 --no-access-log",
       ]
     env_file:
       - path: ./env/api.runtime.env
