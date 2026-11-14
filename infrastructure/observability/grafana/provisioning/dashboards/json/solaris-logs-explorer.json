@@ -12,7 +12,9 @@
         "type": "query",
         "datasource": { "type": "loki", "uid": "loki" },
         "query": "label_values(service)",
+        "refresh": 1,
         "includeAll": true,
+        "allValue": ".+",
         "multi": true,
         "current": { "text": "All", "value": "$__all" }
       },
@@ -21,7 +23,9 @@
         "type": "query",
         "datasource": { "type": "loki", "uid": "loki" },
         "query": "label_values(level)",
+        "refresh": 1,
         "includeAll": true,
+        "allValue": ".+",
         "multi": true,
         "current": { "text": "All", "value": "$__all" }
       },
@@ -39,7 +43,7 @@
       "title": "Errors & Warnings Volume",
       "gridPos": { "x": 0, "y": 0, "w": 24, "h": 5 },
       "datasource": { "type": "loki", "uid": "loki" },
-      "targets": [{ "expr": "sum by (service, level) (count_over_time({service=~\"$service\", level=~\"ERROR|WARNING|CRITICAL\"}[1m]))", "legendFormat": "{{service}} [{{level}}]", "refId": "A" }]
+      "targets": [{ "expr": "sum by (service, level) (count_over_time({job=~\".+\", service=~\"$service\", level=~\"ERROR|WARNING|CRITICAL\"}[1m]))", "legendFormat": "{{service}} [{{level}}]", "refId": "A" }]
     },
     {
       "id": 2,
@@ -47,7 +51,7 @@
       "title": "Errors & Tracebacks",
       "gridPos": { "x": 0, "y": 5, "w": 24, "h": 8 },
       "datasource": { "type": "loki", "uid": "loki" },
-      "targets": [{ "expr": "{service=~\"$service\", level=~\"ERROR|CRITICAL\"} |= \"$search\"", "refId": "A" }],
+      "targets": [{ "expr": "{job=~\".+\", service=~\"$service\", level=~\"ERROR|CRITICAL\"} |= \"$search\"", "refId": "A" }],
       "options": { "showTime": true, "showLabels": true, "enableLogDetails": true, "prettifyLogMessage": true }
     },
     {
@@ -56,7 +60,7 @@
       "title": "All Service Logs (JSON Context)",
       "gridPos": { "x": 0, "y": 13, "w": 24, "h": 12 },
       "datasource": { "type": "loki", "uid": "loki" },
-      "targets": [{ "expr": "{service=~\"$service\", level=~\"$level\"} |= \"$search\"", "refId": "A" }],
+      "targets": [{ "expr": "{job=~\".+\", service=~\"$service\", level=~\"$level\"} |= \"$search\"", "refId": "A" }],
       "options": { "showTime": true, "showLabels": true, "enableLogDetails": true, "prettifyLogMessage": true }
     }
   ]
