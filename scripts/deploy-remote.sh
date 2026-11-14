@@ -302,6 +302,9 @@ fi
 if [[ "$DEPLOY_COMPONENT" == infrastructure || "$DEPLOY_COMPONENT" == observability || "$DEPLOY_COMPONENT" == all ]]; then
   "${compose[@]}" exec -T rabbitmq rabbitmq-plugins enable --online rabbitmq_prometheus >/dev/null 2>&1 || true
 fi
+if [[ "$DEPLOY_COMPONENT" == api || "$DEPLOY_COMPONENT" == observability || "$DEPLOY_COMPONENT" == all ]]; then
+  "${compose[@]}" exec -T -u 0 api chmod 1777 /var/log/solaris >/dev/null 2>&1 || true
+fi
 if [[ "$DEPLOY_COMPONENT" == infrastructure ]]; then
   "${compose[@]}" exec -T rabbitmq rabbitmqctl set_policy wuwa-assets-long-jobs \
     '^wuwa[.](snapshot-build|asset-(download|extract)|release-(media|images)|entity-(media|images)|event-media|character-model|pool-(coordinator|image|audio|video))[.]v1$' '{"consumer-timeout":86400000}' --apply-to queues

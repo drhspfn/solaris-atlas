@@ -1,4 +1,5 @@
 {
+	admin :2019
 	metrics
 	servers {
 		# Official edge networks: https://www.cloudflare.com/ips-v4 and /ips-v6
