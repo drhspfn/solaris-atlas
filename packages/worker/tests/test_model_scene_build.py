@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -18,6 +19,46 @@ def prop():
                           "source": {"blueprint": "Aki/Character/NPC/BP_Test", "component": "WeaponCase0"},
                           "default_visible": True, "bindings": [], "cues": [],
                           "parent_component": "CharacterMesh0", "socket": "WeaponProp02"}}
+
+
+def test_preview_uses_full_model_when_it_is_smaller(tmp_path, monkeypatch):
+    (tmp_path / 'character.glb').write_bytes(b'full')
+    (tmp_path / 'preview.glb').write_bytes(b'preview')
+    monkeypatch.setattr(models, 'glb_summary', lambda path: {'bytes': path.stat().st_size})
+    summaries = {'preview': {'bytes': 7}, 'download': {'bytes': 4}}
+    models.use_smaller_preview(tmp_path, summaries)
+    assert (tmp_path / 'preview.glb').read_bytes() == b'full'
+    assert summaries['preview']['bytes'] == 4
+
+
+def test_asset_cache_requires_each_bound_clip_metadata_and_export(tmp_path):
+    converted, cooked = tmp_path / 'converted', tmp_path / 'cooked'
+    sources = {'model': 'Aki/Prop', 'blueprints': [], 'montages': ['Aki/Anim/Stand']}
+    def make(root, name):
+        path = root / 'Client/Content' / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    make(cooked, 'Aki/Prop.json')
+    make(converted, 'Aki/Prop.uemodel')
+    cached = (None, converted, cooked, {})
+    assert not models.cached_model_covers_sources(cached, sources, True)
+    make(cooked, 'Aki/Anim/Stand.json')
+    assert not models.cached_model_covers_sources(cached, sources, True)
+    make(converted, 'Aki/Anim/Stand.ueanim')
+    assert models.cached_model_covers_sources(cached, sources, True)
+
+
+def test_bound_component_animation_requires_matching_skeleton(tmp_path):
+    sources = prop()
+    sources["component"]["bindings"] = [{"parent_clip": "Aki/Parent", "child_clip": "Aki/Book/Idle"}]
+    path = tmp_path / "Client/Content/Aki/Book/Idle.json"
+    path.parent.mkdir(parents=True)
+    with pytest.raises(ValueError, match="metadata missing"):
+        models.component_animation_skeletons(sources, tmp_path, "Aki/Mystery/Skeleton")
+    path.write_text(json.dumps([{"Type": "AnimSequence", "Name": "Idle", "Properties": {
+        "Skeleton": {"ObjectPath": "/Game/Aki/Book/Skeleton"}}}]), encoding="utf-8")
+    assert models.component_animation_skeletons(sources, tmp_path, "Aki/Mystery/Skeleton") == {
+        "Aki/Book/Idle": "Aki/Book/Skeleton"}
 
 
 @pytest.mark.asyncio
@@ -102,3 +143,49 @@ async def test_root_visibility_cues_survive_without_exportable_child(tmp_path, m
         skeleton="Aki/Skeleton", scene=scene)
     assert recipes == []
     assert scene == {"format": "solaris-model-scene-v1", "components": [], "cues": [cue]}
+
+
+@pytest.mark.parametrize("per_root,allowed", [(35, True), (65, False)])
+@pytest.mark.asyncio
+async def test_scene_component_budget_is_total_across_roots(tmp_path, monkeypatch, per_root, allowed):
+    async def build(root, form, **options):
+        components = []
+        if not form.get("component"):
+            for i in range(per_root):
+                item = prop()
+                item["component"].update(id=f"effect-{i}", name=f"effect-{i}", label="Effect")
+                item["component"]["source"]["component"] = f"effect-{i}"
+                components.append(item)
+        return root, {}, {"linked_components": components}
+
+    monkeypatch.setattr(models, "build_bundle", build)
+    forms = [{"id": "mesh-1"}, {"id": "mesh-2"}]
+    if allowed:
+        bundles = await models.build_scene_bundles(tmp_path, forms)
+        assert len(bundles) == 72
+        assert len({form["id"] for form, *_ in bundles}) == 72
+    else:
+        with pytest.raises(ValueError, match="128"):
+            await models.build_scene_bundles(tmp_path, forms)
+
+
+@pytest.mark.parametrize("count", [70, 129])
+@pytest.mark.asyncio
+async def test_discovery_enforces_component_budget(tmp_path, monkeypatch, count):
+    from wuwa_story_worker import linked_models, model_bundle
+
+    recipes = [{"id": f"effect-{i}", "kind": "effect", "model": "Aki/Prop/Shared",
+                "parent_component": "CharacterMesh0", "socket": None, "socket_transform": None,
+                "default_visible": False, "source": {"component": f"effect-{i}"}, "bindings": [],
+                "cues": [], "diagnostics": [], "required_resources": [], "anim_blueprint": None}
+               for i in range(count)]
+    monkeypatch.setattr(model_bundle, "animation_sources", lambda *_: {})
+    monkeypatch.setattr(linked_models, "discover", lambda *_: recipes)
+    call = models.discover_scene_components(tmp_path,
+        {"component_blueprint": "Aki/BP", "model": "Aki/Body"}, tmp_path, skeleton="Aki/Skeleton")
+    if count > 128:
+        with pytest.raises(ValueError, match="128"):
+            await call
+    else:
+        result = await call
+        assert len({item["component"]["id"] for item in result}) == count

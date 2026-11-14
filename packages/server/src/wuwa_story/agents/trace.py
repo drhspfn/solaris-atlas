@@ -8,14 +8,20 @@ from typing import Any
 def preview(value: Any, limit: int = 4000) -> str:
     def clean(item):
         if isinstance(item, dict):
-            return {key: ("[redacted]" if any(part in key.lower() for part in
-                    ("api_key", "authorization", "password", "secret", "encrypted_content"))
+            return {key: ("[redacted]" if key.lower() in ("image", "base64", "file", "download_url") or any(part in key.lower() for part in
+                    ("api_key", "authorization", "password", "secret", "encrypted_content", "image_base64"))
                 else clean(val)) for key, val in item.items()}
         if isinstance(item, list):
             return [clean(val) for val in item[:50]]
+        if isinstance(item, str) and item.lstrip().startswith(("{", "[")):
+            try:
+                return clean(json.loads(item))
+            except (ValueError, RecursionError):
+                return "[unparsed structured arguments]"
         return item
-    content = value if isinstance(value, str) else json.dumps(
-        clean(value), ensure_ascii=False, default=str)
+    cleaned = clean(value)
+    content = cleaned if isinstance(cleaned, str) else json.dumps(
+        cleaned, ensure_ascii=False, default=str)
     return content[:limit] + (" … [truncated]" if len(content) > limit else "")
 
 

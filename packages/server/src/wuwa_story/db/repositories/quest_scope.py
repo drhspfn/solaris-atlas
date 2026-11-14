@@ -18,7 +18,7 @@ async def quests_for_state(session, state_id: int, release_id: int) -> list[int]
     actions = await source_parents(session, {action for _, action in movies}, ("contains_action",), release_id)
     movie_states = {state for _, state in actions}
     refs = await source_parents(session, {state_id} | movie_states,
-                                ("references_flow_state", "references_dungeon_flow_state"), release_id)
+                                ("references_flow_state", "references_dungeon_flow_state", "references_scenario_flow_state"), release_id)
     owners = {owner for _, owner in refs} | {owner for _, owner in movies}
     children = await source_parents(session, owners, ("has_quest_node",), release_id)
     scenes = await source_parents(session, owners, ("presents_scene",), release_id)
@@ -33,7 +33,7 @@ def quest_states_query(quest_node_id: int, release_id: int | None):
     walk = select(Quest.node_id.label("node_id"), literal(0).label("phase")).where(
         Quest.node_id == quest_node_id
     ).cte("quest_walk", recursive=True)
-    references = ("references_flow_state", "references_dungeon_flow_state")
+    references = ("references_flow_state", "references_dungeon_flow_state", "references_scenario_flow_state")
     transitions = or_(
         and_(walk.c.phase == 0, RelationType.key.in_(("has_quest_node", "has_plot_step", *references))),
         and_(walk.c.phase == 1, RelationType.key == "presents_scene"),
@@ -85,7 +85,7 @@ def _state_quest_links(release_id, state_ids, quest_node_id):
             ).exists())
         return query.cte(name).prefix_with("MATERIALIZED")
 
-    references = ("references_flow_state", "references_dungeon_flow_state")
+    references = ("references_flow_state", "references_dungeon_flow_state", "references_scenario_flow_state")
     direct = parents(references, state_ids, "state_direct_refs")
     transcripts = parents(("has_transcript_state",), state_ids, "state_transcripts")
     movies = parents(("plays_cutscene",), select(transcripts.c.parent), "state_movies")

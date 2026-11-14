@@ -12,28 +12,22 @@ from wuwa_story.ingestion.spine_presentation import presentation_hash
 
 from wuwa_story_worker.sequence_controls import sequence_control_score
 
-MAX_BUNDLE_BYTES = 512 * 1024**2
+# Compressed size of a retained bundle download. Real bundles are 80-200 MiB; decoded JSON deflates ~44:1.
+MAX_BUNDLE_BYTES = 2 * 1024**3
 
 
 def recompile_bundle(bundle, output, target):
     """Preserve extracted movies and incomplete-control evidence, not guessed media."""
+    from wuwa_story_worker import bundle_io
+    with bundle_io.spill_directory(output.parent) as spill:
+        return _recompile_bundle(bundle, output, target, spill)
+
+
+def _recompile_bundle(bundle, output, target, spill):
+    from wuwa_story_worker import bundle_io
     with zipfile.ZipFile(bundle) as archive:
         manifest = json.loads(archive.read('manifest.json'))
-        inventory = manifest['files']
-        if len(inventory) > 10000 or sum(item['size_bytes'] for item in inventory.values()) > MAX_BUNDLE_BYTES:
-            raise ValueError(
-                'Retained sequence bundle exceeds metadata rebuild bounds')
-        entries = {}
-        for name, expected in inventory.items():
-            path = PurePosixPath(name)
-            if path.is_absolute() or '..' in path.parts or '\\' in name:
-                raise ValueError('Invalid retained sequence archive path')
-            if archive.getinfo(name).file_size != expected['size_bytes']:
-                raise ValueError('Retained sequence entry size differs')
-            data = archive.read(name)
-            if hashlib.sha256(data).hexdigest() != expected['sha256']:
-                raise ValueError('Retained sequence entry checksum differs')
-            entries[name] = data
+        entries = bundle_io.load_entries(archive, manifest['files'], spill)
     presentation = json.loads(entries['presentation.json'])
     if (presentation.get('sha256') != target['presentation_sha256']
             or presentation_hash({k: v for k, v in presentation.items() if k != 'sha256'}) != target['presentation_sha256']):
@@ -43,9 +37,7 @@ def recompile_bundle(bundle, output, target):
     assets, originals = {}, []
     for name, data in entries.items():
         if name.startswith(('source/', 'media/')):
-            path = unpacked / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
+            path = bundle_io.materialize(data, unpacked / name)
             originals.append(path)
         if name.startswith('decoded/') and name.endswith('.json') and 'Client/Content/' in name:
             package = '/Game/' + \
@@ -53,7 +45,7 @@ def recompile_bundle(bundle, output, target):
             decoded = unpacked / 'decoded' / \
                 hashlib.sha256(package.encode()).hexdigest()
             decoded.mkdir(parents=True, exist_ok=True)
-            (decoded / 'package.json').write_bytes(data)
+            bundle_io.materialize(data, decoded / 'package.json')
             assets[package] = {'decoded': decoded}
     if not assets:
         raise ValueError(
@@ -103,11 +95,7 @@ def recompile_bundle(bundle, output, target):
         manifest, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix('.partial')
-    with zipfile.ZipFile(temporary, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
-        for name, data in sorted(entries.items()):
-            info = zipfile.ZipInfo(name, date_time=(2000, 1, 1, 0, 0, 0))
-            info.compress_type = zipfile.ZIP_DEFLATED
-            archive.writestr(info, data)
+    bundle_io.write_archive(temporary, entries)
     temporary.replace(output)
     if target.get('sequence_metadata_revision', 0) >= 5:
         from wuwa_story_worker.sequence_composition import annotate_bundle

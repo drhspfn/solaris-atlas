@@ -11,6 +11,7 @@ from pathlib import Path
 from flatbuffers.table import Table
 from wuwa_story.ingestion.cutscenes import CutsceneRecipe
 
+from wuwa_story.version import MIN_SUPPORTED_CLIENT_VERSION, is_supported_cutscene_version
 from wuwa_story_worker.cutscene_caption_audio import caption_soundtracks
 
 
@@ -34,8 +35,8 @@ def sound_timing(blob: bytes) -> tuple[float, float | None]:
 
 def plan_cutscene(config_db: Path, assets: Path, name: str, asset_version: str, *, missing_assets: list | None = None,
                   frame_audio: list[dict] | None = None) -> dict:
-    if asset_version not in {"3.7.0", "3.7.1"}:
-        raise ValueError("Config schema is verified for clients 3.7.0 and 3.7.1 only")
+    if not is_supported_cutscene_version(asset_version):
+        raise ValueError(f"Config schema requires client >= {MIN_SUPPORTED_CLIENT_VERSION}, got {asset_version}")
     # Read-only: never create or modify an absent game database.
     with sqlite3.connect(config_db.resolve().as_uri() + "?mode=ro", uri=True) as db:
         videos = db.execute(

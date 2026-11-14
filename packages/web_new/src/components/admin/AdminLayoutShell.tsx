@@ -9,6 +9,8 @@ import { usePathname } from 'next/navigation';
 import { useAuth } from '@/auth/AuthProvider';
 import { PageLoader } from '@/components/ui/Feedback';
 import { Link, NavLink } from '@/lib/router';
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
+import { PageHeader } from '@/components/ui/PageHeader';
 
 export function AdminLayoutShell({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -36,19 +38,8 @@ export function AdminLayoutShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="page-container admin-page">
-      <div className="breadcrumbs">
-        <Link to="/">Archive</Link>
-        <ChevronRight size={13} />
-        <span>Administration</span>
-      </div>
-      <header className="page-heading">
-        <div>
-          <span className="eyebrow left">ARCHIVE OPERATIONS</span>
-          <h1>
-            Admin panel<span className="heading-period">.</span>
-          </h1>
-        </div>
-      </header>
+      <Breadcrumbs items={[{ label: 'Archive', to: '/' }, { label: 'Administration' }]} />
+      <PageHeader title="Admin panel" />
       <div className="admin-layout">
         <aside className="admin-sidebar">
           <nav aria-label="Administration">

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="CUE4Parse"><HintPath>$(CUE4ParseDir)/CUE4Parse.dll</HintPath></Reference>
+    <Reference Include="Newtonsoft.Json"><HintPath>$(CUE4ParseDir)/Newtonsoft.Json.dll</HintPath></Reference>
+    <None Include="$(CUE4ParseDir)/*.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="CheckCue4Parse" BeforeTargets="ResolveReferences" Condition="!Exists('$(CUE4ParseDir)/CUE4Parse.dll')">
+    <Error Text="Set CUE4ParseDir to the directory of the matching worker CUE4Parse runtime." />
+  </Target>
+</Project>

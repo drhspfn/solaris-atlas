@@ -9,7 +9,12 @@ from pathlib import Path
 
 from wuwa_story_worker.lgui_composition import _map, prefab_layout, visible_layers
 from wuwa_story_worker.lgui_properties import properties
-from wuwa_story_worker.sequence_composition import _asset_file, _exports, _read
+from wuwa_story_worker.sequence_composition import (
+    _asset_file,
+    _exports,
+    _read,
+    _validate_archive_limits,
+)
 
 # Exact decoded shader assets checked against their authored parent and blend mode.
 # Different builds must be reviewed before their materials are accepted.
@@ -115,10 +120,7 @@ def _validate_components(export, size):
 def legacy_plan(bundle: Path):
     with zipfile.ZipFile(bundle) as archive:
         infos = archive.infolist()
-        if (len(infos) > 10000 or len({info.filename for info in infos}) != len(infos)
-                or any(info.file_size > 64 * 1024 * 1024 for info in infos)
-                or sum(info.file_size for info in infos) > 512 * 1024 * 1024):
-            raise ValueError('Legacy archive exceeds limits or contains duplicate entries')
+        _validate_archive_limits(infos, 'Legacy archive')
         manifest = json.loads(archive.read('manifest.json'))
         missing = (manifest.get('control_sources') or {}).get('missing', [])
         if not isinstance(missing, list) or any(
@@ -229,7 +231,9 @@ def mark_legacy_eligible(bundle: Path):
                 'reasons': [{'code': 'render_validation_required'}]}
             for info in source.infolist():
                 if info.filename != 'manifest.json':
-                    target.writestr(info, source.read(info))
+                    with source.open(info) as s_in, target.open(info, 'w', force_zip64=True) as t_out:
+                        while chunk := s_in.read(1024 * 1024):
+                            t_out.write(chunk)
             info = zipfile.ZipInfo('manifest.json', (2000, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             target.writestr(info, json.dumps(manifest, ensure_ascii=False, sort_keys=True))

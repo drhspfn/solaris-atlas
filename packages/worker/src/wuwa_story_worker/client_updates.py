@@ -22,12 +22,12 @@ async def poll_client_updates(workspace):
     results = []
     for tier in tiers:
         async with SessionFactory() as session:
-            results.append(await check_client_update(session, tier))
+            results.append(await check_client_update(session, tier, workspace=workspace))
     return results
 
 
 async def watch_client_updates():
-    interval = int(os.getenv("WUWA_CLIENT_UPDATE_INTERVAL_SECONDS", "3600"))
+    interval = int(os.getenv("WUWA_CLIENT_UPDATE_INTERVAL_SECONDS", "7200"))
     if interval == 0:
         return
     if interval < 60:

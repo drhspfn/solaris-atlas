@@ -14,9 +14,11 @@ from wuwa_story.db.models.ops import GameRelease
 from wuwa_story.db.models.raw import SourceRecord
 from wuwa_story.db.repositories import cutscenes as repository
 from wuwa_story.db.session import get_session
+from wuwa_story.story.cutscene_descriptions import attach_public_descriptions, public_descriptions
 from wuwa_story.story.cutscenes import summaries
 from wuwa_story.story.domain import version_key
 from wuwa_story.story.service import _release_id
+from wuwa_story.version import is_caption_supported
 
 router = APIRouter(prefix="/cutscenes", tags=["story browsing"])
 
@@ -97,7 +99,9 @@ async def catalog(game_version: str | None = None, locale: str = "en",
 async def detail(name: str, game_version: str | None = None, locale: str = "en",
                  session: AsyncSession = Depends(get_session)):
     if read_projections.should_route_to_projection("cutscene", game_version, locale=locale):
-        return await read_projections.cutscene_detail(session, name, game_version, locale)
+        result = await read_projections.cutscene_detail(session, name, game_version, locale)
+        snapshot = await release(session, result.get('game_version') or game_version)
+        return await with_public_descriptions(session, result, snapshot.id, locale)
     snapshot = await release(session, game_version)
     row = await repository.scene(session, name, snapshot.id)
     if row is None:
@@ -128,7 +132,7 @@ async def detail(name: str, game_version: str | None = None, locale: str = "en",
         flows = await cutscene_flows(session, [row.node_id])
         playback = flows.get(row.node_id)
         captions = {}
-        if playback and playback.get("asset_version") in {"3.7.0", "3.7.1"}:
+        if playback and is_caption_supported(playback.get("asset_version")):
             links = await _links(session, [row.node_id], ("uses_caption",), snapshot.id)
             ids = [link["node_id"] for link in links.get(row.node_id, [])]
             if ids:
@@ -140,4 +144,23 @@ async def detail(name: str, game_version: str | None = None, locale: str = "en",
                 captions = caption_tracks(records, await caption_texts(session, records, locale, snapshot.id))
         event = {"kind": "cutscene", "reference": f"cutscene:{name}", "flow_state": "",
                  "action_index": 0, "playback": playback, "captions": captions, "resources": []}
-    return {**item, "game_version": snapshot.game_version, "event": event, "passages": passages}
+    return await with_public_descriptions(session, {
+        **item, "game_version": snapshot.game_version, "event": event, "passages": passages,
+    }, snapshot.id, locale)
+
+
+async def with_public_descriptions(session, result, release_id, locale):
+    """Overlay current summary heads even when the playback came from a read projection."""
+    from copy import deepcopy
+
+    result = deepcopy(result)
+    flow = (result.get('event') or {}).get('playback') or {}
+    result['public_descriptions'] = await attach_public_descriptions(session, {0: flow}, release_id, locale)
+    if not flow.get('media') and result.get('node_id'):
+        variants = await _links(session, [result['node_id']], ('has_variant',), release_id)
+        assets = await _links(session, [v['node_id'] for group in variants.values() for v in group],
+                              ('references_asset',), release_id)
+        result['public_descriptions'] = list((await public_descriptions(
+            session, [a['node_id'] for group in assets.values() for a in group], release_id, locale,
+        )).values())
+    return result

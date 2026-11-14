@@ -2,11 +2,11 @@ import json
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from wuwa_story_worker import release_media
+from wuwa_story_worker import release_media, voice_bootstrap
 
 
 @pytest.mark.asyncio
@@ -264,7 +264,7 @@ async def test_deferred_child_is_waited_for_instead_of_failed():
     ("completed", "different", "failed"),
 ])
 async def test_cutscene_dependency_read_finishes_before_io_without_releasing_job_lock(
-    monkeypatch, voice_status, voice_download, expected
+    monkeypatch, caplog, voice_status, voice_download, expected
 ):
     from contextlib import asynccontextmanager
 
@@ -309,6 +309,7 @@ async def test_cutscene_dependency_read_finishes_before_io_without_releasing_job
     monkeypatch.setattr(release_media, "cutscene", AsyncMock(side_effect=convert))
     update = AsyncMock()
     monkeypatch.setattr(release_media, "update_admin_run", update)
+    caplog.set_level("INFO", logger=release_media.__name__)
     if expected == "waiting_dependency":
         with pytest.raises(release_media.JobDeferred):
             await release_media._process_release_media(payload)
@@ -318,6 +319,11 @@ async def test_cutscene_dependency_read_finishes_before_io_without_releasing_job
     else:
         await release_media._process_release_media(payload)
     assert update.await_args.args[2] == expected
+    assert "release_media.started run=90 kind=cutscene release=9 parent=80" in caplog.text
+    if expected == "waiting_dependency":
+        assert "release_media.deferred run=90 kind=cutscene" in caplog.text
+    elif expected == "failed":
+        assert "release_media.error run=90 kind=cutscene status=failed error_type=ValueError" in caplog.text
     assert release_media.cutscene.await_count == (expected == "completed")
     assert session.commit.await_count == (3 if expected == "completed" else 2)
     connection.invalidate.assert_awaited_once()
@@ -465,6 +471,7 @@ async def test_successful_assets_continue_when_other_event_assets_are_missing(mo
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind,artwork,notices,targets", [
     ("voice_packages", False, False, []), ("images", False, False, []), ("cutscene", False, False, []),
+    ("npc_catalog", False, False, []),
     ("event_catalog", True, False, []), ("event_images", True, False, []),
     ("event_resources", True, False, []), ("event_notices", False, True, []),
     ('tree_order', False, False, []), ('images', False, False, ['flow_state:Story_1_29'])])
@@ -495,7 +502,8 @@ async def test_queued_legacy_dependency_renews_scoped_pipeline_before_export(
 
     async def renew(*args, **kwargs):
         assert args == (session, 9)
-        expected = {"event_artwork_only": artwork, "notices_only": notices}
+        expected = {"event_artwork_only": artwork, "notices_only": notices,
+                    "npc_catalog_only": kind == "npc_catalog"}
         if kind == 'tree_order':
             expected['story_structure_only'] = True
         elif targets:
@@ -987,3 +995,61 @@ async def test_invalid_authored_movie_is_partial_without_poisoning_other_cutscen
     assert status == "partial" and result["videos"] == 0
     assert result["media_report"]["entries"][0]["status"] == "invalid_source"
     audio.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_cls,error_msg", [
+    (RuntimeError, "Official video manifest is unavailable"),
+    (ValueError, "Video CDN serves 3.8.0, requested 1.3.0"),
+])
+async def test_cutscene_assets_recovers_gracefully_when_official_video_manifest_unavailable(
+    monkeypatch, tmp_path, error_cls, error_msg
+):
+    files_dir = tmp_path / "files"
+    files_dir.mkdir(parents=True, exist_ok=True)
+    db_path = files_dir / "video.db"
+    with sqlite3.connect(db_path) as db:
+        db.execute("CREATE TABLE videodata (CgId INT, CgName TEXT, BinData BLOB)")
+        db.execute("INSERT INTO videodata VALUES (101, 'Scene', ?)", (b"/Game/Aki/Movies/Scene.Scene\0",))
+
+    monkeypatch.setattr(release_media, "missing_cutscene_identities", AsyncMock(return_value={"cutscene:Scene"}))
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "tool_path", lambda _: tmp_path / "fmodel")
+    monkeypatch.setattr(release_media, "export_assets", AsyncMock(return_value=tmp_path / "receipt.json"))
+    monkeypatch.setattr(release_media, "video_database", lambda *_args, **_kwargs: db_path)
+
+    monkeypatch.setattr(release_media, "has_caption_audio", lambda *_args: False)
+    monkeypatch.setattr(release_media, "merge_exports", lambda *_args: tmp_path / "release-media/files")
+    monkeypatch.setattr(release_media, "prepare_base_movies", AsyncMock(return_value={"receipts": [], "movies": {}, "errors": {}}))
+    monkeypatch.setattr(voice_bootstrap, "discover_video_plan", Mock(side_effect=error_cls(error_msg)))
+
+    files_dir = tmp_path / "release-media/files"
+    files_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(release_media, "publish_inventory", AsyncMock(return_value={}))
+
+    result, status = await release_media.cutscene_assets(
+        {"targets": ["Scene"]}, {"asset_version": "1.3.0", "tier": "hd", "release_id": 3}
+    )
+    assert status == "completed"
+    assert "manifest_unavailable" in result["media_report"]["video_packages"]
+    assert error_msg in result["media_report"]["video_packages"]["manifest_unavailable"]
+
+
+@pytest.mark.asyncio
+async def test_cutscene_assembly_not_in_videodata_is_partial_without_failing(monkeypatch, tmp_path):
+    monkeypatch.setattr(release_media, "client_root", lambda _: tmp_path)
+    monkeypatch.setattr(release_media, "video_database", lambda _: tmp_path / "video.db")
+    monkeypatch.setattr(release_media, "plan_cutscene", Mock(side_effect=ValueError("Cutscene not found in VideoData")))
+    cleanup = AsyncMock()
+    monkeypatch.setattr(release_media, "cleanup_published_output", cleanup)
+
+    result, status = await release_media.cutscene(
+        {"targets": ["TestMusicSubtitle"], "run_id": 28963},
+        {"asset_version": "3.2.0"}
+    )
+    assert status == "partial"
+    assert result["videos"] == 0
+    assert result["missing_assets"] == ["TestMusicSubtitle"]
+    assert result["media_report"]["entries"][0]["status"] == "not_in_videodata"
+    cleanup.assert_awaited_once()
+

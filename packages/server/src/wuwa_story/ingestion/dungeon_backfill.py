@@ -86,11 +86,12 @@ async def invalidate_repaired_quests(session, release, records):
 
     actions = await children(wrappers, ('contains_action',))
     cutscenes = await children(actions, ('plays_cutscene',))
-    cutscenes.update(await session.scalars(select(Node.id).join(
-        NodeRevision, NodeRevision.node_id == Node.id).where(
-        NodeRevision.release_id == release.id,
-        Node.canonical_key.in_({record['to'] for record in records
-                               if record.get('to', '').startswith('cutscene:')}))))
+    direct_cutscene_keys = {record['to'] for record in records if record.get('to', '').startswith('cutscene:')}
+    if direct_cutscene_keys:
+        cutscenes.update(await session.scalars(select(Node.id).join(
+            NodeRevision, NodeRevision.node_id == Node.id).where(
+            NodeRevision.release_id == release.id,
+            Node.canonical_key.in_(direct_cutscene_keys))))
     captions = await children(cutscenes, ('has_transcript_state',))
     caption_actions = await children(captions, ('contains_action',))
     dialogues = await children(actions | caption_actions, ('presents_talk_item',))

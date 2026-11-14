@@ -33,15 +33,19 @@ async def import_localization_batch(
         return 0, 0
     locales = {row.code: row.id for row in await session.scalars(select(Locale))}
     normalized_keys = [_localization_key_identity(row["key"]) for row in batch]
-    keys = [
-        {
-            "key": normalized,
-            "namespace": row.get("namespace"),
-            "first_release_id": release_id,
-            "metadata_json": metadata,
-        }
-        for row, (normalized, metadata) in zip(batch, normalized_keys, strict=True)
-    ]
+    keys_by_identity: dict[str, dict[str, Any]] = {}
+    for row, (normalized, metadata) in zip(batch, normalized_keys, strict=True):
+        keys_by_identity.setdefault(
+            normalized,
+            {
+                "key": normalized,
+                "namespace": row.get("namespace"),
+                "first_release_id": release_id,
+                "metadata_json": metadata,
+            },
+        )
+    # Stable key order prevents lock-order inversions during concurrent ON CONFLICT inserts.
+    keys = [keys_by_identity[key] for key in sorted(keys_by_identity)]
     key_result = await session.execute(
         insert(LocalizationKey)
         .values(keys)
@@ -165,6 +169,7 @@ async def import_localization_batch(
             digest = value.pop("content_hash")
             value.pop("content")
             value["content_id"] = content_ids[digest] if digest is not None else None
+        values.sort(key=lambda item: (item["release_id"], item["key_id"], item["locale_id"]))
         value_result = await session.execute(
             insert(LocalizationValue)
             .values(values)

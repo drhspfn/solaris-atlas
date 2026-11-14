@@ -238,6 +238,10 @@ Select, focus treatments and source disclosures; they introduce no global theme.
 
 ### Internal ORM console
 
+Visual Memory identity types use native `form-select` controls populated from the
+shared server `VisualKind` enum. `Other` covers unclassified subjects; type fields
+must not accept free text. Creation, filters and agent/API validation share the keys.
+
 The separate `/console` backend surface deliberately uses Starlette-admin's native
 Tabler theme and generated components. The framework owns its visual tokens and
 forms; public atlas runtime tokens are not copied into another renderer. Model

@@ -10,9 +10,46 @@ import {
   playableEncounterFragments,
 } from "./QuestSequenceFragments";
 import { playableSequenceAudio } from "./QuestSequenceAudio";
-import { hasEngineCinematicTracks, illustrationSections } from "./sequenceIllustrations";
+import {
+  hasEngineCinematicTracks,
+  illustrationSections,
+} from "./sequenceIllustrations";
 import { mediaViewerUrl } from "../ui/mediaViewerUtils";
 import styles from "./SequenceComponents.module.css";
+
+type SceneType = "illustrated" | "video" | "engine" | "audio" | "unknown";
+const sceneContent: Record<
+  SceneType,
+  { label: string; status: string; intro: string }
+> = {
+  illustrated: {
+    label: "Illustrated scene",
+    status: "Scene illustrations available.",
+    intro: "Available scene media and source details are shown below.",
+  },
+  video: {
+    label: "Cinematic scene",
+    status: "Video components available; full scene playback is unavailable.",
+    intro: "Available scene media and source details are shown below.",
+  },
+  engine: {
+    label: "In-game cinematic",
+    status:
+      "In-game cinematic · Rendered by the game engine. No standalone recording is available.",
+    intro: "Rendered by the game engine. No standalone recording is available.",
+  },
+  audio: {
+    label: "Scripted scene",
+    status: "Scene audio available; full scene playback is unavailable.",
+    intro: "Available scene media and source details are shown below.",
+  },
+  unknown: {
+    label: "Scripted scene",
+    status:
+      "No standalone media available. The scene's visual format is unknown.",
+    intro: "No standalone media available. Source details are shown below.",
+  },
+};
 
 export function QuestSceneDetails({
   event,
@@ -30,18 +67,27 @@ export function QuestSceneDetails({
   const isEngineCinematic =
     !hasIllustrations &&
     !hasVideo &&
-    hasEngineCinematicTracks(media);
+    (hasEngineCinematicTracks(media) ||
+      Boolean(
+        event.engine_path &&
+        /sequence|level[abc]_seq|da_/i.test(event.engine_path),
+      ) ||
+      Boolean(
+        event.reference && /sequence|level[abc]_seq|da_/i.test(event.reference),
+      ) ||
+      Boolean(
+        event.source?.raw_path && /sequence/i.test(event.source.raw_path),
+      ));
   const hasMedia =
-    hasIllustrations ||
-    hasVideo ||
-    playableSequenceAudio(media).length > 0;
-  const sceneLabel = hasIllustrations
-    ? "Illustrated scene"
-    : hasVideo
-      ? "Cinematic scene"
-      : isEngineCinematic
-        ? "In-game cinematic"
-        : "Scripted scene";
+    hasIllustrations || hasVideo || playableSequenceAudio(media).length > 0;
+
+  let sceneType: SceneType = "unknown";
+  if (hasIllustrations) sceneType = "illustrated";
+  else if (hasVideo) sceneType = "video";
+  else if (isEngineCinematic) sceneType = "engine";
+  else if (hasMedia) sceneType = "audio";
+
+  const { label: sceneLabel, status, intro } = sceneContent[sceneType];
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -56,6 +102,7 @@ export function QuestSceneDetails({
       trigger.current?.focus({ preventScroll: true });
     };
   }, [open]);
+
   return (
     <>
       <header className={styles.sceneHeader}>
@@ -77,17 +124,7 @@ export function QuestSceneDetails({
           <CircleHelp size={20} />
         </button>
       </header>
-      <p className={styles.status}>
-        {hasIllustrations
-          ? "Scene illustrations available."
-          : hasVideo
-            ? "Video components available; full scene playback is unavailable."
-            : isEngineCinematic
-              ? "In-game cinematic · Rendered by the game engine. No standalone recording is available."
-              : hasMedia
-                ? "Scene audio available; full scene playback is unavailable."
-                : "No standalone media available. The scene's visual format is unknown."}
-      </p>
+      <p className={styles.status}>{status}</p>
       {open && (
         <dialog
           ref={dialog}
@@ -123,13 +160,13 @@ export function QuestSceneDetails({
               <X size={20} />
             </Button>
           </header>
-          <p className={styles.dialogIntro}>
-            {isEngineCinematic
-              ? "Rendered by the game engine. No standalone recording is available."
-              : hasMedia
-                ? "Available scene media and source details are shown below."
-                : "No standalone media available. Source details are shown below."}
-          </p>
+          <p className={styles.dialogIntro}>{intro}</p>
+          {isEngineCinematic && (
+            <p className={styles.engineExplanation}>
+              This sequence is rendered in real-time by the Unreal Engine client
+              using 3D character models and camera tracks.
+            </p>
+          )}
           <QuestSequenceFragments media={event.sequence_media} />
           <details className={styles.source} open={!hasMedia}>
             <summary>Technical details</summary>

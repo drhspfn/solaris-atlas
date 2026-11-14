@@ -10,10 +10,14 @@ import { PlayerText } from "@/components/dialogue/PlayerText";
 import { Link, useSearchParams } from "@/lib/router";
 import { questPath } from "@/lib/routeKey";
 import { Select } from "@/components/ui/Select";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { ErrorPanel, PageLoader } from "@/components/ui/Feedback";
 import { InfiniteScroll } from "@/components/ui/InfiniteScroll";
 import { Cutscene } from "./QuestCutscenes";
 import { cutsceneAnchor, packageCutsceneAnchor } from "./cutsceneAnchor";
+import { clipRover } from "./cutsceneAudioSelection";
 import type { QuestMediaEvent } from "./QuestMediaReferences";
 
 type Quest = {
@@ -45,6 +49,18 @@ export type CutscenePage = {
 export type CutsceneDetail = Scene & {
   game_version: string;
   event: QuestMediaEvent;
+  public_descriptions?: {
+    asset_node_id: number;
+    visual_reference_id: number | null;
+    title: string;
+    text: string;
+    chapters: { start: number; end: number; title: string; text: string }[];
+    observation_indices: number[];
+    origin?: "analysis" | "manual";
+    locale?: string;
+    document_id?: number;
+    revision?: number;
+  }[];
   passages: (Quest & {
     focus_line?: string | null;
     package_related?: boolean;
@@ -173,47 +189,32 @@ export function CutsceneArchive({
   }
   return (
     <main className="page-container cutscene-archive">
-      <header className="cutscene-archive-heading">
-        <span className="eyebrow">SOLARIS / CINEMATIC ARCHIVE</span>
-        <h1>Cutscenes</h1>
-        <p>Watch the story. Return to the quest where it unfolds.</p>
-      </header>
-      <form
-        className="cutscene-filters"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          filter("q", searchText.trim());
-        }}
-      >
-        <label className="cutscene-filter">
-          Scene name or code
-          <div className="cutscene-search">
-            <Search size={17} aria-hidden="true" />
-            <input
-              ref={searchInput}
-              name="q"
-              placeholder="Search scenes…"
-              value={searchText}
-              onChange={(event) => setSearchText(event.target.value)}
-              maxLength={128}
-            />
-            {searchText && (
-              <button
-                type="button"
-                className="search-clear"
-                aria-label="Clear scene search"
-                onClick={() => {
-                  setSearchText("");
-                  filter("q", "");
-                  searchInput.current?.focus();
-                }}
-              >
-                <X size={16} aria-hidden="true" />
-              </button>
-            )}
-          </div>
-        </label>
+      <Breadcrumbs
+        items={[{ label: "Archive", to: "/" }, { label: "Cutscenes" }]}
+      />
+      <PageHeader
+        title="Cutscenes"
+        description="Watch the story. Return to the quest where it unfolds."
+        actions={
+          data?.total != null ? (
+            <div className="total-chip">
+              <span>{data.total.toLocaleString()}</span>
+              <small>scenes</small>
+            </div>
+          ) : undefined
+        }
+      />
+      <div className="cutscene-filters">
+        <SearchInput
+          ref={searchInput}
+          className="cutscene-search-bar"
+          value={searchText}
+          onChange={setSearchText}
+          placeholder="Search scene name, code or quest..."
+          ariaLabel="Search cutscenes"
+          onSubmit={(q) => filter("q", q.trim())}
+          onClear={() => filter("q", "")}
+        />
         <div className="cutscene-filter">
           <span>Game version</span>
           <Select
@@ -241,10 +242,7 @@ export function CutsceneArchive({
             ]}
           />
         </div>
-        <button type="submit" className="cutscene-apply">
-          Search
-        </button>
-      </form>
+      </div>
       {error ? (
         <ErrorPanel
           message={error}
@@ -410,24 +408,25 @@ export function CutsceneRecord({
   if (!data) return <PageLoader />;
   return (
     <main className="page-container cutscene-archive">
-      <Link
-        className="cutscene-back"
-        to={`/cutscenes?game_version=${data.game_version}`}
-      >
-        <ArrowLeft size={16} />
-        Cutscene archive
-      </Link>
-      <header className="cutscene-archive-heading">
-        <span className="eyebrow">
-          {data.name} / SNAPSHOT {data.game_version}
-        </span>
-        <h1>
-          <PlayerText value={data.title} display={display} />
-        </h1>
-        {data.title_kind === "analysis" && (
-          <p>AI title · Grounded in the scene analysis</p>
-        )}
-      </header>
+      <Breadcrumbs
+        items={[
+          { label: "Archive", to: "/" },
+          {
+            label: "Cutscenes",
+            to: `/cutscenes?game_version=${data.game_version}`,
+          },
+          { label: <PlayerText value={data.title} display={display} /> },
+        ]}
+      />
+      <PageHeader
+        title={<PlayerText value={data.title} display={display} />}
+        showPeriod={false}
+        description={
+          data.title_kind === "analysis"
+            ? "AI title · Grounded in the scene analysis"
+            : `Snapshot ${data.game_version} · ${data.name}`
+        }
+      />
       {data.event.playback ? (
         <Cutscene
           event={{ ...data.event, title: data.title }}
@@ -438,6 +437,51 @@ export function CutsceneRecord({
           This scene is recorded in the game data, but a playable export is not
           available yet.
         </div>
+      )}
+      {!!data.public_descriptions?.length && (
+        <section className="cutscene-context" aria-label="Scene descriptions">
+          <h2>Scene descriptions</h2>
+          {data.public_descriptions.map((description, index) => {
+            const flow = data.event.playback;
+            const clips =
+              flow?.nodes.filter(
+                (node) =>
+                  node.kind === "clip" &&
+                  flow.media[node.segment || node.asset]?.asset_node_id ===
+                    description.asset_node_id,
+              ) || [];
+            const rovers = new Set(
+              clips.map((clip) => clipRover(flow!, clip.id, "ask")),
+            );
+            const rover = rovers.size === 1 ? [...rovers][0] : "ask";
+            const variant =
+              rover === "female"
+                ? "Female Rover"
+                : rover === "male"
+                  ? "Male Rover"
+                  : `Version ${index + 1}`;
+            return (
+              <section key={description.asset_node_id}>
+                <h3>
+                  <PlayerText value={description.title} display={display} />
+                </h3>
+                {(data.public_descriptions!.length > 1 ||
+                  description.origin === "analysis") && (
+                  <small>
+                    {data.public_descriptions!.length > 1 && variant}
+                    {data.public_descriptions!.length > 1 &&
+                      description.origin === "analysis" &&
+                      " · "}
+                    {description.origin === "analysis" && "AI description"}
+                  </small>
+                )}
+                <p>
+                  <PlayerText value={description.text} display={display} />
+                </p>
+              </section>
+            );
+          })}
+        </section>
       )}
       <section className="cutscene-context">
         <h2>Where this scene appears</h2>

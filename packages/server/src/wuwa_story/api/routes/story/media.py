@@ -15,6 +15,7 @@ from wuwa_story.api.routes.story.captions import caption_texts, caption_tracks
 from wuwa_story.api.routes.story.cutscene_audio import audio_bundles
 from wuwa_story.api.routes.story.shared import _release_id
 from wuwa_story.config.settings import get_settings
+from wuwa_story.version import is_caption_supported
 from wuwa_story.db.models.content import Document, DocumentHead
 from wuwa_story.db.models.core import QuestAction, QuestState
 from wuwa_story.db.models.graph import Edge, EdgeEvidence, Node, NodeRevision
@@ -30,6 +31,7 @@ from wuwa_story.ingestion.spine_presentation import flow_presentation
 from wuwa_story.storage.s3 import S3Storage
 from wuwa_story.story import media as story_media
 from wuwa_story.story import runtime_service
+from wuwa_story.story.cutscene_descriptions import attach_public_descriptions
 from wuwa_story.story.cutscene_occurrences import group_cutscene_occurrences
 from wuwa_story.story.cutscene_publications import publication_order, publication_types
 from wuwa_story.story.scene_continuations import scene_continuations
@@ -272,8 +274,15 @@ async def quest_media(
 ) -> dict[str, Any]:
     """Authored media references with published playable files when available."""
     if read_projections.should_route_to_projection("quest", game_version, locale=locale):
-        return group_cutscene_occurrences(await read_projections.quest_section(
-            session, game_quest_id, locale, game_version, "media"))
+        from copy import deepcopy
+
+        manifest = deepcopy(group_cutscene_occurrences(await read_projections.quest_section(
+            session, game_quest_id, locale, game_version, "media")))
+        release_id = await _release_id(session, manifest.get('game_version') or game_version)
+        flows = {i: event.get('playback') for i, event in enumerate(manifest.get('events', []))}
+        flows.update({f'related-{i}': item.get('playback') for i, item in enumerate(manifest.get('related_cutscenes', []))})
+        await attach_public_descriptions(session, flows, release_id, locale)
+        return manifest
     quest = await get_quest(session, game_quest_id)
     if quest is None:
         raise HTTPException(status_code=404, detail="quest not found")
@@ -348,6 +357,7 @@ async def quest_media(
                         )
                         if report and report.id == description["visual_reference_id"]:
                             media["description"] = description
+    await attach_public_descriptions(session, flows, release_id, locale)
     variants = await _links(session, cutscene_ids, ("has_variant", "uses_audio_event", "uses_audio_event_normalized", "uses_caption"), release_id)
     child_ids = [link["node_id"] for entries in variants.values()
                  for link in entries]
@@ -504,7 +514,7 @@ async def quest_media(
                 resource_raw[child["node_id"]]
                 for child in variants.get(target_id, [])
                 if child["relation"] == "uses_caption" and child["node_id"] in resource_raw
-            ], texts) if entry["playback"] and entry["playback"]["asset_version"] in {"3.7.0", "3.7.1"} else {}
+            ], texts) if entry["playback"] and is_caption_supported(entry["playback"].get("asset_version")) else {}
             entry["resources"] = [
                 {"kind": child["relation"], "reference": child["canonical_key"],
                  "basis": child["basis"], "source": child["source"],

@@ -30,6 +30,53 @@ def test_portable_bundle_deduplicates_forms_and_omits_local_secrets(tmp_path):
         write_archive(path, {"character_key": "character:1"}, [first])
 
 
+def test_blender_project_round_trips_in_portable_archive(tmp_path):
+    entry = bundle(tmp_path)
+    project = entry[1] / "character.blend"
+    project.write_bytes(b"BLENDER-v450")
+    archive = tmp_path / "model.zip"
+    manifest = write_archive(archive, {"character_key": "character:1"}, [entry])
+    decoded = tmp_path / "decoded"
+    assert read_archive(archive, decoded) == manifest
+    key = manifest["forms"][0]["files"]["blender"]
+    assert (decoded / "objects" / key).read_bytes() == project.read_bytes()
+
+
+def test_animation_packs_round_trip_with_form_specific_selections(tmp_path):
+    form, output, summaries, provenance = bundle(tmp_path)
+    (output / "animation-packs").mkdir()
+    (output / "animation-packs/0123456789abcdef.glb").write_bytes(b"shared")
+    (output / "animation-packs/fedcba9876543210.glb").write_bytes(b"variant")
+    (output / "animation-manifest.json").write_text("{}")
+    shared = {"id": "0123456789abcdef", "key": "animation_pack_0123456789abcdef",
+              "clips": [f"shared-{i}" for i in range(400)]}
+    variant = {"id": "fedcba9876543210", "key": "animation_pack_fedcba9876543210",
+               "clips": [f"variant-{i}" for i in range(20)]}
+    first = (form, output, summaries, {**provenance, "animation_packs": [shared, variant]})
+    second = ({**form, "id": "mesh-2"}, output, summaries,
+              {**provenance, "animation_packs": [{**shared, "clips": shared["clips"][:200]}]})
+    archive = tmp_path / "packs.zip"
+    manifest = write_archive(archive, {"character_key": "character:1"}, [first, second])
+    assert len(manifest["objects"]) == 5
+    assert manifest["forms"][0]["files"][shared["key"]] == manifest["forms"][1]["files"][shared["key"]]
+    assert read_archive(archive, tmp_path / "decoded") == manifest
+    assert len(manifest["forms"][0]["provenance"]["animation_packs"][0]["clips"]) == 400
+    assert len(manifest["forms"][1]["provenance"]["animation_packs"][0]["clips"]) == 200
+
+
+@pytest.mark.parametrize("packs", [
+    [{"id": "../bad", "key": "animation_pack_../bad", "clips": ["a"]}],
+    [{"id": "0123456789abcdef", "key": "animation_pack_0123456789abcdef", "clips": ["a", "a"]}],
+    [{"id": "0123456789abcdef", "key": "animation_pack_0123456789abcdef", "clips": ["a"]},
+     {"id": "fedcba9876543210", "key": "animation_pack_fedcba9876543210", "clips": ["a"]}],
+])
+def test_archive_rejects_malformed_pack_descriptors(tmp_path, packs):
+    form, output, summaries, provenance = bundle(tmp_path)
+    with pytest.raises(ValueError):
+        write_archive(tmp_path / "bad.zip", {"character_key": "character:1"},
+                      [(form, output, summaries, {**provenance, "animation_packs": packs})])
+
+
 def test_npc_model_archive_round_trips(tmp_path):
     path = tmp_path / "npc.zip"
     manifest = write_archive(path, {"character_key": "character:npc:17288"}, [bundle(tmp_path)])
@@ -151,3 +198,31 @@ def test_component_unknown_visibility_and_parent_remain_unknown(tmp_path):
     manifest = write_archive(path, {"character_key": "character:1"},
                              [root, (child, root[1], {}, {})])
     assert read_archive(path, tmp_path / "decoded") == manifest
+
+
+def test_seventy_components_round_trip_with_more_than_256_objects(tmp_path):
+    root = bundle(tmp_path)
+    second = {**root[0], "id": "mesh-2"}
+    bundles = [root, (second, root[1], {}, root[3])]
+    for index in range(70):
+        parent = root[0]["id"] if index < 35 else second["id"]
+        child = component(f"component-{index:016x}", parent, f"effect-{index % 35}")
+        output = tmp_path / f"child-{index}"
+        output.mkdir()
+        for filename in ("preview.glb", "character.glb", "animations.glb", "facial.json", "physics.json"):
+            (output / filename).write_bytes(f"{index}-{filename}".encode())
+        bundles.append((child, output, {}, {}))
+    path = tmp_path / "large.zip"
+    manifest = write_archive(path, {"character_key": "character:1"}, bundles)
+    assert len(manifest["objects"]) == 352
+    restored = read_archive(path, tmp_path / "restored")
+    assert restored == manifest
+    assert len({entry["form"]["id"] for entry in restored["forms"]}) == 72
+
+
+def test_archive_rejects_more_than_128_components(tmp_path):
+    root = bundle(tmp_path)
+    children = [(component(f"component-{i:016x}", root[0]["id"], f"effect-{i}"), root[1], {}, {})
+                for i in range(129)]
+    with pytest.raises(ValueError, match="128 components"):
+        write_archive(tmp_path / "too-many.zip", {"character_key": "character:1"}, [root, *children])

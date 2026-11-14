@@ -1,29 +1,48 @@
 export type ModelAsset = { url: string; size_bytes: number };
+export type AnimationPack = ModelAsset & { id: string; clips: string[] };
 export type ModelComponent = {
   id: string;
   parent_form_id: string;
   parent_component?: string | null;
   socket?: string | null;
   transform?: Record<string, Record<string, number>> | null;
-  socket_transform?: { bone?: string; location?: Record<string, number>; rotation?: Record<string, number>; scale?: Record<string, number> } | null;
+  socket_transform?: {
+    bone?: string;
+    location?: Record<string, number>;
+    rotation?: Record<string, number>;
+    scale?: Record<string, number>;
+  } | null;
   default_visible?: boolean | null;
   baked?: boolean;
   standalone_only?: boolean;
   kind?: "component" | "effect";
-  bindings?: { parent_clip: string | null; child_clip: string | null; kind?: string; source?: { looping?: boolean | null } }[];
+  bindings?: {
+    parent_clip: string | null;
+    child_clip: string | null;
+    kind?: string;
+    source?: { looping?: boolean | null };
+  }[];
   cues?: unknown[];
 };
 export type ModelAssets = {
   id?: string;
   preview: ModelAsset | null;
   download: ModelAsset | null;
+  blender?: ModelAsset | null;
   physics: ModelAsset | null;
   animations?: ModelAsset | null;
+  animation_packs?: AnimationPack[] | null;
+  animation_manifest?: ModelAsset | null;
   facial?: ModelAsset | null;
   linked_models?: LinkedModel[] | null;
   scene?: { format: string; components: string[]; cues: unknown[] } | null;
 };
-export type LinkedModel = ModelAssets & { id: string; label: string; parent_id: string; component: ModelComponent };
+export type LinkedModel = ModelAssets & {
+  id: string;
+  label: string;
+  parent_id: string;
+  component: ModelComponent;
+};
 export type ModelForm = ModelAssets & { id: string; label: string };
 export type CharacterModelData = ModelAssets & {
   status: "ready" | "missing";
@@ -65,7 +84,14 @@ export type ViewerOption = {
   path?: string[];
 };
 export type ViewerState = {
-  components: { id: string; name: string; visible: boolean; override: boolean | null; loading: boolean; error: string }[];
+  components: {
+    id: string;
+    name: string;
+    visible: boolean;
+    override: boolean | null;
+    loading: boolean;
+    error: string;
+  }[];
   accessories: { name: string; visible: boolean }[];
   ready: boolean;
   error: string;
@@ -77,9 +103,11 @@ export type ViewerState = {
   animationsLoaded: boolean;
   facialLoaded: boolean;
   animations: ViewerOption[];
+  materialVariants: ViewerOption[];
   bones: ViewerOption[];
   faces: ViewerOption[];
   animation: string;
+  materialVariant: string;
   face: string;
   time: number;
   duration: number;
@@ -101,9 +129,11 @@ export const initialViewerState: ViewerState = {
   animationsLoaded: false,
   facialLoaded: false,
   animations: [],
+  materialVariants: [],
   bones: [],
   faces: [],
   animation: "",
+  materialVariant: "",
   face: "auto",
   time: 0,
   duration: 0,
@@ -128,6 +158,7 @@ export type ViewerController = {
   settings: (settings: ViewerSettings) => void;
   command: (command: ViewerCommand) => Promise<void>;
   animation: (name: string) => void;
+  materialVariant: (name: string) => void;
   face: (name: string) => void;
   seek: (time: number) => void;
   dispose: () => void;

@@ -80,13 +80,13 @@ async def call_model(
 
 
 def has_evidence(output: dict[str, Any]) -> bool:
-    for key in ("results", "lines", "blocks"):
+    for key in ("results", "lines", "blocks", "items", "candidates", "detections"):
         value = output.get(key)
         if isinstance(value, str) and value.strip() and not value.strip().lower().startswith("no "):
             return True
         if isinstance(value, list) and value:
             return True
-    return False
+    return output.get("status") == "approved" and bool(output.get("id"))
 
 
 async def run_chat(session: AsyncSession, messages: Sequence[Any], *, role: Role) -> dict[str, Any]:
@@ -130,7 +130,7 @@ async def run_chat(session: AsyncSession, messages: Sequence[Any], *, role: Role
                     role=role,
                     call_id=getattr(call, "id", f"{step}:{index}"),
                     tool=call.name,
-                    arguments=call.arguments,
+                    arguments=audit.redacted(call.arguments),
                     step=step,
                 )
                 try:

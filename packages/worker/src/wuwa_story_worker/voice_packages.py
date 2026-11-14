@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+from wuwa_story.version import is_supported_version
 from wuwa_story_worker.client_assets import plan_id, read_url, safe_path, save_json, workspace_lock
 
 LANGUAGES = ("en", "ja", "ko", "zh")
@@ -107,9 +108,21 @@ def discover_voice_plan(version: str, public_config: Path, crypto_path: Path | d
 
     config = fetch(f"{safe_path(entry['MixUri'])}/Windows/config.json")
     package_version = config["PackageVersion"]
-    if (not re.fullmatch(r"\d+\.\d+\.\d+", package_version)
-            or not re.fullmatch(r"\d+\.\d+\.\d+", version)
-            or package_version.rsplit(".", 1)[0] != version.rsplit(".", 1)[0]):
+    same_minor = (
+        isinstance(package_version, str)
+        and re.fullmatch(r"\d+\.\d+\.\d+", package_version) is not None
+        and re.fullmatch(r"\d+\.\d+\.\d+", version) is not None
+        and package_version.rsplit(".", 1)[0] == version.rsplit(".", 1)[0]
+    )
+    compatible_supported = (
+        isinstance(package_version, str)
+        and re.fullmatch(r"\d+\.\d+\.\d+", package_version) is not None
+        and re.fullmatch(r"\d+\.\d+\.\d+", version) is not None
+        and package_version.split(".", 1)[0] == version.split(".", 1)[0]
+        and is_supported_version(package_version)
+        and is_supported_version(version)
+    )
+    if not (same_minor or compatible_supported):
         raise ValueError(
             f"Client CDN serves {package_version}, requested {version}")
     uri = safe_path(entry["ResUri"])

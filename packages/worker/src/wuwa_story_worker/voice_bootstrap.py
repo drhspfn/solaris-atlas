@@ -6,6 +6,8 @@ import tomllib
 from pathlib import Path
 from urllib.parse import urlparse
 
+from wuwa_story.version import is_supported_cutscene_version
+
 from wuwa_story_worker.client_assets import plan_id, read_url, safe_path
 from wuwa_story_worker.voice_packages import (
     CONFIG_HOSTS,
@@ -30,6 +32,27 @@ def discover_client_voices(version: str, exported_config: Path) -> dict:
     plan["cipher_source"] = CIPHER_SOURCE
     plan["id"] = plan_id(plan)
     return plan
+
+
+def extract_candidate_versions(package_config: dict, requested_version: str) -> list[str]:
+    candidates = []
+
+    def add(v: str | None) -> None:
+        if isinstance(v, str) and re.fullmatch(r"\d+\.\d+\.\d+", v) and v not in candidates:
+            candidates.append(v)
+            parts = v.split(".")
+            base = f"{parts[0]}.{parts[1]}.0"
+            if base not in candidates:
+                candidates.append(base)
+
+    add(package_config.get("PackageVersion"))
+    add(requested_version)
+    for res_info in package_config.get("ResVersions", {}).values():
+        if isinstance(res_info, dict):
+            add(res_info.get("Version"))
+            for ver_key in res_info.get("IndexSha1", {}).keys():
+                add(ver_key)
+    return candidates
 
 
 def discover_video_plan(version: str, exported_config: Path, tier: str, cg_ids: set[int],
@@ -64,14 +87,37 @@ def discover_video_plan(version: str, exported_config: Path, tier: str, cg_ids: 
     mix = safe_path(entry["MixUri"])
     package_config = decrypt_config(fetch(f"{mix}/Windows/config.json"), crypto)
     package_version = package_config["PackageVersion"]
-    if (not isinstance(package_version, str)
-            or not re.fullmatch(r"\d+\.\d+\.\d+", package_version)
-            or package_version.rsplit(".", 1)[0] != version.rsplit(".", 1)[0]):
+    same_minor = (
+        isinstance(package_version, str)
+        and re.fullmatch(r"\d+\.\d+\.\d+", package_version) is not None
+        and package_version.rsplit(".", 1)[0] == version.rsplit(".", 1)[0]
+    )
+    compatible_supported = (
+        isinstance(package_version, str)
+        and re.fullmatch(r"\d+\.\d+\.\d+", package_version) is not None
+        and package_version.split(".", 1)[0] == version.split(".", 1)[0]
+        and is_supported_cutscene_version(package_version)
+        and is_supported_cutscene_version(version)
+    )
+    if not (same_minor or compatible_supported):
         raise ValueError(f"Video CDN serves {package_version}, requested {version}")
     config = decrypt_config(fetch(f"{mix}/Windows/VideoConfig_{tier}.json"), crypto)
-    body = fetch(f"{mix}/Windows/{package_version}/Video/VideoManifest_{tier}.json")
-    if hashlib.sha1(body).hexdigest() != config["IndexSha1"].lower():
-        raise ValueError("Video manifest checksum mismatch")
+    target_sha1 = config["IndexSha1"].lower()
+    candidate_versions = extract_candidate_versions(package_config, version)
+    body = None
+    for cand in candidate_versions:
+        try:
+            candidate_body = fetch(f"{mix}/Windows/{cand}/Video/VideoManifest_{tier}.json")
+            if hashlib.sha1(candidate_body).hexdigest() == target_sha1:
+                body = candidate_body
+                package_version = cand
+                break
+        except (RuntimeError, OSError):
+            continue
+    if body is None:
+        body = fetch(f"{mix}/Windows/{package_version}/Video/VideoManifest_{tier}.json")
+        if hashlib.sha1(body).hexdigest() != target_sha1:
+            raise ValueError("Video manifest checksum mismatch")
     manifest = decrypt_config(body, crypto)
     files = []
     packages = []

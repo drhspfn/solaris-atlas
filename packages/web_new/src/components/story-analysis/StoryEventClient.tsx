@@ -8,6 +8,7 @@ import { ErrorPanel, PageLoader } from '@/components/ui/Feedback';
 import type { SourceCitation } from '@/data/explanations';
 import { useLocale } from '@/hooks/useLocale';
 import { Link, useSearchParams } from '@/lib/router';
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 
 type StoryEvent = {
   title: string;
@@ -59,13 +60,8 @@ export function StoryEventClient({ eventKey, initialEvent }: { eventKey: string;
 
   return (
     <div className="page-container">
-      <div className="breadcrumbs">
-        <Link to="/">Archive</Link>
-        <ChevronRight size={13} />
-        <span>Story event</span>
-      </div>
+      <Breadcrumbs items={[{ label: 'Archive', to: '/' }, { label: 'Story event' }]} />
       <section className="quest-explanation explanation-event">
-        <span className="eyebrow left">AI INTERPRETATION · {event.game_version}</span>
         <h1>{event.title}</h1>
         <p>{event.description}</p>
         {event.citations.map((citation, index) => (

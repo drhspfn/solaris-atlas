@@ -18,7 +18,7 @@ def redacted(value: Any, limit: int = 48000) -> dict[str, Any]:
         if isinstance(item, dict):
             return {
                 str(key): "[redacted]"
-                if any(
+                if str(key).lower() in ("image", "base64", "file", "download_url") or any(
                     part in str(key).lower()
                     for part in (
                         "password",
@@ -28,6 +28,7 @@ def redacted(value: Any, limit: int = 48000) -> dict[str, Any]:
                         "access_token",
                         "refresh_token",
                         "encrypted_content",
+                        "image_base64",
                     )
                 )
                 else clean(value)

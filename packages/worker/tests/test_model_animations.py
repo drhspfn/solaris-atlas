@@ -144,6 +144,33 @@ def test_animation_summary_reads_actual_clips_and_rejects_them_in_rig_mode(tmp_p
         animation_summary(path, {"DifferentBone"})
 
 
+def test_publication_uses_selected_pack_union_and_preserves_own_facial_curves(tmp_path):
+    from wuwa_story_worker.model_animation_packs import write_manifest
+
+    packs = [{"id": "a" * 16, "key": "animation_pack_" + "a" * 16, "clips": ["Stand1"]},
+             {"id": "b" * 16, "key": "animation_pack_" + "b" * 16, "clips": ["SkinIdle"]}]
+    folder = tmp_path / "animation-packs"
+    folder.mkdir()
+    shared, variant = folder / ("a" * 16 + ".glb"), folder / ("b" * 16 + ".glb")
+    animation_glb(shared)
+    animation_glb(variant, lambda data: data["animations"][0].update(name="SkinIdle"))
+    summaries = {pack["key"]: glb_summary(path, allow_animations=True)
+                 for pack, path in zip(packs, (shared, variant), strict=True)}
+    write_manifest(tmp_path, packs)
+    (tmp_path / "facial.json").write_text(json.dumps({"format": "solaris-facial-v1", "clips": [{
+        "name": "Face", "body_clip": "SkinIdle", "seconds": 1,
+        "tracks": [{"target": "Mouth", "keys": [[0, 0], [1, 1]]}]}]}))
+    job = worker.CharacterModelJob.model_validate({**job_payload(), "include_animations": True})
+    files, count = worker.publication_files(job, tmp_path, summaries, packs=packs)
+    assert count == 2
+    assert {kind for kind, *_ in files} == {"preview", "download", "facial", "animation_manifest",
+                                          *(pack["key"] for pack in packs)}
+    packs[1]["clips"] = ["Nonexistent"]
+    write_manifest(tmp_path, packs)
+    with pytest.raises(ValueError, match="unpublished clips"):
+        worker.publication_files(job, tmp_path, summaries, packs=packs)
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -181,6 +208,8 @@ async def test_extraction_scope_includes_character_siblings_shared_moves_and_acl
     receipt = tmp_path / "exports/manifest.json"
     receipt.parent.mkdir()
     receipt.write_text('{"files": []}')
+    # Extraction now requires the pinned workspace receipt even when mocked.
+    (tmp_path / "plan.json").write_text("{}")
     exported = AsyncMock(return_value=receipt)
     monkeypatch.setattr(worker, "export_assets", exported)
     monkeypatch.setattr(worker, "tool", AsyncMock())
@@ -230,6 +259,18 @@ def job_payload():
         download_id="a" * 64,
         tier="hd",
     )
+
+
+def test_publication_includes_optional_blender_project(tmp_path):
+    job = worker.CharacterModelJob.model_validate(job_payload())
+    project = tmp_path / "character.blend"
+    project.write_bytes(b"BLENDER-v450")
+    files, count = worker.publication_files(job, tmp_path, {})
+    assert ("blender", project, "unknown", "application/x-blender") in files
+    assert count == 0
+    project.write_bytes(b"not a project")
+    with pytest.raises(ValueError, match="Invalid Blender project"):
+        worker.publication_files(job, tmp_path, {})
 
 
 def test_facial_publication_is_validated_against_the_body_animation_collection(tmp_path):
@@ -355,13 +396,16 @@ async def test_claim_accepts_legacy_payload_but_rejects_changed_animation_reques
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "include,clip_count,fail_batch",
-    [(False, 0, False), (True, 1, False), (True, 41, False), (True, 41, True)],
+    "include,clip_count,fail_batch,component",
+    [(False, 0, False, False), (True, 1, False, False), (True, 41, False, False),
+     (True, 41, True, False), (True, 0, False, True), (True, 1, False, True)],
 )
 @pytest.mark.parametrize("animation_workers", [1, 3])
+@pytest.mark.parametrize("export_blender", [False, True])
 async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
-    tmp_path, monkeypatch, include, clip_count, fail_batch, animation_workers
+    tmp_path, monkeypatch, include, clip_count, fail_batch, component, animation_workers, export_blender
 ):
+    monkeypatch.setenv("WUWA_MODEL_BLENDER_EXPORT", "true" if export_blender else "false")
     model = "Aki/Character/Role/FemaleM/Test/Variant/Model/Rig"
     cooked = tmp_path / "source-json"
     metadata = cooked / "Client/Content" / (model + ".json")
@@ -389,7 +433,17 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
     monkeypatch.setattr(worker, "extract_model", extraction)
 
     async def blender(args, log, timeout):
+        if any(str(arg).endswith("blender_facial_attach.py") for arg in args):
+            assert export_blender and "--strict" in args
+            (tmp_path / "bundle/character-facial.blend").write_bytes(b"with face")
+            return
+        if any(str(arg).endswith("blender_ueformat_actions.py") for arg in args):
+            assert export_blender and include and clip_count
+            assert args[args.index("--armature") + 1] == "Rig"
+            (tmp_path / "bundle/character.blend").write_bytes(b"assembled")
+            return
         assert args[args.index("--skeleton") + 1] == "/Game/Aki/ActualSkeleton"
+        assert ("--allow-empty-component-animations" in args) is component
         assert "--with-animations" not in args
         output = tmp_path / "bundle"
         if "--animation-batch" in args:
@@ -411,14 +465,24 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
             animation_glb(parts / f"part-{index:04d}.glb", names)
         else:
             assert "--rig-only" in args
+            if export_blender:
+                assert "--blender-source" in args
+                (output / "blender-source.blend").write_bytes(b"source")
+                (output / "report.json").write_text(json.dumps({"blender_armature": "Rig"}))
             if include:
+                if export_blender and clip_count:
+                    (output / "facial.json").write_text(json.dumps({"format": "solaris-facial-v1", "clips": [{
+                        "name": "Face", "body_clip": "Clip0", "seconds": 1,
+                        "tracks": [{"target": "Smile", "keys": [[0, 0], [1, 1]]}],
+                    }]}))
                 (output / "animation-plan.json").write_text(
                     json.dumps({"clips": [{"name": f"Clip{i}",
                         "source": f"Client/Content/Aki/ActualAnim/Clip{i}.json"}
                         for i in range(clip_count)]})
                 )
                 (output / "report.json").write_text(
-                    json.dumps({"animation_coverage": {"playable_clips": clip_count}})
+                    json.dumps({"animation_coverage": {"playable_clips": clip_count},
+                                **({"blender_armature": "Rig"} if export_blender else {})})
                 )
 
     real_summary = worker.glb_summary
@@ -436,15 +500,20 @@ async def test_build_uses_actual_skeleton_and_keeps_animation_choice(
             )
         assert not (tmp_path / "bundle/animations.glb").exists()
         return
+    sources = {"model": model, "blueprints": [], **({"component": {"bindings": []}} if component else {})}
     _, summaries, provenance = await worker.build_bundle(
-        tmp_path, {"model": model, "blueprints": []}, include_animations=include,
+        tmp_path, sources, include_animations=include,
         animation_workers=animation_workers,
     )
     assert extraction.call_args.args[-1] is include
-    assert ("animations" in summaries) is include
-    assert provenance["include_animations"] is include
+    exported_animations = include and bool(clip_count)
+    assert ("animations" in summaries) is exported_animations
+    assert provenance["include_animations"] is exported_animations
     assert provenance["animation_batches"] == (clip_count + 19) // 20
-    if include:
+    assert (tmp_path / "bundle/character.blend").is_file() is export_blender
+    if export_blender and exported_animations:
+        assert (tmp_path / "bundle/character.blend").read_bytes() == b"with face"
+    if exported_animations:
         assert provenance["animations"]["animations"] == clip_count
         assert provenance["animation_coverage"]["playable_clips"] == clip_count
 
@@ -473,8 +542,9 @@ async def test_second_form_failure_never_starts_publication(tmp_path, monkeypatc
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fail_second", [False, True])
 async def test_forms_build_in_isolated_disposable_workspaces_and_publish_together(
-    tmp_path, monkeypatch, fail_second
+    tmp_path, monkeypatch, fail_second, caplog
 ):
+    caplog.set_level("INFO", logger=worker.__name__)
     payload = job_payload()
     run = SimpleNamespace(metadata_json={"payload": payload}, status="queued")
     session = SimpleNamespace(get=AsyncMock(return_value=run))
@@ -489,6 +559,14 @@ async def test_forms_build_in_isolated_disposable_workspaces_and_publish_togethe
     def workspace(client):
         root = tmp_path / f"scratch-{len(roots)}"
         root.mkdir()
+        # Mirror temporary_entity_workspace's pinned client metadata so child
+        # form workspaces exercise the real inheritance path.
+        import shutil
+
+        for name in ("plan.json", "status.json"):
+            shutil.copyfile(client / name, root / name)
+        (root / "keys.txt").write_text("test-only")
+        (root / "game").mkdir()
         roots.append(root)
         try:
             yield root
@@ -513,7 +591,9 @@ async def test_forms_build_in_isolated_disposable_workspaces_and_publish_togethe
     async def build(root, form, **options):
         built.append(form)
         (root / "raw.uasset").touch()
-        assert options == {"include_animations": False, "run_id": 1}
+        assert options["include_animations"] is False and options["run_id"] == 1
+        assert isinstance(options["animation_cache"], dict) and isinstance(options["asset_cache"], dict)
+        assert options["animation_ownership"]["root"] in options["animation_ownership"]["roots"]
         if fail_second and len(built) == 2:
             raise ValueError("second rig failed")
         output = root / "bundle"
@@ -558,3 +638,7 @@ async def test_forms_build_in_isolated_disposable_workspaces_and_publish_togethe
         published.assert_awaited_once()
     assert len(built) == 2
     assert all(not root.exists() for root in roots)
+    assert "character_model.started run=1 source=client" in caplog.text
+    assert "character_model.stage run=1 stage=export forms=2" in caplog.text
+    assert ("character_model.stage run=1 stage=publish" in caplog.text) is not fail_second
+    assert ("character_model.finished run=1 source=client" in caplog.text) is not fail_second

@@ -62,6 +62,11 @@ services:
       - ../../packages/worker/src:/app/packages/worker/src
       - ../../packages/server/src:/app/packages/server/src
 
+  illustrated-worker:
+    volumes:
+      - ../../packages/worker/src:/app/packages/worker/src
+      - ../../packages/server/src:/app/packages/server/src
+
   audio-worker:
     volumes:
       - ../../packages/worker/src:/app/packages/worker/src

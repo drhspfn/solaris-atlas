@@ -75,7 +75,7 @@ async def test_cancellation_waits_for_publication_before_cleanup(tmp_path, monke
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("published", [True, False])
-async def test_worker_exports_only_missing_and_persists_game_identity(tmp_path, monkeypatch, published):
+async def test_worker_exports_only_missing_and_persists_game_identity(tmp_path, monkeypatch, published, caplog):
     root = client(tmp_path)
     value = request()
     target = {"owner": 1, "release_id": 2, "path": "/Game/Icon.Icon", "kind": "image", "language": None}
@@ -109,7 +109,10 @@ async def test_worker_exports_only_missing_and_persists_game_identity(tmp_path, 
     image.write_bytes(b"image")
     build = AsyncMock(return_value=([(target, image, "image", "image/png", [raw])], []))
     monkeypatch.setattr(entity_media, "build_entity_files", build)
-    await entity_media._process_entity_workspace(payload, None, root)
+    with caplog.at_level("INFO", logger=entity_media.__name__):
+        await entity_media._process_entity_workspace(payload, None, root)
+    assert "entity_media.completed run=7 status=completed requested=1" in caplog.text
+    assert value.download_id not in caplog.text and "/Game/Icon.Icon" not in caplog.text
     assert run.status == "completed"
     assert run.raw_output["skipped"] == int(published)
     if published:
@@ -302,7 +305,7 @@ async def test_partial_voice_publication_and_ambiguous_retry_stay_visible(tmp_pa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_stage", ["variant", "reference", "commit"])
-async def test_complete_target_is_committed_before_later_target_failure(tmp_path, monkeypatch, failure_stage):
+async def test_complete_target_is_committed_before_later_target_failure(tmp_path, monkeypatch, failure_stage, caplog):
     root = client(tmp_path)
     targets = [{"owner": number, "release_id": 2, "path": f"/Game/Icon{number}.Icon{number}",
                 "kind": "image", "language": None} for number in (1, 2)]
@@ -413,8 +416,59 @@ async def test_complete_target_is_committed_before_later_target_failure(tmp_path
     monkeypatch.setattr(entity_media, "_process_entity_media", workspace)
     with pytest.raises(OSError, match="second target"):
         await entity_media._locked_process_entity_media(payload)
+    assert "entity_media.stage_failed run=7 owner=2 resource=" in caplog.text
+    assert "error_type=OSError" in caplog.text and "second target failed" not in caplog.text
+    assert ("stage=commit_publication" if failure_stage == "commit" else "stage=publish") in caplog.text
     assert len(committed_refs) == 1 and committed_refs[0].source_path == targets[0]["path"]
     assert committed_files == ["1.png", "Icon1.uasset"] and len(committed_variants) == 1
     assert events.index(("commit", 1)) < events.index(("lock", 2))
     assert ("rollback", 1) in events
     assert run.status == "failed" and run.raw_output["published"] == 1
+
+
+@pytest.mark.asyncio
+async def test_composition_failure_log_uses_codes_not_details(tmp_path, monkeypatch, caplog):
+    import zipfile
+
+    from wuwa_story_worker import sequence_fragments, sequence_metadata
+
+    root = client(tmp_path)
+    target = {'owner': 42, 'release_id': 2, 'path': 'spine_background:123',
+              'resource_id': 123, 'spine_recipe': 'test', 'kind': 'spine', 'language': None}
+    payload = {'request': request().model_dump(), 'run_id': 7, 'targets': [target]}
+    run = SimpleNamespace(id=7, status='queued', metadata_json={'payload': payload})
+    session = AsyncMock()
+    session.get.return_value = run
+    session.scalar.return_value = None
+    factory = Mock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(entity_media, 'SessionFactory', factory)
+    monkeypatch.setattr(entity_media, 'validate_plan', lambda _: None)
+    monkeypatch.setattr(entity_media, 'missing_media_targets', AsyncMock(return_value=[target]))
+    monkeypatch.setattr(entity_media, 'publish_inventory', AsyncMock(return_value={}))
+    monkeypatch.setattr(entity_media, 'S3Storage', lambda _: AsyncMock())
+    service = AsyncMock()
+    service.register_file.return_value = SimpleNamespace(id=11)
+    service.register_reference.return_value = SimpleNamespace()
+    monkeypatch.setattr(entity_media, 'FileRegistrationService', lambda _: service)
+    executable = tmp_path / 'tool'
+    executable.write_bytes(b'tool')
+    monkeypatch.setattr(entity_media, 'tool_path', lambda _: executable)
+    bundle = root / 'bundle.zip'
+    with zipfile.ZipFile(bundle, 'w') as archive:
+        archive.writestr('manifest.json', json.dumps({'control_sources': {}}))
+    monkeypatch.setattr(sequence_metadata, 'retained_bundle', AsyncMock(return_value=None))
+    monkeypatch.setattr(entity_media, 'build_entity_files', AsyncMock(
+        return_value=([(target, bundle, 'unknown', 'application/zip', [])], [])))
+    monkeypatch.setattr(entity_media, 'source_provenance', lambda *args: {})
+    monkeypatch.setattr(sequence_fragments, 'publish_sequence_fragments', AsyncMock(return_value={
+        'composition': {'state': 'failed', 'reasons': [
+            {'code': 'render_failed', 'detail': 'secret token'}]}}))
+
+    await entity_media._process_entity_workspace(payload, None, root)
+
+    assert run.status == 'partial'
+    assert 'composition.unavailable run=7 owner=42 resource=' in caplog.text
+    assert "state=failed reasons=['render_failed']" in caplog.text
+    assert 'secret token' not in caplog.text and target['path'] not in caplog.text

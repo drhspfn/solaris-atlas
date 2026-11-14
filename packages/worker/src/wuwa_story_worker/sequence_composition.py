@@ -9,14 +9,17 @@ import os
 import subprocess
 import tempfile
 import time
-import zipfile
 import uuid
+import zipfile
 from pathlib import Path, PurePosixPath
 
 from PIL import Image, ImageChops
 
 from wuwa_story_worker.lgui_composition import (
-    apply_settled_tracks, prefab_layout, sequence_tracks, visible_layers,
+    apply_settled_tracks,
+    prefab_layout,
+    sequence_tracks,
+    visible_layers,
 )
 from wuwa_story_worker.riglyph_convert import convert_archive
 
@@ -33,6 +36,53 @@ class ConversionFailed(ValueError):
     pass
 
 
+class ArchiveValidationError(ValueError):
+    pass
+
+
+MAX_ARCHIVE_ENTRIES = 50000
+MAX_ARCHIVE_ENTRY_SIZE = 256 * 1024 * 1024
+# Decoded Sequence JSON is read as a stream and pruned of derived data, so it may exceed the in-memory
+# bound. The largest real 3.8 sample is 497735180 bytes (about 11 MiB deflated); 1 GiB leaves 2x headroom.
+MAX_DECODED_ENTRY_SIZE = 1024 * 1024 * 1024
+# Source packages and authored media are only copied or hashed in streams, never loaded.
+MAX_STREAMED_ENTRY_SIZE = 2 * 1024 * 1024 * 1024
+MAX_ARCHIVE_TOTAL_SIZE = 4 * 1024 * 1024 * 1024
+# Entries above this size must not look like a decompression bomb. Real decoded JSON is about 44:1.
+LARGE_ENTRY_RATIO_FROM = 64 * 1024 * 1024
+MAX_LARGE_ENTRY_RATIO = 500
+
+
+def entry_size_limit(name):
+    """Per-entry bound by role: tight for everything composed in memory, wider for streamed data."""
+    if name.startswith('decoded/') and name.endswith('.json'):
+        return MAX_DECODED_ENTRY_SIZE
+    if name.startswith(('source/', 'media/')):
+        return MAX_STREAMED_ENTRY_SIZE
+    return MAX_ARCHIVE_ENTRY_SIZE
+
+
+def _validate_archive_limits(infos, label='Archive'):
+    """Report which existing archive safety bound was exceeded."""
+    if len(infos) > MAX_ARCHIVE_ENTRIES:
+        raise ArchiveValidationError(f'{label} exceeds entry count limit: {len(infos)} > {MAX_ARCHIVE_ENTRIES}')
+    duplicates = len(infos) - len({info.filename for info in infos})
+    if duplicates:
+        raise ArchiveValidationError(f'{label} contains duplicate entries: {duplicates}')
+    for info in infos:
+        limit = entry_size_limit(info.filename)
+        if info.file_size > limit:
+            raise ArchiveValidationError(
+                f'{label} exceeds per-entry size limit: {info.filename} {info.file_size} > {limit} bytes')
+        if (info.file_size > LARGE_ENTRY_RATIO_FROM
+                and info.file_size > max(getattr(info, 'compress_size', info.file_size), 1) * MAX_LARGE_ENTRY_RATIO):
+            raise ArchiveValidationError(
+                f'{label} entry has a suspicious compression ratio: {info.filename} {info.compress_size} -> {info.file_size}')
+    total = sum(info.file_size for info in infos)
+    if total > MAX_ARCHIVE_TOTAL_SIZE:
+        raise ArchiveValidationError(f'{label} exceeds total uncompressed size limit: {total} > {MAX_ARCHIVE_TOTAL_SIZE} bytes')
+
+
 def _read(archive, manifest, name):
     path = PurePosixPath(name)
     if path.is_absolute() or '..' in path.parts or '\\' in name or name not in manifest['files']:
@@ -41,7 +91,7 @@ def _read(archive, manifest, name):
         raise UnsupportedComposition('Missing or ambiguous archive entry')
     info = manifest['files'][name]
     entry = archive.getinfo(name)
-    if entry.file_size > 64 * 1024 * 1024 or entry.file_size != info['size_bytes']:
+    if entry.file_size > MAX_ARCHIVE_ENTRY_SIZE or entry.file_size != info['size_bytes']:
         raise UnsupportedComposition('Invalid archive entry size')
     data = archive.read(entry)
     if len(data) != info['size_bytes'] or hashlib.sha256(data).hexdigest() != info['sha256']:
@@ -54,10 +104,27 @@ def _exports(archive, manifest, source):
         raise UnsupportedComposition('Invalid asset source path')
     path = 'decoded/files/Client/Content/' + \
         source.removeprefix('/Game/') + '.json'
-    result = json.loads(_read(archive, manifest, path))
-    if not isinstance(result, list):
-        raise UnsupportedComposition('Invalid decoded asset exports')
-    return result
+    return _decoded_exports(archive, manifest, path)
+
+
+def _decoded_exports(archive, manifest, name):
+    """Stream one decoded export array, verifying its recorded size and checksum without loading it whole."""
+    pure = PurePosixPath(name)
+    if (pure.is_absolute() or '..' in pure.parts or '\\' in name or name not in manifest['files']
+            or not name.startswith('decoded/')):
+        raise UnsupportedComposition('Invalid or unrecorded archive entry')
+    if archive.namelist().count(name) != 1:
+        raise UnsupportedComposition('Missing or ambiguous archive entry')
+    info = manifest['files'][name]
+    entry = archive.getinfo(name)
+    if entry.file_size > MAX_DECODED_ENTRY_SIZE or entry.file_size != info['size_bytes']:
+        raise UnsupportedComposition('Invalid archive entry size')
+    try:
+        with archive.open(entry) as handle:
+            from wuwa_story_worker.decoded_json import iter_stream
+            return list(iter_stream(handle, size=entry.file_size, expected_sha256=info['sha256']))
+    except ValueError as error:
+        raise UnsupportedComposition(f'Decoded asset exports are invalid: {error}') from error
 
 
 def _asset_file(archive, manifest, source, export_type, field):
@@ -299,12 +366,7 @@ def annotate_bundle(bundle: Path) -> Path:
         root = Path(temporary)
         with zipfile.ZipFile(bundle) as archive:
             infos = archive.infolist()
-            names = [info.filename for info in infos]
-            if (len(infos) > 10000 or len(set(names)) != len(names)
-                    or any(info.file_size > 64 * 1024 * 1024 for info in infos)
-                    or sum(info.file_size for info in infos) > 512 * 1024 * 1024):
-                raise ValueError(
-                    'Archive exceeds composition limits or contains duplicate entries')
+            _validate_archive_limits(infos)
             manifest = json.loads(archive.read('manifest.json'))
             frames = {}
             stage = 'plan'

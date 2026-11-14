@@ -24,6 +24,7 @@ from wuwa_story_worker.asset_export import _sha256, export_assets
 from wuwa_story_worker.client_assets import save_json, workspace_lock
 from wuwa_story_worker.map_catalog import read_catalog
 from wuwa_story_worker.map_icons import build_icons
+from wuwa_story.version import MIN_SUPPORTED_CLIENT_VERSION, is_supported_map_version
 from wuwa_story_worker.map_sources import WORLD_TILE_SIZE, read_tiles
 
 logger = logging.getLogger(__name__)
@@ -59,9 +60,9 @@ async def build_maps(root: Path, fmodel: Path, converter: Path, publish: bool = 
     if not converter.is_file():
         raise FileNotFoundError(converter)
     plan = json.loads((root / "plan.json").read_text(encoding="utf-8"))
-    if plan["version"] != "3.7.0":
+    if not is_supported_map_version(plan["version"]):
         raise ValueError(
-            "Map ConfigDB readers and coordinate transforms are verified for 3.7.0 only")
+            f"Map ConfigDB readers and coordinate transforms require client >= {MIN_SUPPORTED_CLIENT_VERSION}, got {plan['version']}")
     tools = {"WUWA_FMODEL_PATH": _sha256(fmodel), "WUWA_TEXTURE_CONVERTER_PATH": _sha256(converter)}
     if publish:
         from wuwa_story_worker.map_provenance import reuse_maps
@@ -290,8 +291,8 @@ async def publish_maps(receipt: Path) -> None:
 async def refresh_map_sources(root: Path) -> dict:
     """Refresh source evidence for existing placements without decoding map tiles."""
     bundle = json.loads((root / "maps/manifest.json").read_text(encoding="utf-8"))
-    if bundle["game_version"] != "3.7.0":
-        raise ValueError("Map readers are verified for 3.7.0 only")
+    if not is_supported_map_version(bundle["game_version"]):
+        raise ValueError(f"Map readers require client >= {MIN_SUPPORTED_CLIENT_VERSION}, got {bundle['game_version']}")
     for source in bundle["sources"].values():
         if _sha256(Path(source["path"])) != source["sha256"]:
             raise ValueError("Pinned map source changed")

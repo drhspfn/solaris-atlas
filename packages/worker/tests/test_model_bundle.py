@@ -17,10 +17,13 @@ from wuwa_story_worker.model_bundle import (
     build_animation_plan,
     canonical_animation_rig,
     effect_space_only,
+    empty_effect_material_slots,
+    equivalent_skeletons,
     face_atlas_transform,
     file_sha256,
     indexed_gltf_references,
     inherited_base_color_texture,
+    is_effect_model,
     main,
     material_metadata_path,
     missing_animation_sources,
@@ -28,10 +31,96 @@ from wuwa_story_worker.model_bundle import (
     package_path,
     preview_materials,
     preview_meshes,
+    require_bound_animations,
     retime_tracks,
     rig_glb_stats,
     same_rest_skeleton,
+    uses_animation_translation,
 )
+
+
+def test_empty_effect_material_slots_require_explicit_null_source(tmp_path):
+    converted = tmp_path / 'converted'
+    source = tmp_path / 'source'
+    relative = Path('Client/Content/Aki/Effect/SkeletalMesh/Fx.uemodel')
+    model = converted / relative
+    metadata = (source / relative).with_suffix('.json')
+    metadata.parent.mkdir(parents=True)
+    metadata.write_text(json.dumps([{'Type': 'SkeletalMesh', 'Name': 'Fx', 'SkeletalMaterials': [
+        {'MaterialSlotName': 'None', 'Material': None},
+        {'MaterialSlotName': 'Body', 'Material': {'ObjectPath': 'missing'}},
+        {'MaterialSlotName': 'None'},
+    ]}]))
+    assert empty_effect_material_slots(model, converted, source) == {0}
+    assert empty_effect_material_slots(converted / 'Client/Content/Aki/Character/Fx.uemodel', converted, source) == set()
+    assert empty_effect_material_slots(converted / 'Client/Content/Aki/Effect/Other.uemodel', converted, source) == set()
+
+
+def test_is_effect_model(tmp_path):
+    converted = tmp_path / 'converted'
+    assert is_effect_model(converted / 'Client/Content/Aki/Effect/SkeletalMesh/Fx.uemodel', converted)
+    assert not is_effect_model(converted / 'Client/Content/Aki/Character/Char.uemodel', converted)
+    assert not is_effect_model(tmp_path / 'outside/Fx.uemodel', converted)
+
+
+def test_goblet_liquid_uses_authored_base_texture(tmp_path):
+    parent = '/Game/Aki/Render/MaterialInstance/Effect/MeshParticle/MI_BPProp_Gobletliquid_Com'
+    metadata = {'Textures': {'BaseTex': {'ObjectPath': '/Game/Coffee.0'}}}
+    assert base_color_texture(metadata, tmp_path, parent) == ('/Game/Coffee.0', None)
+    texture = tmp_path / 'Client/Content/Coffee.png'
+    texture.parent.mkdir(parents=True)
+    texture.write_bytes(b'png')
+    assert base_color_texture(metadata, tmp_path, parent) == ('/Game/Coffee.0', texture)
+    assert base_color_texture(metadata, tmp_path, '/Game/Unknown') == (None, None)
+
+
+def test_tacet_mark_shader_uses_authored_diffuse_texture(tmp_path):
+    parent = '/Game/Aki/Render/Shaders/Character/M_Char_XinHen'
+    metadata = {'Textures': {'D': {'ObjectPath': '/Game/Star_D.1'}}}
+    assert base_color_texture(metadata, tmp_path, parent) == ('/Game/Star_D.1', None)
+    texture = tmp_path / 'Client/Content/Star_D.png'
+    texture.parent.mkdir(parents=True)
+    texture.write_bytes(b'png')
+    assert base_color_texture(metadata, tmp_path, parent) == ('/Game/Star_D.1', texture)
+
+
+def test_equivalent_skeletons_require_hierarchy_and_complete_finite_rest_pose():
+    bone = SimpleNamespace(name="Root", parent_index=-1, position=[0, 0, 0],
+                           rotation=[0, 0, 0, 1], scale=[1, 1, 1])
+    other = deepcopy(bone)
+    other.position[0] = 0.0000005
+    assert equivalent_skeletons([bone], [other])
+    other.position[0] = 0.01
+    assert not equivalent_skeletons([bone], [other])
+    other.position[0] = float("nan")
+    assert not equivalent_skeletons([bone], [other])
+    other.position[0] = 0
+    other.parent_index = 0
+    assert not equivalent_skeletons([bone], [other])
+    assert not equivalent_skeletons([], [])
+    other.parent_index = -1
+    other.name = "Different"
+    assert not equivalent_skeletons([bone], [other])
+
+
+def test_explicit_component_binding_cannot_be_silently_excluded():
+    key = package_path("/Game/Aki/Book/Idle")
+    require_bound_animations({"clips": [{"source": "Client/Content/Aki/Book/Idle.json"}]}, {key})
+    with pytest.raises(ValueError, match="Authored component animations are not playable"):
+        require_bound_animations({"clips": []}, {key})
+
+
+def test_skeleton_retarget_metadata_must_be_complete_and_animation_only():
+    metadata = [{"Type": "Skeleton", "AnimRetargetSources": {}, "Properties": {"BoneTree": [
+        {"TranslationRetargetingMode": "EBoneTranslationRetargetingMode::Animation"}]}}]
+    assert uses_animation_translation(metadata, 1)
+    assert not uses_animation_translation(metadata, 2)
+    changed = deepcopy(metadata)
+    changed[0]["AnimRetargetSources"] = {"pose": {}}
+    assert not uses_animation_translation(changed, 1)
+    changed = deepcopy(metadata)
+    changed[0]["Properties"]["BoneTree"][0]["TranslationRetargetingMode"] = "Skeleton"
+    assert not uses_animation_translation(changed, 1)
 
 
 def test_package_identity_ignores_object_suffix_and_preserves_path():
@@ -179,6 +268,26 @@ def test_material_metadata_prefers_exact_model_neighbor_and_rejects_ambiguity(tm
         material_metadata_path("Body", model, [other, tmp_path / "Third/Body.json"])
 
 
+def test_effect_preview_opacity_connects_base_alpha_and_multiplier():
+    from wuwa_story_worker.model_bundle import effect_preview_opacity
+
+    sockets = [SimpleNamespace(default_value=None), SimpleNamespace(default_value=None)]
+    multiply = SimpleNamespace(inputs=sockets, outputs=['result'])
+    links = []
+    material = SimpleNamespace(node_tree=SimpleNamespace(
+        nodes=SimpleNamespace(new=lambda kind: multiply),
+        links=SimpleNamespace(new=lambda a, b: links.append((a, b)))))
+    node = SimpleNamespace(outputs={'Alpha': 'alpha'})
+    shader = SimpleNamespace(inputs={'Alpha': 'opacity'})
+    effect_preview_opacity(material, node, shader, {'Scalars': {'Base_Alpha_Multiply': 0.7}})
+    assert multiply.operation == 'MULTIPLY'
+    assert sockets[1].default_value == 0.7
+    assert links == [('alpha', sockets[0]), ('result', 'opacity')]
+    assert material.surface_render_method == 'DITHERED'
+    with pytest.raises(ValueError, match='Unsupported effect preview opacity'):
+        effect_preview_opacity(material, node, shader, {'Scalars': {'Base_Alpha_Multiply': -1}})
+
+
 def test_base_color_uses_exact_maintex_then_basecolor_without_fuzzy_fallback(tmp_path):
     texture = tmp_path / "Client/Content/Test/Body.png"
     texture.parent.mkdir(parents=True)
@@ -277,9 +386,33 @@ def test_denia_skin_passes_do_not_cut_neck_but_cloth_and_other_characters_keep_m
         assert not base_color_alpha_is_opacity(name, skin)
         assert base_color_alpha_is_opacity(name, {"BlendMode": 1})
     assert base_color_alpha_is_opacity("MI_R2T1DaniyaMd10011Cloth", skin)
+    assert not base_color_alpha_is_opacity("MI_R2T1LuoselaMd10011Up1", skin)
     assert base_color_alpha_is_opacity("MI_OtherCharacterUp01", skin)
     assert base_color_alpha_is_opacity("Hair", {"BlendMode": 2})
+    assert not base_color_alpha_is_opacity("Tail", {"BlendMode": 1, "Switches": {"UseFurry": True}})
     assert not base_color_alpha_is_opacity("Face", {"BlendMode": 0})
+
+
+def test_fur_card_preview_excludes_mixed_tail_and_regular_materials():
+    from wuwa_story_worker.model_bundle import uses_fur_card_mask, uses_fur_vertex_mask
+    cards = {'Switches': {'UseFurry': True, 'FurMaskUseID': True, 'UseFurryParallax': False}}
+    assert uses_fur_card_mask(cards)
+    assert not uses_fur_card_mask({'Switches': {**cards['Switches'], 'UseFurryParallax': True}})
+    assert not uses_fur_card_mask({**cards, 'Textures': {'MainTex': {'ObjectPath': '/Game/Color'}}})
+    assert not uses_fur_card_mask({})
+    mixed = {'Switches': {'UseFurry': True, 'UseFurryParallax': True},
+             'Scalars': {'UseVertexAMask': 1, 'FurBlendUseVertexRFade': 1}}
+    assert uses_fur_vertex_mask(mixed)
+    assert not uses_fur_vertex_mask({'Switches': mixed['Switches'], 'Scalars': {}})
+
+
+def test_fur_uses_third_uv_only_when_available_for_every_mesh():
+    from wuwa_story_worker.model_bundle import fur_uv_name
+    def mesh(*names):
+        return SimpleNamespace(data=SimpleNamespace(uv_layers=[SimpleNamespace(name=n) for n in names]))
+    assert fur_uv_name([mesh('UV0', 'UV1', 'UV2')]) == 'UV2'
+    assert fur_uv_name([mesh('UV0', 'UV1')]) is None
+    assert fur_uv_name([mesh('UV0', 'UV1', 'UV2'), mesh('UV0', 'UV1', 'other')]) is None
 
 
 def test_animation_container_names_are_form_independent_without_renaming_joints():
@@ -357,6 +490,7 @@ def test_preview_mesh_copies_keep_render_uv_and_restore_original_attributes_on_f
             SimpleNamespace(name="UV1", active_render=True),
         ],
         color_attributes=["COL0"],
+        materials=[],
         shape_keys=SimpleNamespace(key_blocks=list(range(87))),
     )
     mesh = SimpleNamespace(data=original)
@@ -368,6 +502,23 @@ def test_preview_mesh_copies_keep_render_uv_and_restore_original_attributes_on_f
         raise RuntimeError("export failed")
     assert mesh.data is original
     assert len(original.uv_layers) == 2 and original.color_attributes == ["COL0"]
+
+
+@pytest.mark.parametrize("material", [
+    {"solaris_fur_preview": "fur"}, {"solaris_eye_material": "eye"},
+])
+def test_preview_mesh_keeps_material_uv_and_vertex_colors(material):
+    class MeshData(SimpleNamespace):
+        def copy(self):
+            return deepcopy(self)
+
+    original = MeshData(uv_layers=[SimpleNamespace(name='UV0'), SimpleNamespace(name='UV1')],
+                        color_attributes=['COL0'], materials=[material])
+    mesh = SimpleNamespace(data=original)
+    with preview_meshes([mesh]):
+        assert len(mesh.data.uv_layers) == 2
+        assert mesh.data.color_attributes == ['COL0']
+    assert mesh.data is original
 
 
 def write_test_glb(path, document):
@@ -453,8 +604,14 @@ def test_preview_glb_requires_zero_morph_targets(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "rig_only,missing_texture,planned",
-    [(False, False, False), (True, False, False), (True, True, False), (True, False, True)],
+    ("rig_only", "missing_texture", "planned", "effect_textureless"),
+    [
+        (False, False, False, False),
+        (True, False, False, False),
+        (True, True, False, False),
+        (True, False, True, False),
+        (True, False, False, True),
+    ],
 )
 def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_clips(
     tmp_path,
@@ -462,11 +619,18 @@ def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_
     rig_only,
     missing_texture,
     planned,
+    effect_textureless,
 ):
-    model = tmp_path / "Character.uemodel"
-    model.touch()
     converted = tmp_path / "converted"
     converted.mkdir()
+    if effect_textureless:
+        model = converted / "Client/Content/Aki/Effect/SkeletalMesh/Fx_Ain_Attack06.uemodel"
+        model.parent.mkdir(parents=True)
+        mat_json = converted / "Client/Content/Aki/Effect/MI_Trans_Chunse_None.json"
+        mat_json.write_text(json.dumps({"Textures": {}}), encoding="utf-8")
+    else:
+        model = tmp_path / "Character.uemodel"
+    model.touch()
     output = tmp_path / "output"
     argv = [
         "blender",
@@ -513,18 +677,43 @@ def test_rig_mode_skips_animation_catalog_scan_and_blend_but_full_mode_requires_
             color_attributes=[],
         ),
     )
-    if missing_texture:
-        material = type("Material", (), {})()
-        material.name = "Body"
-        material.node_tree = SimpleNamespace(
-            nodes={
-                "Principled BSDF": SimpleNamespace(
-                    inputs={
-                        "Roughness": SimpleNamespace(default_value=0),
-                        "Metallic": SimpleNamespace(default_value=0),
-                    }
-                ),
-            }
+    if missing_texture or effect_textureless:
+        class FakeMaterial:
+            def __init__(self, name, node_tree):
+                self.name = name
+                self.node_tree = node_tree
+                self._props = {}
+
+            def __setitem__(self, key, value):
+                self._props[key] = value
+
+            def __getitem__(self, key):
+                return self._props[key]
+
+            def get(self, key, default=None):
+                return self._props.get(key, default)
+
+            def copy(self):
+                return deepcopy(self)
+
+        class NodeCollection(dict):
+            def __iter__(self):
+                return iter(self.values())
+
+        material = FakeMaterial(
+            "MI_Trans_Chunse_None" if effect_textureless else "Body",
+            SimpleNamespace(
+                nodes=NodeCollection({
+                    "Principled BSDF": SimpleNamespace(
+                        type="BSDF_PRINCIPLED",
+                        inputs={
+                            "Roughness": SimpleNamespace(default_value=0),
+                            "Metallic": SimpleNamespace(default_value=0),
+                        },
+                    ),
+                }),
+                links=[],
+            ),
         )
         mesh.data.materials.append(material)
     calls = []
@@ -1084,3 +1273,43 @@ def test_plan_skips_foreign_skeleton_before_dto_validation(tmp_path):
     plan = build_animation_plan(model, converted, "rig", sources, {"root"}, read)
     assert [clip["file"] for clip in plan["clips"]] == ["owned.ueanim"]
     assert plan["animation_coverage"]["matching_sources"] == 1
+
+
+def test_empty_component_plan_only_when_no_matching_sources(tmp_path):
+    model = tmp_path / "model.uemodel"
+    model.touch()
+    converted = tmp_path / "converted"
+    converted.mkdir()
+    foreign = {"foreign": {"matches_skeleton": False, "source": "foreign.json"}}
+    plan = build_animation_plan(model, converted, "rig", foreign, {"root"}, None, allow_empty=True)
+    assert plan["clips"] == []
+    assert plan["animation_coverage"]["matching_sources"] == 0
+    with pytest.raises(ValueError, match="No verified"):
+        build_animation_plan(model, converted, "rig", foreign, {"root"}, None)
+    source = {"clip": {"matches_skeleton": True, "source": "clip.json", "name": "Clip"}}
+    with pytest.raises(ValueError, match="Missing matching animation exports"):
+        build_animation_plan(model, converted, "rig", source, {"root"}, None, allow_empty=True)
+    (converted / "clip.ueanim").touch()
+    dto = SimpleNamespace(metadata=SimpleNamespace(num_frames=2, frames_per_second=30,
+                                                    additive_anim_type=1),
+                          tracks=[SimpleNamespace(name="root")], curves=[])
+    def read(*_):
+        return SimpleNamespace(object_path="clip", object_name="Clip"), dto
+    with pytest.raises(ValueError, match="No verified"):
+        build_animation_plan(model, converted, "rig", source, {"root"}, read, allow_empty=True)
+def test_eye_material_payload_keeps_authored_inputs_and_rejects_escape(tmp_path):
+    import base64
+
+    from wuwa_story_worker.model_bundle import eye_material_payload
+
+    image = tmp_path / 'Client/Content/Eyes/Highlight.png'
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b'eye image')
+    metadata = {'Switches': {'UseHeightLightShape': True}, 'Scalars': {'EyeScale': .8},
+                'Textures': {'HeightLightMap': {'ObjectPath': '/Game/Eyes/Highlight.Highlight'},
+                             'EM': {'ObjectPath': '../../outside'}}}
+    payload = eye_material_payload(metadata, tmp_path)
+    assert payload['scalars']['EyeScale'] == .8
+    assert base64.b64decode(payload['textures']['HeightLightMap']['data_base64']) == b'eye image'
+    assert 'EM' not in payload['textures']
+    assert eye_material_payload({'Switches': {}}, tmp_path) is None

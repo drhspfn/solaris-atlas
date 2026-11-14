@@ -116,7 +116,7 @@ export function attachAnimationCatalog(clip, pack, index) {
 
 // Loader-generated names can differ when meshes claim the same name as a bone.
 // Match authored node names, then bind directly to the existing preview bones.
-export function bindAnimationClips(pack, preview) {
+export function bindAnimationClips(pack, preview, whitelist) {
   if (!pack.animations.length)
     throw new Error("Animation pack contains no clips.");
   const targets = new Map();
@@ -126,7 +126,8 @@ export function bindAnimationClips(pack, preview) {
     const name = preview.parser.json.nodes[index]?.name;
     if (name) targets.set(name, targets.has(name) ? null : node);
   });
-  return pack.animations.map((clip, clipIndex) => {
+  return pack.animations.flatMap((clip, clipIndex) => {
+    if (whitelist && !whitelist.has(clip.name)) return [];
     const bound = clip.clone();
     bound.userData = { ...clip.userData };
     attachAnimationCatalog(bound, pack, clipIndex);
@@ -147,8 +148,60 @@ export function bindAnimationClips(pack, preview) {
       }
       track.name = `${target.uuid}.${path.propertyName}`;
     }
-    return bound;
+    return [bound];
   });
+}
+
+export function animationPackSources(assets) {
+  const packs = assets.animation_packs;
+  if (packs != null && !Array.isArray(packs)) throw new Error('Invalid animation pack list.');
+  if (!packs?.length) return assets.animations ? [{ ...assets.animations, clips: null }] : [];
+  const names = new Set(), ids = new Set();
+  for (const pack of packs) {
+    if (!pack || typeof pack.id !== 'string' || !pack.id.trim() || ids.has(pack.id) ||
+        typeof pack.url !== 'string' || !pack.url.trim() || !Array.isArray(pack.clips) || !pack.clips.length)
+      throw new Error('Invalid animation pack list.');
+    ids.add(pack.id);
+    for (const name of pack.clips) {
+      if (typeof name !== 'string' || !name.trim() || names.has(name))
+        throw new Error('Missing or duplicate animation action name.');
+      names.add(name);
+    }
+  }
+  return packs;
+}
+
+export async function loadAnimationPacks(assets, load, dispose) {
+  const sources = animationPackSources(assets), loaded = new Map();
+  if (!sources.length) throw new Error('Animation pack is unavailable');
+  try {
+    for (const source of sources) {
+      if (!loaded.has(source.url)) loaded.set(source.url, await load(source.url));
+    }
+    return sources.map(source => ({ source, pack: loaded.get(source.url) }));
+  } catch (error) {
+    for (const pack of loaded.values()) dispose(pack.scene);
+    throw error;
+  }
+}
+
+export function bindAnimationPacks(packs, rig) {
+  return packs.flatMap(({ source, pack }) => {
+    if (!source.clips) return bindAnimationClips(pack, rig);
+    const names = new Set();
+    for (const clip of pack.animations) {
+      if (typeof clip.name !== 'string' || !clip.name.trim() || names.has(clip.name))
+        throw new Error('Missing or duplicate animation action name in pack.');
+      names.add(clip.name);
+    }
+    for (const name of source.clips) if (!names.has(name))
+      throw new Error(`Animation action missing from pack: ${name}`);
+    return bindAnimationClips(pack, rig, new Set(source.clips));
+  });
+}
+
+export function disposeAnimationPacks(packs, dispose) {
+  for (const pack of new Set(packs.map(entry => entry.pack))) dispose(pack.scene);
 }
 
 // Construction is inert: only an explicit call may start a request. Failed

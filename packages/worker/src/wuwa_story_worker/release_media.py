@@ -498,8 +498,25 @@ async def cutscene_assets(payload, parent):
     from wuwa_story_worker.voice_bootstrap import discover_video_plan
     from wuwa_story_worker.voice_packages import download_voice_plan
     video_diagnostics = {}
-    plan = await asyncio.to_thread(discover_video_plan, parent["asset_version"], assets, parent["tier"], cg_ids,
-                                   diagnostics=video_diagnostics)
+    try:
+        plan = await asyncio.to_thread(discover_video_plan, parent["asset_version"], assets, parent["tier"], cg_ids,
+                                       diagnostics=video_diagnostics)
+    except (RuntimeError, ValueError) as err:
+        err_msg = str(err)
+        if any(marker in err_msg for marker in ("Official video manifest is unavailable", "Video CDN serves", "Official video configuration is unavailable")):
+            video_diagnostics["manifest_unavailable"] = err_msg
+            plan = {
+                "schema_version": 1,
+                "job_type": "voices.download",
+                "version": parent["asset_version"],
+                "languages": [],
+                "cdns": [],
+                "files": [],
+                "cipher_source": "",
+                "id": f"video-plan-unavailable-{parent.get('release_id')}-{parent.get('asset_version')}",
+            }
+        else:
+            raise
     if plan["files"]:
         video_root = await asyncio.to_thread(download_voice_plan, plan, asset_workspace() / "videos",
                                              concurrency=int(os.getenv("WUWA_ASSET_DOWNLOAD_CONCURRENCY", "4")))
@@ -590,7 +607,25 @@ async def cutscene(payload, parent):
     assets = root / "release-media" / "files"
     config = await asyncio.to_thread(video_database, assets)
     missing_assets = []
-    recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"], missing_assets=missing_assets)
+    try:
+        recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"], missing_assets=missing_assets)
+    except ValueError as err:
+        if "Cutscene not found in VideoData" in str(err):
+            await cleanup_published_output(parent, payload["run_id"], "cutscene")
+            return {
+                "videos": 0,
+                "asset_version": parent.get("asset_version"),
+                "missing_assets": [payload["targets"][0]],
+                "media_report": {
+                    "entries": [{
+                        "expected": payload["targets"][0],
+                        "status": "not_in_videodata",
+                        "error": str(err),
+                        "matches": [],
+                    }]
+                },
+            }, "partial"
+        raise
     missing_sources = [video["asset"] for video in recipe["videos"]
                        if not confined(assets, exported_video_path(video["asset"].removeprefix("asset:ue:"))).is_file()]
     if missing_sources:
@@ -647,8 +682,26 @@ async def cutscene(payload, parent):
         identity = f"frame_audio:{payload['targets'][0]}:{diagnostic.get('code', 'unresolved')}"
         if identity not in missing_assets:
             missing_assets.append(identity)
-    recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"],
-                                     missing_assets=missing_assets, frame_audio=frame_audio)
+    try:
+        recipe = await asyncio.to_thread(plan_cutscene, config, assets, payload["targets"][0], parent["asset_version"],
+                                         missing_assets=missing_assets, frame_audio=frame_audio)
+    except ValueError as err:
+        if "Cutscene not found in VideoData" in str(err):
+            await cleanup_published_output(parent, payload["run_id"], "cutscene")
+            return {
+                "videos": 0,
+                "asset_version": parent.get("asset_version"),
+                "missing_assets": [payload["targets"][0]],
+                "media_report": {
+                    "entries": [{
+                        "expected": payload["targets"][0],
+                        "status": "not_in_videodata",
+                        "error": str(err),
+                        "matches": [],
+                    }]
+                },
+            }, "partial"
+        raise
     if frame_audio and isinstance(recipe.get('flow'), dict):
         sources = [binding.get('source', {}) for binding in frame_report['contexts'] if binding.get('events')]
         recipe['flow']['evidence'] += '; Movie frame audio sources: ' + json.dumps(sources, ensure_ascii=False, sort_keys=True)
@@ -678,7 +731,12 @@ async def cutscene(payload, parent):
         result = await import_cutscene_recipe(recipe_path, assets, assets, assets, work,
                                              tool_path("WUWA_VGMSTREAM_PATH"), Path(ffmpeg), missing_assets=missing_assets,
                                              source_context=context)
-    except ValueError:
+    except ValueError as error:
+        if "Incomplete cutscene rebuild cannot replace a complete publication" in str(error):
+            logger.info("Cutscene %s is already published completely; preserving existing complete publication", payload["targets"][0])
+            await cleanup_published_output(parent, payload["run_id"], "cutscene")
+            return {**report, "reused_complete": True, "asset_version": parent["asset_version"],
+                    "media_report": report}, "completed"
         if missing_assets:
             entries.extend({"expected": name, "status": "not_resolved", "matches": []} for name in missing_assets)
             report.update(requested=len(entries), found=sum(e["status"] == "found" for e in entries),
@@ -699,16 +757,17 @@ async def voice_packages(parent):
     from wuwa_story_worker.voice_packages import download_voice_plan
 
     voice_cache = client_root(parent) / "voices" if parent.get("workspace_id") else asset_workspace() / "voices"
-    markers = sorted(voice_cache.glob(f"{parent['asset_version']}-*/audio-export.json"),
-                     key=lambda path: path.stat().st_mtime, reverse=True)
-    for marker in markers:
+    candidates = sorted(voice_cache.glob(f"{parent['asset_version']}-*"),
+                        key=lambda path: path.stat().st_mtime, reverse=True)
+    for candidate in candidates:
         try:
-            cached = json.loads((marker.parent / "plan.json").read_text(encoding="utf-8"))
-            status = json.loads((marker.parent / "status.json").read_text(encoding="utf-8"))
-            exported = json.loads(marker.read_text(encoding="utf-8"))
+            cached = json.loads((candidate / "plan.json").read_text(encoding="utf-8"))
+            status = json.loads((candidate / "status.json").read_text(encoding="utf-8"))
+            marker = candidate / "audio-export.json"
+            exported = json.loads(marker.read_text(encoding="utf-8")) if marker.exists() else {}
             if (cached["version"] == parent["asset_version"]
                     and status.get("state") == "downloaded" and status.get("id") == cached["id"]
-                    and exported.get("plan_id") == cached["id"]):
+                    and (exported.get("plan_id") == cached["id"] or (candidate / "game").is_dir())):
                 return {**parent, "voice_plan_id": cached["id"], "stage": "voice_packages_ready",
                         "media_report": exported.get("media_report", {})}, "completed"
         except (OSError, ValueError, KeyError):
@@ -974,11 +1033,14 @@ async def process_release_media(payload):
 async def _process_release_media(payload):
     async with engine.connect() as connection, job_lock(connection, 702, payload["run_id"]):
         try:
+            logger.info("release_media.started run=%s kind=%s release=%s parent=%s",
+                        payload["run_id"], payload["kind"], payload.get("release_id"), payload.get("parent_id"))
             async with SessionFactory(bind=connection) as session:
                 run = await session.get(ProcessingRun, payload["run_id"])
                 if run is None or run.metadata_json.get("payload") != payload:
                     raise ValueError("Media task is not the pinned backend request")
                 if run.status in {"completed", "partial", "cancelled"}:
+                    logger.info("release_media.skipped run=%s kind=%s status=%s", run.id, payload["kind"], run.status)
                     return
                 await session.commit()
                 if payload["kind"] == "prepare":
@@ -991,6 +1053,8 @@ async def _process_release_media(payload):
                         "request", {}).get("kind") in {"event_catalog", "event_resources"}
                     if parent.status != "completed" and not partial_resources:
                         if parent.status in {"failed", "enqueue_failed", "blocked", "cancelled"}:
+                            logger.warning("release_media.blocked run=%s kind=%s parent=%s parent_status=%s",
+                                           run.id, payload["kind"], parent.id, parent.status)
                             await update_admin_run(run.id, "release_media", "blocked", error=f"Client preparation #{parent.id} failed; retry the media import")
                             return
                         raise JobDeferred("Client preparation is still queued or running")
@@ -1074,15 +1138,20 @@ async def _process_release_media(payload):
                 logger.info("release_media.finished run=%s kind=%s status=%s", run.id, payload["kind"], status)
         except JobDeferred as error:
             await connection.rollback()
+            logger.info("release_media.deferred run=%s kind=%s reason=%s",
+                        payload["run_id"], payload["kind"], type(error).__name__)
             await update_admin_run(payload["run_id"], "release_media", "waiting_dependency", error=str(error))
             raise
         except BlockingIOError as error:
             await connection.rollback()
+            logger.info("release_media.workspace_busy run=%s kind=%s", payload["run_id"], payload["kind"])
             await update_admin_run(payload["run_id"], "release_media", "waiting_dependency", error="Asset workspace is in use by another export; retrying after it finishes")
             raise JobDeferred("Asset workspace is in use") from error
         except Exception as error:
             await connection.rollback()
             from wuwa_story_worker.broker import transient_job_error
             status = "waiting_dependency" if transient_job_error(error) else "failed"
+            logger.warning("release_media.error run=%s kind=%s status=%s error_type=%s",
+                           payload["run_id"], payload["kind"], status, type(error).__name__)
             await update_admin_run(payload["run_id"], "release_media", status, error=f"{type(error).__name__}: {error}"[:2000])
             raise

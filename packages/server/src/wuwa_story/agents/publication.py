@@ -106,6 +106,11 @@ async def publish_analysis(
     )
     session.add(document)
     await session.flush()
+    if not revisit and result.cutscene_descriptions:
+        from wuwa_story.story.cutscene_descriptions import publish_descriptions
+
+        await publish_descriptions(session, result.cutscene_descriptions, release_id=job.release_id,
+                                   locale_id=job.locale_id, source_document_id=document.id, processor_run_id=run.id)
     await session.execute(
         insert(DocumentHead)
         .values(

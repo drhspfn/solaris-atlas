@@ -1,17 +1,23 @@
-'use client';
-import '@/styles/events.css';
-import { ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { api } from '@/api/client';
-import { PlayerText } from '@/components/dialogue/PlayerText';
-import { gameTextPlainText } from '@/data/gameText';
-import { usePlayerDisplay } from '@/hooks/usePlayerDisplay';
-import { Select } from '@/components/ui/Select';
-import { ErrorPanel } from '@/components/ui/Feedback';
-import { Skeleton, SkeletonGroup } from '@/components/ui/Skeleton';
-import { EventDetails } from './EventDetails';
-import { EventArtwork } from './EventArtwork';
-import { EventArchiveHeader } from './EventArchiveHeader';
+"use client";
+import "@/styles/events.css";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
+import { api } from "@/api/client";
+import { PlayerText } from "@/components/dialogue/PlayerText";
+import { gameTextPlainText } from "@/data/gameText";
+import { usePlayerDisplay } from "@/hooks/usePlayerDisplay";
+import { Select } from "@/components/ui/Select";
+import { ErrorPanel } from "@/components/ui/Feedback";
+import { Skeleton, SkeletonGroup } from "@/components/ui/Skeleton";
+import { EventDetails } from "./EventDetails";
+import { EventArtwork } from "./EventArtwork";
+import { EventArchiveHeader } from "./EventArchiveHeader";
 import {
   DAY,
   DAY_WIDTH,
@@ -31,20 +37,20 @@ import {
   timeZoneLabel,
   type GameEvent,
   type EventFilter,
-} from './calendar';
+} from "./calendar";
 
 type EventsResponse = { events: GameEvent[]; source_url: string };
-type Server = 'asia' | 'europe' | 'america';
+type Server = "asia" | "europe" | "america";
 const servers = {
-  asia: 'Asia · UTC+8',
-  europe: 'Europe · UTC+1',
-  america: 'America · UTC−5',
+  asia: "Asia · UTC+8",
+  europe: "Europe · UTC+1",
+  america: "America · UTC−5",
 };
-const zones = { asia: 'Etc/GMT-8', europe: 'Etc/GMT-1', america: 'Etc/GMT+5' };
-const monthFormat = new Intl.DateTimeFormat('en', {
-  month: 'long',
-  year: 'numeric',
-  timeZone: 'UTC',
+const zones = { asia: "Etc/GMT-8", europe: "Etc/GMT-1", america: "Etc/GMT+5" };
+const monthFormat = new Intl.DateTimeFormat("en", {
+  month: "long",
+  year: "numeric",
+  timeZone: "UTC",
 });
 
 export function EventsPage({
@@ -55,19 +61,19 @@ export function EventsPage({
   initialEventIds?: number[];
 }) {
   const display = usePlayerDisplay();
-  const [server, setServer] = useState<Server>('europe');
-  const [kind, setKind] = useState<EventFilter>('all');
+  const [server, setServer] = useState<Server>("europe");
+  const [kind, setKind] = useState<EventFilter>("all");
   const [events, setEvents] = useState(initialData?.events ?? []);
   const [selected, setSelected] = useState<GameEvent | null>(null);
   const [chosen, setChosen] = useState<number[]>(initialEventIds);
   const [loading, setLoading] = useState(!initialData);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState("");
   const [month, setMonth] = useState(monthKey(Date.now()));
   const [now, setNow] = useState<number | null>(null);
   const [localTime, setLocalTime] = useState(false);
-  const [localZone, setLocalZone] = useState('UTC');
+  const [localZone, setLocalZone] = useState("UTC");
   const [catalogLimit, setCatalogLimit] = useState(24);
   const chart = useRef<HTMLDivElement>(null);
   const pendingTime = useRef<number | null>(null);
@@ -84,15 +90,15 @@ export function EventsPage({
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
-    if (initialData && server === 'europe' && retry === 0) {
+    if (initialData && server === "europe" && retry === 0) {
       setEvents(initialData.events);
       setLoading(false);
-      setError('');
+      setError("");
       return;
     }
     const controller = new AbortController();
     setLoading(true);
-    setError('');
+    setError("");
     setSelected(null);
     void api<EventsResponse>(`/events?server=${server}&summary=true`, {
       signal: controller.signal,
@@ -100,12 +106,14 @@ export function EventsPage({
       .then((data) => {
         if (!controller.signal.aborted) {
           setEvents(data.events);
-          setError('');
+          setError("");
         }
       })
       .catch((reason) => {
         if (!controller.signal.aborted)
-          setError(reason instanceof Error ? reason.message : 'Could not load events.');
+          setError(
+            reason instanceof Error ? reason.message : "Could not load events.",
+          );
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -121,20 +129,26 @@ export function EventsPage({
     runs.some(
       (event) =>
         matchesEventType(event, kind) &&
-        gameTextPlainText(event.title, display).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+        gameTextPlainText(event.title, display)
+          .toLocaleLowerCase()
+          .includes(search.trim().toLocaleLowerCase()),
     ),
   );
-  const visible = matching.filter((runs) => !chosen.length || chosen.includes(runs[0].id));
+  const visible = matching.filter(
+    (runs) => !chosen.length || chosen.includes(runs[0].id),
+  );
   const zoneOffset = (time: number) => {
-    const parts = new Intl.DateTimeFormat('en', {
+    const parts = new Intl.DateTimeFormat("en", {
       timeZone,
-      timeZoneName: 'longOffset',
+      timeZoneName: "longOffset",
     }).formatToParts(time);
     const offset = parts
-      .find((part) => part.type === 'timeZoneName')
+      .find((part) => part.type === "timeZoneName")
       ?.value.match(/GMT([+−-])(\d{2}):(\d{2})/);
     return offset
-      ? (offset[1] === '+' ? 1 : -1) * (Number(offset[2]) * 60 + Number(offset[3])) * 60000
+      ? (offset[1] === "+" ? 1 : -1) *
+          (Number(offset[2]) * 60 + Number(offset[3])) *
+          60000
       : 0;
   };
   const boundaries = Array.from({ length: 43 }, (_, index) => {
@@ -150,7 +164,10 @@ export function EventsPage({
     .filter((runs) => runs.length);
   const catalog = visible
     .map((runs) =>
-      runs.filter((event) => !Number.isFinite(startTime(event)) && !isPermanentListing(event)),
+      runs.filter(
+        (event) =>
+          !Number.isFinite(startTime(event)) && !isPermanentListing(event),
+      ),
     )
     .filter((runs) => runs.length);
   const recorded = visible.flatMap((runs) =>
@@ -165,13 +182,13 @@ export function EventsPage({
   ]
     .sort()
     .reverse();
-  const dateFormat = new Intl.DateTimeFormat('en', {
+  const dateFormat = new Intl.DateTimeFormat("en", {
     timeZone,
-    dateStyle: 'medium',
-    timeStyle: 'short',
+    dateStyle: "medium",
+    timeStyle: "short",
   });
   const formatDate = (date: string | null) =>
-    date ? dateFormat.format(new Date(date)) : 'Date not recorded';
+    date ? dateFormat.format(new Date(date)) : "Date not recorded";
   const jumpTo = (event: GameEvent) => {
     if (Number.isFinite(startTime(event))) {
       pendingTime.current = startTime(event);
@@ -184,7 +201,9 @@ export function EventsPage({
     }
   };
   const toggle = (id: number) =>
-    setChosen((ids) => (ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id]));
+    setChosen((ids) =>
+      ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id],
+    );
   const today = now === null ? -1 : timePosition(now, boundaries);
   const changeMonth = (value: string) => {
     setMonth(value);
@@ -194,12 +213,14 @@ export function EventsPage({
     if (!chart.current || loading) return;
     const time = pendingTime.current ?? Date.now();
     chart.current.scrollLeft =
-      time >= start && time < end ? Math.max(0, timePosition(time, boundaries) - DAY_WIDTH * 2) : 0;
+      time >= start && time < end
+        ? Math.max(0, timePosition(time, boundaries) - DAY_WIDTH * 2)
+        : 0;
     pendingTime.current = null;
   }, [month, timeZone, loading]);
 
   return (
-    <main className="events-page">
+    <main className="page-container events-page">
       <EventArchiveHeader active="calendar" />
       <section className="events-controls" aria-label="Event filters">
         <label className="events-filter">
@@ -230,10 +251,10 @@ export function EventsPage({
             value={kind}
             onChange={(value) => setKind(value as typeof kind)}
             options={[
-              { value: 'all', label: 'All types' },
-              { value: 'characters', label: 'Character convenes' },
-              { value: 'weapons', label: 'Weapon convenes' },
-              { value: 'activities', label: 'Events and modes' },
+              { value: "all", label: "All types" },
+              { value: "characters", label: "Character convenes" },
+              { value: "weapons", label: "Weapon convenes" },
+              { value: "activities", label: "Events and modes" },
               ...Object.entries(kindLabels).map(([value, label]) => ({
                 value,
                 label,
@@ -252,7 +273,8 @@ export function EventsPage({
       </section>
       <details className="events-picker">
         <summary>
-          Choose events {chosen.length ? `· ${chosen.length} selected` : '· all events'}
+          Choose events{" "}
+          {chosen.length ? `· ${chosen.length} selected` : "· all events"}
         </summary>
         <div className="events-picker-actions">
           <span>Select several events to compare their history.</span>
@@ -268,8 +290,15 @@ export function EventsPage({
                 checked={chosen.includes(runs[0].id)}
                 onChange={() => toggle(runs[0].id)}
               />
-              <span><PlayerText value={runs[runs.length - 1].title} display={display} /></span>
-              <small>{runs.filter((event) => event.starts_at).length} runs</small>
+              <span>
+                <PlayerText
+                  value={runs[runs.length - 1].title}
+                  display={display}
+                />
+              </span>
+              <small>
+                {runs.filter((event) => event.starts_at).length} runs
+              </small>
             </label>
           ))}
         </div>
@@ -292,13 +321,23 @@ export function EventsPage({
         </div>
       )}
       {error && (
-        <ErrorPanel message={error} onRetry={() => setRetry((value) => value + 1)} />
+        <ErrorPanel
+          message={error}
+          onRetry={() => setRetry((value) => value + 1)}
+        />
       )}
-      <section className="events-timeline" aria-label="Events timeline" aria-busy={loading}>
+      <section
+        className="events-timeline"
+        aria-label="Events timeline"
+        aria-busy={loading}
+      >
         <header className="events-calendar-tools">
           <h2>Event calendar</h2>
           <div>
-            <button aria-label="Previous month" onClick={() => changeMonth(shiftMonth(month, -1))}>
+            <button
+              aria-label="Previous month"
+              onClick={() => changeMonth(shiftMonth(month, -1))}
+            >
               <ChevronLeft size={18} />
             </button>
             <Select
@@ -310,7 +349,10 @@ export function EventsPage({
                 label: monthFormat.format(monthStart(value)),
               }))}
             />
-            <button aria-label="Next month" onClick={() => changeMonth(shiftMonth(month, 1))}>
+            <button
+              aria-label="Next month"
+              onClick={() => changeMonth(shiftMonth(month, 1))}
+            >
               <ChevronRight size={18} />
             </button>
             <button
@@ -329,8 +371,8 @@ export function EventsPage({
           </div>
         </header>
         <p className="events-calendar-help">
-          Scroll across for dates and down for events. Select a bar for details. Times:{' '}
-          {timeZoneLabel(timeZone, now ?? 0)}.
+          Scroll across for dates and down for events. Select a bar for details.
+          Times: {timeZoneLabel(timeZone, now ?? 0)}.
         </p>
         {loading ? (
           <EventTimelineSkeleton />
@@ -347,7 +389,7 @@ export function EventsPage({
                 style={
                   {
                     width: 42 * DAY_WIDTH,
-                    '--day-width': `${DAY_WIDTH}px`,
+                    "--day-width": `${DAY_WIDTH}px`,
                   } as CSSProperties
                 }
               >
@@ -359,24 +401,25 @@ export function EventsPage({
                         key={index}
                         className={
                           now &&
-                          new Date(now + zoneOffset(now)).toISOString().slice(0, 10) ===
-                            day.toISOString().slice(0, 10)
-                            ? 'is-today'
-                            : ''
+                          new Date(now + zoneOffset(now))
+                            .toISOString()
+                            .slice(0, 10) === day.toISOString().slice(0, 10)
+                            ? "is-today"
+                            : ""
                         }
                       >
                         <span>
                           {day.getUTCDate() === 1 || index === 0
-                            ? day.toLocaleDateString('en', {
-                                month: 'short',
-                                timeZone: 'UTC',
+                            ? day.toLocaleDateString("en", {
+                                month: "short",
+                                timeZone: "UTC",
                               })
-                            : ''}
+                            : ""}
                         </span>
                         <small>
-                          {day.toLocaleDateString('en', {
-                            weekday: 'short',
-                            timeZone: 'UTC',
+                          {day.toLocaleDateString("en", {
+                            weekday: "short",
+                            timeZone: "UTC",
                           })}
                         </small>
                         <strong>{day.getUTCDate()}</strong>
@@ -394,44 +437,59 @@ export function EventsPage({
                     className="events-calendar-group"
                     key={group}
                     aria-label={
-                      group === 'characters'
-                        ? 'Character convenes'
-                        : group === 'weapons'
-                          ? 'Weapon convenes'
+                      group === "characters"
+                        ? "Character convenes"
+                        : group === "weapons"
+                          ? "Weapon convenes"
                           : kindLabels[group as keyof typeof kindLabels]
                     }
                   >
                     <h3>
-                      {group === 'characters'
-                        ? 'Character convenes'
-                        : group === 'weapons'
-                          ? 'Weapon convenes'
+                      {group === "characters"
+                        ? "Character convenes"
+                        : group === "weapons"
+                          ? "Weapon convenes"
                           : kindLabels[group as keyof typeof kindLabels]}
                     </h3>
-                    <div className="events-calendar-row" style={{ height: lanes * 60 }}>
+                    <div
+                      className="events-calendar-row"
+                      style={{ height: lanes * 60 }}
+                    >
                       {bars.map(({ event, lane, left, width }) => (
                         <button
-                          key={event.occurrence_id ?? `${event.id}-${event.starts_at}`}
+                          key={
+                            event.occurrence_id ??
+                            `${event.id}-${event.starts_at}`
+                          }
                           className="events-bar"
                           style={
                             {
                               left,
                               width,
                               top: lane * 60 + 8,
-                              '--event-color': eventColor(event.id),
+                              "--event-color": eventColor(event.id),
                             } as CSSProperties
                           }
-                          onClick={(click) => openEvent(event, click.currentTarget)}
-                          aria-label={`${gameTextPlainText(event.title, display)}, ${formatDate(event.starts_at)} to ${event.ends_at ? formatDate(event.ends_at) : 'end date unavailable'}`}
+                          onClick={(click) =>
+                            openEvent(event, click.currentTarget)
+                          }
+                          aria-label={`${gameTextPlainText(event.title, display)}, ${formatDate(event.starts_at)} to ${event.ends_at ? formatDate(event.ends_at) : "end date unavailable"}`}
                         >
                           <EventArtwork event={event} />
                           <span className="events-bar-copy">
-                            <strong><PlayerText value={event.title} display={display} /></strong>
+                            <strong>
+                              <PlayerText
+                                value={event.title}
+                                display={display}
+                              />
+                            </strong>
                             <small>
-                              {event.game_version ? `v${event.game_version} · ` : ''}
+                              {event.game_version
+                                ? `v${event.game_version} · `
+                                : ""}
                               {now === null
                                 ? kindLabels[event.kind]
-                                : countdown(event, now).replace(/:\d{2}$/, '')}
+                                : countdown(event, now).replace(/:\d{2}$/, "")}
                             </small>
                           </span>
                         </button>
@@ -443,7 +501,8 @@ export function EventsPage({
             </div>
             {!timeline.length && (
               <div className="events-empty">
-                No recorded runs in this date range. Choose another month or an event below.
+                No recorded runs in this date range. Choose another month or an
+                event below.
               </div>
             )}
           </>
@@ -462,14 +521,16 @@ export function EventsPage({
                   openEvent(event, click.currentTarget);
                 }}
               >
-                <span><PlayerText value={event.title} display={display} /></span>
+                <span>
+                  <PlayerText value={event.title} display={display} />
+                </span>
                 <small>
-                  {formatDate(event.starts_at)} →{' '}
+                  {formatDate(event.starts_at)} →{" "}
                   {event.ends_at
                     ? formatDate(event.ends_at)
-                    : event.kind === 'permanent'
-                      ? 'Permanent'
-                      : 'End date unavailable'}
+                    : event.kind === "permanent"
+                      ? "Permanent"
+                      : "End date unavailable"}
                 </small>
               </button>
             ))}
@@ -478,15 +539,15 @@ export function EventsPage({
       )}
       {[
         {
-          title: 'Permanent content',
+          title: "Permanent content",
           rows: permanent,
-          description: 'Permanent modes and events without a closing date.',
+          description: "Permanent modes and events without a closing date.",
         },
         {
-          title: 'Dates not recorded',
+          title: "Dates not recorded",
           rows: catalog,
           description:
-            'These events are in the game catalog. Server schedule unavailable; their presence does not confirm that they are currently running.',
+            "These events are in the game catalog. Server schedule unavailable; their presence does not confirm that they are currently running.",
         },
       ].map(
         ({ title, rows, description }) =>
@@ -504,10 +565,14 @@ export function EventsPage({
                     >
                       <EventArtwork event={event} />
                       <span>
-                        <strong><PlayerText value={event.title} display={display} /></strong>
+                        <strong>
+                          <PlayerText value={event.title} display={display} />
+                        </strong>
                         <small>
                           {kindLabels[event.kind]}
-                          {event.catalog_version ? ` · Client ${event.catalog_version}` : ''}
+                          {event.catalog_version
+                            ? ` · Client ${event.catalog_version}`
+                            : ""}
                         </small>
                       </span>
                     </button>
@@ -528,8 +593,8 @@ export function EventsPage({
       {!loading && !visible.length && (
         <p className="events-empty">
           {events.length
-            ? 'No events match these filters. Clear your search or selection.'
-            : 'No events have been imported yet.'}
+            ? "No events match these filters. Clear your search or selection."
+            : "No events have been imported yet."}
         </p>
       )}
       {selected && (
@@ -549,9 +614,13 @@ export function EventsPage({
         />
       )}
       <footer className="events-source">
-        Names and artwork come from the game client and official Notice board. Only recorded opening
-        dates appear on the calendar.{' '}
-        <a href="https://wutheringwaves.kurogames.com/" target="_blank" rel="noopener noreferrer">
+        Names and artwork come from the game client and official Notice board.
+        Only recorded opening dates appear on the calendar.{" "}
+        <a
+          href="https://wutheringwaves.kurogames.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
           Wuthering Waves ↗
         </a>
       </footer>
@@ -560,12 +629,30 @@ export function EventsPage({
 }
 
 export function EventTimelineSkeleton() {
-  return <SkeletonGroup label="Reading the archive" className="events-chart-scroll">
-    <div className="events-chart" style={{ minWidth: 600 }}>
-      <div className="events-axis"><Skeleton style={{ width: '100%', height: 54 }} /></div>
-      {Array.from({ length: 3 }, (_, index) => <div className="events-calendar-row" key={index} style={{ height: 60 }}>
-        <Skeleton className="events-bar" style={{ left: `${index * 12}%`, top: 8, width: '35%', height: 44 }} />
-      </div>)}
-    </div>
-  </SkeletonGroup>;
+  return (
+    <SkeletonGroup label="Reading the archive" className="events-chart-scroll">
+      <div className="events-chart" style={{ minWidth: 600 }}>
+        <div className="events-axis">
+          <Skeleton style={{ width: "100%", height: 54 }} />
+        </div>
+        {Array.from({ length: 3 }, (_, index) => (
+          <div
+            className="events-calendar-row"
+            key={index}
+            style={{ height: 60 }}
+          >
+            <Skeleton
+              className="events-bar"
+              style={{
+                left: `${index * 12}%`,
+                top: 8,
+                width: "35%",
+                height: 44,
+              }}
+            />
+          </div>
+        ))}
+      </div>
+    </SkeletonGroup>
+  );
 }

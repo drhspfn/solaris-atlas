@@ -47,16 +47,17 @@ def test_event_route_is_separate_from_regular_imports():
 def test_private_execution_queues_are_supported_and_share_dispatch_rules():
     from wuwa_story.ingestion.media_queues import media_pool
 
-    for pool in ("coordinator", "image", "audio", "video"):
+    for pool in ("coordinator", "image", "illustrated", "audio", "video"):
         assert f"wuwa.pool-{pool}.v1" in queue_control.QUEUE_PROCESSORS
     assert media_pool({"job_type": "media.entities", "request": {"kinds": ["image", "voice"]}}) == "audio"
-    assert media_pool({"kind": "images"}) == "image"
+    assert media_pool({"kind": "images"}) == "illustrated"
+    assert media_pool({"kind": "event_images"}) == "image"
 
 
 @pytest.mark.asyncio
 async def test_clearing_image_pool_leaves_queued_audio_untouched(monkeypatch):
     image = SimpleNamespace(id=11, status="queued", metadata_json={
-        "queue": "wuwa.release-images.v1", "payload": {"kind": "images"}})
+        "queue": "wuwa.release-images.v1", "payload": {"kind": "event_resources"}})
     audio = SimpleNamespace(id=12, status="queued", metadata_json={
         "queue": "wuwa.release-media.v1", "payload": {"kind": "voices"}})
     session = AsyncMock()

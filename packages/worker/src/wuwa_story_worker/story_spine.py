@@ -7,6 +7,7 @@ import zipfile
 from contextlib import closing
 from pathlib import Path, PurePosixPath
 
+from wuwa_story_worker.decoded_json import load_exports
 from wuwa_story_worker.asset_export import export_assets
 from wuwa_story_worker.event_resources import prefab_images, ui_references
 from wuwa_story_worker.map_icons import build_icons
@@ -74,8 +75,31 @@ def sequence_prefabs(config, openings):
     return result, missing
 
 
+def _stream_digest(path):
+    digest, size = hashlib.sha256(), 0
+    with Path(path).open('rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+            size += len(chunk)
+    return {'sha256': digest.hexdigest(), 'size_bytes': size}
+
+
+def _write_zip_entry(archive, name, value):
+    """Write bytes or stream a file from disk; large source files never sit fully in RAM."""
+    info = zipfile.ZipInfo(name, date_time=(2000, 1, 1, 0, 0, 0))
+    info.compress_type = zipfile.ZIP_DEFLATED
+    if isinstance(value, Path):
+        with value.open('rb') as source, archive.open(info, 'w', force_zip64=True) as target:
+            while chunk := source.read(1024 * 1024):
+                target.write(chunk)
+    else:
+        archive.writestr(info, value)
+
+
 def portable_bundle(output, resource, assets, icons, identity, *, presentation=None, movie_fragments=None):
     entries = {}
+    # Entries too large or irrelevant to keep in memory: archived by streaming from disk.
+    streamed = {}
     originals = set()
     skeletons = []
     texture_files = {}
@@ -87,7 +111,7 @@ def portable_bundle(output, resource, assets, icons, identity, *, presentation=N
                 or relative.is_absolute() or '..' in relative.parts or '\\' in archive_path):
             raise ValueError(
                 'Expected an exact authored movie fragment archive path')
-        entries['media/' + archive_path] = Path(path).read_bytes()
+        streamed['media/' + archive_path] = Path(path)
         originals.add(Path(path))
     for source, asset in sorted(assets.items()):
         package = Path(asset['package'])
@@ -99,16 +123,16 @@ def portable_bundle(output, resource, assets, icons, identity, *, presentation=N
         for path in raw_parts:
             if path.is_file():
                 originals.add(path)
-                entries['source/' +
-                        path.relative_to(asset['raw']).as_posix()] = path.read_bytes()
+                streamed['source/' +
+                         path.relative_to(asset['raw']).as_posix()] = path
         source_packages.append(source)
         exports = []
         for path in sorted(asset['decoded'].rglob('*.json')) if not asset.get('decode_failed') else []:
-            decoded = json.loads(path.read_text(encoding='utf-8-sig'))
+            decoded = load_exports(path)
             if isinstance(decoded, list) and any(isinstance(item, dict) and item.get('Type') for item in decoded):
                 exports.extend(decoded)
-                entries['decoded/' +
-                        path.relative_to(asset['decoded']).as_posix()] = path.read_bytes()
+                streamed['decoded/' +
+                         path.relative_to(asset['decoded']).as_posix()] = path
         dependencies[source] = {path for kind, path in ui_references(
             exports, include_sequences=True) if kind == 'dependency'}
         folder = 'spine/' + \
@@ -150,7 +174,7 @@ def portable_bundle(output, resource, assets, icons, identity, *, presentation=N
             originals.add(path)
             # Raw image packages have the same stable Client/Content path as the prefab exports.
             from wuwa_story_worker.media_provenance import package_path
-            entries['source/' + package_path(path)] = path.read_bytes()
+            streamed['source/' + package_path(path)] = path
     if not resource.get('controller_archive') and (not skeletons or not any(name.endswith('.atlas') for name in entries)):
         raise ValueError(
             'Prefab did not resolve both a Spine skeleton and atlas')
@@ -180,17 +204,18 @@ def portable_bundle(output, resource, assets, icons, identity, *, presentation=N
                                  'timing_status': presentation['timing_status']} if presentation else None,
                 'dependencies': {source: sorted(paths) for source, paths in sorted(dependencies.items())},
                 'packages': source_packages, 'skeletons': skeletons, 'textures': texture_files,
-                'files': {name: {'sha256': hashlib.sha256(data).hexdigest(), 'size_bytes': len(data)}
-                          for name, data in sorted(entries.items())}}
+                'files': {name: ({'sha256': hashlib.sha256(value).hexdigest(), 'size_bytes': len(value)}
+                                 if isinstance(value, bytes) else _stream_digest(value))
+                          for name, value in sorted({**entries, **streamed}.items())}}
+    if entries.keys() & streamed.keys():
+        raise ValueError('Bundle entry name collision between memory and streamed entries')
     entries['manifest.json'] = json.dumps(
         manifest, ensure_ascii=False, sort_keys=True).encode('utf-8')
     output.parent.mkdir(parents=True, exist_ok=True)
     partial = output.with_suffix('.partial')
     with zipfile.ZipFile(partial, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
-        for name, data in sorted(entries.items()):
-            info = zipfile.ZipInfo(name, date_time=(2000, 1, 1, 0, 0, 0))
-            info.compress_type = zipfile.ZIP_DEFLATED
-            archive.writestr(info, data)
+        for name, value in sorted({**entries, **streamed}.items()):
+            _write_zip_entry(archive, name, value)
     if manifest.get('animation_import') and not manifest['animation_import']['conversion_allowed']:
         from wuwa_story_worker.legacy_spine_composition import mark_legacy_eligible
         mark_legacy_eligible(partial)
@@ -249,7 +274,7 @@ async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentati
             if not asset or asset.get('decode_failed'):
                 continue
             for path in asset['decoded'].rglob('*.json'):
-                exports = json.loads(path.read_text(encoding='utf-8-sig'))
+                exports = load_exports(path)
                 for export in exports if isinstance(exports, list) else []:
                     if isinstance(export, dict) and export.get('Type') == 'PrefabAsset':
                         prefab_sequences.update(ref for kind, ref in ui_references(
@@ -276,7 +301,7 @@ async def build_spine_bundle(root, resource_id, fmodel, converter, *, presentati
         if asset.get('decode_failed'):
             continue
         for path in asset['decoded'].rglob('*.json'):
-            exports = json.loads(path.read_text(encoding='utf-8-sig'))
+            exports = load_exports(path)
             for export in exports if isinstance(exports, list) else []:
                 if isinstance(export, dict) and export.get('Type') == 'SpineAtlasAsset':
                     pages.update(texture for _, texture in ui_references(

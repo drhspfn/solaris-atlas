@@ -11,6 +11,7 @@ KEY_RE = re.compile(r"[A-Z][A-Z0-9_]*")
 
 GROUPS = {
     "compose.env": {
+        "VISUAL_MEMORY_IMAGE_TAG": "main",
         "DOMAIN": "example.invalid",
         "USE_MINIO": "true",
         "POSTGRES_USER": "wuwa",
@@ -91,6 +92,8 @@ GROUPS = {
         "AUTH_CSRF_SECRET": None,
     },
     "api.env": {
+        "VISUAL_MEMORY_EMBEDDER": "dinov2",
+        "VISUAL_MEMORY_CCIP_PATH": "/models/ccip",
         "APP_NAME": "WuWa Story Platform",
         "MEDIA_CACHE_CONTROL": "public, max-age=31536000, immutable",
         "API_CACHE_NAMESPACE": "solaris-api-v1",
@@ -124,7 +127,7 @@ GROUPS = {
         "WUWA_IMPORT_BATCH_SIZE": "500",
         "WUWA_ASSET_WORKSPACE": "/var/lib/wuwa-worker/client-assets",
         "WUWA_ASSET_DOWNLOAD_CONCURRENCY": "4",
-        "WUWA_CLIENT_UPDATE_INTERVAL_SECONDS": "3600",
+        "WUWA_CLIENT_UPDATE_INTERVAL_SECONDS": "7200",
         "WUWA_ASSET_EXPORT_FILTERS": "ConfigDB",
         "WUWA_ASSET_BUILD_MAPS": "0",
         "WUWA_RIGLYPH_ENABLED": "false",
@@ -144,9 +147,11 @@ def validate_worker_config(rendered):
         if key.startswith("WUWA_") and key.endswith(("_REPLICAS", "_CPUS")):
             try:
                 minimum = 0 if key == "WUWA_PROJECTION_REPLICAS" else 1
-                positive = Decimal(value).is_finite() and Decimal(value) >= minimum
+                positive = Decimal(value).is_finite(
+                ) and Decimal(value) >= minimum
                 if key.endswith("_CPUS"):
-                    positive = Decimal(value).is_finite() and Decimal(value) > 0
+                    positive = Decimal(
+                        value).is_finite() and Decimal(value) > 0
                 if key.endswith("_REPLICAS"):
                     positive = positive and int(value) >= minimum
             except (ValueError, InvalidOperation):
@@ -170,14 +175,16 @@ def validate_worker_config(rendered):
             raise ValueError
         if not 0 < float(worker["WUWA_SHUTDOWN_TIMEOUT_SECONDS"]) < 120:
             raise ValueError
-        capacity = int(worker["WUWA_WORKER_DB_POOL_SIZE"]) + int(worker["WUWA_WORKER_DB_MAX_OVERFLOW"])
+        capacity = int(worker["WUWA_WORKER_DB_POOL_SIZE"]) + \
+            int(worker["WUWA_WORKER_DB_MAX_OVERFLOW"])
         if int(worker["WUWA_WORKER_DB_POOL_SIZE"]) < 1 or int(worker["WUWA_WORKER_DB_MAX_OVERFLOW"]) < 0:
             raise ValueError
         if any(2 * limits.get(f"pool_{pool}", 3 if pool == "coordinator" else 1) + 2 > capacity
                for pool in ("coordinator", "image", "audio", "video")):
             raise ValueError
     except ValueError as error:
-        raise SystemExit("Invalid worker limits: positive concurrency, snapshot replicas * concurrency <=4, shutdown <120s, DB capacity >= 2 * pool concurrency +2 required") from error
+        raise SystemExit(
+            "Invalid worker limits: positive concurrency, snapshot replicas * concurrency <=4, shutdown <120s, DB capacity >= 2 * pool concurrency +2 required") from error
 
 
 def main() -> None:
@@ -199,14 +206,16 @@ def main() -> None:
                 missing.append(key)
                 continue
             if not KEY_RE.fullmatch(key) or any(char in value for char in "\r\n\0"):
-                raise SystemExit(f"Invalid value for {key}: environment values must be single-line")
+                raise SystemExit(
+                    f"Invalid value for {key}: environment values must be single-line")
             if value == "":
                 continue
             values[key] = value
         rendered[filename] = values
 
     if missing:
-        raise SystemExit("Set these GitHub production Secrets before deploying: " + ", ".join(sorted(set(missing))))
+        raise SystemExit(
+            "Set these GitHub production Secrets before deploying: " + ", ".join(sorted(set(missing))))
 
     validate_worker_config(rendered)
 
@@ -216,19 +225,24 @@ def main() -> None:
     if use_minio == "false":
         rendered["compose.env"].setdefault("S3_REGION", "auto")
         rendered["compose.env"].setdefault("S3_USE_SSL", "true")
-        required_r2 = {"S3_ENDPOINT_URL": "Variable", "S3_ACCESS_KEY_ID": "Variable", "S3_SECRET_ACCESS_KEY": "Secret"}
-        missing_r2 = [f"{key} ({kind})" for key, kind in required_r2.items() if not rendered["compose.env"].get(key)]
+        required_r2 = {"S3_ENDPOINT_URL": "Variable",
+                       "S3_ACCESS_KEY_ID": "Variable", "S3_SECRET_ACCESS_KEY": "Secret"}
+        missing_r2 = [f"{key} ({kind})" for key, kind in required_r2.items(
+        ) if not rendered["compose.env"].get(key)]
         if missing_r2:
-            raise SystemExit("Set these GitHub production R2 settings when USE_MINIO=false: " + ", ".join(missing_r2))
+            raise SystemExit(
+                "Set these GitHub production R2 settings when USE_MINIO=false: " + ", ".join(missing_r2))
     else:
         rendered["compose.env"].setdefault("S3_REGION", "us-east-1")
         rendered["compose.env"].setdefault("S3_USE_SSL", "false")
         if not rendered["compose.env"].get("MINIO_ROOT_PASSWORD"):
-            raise SystemExit("Set MINIO_ROOT_PASSWORD as a GitHub production Secret when USE_MINIO=true")
+            raise SystemExit(
+                "Set MINIO_ROOT_PASSWORD as a GitHub production Secret when USE_MINIO=true")
 
     for filename, values in rendered.items():
         path = output_dir / filename
-        path.write_text("".join(f"{key}={value}\n" for key, value in values.items()), encoding="utf-8")
+        path.write_text(
+            "".join(f"{key}={value}\n" for key, value in values.items()), encoding="utf-8")
         os.chmod(path, 0o600)
 
 

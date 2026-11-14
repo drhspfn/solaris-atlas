@@ -19,6 +19,7 @@ import {
   sidebarActivityTitle,
 } from "@/components/story/runtimeActivity";
 import { AnalysisActions } from "@/components/story/AnalysisActions";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 import {
   cutsceneSlots,
   visibleCutsceneEntries,
@@ -1122,19 +1123,21 @@ export function QuestPageClient({
         />
       )}
       {loading && <p role="status">Updating quest transcript…</p>}
-      <div className="breadcrumbs">
-        <Link to="/">Archive</Link>
-        <ChevronRight size={13} />
-        <Link to="/story-map">Story map</Link>
-        <ChevronRight size={13} />
-        <span>
-          <PlayerText
-            value={quest.name}
-            fallback={`Quest ${questKey}`}
-            display={playerDisplay}
-          />
-        </span>
-      </div>
+      <Breadcrumbs
+        items={[
+          { label: "Archive", to: "/" },
+          { label: "Story map", to: "/story-map" },
+          {
+            label: (
+              <PlayerText
+                value={quest.name}
+                fallback={`Quest ${questKey}`}
+                display={playerDisplay}
+              />
+            ),
+          },
+        ]}
+      />
       <section className="quest-hero">
         <div className="quest-emblem">
           <BookOpen size={28} />
@@ -1143,9 +1146,6 @@ export function QuestPageClient({
           </span>
         </div>
         <div className="quest-intro">
-          <span className="eyebrow left">
-            QUEST DOSSIER / {quest.quest_type || "NARRATIVE"}
-          </span>
           <div className="quest-title-row">
             <h1>
               <PlayerText

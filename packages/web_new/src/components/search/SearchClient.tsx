@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { api } from "@/api/client";
 import { EntityCard, EntityCardSkeleton } from "@/components/cards/EntityCard";
 import { SearchBox } from "@/components/search/SearchBox";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { StoryQuestionResults } from "@/components/search/StoryQuestionResults";
 import { SkeletonGroup } from "@/components/ui/Skeleton";
 import { Pill } from "@/components/ui/Pill";
@@ -62,30 +64,23 @@ export function SearchClient() {
 
   return (
     <div className="page-container">
-      <div className="breadcrumbs">
-        <Link to="/">Archive</Link>
-        <ChevronRight size={13} />
-        <span>Search</span>
-      </div>
-      <div className="search-page-head">
-        <div>
-          <span className="eyebrow left">
-            {storyMode ? "STORY EXPLANATIONS" : "ARCHIVE SEARCH"}
-          </span>
-          <h1>
-            {q ? (
-              <>
-                Results for <em>“{q}”</em>
-              </>
-            ) : storyMode ? (
-              "Explore the story"
-            ) : (
-              "Search the archive"
-            )}
-          </h1>
-        </div>
-        <SearchBox initial={q} />
-      </div>
+      <Breadcrumbs items={[{ label: "Archive", to: "/" }, { label: "Search" }]} />
+      <PageHeader
+        className="search-page-head"
+        showPeriod={false}
+        title={
+          q ? (
+            <>
+              Results for <em>“{q}”</em>
+            </>
+          ) : storyMode ? (
+            "Explore the story"
+          ) : (
+            "Search the archive"
+          )
+        }
+        actions={<SearchBox initial={q} />}
+      />
       <nav className="search-filters" aria-label="Search mode">
         <Pill
           kind="link"

@@ -150,7 +150,7 @@ def public_character_filter(role_type, identity, canonical_key, kind="playable",
         "story": or_(role_type.in_((2, 4, 5)), identity["has_story"].as_boolean().is_(True)),
         "npc": or_(role_type == 6, identity["has_npc"].as_boolean().is_(True)),
         "technical": or_(role_type.is_(None), role_type.not_in((1, 2, 4, 5, 6)), mixed),
-        "all": True,
+        "all": or_(role_type.is_not(None), role_type.is_(None)),
     }[kind]
     if kind not in ("all", "technical"):
         category = and_(category, or_(identity["classification"].as_string().is_(None), ~mixed))

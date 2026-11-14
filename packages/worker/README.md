@@ -100,6 +100,27 @@ docker compose -f infrastructure/local/compose.yml --env-file infrastructure/loc
 
 The worker uses the existing S3 settings and registers published files in PostgreSQL. Exports retain `fmodel.log`, an inventory of file hashes, and a publication receipt. Failed exports, partial mounts, empty output and mismatching file counts reject publication even if the CLI exits zero. Successful raw files are published under version/tier/job/filter-specific keys with the manifest written last.
 
+Linked model uploads independently discover authored components from the installed
+client. Successful discovery is cached under `WUWA_ASSET_WORKSPACE/trusted-model-discovery`
+before comparing the untrusted upload. The cache is private worker-owned state on
+the persistent worker volume; do not expose it as a writable upload directory.
+It is disposable (at most 128 records, 1 MiB each) and can be removed while
+the worker is stopped. Corrupt records are misses. The key includes the validated
+plan, exact authored forms and animation mode, key file, worker/server Python
+source, Python package versions, and the extractor tool directories. Every lookup
+also verifies the planned client archive sizes and MD5s and rejects extra mounted
+archives; discovery checks the inputs again before committing its result.
+
+Cache hits still read the installed archives in full, so their duration depends on
+storage throughput; this saves FModel discovery, not client verification. The
+existing asset workspace lock serializes discovery with managed downloads and
+repairs, including a cold discovery. System libraries and uncoordinated external
+writes to the worker volume are outside this lock; keep the worker image and volume
+trusted. The record checksum detects accidental damage, not an attacker who can
+rewrite worker-owned files and recompute the checksum. Component identity failures
+log every missing, unexpected, or mismatched component ID and bounded source/model
+paths in the worker log; the upload itself never supplies trusted cache entries.
+
 ### Map extraction and database publication
 
 Map extraction uses the bundled CUE4Parse CLI. Readers and coordinate transforms currently accept client `3.7.0` only. To queue maps for a completed asset plan, run the existing command inside the worker (the plan path must be in its mounted workspace):

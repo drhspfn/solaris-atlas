@@ -43,6 +43,51 @@ def test_decoding_uses_archive_identity_and_rejects_stale_authored_forms(tmp_pat
         model_uploads.decode_bundles(archive, tmp_path / "wrong", wrong, [form])
 
 
+def test_uploaded_archive_preserves_blender_project_for_publication(tmp_path):
+    _, form, job = portable(tmp_path)
+    output = tmp_path / "bundle"
+    (output / "character.blend").write_bytes(b"BLENDER-v450")
+    archive = tmp_path / "with-blender.zip"
+    write_archive(archive, {"character_key": "character:1", "game_version": "3.3.0",
+                            "asset_version": "3.7.0", "tier": "hd"},
+                  [(form, output, {}, {"model": form["model"]})])
+    publication, bundles = model_uploads.decode_bundles(archive, tmp_path / "decoded-blender", job, [form])
+    files, _ = character_models.publication_files(publication, bundles[0][1], bundles[0][2])
+    assert any(kind == "blender" and path.read_bytes() == b"BLENDER-v450" for kind, path, *_ in files)
+
+
+def test_decoding_validates_selected_pack_clips_and_materializes_paths(tmp_path, monkeypatch):
+    _, form, job = portable(tmp_path)
+    output = tmp_path / "bundle"
+    (output / "animation-packs").mkdir()
+    pack = {"id": "0123456789abcdef", "key": "animation_pack_0123456789abcdef", "clips": ["walk"]}
+    data = {"nodes": [{"name": "Root"}], "animations": [
+        {"name": "walk", "channels": [{"target": {"node": 0}}]}]}
+    payload = json.dumps(data).encode()
+    (output / "animation-packs/0123456789abcdef.glb").write_bytes(
+        struct.pack("<4sIII4s", b"glTF", 2, 20 + len(payload), len(payload), b"JSON") + payload)
+    (output / "animation-manifest.json").write_text(json.dumps(
+        {"format": "solaris-animation-packs-v1", "packs": [pack]}))
+    monkeypatch.setattr(model_uploads, "animation_summary", lambda path: {"clips": [{"name": "walk"}]})
+    archive = tmp_path / "packs.zip"
+    write_archive(archive, {"character_key": "character:1", "game_version": "3.3.0",
+                            "asset_version": "3.7.0", "tier": "hd"},
+                  [(form, output, {}, {"model": form["model"], "animation_packs": [pack]})])
+    publication, bundles = model_uploads.decode_bundles(archive, tmp_path / "decoded-packs", job, [form])
+    assert publication.include_animations
+    assert (bundles[0][1] / "animation-packs/0123456789abcdef.glb").is_file()
+    assert bundles[0][2][pack["key"]]["clips"] == [{"name": "walk"}]
+    pack["clips"] = ["missing"]
+    (output / "animation-manifest.json").write_text(json.dumps(
+        {"format": "solaris-animation-packs-v1", "packs": [pack]}))
+    bad = tmp_path / "missing.zip"
+    write_archive(bad, {"character_key": "character:1", "game_version": "3.3.0",
+                        "asset_version": "3.7.0", "tier": "hd"},
+                  [(form, output, {}, {"model": form["model"], "animation_packs": [pack]})])
+    with pytest.raises(ValueError, match="missing clips"):
+        model_uploads.decode_bundles(bad, tmp_path / "missing-packs", job, [form])
+
+
 def test_npc_data_asset_archive_retains_resolved_mesh_and_checks_setup_identity(tmp_path):
     _, base, job = portable(tmp_path)
     form = {**base, 'model': 'Aki/Npc/Setup', 'data_asset': 'Aki/Npc/Setup'}
@@ -61,7 +106,8 @@ def test_npc_data_asset_archive_retains_resolved_mesh_and_checks_setup_identity(
 
 
 @pytest.mark.asyncio
-async def test_uploaded_model_publishes_without_game_client_or_extraction(tmp_path, monkeypatch):
+async def test_uploaded_model_publishes_without_game_client_or_extraction(tmp_path, monkeypatch, caplog):
+    caplog.set_level("INFO", logger=model_uploads.__name__)
     archive, form, job = portable(tmp_path)
     run = NS(status="queued", metadata_json={"payload": job.model_dump()})
     session = NS(get=AsyncMock(return_value=run))
@@ -92,6 +138,11 @@ async def test_uploaded_model_publishes_without_game_client_or_extraction(tmp_pa
     assert publish.call_args.kwargs["publication_payload"] == job.model_dump()
     storage.delete.assert_awaited_once()
     assert not list((tmp_path / "transient-jobs").glob("*/model.zip"))
+    assert "character_model.started run=1 source=upload" in caplog.text
+    assert "character_model.stage run=1 stage=validate_archive" in caplog.text
+    assert "character_model.stage run=1 stage=publish forms=1" in caplog.text
+    assert "character_model.finished run=1 source=upload" in caplog.text
+    assert job.storage_token not in caplog.text
 
 
 def test_decode_component_checks_parent_source_and_allows_static_mesh(tmp_path):
@@ -141,6 +192,8 @@ async def test_trusted_discovery_prepares_matching_component(tmp_path, monkeypat
         {"path": str(client), "download_id": "x", "version": "3.7.0", "tier": "hd", "state": "downloaded"}])
     monkeypatch.setattr(model_uploads, "validate_plan", lambda _: None)
     monkeypatch.setattr(model_uploads, "tool_path", lambda _: tmp_path / "tool")
+    monkeypatch.setattr(model_uploads, "asset_workspace", lambda: tmp_path / "assets")
+    monkeypatch.setattr(model_uploads, "input_key", lambda *args: "test")
     extract = AsyncMock(return_value=(None, None, tmp_path, {}))
     monkeypatch.setattr(character_models, "extract_model", extract)
     relation = {"id": "Fox", "name": "Fox", "label": "Fox", "parent_component": "CharacterMesh0",
@@ -166,10 +219,129 @@ async def test_trusted_discovery_prepares_matching_component(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_trusted_discovery_uses_form_ownership_and_explicit_references(tmp_path, monkeypatch):
+    from wuwa_story_worker import npc_accessories
+    from wuwa_story_worker.model_animation_packs import ownership_for
+
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "plan.json").write_text(json.dumps({"id": "x", "version": "3.7.0", "tier": "hd"}))
+    (client / "status.json").write_text(json.dumps({"id": "x", "state": "downloaded"}))
+    monkeypatch.setattr(model_uploads, "inspect_installed_clients", lambda _: [
+        {"path": str(client), "download_id": "x", "version": "3.7.0", "tier": "hd", "state": "downloaded"}])
+    monkeypatch.setattr(model_uploads, "validate_plan", lambda _: None)
+    monkeypatch.setattr(model_uploads, "tool_path", lambda _: tmp_path / "tool")
+    monkeypatch.setattr(character_models, "extract_model", AsyncMock(return_value=(None, None, tmp_path, {})))
+    reference = "Aki/Test/Other/Referenced"
+    path = tmp_path / "Client/Content" / (reference + ".json")
+    path.parent.mkdir(parents=True)
+    path.write_text("[]")
+    monkeypatch.setattr(npc_accessories, "visibility_sources", lambda _: [reference])
+    discover = AsyncMock(return_value=[])
+    monkeypatch.setattr(character_models, "discover_scene_components", discover)
+    forms = [{"id": f"form-{i}", "model": f"Aki/Test/Variant{i}/Model/Mesh",
+              "blueprints": [], "component_blueprint": "Aki/Test/BP", "montages": []}
+             for i in range(2)]
+
+    await model_uploads._discover_upload_components(tmp_path, forms, "3.7.0", "hd")
+    for form, call in zip(forms, discover.await_args_list, strict=True):
+        sources = call.args[1]
+        assert sources["animation_ownership"] == {
+            **ownership_for(form, forms), "explicit": [reference]}
+
+
+@pytest.mark.asyncio
 async def test_linked_upload_requires_unambiguous_matching_client(tmp_path, monkeypatch):
     monkeypatch.setattr(model_uploads, "inspect_installed_clients", lambda _: [])
     with pytest.raises(ValueError, match="matching ready installed client"):
         await model_uploads.discover_upload_components(tmp_path, [], "3.7.0", "hd")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count", [46, 128, 129])
+async def test_trusted_discovery_limits_total_components(tmp_path, monkeypatch, count):
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "plan.json").write_text(json.dumps({"id": "x", "version": "3.7.0", "tier": "hd"}))
+    (client / "status.json").write_text(json.dumps({"id": "x", "state": "downloaded"}))
+    monkeypatch.setattr(model_uploads, "inspect_installed_clients", lambda _: [
+        {"path": str(client), "download_id": "x", "version": "3.7.0", "tier": "hd", "state": "downloaded"}])
+    monkeypatch.setattr(model_uploads, "validate_plan", lambda _: None)
+    forms = [{"id": f"form-{i}", "label": f"Form {i}", "order": i,
+              "model": "Aki/Test/Mesh", "blueprints": [], "component_blueprint": "Aki/Test/BP"}
+             for i in range(2)]
+    def recipes(amount):
+        return [{"model": f"Aki/Test/Component{i}", "blueprints": [], "component": {
+            "id": f"part-{i}", "parent_component": "CharacterMesh0"}} for i in range(amount)]
+
+    discover = AsyncMock(side_effect=[recipes(count // 2), recipes(count - count // 2)])
+    monkeypatch.setattr(model_uploads, "_discover_upload_form", discover)
+    forms[1]["model"] = "Aki/Test/OtherMesh"
+    if count > 128:
+        with pytest.raises(ValueError, match="excessive"):
+            await model_uploads._discover_upload_components(tmp_path, forms, "3.7.0", "hd")
+    else:
+        result = await model_uploads._discover_upload_components(tmp_path, forms, "3.7.0", "hd")
+        assert len(result) == count
+        assert {entry["component"]["parent_form_id"] for entry in result.values()} == {"form-0", "form-1"}
+
+
+@pytest.mark.asyncio
+async def test_trusted_discovery_rechecks_duplicate_identities(tmp_path, monkeypatch):
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "plan.json").write_text(json.dumps({"id": "x", "version": "3.7.0", "tier": "hd"}))
+    (client / "status.json").write_text(json.dumps({"id": "x", "state": "downloaded"}))
+    monkeypatch.setattr(model_uploads, "inspect_installed_clients", lambda _: [
+        {"path": str(client), "download_id": "x", "version": "3.7.0", "tier": "hd", "state": "downloaded"}])
+    monkeypatch.setattr(model_uploads, "validate_plan", lambda _: None)
+    form = {"id": "one", "label": "One", "order": 0, "model": "Aki/Test/Mesh",
+            "blueprints": [], "component_blueprint": "Aki/Test/BP"}
+    recipe = {"model": "Aki/Test/Part", "blueprints": [], "component": {
+        "id": "part", "parent_component": "CharacterMesh0"}}
+    discover = AsyncMock(return_value=[recipe])
+    monkeypatch.setattr(model_uploads, "_discover_upload_form", discover)
+    result = await model_uploads._discover_upload_components(
+        tmp_path, [form, {**form, "id": "two", "label": "Two", "order": 1}], "3.7.0", "hd")
+    assert len(result) == 2
+    assert {entry["component"]["parent_form_id"] for entry in result.values()} == {"one", "two"}
+    assert discover.await_count == 2
+    with pytest.raises(ValueError, match="Duplicate or excessive"):
+        await model_uploads._discover_upload_components(tmp_path, [form, form], "3.7.0", "hd")
+    discover.reset_mock()
+    discover.return_value = [recipe, recipe]
+    with pytest.raises(ValueError, match="Duplicate authored component"):
+        await model_uploads._discover_upload_components(tmp_path, [form], "3.7.0", "hd")
+
+
+@pytest.mark.asyncio
+async def test_trusted_discovery_processes_distinct_chisa_forms(tmp_path, monkeypatch):
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "plan.json").write_text(json.dumps({"id": "x", "version": "3.7.0", "tier": "hd"}))
+    (client / "status.json").write_text(json.dumps({"id": "x", "state": "downloaded"}))
+    monkeypatch.setattr(model_uploads, "inspect_installed_clients", lambda _: [
+        {"path": str(client), "download_id": "x", "version": "3.7.0", "tier": "hd", "state": "downloaded"}])
+    monkeypatch.setattr(model_uploads, "validate_plan", lambda _: None)
+    base = "Aki/Character/Role/FemaleM/Qianxia/"
+    forms = [{"id": "mesh-100052", "model": base + "R2T1QianXiaMd10011/Model/R2T1QianXiaMd10011",
+              "blueprints": [base + "R2T1QianXiaMd10011/ABP_R2T1QianXiaMd10011_PC"],
+              "component_blueprint": base + "BP_QianXia"},
+             {"id": "mesh-1000521", "model": base + "R2T1QianXiaMd20011/Model/R2T1QianXiaMd20011",
+              "blueprints": [base + "R2T1QianXiaMd20011/ABP_R2T1QianXiaMd20011_PC"],
+              "component_blueprint": base + "BP_QianXia_Md20011"}]
+    async def discover(root, form, local_client, include_animations):
+        return [{"model": form["model"], "blueprints": [], "component": {
+            "id": "part", "parent_component": "CharacterMesh0",
+            "source": {"blueprint": form["component_blueprint"], "component": "part"}}}]
+
+    mocked = AsyncMock(side_effect=discover)
+    monkeypatch.setattr(model_uploads, "_discover_upload_form", mocked)
+    result = await model_uploads._discover_upload_components(tmp_path, forms, "3.7.0", "hd")
+    assert mocked.await_count == 2
+    assert {entry["model"] for entry in result.values()} == {form["model"] for form in forms}
+    assert {entry["component"]["source"]["blueprint"] for entry in result.values()} == {
+        form["component_blueprint"] for form in forms}
 
 @pytest.mark.asyncio
 async def test_process_linked_upload_uses_trusted_discovery(tmp_path, monkeypatch):
@@ -241,3 +413,29 @@ def test_decode_nested_component_uses_root_blueprint_not_parent_mesh(tmp_path):
     with pytest.raises(ValueError, match="parent Blueprint"):
         model_uploads.decode_bundles(wrong, tmp_path / "nested-wrong", job, [root],
                                      expected_components=trusted)
+
+
+def test_reports_every_component_mismatch_before_rejecting(tmp_path, caplog):
+    _, root, job = portable(tmp_path)
+    root = {**root, "component_blueprint": "Aki/Npc/Blueprint"}
+    children = []
+    for index, name in enumerate(("Fox", "Hat"), 1):
+        form = {"id": f"component-{index:016x}", "label": name, "order": index,
+                "component": {"id": name, "parent_form_id": root["id"],
+                              "source": {"blueprint": root["component_blueprint"], "component": name}}}
+        children.append(form)
+    archive = tmp_path / "mismatches.zip"
+    write_archive(archive, {"character_key": job.character_key, "game_version": job.game_version,
+                            "asset_version": "3.7.0", "tier": "hd"},
+                  [(root, tmp_path / "bundle", {}, {"model": root["model"]})] +
+                  [(form, tmp_path / "bundle", {}, {"model": "Aki/Archive/" + form["label"]})
+                   for form in children])
+    trusted = {form["id"]: {"component": form["component"], "model": "Aki/Trusted/" + form["label"]}
+               for form in children}
+    with pytest.raises(ValueError, match="trusted authored identity"):
+        model_uploads.decode_bundles(archive, tmp_path / "mismatches", job, [root],
+                                     expected_components=trusted)
+    for form in children:
+        assert form["id"] in caplog.text
+        assert "Aki/Archive/" + form["label"] in caplog.text
+        assert "Aki/Trusted/" + form["label"] in caplog.text

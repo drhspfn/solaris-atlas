@@ -9,6 +9,7 @@ import { PageLoader } from '@/components/ui/Feedback';
 import type { StoryConnection } from '@/data/explanations';
 import { useLocale } from '@/hooks/useLocale';
 import { Link, useSearchParams } from '@/lib/router';
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 
 export function StoryConnectionClient({
   documentId,
@@ -69,15 +70,8 @@ export function StoryConnectionClient({
 
   return (
     <div className="page-container">
-      <div className="breadcrumbs">
-        <Link to="/">Archive</Link>
-        <ChevronRight size={13} aria-hidden="true" />
-        <span>Story connection</span>
-      </div>
+      <Breadcrumbs items={[{ label: 'Archive', to: '/' }, { label: 'Story connection' }]} />
       <article className="quest-explanation explanation-event story-connection-page">
-        <span className="eyebrow left">
-          AI INTERPRETATION{data.certainty ? ` · ${data.certainty}` : ''}
-        </span>
         <h1>{data.title}</h1>
         <div className="explanation-edge-path">
           {data.from_node && <Link to={data.from_node.href}>{data.from_node.label}</Link>}

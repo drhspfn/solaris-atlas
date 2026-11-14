@@ -208,3 +208,20 @@ def test_cached_voice_bytes_must_match_manifest(tmp_path):
     path.write_bytes(b"changed")
     with pytest.raises(ValueError, match="changed"):
         verified_voice_export((path, "0" * 64))
+
+
+@pytest.mark.asyncio
+async def test_spine_failure_log_has_context_without_exception_text(tmp_path, monkeypatch, caplog):
+    from unittest.mock import AsyncMock
+
+    from wuwa_story_worker import entity_media, story_spine
+
+    target = {'owner': 42, 'path': 'spine_background:123', 'resource_id': 123, 'kind': 'spine'}
+    monkeypatch.setattr(story_spine, 'build_spine_bundle', AsyncMock(side_effect=ValueError('secret token')))
+    files, missing = await entity_media.build_entity_files(
+        tmp_path, [target], tmp_path / 'fmodel', tmp_path / 'converter', run_id=7)
+
+    assert files == [] and missing == [target['path']]
+    assert 'story_spine.missing run=7 owner=42 resource=' in caplog.text
+    assert 'stage=build error_type=ValueError' in caplog.text
+    assert 'secret token' not in caplog.text and target['path'] not in caplog.text

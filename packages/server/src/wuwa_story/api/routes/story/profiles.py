@@ -828,15 +828,111 @@ async def character_profile(
     # NPC metadata is stored on its typed character, independently of playable projections.
     from wuwa_story.api.routes.story.npc_profile import npc_profile, npc_record
 
-    candidate = await get_node(session, canonical_key, ("character",))
-    if candidate is None and (identifier := numeric_id(canonical_key)) is not None:
+    candidate = await get_node(session, canonical_key, ("character",)) if hasattr(session, "scalars") else None
+    if candidate is None and (identifier := numeric_id(canonical_key)) is not None and hasattr(session, "get"):
         candidate = await session.get(Node, identifier)
-    candidate_character = await session.get(Character, candidate.id) if candidate else None
+    candidate_character = await session.get(Character, candidate.id) if candidate and hasattr(session, "get") else None
     identity = ((candidate_character.metadata_json or {}).get("public_identity") or {}) if candidate_character else {}
     representative = identity.get("canonical_key")
     if candidate and identity.get("family") != "rover" and representative and representative != candidate.canonical_key:
         return await character_profile(representative, locale=locale, game_version=game_version,
                                        session=session, connections_limit=connections_limit)
+    if candidate and candidate.canonical_key.startswith("speaker:"):
+        from wuwa_story.db.models.graph import Edge
+        from wuwa_story.db.models.core import SpeakerEntityLink
+
+        # 1. Check if speaker links to a character entity
+        target_char_id = await session.scalar(
+            select(Edge.target_node_id).where(
+                Edge.source_node_id == candidate.id,
+                Edge.relation_type == "references_character",
+            )
+        )
+        if target_char_id is None:
+            target_char_id = await session.scalar(
+                select(SpeakerEntityLink.entity_node_id).where(
+                    SpeakerEntityLink.speaker_node_id == candidate.id
+                )
+            )
+        if target_char_id is not None:
+            target_node = await session.get(Node, target_char_id)
+            if target_node:
+                return await character_profile(
+                    target_node.canonical_key,
+                    locale=locale,
+                    game_version=game_version,
+                    session=session,
+                    connections_limit=connections_limit,
+                )
+
+        # 2. Standalone narrative speaker
+        speaker_rec = await session.get(Speaker, candidate.id)
+        release_id = await _release_id(session, game_version)
+        speaker_name = None
+        if speaker_rec and speaker_rec.name_key_id:
+            speaker_name = await _localized(session, speaker_rec.name_key_id, locale, release_id)
+        if not speaker_name:
+            speaker_name = (candidate.slug or "").split("-", 1)[-1].replace("-", " ").title() or candidate.canonical_key
+
+        participation = dialogue_participation(release_id, speaker_ids={candidate.id})
+        state_ids = set(await session.scalars(select(participation.c.state_id).distinct())) if hasattr(session, "scalars") else set()
+        quests_with_dialogue = []
+        if state_ids:
+            links = quest_state_links(release_id, state_ids=state_ids)
+            for quest, state_id in await session.execute(
+                select(Quest, links.c.state_id).join(links, links.c.quest_id == Quest.node_id)
+                .where(links.c.state_id.in_(state_ids)).order_by(Quest.game_quest_id)
+            ):
+                quests_with_dialogue.append(await _quest_info(session, quest, locale, game_version))
+
+        links = await _explicit_entity_links(session, candidate.id, locale) if hasattr(session, "scalars") else []
+        profile_data = {
+            "character": {
+                "id": candidate.id,
+                "canonical_key": candidate.canonical_key,
+                "slug": candidate.slug,
+                "name": speaker_name,
+                "canonical_name": speaker_name,
+                "description": "Story speaker & voice participant.",
+                "playable": False,
+                "game_version": game_version,
+            },
+            "family": None,
+            "speakers": [{
+                "id": candidate.id,
+                "canonical_key": candidate.canonical_key,
+                "game_speaker_id": speaker_rec.game_speaker_id if speaker_rec else None,
+                "label": speaker_name,
+            }],
+            "quests_with_dialogue": quests_with_dialogue,
+            "co_present_characters": [],
+            "co_present_speakers": [],
+            "progression_materials": [],
+            "explicit_links": links,
+            "source_evidence": [],
+            "connection_summary": {
+                "confirmed_speakers": 1,
+                "quests_with_dialogue": len(quests_with_dialogue),
+                "co_present_characters": 0,
+                "explicit_entity_links": len(links),
+                "configuration_records": 0,
+                "narrative_status": "speaker_mapped",
+                "explanation": "Narrative speaker voice archive.",
+            },
+            "limitations": [],
+        }
+        if connections_limit is not None:
+            from wuwa_story.read_models.readers.character_connections import page_connections
+            return {
+                **profile_data,
+                "connection_pages": {
+                    "quests": page_connections(profile_data, "quests", identity=candidate.canonical_key,
+                                               generation=1, locale=locale, limit=connections_limit),
+                    "characters": {"results": [], "total": 0, "has_more": False, "next_cursor": None},
+                },
+            }
+        return profile_data
+
     if candidate and candidate.canonical_key.startswith("character:npc:"):
         node, character, npc, release_id = await npc_record(session, candidate.canonical_key, game_version)
         return await npc_profile(session, node, character, npc, release_id, locale)

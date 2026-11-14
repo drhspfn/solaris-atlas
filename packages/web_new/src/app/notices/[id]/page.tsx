@@ -1,31 +1,48 @@
-import type { Metadata } from 'next';
-import Link from 'next/link';
-import { connection } from 'next/server';
-import { serverApi } from '@/api/serverApi';
-import { canonicalRoute } from '@/lib/canonicalRoute';
-import { decodeRouteKey } from '@/lib/routeKey';
-import { noticeCategories, type NoticeDetail } from '@/lib/notices';
-import '@/styles/notices.css';
+import type { Metadata } from "next";
+import Link from "next/link";
+import { connection } from "next/server";
+import { serverApi } from "@/api/serverApi";
+import { canonicalRoute } from "@/lib/canonicalRoute";
+import { decodeRouteKey } from "@/lib/routeKey";
+import { noticeCategories, type NoticeDetail } from "@/lib/notices";
+import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
+import { PageHeader } from "@/components/ui/PageHeader";
+import "@/styles/notices.css";
 
-type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ revision?: string }> };
-async function readNotice(params: Props['params'], searchParams: Props['searchParams']) {
+type Props = {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ revision?: string }>;
+};
+async function readNotice(
+  params: Props["params"],
+  searchParams: Props["searchParams"],
+) {
   const { id } = await params;
   const { revision } = await searchParams;
-  const query = revision && /^[a-f0-9]{64}$/.test(revision) ? `?revision=${revision}` : '';
-  return serverApi<NoticeDetail>(`/notices/${encodeURIComponent(decodeRouteKey(id))}${query}`, { revalidate: 0 });
+  const query =
+    revision && /^[a-f0-9]{64}$/.test(revision) ? `?revision=${revision}` : "";
+  return serverApi<NoticeDetail>(
+    `/notices/${encodeURIComponent(decodeRouteKey(id))}${query}`,
+    { revalidate: 0 },
+  );
 }
-export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
+export async function generateMetadata({
+  params,
+  searchParams,
+}: Props): Promise<Metadata> {
   const notice = await readNotice(params, searchParams);
-  if (!notice) return { title: 'Announcement unavailable — Solaris Atlas' };
+  if (!notice) return { title: "Announcement unavailable — Solaris Atlas" };
   const description = notice.blocks
-    .filter((block) => block.type === 'text')
+    .filter((block) => block.type === "text")
     .map((block) => block.text)
-    .join(' ')
+    .join(" ")
     .slice(0, 180);
   return {
     title: `${notice.title} — Solaris Atlas`,
     description,
-    alternates: { canonical: notice.href || `/notices/${notice.slug || notice.id}` },
+    alternates: {
+      canonical: notice.href || `/notices/${notice.slug || notice.id}`,
+    },
     openGraph: {
       title: notice.title,
       description,
@@ -39,30 +56,50 @@ export default async function NoticePage({ params, searchParams }: Props) {
   if (!notice) {
     const { id } = await params;
     const { revision } = await searchParams;
-    const retryQuery = revision && /^[a-f0-9]{64}$/.test(revision) ? `?revision=${revision}` : '';
+    const retryQuery =
+      revision && /^[a-f0-9]{64}$/.test(revision)
+        ? `?revision=${revision}`
+        : "";
     return (
       <main className="notices-page">
         <h1>Announcement unavailable</h1>
         <p>The archive could not load this announcement.</p>
-        <p><a href={`/notices/${encodeURIComponent(id)}${retryQuery}`}>Try again</a></p>
+        <p>
+          <a href={`/notices/${encodeURIComponent(id)}${retryQuery}`}>
+            Try again
+          </a>
+        </p>
         <Link href="/notices">Return to announcements</Link>
       </main>
     );
   }
-  await canonicalRoute("notices", decodeRouteKey((await params).id), notice, searchParams);
+  await canonicalRoute(
+    "notices",
+    decodeRouteKey((await params).id),
+    notice,
+    searchParams,
+  );
   return (
-    <main className="notices-page notice-detail">
-      <Link href="/notices">← All announcements</Link>
-      <header className="notices-heading">
-        <div>
-          <span>{noticeCategories[notice.category]}</span>
-          <h1>{notice.title}</h1>
-        </div>
-      </header>
+    <main className="page-container notices-page notice-detail">
+      <Breadcrumbs
+        items={[
+          { label: "Archive", href: "/" },
+          { label: "Announcements", href: "/notices" },
+          { label: notice.title },
+        ]}
+      />
+      <PageHeader
+        title={notice.title}
+        showPeriod={false}
+        description={noticeCategories[notice.category]}
+      />
       {!!notice.events.length && (
         <nav className="notice-related" aria-label="Related events">
           {notice.events.map((event) => (
-            <Link key={event.id} href={event.href || `/events?event=${event.slug || event.id}`}>
+            <Link
+              key={event.id}
+              href={event.href || `/events?event=${event.slug || event.id}`}
+            >
               {event.title} · Show history ↗
             </Link>
           ))}
@@ -70,7 +107,7 @@ export default async function NoticePage({ params, searchParams }: Props) {
       )}
       <article className="notice-body">
         {notice.blocks.map((block, index) =>
-          block.type === 'image' ? (
+          block.type === "image" ? (
             <img
               key={index}
               src={block.url}
@@ -99,10 +136,10 @@ export default async function NoticePage({ params, searchParams }: Props) {
             <Link
               key={revision}
               href={`${notice.href || `/notices/${notice.slug || notice.id}`}?revision=${revision}`}
-              aria-current={revision === notice.revision ? 'page' : undefined}
+              aria-current={revision === notice.revision ? "page" : undefined}
             >
               {index === 0
-                ? 'Latest revision'
+                ? "Latest revision"
                 : `Earlier revision ${notice.revisions.length - index}`}
             </Link>
           ))}
@@ -113,8 +150,12 @@ export default async function NoticePage({ params, searchParams }: Props) {
           Open Kuro’s Notice board ↗
         </a>
         <span>
-          Saved {new Date(notice.observed_at).toLocaleDateString('en', { timeZone: 'UTC' })} ·{' '}
-          {notice.revisions.length} archived revision{notice.revisions.length === 1 ? '' : 's'}
+          Saved{" "}
+          {new Date(notice.observed_at).toLocaleDateString("en", {
+            timeZone: "UTC",
+          })}{" "}
+          · {notice.revisions.length} archived revision
+          {notice.revisions.length === 1 ? "" : "s"}
         </span>
       </footer>
     </main>

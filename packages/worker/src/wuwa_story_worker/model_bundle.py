@@ -5,8 +5,10 @@ portable: this preview deliberately uses exported base-color textures only.
 """
 
 import argparse
+import base64
 import hashlib
 import json
+import math
 import struct
 import sys
 from contextlib import contextmanager
@@ -59,6 +61,41 @@ def missing_animation_sources(sources, exported_keys):
     ]
 
 
+def equivalent_skeletons(left, right):
+    """Compare complete UEFormat local bind poses, not just bone names."""
+    if not left or not right or len(left) != len(right):
+        return False
+    for a, b in zip(left, right, strict=True):
+        if a.name != b.name or a.parent_index != b.parent_index:
+            return False
+        for field, length in (("position", 3), ("rotation", 4), ("scale", 3)):
+            x, y = getattr(a, field), getattr(b, field)
+            if len(x) != length or len(y) != length or any(
+                not math.isfinite(float(v)) or not math.isfinite(float(w)) or abs(v - w) > 1e-5
+                for v, w in zip(x, y, strict=True)
+            ):
+                return False
+    return True
+
+
+def uses_animation_translation(metadata, bone_count):
+    rows = [row for row in metadata if row.get("Type") == "Skeleton"]
+    if len(rows) != 1 or rows[0].get("AnimRetargetSources") != {}:
+        return False
+    tree = rows[0].get("Properties", {}).get("BoneTree", [])
+    return bool(tree) and len(tree) == bone_count and all(
+        item.get("TranslationRetargetingMode") == "EBoneTranslationRetargetingMode::Animation"
+        for item in tree
+    )
+
+
+def require_bound_animations(plan, bound_keys):
+    if bound_keys:
+        included = {package_path(clip["source"].removesuffix(".json")) for clip in plan["clips"]}
+        if bound_keys - included:
+            raise ValueError(f"Authored component animations are not playable: {sorted(bound_keys - included)}")
+
+
 def animation_exclusion(dto, *, require_decoded=False):
     """Distinguish intentional non-body clips from failed animation decoding."""
     if not dto.metadata or not dto.tracks:
@@ -103,11 +140,30 @@ def validate_animation_bones(dto, bone_names):
 
 
 def build_animation_plan(
-    model, converted, skeleton, sources, bone_names, read_animation, animation=None, morph_names=()
+    model, converted, skeleton, sources, bone_names, read_animation, animation=None, morph_names=(),
+    source_root=None, allow_empty=False,
 ):
     """Decode one DTO at a time; never allocate Blender actions during preflight."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from model_facial import FORMAT, facial_clip
+    from model_montage import create_montage_clips, montage_references
+
+    montage_definitions, montage_refs = montage_references(sources, source_root)
+    montage_sequences = {}
+
+    def extract_face(dto, source, row, name, body_clip=None):
+        try:
+            source_curves = None
+            if source_root is not None and morph_names:
+                exports = json.loads((source_root / source["source"]).read_text(encoding="utf-8-sig"))
+                source_export = next(item for item in exports if item.get("Name") == source["name"]
+                                     and item.get("Type") == source["type"])
+                curve_data = source_export.get("CompressedCurveData")
+                if curve_data is not None:
+                    source_curves = curve_data["FloatCurves"]
+            return facial_clip(dto, name, morph_names, body_clip=body_clip, source_curves=source_curves)
+        except (ValueError, KeyError, TypeError, StopIteration) as exc:
+            raise ValueError(f"Facial animation {source['source']} ({row['file']}): {exc}") from exc
 
     rows, clips, seen, names, facial = [], [], set(), set(), []
     for path in sorted(converted.rglob("*.ueanim")):
@@ -129,6 +185,7 @@ def build_animation_plan(
             "included_in_glb": False,
         }
         rows.append(row)
+
         try:
             excluded = animation_exclusion(dto, require_decoded=True)
         except ValueError as exc:
@@ -136,12 +193,20 @@ def build_animation_plan(
         if excluded:
             row["excluded_reason"] = excluded
             # Facial curves are weights, independent of additive bone transforms.
-            face = facial_clip(dto, f"Expression {len(facial) + 1}: {header.object_name}", morph_names)
+            face = extract_face(dto, source, row, f"Expression {len(facial) + 1}: {header.object_name}")
             if face is not None:
                 facial.append(face)
             del dto
             continue
         validate_animation_bones(dto, bone_names)
+        if key in montage_refs:
+            if not metadata.frames_per_second or metadata.frames_per_second <= 0:
+                raise ValueError(f"Invalid montage sequence FPS: {row['file']}")
+            montage_sequences[key] = {
+                "file": row["file"], "sha256": file_sha256(path),
+                "duration": metadata.num_frames / metadata.frames_per_second,
+                "matches_skeleton": True,
+            }
         if animation and header.object_name != animation:
             del dto
             continue
@@ -154,14 +219,17 @@ def build_animation_plan(
         names.add(name)
         row.update(action=name, included_in_glb=True)
         clips.append({**row, "name": name, "sha256": file_sha256(path)})
-        face = facial_clip(dto, name, morph_names, body_clip=name)
+        face = extract_face(dto, source, row, name, body_clip=name)
         if face is not None:
             facial.append(face)
         del dto
+    montage_clips = create_montage_clips(montage_definitions, sources, seen, montage_sequences, names, animation)
+    clips.extend(montage_clips)
+    rows.extend(montage_clips)
     missing = missing_animation_sources(sources, seen)
     if missing:
         raise ValueError(f"Missing matching animation exports: {missing}")
-    if not clips:
+    if not clips and (not allow_empty or any(row["matches_skeleton"] for row in sources.values())):
         raise ValueError("No verified, non-additive animation tracks available")
     return {
         "schema_version": 1,
@@ -209,6 +277,9 @@ def animation_batch(plan, model, converted, skeleton, index, size):
     for clip in selected:
         if file_sha256(animation_file(converted, clip["file"])) != clip["sha256"]:
             raise ValueError(f"Animation file hash mismatch: {clip['file']}")
+        for segment in clip.get("montage", {}).get("segments", []):
+            if file_sha256(animation_file(converted, segment["file"])) != segment["sha256"]:
+                raise ValueError(f"Montage segment hash mismatch: {segment['file']}")
     return selected
 
 
@@ -297,7 +368,140 @@ def material_metadata(metadata):
     }
 
 
-def base_color_texture(metadata: dict, converted: Path) -> tuple[str | None, Path | None]:
+EFFECT_PREVIEW_PARENTS = {
+    "/Game/Aki/Render/MaterialInstance/Effect/CharacterMesh/MI_AdvancedEffect_WaterMatCap_CM",
+    "/Game/Aki/Render/MaterialInstance/Effect/CharacterMesh/MI_AdvancedEffect_ParallaxSubUV_CM",
+    "/Game/Aki/Render/MaterialInstance/Effect/CharacterMesh/MI_Refraction_CM",
+    "/Game/Aki/Render/MaterialInstance/Effect/CharacterMesh/MI_AdvancedEffect_CM",
+}
+
+
+def material_parent(rows):
+    parents = [row.get("Properties", {}).get("Parent", {}).get("ObjectPath")
+               for row in rows if row.get("Type") == "MaterialInstanceConstant"]
+    if len(parents) != 1 or not parents[0]:
+        return None
+    parent = parents[0].split(".", 1)[0]
+    return '/Game/' + parent[len('Client/Content/'):] if parent.startswith('Client/Content/') else parent
+
+
+def stencil_mask_payload(models, converted, cooked):
+    """Keep authored stencil masks with their mesh slots; they use the face's UVs."""
+    def resource(reference):
+        value = reference.replace('\\', '/').split('.', 1)[0]
+        if value.startswith('/Game/'):
+            value = 'Client/Content/' + value[6:]
+        parts = value.split('/')
+        if parts[:2] != ['Client', 'Content'] or any(p in ('', '.', '..') for p in parts):
+            raise ValueError('Invalid stencil resource path')
+        return Path(*parts)
+
+    masks, readers = [], []
+    for model in models:
+        if not model.is_relative_to(converted):
+            continue
+        relative = model.relative_to(converted).with_suffix('.json')
+        source = cooked / relative
+        if not source.is_file():
+            continue
+        for row in json.loads(source.read_text(encoding='utf-8-sig')):
+            if row.get('Type') not in {'SkeletalMesh', 'StaticMesh'}:
+                continue
+            slots = row.get('SkeletalMaterials', row.get('StaticMaterials', []))
+            authored = {(slot.get('Material') or slot.get('MaterialInterface') or {}).get('ObjectPath', '').split('.', 1)[0]
+                        for slot in slots}
+            for slot in slots:
+                ref = (slot.get('Material') or slot.get('MaterialInterface') or {}).get('ObjectPath')
+                if not ref:
+                    continue
+                path = resource(ref).with_suffix('.json')
+                raw = cooked / path
+                if not raw.is_file():
+                    continue
+                rows = json.loads(raw.read_text(encoding='utf-8-sig'))
+                parent = material_parent(rows)
+                if (str(slot.get('MaterialSlotName', '')).startswith('HETA_') and parent
+                        and package_path(parent) in {package_path(item) for item in authored}):
+                    metadata = material_metadata(json.loads((converted / path).read_text(encoding='utf-8-sig')))
+                    if metadata.get('Switches', {}).get('IsHairHET') is True:
+                        readers.append({'mesh': relative.as_posix(), 'material': parent})
+                if parent != '/Game/Aki/Render/Shaders/Character/M_WriteStencil':
+                    continue
+                metadata = material_metadata(json.loads((converted / path).read_text(encoding='utf-8-sig')))
+                mask = metadata.get('Textures', {}).get('Mask', {}).get('ObjectPath')
+                if not mask:
+                    continue
+                image = converted / resource(mask).with_suffix('.png')
+                base = ref.split('.', 1)[0].removesuffix('_HET')
+                masks.append({'mesh': relative.as_posix(), 'slot': slot.get('MaterialSlotName'),
+                              'target_material': base if base in authored else None,
+                              'material': ref, 'texture': mask, 'mime_type': 'image/png',
+                              'data_base64': base64.b64encode(image.read_bytes()).decode('ascii')})
+    return {'format': 'solaris-hair-stencil-v1', 'masks': masks, 'readers': readers} if masks else None
+
+
+def eye_material_payload(metadata, converted):
+    """Preserve authored eye inputs for consumers that support their shader."""
+    if not metadata.get('Switches', {}).get('UseHeightLightShape'):
+        return None
+    textures = {}
+    root = converted.resolve()
+    for name in ('HeightLightMap', 'EM', 'MaskTex'):
+        reference = (metadata.get('Textures', {}).get(name) or {}).get('ObjectPath')
+        if not reference:
+            continue
+        path = reference.replace('\\', '/').split('.', 1)[0]
+        if path.startswith('/Game/'):
+            path = 'Client/Content/' + path[6:]
+        image = (root / (path + '.png')).resolve()
+        if not image.is_relative_to(root) or not image.is_file():
+            continue
+        textures[name] = {'source': reference, 'data_base64': base64.b64encode(image.read_bytes()).decode('ascii')}
+    return {'format': 'solaris-eye-material-v1', 'textures': textures,
+            'scalars': metadata.get('Scalars', {}), 'colors': metadata.get('Colors', {}),
+            'switches': metadata.get('Switches', {})}
+
+
+def add_blender_studio(meshes):
+    """Add adjustable lighting around the exported model in the Blender file."""
+    import bpy
+    from mathutils import Vector
+
+    points = [mesh.matrix_world @ Vector(corner) for mesh in meshes for corner in mesh.bound_box]
+    if not points:
+        return
+    low = Vector(tuple(min(p[i] for p in points) for i in range(3)))
+    high = Vector(tuple(max(p[i] for p in points) for i in range(3)))
+    center = (low + high) * .5
+    size = max(high - low)
+    if not math.isfinite(size) or size <= 0:
+        return
+    collection = bpy.data.collections.new('Solaris studio')
+    bpy.context.scene.collection.children.link(collection)
+    for name, offset, power in (
+        ('Key', (1.5, -2, 1.2), 160),
+        ('Fill', (-1.5, -1, .5), 55),
+        ('Rim', (0, 1.5, 1), 90),
+    ):
+        light = bpy.data.lights.new('Solaris ' + name, 'AREA')
+        light.energy = power * size * size
+        light.shape = 'DISK'
+        light.size = size
+        obj = bpy.data.objects.new(light.name, light)
+        collection.objects.link(obj)
+        obj.location = center + Vector(offset) * size
+        obj.rotation_euler = (center - obj.location).to_track_quat('-Z', 'Y').to_euler()
+    if bpy.context.scene.camera is None:
+        camera = bpy.data.cameras.new('Solaris camera')
+        camera.lens = 50
+        obj = bpy.data.objects.new(camera.name, camera)
+        collection.objects.link(obj)
+        obj.location = center + Vector((0, -3.0, 0.1)) * size
+        obj.rotation_euler = (center - obj.location).to_track_quat('-Z', 'Y').to_euler()
+        bpy.context.scene.camera = obj
+
+
+def base_color_texture(metadata: dict, converted: Path, parent=None) -> tuple[str | None, Path | None]:
     metadata = material_metadata(metadata)
     textures = metadata.get("Textures", {})
     switches = metadata.get("Switches", {})
@@ -318,6 +522,14 @@ def base_color_texture(metadata: dict, converted: Path) -> tuple[str | None, Pat
     ):
         face_atlas_transform(metadata)
         reference = textures["Tex_FaceAni"].get("ObjectPath")
+    elif parent in EFFECT_PREVIEW_PARENTS:
+        reference = textures.get("Base", {}).get("ObjectPath")
+    elif parent == "/Game/Aki/Render/MaterialInstance/Effect/MeshParticle/MI_BPProp_Gobletliquid_Com":
+        # The cooked goblet-liquid material uses BaseTex for its diffuse input.
+        reference = textures.get("BaseTex", {}).get("ObjectPath")
+    elif parent == "/Game/Aki/Render/Shaders/Character/M_Char_XinHen":
+        # The cooked tacet-mark shader uses D for its diffuse input.
+        reference = textures.get("D", {}).get("ObjectPath")
     else:
         reference = next(
             (textures[key].get("ObjectPath") for key in
@@ -356,17 +568,15 @@ def inherited_base_color_texture(metadata: dict, path: Path | None, converted: P
     visited = set()
     while True:
         metadata = material_metadata(metadata)
-        reference, texture = base_color_texture(metadata, converted)
+        source = source_json / path.relative_to(converted) if path else None
+        rows = json.loads(source.read_text(encoding="utf-8-sig")) if source and source.is_file() else []
+        reference, texture = base_color_texture(metadata, converted, material_parent(rows))
         if reference or path is None:
             return reference, texture
         relative = path.relative_to(converted)
         if relative in visited:
             raise ValueError("Cyclic material parent chain")
         visited.add(relative)
-        source = source_json / relative
-        if not source.is_file():
-            return None, None
-        rows = json.loads(source.read_text(encoding="utf-8-sig"))
         parents = [
             row.get("Properties", {}).get("Parent", {}).get("ObjectPath")
             for row in rows
@@ -384,6 +594,33 @@ def inherited_base_color_texture(metadata: dict, path: Path | None, converted: P
             return None, None
         path = candidate
         metadata = json.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def is_effect_model(model: Path, converted: Path) -> bool:
+    """Return True when *model* lives under Client/Content/Aki/Effect."""
+    try:
+        relative = model.resolve().relative_to(converted.resolve())
+    except ValueError:
+        return False
+    parts = [part.casefold() for part in relative.parts]
+    return parts[:3] == ['client', 'content', 'aki'] and len(parts) >= 4 and parts[3] == 'effect'
+
+
+def empty_effect_material_slots(model: Path, converted: Path, source_json: Path) -> set[int]:
+    """Identify explicitly empty material slots on an authored effect mesh."""
+    if not is_effect_model(model, converted):
+        return set()
+    relative = model.resolve().relative_to(converted.resolve())
+    source = (source_json / relative).with_suffix('.json')
+    if not source.is_file():
+        return set()
+    rows = json.loads(source.read_text(encoding='utf-8-sig'))
+    matches = [row for row in rows if row.get('Type') == 'SkeletalMesh' and row.get('Name') == model.stem]
+    if len(matches) != 1 or not isinstance(matches[0].get('SkeletalMaterials'), list):
+        return set()
+    return {index for index, slot in enumerate(matches[0]['SkeletalMaterials'])
+            if isinstance(slot, dict) and 'Material' in slot and slot['Material'] is None
+            and slot.get('MaterialSlotName') == 'None'}
 
 
 def opacity_mask_cutoff(metadata: dict) -> float:
@@ -404,13 +641,114 @@ def effect_space_only(metadata: dict) -> bool:
 
 def base_color_alpha_is_opacity(material_name: str, metadata: dict) -> bool:
     """The base-color fallback must not treat Denia's skin shader data as holes."""
-    if material_name in {"MI_R2T1DaniyaMd10011Up01", "MI_R2T1DaniyaMd10011Up02"} and (
+    if metadata.get('Switches', {}).get('UseFurry') is True:
+        # Fur opacity is composed with additional masks and parallax in-game;
+        # applying the engine's generic cutoff to MainTex alpha removes the base.
+        return False
+    if material_name in {"MI_R2T1DaniyaMd10011Up01", "MI_R2T1DaniyaMd10011Up02",
+                         "MI_R2T1LuoselaMd10011Up1"} and (
         metadata.get("Switches", {}).get("UseOnlySkinRampColor") is True
     ):
-        # Verified against both cooked skin passes and before/after renders.
-        # Their diffuse alpha clips the neck; retain cloth/hair mask behavior.
+        # Direct clipping removes visible body sections on these skin passes;
+        # their full game opacity formula is not established. Keep cloth/hair masks.
         return False
     return metadata.get("BlendMode") in {1, 2}
+
+
+def uses_fur_card_mask(metadata):
+    """Recognize the textureless fur-card material tested on Denia's sleeves."""
+    switches = metadata.get('Switches') or {}
+    textures = metadata.get('Textures') or {}
+    return (switches.get('UseFurry') is True
+            and switches.get('FurMaskUseID') is True
+            and switches.get('UseFurryParallax') is False
+            and not (textures.get('MainTex') or textures.get('BaseColor')))
+
+
+def uses_fur_vertex_mask(metadata):
+    switches, scalars = metadata.get('Switches') or {}, metadata.get('Scalars') or {}
+    return (switches.get('UseFurry') is True and switches.get('UseFurryParallax') is True
+            and scalars.get('UseVertexAMask') == 1 and scalars.get('FurBlendUseVertexRFade') == 1)
+
+
+def fur_uv_name(meshes):
+    """Use a common third UV set only when every participating mesh has one."""
+    names = {mesh.data.uv_layers[2].name for mesh in meshes if len(mesh.data.uv_layers) > 2}
+    return (next(iter(names)) if meshes and len(names) == 1
+            and all(len(mesh.data.uv_layers) > 2 for mesh in meshes) else None)
+
+
+def add_fur_preview(material, shader, metadata, converted, *, fur_uv=None, vertex_color=None):
+    """Approximate authored fur texture as relief, retaining an opaque base.
+
+    This is an editable Blender preview, not the decoded game shader or fur shells.
+    """
+    if metadata.get('Switches', {}).get('UseFurry') is not True:
+        return False
+    reference = metadata.get('Textures', {}).get('Fur_Tex', {}).get('ObjectPath')
+    if not isinstance(reference, str):
+        return False
+    relative = reference.replace('\\', '/').split('.', 1)[0]
+    if relative.startswith('/Game/'):
+        relative = 'Client/Content/' + relative[6:]
+    root = converted.resolve()
+    texture = (root / (relative + '.png')).resolve()
+    if not texture.is_relative_to(root) or not texture.is_file():
+        return False
+    import bpy
+
+    image = bpy.data.images.load(str(texture), check_existing=False)
+    image.colorspace_settings.name = 'Non-Color'
+    image.alpha_mode = 'CHANNEL_PACKED'
+    image.pack()
+    nodes, links = material.node_tree.nodes, material.node_tree.links
+    tex = nodes.new('ShaderNodeTexImage')
+    tex.label = 'Fur mask (game texture)'
+    tex.image = image
+    bump = nodes.new('ShaderNodeBump')
+    bump.label = 'Approximate fur relief (adjustable)'
+    bump.inputs['Strength'].default_value = .22
+    bump.inputs['Distance'].default_value = .002
+    links.new(tex.outputs['Color'], bump.inputs['Height'])
+    links.new(bump.outputs['Normal'], shader.inputs['Normal'])
+    if fur_uv and (uses_fur_card_mask(metadata) or (vertex_color and uses_fur_vertex_mask(metadata))):
+        # The third UV samples the strand atlas. Mixed parallax surfaces also
+        # need their vertex alpha to retain the base. This remains an approximation.
+        uv = nodes.new('ShaderNodeUVMap')
+        uv.uv_map = fur_uv
+        uv.label = 'Fur card UV (third UV set)'
+        links.new(uv.outputs['UV'], tex.inputs['Vector'])
+        opacity = tex.outputs['Color']
+        if vertex_color and uses_fur_vertex_mask(metadata):
+            vertex = nodes.new('ShaderNodeVertexColor')
+            vertex.layer_name = vertex_color
+            vertex.label = 'Authored vertex alpha (base coverage)'
+            coverage = nodes.new('ShaderNodeMath')
+            coverage.operation = 'MAXIMUM'
+            coverage.label = 'Approximation: retain base under fur'
+            links.new(vertex.outputs['Alpha'], coverage.inputs[0])
+            links.new(opacity, coverage.inputs[1])
+            opacity = coverage.outputs[0]
+        links.new(opacity, shader.inputs['Alpha'])
+        material.surface_render_method = 'DITHERED'
+        material['solaris_fur_preview'] = 'Approximation: fur card mask; game shader not recovered'
+    else:
+        material['solaris_fur_preview'] = 'Approximation: texture relief; game fur shader not recovered'
+    return True
+
+
+def effect_preview_opacity(material, node, shader, metadata):
+    """Approximate effect opacity from Base alpha and the authored multiplier."""
+    value = metadata.get("Scalars", {}).get("Base_Alpha_Multiply", 1)
+    if type(value) not in (int, float) or not 0 <= value <= 100:
+        raise ValueError("Unsupported effect preview opacity multiplier")
+    multiply = material.node_tree.nodes.new("ShaderNodeMath")
+    multiply.operation = "MULTIPLY"
+    multiply.use_clamp = True
+    multiply.inputs[1].default_value = value
+    material.node_tree.links.new(node.outputs["Alpha"], multiply.inputs[0])
+    material.node_tree.links.new(multiply.outputs[0], shader.inputs["Alpha"])
+    material.surface_render_method = "DITHERED"
 
 
 def compatible_master_pose(primary, extra) -> bool:
@@ -475,13 +813,16 @@ def canonical_animation_rig(armature):
 
 @contextmanager
 def preview_meshes(meshes):
-    """The generated base-color shaders use only the render UV and no colors."""
+    """Trim unused mesh attributes, retaining authored fur and eye inputs."""
     originals = []
     try:
         for mesh in meshes:
             original = mesh.data
             originals.append((mesh, original))
             mesh.data = original.copy()
+            if any(material and (material.get('solaris_fur_preview') or material.get('solaris_eye_material'))
+                   for material in mesh.data.materials):
+                continue
             uv_name = next(
                 (uv.name for uv in mesh.data.uv_layers if uv.active_render),
                 mesh.data.uv_layers[0].name if mesh.data.uv_layers else None,
@@ -496,6 +837,32 @@ def preview_meshes(meshes):
     finally:
         for mesh, original in originals:
             mesh.data = original
+
+
+@contextmanager
+def gltf_fur_fallback(meshes):
+    """Do not export a Blender-only mask that glTF bakes with the wrong UV."""
+    removed, defaults = [], []
+    try:
+        materials = {material for mesh in meshes for material in mesh.data.materials if material}
+        for material in materials:
+            if material.get('solaris_fur_preview') != 'Approximation: fur card mask; game shader not recovered':
+                continue
+            shader = next((node for node in material.node_tree.nodes if node.type == 'BSDF_PRINCIPLED'), None)
+            if shader is None:
+                continue
+            alpha = shader.inputs['Alpha']
+            defaults.append((alpha, alpha.default_value))
+            for link in list(alpha.links):
+                removed.append((material.node_tree.links, link.from_socket, alpha))
+                material.node_tree.links.remove(link)
+            alpha.default_value = 1
+        yield
+    finally:
+        for links, output, alpha in removed:
+            links.new(output, alpha)
+        for alpha, value in defaults:
+            alpha.default_value = value
 
 
 @contextmanager
@@ -559,7 +926,7 @@ def rig_glb_stats(path: Path, bones: int, morph_targets: int, textures: int) -> 
     if stats["animations"] or stats["joints"] != bones or stats["morph_targets"] != morph_targets:
         raise ValueError(f"Rig GLB lost joints/morphs or contains animations: {stats}")
     if (
-        stats["textures"] != textures
+        stats["textures"] < textures
         or any("bufferView" not in image or "uri" in image for image in document.get("images", []))
         or any("uri" in buffer for buffer in document.get("buffers", []))
     ):
@@ -591,9 +958,14 @@ def main():
     parser.add_argument("--attachments", type=Path)
     parser.add_argument("--material-overrides", type=Path)
     parser.add_argument('--part-material-overrides', type=Path)
+    parser.add_argument('--material-variants', type=Path)
     parser.add_argument('--master-pose', action='store_true')
     parser.add_argument('--hide-primary-geometry', action='store_true')
     parser.add_argument('--bone-visibility', type=Path)
+    parser.add_argument('--animation-ownership', type=Path)
+    parser.add_argument('--component-animation-bindings', type=Path)
+    parser.add_argument('--allow-empty-component-animations', action='store_true')
+    parser.add_argument('--shared-animation-rig', action='store_true')
     parser.add_argument("--converted", type=Path, required=True)
     parser.add_argument("--source-json", type=Path, required=True)
     parser.add_argument("--skeleton", required=True)
@@ -618,6 +990,8 @@ def main():
         help="Maximum preview texture dimension (rig-only mode)",
     )
     parser.add_argument("--animation-plan", type=Path)
+    parser.add_argument("--blender-source", action="store_true",
+                        help="Save the rig-only Blender scene with its editable materials and studio")
     parser.add_argument("--animation-batch", type=int)
     parser.add_argument("--animation-batch-size", type=int, default=None)
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1 :])
@@ -638,6 +1012,8 @@ def main():
         parser.error("--animation-batch-size requires --animation-batch")
     if args.animation_plan and not batch_mode and not args.rig_only:
         parser.error("Creating --animation-plan requires --rig-only")
+    if args.blender_source and not args.rig_only:
+        parser.error("--blender-source requires --rig-only")
     rig_mode = args.rig_only or args.with_animations
     import bpy
 
@@ -706,15 +1082,23 @@ def main():
             if not part_materials:
                 return
             package = model_path.relative_to(args.converted / 'Client/Content').with_suffix('').as_posix()
-            for slot, material_path in part_materials.get(package, {}).items():
-                name = material_path.rsplit('/', 1)[-1]
-                material = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+            overrides_for_pkg = part_materials.get(package, {})
+            if not overrides_for_pkg:
+                return
+            applied = 0
+            for slot, material_path in overrides_for_pkg.items():
                 meshes = [obj for obj in rig.children_recursive if obj.type == 'MESH'
                           and int(slot) < len(obj.data.materials)]
                 if not meshes:
-                    raise ValueError(f'NPC part material targets absent slot: {package}:{slot}')
+                    continue
+                name = material_path.rsplit('/', 1)[-1]
+                material = bpy.data.materials.get(name) or bpy.data.materials.new(name)
                 for obj in meshes:
                     obj.data.materials[int(slot)] = material
+                applied += 1
+            if applied == 0:
+                first_slot = next(iter(overrides_for_pkg))
+                raise ValueError(f'NPC part material targets absent slot: {package}:{first_slot}')
 
         if args.hide_primary_geometry:
             if not args.master_pose or not args.extra_model:
@@ -801,12 +1185,41 @@ def main():
                 if imported.type == "ARMATURE":
                     bpy.data.objects.remove(imported, do_unlink=True)
     if batch_mode:
+        # Blender executes this file as a script, without the worker package on sys.path.
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
         bones = {bone.name for bone in armature.data.bones}
         if set(plan["bones"]) != bones:
             raise ValueError("Animation plan bones do not match imported rig")
         bpy.context.scene.render.fps = 30
+        bpy.context.scene.render.fps_base = 1
         actions = []
         for clip in selected_clips:
+            if clip.get("montage"):
+                from model_montage_blender import bake_montage_preview
+
+                segment_actions = {}
+                for index, segment in enumerate(clip["montage"]["segments"]):
+                    if segment["reference"] in segment_actions:
+                        continue
+                    header, dto = read_animation(animation_file(args.converted, segment["file"]))
+                    if package_path(header.object_path) != segment["reference"]:
+                        raise ValueError("Montage segment source identity changed")
+                    if animation_exclusion(dto, require_decoded=True):
+                        raise ValueError("Montage segment is no longer playable")
+                    validate_animation_bones(dto, bones)
+                    to_blender_space(dto, header.file_version, 0.01)
+                    retime_tracks(dto)
+                    segment_actions[segment["reference"]] = create_anim(
+                        dto, UEAnimOptions(override_skeleton=armature, import_curves=False),
+                        f"__montage_segment_{index}",
+                    )
+                    del dto
+                action = bake_montage_preview(armature, clip["montage"], segment_actions, clip["name"])
+                for segment_action in segment_actions.values():
+                    bpy.data.actions.remove(segment_action, do_unlink=True)
+                action["source_path"] = clip["source"]
+                actions.append(action)
+                continue
             header, dto = read_animation(animation_file(args.converted, clip["file"]))
             if animation_exclusion(dto, require_decoded=True):
                 raise ValueError("Planned animation is no longer playable")
@@ -853,6 +1266,9 @@ def main():
             )
         if "FINISHED" not in result:
             raise RuntimeError(f"GLB export failed: {part}")
+        from model_montage import annotate_montage_glb
+
+        annotate_montage_glb(part, selected_clips)
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from model_animations import animation_summary
 
@@ -870,6 +1286,38 @@ def main():
         if args.rig_only and not args.animation_plan
         else animation_sources(args.source_json, args.skeleton)
     )
+    if args.animation_ownership:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from model_animation_packs import owned_sources
+        sources = owned_sources(sources, json.loads(args.animation_ownership.read_text(encoding="utf-8")))
+    bound_keys = set()
+    if args.component_animation_bindings and not batch_mode:
+        bindings = json.loads(args.component_animation_bindings.read_text(encoding="utf-8"))
+        _, target = read_animation(args.model)
+        for clip, source_skeleton in bindings.items():
+            key = package_path("/Game/" + clip)
+            source = sources.get(key)
+            if not source or package_path(source["skeleton"]) != package_path("/Game/" + source_skeleton):
+                raise ValueError(f"Missing or changed authored component animation: {clip}")
+            if not source["matches_skeleton"]:
+                skeleton_path = args.converted / "Client/Content" / (source_skeleton + ".uemodel")
+                metadata_path = args.source_json / "Client/Content" / (source_skeleton + ".json")
+                target_package = args.skeleton.split(".", 1)[0]
+                if target_package.startswith("/Game/"):
+                    target_package = "Client/Content/" + target_package[6:]
+                target_path = args.source_json / (target_package + ".json")
+                if not skeleton_path.is_file() or not metadata_path.is_file() or not target_path.is_file():
+                    raise ValueError(f"Missing authored animation skeleton: {source_skeleton}")
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8-sig"))
+                target_metadata = json.loads(target_path.read_text(encoding="utf-8-sig"))
+                _, animation_rig = read_animation(skeleton_path)
+                bones = animation_rig.skeleton.bones
+                if (not uses_animation_translation(metadata, len(bones))
+                        or not uses_animation_translation(target_metadata, len(target.skeleton.bones))
+                        or not equivalent_skeletons(target.skeleton.bones, bones)):
+                    raise ValueError(f"Incompatible authored component animation skeleton: {clip} ({source_skeleton})")
+                source["matches_skeleton"] = True
+            bound_keys.add(key)
     report = {
         "model_source": str(args.model.resolve()),
         "model_sha256": hashlib.sha256(args.model.read_bytes()).hexdigest(),
@@ -894,7 +1342,18 @@ def main():
                 key.name for mesh in meshes if mesh.data.shape_keys
                 for key in list(mesh.data.shape_keys.key_blocks)[1:]
             },
+            source_root=args.source_json,
+            allow_empty=args.allow_empty_component_animations and not bound_keys,
         )
+        require_bound_animations(plan, bound_keys)
+        # The skeleton reference alone does not establish identical bind poses.
+        if args.shared_animation_rig:
+            rig = {"object": [float(value) for row in armature.matrix_world for value in row],
+                   "bones": [(bone.name, bone.parent.name if bone.parent else None,
+                              [float(value) for row in bone.matrix_local for value in row])
+                             for bone in sorted(armature.data.bones, key=lambda bone: bone.name)]}
+            plan["rig_fingerprint"] = hashlib.sha256(json.dumps(rig, allow_nan=False).encode()).hexdigest()
+            plan["rig_signature"] = rig
         args.animation_plan.parent.mkdir(parents=True, exist_ok=True)
         args.animation_plan.write_text(json.dumps(plan, indent=2), encoding="utf-8")
         report["animations"] = plan["animations"]
@@ -920,10 +1379,18 @@ def main():
             bmesh.ops.delete(bm, geom=[face for face in bm.faces if face.material_index in skipped], context="FACES")
             bm.to_mesh(mesh.data)
             bm.free()
-    for material in sorted(
-        {material for mesh in meshes for material in mesh.data.materials if material},
-        key=lambda material: material.name,
-    ):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from eye_shader import add_eye_highlight, gltf_eye_fallback
+    from model_material_inventory import material_input_inventory, pack_material_inventory
+
+    empty_effect_slots = empty_effect_material_slots(args.model, args.converted, args.source_json)
+    blender_materials = []
+    built_materials = set()
+
+    def setup_blender_material(material, users):
+        if material.name in built_materials:
+            return
+        built_materials.add(material.name)
         path = (
             material_metadata_path(material.name, args.model, metadata_files)
             if rig_mode
@@ -932,12 +1399,31 @@ def main():
         metadata = material_metadata(json.loads(path.read_text(encoding="utf-8-sig"))) if path else {}
         if args.extra_model and effect_space_only(metadata):
             material.use_nodes = True
-            continue
+            return
         reference, texture = inherited_base_color_texture(metadata, path, args.converted, args.source_json)
-        if texture is None:
+        empty_effect = (
+            not args.extra_model and material.name == 'None' and users
+            and all(index in empty_effect_slots
+                    for mesh in users for index, slot in enumerate(mesh.data.materials) if slot == material)
+        )
+        textureless_effect = (
+            is_effect_model(Path(args.model), args.converted)
+            and path is not None
+            and reference is None
+        )
+        if texture is None and not empty_effect and not textureless_effect:
             report["missing_textures"].append({"material": material.name, "reference": reference})
         material.use_nodes = True
         shader = material.node_tree.nodes.get("Principled BSDF")
+        if metadata:
+            # Preserve authored inputs without claiming unverified shader semantics.
+            inventory = material_input_inventory(metadata, args.converted)
+            material['solaris_material_inputs'] = json.dumps(inventory, separators=(',', ':'))
+            if args.blender_source:
+                blender_materials.append((material, inventory))
+        eye_payload = eye_material_payload(metadata, args.converted)
+        if eye_payload:
+            material['solaris_eye_material'] = json.dumps(eye_payload, separators=(',', ':'))
         shader.inputs["Roughness"].default_value = 0.85
         shader.inputs["Metallic"].default_value = 0
         if texture:
@@ -971,7 +1457,11 @@ def main():
                 material.node_tree.links.new(mapping.outputs['Vector'], node.inputs['Vector'])
             material.node_tree.links.new(node.outputs["Color"], shader.inputs["Base Color"])
             blend_mode = metadata.get("BlendMode")
-            if base_color_alpha_is_opacity(path.stem if path else material.name, metadata):
+            source = args.source_json / path.relative_to(args.converted) if path else None
+            rows = json.loads(source.read_text(encoding="utf-8-sig")) if source and source.is_file() else []
+            if material_parent(rows) in EFFECT_PREVIEW_PARENTS:
+                effect_preview_opacity(material, node, shader, metadata)
+            elif base_color_alpha_is_opacity(path.stem if path else material.name, metadata):
                 alpha = node.outputs["Alpha"]
                 if blend_mode == 1:
                     clip = material.node_tree.nodes.new("ShaderNodeMath")
@@ -981,12 +1471,42 @@ def main():
                     alpha = clip.outputs[0]
                 material.node_tree.links.new(alpha, shader.inputs["Alpha"])
                 material.surface_render_method = "DITHERED"
+        uv_names = {mesh.data.uv_layers[0].name for mesh in users if mesh.data.uv_layers}
+        eye_uv = (next(iter(uv_names)) if users and len(uv_names) == 1
+                  and all(mesh.data.uv_layers for mesh in users) else None)
+        add_eye_highlight(material, shader, metadata, args.converted, uv_name=eye_uv)
+        fur_uv = fur_uv_name(users)
+        color_names = {mesh.data.color_attributes[0].name for mesh in users if mesh.data.color_attributes}
+        vertex_color = (next(iter(color_names)) if users and len(color_names) == 1
+                        and all(mesh.data.color_attributes for mesh in users) else None)
+        fur_preview = add_fur_preview(material, shader, metadata, args.converted,
+                                      fur_uv=fur_uv, vertex_color=vertex_color)
         report["materials"].append(
-            {"name": material.name, "texture": str(texture) if texture else None}
+            {"name": material.name, "texture": str(texture) if texture else None,
+             "fur_preview": fur_preview, "authored_empty_effect_slot": bool(empty_effect)}
         )
+
+    for material in sorted(
+        {material for mesh in meshes for material in mesh.data.materials if material},
+        key=lambda material: material.name,
+    ):
+        users = [mesh for mesh in meshes if material in mesh.data.materials[:]]
+        setup_blender_material(material, users)
     if rig_mode and report["missing_textures"]:
         (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         raise ValueError(f"Missing required base-color textures: {report['missing_textures']}")
+
+    if not batch_mode:
+        mask_models = [args.model, *args.extra_model]
+        if args.attachments:
+            mask_models.extend(Path(item['file']) for item in json.loads(
+                args.attachments.read_text(encoding='utf-8')))
+        stencil = stencil_mask_payload(mask_models, args.converted, args.source_json)
+        if stencil:
+            # Exported as glTF extras, so the masks survive both publication and
+            # Blender re-import without being mistaken for the hair's own UVs.
+            armature['solaris_hair_stencil'] = json.dumps(stencil, separators=(',', ':'))
+            report['stencil_masks'] = len(stencil['masks'])
 
     actions = []
 
@@ -1094,7 +1614,7 @@ def main():
             export_anim_single_armature=True,
             export_extras=True,
         )
-        with indexed_gltf_references(GlTF2Exporter, (Accessor, BufferView)):
+        with gltf_fur_fallback(meshes), gltf_eye_fallback(meshes), indexed_gltf_references(GlTF2Exporter, (Accessor, BufferView)):
             if "FINISHED" not in bpy.ops.export_scene.gltf(**options):
                 raise RuntimeError(f"GLB export failed: {name}")
 
@@ -1104,6 +1624,7 @@ def main():
             (action for action in actions if action.name == "Stand1"), actions[0]
         )
         bpy.context.scene.frame_set(30)
+        add_blender_studio(meshes)
         bpy.context.preferences.filepaths.save_version = 0
         bpy.ops.wm.save_as_mainfile(
             filepath=str((args.output / "character.blend").resolve()), compress=True
@@ -1111,7 +1632,9 @@ def main():
     export_glb("character.glb", animations=not rig_mode)
     if rig_mode:
         report["rig_only"] = args.rig_only
-        report["textures"] = len({row["texture"] for row in report["materials"]})
+        # glTF may bake additional textures when a fur mask and diffuse use
+        # different images; require at least all distinct source color textures.
+        report["textures"] = len({row["texture"] for row in report["materials"] if row["texture"]})
         report["morph_targets"] = sum(
             len(mesh.data.shape_keys.key_blocks) - 1 for mesh in meshes if mesh.data.shape_keys
         )
@@ -1131,6 +1654,74 @@ def main():
         )
         report["preview_texture_size"] = args.preview_texture_size
         report["preview_glb_bytes"] = report["preview_glb"]["bytes"]
+        if args.material_variants:
+            variants_spec = json.loads(args.material_variants.read_text(encoding="utf-8"))
+            if len(variants_spec) > 1:
+                from model_gltf_variants import merge_glb_material_variants
+
+                base_slots = {mesh: list(mesh.data.materials) for mesh in meshes}
+                base_label = variants_spec[0].get("label") or "Form 1"
+                package = args.model.relative_to(args.converted / "Client/Content").with_suffix("").as_posix()
+                variant_char_glbs = []
+                variant_prev_glbs = []
+                try:
+                    for idx, variant in enumerate(variants_spec[1:], start=1):
+                        for mesh, slots in base_slots.items():
+                            for s_idx, mat in enumerate(slots):
+                                mesh.data.materials[s_idx] = mat
+                        overrides_for_pkg = (variant.get("overrides") or {}).get(package, {})
+                        for slot, material_path in overrides_for_pkg.items():
+                            target_meshes = [
+                                obj for obj in meshes if int(slot) < len(obj.data.materials)
+                            ]
+                            if not target_meshes:
+                                continue
+                            name = material_path.rsplit("/", 1)[-1]
+                            mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+                            mat.use_fake_user = True
+                            for obj in target_meshes:
+                                obj.data.materials[int(slot)] = mat
+                            setup_blender_material(mat, target_meshes)
+                        if report["missing_textures"]:
+                            (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                            raise ValueError(f"Missing required base-color textures: {report['missing_textures']}")
+                        var_label = variant.get("label") or f"Form {idx + 1}"
+                        var_char = f".variant-{idx}-character.glb"
+                        var_prev = f".variant-{idx}-preview.glb"
+                        export_glb(var_char, animations=False)
+                        with preview_meshes(meshes), preview_materials(meshes, args.preview_texture_size):
+                            export_glb(var_prev, morph=False)
+                        variant_char_glbs.append((var_label, args.output / var_char))
+                        variant_prev_glbs.append((var_label, args.output / var_prev))
+                finally:
+                    for mesh, slots in base_slots.items():
+                        for s_idx, mat in enumerate(slots):
+                            mesh.data.materials[s_idx] = mat
+
+                if variant_char_glbs:
+                    merge_glb_material_variants(args.output / "character.glb", variant_char_glbs, base_name=base_label)
+                    merge_glb_material_variants(args.output / "preview.glb", variant_prev_glbs, base_name=base_label)
+                    report["character_glb"]["bytes"] = (args.output / "character.glb").stat().st_size
+                    report["preview_glb"]["bytes"] = (args.output / "preview.glb").stat().st_size
+                    report["preview_glb_bytes"] = report["preview_glb"]["bytes"]
+                    report["material_variants"] = [
+                        {"id": v.get("id"), "label": v.get("label")} for v in variants_spec
+                    ]
+                    armature["solaris_material_variants"] = json.dumps(
+                        report["material_variants"], separators=(",", ":")
+                    )
+                for _, tmp_path in (*variant_char_glbs, *variant_prev_glbs):
+                    tmp_path.unlink(missing_ok=True)
+        if args.blender_source:
+            # Save only after GLB exports: the editable studio is not game geometry.
+            for material, inventory in blender_materials:
+                pack_material_inventory(material, inventory, args.converted)
+            add_blender_studio(meshes)
+            bpy.context.preferences.filepaths.save_version = 0
+            bpy.ops.wm.save_as_mainfile(
+                filepath=str((args.output / "blender-source.blend").resolve()), compress=True
+            )
+            report["blender_armature"] = armature.name
     if args.with_animations:
         try:
             import_actions()

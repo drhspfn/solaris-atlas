@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from wuwa_story_worker.model_material_dependencies import missing_material_resources
 
 
@@ -7,6 +9,106 @@ def put(root, package, value):
     path = root / "Client/Content" / (package + ".json")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value))
+
+
+def test_fur_fetches_only_authored_texture_when_enabled(tmp_path):
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'Material': {'ObjectPath': '/Game/MI_Fur.MI_Fur'}}]}])
+    put(cooked, 'MI_Fur', [])
+    metadata = {'Switches': {'UseFurry': True}, 'Textures': {
+        'Fur_Tex': {'ObjectPath': '/Game/Shared/Fur.Fur'}}}
+    put(converted, 'MI_Fur', metadata)
+    assert missing_material_resources(cooked, converted, ['Body']) == ['Shared/Fur']
+    texture = converted / 'Client/Content/Shared/Fur.png'
+    texture.parent.mkdir(parents=True)
+    texture.touch()
+    assert missing_material_resources(cooked, converted, ['Body']) == []
+    texture.unlink()
+    metadata['Switches']['UseFurry'] = False
+    put(converted, 'MI_Fur', metadata)
+    assert missing_material_resources(cooked, converted, ['Body']) == []
+
+
+def test_fur_parallax_follows_master_defaults_and_preserves_instance_override(tmp_path):
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'Material': {'ObjectPath': '/Game/Fur.Fur'}}]}])
+    put(cooked, 'Fur', [{'Type': 'MaterialInstanceConstant', 'Properties': {
+        'Parent': {'ObjectName': "Material'Master'", 'ObjectPath': '/Game/Master.Master'}}}])
+    put(converted, 'Fur', {'Switches': {'UseFurry': True, 'UseFurryParallax': True},
+                           'Textures': {'HeightMap': {'ObjectPath': '/Game/CustomHeight'}}})
+    assert missing_material_resources(cooked, converted, ['Body']) == ['CustomHeight', 'Master']
+    put(cooked, 'Master', [{'Type': 'Material', 'CachedExpressionData': {'Parameters': {
+        'RuntimeEntries[2]': {'ParameterInfos': [{'Name': 'HeightMap'}, {'Name': 'FlowmapMap'}]},
+        'TextureValues': [{'ObjectPath': '/Game/DefaultHeight'}, {'ObjectPath': '/Game/Flow'}]}}}])
+    assert missing_material_resources(cooked, converted, ['Body']) == ['CustomHeight', 'Flow']
+    for name in ['CustomHeight', 'Flow']:
+        path = converted / 'Client/Content' / (name + '.png')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    assert missing_material_resources(cooked, converted, ['Body']) == []
+
+
+def test_fur_region_mask_fetches_inherited_id_and_type_textures(tmp_path):
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'Material': {'ObjectPath': '/Game/Fur.Fur'}}]}])
+    put(cooked, 'Fur', [{'Type': 'MaterialInstanceConstant', 'Properties': {
+        'Parent': {'ObjectName': "MaterialInstanceConstant'Cloth'", 'ObjectPath': '/Game/Cloth.Cloth'}}}])
+    put(converted, 'Fur', {'Switches': {'UseFurry': True, 'FurMaskUseID': True}, 'Textures': {}})
+    put(cooked, 'Cloth', [{'Type': 'MaterialInstanceConstant', 'Properties': {
+        'TextureParameterValues': [
+            {'ParameterInfo': {'Name': 'RegionIDTex'}, 'ParameterValue': {'ObjectPath': '/Game/Region'}},
+            {'ParameterInfo': {'Name': 'TypeMask'}, 'ParameterValue': {'ObjectPath': '/Game/Type'}},
+        ]}}])
+    put(converted, 'Cloth', {'Textures': {}})
+    assert missing_material_resources(cooked, converted, ['Body']) == ['Region', 'Type']
+    for name in ['Region', 'Type']:
+        path = converted / 'Client/Content' / (name + '.png')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    assert missing_material_resources(cooked, converted, ['Body']) == []
+
+
+def test_fur_parallax_inputs_are_fetched_for_cloth_without_fur_cards(tmp_path):
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'Material': {'ObjectPath': '/Game/Cloth.Cloth'}}]}])
+    put(cooked, 'Cloth', [{'Type': 'MaterialInstanceConstant', 'Properties': {}}])
+    put(converted, 'Cloth', {'Switches': {'UseFurryParallax': True, 'FurMaskUseID': True},
+                             'Textures': {
+                                 name: {'ObjectPath': '/Game/' + name}
+                                 for name in ('HeightMap', 'FlowmapMap', 'RegionIDTex', 'TypeMask')
+                             }})
+    assert missing_material_resources(cooked, converted, ['Body']) == [
+        'FlowmapMap', 'HeightMap', 'RegionIDTex', 'TypeMask']
+    put(converted, 'Cloth', {'Switches': {'FurMaskUseID': True}, 'Textures': {
+        'RegionIDTex': {'ObjectPath': '/Game/RegionIDTex'}}})
+    assert missing_material_resources(cooked, converted, ['Body']) == []
+
+
+def test_parallax_fetches_type_mask_without_region_id_mode(tmp_path):
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'Material': {'ObjectPath': '/Game/Tail.Tail'}}]}])
+    put(cooked, 'Tail', [{'Type': 'MaterialInstanceConstant', 'Properties': {}}])
+    put(converted, 'Tail', {'Switches': {'UseFurry': True, 'UseFurryParallax': True,
+                                       'UseTypeMask': True, 'UseNormalMap': True},
+                            'Textures': {'TypeMask': {'ObjectPath': '/Game/TailID'},
+                                         'Normal_Roughness_Metallic': {'ObjectPath': '/Game/TailNormal'}}})
+    assert missing_material_resources(cooked, converted, ['Body']) == ['TailID', 'TailNormal']
+
+
+def test_eye_shader_fetches_authored_highlights_and_sdf(tmp_path):
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'Material': {'ObjectPath': '/Game/Eye.Eye'}}]}])
+    put(cooked, 'Eye', [{'Type': 'MaterialInstanceConstant', 'Properties': {}}])
+    put(converted, 'Eye', {'Switches': {'UseHeightLightShape': True, 'UseEyeSDF': True},
+                           'Textures': {name: {'ObjectPath': '/Game/' + name}
+                                        for name in ('HeightLightMap', 'EM', 'MaskTex')}})
+    assert missing_material_resources(cooked, converted, ['Body']) == ['EM', 'HeightLightMap', 'MaskTex']
 
 
 def test_follows_exact_shared_parent_and_texture_without_scanning_other_materials(tmp_path):
@@ -54,3 +156,81 @@ def test_raw_material_color_parameter_uses_the_exact_reference(tmp_path):
         'TextureParameterValues': [{'ParameterInfo': {'Name': 'MainTex'},
                                     'ParameterValue': {'ObjectPath': '/Game/ExactColor.0'}}]}}]
     assert base_color_texture(raw, tmp_path) == ('/Game/ExactColor.0', None)
+
+
+def test_authored_stencil_mask_is_fetched_and_preserved_with_its_slot(tmp_path):
+    import base64
+    from wuwa_story_worker.model_bundle import stencil_mask_payload
+
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    model = converted / 'Client/Content/Body.uemodel'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'MaterialSlotName': 'HET_Face', 'Material': {'ObjectPath': '/Game/FaceMask.0'}}]}])
+    put(cooked, 'FaceMask', [{'Type': 'MaterialInstanceConstant', 'Properties': {
+        'Parent': {'ObjectPath': '/Game/Aki/Render/Shaders/Character/M_WriteStencil'}}}])
+    put(converted, 'FaceMask', {'Textures': {'Mask': {'ObjectPath': '/Game/Textures/Face.0'}}})
+    assert missing_material_resources(cooked, converted, ['Body']) == ['Textures/Face']
+    image = converted / 'Client/Content/Textures/Face.png'
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b'mask image')
+    assert missing_material_resources(cooked, converted, ['Body']) == []
+    payload = stencil_mask_payload([model], converted, cooked)
+    assert payload['format'] == 'solaris-hair-stencil-v1'
+    assert payload['masks'][0]['slot'] == 'HET_Face'
+    assert payload['masks'][0]['texture'] == '/Game/Textures/Face.0'
+    assert base64.b64decode(payload['masks'][0]['data_base64']) == b'mask image'
+
+
+def test_stencil_reader_must_be_an_authored_hair_pass_with_an_authored_parent(tmp_path):
+    from wuwa_story_worker.model_bundle import stencil_mask_payload
+
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    model = converted / 'Client/Content/Body.uemodel'
+    put(cooked, 'Body', [{'Type': 'SkeletalMesh', 'SkeletalMaterials': [
+        {'MaterialSlotName': 'MI_Bangs', 'Material': {'ObjectPath': '/Game/Bangs.0'}},
+        {'MaterialSlotName': 'HETA_Bangs', 'Material': {'ObjectPath': '/Game/HairPass.0'}},
+        {'MaterialSlotName': 'HET_Face', 'Material': {'ObjectPath': '/Game/Face_HET.0'}},
+        {'MaterialSlotName': 'MI_Face', 'Material': {'ObjectPath': '/Game/Face.0'}}]}])
+    put(cooked, 'HairPass', [{'Type': 'MaterialInstanceConstant', 'Properties': {
+        'Parent': {'ObjectPath': '/Game/Bangs.0'}}}])
+    put(converted, 'HairPass', {'Switches': {'IsHairHET': True}})
+    put(cooked, 'Face_HET', [{'Type': 'MaterialInstanceConstant', 'Properties': {
+        'Parent': {'ObjectPath': '/Game/Aki/Render/Shaders/Character/M_WriteStencil'}}}])
+    put(converted, 'Face_HET', {'Textures': {'Mask': {'ObjectPath': '/Game/FaceMask.0'}}})
+    image = converted / 'Client/Content/FaceMask.png'
+    image.write_bytes(b'mask')
+    result = stencil_mask_payload([model], converted, cooked)
+    assert result['readers'][0]['material'] == '/Game/Bangs'
+    assert result['masks'][0]['target_material'] == '/Game/Face'
+
+
+@pytest.mark.parametrize('family', ['WaterMatCap', 'ParallaxSubUV', 'Refraction', 'AdvancedEffect'])
+def test_effect_base_dependency_requires_known_parent(tmp_path, family):
+    from wuwa_story_worker.model_bundle import inherited_base_color_texture
+
+    cooked, converted = tmp_path / 'cooked', tmp_path / 'converted'
+    name = {'Refraction': 'MI_Refraction_CM', 'AdvancedEffect': 'MI_AdvancedEffect_CM'}.get(
+        family, f'MI_AdvancedEffect_{family}_CM')
+    parent = f'Aki/Render/MaterialInstance/Effect/CharacterMesh/{name}'
+    put(cooked, 'Body', [{'Type': 'StaticMesh', 'StaticMaterials': [
+        {'MaterialInterface': {'ObjectPath': '/Game/Fan.0'}}]}])
+    put(cooked, 'Fan', [{'Type': 'MaterialInstanceConstant', 'Properties': {'Parent': {
+        'ObjectName': "MaterialInstanceConstant'Parent'", 'ObjectPath': f'/Game/{parent}.0'}}}])
+    put(converted, 'Fan', {'Textures': {'Base': {'ObjectPath': '/Game/Effect/Exact.0'}}})
+    put(cooked, parent, [])
+    put(converted, parent, {})
+    assert missing_material_resources(cooked, converted, ['Body']) == ['Effect/Exact']
+    put(cooked, 'Fan', [{'Type': 'MaterialInstanceConstant', 'Properties': {'Parent': {
+        'ObjectName': "MaterialInstanceConstant'Parent'", 'ObjectPath': f'Client/Content/{parent}.0'}}}])
+    assert missing_material_resources(cooked, converted, ['Body']) == ['Effect/Exact']
+    texture = converted / 'Client/Content/Effect/Exact.png'
+    texture.parent.mkdir(parents=True)
+    texture.touch()
+    assert missing_material_resources(cooked, converted, ['Body']) == []
+    path = converted / 'Client/Content/Fan.json'
+    assert inherited_base_color_texture(json.loads(path.read_text()), path, converted, cooked) == (
+        '/Game/Effect/Exact.0', texture)
+    put(cooked, 'Fan', [{'Type': 'MaterialInstanceConstant', 'Properties': {'Parent': {
+        'ObjectName': "Material'Other'", 'ObjectPath': '/Game/Other.0'}}}])
+    texture.unlink()
+    assert missing_material_resources(cooked, converted, ['Body']) == []
