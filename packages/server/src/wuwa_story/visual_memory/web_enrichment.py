@@ -422,6 +422,63 @@ async def load_enrichment_targets(
     return targets
 
 
+PRIMARY_DB_ARTWORK_KINDS = ("RolePortrait", "FormationRoleCard", "RoleHeadIconLarge")
+FALLBACK_DB_ARTWORK_KINDS = ("RoleHeadIconBig", "Card", "RoleHeadIconCircle", "RoleHeadIcon")
+_PRIMARY_PATH_PATTERNS = ("%/PixActivity/%", "%/IconRolePile/%", "%/IconRoleHead256/%")
+_FALLBACK_PATH_PATTERNS = (
+    "%/IconRoleHead150/%",
+    "%/IconRoleHead175/%",
+    "%/IconRoleHeadCircle256/%",
+    "%/IconRoleHead80/%",
+)
+
+
+def select_preferred_artwork_paths(payload: dict[str, Any] | None) -> list[str]:
+    """Return up to 3 personal artwork engine_paths prioritizing Portrait, Card, and HeadIconLarge."""
+    if not isinstance(payload, dict):
+        return []
+    by_kind: dict[str, str] = {}
+    for section in ("archive", "profile"):
+        section_data = payload.get(section)
+        if not isinstance(section_data, dict):
+            continue
+        artwork = section_data.get("artwork")
+        if not isinstance(artwork, list):
+            continue
+        for item in artwork:
+            if not isinstance(item, dict) or item.get("scope") == "shared_resource":
+                continue
+            kind = item.get("kind")
+            path = item.get("engine_path")
+            if isinstance(kind, str) and isinstance(path, str) and path and kind not in by_kind:
+                by_kind[kind] = path
+
+    selected: list[str] = []
+    seen_paths: set[str] = set()
+    for kind in PRIMARY_DB_ARTWORK_KINDS:
+        path = by_kind.get(kind)
+        if path and path not in seen_paths:
+            selected.append(path)
+            seen_paths.add(path)
+    if len(selected) < len(PRIMARY_DB_ARTWORK_KINDS):
+        for kind in FALLBACK_DB_ARTWORK_KINDS:
+            path = by_kind.get(kind)
+            if path and path not in seen_paths:
+                selected.append(path)
+                seen_paths.add(path)
+                if len(selected) >= len(PRIMARY_DB_ARTWORK_KINDS):
+                    break
+    return selected
+
+
+async def _resolve_actor_id(session) -> int | None:
+    from sqlalchemy import select
+
+    from wuwa_story.db.models.auth import User
+
+    return await session.scalar(select(User.id).order_by(User.role.desc(), User.id.asc()).limit(1))
+
+
 async def ensure_visual_identity_for_node(session, node_id: int, name: str) -> int:
     """Return the existing `VisualIdentity.id` for `node_id`, or create one if missing."""
     from sqlalchemy import select
@@ -451,32 +508,68 @@ async def import_existing_db_images_for_target(
     service,
     target: EnrichmentTarget,
     identity_id: int,
+    *,
+    approve: bool = True,
+    actor_id: int | None = None,
 ) -> int:
-    """Import all existing stored images for `target.entity_id` into `VisualReference`."""
-    from sqlalchemy import select
+    """Import only RolePortrait, FormationRoleCard, RoleHeadIconLarge (or adjacent personal fallbacks)."""
+    from sqlalchemy import or_, select
 
+    from wuwa_story.db.models.browse import CharacterRead
+    from wuwa_story.db.models.i18n import Locale
     from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference
 
     if target.entity_id is None:
         return 0
-    rows = (
-        await session.execute(
-            select(FileReference, FileObject, FileLocation)
-            .join(FileObject, FileObject.id == FileReference.file_id)
-            .join(FileLocation, FileLocation.file_id == FileObject.id)
-            .where(
-                FileReference.owner_node_id == target.entity_id,
-                FileObject.mime_type.in_(
-                    ("image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp")
-                ),
-                FileLocation.available.is_(True),
-                FileLocation.backend == storage.backend,
-                FileLocation.bucket == storage.bucket,
-            )
-            .order_by(FileReference.id.desc(), FileLocation.is_primary.desc(), FileLocation.id)
-        )
-    ).all()
 
+    locale_id = await session.scalar(select(Locale.id).where(Locale.code == "en"))
+    payload = None
+    if locale_id is not None:
+        payload = await session.scalar(
+            select(CharacterRead.payload)
+            .where(
+                CharacterRead.entity_id == target.entity_id,
+                CharacterRead.locale_id == locale_id,
+            )
+            .order_by(CharacterRead.updated_at.desc(), CharacterRead.snapshot_key.desc())
+            .limit(1)
+        )
+    preferred_paths = select_preferred_artwork_paths(payload)
+
+    base_stmt = (
+        select(FileReference, FileObject, FileLocation)
+        .join(FileObject, FileObject.id == FileReference.file_id)
+        .join(FileLocation, FileLocation.file_id == FileObject.id)
+        .where(
+            FileReference.owner_node_id == target.entity_id,
+            FileObject.mime_type.in_(
+                ("image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp")
+            ),
+            FileLocation.available.is_(True),
+            FileLocation.backend == storage.backend,
+            FileLocation.bucket == storage.bucket,
+        )
+        .order_by(FileReference.id.desc(), FileLocation.is_primary.desc(), FileLocation.id)
+    )
+    if preferred_paths:
+        rows = (await session.execute(base_stmt.where(FileReference.source_path.in_(preferred_paths)))).all()
+    else:
+        rows = (
+            await session.execute(
+                base_stmt.where(or_(*(FileReference.source_path.like(p) for p in _PRIMARY_PATH_PATTERNS)))
+            )
+        ).all()
+        if not rows:
+            rows = (
+                await session.execute(
+                    base_stmt.where(
+                        or_(*(FileReference.source_path.like(p) for p in _FALLBACK_PATH_PATTERNS))
+                    )
+                )
+            ).all()
+
+    ref_status = "approved" if approve and actor_id is not None else "pending"
+    ref_actor = actor_id if ref_status == "approved" else None
     imported = 0
     seen_files: set[int] = set()
     for reference, file, location in rows:
@@ -496,7 +589,8 @@ async def import_existing_db_images_for_target(
             bytes(data),
             links=[{"identity_id": identity_id, "appearance_id": None}],
             source_type="game_asset",
-            status="pending",
+            status=ref_status,
+            actor_id=ref_actor,
             source_group=f"db:{target.kind}:{target.entity_id}",
             rights=f"Game asset; node_id={target.entity_id}; file_reference_id={reference.id}; file_id={file.id}",
         )
@@ -513,16 +607,29 @@ async def persist_candidates_to_visual_memory(
     *,
     storage=None,
     include_db_images: bool = False,
+    approve: bool = True,
+    actor_id: int | None = None,
 ) -> dict[str, int]:
-    """Ensure a `VisualIdentity` exists and save web (and optional DB) images as pending references."""
+    """Ensure a `VisualIdentity` exists and save DB + web images (approved for search by default)."""
     if target.entity_id is None:
         raise ValueError("Cannot persist offline target without entity_id to database")
+
+    if approve and actor_id is None:
+        actor_id = await _resolve_actor_id(session)
+    ref_status = "approved" if approve and actor_id is not None else "pending"
+    ref_actor = actor_id if ref_status == "approved" else None
 
     identity_id = await ensure_visual_identity_for_node(session, target.entity_id, target.name)
     db_imported = 0
     if include_db_images and storage is not None:
         db_imported = await import_existing_db_images_for_target(
-            session, storage, service, target, identity_id
+            session,
+            storage,
+            service,
+            target,
+            identity_id,
+            approve=approve,
+            actor_id=actor_id,
         )
 
     added = 0
@@ -535,7 +642,8 @@ async def persist_candidates_to_visual_memory(
             source_url=cand.url,
             source_page=cand.page_url,
             source_group=f"ddg:{target.kind}:{target.entity_id}",
-            status="pending",
+            status=ref_status,
+            actor_id=ref_actor,
             rights=f"Web search candidate; query={cand.query}; title={(cand.title or '')[:200]}",
         )
         if res.get("duplicate"):

@@ -39,8 +39,10 @@ def test_build_search_queries_for_playable_and_npc():
 
 def test_validate_image_bytes_checks_dimensions_and_format():
     assert validate_image_bytes(b"not-an-image") is None
-    assert validate_image_bytes(_png_bytes(100, 100), min_width=200, min_height=200) is None
-    res = validate_image_bytes(_png_bytes(320, 240), min_width=200, min_height=200)
+    assert validate_image_bytes(_png_bytes(
+        100, 100), min_width=200, min_height=200) is None
+    res = validate_image_bytes(_png_bytes(
+        320, 240), min_width=200, min_height=200)
     assert res is not None
     width, height, digest = res
     assert (width, height) == (320, 240)
@@ -54,13 +56,20 @@ async def test_collect_web_images_deduplicates_filters_and_exports(tmp_path: Pat
 
     async def fake_search(query: str, *, max_results: int = 5):
         return [
-            {"image": "https://example.com/yhan_1.png", "url": "https://example.com/p1", "title": "Yhan"},
-            {"image": "https://example.com/yhan_dup_bytes.png", "url": "https://example.com/p2", "title": "Yhan dup"},
-            {"image": "https://example.com/characters/encore/splash.png", "url": "https://example.com/p3", "title": "Encore"},
-            {"image": "https://images-ng.pixai.art/images/orig/yhan.png", "url": "https://pixai.art/model/1", "title": "Yhan AI LoRA"},
-            {"image": "https://example.com/unrelated_guide.png", "url": "https://example.com/guide", "title": "Echo Guide"},
-            {"image": "https://example.com/yhan_2.png", "url": "https://example.com/p4", "title": "Yhan 2"},
-            {"image": "https://example.com/broken.png", "url": "https://example.com/p5", "title": "Broken"},
+            {"image": "https://example.com/yhan_1.png",
+                "url": "https://example.com/p1", "title": "Yhan"},
+            {"image": "https://example.com/yhan_dup_bytes.png",
+                "url": "https://example.com/p2", "title": "Yhan dup"},
+            {"image": "https://example.com/characters/encore/splash.png",
+                "url": "https://example.com/p3", "title": "Encore"},
+            {"image": "https://images-ng.pixai.art/images/orig/yhan.png",
+                "url": "https://pixai.art/model/1", "title": "Yhan AI LoRA"},
+            {"image": "https://example.com/unrelated_guide.png",
+                "url": "https://example.com/guide", "title": "Echo Guide"},
+            {"image": "https://example.com/yhan_2.png",
+                "url": "https://example.com/p4", "title": "Yhan 2"},
+            {"image": "https://example.com/broken.png",
+                "url": "https://example.com/p5", "title": "Broken"},
         ][:max_results]
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -70,7 +79,8 @@ async def test_collect_web_images_deduplicates_filters_and_exports(tmp_path: Pat
             return httpx.Response(200, content=png_b, headers={"content-type": "image/png"})
         return httpx.Response(403, content=b"forbidden", headers={"content-type": "text/html"})
 
-    target = EnrichmentTarget(entity_id=1001, name="Yhan", kind="npc", role_type="4")
+    target = EnrichmentTarget(
+        entity_id=1001, name="Yhan", kind="npc", role_type="4")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         collected = await collect_web_images_for_target(
             target,
@@ -84,9 +94,12 @@ async def test_collect_web_images_deduplicates_filters_and_exports(tmp_path: Pat
         )
 
     assert len(collected["candidates"]) == 2
-    assert collected["skipped"] == 5  # wrong char + pixai + missing name + dup sha256 + 403
-    out_dir = export_candidates_to_dir(tmp_path, target, collected["candidates"])
-    manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
+    # wrong char + pixai + missing name + dup sha256 + 403
+    assert collected["skipped"] == 5
+    out_dir = export_candidates_to_dir(
+        tmp_path, target, collected["candidates"])
+    manifest = json.loads(
+        (out_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["count"] == 2
     assert (out_dir / manifest["images"][0]["file"]).is_file()
 
@@ -113,7 +126,8 @@ async def test_persist_candidates_creates_identity_and_adds_pending_references()
             return None
 
     session = FakeSession()
-    service = SimpleNamespace(add_reference=AsyncMock(return_value={"id": 1, "duplicate": False}))
+    service = SimpleNamespace(add_reference=AsyncMock(
+        return_value={"id": 1, "duplicate": False}))
     target = EnrichmentTarget(entity_id=1001, name="Yhan", kind="npc")
 
     from wuwa_story.visual_memory.web_enrichment import WebImageCandidate
@@ -129,14 +143,59 @@ async def test_persist_candidates_creates_identity_and_adds_pending_references()
         sha256="abc" * 21 + "a",
         content=png_a,
     )
-    stats = await persist_candidates_to_visual_memory(session, service, target, [cand])
+    stats = await persist_candidates_to_visual_memory(
+        session, service, target, [cand], approve=True, actor_id=1
+    )
     assert stats["identity_id"] == 500
     assert stats["web_added"] == 1
     service.add_reference.assert_awaited_once()
     call_kwargs = service.add_reference.call_args.kwargs
     assert call_kwargs["source_type"] == "web_search"
-    assert call_kwargs["status"] == "pending"
-    assert call_kwargs["links"] == [{"identity_id": 500, "appearance_id": None}]
+    assert call_kwargs["status"] == "approved"
+    assert call_kwargs["actor_id"] == 1
+    assert call_kwargs["links"] == [
+        {"identity_id": 500, "appearance_id": None}]
+
+
+def test_select_preferred_artwork_paths_prioritizes_portrait_card_head_large():
+    from wuwa_story.visual_memory.web_enrichment import select_preferred_artwork_paths
+
+    payload = {
+        "archive": {
+            "artwork": [
+                {"kind": "RoleHeadIcon", "scope": "character",
+                    "engine_path": "/head80"},
+                {"kind": "RoleHeadIconBig", "scope": "character",
+                    "engine_path": "/head150"},
+                {"kind": "RoleHeadIconLarge", "scope": "character",
+                    "engine_path": "/head256"},
+                {"kind": "FormationRoleCard",
+                    "scope": "character", "engine_path": "/card"},
+                {"kind": "RolePortrait", "scope": "character",
+                    "engine_path": "/portrait"},
+                {"kind": "RoleStand", "scope": "shared_resource",
+                    "engine_path": "/shared"},
+            ]
+        }
+    }
+    assert select_preferred_artwork_paths(
+        payload) == ["/portrait", "/card", "/head256"]
+
+    partial = {
+        "archive": {
+            "artwork": [
+                {"kind": "RolePortrait", "scope": "shared_resource",
+                    "engine_path": "/shared"},
+                {"kind": "FormationRoleCard",
+                    "scope": "character", "engine_path": "/card"},
+                {"kind": "RoleHeadIconBig", "scope": "character",
+                    "engine_path": "/head150"},
+                {"kind": "Card", "scope": "character", "engine_path": "/head175"},
+            ]
+        }
+    }
+    assert select_preferred_artwork_paths(
+        partial) == ["/card", "/head150", "/head175"]
 
 
 @pytest.mark.asyncio
@@ -155,7 +214,8 @@ async def test_load_enrichment_targets_compiles_character_read_query():
         async def execute(self, stmt):
             executed_sql.append(str(stmt))
             return SimpleNamespace(
-                all=lambda: [SimpleNamespace(entity_id=15496, title="Yangyang", role_type="1")]
+                all=lambda: [SimpleNamespace(
+                    entity_id=15496, title="Yangyang", role_type="1")]
             )
 
     targets = await load_enrichment_targets(FakeSession(), kind="playable")

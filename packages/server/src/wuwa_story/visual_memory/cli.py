@@ -247,6 +247,7 @@ async def _run_enrich_web(args):
                         collected["candidates"],
                         storage=storage,
                         include_db_images=args.include_db_images,
+                        approve=not args.pending,
                     )
                     await session.commit()
                 items.append(
@@ -297,6 +298,7 @@ def main():
     enrich_parser.add_argument("--delay", type=float, default=0.4, help="Delay between DDG queries (s)")
     enrich_parser.add_argument("--export-dir", help="Optional local folder to save images + manifest.json")
     enrich_parser.add_argument("--include-db-images", action="store_true", help="Also import DB images")
+    enrich_parser.add_argument("--pending", action="store_true", help="Store as pending instead of approved")
     enrich_parser.add_argument("--dry-run", action="store_true", help="Do not write to DB")
     enrich_parser.add_argument("--offline", action="store_true", help="Run without DB using --names")
     args = parser.parse_args()
