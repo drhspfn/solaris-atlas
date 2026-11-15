@@ -113,6 +113,7 @@ def pipeline(monkeypatch):
     run = SimpleNamespace(
         id=1,
         target_node_id=5,
+        prompt_version="cutscene-visual-v4",
         tokens_input=0,
         tokens_output=0,
         cost=0,
@@ -381,3 +382,198 @@ async def test_analysis_requests_and_publishes_ranked_candidates(monkeypatch, pi
     assert db.reports[0].metadata_json["title"] == "A Last Stand"
     assert db.reports[0].metadata_json["title_language"] == "en"
     assert publish.await_args.args[-1][0]["preview_candidates"][0]["score"] == 95
+
+
+@pytest.mark.asyncio
+async def test_video_analysis_agent_v5_resamples_searches_and_publishes_knowledge(monkeypatch, tmp_path):
+    from wuwa_story_worker import video_analysis_agent as vaa
+
+    class Storage:
+        async def get(self, key):
+            yield b"movie"
+
+    class DB:
+        def __init__(self):
+            self.calls = {}
+            self.reports = []
+            self.commit = AsyncMock()
+            self.execute = AsyncMock()
+
+        async def scalar(self, query):
+            if "file_location" in str(query):
+                return SimpleNamespace(object_key="movie")
+            return None
+
+        def add(self, value):
+            self.reports.append(value)
+
+    db = DB()
+    calls_state = {"n": 0}
+
+    async def reserve(_, settings, *, step, **kwargs):
+        call = SimpleNamespace(id=step + 1, status="reserved")
+        db.calls[step] = call
+        return call
+
+    async def settle(_, call_id, settings, source, output, raw):
+        return True
+
+    async def fake_extract_frame(self, time_sec, frame_idx):
+        out = self.root / f"frame_{frame_idx:04d}.jpg"
+        out.write_bytes(jpeg())
+        self.frame_paths[frame_idx] = out
+        self.frame_times[frame_idx] = time_sec
+        return out.read_bytes()
+
+    register = AsyncMock(
+        side_effect=[
+            SimpleNamespace(id=101),
+            SimpleNamespace(id=102),
+            SimpleNamespace(id=201),
+            SimpleNamespace(id=301),
+        ]
+    )
+    reference = AsyncMock(return_value=SimpleNamespace(id=301, metadata_json={}))
+    variant = AsyncMock()
+    publish_knowledge = AsyncMock()
+
+    monkeypatch.setattr(vision, "S3Storage", lambda _: Storage())
+    monkeypatch.setattr(vision, "get_settings", lambda: SimpleNamespace(s3_bucket="test"))
+    monkeypatch.setattr(vision.shutil, "which", lambda _: "ffmpeg")
+    monkeypatch.setattr(vision, "video_duration", lambda *_: (60.0, False))
+    monkeypatch.setattr(vaa.VideoWorkspace, "extract_frame", fake_extract_frame)
+    monkeypatch.setattr(vaa, "reserve", reserve)
+    monkeypatch.setattr(vaa, "settle", settle)
+    monkeypatch.setattr(vaa, "run_tool", AsyncMock())
+    monkeypatch.setattr(vaa, "_publish_cutscene_knowledge", publish_knowledge)
+    monkeypatch.setattr(
+        vaa,
+        "FileRegistrationService",
+        lambda _: SimpleNamespace(register_file=register, register_reference=reference, register_variant=variant),
+    )
+    monkeypatch.setattr(
+        vaa,
+        "LoreSearchService",
+        lambda _: SimpleNamespace(
+            hybrid_search=AsyncMock(
+                return_value=[
+                    SimpleNamespace(
+                        source_type="quest_lore",
+                        source_id=88,
+                        quest_id=12,
+                        chunk_type="summary",
+                        content="Somnoire is a dream realm linked to Ebony Gatekeepers.",
+                    )
+                ]
+            )
+        ),
+    )
+
+    async def fake_post(_provider, _route, _payload):
+        calls_state["n"] += 1
+        if calls_state["n"] == 1:
+            return {
+                "status": "completed",
+                "usage": {"input_tokens": 120, "output_tokens": 40},
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call_1",
+                        "name": "resample_video_window",
+                        "arguments": json.dumps(
+                            {
+                                "start_seconds": 10.0,
+                                "end_seconds": 14.0,
+                                "interval_seconds": 2.0,
+                                "reason": "Inspect figure passing across frame",
+                            }
+                        ),
+                    },
+                    {
+                        "type": "function_call",
+                        "call_id": "call_2",
+                        "name": "search_lore",
+                        "arguments": json.dumps({"query": "Somnoire"}),
+                    },
+                ],
+            }
+        return {
+            "status": "completed",
+            "usage": {"input_tokens": 140, "output_tokens": 60},
+            "output": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_3",
+                    "name": "finish_video_analysis",
+                    "arguments": json.dumps(
+                        {
+                            "title": "Echoes of Somnoire",
+                            "summary": "Rover enters the Somnoire dream gate with Shorekeeper.",
+                            "events": [
+                                {
+                                    "time": 12.0,
+                                    "global_frame": 9,
+                                    "observation": "Shorekeeper steps into the Somnoire portal.",
+                                    "confidence": "observed",
+                                    "actors": ["Shorekeeper"],
+                                    "lore_topics": ["Somnoire"],
+                                }
+                            ],
+                            "story_events": [
+                                {
+                                    "title": "Opening the Somnoire Gate",
+                                    "summary": "Shorekeeper opens the Somnoire gate to investigate the dream anomaly.",
+                                    "time_start": 10.0,
+                                    "time_end": 14.0,
+                                    "participants": ["Shorekeeper"],
+                                    "topics": ["Somnoire"],
+                                }
+                            ],
+                            "entity_links": [
+                                {
+                                    "target_name": "Shorekeeper",
+                                    "kind": "character",
+                                    "relation": "appears_in",
+                                    "confidence": "observed",
+                                    "evidence": "Observed at A02 #009",
+                                }
+                            ],
+                            "lore_topics": ["Somnoire"],
+                            "preview_candidates": [{"time": 12.0, "global_frame": 9, "score": 92}],
+                        }
+                    ),
+                }
+            ],
+        }
+
+    monkeypatch.setattr(vaa.Provider, "post", fake_post)
+    run = SimpleNamespace(
+        id=9,
+        target_node_id=55,
+        prompt_version="video-analysis-v5",
+        input_hash=b"\xaa\xbb",
+        tokens_input=0,
+        tokens_output=0,
+        cost=0,
+        raw_output={},
+        metadata_json={
+            "file_id": 2,
+            "source_sha256": hashlib.sha256(b"movie").hexdigest(),
+            "asset_version": "3.7.0",
+            "text_context": {"rows": [], "dialogue_lines": [{"speaker": "Shorekeeper", "text": "The Somnoire awaits."}]},
+        },
+    )
+    settings = AgentSettings(_env_file=None, provider="responses", vision_max_frames=6)
+    await vision.analyze_run(db, run, settings)
+
+    assert run.status == "completed"
+    report = reference.return_value.metadata_json
+    assert report["protocol"] == "video-analysis-v5"
+    assert report["title"] == "Echoes of Somnoire"
+    assert report["lore_topics"] == ["Somnoire"]
+    assert len(report["atlases"]) == 2
+    assert report["atlases"][0]["atlas_index"] == 1
+    assert report["atlases"][1]["atlas_index"] == 2
+    assert report["atlases"][1]["frame_number_start"] == report["atlases"][0]["frame_number_end"] + 1
+    assert run.raw_output["atlases"] == 2
+    publish_knowledge.assert_awaited_once()

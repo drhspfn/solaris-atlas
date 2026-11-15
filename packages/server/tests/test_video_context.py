@@ -43,7 +43,9 @@ def session_with(rows=(), release=True):
     )
     result = Mock()
     result.mappings.return_value = rows
-    db.execute = AsyncMock(return_value=result)
+    empty_result = Mock()
+    empty_result.mappings.return_value = []
+    db.execute = AsyncMock(side_effect=[result, empty_result])
     return db
 
 
@@ -103,11 +105,13 @@ async def test_missing_exact_source_does_not_fall_back_to_caller_or_another_buil
 
 
 async def test_explicit_truncation_bounds_rows_and_serialized_characters():
-    rows = [{"node_id": i, "text": '"\\\n' * 100} for i in range(MAX_CONTEXT_ROWS + 1)]
+    rows = [{"node_id": i, "text": '"\\\n' * 100}
+            for i in range(MAX_CONTEXT_ROWS + 1)]
     snapshot = await video_context_snapshot(session_with(rows), reference())
     assert snapshot["truncated"] is True
     assert 0 < len(snapshot["rows"]) <= MAX_CONTEXT_ROWS
-    assert len(json.dumps(snapshot, ensure_ascii=False, sort_keys=True)) <= MAX_CONTEXT_CHARACTERS
+    assert len(json.dumps(snapshot, ensure_ascii=False,
+               sort_keys=True)) <= MAX_CONTEXT_CHARACTERS
     assert snapshot["rows"] == rows[: len(snapshot["rows"])]
 
 
@@ -120,7 +124,8 @@ async def test_plain_text_is_only_allowed_for_generic_videos_and_is_bounded():
     assert snapshot["context"].startswith("English context")
     assert snapshot["truncated"] is True
     assert snapshot["release"] is None
-    assert len(json.dumps(snapshot, ensure_ascii=False, sort_keys=True)) <= MAX_CONTEXT_CHARACTERS
+    assert len(json.dumps(snapshot, ensure_ascii=False,
+               sort_keys=True)) <= MAX_CONTEXT_CHARACTERS
     db.assert_not_called()
     assert (await video_context_snapshot(db, ref))["basis"] == "unavailable"
 
@@ -180,21 +185,26 @@ def test_compiled_query_executes_with_exact_asset_release_and_resolved_english_o
         assert len(rows()) == 1
         # Pin each hop independently; an edge observed only in another build is excluded.
         for edge_id in (1, 2, 3):
-            db.execute("UPDATE graph.edge SET layer='semantic' WHERE id IN (7,8)")
-            db.execute("UPDATE graph.edge_evidence SET release_id=3 WHERE edge_id=?", (edge_id,))
+            db.execute(
+                "UPDATE graph.edge SET layer='semantic' WHERE id IN (7,8)")
+            db.execute(
+                "UPDATE graph.edge_evidence SET release_id=3 WHERE edge_id=?", (edge_id,))
             assert rows() == []
-            db.execute("UPDATE graph.edge_evidence SET release_id=2 WHERE edge_id=?", (edge_id,))
+            db.execute(
+                "UPDATE graph.edge_evidence SET release_id=2 WHERE edge_id=?", (edge_id,))
         for table, column, predicate in (
             ("graph.node_revision", "release_id", "node_id=50"),
             ("graph.node_revision", "release_id", "node_id=30"),
             ("graph.node_revision", "release_id", "node_id=20"),
             ("graph.node_revision", "release_id", "node_id=10"),
             ("raw.source_record", "release_id", "id=8"),
-            ("i18n.localization_value", "release_id", "key_id=1 AND locale_id=1 AND release_id=2"),
+            ("i18n.localization_value", "release_id",
+             "key_id=1 AND locale_id=1 AND release_id=2"),
         ):
             db.execute("SAVEPOINT excluded")
             db.execute(f"UPDATE {table} SET {column}=3 WHERE {predicate}")
             assert rows() == []
             db.execute("ROLLBACK TO excluded")
-        db.execute("UPDATE i18n.localization_value SET status='resolved_empty' WHERE content_id=1")
+        db.execute(
+            "UPDATE i18n.localization_value SET status='resolved_empty' WHERE content_id=1")
         assert rows() == []

@@ -7,7 +7,7 @@ import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import select, text
+from sqlalchemy import delete, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,12 +15,163 @@ from wuwa_story.agents.contracts import CutsceneDescription
 from wuwa_story.agents.settings import AgentSettings
 from wuwa_story.agents.video_context import video_context_snapshot
 from wuwa_story.db.models.agents import AgentCall
+from wuwa_story.db.models.graph import Edge
+from wuwa_story.db.models.lore import LoreChunk
 from wuwa_story.db.models.ops import ProcessingRun, Processor
-from wuwa_story.db.models.storage import FileObject, FileReference
+from wuwa_story.db.models.storage import FileLocation, FileObject, FileReference, FileVariant
 from wuwa_story.story.cutscene_publications import publication_order, publication_types
 
-VISION_VERSION = "cutscene-visual-v4"
+VISION_VERSION = "video-analysis-v5"
 MIN_VISUAL_SECONDS = 5.0
+
+
+class VideoEntityLink(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    target_node_id: int | None = Field(default=None, gt=0)
+    canonical_key: str | None = Field(default=None, min_length=1, max_length=256)
+    target_name: str = Field(min_length=1, max_length=200)
+    kind: Literal["character", "item", "location", "event", "quest", "lore_topic"]
+    relation: Literal["appears_in", "uses_item", "located_at", "related_to_event", "mentions"]
+    confidence: Literal["observed", "dialogue_sourced", "inferred"]
+    evidence: str = Field(min_length=1, max_length=500)
+
+
+class VideoStoryEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    title: str = Field(min_length=1, max_length=160)
+    summary: str = Field(min_length=1, max_length=600)
+    time_start: float = Field(ge=0)
+    time_end: float = Field(ge=0)
+    participants: list[str] = Field(default_factory=list, max_length=24)
+    topics: list[str] = Field(default_factory=list, max_length=24)
+
+
+class VideoAnalysisEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    time: float = Field(ge=0)
+    global_frame: int | None = Field(default=None, ge=1)
+    observation: str = Field(min_length=1, max_length=600)
+    confidence: Literal["observed", "uncertain"]
+    actors: list[str] = Field(default_factory=list, max_length=16)
+    items: list[str] = Field(default_factory=list, max_length=16)
+    lore_topics: list[str] = Field(default_factory=list, max_length=16)
+
+
+class VideoPreviewCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    time: float = Field(ge=0)
+    global_frame: int | None = Field(default=None, ge=1)
+    score: int = Field(ge=0, le=100)
+
+
+class VideoAnalysisResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str | None = Field(default=None, min_length=1, max_length=120, pattern=r"^[^\r\n]+$")
+    summary: str = Field(min_length=1, max_length=1600)
+    events: list[VideoAnalysisEvent] = Field(min_length=1, max_length=200)
+    story_events: list[VideoStoryEvent] = Field(default_factory=list, max_length=32)
+    entity_links: list[VideoEntityLink] = Field(default_factory=list, max_length=64)
+    lore_topics: list[str] = Field(default_factory=list, max_length=32)
+    preview_candidates: list[VideoPreviewCandidate] = Field(default_factory=list, max_length=5)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def readable_video_title(cls, value):
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        if (not value or len(value) > 120 or "\n" in value or "\r" in value
+                or re.fullmatch(r"(?:cutscene\s*:?[ ]*)?[A-Za-z_]*\d[A-Za-z0-9_-]*", value, re.I)):
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def ordered_events(self):
+        if [event.time for event in self.events] != sorted(event.time for event in self.events):
+            raise ValueError("Video analysis events must be chronological")
+        return self
+
+
+def dynamic_sampling_plan(duration: float, settings: AgentSettings) -> dict[str, float | int]:
+    """Compute overview interval and zoom-window limits dynamically from video duration."""
+    if not math.isfinite(duration) or duration <= 0:
+        raise ValueError("Duration must be finite and positive")
+    base_interval = float(settings.vision_frame_interval)
+    if duration <= 45.0:
+        overview_interval = min(base_interval, 2.0)
+    elif duration <= 300.0:
+        overview_interval = base_interval
+    else:
+        overview_interval = max(base_interval, round(duration / max(24, settings.vision_max_frames // 2), 2))
+    max_overview_frames = min(settings.vision_max_frames, max(12, math.ceil(duration / overview_interval) + 1))
+    soft_zoom_frames = min(48, max(16, round(min(duration, 120.0) * 0.4)))
+    return {
+        "overview_interval": overview_interval,
+        "max_overview_frames": max_overview_frames,
+        "soft_zoom_frames": soft_zoom_frames,
+        "hard_zoom_frames": 96,
+    }
+
+
+def validate_resample_request(
+    duration: float,
+    start_seconds: float,
+    end_seconds: float,
+    interval_seconds: float,
+    *,
+    soft_max_frames: int,
+    hard_max_frames: int = 96,
+    bypass_limit: bool = False,
+    bypass_justification: str | None = None,
+) -> dict[str, object]:
+    """Validate a zoom-window resample request; guide the agent with alternatives when over soft limit."""
+    if not (math.isfinite(start_seconds) and math.isfinite(end_seconds) and math.isfinite(interval_seconds)):
+        raise ValueError("Sampling bounds and interval must be finite")
+    if start_seconds < 0 or end_seconds <= start_seconds or start_seconds >= duration:
+        raise ValueError(f"Invalid time window [{start_seconds}, {end_seconds}] for duration {duration:.2f}s")
+    if not 0.1 <= interval_seconds <= 30.0:
+        raise ValueError("interval_seconds must be between 0.1 and 30.0")
+    clamped_end = min(duration, end_seconds)
+    window = clamped_end - start_seconds
+    count = max(2, math.ceil(window / interval_seconds) + 1)
+    if count > hard_max_frames:
+        suggested_interval = round(window / max(1, hard_max_frames - 1), 2)
+        suggested_window = round(interval_seconds * (soft_max_frames - 1), 1)
+        return {
+            "ok": False,
+            "error": "hard_limit_exceeded",
+            "requested_frames": count,
+            "hard_max_frames": hard_max_frames,
+            "message": f"Requested {count} frames exceeds hard cap ({hard_max_frames}).",
+            "alternatives": [
+                f"Inspect a shorter {suggested_window}s slice at {interval_seconds}s interval first.",
+                f"Or keep [{start_seconds:.1f}s, {clamped_end:.1f}s] with interval_seconds >= {suggested_interval}s.",
+            ],
+        }
+    if count > soft_max_frames and (not bypass_limit or not (bypass_justification or "").strip()):
+        suggested_interval = round(window / max(1, soft_max_frames - 1), 2)
+        suggested_window = round(interval_seconds * (soft_max_frames - 1), 1)
+        return {
+            "ok": False,
+            "error": "soft_limit_exceeded",
+            "requested_frames": count,
+            "soft_max_frames": soft_max_frames,
+            "message": (
+                f"Window [{start_seconds:.1f}s, {clamped_end:.1f}s] at {interval_seconds}s needs "
+                f"{count} frames (soft limit {soft_max_frames})."
+            ),
+            "alternatives": [
+                f"Narrow the window to ~{suggested_window}s (e.g. {start_seconds:.1f}s..{min(clamped_end, start_seconds + suggested_window):.1f}s) first, then decide if more is needed.",
+                f"Or use interval_seconds >= {suggested_interval}s for a quick pass.",
+                "Or re-call with bypass_limit=true and a concrete bypass_justification explaining why this full dense window is required.",
+            ],
+        }
+    last_offset = max(0.0, clamped_end - min(0.05, window / 2))
+    times = [
+        round(start_seconds + (last_offset - start_seconds) * idx / (count - 1), 4)
+        for idx in range(count)
+    ]
+    return {"ok": True, "times": times, "bypassed": bool(count > soft_max_frames and bypass_limit)}
 
 
 class VisualEvent(BaseModel):
@@ -260,3 +411,143 @@ async def resume_visual_job(session: AsyncSession, run_id: int, output_tokens: i
     run.metadata_json = {**run.metadata_json, "settings": config, "last_dispatched": 0}
     run.status, run.error = "pending", None
     return run
+
+
+_ANALYSIS_REF_TYPES = (
+    "cutscene_visual_description",
+    "cutscene_visual_title",
+    "cutscene_preview",
+    "video_frame_atlas",
+)
+
+
+async def wipe_cutscene_analysis(
+    session: AsyncSession,
+    storage: object,
+    asset_id: int,
+    game_version: str | None = None,
+) -> dict[str, int | str | None]:
+    """Delete cutscene analysis reports, runs, generated edges/lore, previews, atlases, and orphan S3 objects."""
+    locked = await session.scalar(
+        text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": -asset_id - 1_000_000}
+    )
+    if not locked:
+        raise ValueError("Cutscene analysis cleanup is already in progress")
+
+    proc_id = await session.scalar(select(Processor.id).where(Processor.key == "cutscene_vision"))
+    run_ids: list[int] = []
+    if proc_id is not None:
+        run_stmt = select(ProcessingRun.id).where(
+            ProcessingRun.processor_id == proc_id,
+            ProcessingRun.target_node_id == asset_id,
+        )
+        if game_version:
+            run_stmt = run_stmt.where(
+                ProcessingRun.metadata_json["asset_version"].astext == game_version
+            )
+        run_ids = list(await session.scalars(run_stmt))
+
+    ref_stmt = select(FileReference).where(
+        FileReference.owner_node_id == asset_id,
+        FileReference.reference_type.in_(_ANALYSIS_REF_TYPES),
+    )
+    if game_version:
+        source_video_ids = list(
+            await session.scalars(
+                select(FileReference.file_id).where(
+                    FileReference.owner_node_id == asset_id,
+                    FileReference.reference_type.in_(publication_types("cutscene_video")),
+                    FileReference.metadata_json["asset_version"].astext == game_version,
+                )
+            )
+        )
+        version_clauses = [
+            FileReference.metadata_json["asset_version"].astext == game_version,
+        ]
+        if source_video_ids:
+            version_clauses.append(
+                FileReference.metadata_json["source_file_id"].as_integer().in_(source_video_ids)
+            )
+        ref_stmt = ref_stmt.where(or_(*version_clauses))
+    refs = list(await session.scalars(ref_stmt))
+    ref_ids = [r.id for r in refs]
+    candidate_file_ids = {r.file_id for r in refs}
+
+    if run_ids:
+        variant_file_ids = list(
+            await session.scalars(
+                select(FileVariant.child_file_id).where(
+                    FileVariant.processor_run_id.in_(run_ids),
+                    FileVariant.variant_type.in_(("cutscene_preview", "video_frame_atlas")),
+                )
+            )
+        )
+        candidate_file_ids.update(variant_file_ids)
+        await session.execute(
+            delete(FileVariant).where(
+                FileVariant.processor_run_id.in_(run_ids),
+                FileVariant.variant_type.in_(("cutscene_preview", "video_frame_atlas")),
+            )
+        )
+        await session.execute(delete(AgentCall).where(AgentCall.run_id.in_(run_ids)))
+        await session.execute(delete(ProcessingRun).where(ProcessingRun.id.in_(run_ids)))
+
+    if candidate_file_ids:
+        await session.execute(
+            delete(FileVariant).where(
+                FileVariant.child_file_id.in_(candidate_file_ids),
+                FileVariant.variant_type.in_(("cutscene_preview", "video_frame_atlas")),
+            )
+        )
+    if ref_ids:
+        await session.execute(delete(FileReference).where(FileReference.id.in_(ref_ids)))
+
+    edge_res = await session.execute(
+        delete(Edge).where(Edge.from_node_id == asset_id, Edge.layer == "agent")
+    )
+    lore_stmt = delete(LoreChunk).where(
+        LoreChunk.source_type == "cutscene_vision",
+        LoreChunk.source_id == str(asset_id),
+    )
+    if game_version:
+        lore_stmt = lore_stmt.where(LoreChunk.game_version == str(game_version)[:20])
+    lore_res = await session.execute(lore_stmt)
+    await session.flush()
+
+    deleted_files = 0
+    deleted_s3 = 0
+    for fid in sorted(candidate_file_ids):
+        still_referenced = await session.scalar(
+            select(FileReference.id).where(FileReference.file_id == fid).limit(1)
+        )
+        still_variant = await session.scalar(
+            select(FileVariant.child_file_id)
+            .where(or_(FileVariant.child_file_id == fid, FileVariant.parent_file_id == fid))
+            .limit(1)
+        )
+        if still_referenced is not None or still_variant is not None:
+            continue
+        locations = list(
+            await session.scalars(select(FileLocation).where(FileLocation.file_id == fid))
+        )
+        for loc in locations:
+            if loc.backend == "s3" and getattr(storage, "delete", None):
+                try:
+                    await storage.delete(loc.object_key)
+                    deleted_s3 += 1
+                except Exception:
+                    pass
+        await session.execute(delete(FileLocation).where(FileLocation.file_id == fid))
+        await session.execute(delete(FileObject).where(FileObject.id == fid))
+        deleted_files += 1
+
+    return {
+        "asset_node_id": asset_id,
+        "game_version": game_version,
+        "deleted_runs": len(run_ids),
+        "deleted_references": len(ref_ids),
+        "deleted_files": deleted_files,
+        "deleted_s3_objects": deleted_s3,
+        "deleted_edges": int(edge_res.rowcount or 0),
+        "deleted_lore_chunks": int(lore_res.rowcount or 0),
+    }
