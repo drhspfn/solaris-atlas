@@ -7,6 +7,7 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -86,6 +88,7 @@ class VideoWorkspace:
     async def extract_frame(self, timestamp: float, global_index: int) -> bytes:
         out = self.root / f"frame_{global_index:04d}.jpg"
         out.unlink(missing_ok=True)
+        safe_ts = min(max(0.0, float(timestamp)), max(0.0, self.duration - 0.1)) if self.duration > 0 else max(0.0, float(timestamp))
         await run_tool(
             [
                 str(self.ffmpeg),
@@ -93,7 +96,7 @@ class VideoWorkspace:
                 "error",
                 "-y",
                 "-ss",
-                str(timestamp),
+                str(safe_ts),
                 "-i",
                 str(self.movie),
                 "-frames:v",
@@ -542,6 +545,34 @@ async def _publish_cutscene_knowledge(
             )
 
 
+def _estimate_input_tokens(payload: Any, atlases: list[AtlasEntry]) -> int:
+    """Estimate text tokens without counting raw base64 image bytes, plus per-atlas image tokens."""
+    def _strip_images(obj: Any) -> Any:
+        if isinstance(obj, str):
+            if obj.startswith("data:image/"):
+                return "<image>"
+            return obj
+        if isinstance(obj, list):
+            return [_strip_images(item) for item in obj]
+        if isinstance(obj, dict):
+            if obj.get("type") == "image" and "source" in obj:
+                return {"type": "image", "source": "<image>"}
+            return {k: _strip_images(v) for k, v in obj.items()}
+        return obj
+
+    text_len = len(json.dumps(_strip_images(payload), ensure_ascii=False, default=str))
+    image_tokens = sum(
+        max(
+            2048,
+            math.ceil(int(entry.layout.get("width", 1280)) / 16)
+            * math.ceil(int(entry.layout.get("height", 720)) / 16)
+            * 2,
+        )
+        for entry in atlases
+    )
+    return max(4096, text_len // 4 + image_tokens + 1024)
+
+
 async def run_video_analysis_agent(
     db: AsyncSession,
     run: ProcessingRun,
@@ -589,7 +620,7 @@ async def run_video_analysis_agent(
         for turn_index in range(MAX_AGENT_TURNS):
             step = step_offset + turn_index
             route, payload = provider.request(history, tools)
-            input_bound = max(4096, len(json.dumps(payload, default=str)) // 4)
+            input_bound = _estimate_input_tokens(payload, workspace.atlases)
             call = await reserve(
                 db,
                 settings,
@@ -612,8 +643,17 @@ async def run_video_analysis_agent(
                 raise
             source_tokens, output_tokens = token_usage(raw, settings.provider)
             await settle(db, call.id, settings, source_tokens, output_tokens, raw)
+            if hasattr(db, "refresh"):
+                await db.refresh(call)
             run.tokens_input = (run.tokens_input or 0) + source_tokens
             run.tokens_output = (run.tokens_output or 0) + output_tokens
+            run.cost = float(getattr(run, "cost", 0) or 0) + float(getattr(call, "cost_usd", 0) or 0)
+            run.raw_output = {
+                **(run.raw_output or {}),
+                "mode": "video_agent",
+                "step": step + 1,
+                "atlases": len(workspace.atlases),
+            }
             await db.commit()
 
             turn = provider.parse(raw)
@@ -627,7 +667,16 @@ async def run_video_analysis_agent(
             new_images: list[tuple[AtlasEntry, dict[str, Any]]] = []
             for tc in turn.calls:
                 if tc.name == "finish_video_analysis":
-                    final_result = VideoAnalysisResult.model_validate(tc.arguments)
+                    try:
+                        final_result = VideoAnalysisResult.model_validate(tc.arguments)
+                    except ValidationError as exc:
+                        history.append(
+                            provider.tool_result(
+                                tc,
+                                {"error": f"Invalid finish_video_analysis arguments: {exc}"},
+                            )
+                        )
+                        continue
                     history.append(provider.tool_result(tc, {"status": "accepted"}))
                     break
                 tool_out, created = await _execute_video_tool(db, workspace, tc)
@@ -682,30 +731,38 @@ async def run_video_analysis_agent(
 
     preview_ids = []
     preview_path = workspace.root / "preview.jpg"
+    max_preview_time = max(0.0, workspace.duration - 0.1)
     for candidate in sorted(final_result.preview_candidates, key=lambda c: c.score, reverse=True)[:5]:
         preview_path.unlink(missing_ok=True)
-        await run_tool(
-            [
-                str(workspace.ffmpeg),
-                "-v",
-                "error",
-                "-y",
-                "-ss",
-                str(candidate.time),
-                "-i",
-                str(workspace.movie),
-                "-frames:v",
-                "1",
-                "-vf",
-                "scale='min(1280,iw)':-2,format=yuvj420p",
-                "-threads",
-                "1",
-                "-q:v",
-                "2",
-                str(preview_path),
-            ],
-            60,
-        )
+        seek_time = min(max(0.0, float(candidate.time)), max_preview_time)
+        try:
+            await run_tool(
+                [
+                    str(workspace.ffmpeg),
+                    "-v",
+                    "error",
+                    "-y",
+                    "-ss",
+                    str(seek_time),
+                    "-i",
+                    str(workspace.movie),
+                    "-frames:v",
+                    "1",
+                    "-vf",
+                    "scale='min(1280,iw)':-2,format=yuvj420p",
+                    "-threads",
+                    "1",
+                    "-q:v",
+                    "2",
+                    str(preview_path),
+                ],
+                60,
+            )
+            if not preview_path.is_file() or preview_path.stat().st_size == 0:
+                continue
+        except Exception as exc:
+            logger.warning("video_agent.preview_extract_failed time=%s error_type=%s", seek_time, type(exc).__name__)
+            continue
         file = await service.register_file(db, preview_path, "image", mime_type="image/jpeg")
         await service.register_variant(db, run.metadata_json["file_id"], file.id, "cutscene_preview", run.id)
         source_path = f"video:{run.metadata_json['file_id']}:preview:run:{run.id}:time:{candidate.time}"
@@ -755,7 +812,7 @@ async def run_video_analysis_agent(
     }
     report_path = workspace.root / "visual-report.json"
     report_path.write_text(json.dumps(report, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-    report_file = await service.register_file(db, report_path, "json", mime_type="application/json")
+    report_file = await service.register_file(db, report_path, "raw_json", mime_type="application/json")
     source_path = f"video:{run.metadata_json['file_id']}:visual:{run.input_hash.hex()}"
     report_ref = await db.scalar(
         select(FileReference).where(
@@ -775,7 +832,12 @@ async def run_video_analysis_agent(
     report_ref.metadata_json = report
 
     await _publish_cutscene_knowledge(db, run, final_result)
-    run.raw_output = {"report_reference_id": report_ref.id, "atlases": len(atlas_refs)}
+    run.raw_output = {
+        **(run.raw_output or {}),
+        "mode": "video_agent",
+        "report_reference_id": report_ref.id,
+        "atlases": len(atlas_refs),
+    }
     run.status = "completed"
     return final_result
 
