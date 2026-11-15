@@ -26,11 +26,9 @@ _CORE_KEY_INDEXES = (
 
 def upgrade() -> None:
     op.execute("SET LOCAL lock_timeout='5s'")
-    op.drop_constraint(
-        "uq_localization_release_key_locale",
-        "localization_value",
-        schema="i18n",
-        type_="unique",
+    op.execute(
+        "ALTER TABLE i18n.localization_value "
+        "DROP CONSTRAINT IF EXISTS uq_localization_release_key_locale"
     )
     op.create_index(
         "ix_node_revision_release_node",
@@ -59,10 +57,4 @@ def downgrade() -> None:
         table_name="node_revision",
         schema="graph",
         if_exists=True,
-    )
-    op.create_unique_constraint(
-        "uq_localization_release_key_locale",
-        "localization_value",
-        ["release_id", "key_id", "locale_id"],
-        schema="i18n",
     )
