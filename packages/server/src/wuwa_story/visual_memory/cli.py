@@ -248,6 +248,7 @@ async def _run_enrich_web(args):
                         storage=storage,
                         include_db_images=args.include_db_images,
                     )
+                    await session.commit()
                 items.append(
                     {
                         "entity_id": target.entity_id,
