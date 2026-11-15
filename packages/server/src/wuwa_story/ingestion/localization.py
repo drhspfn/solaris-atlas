@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any
 
-from sqlalchemy import BigInteger, SmallInteger, String, Text, bindparam, select, text
+from sqlalchemy import BigInteger, SmallInteger, String, Text, bindparam, select, text, tuple_
 from sqlalchemy.dialects.postgresql import ARRAY, BYTEA, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -182,25 +182,29 @@ async def import_localization_batch(
             source_file_ids = dict(source_file_rows.all())
             if cache is not None:
                 cache.source_file_ids = source_file_ids
+        id_to_path: dict[int, str] = {}
+        file_row_pairs: list[tuple[int, int]] = []
         for source_path, positions in source_refs.items():
             source_file_id = source_file_ids.get(source_path)
             if source_file_id is None:
                 continue
-            ordered_positions = sorted(positions)
-            for offset in range(0, len(ordered_positions), _SOURCE_POS_CHUNK):
-                position_chunk = ordered_positions[offset : offset + _SOURCE_POS_CHUNK]
-                source_rows = await session.execute(
-                    select(SourceRecord.row_index, SourceRecord.id).where(
-                        SourceRecord.release_id == release_id,
-                        SourceRecord.source_file_id == source_file_id,
-                        SourceRecord.row_index.in_(position_chunk),
-                    )
+            id_to_path[source_file_id] = source_path
+            for pos in positions:
+                file_row_pairs.append((source_file_id, pos))
+        file_row_pairs.sort()
+        for offset in range(0, len(file_row_pairs), _SOURCE_POS_CHUNK):
+            pair_chunk = file_row_pairs[offset : offset + _SOURCE_POS_CHUNK]
+            source_rows = await session.execute(
+                select(SourceRecord.source_file_id, SourceRecord.row_index, SourceRecord.id).where(
+                    SourceRecord.release_id == release_id,
+                    tuple_(SourceRecord.source_file_id, SourceRecord.row_index).in_(pair_chunk),
                 )
-                source_record_ids.update(
-                    ((source_path, position), record_id)
-                    for position, record_id in source_rows
-                    if position is not None
-                )
+            )
+            for sf_id, position, record_id in source_rows:
+                if position is not None:
+                    path = id_to_path.get(sf_id)
+                    if path is not None:
+                        source_record_ids[(path, position)] = record_id
     t_sources = monotonic() if debug else 0.0
     values: list[dict[str, Any]] = []
     for row, (normalized_key, _) in zip(batch, normalized_keys, strict=True):

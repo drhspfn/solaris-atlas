@@ -9,7 +9,6 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
-    UniqueConstraint,
     func,
     select,
 )
@@ -51,9 +50,6 @@ class LocalizationContent(Base):
 class LocalizationValue(Base):
     __tablename__ = "localization_value"
     __table_args__ = (
-        UniqueConstraint(
-            "release_id", "key_id", "locale_id", name="uq_localization_release_key_locale"
-        ),
         Index("ix_localization_value_key_locale_release", "key_id", "locale_id", "release_id"),
         {"schema": "i18n"},
     )
