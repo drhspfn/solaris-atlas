@@ -61,6 +61,9 @@ jobs:
   worker:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'Run checks'
     runs-on: ubuntu-latest
+    env:
+      WUWA_WORKER_WORKSPACE: ${{ runner.temp }}/wuwa-worker
+      WUWA_ASSET_WORKSPACE: ${{ runner.temp }}/wuwa-worker/client-assets
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
