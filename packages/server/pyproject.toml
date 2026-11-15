@@ -26,6 +26,7 @@ dependencies = [
   "mcp>=1.9,<2",
   "sqlglot>=27,<30",
   "starlette-admin>=0.17.1,<0.18",
+  "ddgs>=7,<10",
 ]
 
 [project.optional-dependencies]
