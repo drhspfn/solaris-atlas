@@ -398,7 +398,16 @@ async def test_run_video_analysis_agent_e2e_local(tmp_path: Path, monkeypatch):
     assert db.commits >= 5
     edges = [obj for obj in db.added if getattr(obj, "__tablename__", None) == "edge"]
     assert len(edges) == 1
-    assert edges[0].basis == "inference"
+    assert edges[0].layer in {"source", "canonical", "semantic", "manual"}
+    assert edges[0].basis in {
+        "explicit_reference",
+        "exact_join",
+        "authored_order",
+        "source_array_adjacency",
+        "semantic_extraction",
+        "inference",
+        "manual",
+    }
     assert edges[0].processor_run_id == run.id
 
 

@@ -530,7 +530,7 @@ async def _publish_cutscene_knowledge(
                 Edge.from_node_id == asset_node_id,
                 Edge.to_node_id == link.target_node_id,
                 Edge.relation_type_id == rel_id,
-                Edge.layer == "agent",
+                Edge.layer == "semantic",
             )
         )
         if existing_edge is None:
@@ -539,7 +539,7 @@ async def _publish_cutscene_knowledge(
                     from_node_id=asset_node_id,
                     to_node_id=link.target_node_id,
                     relation_type_id=rel_id,
-                    layer="agent",
+                    layer="semantic",
                     basis="inference",
                     confidence=0.85 if link.confidence == "observed" else 0.7,
                     processor_run_id=run.id,
