@@ -61,9 +61,6 @@ jobs:
   worker:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'Run checks'
     runs-on: ubuntu-latest
-    env:
-      WUWA_WORKER_WORKSPACE: ${{ runner.temp }}/wuwa-worker
-      WUWA_ASSET_WORKSPACE: ${{ runner.temp }}/wuwa-worker/client-assets
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -74,6 +71,9 @@ jobs:
         run: uv sync --frozen --group dev
       - name: Run worker tests
         working-directory: packages/worker
+        env:
+          WUWA_WORKER_WORKSPACE: ${{ runner.temp }}/wuwa-worker
+          WUWA_ASSET_WORKSPACE: ${{ runner.temp }}/wuwa-worker/client-assets
         run: uv run pytest -q
 
   server-and-visual-memory:
