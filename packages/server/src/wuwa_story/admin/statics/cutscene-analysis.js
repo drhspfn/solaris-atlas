@@ -218,7 +218,7 @@
  <div class="text-secondary">${Number(j.tokens_input || 0).toLocaleString()} / ${Number(j.tokens_output || 0).toLocaleString()}</div>
  </td>
  <td class="text-end">
- ${!["queued", "running", "completed"].includes(j.status) ? `<button type="button" class="btn btn-outline-primary ca-resume-btn" data-run-id="${j.id}" data-output-tokens="${j.output_tokens || ""}" ${visionEnabled ? "" : "disabled"}>Resume</button>` : '<span class="text-secondary small">—</span>'}
+ ${!["pending", "queued", "running", "completed"].includes(j.status) ? `<button type="button" class="btn btn-outline-primary ca-resume-btn" data-run-id="${j.id}" data-output-tokens="${j.output_tokens || ""}" ${visionEnabled ? "" : "disabled"}>Resume</button>` : '<span class="text-secondary small">—</span>'}
  </td>
  </tr>`,
           )
