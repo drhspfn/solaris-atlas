@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from time import monotonic
 from typing import Any
 
-from sqlalchemy import and_, delete, func, select, tuple_
+from sqlalchemy import and_, delete, exists, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -71,45 +71,60 @@ async def _source_rows(
     release_id: int,
     batch_size: int,
 ) -> AsyncIterator[dict[str, Any]]:
+    """Stream localized search documents using PK-ordered node batches + point PK lookups."""
     key_id = getattr(model, key_field)
-    statement = (
-        select(model.node_id, LocalizationValue.locale_id, LocalizationContent.content)
-        .join(LocalizationValue, LocalizationValue.key_id == key_id)
-        .join(LocalizationContent, LocalizationContent.id == LocalizationValue.content_id)
-        .where(
-            LocalizationValue.release_id == release_id,
-            LocalizationValue.status == "resolved_nonempty",
-            LocalizationContent.content != "",
-        )
-    )
-    last: tuple[int, int] | None = None
+    node_batch = max(1, min(batch_size, 500))
+    last = 0
     while True:
-        page = statement
-        if last is not None:
-            page = page.where(tuple_(model.node_id, LocalizationValue.locale_id) > last)
-        rows = (
+        rows = list(
             await session.execute(
-                page.order_by(model.node_id, LocalizationValue.locale_id).limit(batch_size)
+                select(model.node_id, key_id)
+                .where(model.node_id > last, key_id.is_not(None))
+                .order_by(model.node_id)
+                .limit(node_batch)
             )
-        ).all()
+        )
         if not rows:
             return
-        for node_id, locale_id, content in rows:
-            yield _document(node_id, locale_id, content, category)
-        last = (rows[-1][0], rows[-1][1])
+        keys = {key for _, key in rows}
+        values = await session.execute(
+            select(
+                LocalizationValue.key_id,
+                LocalizationValue.locale_id,
+                LocalizationContent.content,
+            )
+            .join(LocalizationContent, LocalizationContent.id == LocalizationValue.content_id)
+            .where(
+                LocalizationValue.release_id == release_id,
+                LocalizationValue.key_id.in_(keys),
+                LocalizationValue.status == "resolved_nonempty",
+                LocalizationContent.content != "",
+            )
+        )
+        by_key: dict[int, list[tuple[int, str]]] = {}
+        for key, locale_id, content in values:
+            by_key.setdefault(key, []).append((locale_id, content))
+        for node_id, key in rows:
+            for locale_id, content in by_key.get(key, ()):
+                yield _document(node_id, locale_id, content, category)
+        last = rows[-1][0]
 
 
 async def _historical_source_rows(session, model, key_field, category, release_id, releases, batch_size):
     """Index nodes in this snapshot with the newest available text per key and locale."""
     key_id = getattr(model, key_field)
     rank = {release.id: index for index, release in enumerate(sorted(releases, key=release_order))}
+    node_batch = max(1, min(batch_size, 500))
     last = 0
     while True:
         rows = list(await session.execute(
             select(model.node_id, key_id)
-            .join(NodeRevision, NodeRevision.node_id == model.node_id)
-            .where(NodeRevision.release_id == release_id, model.node_id > last, key_id.is_not(None))
-            .distinct().order_by(model.node_id).limit(batch_size)
+            .where(
+                model.node_id > last,
+                key_id.is_not(None),
+                exists().where(NodeRevision.node_id == model.node_id, NodeRevision.release_id == release_id),
+            )
+            .order_by(model.node_id).limit(node_batch)
         ))
         if not rows:
             return
@@ -158,11 +173,13 @@ async def _npc_display_rows(session, release_id, batch_size):
     last = 0
     while True:
         rows = list(await session.execute(select(Character.node_id, Character.metadata_json)
-            .join(NodeRevision, NodeRevision.node_id == Character.node_id)
-            .where(NodeRevision.release_id == release_id, Character.node_id > last,
-                   Character.name_key_id.is_(None),
-                   Character.metadata_json["role_type"].as_integer() == 6)
-            .distinct().order_by(Character.node_id).limit(batch_size)))
+            .where(
+                Character.node_id > last,
+                Character.name_key_id.is_(None),
+                Character.metadata_json["role_type"].as_integer() == 6,
+                exists().where(NodeRevision.node_id == Character.node_id, NodeRevision.release_id == release_id),
+            )
+            .order_by(Character.node_id).limit(batch_size)))
         if not rows:
             return
         candidates = [(node_id, *npc_display_keys((metadata or {}).get("npc") or {}))
@@ -263,8 +280,8 @@ async def build_lexical_index(
 
 async def _upsert_batch(session: AsyncSession, batch: list[dict[str, Any]], newer_release_ids=None) -> int:
     total_written = 0
-    for offset in range(0, len(batch), 3000):
-        chunk = batch[offset : offset + 3000]
+    for offset in range(0, len(batch), 4000):
+        chunk = batch[offset : offset + 4000]
         statement = insert(SearchDocument).values(chunk)
         protected = set(await session.scalars(select(NodeRevision.node_id).where(
             NodeRevision.node_id.in_([value["target_node_id"] for value in chunk]),

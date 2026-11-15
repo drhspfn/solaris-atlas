@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +20,14 @@ from wuwa_story.ingestion.localization import LocalizationImportCache, import_lo
 from wuwa_story.ingestion.raw import import_raw_snapshot
 from wuwa_story.ingestion.releases import register_release, start_import_run
 from wuwa_story.search.indexer import build_lexical_index
+
+
+async def _analyze_tables(session: AsyncSession, *tables: str) -> None:
+    bind = session.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+    for table in tables:
+        await session.execute(text(f"ANALYZE {table}"))
 
 
 class CompiledDatasetImporter(Importer):
@@ -59,16 +68,20 @@ class CompiledDatasetImporter(Importer):
             raw_seen, raw_created = await progress.phase(
                 "raw", lambda: import_raw_snapshot(source, session, release.id, batch_size)
             )
+            await _analyze_tables(session, "raw.source_file", "raw.source_record")
             seen += raw_seen
             created += raw_created
             localization_batch = max(batch_size, 2000)
-            canonical_batch = max(batch_size, 2000)
+            canonical_batch = max(batch_size, 4000)
             search_batch = max(batch_size, 4000)
             localization_seen, localization_created = await progress.phase(
                 "localization", lambda: self._import_localization(
                     source / "localization" / "all-locales.jsonl", session,
                     release.id, localization_batch,
                 )
+            )
+            await _analyze_tables(
+                session, "i18n.localization_key", "i18n.localization_content", "i18n.localization_value"
             )
             seen += localization_seen
             created += localization_created
@@ -99,7 +112,17 @@ class CompiledDatasetImporter(Importer):
                 return count, count
 
             entity_count, entity_created = await progress.phase("entities", entities)
+            await _analyze_tables(
+                session,
+                "graph.node",
+                "graph.node_revision",
+                "core.dialogue_line",
+                "core.player_choice",
+                "core.narration",
+                "core.phone_message",
+            )
             edge_count, edge_created = await progress.phase("edges", edges)
+            await _analyze_tables(session, "graph.edge", "graph.edge_evidence")
             await progress.phase("cutscene_story_order", lambda: rebuild_cutscene_order(session, release.id))
             # Search documents are a deterministic projection of imported localized text.
             # Build them as part of snapshot import so freshly imported releases are searchable.

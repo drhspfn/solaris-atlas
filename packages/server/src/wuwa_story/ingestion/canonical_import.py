@@ -121,23 +121,30 @@ async def _source_record_ids(
             )
         )
         file_ids = dict(file_rows.all())
-    positions_by_path: dict[str, list[int]] = {}
+    id_to_path: dict[int, str] = {}
+    file_row_pairs: list[tuple[int, int]] = []
     for path, row in pairs:
-        positions_by_path.setdefault(path, []).append(row)
-    resolved: dict[tuple[str, int], int] = {}
-    for path, positions in positions_by_path.items():
         file_id = file_ids.get(path)
         if file_id is None:
             continue
-        for offset in range(0, len(positions), 5000):
-            result = await session.execute(
-                select(SourceRecord.row_index, SourceRecord.id).where(
-                    SourceRecord.release_id == release_id,
-                    SourceRecord.source_file_id == file_id,
-                    SourceRecord.row_index.in_(positions[offset : offset + 5000]),
-                )
+        id_to_path[file_id] = path
+        file_row_pairs.append((file_id, row))
+    resolved: dict[tuple[str, int], int] = {}
+    if not file_row_pairs:
+        return resolved
+    file_row_pairs.sort()
+    for offset in range(0, len(file_row_pairs), 5000):
+        chunk = file_row_pairs[offset : offset + 5000]
+        result = await session.execute(
+            select(SourceRecord.source_file_id, SourceRecord.row_index, SourceRecord.id).where(
+                SourceRecord.release_id == release_id,
+                tuple_(SourceRecord.source_file_id, SourceRecord.row_index).in_(chunk),
             )
-            resolved.update(((path, row), record_id) for row, record_id in result)
+        )
+        for sf_id, row, record_id in result:
+            path = id_to_path.get(sf_id)
+            if path is not None and row is not None:
+                resolved[(path, row)] = record_id
     return resolved
 
 
@@ -342,7 +349,9 @@ async def import_canonical_entities(
                 (ref for ref in refs if ref is not None),
                 source_file_cache=source_file_cache,
             )
-            await _insert_typed_entities(session, kind, batch, node_map, source_ids, newer_release_ids)
+            await _insert_typed_entities(
+                session, kind, batch, node_map, source_ids, newer_release_ids, node_id_cache=node_id_cache
+            )
             await session.commit()
             typed_count += len(batch)
         if debug and typed_count:
@@ -396,6 +405,8 @@ async def _insert_typed_entities(
     node_map: dict[str, tuple[int, int]],
     source_ids: dict[tuple[str, int], int],
     newer_release_ids: list[int] | None = None,
+    *,
+    node_id_cache: dict[str, int] | None = None,
 ) -> None:
     keys = {_text_key(record, "TidName", "Name", "Title", "CaptionText") for record in records}
     keys |= {_nested_key(record, "localization") for record in records}
@@ -405,10 +416,12 @@ async def _insert_typed_entities(
     keys |= {_nested_key(record, "bgdescription") for record in records}
     keys |= {_nested_key(record, "title") for record in records}
     keys.discard(None)
-    key_rows = await session.execute(
-        select(LocalizationKey.key, LocalizationKey.id).where(LocalizationKey.key.in_(keys or {""}))
-    )
-    localization_ids = dict(key_rows.all())
+    localization_ids: dict[str, int] = {}
+    if keys:
+        key_rows = await session.execute(
+            select(LocalizationKey.key, LocalizationKey.id).where(LocalizationKey.key.in_(keys))
+        )
+        localization_ids = dict(key_rows.all())
     related_keys: set[str] = set()
     for record in records:
         raw = record.get("raw") if isinstance(record.get("raw"), dict) else {}
@@ -424,12 +437,22 @@ async def _insert_typed_entities(
             parent_id = raw.get("Father")
             if isinstance(parent_id, int) and parent_id > 0:
                 related_keys.add(f"area:{parent_id}")
-    related_rows = await session.execute(
-        select(Node.id, Node.canonical_key).where(Node.canonical_key.in_(related_keys or {""}))
-    )
-    related_node_ids = {
-        canonical_key: node_id for node_id, canonical_key in related_rows
-    }
+    related_node_ids: dict[str, int] = {}
+    if related_keys:
+        missing_related: set[str] = set()
+        for rel_key in related_keys:
+            if node_id_cache is not None and rel_key in node_id_cache:
+                related_node_ids[rel_key] = node_id_cache[rel_key]
+            else:
+                missing_related.add(rel_key)
+        if missing_related:
+            related_rows = await session.execute(
+                select(Node.id, Node.canonical_key).where(Node.canonical_key.in_(missing_related))
+            )
+            for node_id, canonical_key in related_rows:
+                related_node_ids[canonical_key] = node_id
+                if node_id_cache is not None:
+                    node_id_cache[canonical_key] = node_id
     typed: list[tuple[type, list[dict[str, Any]]]] = []
     for record in records:
         node_id = node_map[record["id"]][0]
@@ -937,8 +960,9 @@ async def import_canonical_edges(
                     },
                 }
             )
+        edge_ids: dict[tuple[int, int, int, str, str], int] = {}
         for offset in range(0, len(edge_values), 2500):
-            await session.execute(
+            inserted = await session.execute(
                 insert(Edge.__table__)
                 .values(edge_values[offset : offset + 2500])
                 .on_conflict_do_nothing(
@@ -950,19 +974,32 @@ async def import_canonical_edges(
                         Edge.basis,
                     ]
                 )
+                .returning(
+                    Edge.id,
+                    Edge.from_node_id,
+                    Edge.relation_type_id,
+                    Edge.to_node_id,
+                    Edge.layer,
+                    Edge.basis,
+                )
             )
-        edge_keys = [
-            (
-                row["from_node_id"],
-                row["relation_type_id"],
-                row["to_node_id"],
-                row["layer"],
-                row["basis"],
+            for edge_id, from_id, relation_id, to_id, layer, basis in inserted:
+                edge_ids[(from_id, relation_id, to_id, layer, basis)] = edge_id
+        missing_edge_keys = [
+            key
+            for key in (
+                (
+                    row["from_node_id"],
+                    row["relation_type_id"],
+                    row["to_node_id"],
+                    row["layer"],
+                    row["basis"],
+                )
+                for row in edge_values
             )
-            for row in edge_values
+            if key not in edge_ids
         ]
-        edge_ids: dict[tuple[int, int, int, str, str], int] = {}
-        for offset in range(0, len(edge_keys), 2000):
+        for offset in range(0, len(missing_edge_keys), 2000):
             found = await session.execute(
                 select(
                     Edge.id,
@@ -978,7 +1015,7 @@ async def import_canonical_edges(
                         Edge.to_node_id,
                         Edge.layer,
                         Edge.basis,
-                    ).in_(edge_keys[offset : offset + 2000])
+                    ).in_(missing_edge_keys[offset : offset + 2000])
                 )
             )
             for edge_id, from_id, relation_id, to_id, layer, basis in found:

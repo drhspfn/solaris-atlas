@@ -53,6 +53,7 @@ class NodeRevision(MetadataMixin, Base):
     __tablename__ = "node_revision"
     __table_args__ = (
         UniqueConstraint("node_id", "revision", name="uq_node_revision"),
+        Index("ix_node_revision_release_node", "release_id", "node_id"),
         {"schema": "graph"},
     )
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)

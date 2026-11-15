@@ -27,10 +27,10 @@ class Character(MetadataMixin, Base):
     )
     canonical_name: Mapped[str | None] = mapped_column(String(256))
     name_key_id: Mapped[int | None] = mapped_column(
-        ForeignKey("i18n.localization_key.id", ondelete="SET NULL")
+        ForeignKey("i18n.localization_key.id", ondelete="SET NULL"), index=True
     )
     nickname_key_id: Mapped[int | None] = mapped_column(
-        ForeignKey("i18n.localization_key.id", ondelete="SET NULL")
+        ForeignKey("i18n.localization_key.id", ondelete="SET NULL"), index=True
     )
     description: Mapped[str | None] = mapped_column(Text)
     playable: Mapped[bool | None] = mapped_column(Boolean)
@@ -54,7 +54,7 @@ class Location(MetadataMixin, Base):
     )
     canonical_name: Mapped[str | None] = mapped_column(String(256))
     name_key_id: Mapped[int | None] = mapped_column(
-        ForeignKey("i18n.localization_key.id", ondelete="SET NULL")
+        ForeignKey("i18n.localization_key.id", ondelete="SET NULL"), index=True
     )
     game_location_id: Mapped[str | None] = mapped_column(String(256), index=True)
     parent_location_node_id: Mapped[int | None] = mapped_column(
@@ -73,10 +73,10 @@ class Item(MetadataMixin, Base):
     )
     canonical_name: Mapped[str | None] = mapped_column(String(256))
     name_key_id: Mapped[int | None] = mapped_column(
-        ForeignKey("i18n.localization_key.id", ondelete="SET NULL")
+        ForeignKey("i18n.localization_key.id", ondelete="SET NULL"), index=True
     )
     description_key_id: Mapped[int | None] = mapped_column(
-        ForeignKey("i18n.localization_key.id", ondelete="SET NULL")
+        ForeignKey("i18n.localization_key.id", ondelete="SET NULL"), index=True
     )
     description: Mapped[str | None] = mapped_column(Text)
     game_item_id: Mapped[int | None] = mapped_column(BigInteger)
@@ -110,7 +110,7 @@ class Speaker(MetadataMixin, Base):
     )
     game_speaker_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     name_key_id: Mapped[int | None] = mapped_column(
-        ForeignKey("i18n.localization_key.id", ondelete="SET NULL")
+        ForeignKey("i18n.localization_key.id", ondelete="SET NULL"), index=True
     )
 
 
@@ -159,10 +159,10 @@ class Quest(MetadataMixin, Base):
     )
     game_quest_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     name_key_id: Mapped[int | None] = mapped_column(
-        ForeignKey("i18n.localization_key.id", ondelete="SET NULL")
+        ForeignKey("i18n.localization_key.id", ondelete="SET NULL"), index=True
     )
     description_key_id: Mapped[int | None] = mapped_column(
-        ForeignKey("i18n.localization_key.id", ondelete="SET NULL")
+        ForeignKey("i18n.localization_key.id", ondelete="SET NULL"), index=True
     )
     quest_type: Mapped[str | None] = mapped_column(String(64))
     region_id: Mapped[str | None] = mapped_column(String(128))
@@ -281,7 +281,7 @@ class PlayerChoice(MetadataMixin, Base):
         ForeignKey("graph.node.id", ondelete="CASCADE"), primary_key=True
     )
     localization_key_id: Mapped[int | None] = mapped_column(
-        ForeignKey("i18n.localization_key.id", ondelete="SET NULL")
+        ForeignKey("i18n.localization_key.id", ondelete="SET NULL"), index=True
     )
     source_record_id: Mapped[int | None] = mapped_column(
         ForeignKey("raw.source_record.id", ondelete="SET NULL")
@@ -301,7 +301,7 @@ class PhoneMessage(MetadataMixin, Base):
         ForeignKey("core.speaker.node_id", ondelete="SET NULL")
     )
     localization_key_id: Mapped[int | None] = mapped_column(
-        ForeignKey("i18n.localization_key.id", ondelete="SET NULL")
+        ForeignKey("i18n.localization_key.id", ondelete="SET NULL"), index=True
     )
     source_record_id: Mapped[int | None] = mapped_column(
         ForeignKey("raw.source_record.id", ondelete="SET NULL")
@@ -315,7 +315,7 @@ class Narration(MetadataMixin, Base):
         ForeignKey("graph.node.id", ondelete="CASCADE"), primary_key=True
     )
     localization_key_id: Mapped[int | None] = mapped_column(
-        ForeignKey("i18n.localization_key.id", ondelete="SET NULL")
+        ForeignKey("i18n.localization_key.id", ondelete="SET NULL"), index=True
     )
     narration_type: Mapped[str | None] = mapped_column(String(64))
     source_record_id: Mapped[int | None] = mapped_column(
