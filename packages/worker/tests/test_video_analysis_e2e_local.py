@@ -95,9 +95,16 @@ class _FakeDb:
             fetchall=lambda: [],
         )
 
-    async def scalar(self, _stmt):
+    async def scalar(self, stmt):
         if self._scalar_values:
             return self._scalar_values.pop(0)
+        sql = str(stmt)
+        if "graph.node" in sql:
+            return 42
+        if "ontology.relation_type" in sql:
+            return 5
+        if "i18n.locale" in sql:
+            return 1
         return None
 
     async def scalars(self, _stmt):
@@ -183,12 +190,8 @@ async def test_run_video_analysis_agent_e2e_local(tmp_path: Path, monkeypatch):
     )
     workspace.root.mkdir(parents=True, exist_ok=True)
 
-    # Fake DB: scalar() calls during run:
-    # 1) _existing_step_count -> max(AgentCall.step) = None
-    # 2) search_entities -> locale_id = 1
-    # 3) search_lore -> locale_id = 1
-    # 4) _publish_cutscene_knowledge -> existing doc = None
-    db = _FakeDb(scalar_values=[None, 1, 1, None])
+    # Fake DB: first scalar() is _existing_step_count -> None; remaining queries dispatch by table name.
+    db = _FakeDb(scalar_values=[None])
 
     run = SimpleNamespace(
         id=99001,
@@ -391,7 +394,12 @@ async def test_run_video_analysis_agent_e2e_local(tmp_path: Path, monkeypatch):
     assert "image" in file_types
     assert "raw_json" in file_types
     assert "json" not in file_types
+    assert db.flushes >= 4
     assert db.commits >= 5
+    edges = [obj for obj in db.added if getattr(obj, "__tablename__", None) == "edge"]
+    assert len(edges) == 1
+    assert edges[0].basis == "inference"
+    assert edges[0].processor_run_id == run.id
 
 
 @pytest.mark.asyncio

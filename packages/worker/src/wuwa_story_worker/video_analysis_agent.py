@@ -506,8 +506,12 @@ async def _publish_cutscene_knowledge(
         "related_to_event": "RELATED_TO",
         "mentions": "MENTIONS",
     }
+    seen_edges: set[tuple[int, int]] = set()
     for link in result.entity_links:
         if not link.target_node_id or link.target_node_id == asset_node_id:
+            continue
+        target_exists = await db.scalar(select(Node.id).where(Node.id == link.target_node_id))
+        if target_exists is None:
             continue
         rel_key = relation_map.get(link.relation, "MENTIONS")
         rel_id = await db.scalar(select(RelationType.id).where(RelationType.key == rel_key))
@@ -518,8 +522,9 @@ async def _publish_cutscene_knowledge(
                 .on_conflict_do_nothing(index_elements=[RelationType.key])
             )
             rel_id = await db.scalar(select(RelationType.id).where(RelationType.key == rel_key))
-        if rel_id is None:
+        if rel_id is None or (link.target_node_id, rel_id) in seen_edges:
             continue
+        seen_edges.add((link.target_node_id, rel_id))
         existing_edge = await db.scalar(
             select(Edge.id).where(
                 Edge.from_node_id == asset_node_id,
@@ -535,7 +540,9 @@ async def _publish_cutscene_knowledge(
                     to_node_id=link.target_node_id,
                     relation_type_id=rel_id,
                     layer="agent",
+                    basis="inference",
                     confidence=0.85 if link.confidence == "observed" else 0.7,
+                    processor_run_id=run.id,
                     metadata_json={
                         "run_id": run.id,
                         "kind": link.kind,
@@ -643,6 +650,8 @@ async def run_video_analysis_agent(
                 raise
             source_tokens, output_tokens = token_usage(raw, settings.provider)
             await settle(db, call.id, settings, source_tokens, output_tokens, raw)
+            if hasattr(db, "flush"):
+                await db.flush()
             if hasattr(db, "refresh"):
                 await db.refresh(call)
             run.tokens_input = (run.tokens_input or 0) + source_tokens
