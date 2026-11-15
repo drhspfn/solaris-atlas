@@ -137,3 +137,31 @@ async def test_persist_candidates_creates_identity_and_adds_pending_references()
     assert call_kwargs["source_type"] == "web_search"
     assert call_kwargs["status"] == "pending"
     assert call_kwargs["links"] == [{"identity_id": 500, "appearance_id": None}]
+
+
+@pytest.mark.asyncio
+async def test_load_enrichment_targets_compiles_character_read_query():
+    from wuwa_story.visual_memory.web_enrichment import load_enrichment_targets
+
+    executed_sql = []
+
+    class FakeSession:
+        async def scalar(self, stmt):
+            sql = str(stmt)
+            if "i18n.locale" in sql:
+                return 1
+            return 2
+
+        async def execute(self, stmt):
+            executed_sql.append(str(stmt))
+            return SimpleNamespace(
+                all=lambda: [SimpleNamespace(entity_id=15496, title="Yangyang", role_type="1")]
+            )
+
+    targets = await load_enrichment_targets(FakeSession(), kind="playable")
+    assert len(targets) == 1
+    assert targets[0].entity_id == 15496
+    assert targets[0].name == "Yangyang"
+    assert targets[0].kind == "playable"
+    assert targets[0].existing_image_count == 2
+    assert "character_read" in executed_sql[0]

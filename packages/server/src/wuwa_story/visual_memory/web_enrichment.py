@@ -377,7 +377,7 @@ async def load_enrichment_targets(
             CharacterRead.title != "",
         )
         .distinct(CharacterRead.entity_id)
-        .order_by(CharacterRead.entity_id, CharacterRead.id.desc())
+        .order_by(CharacterRead.entity_id, CharacterRead.updated_at.desc(), CharacterRead.snapshot_key.desc())
     )
     if role_types:
         stmt = stmt.where(role_expr.in_(role_types))
