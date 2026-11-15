@@ -35,6 +35,7 @@ from wuwa_story.agents.providers import (
     token_usage,
 )
 from wuwa_story.agents.settings import AgentSettings
+from wuwa_story.db.models.agents import AgentCall
 from wuwa_story.db.models.core import DialogueLine, Speaker
 from wuwa_story.db.models.graph import Edge, Node, NodeRevision, NodeType
 from wuwa_story.db.models.i18n import Locale, LocalizationValue
@@ -580,8 +581,13 @@ async def run_video_analysis_agent(
             )
         )
 
+        max_step = await db.scalar(
+            select(func.max(AgentCall.step)).where(AgentCall.run_id == run.id)
+        )
+        step_offset = (max_step + 1) if max_step is not None else 0
         final_result: VideoAnalysisResult | None = None
-        for step in range(MAX_AGENT_TURNS):
+        for turn_index in range(MAX_AGENT_TURNS):
+            step = step_offset + turn_index
             route, payload = provider.request(history, tools)
             input_bound = max(4096, len(json.dumps(payload, default=str)) // 4)
             call = await reserve(
