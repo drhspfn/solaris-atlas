@@ -11,7 +11,12 @@ import "@/styles/character-model.css";
 type Job = {
   id: number;
   status: string;
-  result?: { stage?: string; batch?: number; batches?: number; animations?: number } | null;
+  result?: {
+    stage?: string;
+    batch?: number;
+    batches?: number;
+    animations?: number;
+  } | null;
   error?: string | null;
 };
 const terminal = (status: string) =>
@@ -80,7 +85,12 @@ function ImportControls({
   const [includeAnimations, setIncludeAnimations] = useState(true);
   const [archive, setArchive] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState("");
-  const uploadAttempt = useRef<{ file: File; key: string; version: string; token: string } | null>(null);
+  const uploadAttempt = useRef<{
+    file: File;
+    key: string;
+    version: string;
+    token: string;
+  } | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -168,7 +178,9 @@ function ImportControls({
     setInvalidKey(false);
     if (!/^character:(?:npc:)?[1-9][0-9]*$/.test(key.trim())) {
       setInvalidKey(true);
-      setError("Enter a canonical character key, for example character:1505 or character:npc:123.");
+      setError(
+        "Enter a canonical character key, for example character:1505 or character:npc:123.",
+      );
       keyInput.current?.focus();
       return;
     }
@@ -188,34 +200,55 @@ function ImportControls({
           uploadAttempt.current.version !== version
         ) {
           uploadAttempt.current = {
-            file: archive, key: key.trim(), version,
+            file: archive,
+            key: key.trim(),
+            version,
             token: crypto.randomUUID().replaceAll("-", ""),
           };
         }
-        const upload = await api<Job & { chunk_bytes: number }>("/admin/character-models/uploads", {
-          method: "POST",
-          signal: controller.signal,
-          body: {
-            character_key: key.trim(),
-            ...(version.trim() ? { game_version: version.trim() } : {}),
-            force, archive_bytes: archive.size, upload_token: uploadAttempt.current.token,
+        const upload = await api<Job & { chunk_bytes: number }>(
+          "/admin/character-models/uploads",
+          {
+            method: "POST",
+            signal: controller.signal,
+            body: {
+              character_key: key.trim(),
+              ...(version.trim() ? { game_version: version.trim() } : {}),
+              force,
+              archive_bytes: archive.size,
+              upload_token: uploadAttempt.current.token,
+            },
           },
-        });
+        );
         if (upload.status === "uploading") {
-          for (let offset = 0, part = 0; offset < archive.size; offset += upload.chunk_bytes, part++) {
-            setUploadProgress(`Uploading archive · ${Math.round(offset / archive.size * 100)}%`);
-            await api(`/admin/character-models/uploads/${upload.id}/parts/${part}`, {
-              method: "PUT",
-              body: archive.slice(offset, offset + upload.chunk_bytes),
-              signal: controller.signal,
-            });
+          for (
+            let offset = 0, part = 0;
+            offset < archive.size;
+            offset += upload.chunk_bytes, part++
+          ) {
+            setUploadProgress(
+              `Uploading archive · ${Math.round((offset / archive.size) * 100)}%`,
+            );
+            await api(
+              `/admin/character-models/uploads/${upload.id}/parts/${part}`,
+              {
+                method: "PUT",
+                body: archive.slice(offset, offset + upload.chunk_bytes),
+                signal: controller.signal,
+              },
+            );
           }
         }
-        setUploadProgress("Upload complete · queuing validation and publication");
-        result = await api<Job>(`/admin/character-models/uploads/${upload.id}/complete`, {
-          method: "POST",
-          signal: controller.signal,
-        });
+        setUploadProgress(
+          "Upload complete · queuing validation and publication",
+        );
+        result = await api<Job>(
+          `/admin/character-models/uploads/${upload.id}/complete`,
+          {
+            method: "POST",
+            signal: controller.signal,
+          },
+        );
       } else {
         result = await api<Job>("/admin/character-models", {
           method: "POST",
@@ -252,8 +285,8 @@ function ImportControls({
   const controls = (
     <>
       <p>
-        Build from the game client, or upload a local model ZIP.
-        Animations load separately on demand.
+        Build from the game client, or upload a local model ZIP. Animations load
+        separately on demand.
       </p>
       <form
         noValidate
@@ -300,26 +333,75 @@ function ImportControls({
         )}
         <label htmlFor={`${id}-archive`}>
           Local model archive (optional)
-          <input ref={archiveInput} id={`${id}-archive`} type="file" accept=".zip,application/zip"
-            disabled={busy || pending} onChange={event => {
-              setArchive(event.target.files?.[0] ?? null); setUploadProgress("");
-            }} />
-          <small>Leave empty to build from the game. With an archive, its included animations and forms are used.</small>
+          <input
+            ref={archiveInput}
+            id={`${id}-archive`}
+            type="file"
+            accept=".zip,application/zip"
+            disabled={busy || pending}
+            onChange={(event) => {
+              setArchive(event.target.files?.[0] ?? null);
+              setUploadProgress("");
+            }}
+          />
+          <small>
+            Leave empty to build from the game. With an archive, its included
+            animations and forms are used.
+          </small>
         </label>
-        {archive && <button type="button" disabled={busy || pending} onClick={() => {
-          setArchive(null); setUploadProgress("");
-          if (archiveInput.current) archiveInput.current.value = "";
-        }}>Use game client instead</button>}
-        <button type="button" disabled={busy || pending || !/^character:(?:npc:)?[1-9][0-9]*$/.test(key.trim())}
-          onClick={() => void (async () => {
-            try {
-              const query = new URLSearchParams({ character_key: key.trim(), ...(version ? { game_version: version } : {}) });
-              const recipe = await api<{ game_version: string }>(`/admin/character-models/recipe?${query}`, { cacheTtl: 0 });
-              const url = URL.createObjectURL(new Blob([JSON.stringify(recipe, null, 2)], { type: "application/json" }));
-              const link = document.createElement("a"); link.href = url; link.download = `${key.replace(":", "-")}-${recipe.game_version}-recipe.json`; link.click();
-              setTimeout(() => URL.revokeObjectURL(url), 1000);
-            } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not download model recipe."); }
-          })()}>Download local build recipe</button>
+        {archive && (
+          <button
+            type="button"
+            disabled={busy || pending}
+            onClick={() => {
+              setArchive(null);
+              setUploadProgress("");
+              if (archiveInput.current) archiveInput.current.value = "";
+            }}
+          >
+            Use game client instead
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={
+            busy ||
+            pending ||
+            !/^character:(?:npc:)?[1-9][0-9]*$/.test(key.trim())
+          }
+          onClick={() =>
+            void (async () => {
+              try {
+                const query = new URLSearchParams({
+                  character_key: key.trim(),
+                  ...(version ? { game_version: version } : {}),
+                });
+                const recipe = await api<{ game_version: string }>(
+                  `/admin/character-models/recipe?${query}`,
+                  { cacheTtl: 0 },
+                );
+                const url = URL.createObjectURL(
+                  new Blob([JSON.stringify(recipe, null, 2)], {
+                    type: "application/json",
+                  }),
+                );
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `${key.replace(":", "-")}-${recipe.game_version}-recipe.json`;
+                link.click();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+              } catch (cause) {
+                setError(
+                  cause instanceof Error
+                    ? cause.message
+                    : "Could not download model recipe.",
+                );
+              }
+            })()
+          }
+        >
+          Download local build recipe
+        </button>
         <label className="character-model-force">
           <input
             type="checkbox"
@@ -353,14 +435,18 @@ function ImportControls({
         <p role="status">
           Import #{job.id}: {job.status.replaceAll("_", " ")}
           {job.status === "completed" ? " · Model ready." : ""}
-          {pending && job.result?.stage && ` · ${stages[job.result.stage] || "Processing model"}`}
-          {pending && Number.isInteger(job.result?.batch) && Number.isInteger(job.result?.batches)
-            && ` · Batch ${job.result!.batch} of ${job.result!.batches}`}
+          {pending &&
+            job.result?.stage &&
+            ` · ${stages[job.result.stage] || "Processing model"}`}
+          {pending &&
+            Number.isInteger(job.result?.batch) &&
+            Number.isInteger(job.result?.batches) &&
+            ` · Batch ${job.result!.batch} of ${job.result!.batches}`}
         </p>
       )}
       {job && (
         <p>
-          <a href="/admin/data-operations">
+          <a href="/console/data-operations">
             Open task monitor · run #{job.id}
           </a>
         </p>

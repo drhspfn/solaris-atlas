@@ -1,0 +1,527 @@
+﻿{% extends "layout.html" %} {% block content %} {% set releases =
+overview.get("releases", []) %} {% set imports = overview.get("imports", []) %}
+{% set maps = overview.get("maps", []) %} {% set client_assets =
+overview.get("client_assets", {}) %} {% set installed =
+client_assets.get("installed", []) %} {% set active_client =
+client_assets.get("active_client") %} {% set active_download =
+client_assets.get("active_download") %} {% set q_list = queues.get("queues", [])
+%} {% set total_ready = q_list | sum(attribute="ready") %} {% set total_active =
+q_list | sum(attribute="active") %}
+
+<div id="sa-data-ops" class="sa-page">
+ <div class="sa-header">
+ <div>
+ <h2>Data Operations &amp; Queues</h2>
+ <p>
+ Releases, snapshot imports, RabbitMQ queues, client assets, and map
+ builds.
+ </p>
+ </div>
+ <div class="sa-toolbar">
+ <button
+ type="button"
+ class="btn btn-secondary sa-poll-btn"
+ id="ops-poll-toggle"
+ data-interval="10"
+ >
+ <span class="sa-dot" id="ops-poll-dot"></span>
+ <span id="ops-poll-label">Auto-refresh: Off</span>
+ </button>
+ <select
+ class="form-select "
+ id="ops-poll-interval"
+ style="width: auto"
+ aria-label="Polling interval"
+ >
+ <option value="5">5s</option>
+ <option value="10" selected>10s</option>
+ <option value="30">30s</option>
+ </select>
+ <button type="button" class="btn btn-primary " id="ops-refresh-btn">
+ Refresh now
+ </button>
+ </div>
+ </div>
+
+ <div id="ops-notice" class="sa-msg sa-msg--ok" role="status" hidden></div>
+ <div
+ id="ops-error"
+ class="sa-msg sa-msg--err"
+ role="alert"
+ {%
+ if
+ not
+ overview_error
+ %}hidden{%
+ endif
+ %}
+ >
+ {{ overview_error }}
+ </div>
+
+ <div class="sa-kpi-grid">
+ <div class="sa-kpi">
+ <span class="sa-kpi__label">Active tasks</span>
+ <span class="sa-kpi__val" id="kpi-active-tasks"
+ >{{ overview.get("active_tasks", 0) }}</span
+ >
+ <span class="sa-kpi__sub">queued / running / pending</span>
+ </div>
+ <div class="sa-kpi">
+ <span class="sa-kpi__label">Latest release</span>
+ <span class="sa-kpi__val"
+ >{{ releases[0].game_version if releases else "—" }}</span
+ >
+ <span class="sa-kpi__sub">{{ releases | length }} total releases</span>
+ </div>
+ <div class="sa-kpi">
+ <span class="sa-kpi__label">Live client</span>
+ <span class="sa-kpi__val"
+ >{{ client_assets.get("live_version") or "—" }}</span
+ >
+ <span class="sa-kpi__sub"
+ >{{ installed | length }} installed locally</span
+ >
+ </div>
+ <div class="sa-kpi">
+ <span class="sa-kpi__label">RabbitMQ queues</span>
+ <span class="sa-kpi__val" id="kpi-queue-count"
+ >{{ q_list | length }}</span
+ >
+ <span class="sa-kpi__sub" id="kpi-queue-totals"
+ >{{ total_ready }} waiting · {{ total_active }} delivered</span
+ >
+ </div>
+ </div>
+
+ <div class="sa-ops-grid">
+ <section class="sa-panel">
+ <div class="sa-panel__head">
+ <h3 class="sa-panel__title">Patch Snapshot Import</h3>
+ </div>
+ <form id="form-snapshot" class="sa-row">
+ <input
+ type="text"
+ class="form-control "
+ name="version"
+ placeholder="e.g. 3.8"
+ pattern="^\d+\.\d+$"
+ required
+ style="flex: 1; min-width: 110px"
+ />
+ <button type="submit" class="btn btn-primary ">
+ Import patch
+ </button>
+ </form>
+ <span class="sa-muted"
+ >Enqueues a full compiled snapshot import for the specified game
+ version.</span
+ >
+ </section>
+
+ <section class="sa-panel">
+ <div class="sa-panel__head">
+ <h3 class="sa-panel__title">Game Client Assets</h3>
+ {% if active_download %}
+ <span class="sa-badge sa-badge--run"
+ >Downloading {{ active_download.get("version", "") }}</span
+ >
+ {% endif %}
+ </div>
+ <form id="form-client-download" class="sa-row">
+ <input
+ type="text"
+ class="form-control "
+ name="version"
+ value="{{ client_assets.get('live_version') or '' }}"
+ placeholder="Version (optional)"
+ style="flex: 1; min-width: 100px"
+ />
+ <select
+ class="form-select "
+ name="tier"
+ style="width: auto"
+ >
+ <option value="hd" selected>HD</option>
+ <option value="sd">SD</option>
+ <option value="uhd">UHD</option>
+ </select>
+ <button type="submit" class="btn btn-primary ">Download</button>
+ <button
+ type="button"
+ class="btn btn-secondary "
+ id="btn-client-check"
+ >
+ Check updates
+ </button>
+ </form>
+ <span class="sa-muted"
+ >Active: {{ active_client.version ~ ' (' ~ active_client.tier|upper ~
+ ')' if active_client else 'None' }}</span
+ >
+ </section>
+
+ <section class="sa-panel">
+ <div class="sa-panel__head">
+ <h3 class="sa-panel__title">Maps &amp; Archives</h3>
+ </div>
+ <form id="form-maps" class="sa-row">
+ <input
+ type="text"
+ class="form-control "
+ name="version"
+ value="{{ releases[0].game_version if releases else '' }}"
+ placeholder="Version (optional)"
+ style="flex: 1; min-width: 100px"
+ />
+ <select
+ class="form-select "
+ name="tier"
+ style="width: auto"
+ >
+ <option value="hd" selected>HD</option>
+ <option value="sd">SD</option>
+ <option value="uhd">UHD</option>
+ </select>
+ <button type="submit" class="btn btn-primary ">Build maps</button>
+ </form>
+ <div class="sa-row">
+ <button
+ type="button"
+ class="btn btn-secondary "
+ id="btn-events-import"
+ >
+ Import events
+ </button>
+ <button
+ type="button"
+ class="btn btn-secondary "
+ id="btn-notices-import"
+ >
+ Import notices
+ </button>
+ </div>
+ </section>
+ </div>
+
+ <div class="sa-tabs" role="tablist">
+ <button type="button" class="sa-tab is-active" data-tab="queues">
+ Queues &amp; Activity
+ </button>
+ <button type="button" class="sa-tab" data-tab="releases">
+ Releases ({{ releases | length }})
+ </button>
+ <button type="button" class="sa-tab" data-tab="imports">
+ Import Runs ({{ imports | length }})
+ </button>
+ <button type="button" class="sa-tab" data-tab="maps">
+ Maps &amp; Clients
+ </button>
+ </div>
+
+ <div class="sa-tab-pane" data-pane="queues">
+ <div class="sa-panel" style="margin-bottom: 0.75rem">
+ <div class="sa-panel__head">
+ <h3 class="sa-panel__title">RabbitMQ Queues</h3>
+ <label
+ class="sa-muted"
+ style="
+ display: flex;
+ align-items: center;
+ gap: 0.4rem;
+ cursor: pointer;
+ "
+ >
+ <input
+ type="checkbox"
+ id="ops-show-idle"
+ class="form-check-input m-0"
+ />
+ Show idle queues
+ </label>
+ </div>
+ <div id="ops-queues-wrap" class="sa-table-wrap">
+ <table class="sa-table">
+ <thead>
+ <tr>
+ <th>Operation</th>
+ <th>Waiting</th>
+ <th>Delivered</th>
+ <th>Failed</th>
+ <th>Workers</th>
+ <th>Manage</th>
+ </tr>
+ </thead>
+ <tbody id="ops-queues-body">
+ <tr>
+ <td colspan="6"><span class="sa-skeleton"></span></td>
+ </tr>
+ </tbody>
+ </table>
+ </div>
+ </div>
+
+ <div class="sa-panel">
+ <div class="sa-panel__head">
+ <h3 class="sa-panel__title">Processing Tasks</h3>
+ <div class="sa-row">
+ <select
+ class="form-select "
+ id="ops-task-status"
+ style="width: auto"
+ >
+ <option value="">All statuses</option>
+ <option value="running">Running</option>
+ <option value="queued">Queued</option>
+ <option value="failed">Failed</option>
+ <option value="succeeded">Succeeded</option>
+ </select>
+ </div>
+ </div>
+ <div class="sa-table-wrap">
+ <table class="sa-table sa-table--tasks">
+ <thead>
+ <tr>
+ <th>ID</th>
+ <th>Task</th>
+ <th>Status</th>
+ <th>Details / Report</th>
+ </tr>
+ </thead>
+ <tbody id="ops-tasks-body">
+ <tr>
+ <td colspan="4"><span class="sa-skeleton"></span></td>
+ </tr>
+ <tr>
+ <td colspan="4">
+ <span class="sa-skeleton" style="width: 70%"></span>
+ </td>
+ </tr>
+ </tbody>
+ </table>
+ </div>
+ <div class="sa-row" style="justify-content: flex-end">
+ <button
+ type="button"
+ class="btn btn-secondary "
+ id="ops-tasks-more"
+ hidden
+ >
+ Load more
+ </button>
+ </div>
+ </div>
+ </div>
+
+ <div class="sa-tab-pane" data-pane="releases" hidden>
+ <div class="sa-table-wrap">
+ <table class="sa-table">
+ <thead>
+ <tr>
+ <th>ID</th>
+ <th>Version</th>
+ <th>Sequence</th>
+ <th>Resource</th>
+ <th>Upstream</th>
+ <th>Imported at</th>
+ <th>Actions</th>
+ </tr>
+ </thead>
+ <tbody>
+ {% for r in releases %}
+ <tr>
+ <td class="sa-mono">#{{ r.id }}</td>
+ <td><strong>{{ r.game_version }}</strong></td>
+ <td class="sa-mono">{{ r.sequence }}</td>
+ <td class="sa-mono">{{ r.resource_version or "—" }}</td>
+ <td>
+ {{ r.upstream_name }} {% if r.upstream_commit %}<span
+ class="sa-muted sa-mono"
+ >({{ r.upstream_commit[:8] }})</span
+ >{% endif %}
+ </td>
+ <td class="sa-mono">
+ {{ r.imported_at.strftime("%Y-%m-%d %H:%M") if r.imported_at else
+ "—" }}
+ </td>
+ <td>
+ <button
+ type="button"
+ class="btn btn-secondary js-release-media"
+ data-release-id="{{ r.id }}"
+ data-version="{{ r.game_version }}"
+ >
+ Import media
+ </button>
+ </td>
+ </tr>
+ {% else %}
+ <tr>
+ <td colspan="7" class="sa-muted">No releases imported yet.</td>
+ </tr>
+ {% endfor %}
+ </tbody>
+ </table>
+ </div>
+ </div>
+
+ <div class="sa-tab-pane" data-pane="imports" hidden>
+ <div class="sa-table-wrap">
+ <table class="sa-table">
+ <thead>
+ <tr>
+ <th>Run</th>
+ <th>Version</th>
+ <th>Status</th>
+ <th>Started</th>
+ <th>Finished</th>
+ <th>Counts (seen / created / failed)</th>
+ <th>Error</th>
+ </tr>
+ </thead>
+ <tbody>
+ {% for imp in imports %}
+ <tr>
+ <td class="sa-mono">#{{ imp.id }}</td>
+ <td><strong>{{ imp.game_version }}</strong></td>
+ <td>
+ <span
+ class="sa-badge {% if imp.status == 'succeeded' %}sa-badge--ok{% elif imp.status == 'running' %}sa-badge--run{% elif imp.status == 'failed' %}sa-badge--err{% endif %}"
+ >{{ imp.status }}</span
+ >
+ </td>
+ <td class="sa-mono">
+ {{ imp.started_at.strftime("%Y-%m-%d %H:%M") if imp.started_at
+ else "—" }}
+ </td>
+ <td class="sa-mono">
+ {{ imp.finished_at.strftime("%Y-%m-%d %H:%M") if imp.finished_at
+ else "In progress" }}
+ </td>
+ <td class="sa-mono">
+ {{ imp.records_seen }} / {{ imp.records_created }} / {{
+ imp.records_failed }}
+ </td>
+ <td
+ class="sa-muted"
+ style="max-width: 280px; overflow-wrap: anywhere"
+ >
+ {{ imp.error or "—" }}
+ </td>
+ </tr>
+ {% else %}
+ <tr>
+ <td colspan="7" class="sa-muted">No import runs recorded.</td>
+ </tr>
+ {% endfor %}
+ </tbody>
+ </table>
+ </div>
+ </div>
+
+ <div class="sa-tab-pane" data-pane="maps" hidden>
+ <div class="sa-ops-grid">
+ <div class="sa-panel">
+ <div class="sa-panel__head">
+ <h3 class="sa-panel__title">Tile Maps by Version</h3>
+ </div>
+ <div class="sa-table-wrap">
+ <table class="sa-table">
+ <thead>
+ <tr>
+ <th>Version</th>
+ <th>Maps</th>
+ <th>Asset jobs</th>
+ <th>Markers</th>
+ </tr>
+ </thead>
+ <tbody>
+ {% for m in maps %}
+ <tr>
+ <td><strong>{{ m.game_version }}</strong></td>
+ <td class="sa-mono">{{ m.map_count }}</td>
+ <td class="sa-mono">{{ m.asset_jobs }}</td>
+ <td class="sa-mono">{{ m.marker_count }}</td>
+ </tr>
+ {% else %}
+ <tr>
+ <td colspan="4" class="sa-muted">No maps built yet.</td>
+ </tr>
+ {% endfor %}
+ </tbody>
+ </table>
+ </div>
+ </div>
+
+ <div class="sa-panel">
+ <div class="sa-panel__head">
+ <h3 class="sa-panel__title">Installed Client Builds</h3>
+ </div>
+ <div class="sa-table-wrap">
+ <table class="sa-table">
+ <thead>
+ <tr>
+ <th>Version</th>
+ <th>Tier</th>
+ <th>State</th>
+ <th>Files</th>
+ <th>Size</th>
+ </tr>
+ </thead>
+ <tbody>
+ {% for c in installed %}
+ <tr>
+ <td><strong>{{ c.version }}</strong></td>
+ <td class="sa-mono">{{ c.tier | upper }}</td>
+ <td>
+ <span
+ class="sa-badge {% if c.state == 'active' %}sa-badge--ok{% endif %}"
+ >{{ c.state }}</span
+ >
+ </td>
+ <td class="sa-mono">{{ c.file_count }}</td>
+ <td class="sa-mono">
+ {{ "%.1f GiB" | format(c.size_bytes / (1024**3)) }}
+ </td>
+ </tr>
+ {% else %}
+ <tr>
+ <td colspan="5" class="sa-muted">
+ No client assets downloaded locally.
+ </td>
+ </tr>
+ {% endfor %}
+ </tbody>
+ </table>
+ </div>
+ </div>
+ </div>
+ </div>
+</div>
+
+<dialog
+ id="ops-modal"
+ style="
+ background: #0f1617;
+ color: #e8eceb;
+ border: 1px solid #354645;
+ border-radius: 12px;
+ max-width: 680px;
+ width: 92vw;
+ padding: 1.1rem;
+ "
+>
+ <div class="sa-panel__head" style="margin-bottom: 0.75rem">
+ <h3 class="sa-panel__title" id="ops-modal-title">Details</h3>
+ <button type="button" class="btn btn-secondary " id="ops-modal-close">
+ Close
+ </button>
+ </div>
+ <div id="ops-modal-body"></div>
+</dialog>
+
+<script id="ops-initial-queues" type="application/json">
+ {{ queues | tojson }}
+</script>
+<script src="{{ url_for(__name__ ~ ':statics', path='data-operations.js') }}"></script>
+{% endblock %}

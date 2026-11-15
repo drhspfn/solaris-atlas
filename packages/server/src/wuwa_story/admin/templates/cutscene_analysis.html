@@ -1,0 +1,300 @@
+﻿{% extends "layout.html" %} {% block content %}
+<div class="sa-page" id="sa-cutscene-analysis">
+  <div class="sa-header">
+    <div>
+      <h1>Cutscene Analysis</h1>
+      <p class="sa-subtitle">
+        Imported cutscene video assets, playback preview, and checkpointed
+        vision jobs.
+      </p>
+    </div>
+    <div class="sa-toolbar">
+      <div class="sa-poll-group" role="group" aria-label="Auto refresh">
+        <button
+          type="button"
+          class="sa-poll-btn"
+          id="ca-poll-toggle"
+          data-interval="0"
+        >
+          <span class="sa-dot" id="ca-poll-dot"></span>
+          <span id="ca-poll-label">Auto: Off</span>
+        </button>
+        <select
+          class="form-select"
+          id="ca-poll-select"
+          style="width: auto"
+          aria-label="Polling interval"
+        >
+          <option value="0">Off</option>
+          <option value="5000">5s</option>
+          <option value="10000" selected>10s</option>
+          <option value="30000">30s</option>
+        </select>
+      </div>
+      <button
+        type="button"
+        class="btn btn-outline-secondary"
+        id="ca-refresh-btn"
+      >
+        Refresh
+      </button>
+    </div>
+  </div>
+
+  <div id="ca-banner" class="alert d-none" role="alert"></div>
+  {% if load_error %}
+  <div class="alert alert-danger">{{ load_error }}</div>
+  {% endif %} {% if not assets_data.enabled %}
+  <div class="sa-msg sa-msg--warn">
+    Vision worker is currently disabled (<code class="sa-mono text-nowrap"
+      >AGENT_VISION_ENABLED=false</code
+    >). Preview works, but launching or resuming vision jobs requires enabling
+    it.
+  </div>
+  {% endif %}
+
+  <div class="sa-kpi-grid">
+    <div class="sa-kpi">
+      <div class="sa-kpi-label">Vision Status</div>
+      <div class="sa-kpi-value" id="ca-kpi-enabled">
+        {{ "Enabled" if assets_data.enabled else "Disabled" }}
+      </div>
+      <div class="sa-kpi-sub">AGENT_VISION_ENABLED</div>
+    </div>
+    <div class="sa-kpi">
+      <div class="sa-kpi-label">Loaded Assets</div>
+      <div class="sa-kpi-value" id="ca-kpi-assets">
+        {{ assets_data.assets|length }}
+      </div>
+      <div class="sa-kpi-sub">Cutscene video publications</div>
+    </div>
+    <div class="sa-kpi">
+      <div class="sa-kpi-label">Loaded Vision Jobs</div>
+      <div class="sa-kpi-value" id="ca-kpi-jobs">
+        {{ jobs_data.jobs|length }}
+      </div>
+      <div class="sa-kpi-sub" id="ca-kpi-active-jobs">
+        Running: {{ jobs_data.jobs|selectattr("status", "in", ["queued",
+        "running"])|list|length }}
+      </div>
+    </div>
+    <div class="sa-kpi">
+      <div class="sa-kpi-label">Filter</div>
+      <div class="sa-kpi-value text-truncate" id="ca-kpi-query">
+        {{ query or "All" }}
+      </div>
+      <div class="sa-kpi-sub" id="ca-updated-at">SSR</div>
+    </div>
+  </div>
+
+  <div class="sa-split sa-split--even">
+    <div class="sa-panel">
+      <div class="sa-panel-head">
+        <h2 class="sa-panel-title">Cutscene Assets</h2>
+        <form id="ca-search-form" class="d-flex gap-2">
+          <input
+            type="search"
+            class="form-control"
+            id="ca-search-input"
+            value="{{ query }}"
+            placeholder="Filter reference..."
+            style="width: 12rem"
+          />
+          <button type="submit" class="btn btn-outline-secondary">
+            Search
+          </button>
+        </form>
+      </div>
+      <div class="sa-table-wrap">
+        <table class="sa-table sa-table--assets">
+          <thead>
+            <tr>
+              <th>Asset</th>
+              <th>Version</th>
+              <th class="text-end">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="ca-assets-body">
+            {% for asset in assets_data.assets %}
+            <tr>
+              <td class="text-break">
+                <div class="fw-semibold">{{ asset.reference }}</div>
+                <div class="text-secondary small">Node #{{ asset.id }}</div>
+              </td>
+              <td>
+                <span class="sa-badge sa-badge--neutral"
+                  >{{ asset.game_version }}</span
+                >
+              </td>
+              <td class="text-end text-nowrap">
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary ca-preview-btn"
+                  data-asset-id="{{ asset.id }}"
+                  data-version="{{ asset.game_version }}"
+                  data-ref="{{ asset.reference }}"
+                >
+                  Preview
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-primary ca-analyze-btn ms-1"
+                  data-asset-id="{{ asset.id }}"
+                  data-version="{{ asset.game_version }}"
+                  {%
+                  if
+                  not
+                  assets_data.enabled
+                  %}disabled{%
+                  endif
+                  %}
+                >
+                  Analyze
+                </button>
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="3" class="text-secondary text-center py-3">
+                No cutscene assets matched.
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div
+        class="sa-panel-foot d-flex justify-content-between align-items-center"
+      >
+        <button
+          type="button"
+          class="btn btn-outline-secondary {% if not assets_data.next_before %}d-none{% endif %}"
+          id="ca-load-more-assets"
+          data-before="{{ assets_data.next_before or '' }}"
+        >
+          Load older
+        </button>
+        <span class="text-secondary small" id="ca-assets-meta"
+          >{{ assets_data.assets|length }} shown</span
+        >
+      </div>
+    </div>
+
+    <div class="sa-panel">
+      <div class="sa-panel-head">
+        <h2 class="sa-panel-title">Vision Jobs</h2>
+        {% if selected_run_id %}
+        <button
+          type="button"
+          class="btn btn-outline-secondary"
+          id="ca-clear-run-filter"
+        >
+          Show all jobs
+        </button>
+        {% endif %}
+      </div>
+      <div id="ca-preview-box" class="sa-panel-body border-bottom d-none"></div>
+      <div class="sa-table-wrap">
+        <table class="sa-table sa-table--jobs">
+          <thead>
+            <tr>
+              <th>Job</th>
+              <th>Status</th>
+              <th>Progress</th>
+              <th>Cost</th>
+              <th class="text-end">Action</th>
+            </tr>
+          </thead>
+          <tbody id="ca-jobs-body">
+            {% for job in jobs_data.jobs %}
+            <tr>
+              <td>
+                <div class="fw-semibold">
+                  #{{ job.id }} · {{ job.reference or ("Node #" ~
+                  job.asset_node_id) }}
+                </div>
+                <div class="text-secondary small">
+                  {{ job.game_version }}{% if job.title_only %} · title-only{%
+                  endif %}
+                </div>
+                {% if job.error %}
+                <div class="text-danger small">{{ job.error }}</div>
+                {% endif %}
+              </td>
+              <td>
+                <span class="sa-badge sa-badge--{{ job.status }}"
+                  >{{ job.status }}</span
+                >
+              </td>
+              <td class="small">
+                Step {{ job.step }} · {{ job.frames_done }} done / {{
+                job.frames_remaining }} left
+              </td>
+              <td class="small">
+                ${{ "%.4f"|format(job.cost_usd or 0) }}
+                <div class="text-secondary">
+                  {{ "{:,}".format(job.tokens_input or 0) }} / {{
+                  "{:,}".format(job.tokens_output or 0) }}
+                </div>
+              </td>
+              <td class="text-end">
+                {% if job.status not in ["queued", "running", "completed"] %}
+                <button
+                  type="button"
+                  class="btn btn-outline-primary ca-resume-btn"
+                  data-run-id="{{ job.id }}"
+                  data-output-tokens="{{ job.output_tokens or '' }}"
+                  {%
+                  if
+                  not
+                  assets_data.enabled
+                  %}disabled{%
+                  endif
+                  %}
+                >
+                  Resume
+                </button>
+                {% else %}
+                <span class="text-secondary small">—</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="5" class="text-secondary text-center py-3">
+                No vision jobs recorded.
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div
+        class="sa-panel-foot d-flex justify-content-between align-items-center"
+      >
+        <button
+          type="button"
+          class="btn btn-outline-secondary {% if not jobs_data.next_before %}d-none{% endif %}"
+          id="ca-load-more-jobs"
+          data-before="{{ jobs_data.next_before or '' }}"
+        >
+          Load older
+        </button>
+        <span class="text-secondary small" id="ca-jobs-meta"
+          >{{ jobs_data.jobs|length }} shown</span
+        >
+      </div>
+    </div>
+  </div>
+</div>
+
+<script id="ca-initial-data" type="application/json">
+  {{ {
+  "query": query,
+  "selected_run_id": selected_run_id,
+  "assets_data": assets_data,
+  "jobs_data": jobs_data
+  } | tojson }}
+</script>
+<script src="{{ url_for('console:statics', path='cutscene-analysis.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,355 @@
+﻿{% extends "layout.html" %} {% block content %}
+<div class="sa-page" id="sa-story-agent">
+  <div class="sa-header">
+    <div>
+      <h1>Story Agent</h1>
+      <p class="sa-subtitle">
+        Quest analysis runs, daily budget, step traces, resume controls, and
+        revisits.
+      </p>
+    </div>
+    <div class="sa-toolbar">
+      <div class="sa-poll-group" role="group" aria-label="Auto refresh">
+        <button
+          type="button"
+          class="sa-poll-btn"
+          id="sa-poll-toggle"
+          data-interval="0"
+        >
+          <span class="sa-dot" id="sa-poll-dot"></span>
+          <span id="sa-poll-label">Auto: Off</span>
+        </button>
+        <select
+          class="form-select"
+          id="sa-poll-select"
+          style="width: auto"
+          aria-label="Polling interval"
+        >
+          <option value="0">Off</option>
+          <option value="5000">5s</option>
+          <option value="10000" selected>10s</option>
+          <option value="30000">30s</option>
+        </select>
+      </div>
+      <button
+        type="button"
+        class="btn btn-outline-secondary"
+        id="sa-refresh-btn"
+      >
+        Refresh
+      </button>
+    </div>
+  </div>
+
+  <div id="sa-banner" class="alert d-none" role="alert"></div>
+  {% if load_error %}
+  <div class="alert alert-danger">{{ load_error }}</div>
+  {% endif %} {% set spent_today = today_row.spent_usd if today_row else "0.00"
+  %} {% set reserved_today = today_row.reserved_usd if today_row else "0.00" %}
+  {% set tokens_today = (today_row.spent_tokens + today_row.reserved_tokens) if
+  today_row else 0 %}
+  <div class="sa-kpi-grid" id="sa-kpi-grid">
+    <div class="sa-kpi">
+      <div class="sa-kpi-label">Today Spent / Budget</div>
+      <div class="sa-kpi-value" id="kpi-budget">
+        ${{ spent_today }}
+        <span class="text-secondary fs-6">/ ${{ usage.daily_budget_usd }}</span>
+      </div>
+      <div class="sa-kpi-sub" id="kpi-reserved">
+        Reserved: ${{ reserved_today }} ({{ usage.timezone }})
+      </div>
+    </div>
+    <div class="sa-kpi">
+      <div class="sa-kpi-label">Today Tokens</div>
+      <div class="sa-kpi-value" id="kpi-tokens">
+        {{ "{:,}".format(tokens_today) }}
+      </div>
+      <div class="sa-kpi-sub" id="kpi-token-limit">
+        Limit: {{ "{:,}".format(usage.daily_token_limit) }}
+      </div>
+    </div>
+    <div class="sa-kpi">
+      <div class="sa-kpi-label">Loaded Runs</div>
+      <div class="sa-kpi-value" id="kpi-runs-count">
+        {{ jobs_data.jobs|length }}
+      </div>
+      <div class="sa-kpi-sub" id="kpi-active-runs">
+        Running: {{ jobs_data.jobs|selectattr("status", "in", ["queued",
+        "running"])|list|length }}
+      </div>
+    </div>
+    <div class="sa-kpi">
+      <div class="sa-kpi-label">Revisits</div>
+      <div class="sa-kpi-value" id="kpi-revisits-count">
+        {{ revisits_data.revisits|length }}
+      </div>
+      <div class="sa-kpi-sub">Recent queued/completed</div>
+    </div>
+  </div>
+
+  <div class="sa-panel">
+    <div class="sa-panel-head">
+      <h2 class="sa-panel-title">Run Quest Analysis</h2>
+      <span class="sa-muted"
+        >Matching active or completed requests reuse the existing run unless a
+        new version/generation is targeted.</span
+      >
+    </div>
+    <form id="sa-create-form" class="d-flex flex-wrap gap-3 align-items-end">
+      <div>
+        <label class="form-label mb-1" for="sa-quest-id">Quest ID</label>
+        <input
+          type="number"
+          min="1"
+          required
+          class="form-control"
+          id="sa-quest-id"
+          name="quest_id"
+          placeholder="e.g. 135000123"
+          style="width: 12rem"
+        />
+      </div>
+      <div>
+        <label class="form-label mb-1" for="sa-game-version"
+          >Game version (optional)</label
+        >
+        <input
+          type="text"
+          maxlength="64"
+          class="form-control"
+          id="sa-game-version"
+          name="game_version"
+          placeholder="latest"
+          style="width: 11rem"
+        />
+      </div>
+      <div>
+        <button type="submit" class="btn btn-primary" id="sa-create-btn">
+          Run analysis
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <div class="sa-tabs" role="tablist">
+    <button type="button" class="sa-tab is-active" data-tab="runs">
+      Runs &amp; Inspector
+    </button>
+    <button type="button" class="sa-tab" data-tab="revisits">
+      Revisits ({{ revisits_data.revisits|length }})
+    </button>
+    <button type="button" class="sa-tab" data-tab="usage">
+      Daily Usage ({{ usage.days|length }})
+    </button>
+  </div>
+
+  <div class="sa-tab-pane" id="tab-runs">
+    <div class="sa-split">
+      <div class="sa-panel">
+        <div class="sa-panel-head">
+          <h2 class="sa-panel-title">Analysis Runs</h2>
+          <span class="text-secondary small" id="sa-runs-meta"
+            >{{ jobs_data.jobs|length }} shown</span
+          >
+        </div>
+        <div id="sa-runs-list" class="sa-run-list">
+          {% for job in jobs_data.jobs %}
+          <button
+            type="button"
+            class="sa-run-item {% if selected_job_id == job.id %}is-selected{% endif %}"
+            data-run-id="{{ job.id }}"
+          >
+            <div
+              class="d-flex justify-content-between align-items-center gap-2"
+            >
+              <span class="fw-semibold">#{{ job.id }} · {{ job.mode }}</span>
+              <span class="sa-badge sa-badge--{{ job.status }}"
+                >{{ job.status }}</span
+              >
+            </div>
+            <div class="small text-secondary mt-1">
+              Step {{ job.step }}/{{ job.max_steps }} · {{ job.model }} · ${{
+              "%.4f"|format(job.cost_usd or 0) }}
+            </div>
+            {% if job.error %}
+            <div class="small text-danger text-truncate mt-1">
+              {{ job.error }}
+            </div>
+            {% endif %}
+          </button>
+          {% else %}
+          <div class="p-3 text-secondary small">No story agent runs found.</div>
+          {% endfor %}
+        </div>
+        <div
+          class="sa-panel-foot d-flex justify-content-between align-items-center"
+        >
+          <button
+            type="button"
+            class="btn btn-outline-secondary {% if not jobs_data.next_before %}d-none{% endif %}"
+            id="sa-load-more-runs"
+            data-before="{{ jobs_data.next_before or '' }}"
+          >
+            Load older
+          </button>
+          <span class="text-secondary small" id="sa-runs-updated">SSR</span>
+        </div>
+      </div>
+
+      <div class="sa-panel" id="sa-detail-panel">
+        <div class="sa-panel-head">
+          <h2 class="sa-panel-title" id="sa-detail-title">
+            {% if selected_detail %}Run #{{ selected_detail.id }}{% else %}Run
+            Inspector{% endif %}
+          </h2>
+          <div
+            class="d-flex gap-2 align-items-center"
+            id="sa-detail-actions"
+          ></div>
+        </div>
+        <div class="sa-panel-body" id="sa-detail-body">
+          {% if not selected_detail %}
+          <div class="text-secondary small py-4 text-center">
+            Select a run on the left to inspect steps, calls, traces, and resume
+            controls.
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sa-tab-pane d-none" id="tab-revisits">
+    <div class="sa-panel">
+      <div class="sa-panel-head">
+        <h2 class="sa-panel-title">Queued &amp; Recent Revisits</h2>
+        <button
+          type="button"
+          class="btn btn-outline-secondary d-none"
+          id="sa-load-more-revisits"
+        >
+          Load older
+        </button>
+      </div>
+      <div class="sa-table-wrap">
+        <table class="sa-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Document</th>
+              <th>Release</th>
+              <th>Status</th>
+              <th>Run</th>
+              <th>Candidates</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody id="sa-revisits-body">
+            {% for r in revisits_data.revisits %}
+            <tr>
+              <td>#{{ r.id }}</td>
+              <td>{{ r.document_id }}</td>
+              <td>{{ r.release_id }}</td>
+              <td>
+                <span class="sa-badge sa-badge--{{ r.status }}"
+                  >{{ r.status }}</span
+                >
+              </td>
+              <td>
+                {% if r.run_id %}<a
+                  href="#"
+                  class="sa-jump-run"
+                  data-run-id="{{ r.run_id }}"
+                  >#{{ r.run_id }}</a
+                >{% else %}—{% endif %}
+              </td>
+              <td>{{ r.candidate_count }}</td>
+              <td class="text-danger small">{{ r.error or "" }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="7" class="text-secondary text-center py-3">
+                No revisits recorded.
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="sa-tab-pane d-none" id="tab-usage">
+    <div class="sa-panel">
+      <div class="sa-panel-head">
+        <h2 class="sa-panel-title">
+          Daily Budget Usage ({{ usage.timezone }})
+        </h2>
+      </div>
+      <div class="sa-table-wrap">
+        <table class="sa-table">
+          <thead>
+            <tr>
+              <th>Day</th>
+              <th>Spent USD</th>
+              <th>Reserved USD</th>
+              <th>Spent Tokens</th>
+              <th>Reserved Tokens</th>
+            </tr>
+          </thead>
+          <tbody id="sa-usage-body">
+            {% for d in usage.days %}
+            <tr>
+              <td>{{ d.day }}</td>
+              <td>${{ d.spent_usd }}</td>
+              <td>${{ d.reserved_usd }}</td>
+              <td>{{ "{:,}".format(d.spent_tokens) }}</td>
+              <td>{{ "{:,}".format(d.reserved_tokens) }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="5" class="text-secondary text-center py-3">
+                No usage records yet.
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div
+  class="modal modal-blur fade"
+  id="sa-trace-modal"
+  tabindex="-1"
+  aria-hidden="true"
+>
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="sa-trace-title">Call Trace</h5>
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="modal"
+          aria-label="Close"
+        ></button>
+      </div>
+      <div class="modal-body" id="sa-trace-body"></div>
+    </div>
+  </div>
+</div>
+
+<script id="sa-initial-data" type="application/json">
+  {{ {
+  "usage": usage,
+  "jobs_data": jobs_data,
+  "revisits_data": revisits_data,
+  "selected_job_id": selected_job_id,
+  "selected_detail": selected_detail
+  } | tojson }}
+</script>
+<script src="{{ url_for('console:statics', path='story-agent.js') }}"></script>
+{% endblock %}
