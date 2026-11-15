@@ -815,61 +815,67 @@ async def _insert_typed_entities(
     for model, values in typed:
         grouped.setdefault(model, []).extend(values)
     for model, values in grouped.items():
-        statement = insert(model.__table__).values(values)
-        updates_by_model = {
-            Character: ("canonical_name", "name_key_id", "nickname_key_id", "metadata"),
-            Item: (
-                "canonical_name",
-                "game_item_id",
-                "name_key_id",
-                "description_key_id",
-                "metadata",
-            ),
-            Location: (
-                "canonical_name",
-                "name_key_id",
-                "game_location_id",
-                "parent_location_node_id",
-                "metadata",
-            ),
-        }
-        update_columns = updates_by_model.get(model)
-        if update_columns:
-            protected = set(await session.scalars(select(NodeRevision.node_id).where(
-                NodeRevision.node_id.in_([value["node_id"] for value in values]),
-                NodeRevision.release_id.in_(newer_release_ids),
-            ))) if newer_release_ids else set()
-            if protected:
-                projected = set(await session.scalars(select(model.node_id).where(
-                    model.node_id.in_(protected)
-                )))
-                if protected - projected:
-                    raise ValueError(
-                        f"Cannot import historical {kind}: a newer revision has no typed projection"
+        if not values:
+            continue
+        col_count = max(1, len(values[0]))
+        chunk_size = max(1, 30000 // col_count)
+        for offset in range(0, len(values), chunk_size):
+            chunk = values[offset : offset + chunk_size]
+            statement = insert(model.__table__).values(chunk)
+            updates_by_model = {
+                Character: ("canonical_name", "name_key_id", "nickname_key_id", "metadata"),
+                Item: (
+                    "canonical_name",
+                    "game_item_id",
+                    "name_key_id",
+                    "description_key_id",
+                    "metadata",
+                ),
+                Location: (
+                    "canonical_name",
+                    "name_key_id",
+                    "game_location_id",
+                    "parent_location_node_id",
+                    "metadata",
+                ),
+            }
+            update_columns = updates_by_model.get(model)
+            if update_columns:
+                protected = set(await session.scalars(select(NodeRevision.node_id).where(
+                    NodeRevision.node_id.in_([value["node_id"] for value in chunk]),
+                    NodeRevision.release_id.in_(newer_release_ids),
+                ))) if newer_release_ids else set()
+                if protected:
+                    projected = set(await session.scalars(select(model.node_id).where(
+                        model.node_id.in_(protected)
+                    )))
+                    if protected - projected:
+                        raise ValueError(
+                            f"Cannot import historical {kind}: a newer revision has no typed projection"
+                        )
+                updates = {column: getattr(statement.excluded, column) for column in update_columns}
+                if model is Character:
+                    # Old cached bundles have no family field; they must not erase a
+                    # confirmed identity established by a newer compiler/backfill.
+                    preserved = []
+                    for key in ("public_identity", "shared_artwork_paths"):
+                        incoming = statement.excluded.metadata[key]
+                        value = case((incoming.astext.is_not(None), incoming),
+                                     else_=Character.metadata_json[key])
+                        preserved.extend((key, value))
+                    updates["metadata"] = statement.excluded.metadata.op("||")(
+                        func.jsonb_build_object(*preserved))
+                await session.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=[model.node_id],
+                        set_=updates,
+                        where=statement.excluded.node_id.not_in(protected) if protected else None,
                     )
-            updates = {column: getattr(statement.excluded, column) for column in update_columns}
-            if model is Character:
-                # Old cached bundles have no family field; they must not erase a
-                # confirmed identity established by a newer compiler/backfill.
-                preserved = []
-                for key in ("public_identity", "shared_artwork_paths"):
-                    incoming = statement.excluded.metadata[key]
-                    value = case((incoming.astext.is_not(None), incoming),
-                                 else_=Character.metadata_json[key])
-                    preserved.extend((key, value))
-                updates["metadata"] = statement.excluded.metadata.op("||")(
-                    func.jsonb_build_object(*preserved))
-            await session.execute(
-                statement.on_conflict_do_update(
-                    index_elements=[model.node_id],
-                    set_=updates,
-                    where=statement.excluded.node_id.not_in(protected) if protected else None,
                 )
-            )
-        else:
-            await session.execute(
-                statement.on_conflict_do_nothing(index_elements=[model.node_id])
-            )
+            else:
+                await session.execute(
+                    statement.on_conflict_do_nothing(index_elements=[model.node_id])
+                )
 
 
 async def import_canonical_edges(
