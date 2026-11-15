@@ -132,6 +132,20 @@
     return '<span class="sa-badge sa-badge--neutral">Not analyzed</span>';
   }
 
+  function renderAssetTitle(a) {
+    const scenes = Array.isArray(a.cutscenes) ? a.cutscenes : [];
+    if (scenes.length) {
+      const links = scenes
+        .map(
+          (s) =>
+            `<a href="/console/cutscenes/detail/${s.node_id}" class="link-light text-decoration-underline">${esc(s.cg_name || `Cutscene #${s.node_id}`)}</a>`,
+        )
+        .join(" · ");
+      return `<div class="fw-semibold">${links}</div><div class="text-secondary small sa-mono">${esc(a.reference)} · Node #${a.id}</div>`;
+    }
+    return `<div class="fw-semibold">${esc(a.reference)}</div><div class="text-secondary small">Node #${a.id}</div>`;
+  }
+
   function renderAssets() {
     document.getElementById("ca-kpi-enabled").textContent = visionEnabled
       ? "Enabled"
@@ -148,8 +162,7 @@
           .map(
             (a) => `<tr>
  <td class="text-break">
- <div class="fw-semibold">${esc(a.reference)}</div>
- <div class="text-secondary small">Node #${a.id}</div>
+ ${renderAssetTitle(a)}
  </td>
  <td>
  <div class="d-flex flex-wrap gap-1 mb-1">

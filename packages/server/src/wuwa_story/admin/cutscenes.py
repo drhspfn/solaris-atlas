@@ -8,6 +8,7 @@ from starlette.templating import Jinja2Templates
 from starlette_admin import CustomView
 
 from wuwa_story.agents.cutscene_vision import visual_reference
+from wuwa_story.agents.settings import get_agent_settings
 from wuwa_story.api.routes.cutscenes import detail, release
 from wuwa_story.db.models.core import Cutscene
 from wuwa_story.db.models.ops import ProcessingRun, Processor
@@ -87,6 +88,7 @@ class CutsceneData(CustomView):
         result["analysis"] = {
             "asset_node_ids": asset_ids,
             "asset_version": asset_version,
+            "vision_enabled": get_agent_settings().vision_enabled,
             "has_analysis": has_analysis,
             "has_artifacts": has_artifacts,
             "reports_count": len(reports),

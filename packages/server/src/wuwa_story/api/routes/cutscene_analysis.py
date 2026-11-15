@@ -19,7 +19,9 @@ from wuwa_story.api.routes.story.cutscene_audio import audio_bundles
 from wuwa_story.api.routes.story.media import cutscene_videos
 from wuwa_story.auth.dependencies import require_admin, require_csrf
 from wuwa_story.config.settings import get_settings
-from wuwa_story.db.models.graph import Node
+from wuwa_story.db.models.core import Cutscene
+from wuwa_story.db.models.graph import Edge, Node
+from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.ops import ProcessingRun, Processor
 from wuwa_story.db.models.storage import FileReference
 from wuwa_story.db.session import get_session
@@ -164,6 +166,65 @@ async def _asset_analysis_summaries(
     return summaries
 
 
+async def _asset_cutscenes(
+    session: AsyncSession,
+    asset_ids: set[int],
+) -> dict[int, list[dict[str, Any]]]:
+    if not asset_ids:
+        return {}
+    mapping: dict[int, list[dict[str, Any]]] = {aid: [] for aid in asset_ids}
+    seen: dict[int, set[int]] = {aid: set() for aid in asset_ids}
+
+    variants, assets_edge = aliased(Edge), aliased(Edge)
+    variant_type, asset_type = aliased(RelationType), aliased(RelationType)
+    graph_rows = await session.execute(
+        select(
+            assets_edge.to_node_id,
+            Cutscene.node_id,
+            Cutscene.cg_name,
+            Cutscene.cg_file,
+        )
+        .join(variants, variants.from_node_id == Cutscene.node_id)
+        .join(variant_type, variant_type.id == variants.relation_type_id)
+        .join(assets_edge, assets_edge.from_node_id == variants.to_node_id)
+        .join(asset_type, asset_type.id == assets_edge.relation_type_id)
+        .where(
+            assets_edge.to_node_id.in_(asset_ids),
+            variants.layer == "source",
+            assets_edge.layer == "source",
+            variant_type.key == "has_variant",
+            asset_type.key == "references_asset",
+        )
+        .order_by(Cutscene.cg_name.asc(), Cutscene.node_id.asc())
+    )
+    for asset_id, scene_id, cg_name, cg_file in graph_rows:
+        if scene_id in seen.get(asset_id, set()):
+            continue
+        seen[asset_id].add(scene_id)
+        mapping[asset_id].append(
+            {"node_id": scene_id, "cg_name": cg_name, "cg_file": cg_file}
+        )
+
+    direct_rows = await session.execute(
+        select(
+            Cutscene.media_asset_node_id,
+            Cutscene.node_id,
+            Cutscene.cg_name,
+            Cutscene.cg_file,
+        )
+        .where(Cutscene.media_asset_node_id.in_(asset_ids))
+        .order_by(Cutscene.cg_name.asc(), Cutscene.node_id.asc())
+    )
+    for asset_id, scene_id, cg_name, cg_file in direct_rows:
+        if asset_id is None or scene_id in seen.get(asset_id, set()):
+            continue
+        seen[asset_id].add(scene_id)
+        mapping[asset_id].append(
+            {"node_id": scene_id, "cg_name": cg_name, "cg_file": cg_file}
+        )
+    return mapping
+
+
 @router.get("/assets")
 async def assets(
     q: str = Query("", max_length=128),
@@ -198,8 +259,61 @@ async def assets(
     if before is not None:
         statement = statement.where(FileReference.id < before)
     if q:
-        statement = statement.where(
-            Node.canonical_key.icontains(q, autoescape=True))
+        variants, assets_edge = aliased(Edge), aliased(Edge)
+        variant_type, asset_type = aliased(RelationType), aliased(RelationType)
+        scene_text_match = or_(
+            Cutscene.cg_name.icontains(q, autoescape=True),
+            Cutscene.cg_file.icontains(q, autoescape=True),
+        )
+        has_graph_scene = (
+            select(Cutscene.node_id)
+            .join(variants, variants.from_node_id == Cutscene.node_id)
+            .join(variant_type, variant_type.id == variants.relation_type_id)
+            .join(assets_edge, assets_edge.from_node_id == variants.to_node_id)
+            .join(asset_type, asset_type.id == assets_edge.relation_type_id)
+            .where(
+                assets_edge.to_node_id == FileReference.owner_node_id,
+                variants.layer == "source",
+                assets_edge.layer == "source",
+                variant_type.key == "has_variant",
+                asset_type.key == "references_asset",
+                scene_text_match,
+            )
+            .exists()
+        )
+        has_direct_scene = (
+            select(Cutscene.node_id)
+            .where(
+                Cutscene.media_asset_node_id == FileReference.owner_node_id,
+                scene_text_match,
+            )
+            .exists()
+        )
+        q_clauses = [
+            Node.canonical_key.icontains(q, autoescape=True),
+            has_graph_scene,
+            has_direct_scene,
+        ]
+        if q.isdigit():
+            q_num = int(q)
+            q_clauses.append(FileReference.owner_node_id == q_num)
+            q_clauses.append(
+                select(Cutscene.node_id)
+                .join(variants, variants.from_node_id == Cutscene.node_id)
+                .join(variant_type, variant_type.id == variants.relation_type_id)
+                .join(assets_edge, assets_edge.from_node_id == variants.to_node_id)
+                .join(asset_type, asset_type.id == assets_edge.relation_type_id)
+                .where(
+                    assets_edge.to_node_id == FileReference.owner_node_id,
+                    Cutscene.node_id == q_num,
+                    variants.layer == "source",
+                    assets_edge.layer == "source",
+                    variant_type.key == "has_variant",
+                    asset_type.key == "references_asset",
+                )
+                .exists()
+            )
+        statement = statement.where(or_(*q_clauses))
     if analyzed_only:
         analysis_ref = aliased(FileReference)
         has_ref = (
@@ -227,6 +341,9 @@ async def assets(
         statement = statement.where(or_(has_ref, has_run))
     rows = (await session.execute(statement)).all()
     summaries = await _asset_analysis_summaries(session, rows)
+    cutscenes_by_asset = await _asset_cutscenes(
+        session, {ref.owner_node_id for ref, _ in rows}
+    )
     return {
         "enabled": get_agent_settings().vision_enabled,
         "assets": [
@@ -234,6 +351,7 @@ async def assets(
                 "id": ref.owner_node_id,
                 "reference": key,
                 "game_version": ref.metadata_json["asset_version"],
+                "cutscenes": cutscenes_by_asset.get(ref.owner_node_id, []),
                 **summaries.get(
                     (ref.owner_node_id, str(ref.metadata_json["asset_version"] or "")),
                     {

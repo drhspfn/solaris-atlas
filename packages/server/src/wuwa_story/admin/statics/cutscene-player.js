@@ -13,6 +13,7 @@
   const publicList = root.querySelector(".sa-cutscene-public");
   const systemList = root.querySelector(".sa-cutscene-system");
   const analysisBadge = document.getElementById("sa-cutscene-analysis-badge");
+  const runAnalysisBtn = document.getElementById("sa-cutscene-run-analysis");
   const clearAnalysisBtn = document.getElementById("sa-cutscene-clear-analysis");
   const analysisMsg = document.getElementById("sa-cutscene-analysis-msg");
   const timelineInput = root.querySelector("[name=timeline]");
@@ -82,6 +83,17 @@
         analysisBadge.className = "badge text-bg-secondary";
         analysisBadge.textContent = "Visual analysis: Not run";
       }
+    }
+    if (runAnalysisBtn) {
+      const canRun = Boolean(
+        currentAnalysis?.asset_node_ids?.length &&
+          currentAnalysis?.asset_version,
+      );
+      runAnalysisBtn.hidden = !canRun;
+      runAnalysisBtn.disabled = !currentAnalysis?.vision_enabled;
+      runAnalysisBtn.title = currentAnalysis?.vision_enabled
+        ? ""
+        : "Enable AGENT_VISION_ENABLED on the API and visual worker";
     }
     if (clearAnalysisBtn) {
       const canClear = Boolean(
@@ -420,6 +432,44 @@
         status.textContent = "Fullscreen is unavailable.";
       });
     });
+  runAnalysisBtn?.addEventListener("click", async () => {
+    const assetIds = currentAnalysis?.asset_node_ids || [];
+    const version = currentAnalysis?.asset_version || "";
+    if (!assetIds.length || !version) return;
+    runAnalysisBtn.disabled = true;
+    try {
+      const csrfToken = await fetchCsrfToken();
+      const res = await fetch(`${apiPrefix()}/admin/story-agent/cutscenes/jobs`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken,
+        },
+        body: JSON.stringify({
+          asset_node_ids: assetIds,
+          game_version: version,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.detail || `HTTP ${res.status}`);
+      }
+      const jobs = Array.isArray(body.jobs) ? body.jobs : [];
+      const idsText = jobs.map((j) => `#${j.id}`).join(", ");
+      showAnalysisMessage(
+        jobs.length
+          ? `Queued ${jobs.length} vision job(s) (${idsText}) for ${version}.`
+          : `Queued vision analysis for ${version}.`,
+        "success",
+      );
+      await load({ keepMessage: true });
+    } catch (error) {
+      showAnalysisMessage(error.message || "Run failed", "danger");
+      runAnalysisBtn.disabled = !currentAnalysis?.vision_enabled;
+    }
+  });
+
   clearAnalysisBtn?.addEventListener("click", async () => {
     const assetIds = currentAnalysis?.asset_node_ids || [];
     const version = currentAnalysis?.asset_version || "";

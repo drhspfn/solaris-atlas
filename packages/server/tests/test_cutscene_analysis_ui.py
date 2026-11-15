@@ -8,13 +8,25 @@ from wuwa_story.admin.cutscenes import CutsceneData
 from wuwa_story.api.routes.cutscene_analysis import _asset_analysis_summaries, assets
 
 
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def all(self):
+        return list(self._rows)
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
 class _FakeSession:
-    def __init__(self, *, execute_rows=None, scalar_batches=None):
-        self._execute_rows = execute_rows or []
+    def __init__(self, *, execute_batches=None, scalar_batches=None):
+        self._execute_batches = list(execute_batches or [])
         self._scalar_batches = list(scalar_batches or [])
 
     async def execute(self, statement):
-        return SimpleNamespace(all=lambda: list(self._execute_rows))
+        rows = self._execute_batches.pop(0) if self._execute_batches else []
+        return _FakeResult(rows)
 
     async def scalars(self, statement):
         if not self._scalar_batches:
@@ -103,11 +115,15 @@ async def test_assets_endpoint_includes_analysis_summary_fields(monkeypatch):
         metadata_json={"asset_version": "3.7.1"},
     )
     session = _FakeSession(
-        execute_rows=[(video_ref, "asset:ue:/Game/Aki/Sequence/Test")],
+        execute_batches=[
+            [(video_ref, "asset:ue:/Game/Aki/Sequence/Test")],
+            [(101, 15536, "Start", "M0206_Mp4")],
+            [],
+        ],
         scalar_batches=[[], []],
     )
 
-    payload = await assets(q="Test", before=None, analyzed_only=True, limit=30, session=session)
+    payload = await assets(q="Start", before=None, analyzed_only=True, limit=30, session=session)
 
     assert payload["enabled"] is True
     assert payload["assets"] == [
@@ -115,6 +131,7 @@ async def test_assets_endpoint_includes_analysis_summary_fields(monkeypatch):
             "id": 101,
             "reference": "asset:ue:/Game/Aki/Sequence/Test",
             "game_version": "3.7.1",
+            "cutscenes": [{"node_id": 15536, "cg_name": "Start", "cg_file": "M0206_Mp4"}],
             "reports_count": 0,
             "previews_count": 0,
             "atlases_count": 0,
@@ -181,6 +198,11 @@ async def test_cutscene_data_reports_previews_without_ai_analysis(monkeypatch):
         AsyncMock(return_value=None),
     )
 
+    monkeypatch.setattr(
+        "wuwa_story.admin.cutscenes.get_agent_settings",
+        lambda: SimpleNamespace(vision_enabled=True),
+    )
+
     response = await CutsceneData("Cutscene data").render(request, templates=None)
     assert response.status_code == 200
     import json
@@ -189,6 +211,7 @@ async def test_cutscene_data_reports_previews_without_ai_analysis(monkeypatch):
     assert body["analysis"] == {
         "asset_node_ids": [4801],
         "asset_version": "3.7.1",
+        "vision_enabled": True,
         "has_analysis": False,
         "has_artifacts": True,
         "reports_count": 0,

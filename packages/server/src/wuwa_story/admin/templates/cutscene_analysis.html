@@ -120,8 +120,8 @@
             class="form-control"
             id="ca-search-input"
             value="{{ query }}"
-            placeholder="Filter reference..."
-            style="width: 12rem"
+            placeholder="Cutscene (Start) or asset..."
+            style="width: 14rem"
           />
           <button type="submit" class="btn btn-outline-secondary">
             Search
@@ -141,8 +141,19 @@
             {% for asset in assets_data.assets %}
             <tr>
               <td class="text-break">
+                {% if asset.cutscenes %}
+                <div class="fw-semibold d-flex flex-wrap gap-2">
+                  {% for scene in asset.cutscenes %}
+                  <a href="/console/cutscenes/detail/{{ scene.node_id }}" class="link-light text-decoration-underline">
+                    {{ scene.cg_name or ('Cutscene #' ~ scene.node_id) }}
+                  </a>
+                  {% endfor %}
+                </div>
+                <div class="text-secondary small sa-mono">{{ asset.reference }} · Node #{{ asset.id }}</div>
+                {% else %}
                 <div class="fw-semibold">{{ asset.reference }}</div>
                 <div class="text-secondary small">Node #{{ asset.id }}</div>
+                {% endif %}
               </td>
               <td>
                 <div class="d-flex flex-wrap gap-1 mb-1">
