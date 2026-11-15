@@ -101,8 +101,8 @@ GROUPS = {
         "AUTH_CSRF_SECRET": None,
     },
     "api.env": {
-        "VISUAL_MEMORY_EMBEDDER": "dinov2",
-        "VISUAL_MEMORY_CCIP_PATH": "/models/ccip",
+        "VISUAL_MEMORY_EMBEDDER": "ccip",
+        "VISUAL_MEMORY_CCIP_PATH": "/models/ccip-24-4ea118d1",
         "APP_NAME": "WuWa Story Platform",
         "MEDIA_CACHE_CONTROL": "public, max-age=31536000, immutable",
         "API_CACHE_NAMESPACE": "solaris-api-v1",
