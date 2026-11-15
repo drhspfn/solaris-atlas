@@ -8,15 +8,16 @@
   const kindSelect = () => `<label>Type<select class="form-select" name="kind" required><option value="">Choose a type</option>${identityKinds.map(kind => `<option value="${esc(kind.value)}">${esc(kind.label)}</option>`).join('')}</select></label>`;
   const state = { page: 0, size: 20, total: 0, image: null, width: 0, height: 0, boxes: [], sequence: 0 };
   const message = (text, error = false) => { const el = $('#vm-message'); el.textContent = text; el.className = error ? 'vm-error' : ''; el.setAttribute('role', error ? 'alert' : 'status'); const dialogMessage = $('#vm-dialog-message'); if (dialogMessage) { dialogMessage.textContent = !$('#vm-dialog').hidden && error ? text : ''; dialogMessage.className = error ? 'vm-error' : ''; } };
+  const apiPrefix = () => (location.hostname.startsWith('api.') || location.port === '8000' ? '' : '/api');
   async function api(path, body, method = 'POST') {
     const options = { credentials: 'same-origin' };
     if (body !== undefined) {
-      const tokenResponse = await fetch('/auth/csrf', {credentials: 'same-origin'});
+      const tokenResponse = await fetch(`${apiPrefix()}/auth/csrf`, {credentials: 'same-origin'});
       if (!tokenResponse.ok) throw new Error('Could not obtain request verification. Sign in and retry.');
       const token = (await tokenResponse.json()).csrf_token;
       Object.assign(options, {method, headers: {'Content-Type':'application/json', 'X-CSRF-Token': token}, body: JSON.stringify(body)});
     }
-    const response = await fetch('/admin/visual-memory' + path, options);
+    const response = await fetch(`${apiPrefix()}/admin/visual-memory${path}`, options);
     if (!response.ok) { let detail = ''; try { detail = (await response.json()).detail; } catch {} throw new Error(typeof detail === 'string' ? detail : `Request failed (${response.status}).`); }
     return response.json();
   }
