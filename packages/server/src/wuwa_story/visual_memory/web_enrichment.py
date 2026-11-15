@@ -189,7 +189,7 @@ def validate_image_bytes(data: bytes, *, min_width: int = 200, min_height: int =
             width, height = img.size
     except (UnidentifiedImageError, OSError, ValueError):
         return None
-    if width < min_width or height < min_height:
+    if width < min_width or height < min_height or width * height > 20_000_000:
         return None
     return width, height, hashlib.sha256(data).hexdigest()
 
@@ -585,15 +585,18 @@ async def import_existing_db_images_for_target(
                 break
         if len(data) > MAX_IMAGE_BYTES or not data:
             continue
-        res = await service.add_reference(
-            bytes(data),
-            links=[{"identity_id": identity_id, "appearance_id": None}],
-            source_type="game_asset",
-            status=ref_status,
-            actor_id=ref_actor,
-            source_group=f"db:{target.kind}:{target.entity_id}",
-            rights=f"Game asset; node_id={target.entity_id}; file_reference_id={reference.id}; file_id={file.id}",
-        )
+        try:
+            res = await service.add_reference(
+                bytes(data),
+                links=[{"identity_id": identity_id, "appearance_id": None}],
+                source_type="game_asset",
+                status=ref_status,
+                actor_id=ref_actor,
+                source_group=f"db:{target.kind}:{target.entity_id}",
+                rights=f"Game asset; node_id={target.entity_id}; file_reference_id={reference.id}; file_id={file.id}",
+            )
+        except ValueError:
+            continue
         if not res.get("duplicate"):
             imported += 1
     return imported
@@ -635,17 +638,20 @@ async def persist_candidates_to_visual_memory(
     added = 0
     duplicates = 0
     for cand in candidates:
-        res = await service.add_reference(
-            cand.content,
-            links=[{"identity_id": identity_id, "appearance_id": None}],
-            source_type="web_search",
-            source_url=cand.url,
-            source_page=cand.page_url,
-            source_group=f"ddg:{target.kind}:{target.entity_id}",
-            status=ref_status,
-            actor_id=ref_actor,
-            rights=f"Web search candidate; query={cand.query}; title={(cand.title or '')[:200]}",
-        )
+        try:
+            res = await service.add_reference(
+                cand.content,
+                links=[{"identity_id": identity_id, "appearance_id": None}],
+                source_type="web_search",
+                source_url=cand.url,
+                source_page=cand.page_url,
+                source_group=f"ddg:{target.kind}:{target.entity_id}",
+                status=ref_status,
+                actor_id=ref_actor,
+                rights=f"Web search candidate; query={cand.query}; title={(cand.title or '')[:200]}",
+            )
+        except ValueError:
+            continue
         if res.get("duplicate"):
             duplicates += 1
         else:
