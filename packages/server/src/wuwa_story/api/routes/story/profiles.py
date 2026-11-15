@@ -37,7 +37,7 @@ from wuwa_story.db.models.core import (
     QuestState,
     Speaker,
 )
-from wuwa_story.db.models.graph import Node, NodeType
+from wuwa_story.db.models.graph import Edge, Node, NodeType
 from wuwa_story.db.models.i18n import Locale, LocalizationKey
 from wuwa_story.db.models.ontology import RelationType
 from wuwa_story.db.models.raw import SourceFile, SourceRecord
@@ -839,7 +839,6 @@ async def character_profile(
                                        session=session, connections_limit=connections_limit)
     if candidate and candidate.canonical_key.startswith("speaker:"):
         from wuwa_story.db.models.core import SpeakerEntityLink
-        from wuwa_story.db.models.graph import Edge
 
         # 1. Check if speaker links to a character entity
         target_char_id = await session.scalar(
